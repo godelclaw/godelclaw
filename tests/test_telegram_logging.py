@@ -495,6 +495,25 @@ def test_upload_route_is_limited_to_allowed_chats():
         ).startswith("send failed: target chat is not allowed")
 
 
+def test_upload_success_receipt_matches_broker_prefix():
+    tg = load_telegram()
+    tg._token = "fake-token"
+    tg._primary_chat_id = "operator-private"
+    tg._allowed_chat_ids = {"operator-private"}
+
+    def fake_post(url, data=None, files=None, timeout=None):
+        return FakeResponse({"ok": True, "result": {"message_id": 44}})
+
+    tg.requests.post = fake_post
+    with tempfile.TemporaryDirectory() as tmp:
+        tg._log_path = str(pathlib.Path(tmp) / "telegram_updates.jsonl")
+        artifact = pathlib.Path(tmp) / "artifact.txt"
+        artifact.write_text("test", encoding="utf-8")
+        result = tg.send_file(str(artifact), "caption")
+        assert result.startswith("sent ")
+        assert "msg 44" in result
+
+
 def test_model_effect_send_is_at_most_once_per_turn():
     tg = load_telegram()
     posts = []
@@ -590,6 +609,7 @@ if __name__ == "__main__":
     test_no_primary_retains_legacy_reply_route()
     test_explicit_outbound_route_is_limited_to_allowed_chats()
     test_upload_route_is_limited_to_allowed_chats()
+    test_upload_success_receipt_matches_broker_prefix()
     test_energy_updates_are_atomic_across_threads()
     test_delete_my_recent_advances_past_tombstoned_sends()
     test_energy_updates_are_atomic_across_threads()
