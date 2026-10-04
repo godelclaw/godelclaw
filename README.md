@@ -164,10 +164,31 @@ retain their own adapters; the gateway is not a universal execution path.
 Its prototype transport is JSON over Unix sockets, with no native rho bridge
 qualified yet. Each instance uses its own gateway configuration and queue.
 
-Python currently supplies provider and host adapters. A native CeTTa LLM client
-is future work. The separation lets a channel, a cognitive loop and a tool
-worker have independent lifetimes while retaining explicit request/result
-boundaries.
+Python currently supplies the live provider and host adapters. The isolated
+[`native_llm_chat.metta`](src/native_llm_chat.metta) module provides a CeTTa
+OpenAI-compatible chat boundary for local testing. Its caller submits one
+request, keeps the caller and transport correlation IDs, then routes each
+`io:event` to the matching pending handle. It is not wired into a live loop.
+The separation lets a channel, a cognitive loop and a tool worker have
+independent lifetimes while retaining explicit request/result boundaries.
+
+| Compared with `src/synthetic_llm.py` | Native chat boundary |
+| --- | --- |
+| Request | Same `model`, one user `message`, `max_tokens` and `reasoning.effort`; removes exactly the first three prompt layout markers. |
+| Response | Reads `choices[0].message.content`; preserves nonblank text and returns a typed, correlated failure for empty or malformed responses and HTTP status 400 or above. The Python adapter converts these to a paced `()` action and updates cognitive health. |
+| Transport | One `io:submit`, no retry, 120-second timeout and 1 MiB response cap. The Python adapter has a configurable timeout and no response byte cap. |
+| Credentials and state | Sends only `Content-Type`; a local endpoint or host-authenticated relay must hold the key. Model persistence, provider selection, Anthropic routing, usage accounting and pacing remain in Python. |
+
+CeTTa's canonical JSON V1 values do not yet provide a direct constructor from
+a MeTTa `String`, so this module uses the supported compatibility JSON codec
+for both encoding and decoding. CeTTa's ephemeral `io:submit` also has no
+credential-reference argument; placing a bearer token in a MeTTa header atom
+would expose it to evaluation. Real requests require a build whose
+`io:capabilities` contains `http`. The offline checks in
+[`test_native_llm_chat.metta`](tests/test_native_llm_chat.metta) and
+[`test_native_llm_chat_petta.metta`](tests/test_native_llm_chat_petta.metta)
+exercise the pure and scripted event paths; their submit check runs only when
+HTTP is unavailable.
 
 ## Memory
 
