@@ -52,7 +52,7 @@ class IterAnthropicTests(unittest.TestCase):
         self.health = patcher.start()
         self.addCleanup(patcher.stop)
         for name, value in (("current_model", "claude-opus-5-5"), ("_provider_for", {
-                "name": "anthropic", "base": f"http://127.0.0.1:{self.server.server_port}/v1",
+                "name": "anthropic", "protocol": "anthropic", "base": f"http://127.0.0.1:{self.server.server_port}/v1",
                 "key": "fixture-only"})):
             patcher = patch.object(runtime_host.synthetic_llm, name, return_value=value)
             patcher.start()
@@ -91,7 +91,8 @@ class IterAnthropicTests(unittest.TestCase):
         self.assertEqual(payload["model"], "claude-opus-5-5")
         self.assertEqual(payload["tool_choice"], {"type": "auto"})
         self.assertNotIn("enable_thinking", payload)
-        self.assertEqual(payload["system"], [{"type": "text", "text": "own identity"}])
+        self.assertEqual(payload["system"], [{"type": "text", "text": "own identity",
+                                               "cache_control": {"type": "ephemeral"}}])
         self.assertEqual(payload["tools"][0]["input_schema"], {"type": "object"})
         self.assertEqual(payload["messages"][1]["content"][:2], self.server.reply["content"][:2])
         self.assertEqual([b["id"] for b in payload["messages"][1]["content"] if b["type"] == "tool_use"],
@@ -115,8 +116,8 @@ class IterAnthropicTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "provider failed: JSONDecodeError"):
             runtime_host.provider_request(request)
         self.assertEqual(self.server.received, [])
-        self.sleep.assert_called_once_with(15)
-        self.health.turn_failed.assert_called_once_with("JSONDecodeError")
+        self.sleep.assert_not_called()
+        self.health.turn_failed.assert_called_once_with("JSONDecodeError", retry_after=15)
         self.record.assert_called_with("provider-error", error="JSONDecodeError")
 
 

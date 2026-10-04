@@ -69,7 +69,7 @@ class ProviderTimeoutProbeTest(unittest.TestCase):
 
         diagnostic = (result.stdout + "\n" + result.stderr)[-5000:]
         self.assertEqual(result.returncode, 0, diagnostic)
-        self.assertEqual(result.stderr.count("transient chat failure"), 12)
+        self.assertEqual(result.stderr.count("failed provider turn: TimeoutError"), 12)
         witnessed = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", result.stdout)
         match = re.search(
             r"^\(PROVIDER_TIMEOUTS_COMPLETE\s+(\d+)\)$",

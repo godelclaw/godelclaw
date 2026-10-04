@@ -17,6 +17,8 @@ import lifecycle
 import loop_modes
 import mode_channel
 import synthetic_llm
+import llm_policy
+import provider_protocol
 
 
 def root():
@@ -220,132 +222,31 @@ class IterClient:
 
 
 def provider_request(request):
-    """Use the existing owned HTTP adapter, retaining native tool-call JSON."""
-    import urllib.request
+    """Provider fidelity and operator admission are shared across modes."""
+    provider_retry_boundary()
     selected = synthetic_llm.current_model()
     record("model-applied", model=selected)
-    provider = synthetic_llm._provider_for(selected)
     cognitive_health.expect_turn(mode())
     try:
-        if not provider["key"]:
-            raise RuntimeError("provider credential is not configured")
-        if provider["name"] == "anthropic":
-            payload = anthropic_payload(request, selected)
-            endpoint = "/messages"
-            headers = {"x-api-key": provider["key"], "anthropic-version": "2023-06-01"}
-        else:
-            payload = {k: v for k, v in request.items() if k not in ("model", "extra_body")}
-            payload["model"] = selected
-            payload.update(request.get("extra_body", {}))
-            endpoint = "/chat/completions"
-            headers = {"Authorization": "Bearer " + provider["key"]}
-        req = urllib.request.Request(provider["base"] + endpoint,
-            json.dumps(payload).encode(), {**headers, "Content-Type": "application/json"})
-        cognitive_health.turn_started(provider["name"])
-        response = synthetic_llm._request_json(req, synthetic_llm._float_env("SYNTHETIC_TIMEOUT", 120, 1))
-        if provider["name"] == "anthropic":
-            synthetic_llm._tally_anthropic(response.get("usage", {}))
-            response = anthropic_response(response)
+        response = synthetic_llm.structured_chat(request)
         cognitive_health.turn_completed(len(json.dumps(response)))
-        record("provider-response", protocol="tool-calls", provider=provider["name"])
+        record("provider-response", protocol="tool-calls")
         return response
     except Exception as error:
-        cognitive_health.turn_failed(type(error).__name__)
+        delay = getattr(error, "retry_after", 15)
+        cognitive_health.turn_failed(type(error).__name__, retry_after=delay)
         record("provider-error", error=type(error).__name__)
-        sleep(15)
+        if llm_policy.configuration(mode())["profile"] == "managed":
+            sleep(min(delay, 15))
         raise RuntimeError("provider failed: " + type(error).__name__) from None
 
 
 def anthropic_payload(request, model):
-    """Translate Iter's structured messages without losing tool-call IDs.
-
-    Anthropic has no tool-role message: all results for one assistant batch
-    precede subsequent text in a single user message. Tool policy remains in
-    core.metta; recent Claude models reject forced-tool API options.
-    """
-    messages, system = [], []
-
-    def text_blocks(value):
-        if value is None or value == "":
-            return []
-        if isinstance(value, str):
-            return [{"type": "text", "text": value}]
-        if isinstance(value, list) and all(b.get("type") == "text" for b in value):
-            return value
-        raise ValueError("unsupported Iter message content at Anthropic boundary")
-
-    for item in request["messages"]:
-        role = item["role"]
-        if role == "system":
-            if messages:
-                raise ValueError("system instructions must precede the conversation")
-            system.extend(text_blocks(item.get("content")))
-            continue
-        if role == "tool":
-            role = "user"
-            blocks = [{"type": "tool_result", "tool_use_id": item["tool_call_id"],
-                       "content": item.get("content", "")}]
-            if messages and messages[-1]["role"] == "user" and any(
-                    b["type"] != "tool_result" for b in messages[-1]["content"]):
-                raise ValueError("tool results must precede user text")
-        elif role in ("user", "assistant"):
-            blocks = text_blocks(item.get("content"))
-            reasoning = item.get("reasoning_details", []) if role == "assistant" else []
-            if reasoning:
-                if not isinstance(reasoning, list) or any(
-                        b.get("type") not in ("thinking", "redacted_thinking") for b in reasoning):
-                    raise ValueError("unsupported reasoning at Anthropic boundary")
-                blocks = reasoning + blocks
-            for call in item.get("tool_calls", []):
-                if role != "assistant":
-                    raise ValueError("tool calls require an assistant message")
-                function = call["function"]
-                blocks.append({"type": "tool_use", "id": call["id"],
-                               "name": function["name"],
-                               "input": json.loads(function["arguments"])})
-        else:
-            raise ValueError("unsupported Iter message role at Anthropic boundary")
-        if blocks:
-            if messages and messages[-1]["role"] == role:
-                messages[-1]["content"].extend(blocks)
-            else:
-                messages.append({"role": role, "content": blocks})
-    tools = []
-    for tool in request.get("tools", []):
-        function = tool["function"]
-        tools.append({"name": function["name"],
-                      "description": function.get("description", ""),
-                      "input_schema": function["parameters"]})
-    payload = {"model": model, "max_tokens": request["max_tokens"],
-               "messages": messages, "tools": tools, "tool_choice": {"type": "auto"}}
-    if system:
-        payload["system"] = system
-    return payload
+    return provider_protocol.anthropic_body(request, model)
 
 
 def anthropic_response(response):
-    text, calls, reasoning = [], [], []
-    for block in response["content"]:
-        if block["type"] == "text":
-            text.append(block["text"])
-        elif block["type"] == "tool_use":
-            calls.append({"id": block["id"], "type": "function", "function": {
-                "name": block["name"], "arguments": json.dumps(block["input"], ensure_ascii=False)}})
-        elif block["type"] in ("thinking", "redacted_thinking"):
-            # Keep signatures opaque, using the reasoning field which Iter
-            # already checkpoints and later prunes at its context boundary.
-            reasoning.append(block)
-        else:
-            record("unsupported-provider-block", block_type=block["type"])
-            raise ValueError("unsupported Anthropic response block")
-    message = {"role": "assistant", "content": "".join(text) or None}
-    if reasoning:
-        message["reasoning_details"] = reasoning
-    if calls:
-        message["tool_calls"] = calls
-    reason = response.get("stop_reason")
-    return {"choices": [{"message": message, "finish_reason": {
-        "max_tokens": "length", "tool_use": "tool_calls"}.get(reason, "stop")}]}
+    return provider_protocol.normalize_response("anthropic", response)
 
 
 def install_iter():
@@ -367,13 +268,27 @@ def config(key, default):
 
 
 def provider(prompt, max_tokens, reasoning):
+    return synthetic_llm.chat(provider_model(), max_tokens, reasoning, provider_prompt(prompt))
+
+
+def provider_model():
     gate()
+    provider_retry_boundary()
     cognitive_health.expect_turn(mode())
     selected = synthetic_llm.current_model()
     record("provider-request", protocol="command-text", model=selected)
-    response = synthetic_llm.chat(selected, max_tokens, reasoning, route_context() + "\n\n" + str(prompt))
-    record("provider-response", protocol="command-text")
-    return response
+    return selected
+
+
+def provider_prompt(prompt):
+    return route_context() + "\n\n" + str(prompt)
+
+
+def provider_retry_boundary():
+    if llm_policy.configuration(mode())["profile"] == "managed":
+        while cognitive_health.retry_wait_seconds() > 0:
+            sleep(.25)
+    return True
 
 
 def omega_sleep(seconds):

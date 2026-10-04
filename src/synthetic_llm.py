@@ -10,6 +10,8 @@ import urllib.parse
 import urllib.request
 
 import cognitive_health
+import llm_policy
+import provider_protocol
 
 
 def _open_connection(parts, timeout):
@@ -81,33 +83,17 @@ def _note_answered():
 
 
 def _empty_action(reason):
-    """Return the no-op action, paced.
-
-    A provider that fails — including HTTP 200 carrying no content, which is
-    what credit exhaustion and rate shaping look like — is not answering. The
-    agent loop cannot tell that apart from "the model chose to do nothing": it
-    sees no commands, so it never reaches a (rest ...), and calls again on the
-    next iteration with no delay. Being rate-limited therefore *increases* the
-    call rate, which is exactly backwards, and burned 316 calls in one day.
-
-    Pacing belongs here rather than in the loop: the agent keeps full control
-    of its own resting, and a failing provider costs wall-clock instead of the
-    remaining budget. The streak resets on the first real answer.
-    """
+    """Record failure and let the independent, interruptible loop own waiting."""
     global _consecutive_empty
     _consecutive_empty += 1
-    cognitive_health.turn_failed(type(reason).__name__)
     base = _float_env("SYNTHETIC_EMPTY_BACKOFF", 15.0, 0.0)
     cap = _float_env("SYNTHETIC_EMPTY_BACKOFF_CAP", 300.0, 0.0)
-    wait = min(cap, base * (2 ** (_consecutive_empty - 1))) if base else 0.0
-    print(
-        "[synthetic_llm] transient chat failure: "
-        f"{type(reason).__name__}: {reason}; returning () "
-        f"(consecutive {_consecutive_empty}, pausing {wait:.0f}s)",
-        file=sys.stderr,
-    )
-    if wait > 0:
-        time.sleep(wait)
+    wait = min(cap, base * (2 ** min(_consecutive_empty - 1, 20))) if base else 0.0
+    wait = max(wait, getattr(reason, "retry_after", 0))
+    cognitive_health.turn_failed(type(reason).__name__, retry_after=wait)
+    # Exception messages may contain URLs, headers or response bodies.
+    print("[synthetic_llm] failed provider turn: " + type(reason).__name__ +
+          f"; retry in {wait:.0f}s", file=sys.stderr)
     return "()"
 
 
@@ -120,7 +106,7 @@ def _empty_action(reason):
 _ANTHROPIC_DEFAULT_BASE = "https://api.anthropic.com/v1"
 _ANTHROPIC_DEFAULT_MODELS = (
     "claude-fable-5,claude-opus-5-5,claude-opus-5,claude-opus-4-8,"
-    "claude-sonnet-5,claude-haiku-4-5-20251001"
+    "claude-sonnet-5-5,claude-sonnet-5,claude-haiku-4-5-20251001"
 )
 
 
@@ -203,20 +189,18 @@ def _anthropic_models():
 
 
 def _provider_for(model):
+    if str(model).startswith("openai:"):
+        return {"name": "openai", "protocol": "responses",
+                "model": str(model).split(":", 1)[1],
+                "base": os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/"),
+                "key": os.environ.get("OPENAI_API_KEY", "")}
     if _is_anthropic_model(model):
-        return {
-            "name": "anthropic",
-            "base": os.environ.get(
-                "ANTHROPIC_BASE_URL", _ANTHROPIC_DEFAULT_BASE).rstrip("/"),
-            "key": os.environ.get("ANTHROPIC_API_KEY", ""),
-        }
-    return {
-        "name": "synthetic",
-        "base": os.environ.get(
-            "SYNTHETIC_BASE_URL",
-            "https://api.synthetic.new/openai/v1").rstrip("/"),
-        "key": os.environ.get("SYNTHETIC_API_KEY", ""),
-    }
+        return {"name": "anthropic", "protocol": "anthropic",
+                "base": os.environ.get("ANTHROPIC_BASE_URL", _ANTHROPIC_DEFAULT_BASE).rstrip("/"),
+                "key": os.environ.get("ANTHROPIC_API_KEY", "")}
+    return {"name": "synthetic", "protocol": "chat-completions",
+            "base": os.environ.get("SYNTHETIC_BASE_URL", "https://api.synthetic.new/openai/v1").rstrip("/"),
+            "key": os.environ.get("SYNTHETIC_API_KEY", "")}
 
 
 # The agent's prompt layout (loop.metta and context_sources.py) places
@@ -231,43 +215,9 @@ def _without_cache_boundaries(text):
     return str(text).replace(_CACHE_BOUNDARY, "", _LAYOUT_BOUNDARIES)
 
 
-def _anthropic_request(provider, effective_model, max_tokens, prompt):
-    """Native Messages API request with prompt caching.
-
-    The agent lays its prompt out least-changeable first and marks each prefix
-    a provider may reuse with a cache boundary.  Every part before a boundary
-    becomes a cached system block, so a turn reuses the longest unchanged
-    prefix; the part after the last boundary changes every turn and is the
-    user message.  A prompt without boundaries keeps the older split at
-    ' LOOPS_LEFT: '."""
-    text = str(prompt)
-    parts = text.split(_CACHE_BOUNDARY, _LAYOUT_BOUNDARIES)
-    if len(parts) > 1:
-        stable, user = parts[:-1], parts[-1]
-    else:
-        cut = text.find(" LOOPS_LEFT: ")
-        stable, user = ([text[:cut]], text[cut:]) if cut > 0 else ([], text)
-    if not user.strip() and stable:
-        user = stable.pop()
-    body = {
-        "model": effective_model,
-        "max_tokens": int(max_tokens),
-        "messages": [{"role": "user", "content": user}],
-    }
-    system = [{"type": "text", "text": part,
-               "cache_control": {"type": "ephemeral"}}
-              for part in stable if part.strip()]
-    if system:
-        body["system"] = system
-    return urllib.request.Request(
-        provider["base"] + "/messages",
-        json.dumps(body).encode("utf-8"),
-        {
-            "x-api-key": provider["key"],
-            "anthropic-version": "2023-06-01",
-            "Content-Type": "application/json",
-        },
-    )
+def _anthropic_request(provider, effective_model, max_tokens, prompt, effort="medium"):
+    endpoint, body = provider_protocol.command_body("anthropic", effective_model, max_tokens, effort, prompt)
+    return _authenticated_request(provider, endpoint, body)
 
 
 def _usage_path():
@@ -361,69 +311,102 @@ def _extract_content(payload, provider_name="synthetic"):
     return payload["choices"][0]["message"]["content"]
 
 
+class OutputTruncated(RuntimeError):
+    pass
+
+
+class EmptyResponse(RuntimeError):
+    pass
+
+
+def _authenticated_request(provider, endpoint, body):
+    headers = {"Content-Type": "application/json"}
+    if provider["name"] == "anthropic":
+        headers.update({"x-api-key": provider["key"], "anthropic-version": "2023-06-01"})
+    else:
+        headers["Authorization"] = "Bearer " + provider["key"]
+    return urllib.request.Request(provider["base"] + endpoint,
+                                  json.dumps(body).encode("utf-8"), headers)
+
+
+def _completion_metadata(result):
+    """No messages, tool arguments, signatures, credentials or raw errors."""
+    path = os.environ.get("METTACLAW_LLM_COMPLETION_PATH")
+    if not path:
+        health = os.environ.get("METTACLAW_COGNITIVE_HEALTH_PATH")
+        path = os.path.join(os.path.dirname(health), "llm-completion.json") if health else None
+    if path:
+        value = {"finish_reason": result["choices"][0].get("finish_reason"),
+                 "provider_stop": result.get("provider_stop"), "usage": result.get("usage", {}),
+                 "transport": result.get("transport", "python"), "observed_at": time.time()}
+        # This is an observation, not admission authority.
+        try:
+            parent = os.path.dirname(path) or "."
+            os.makedirs(parent, exist_ok=True)
+            fd, temporary = tempfile.mkstemp(dir=parent, prefix=".llm-completion-")
+            with os.fdopen(fd, "w") as stream:
+                json.dump(value, stream)
+            os.replace(temporary, path)
+        except OSError:
+            pass
+
+
+def _exchange(provider, endpoint, body, max_tokens):
+    ticket = llm_policy.admit(provider["name"], max_tokens)
+    cognitive_health.turn_started(provider["name"])
+    try:
+        payload = _request_json(_authenticated_request(provider, endpoint, body),
+                                _float_env("SYNTHETIC_TIMEOUT", 120.0, 1.0))
+        result = provider_protocol.normalize_response(provider["protocol"], payload)
+        llm_policy.complete(ticket, result)
+        _completion_metadata(result)
+        if provider["name"] == "anthropic":
+            _tally_anthropic(payload.get("usage", {}))
+        return result
+    except BaseException as error:
+        status = getattr(error, "code", None)
+        retry = None
+        headers = getattr(error, "headers", None)
+        if headers:
+            try:
+                retry = float(headers.get("retry-after"))
+            except (TypeError, ValueError):
+                pass
+        llm_policy.fail(ticket, status=status, retry_after=retry)
+        raise
+
+
+def structured_chat(request):
+    selected = current_model()
+    provider = _provider_for(selected)
+    if not provider["key"]:
+        raise RuntimeError("provider credential is not configured")
+    endpoint, payload = provider_protocol.structured_body(
+        provider["protocol"], provider.get("model", selected), request)
+    return _exchange(provider, endpoint, payload, request["max_tokens"])
+
+
 def chat(model, max_tokens, effort, prompt):
     effective_model = current_model(str(model))
     provider = _provider_for(effective_model)
-    cognitive_health.turn_started(provider["name"])
-    key = provider["key"]
-    if not key:
-        if provider["name"] == "anthropic":
-            # A session-switched provider must never crash the loop.
-            return _empty_action("ANTHROPIC_API_KEY is not set")
-        cognitive_health.turn_failed("missing-api-key")
-        raise RuntimeError("SYNTHETIC_API_KEY is not set")
-    if provider["name"] == "anthropic":
-        req = _anthropic_request(provider, effective_model, max_tokens, prompt)
-    else:
-        data = json.dumps(
-            {
-                "model": effective_model,
-                "messages": [{"role": "user",
-                              "content": _without_cache_boundaries(prompt)}],
-                "max_tokens": int(max_tokens),
-                "reasoning": {"effort": str(effort)},
-            }
-        ).encode("utf-8")
-        req = urllib.request.Request(
-            provider["base"] + "/chat/completions",
-            data,
-            {
-                "Authorization": "Bearer " + key,
-                "Content-Type": "application/json",
-            },
-        )
-    timeout = _float_env("SYNTHETIC_TIMEOUT", 120.0, 1.0)
-    # One cognitive turn owns exactly one external request. Retrying here
-    # hides multiple calls inside one turn, keeps the loop unavailable for an
-    # unbounded interval, and defeats its explicit pacing state. A transient
-    # failure crosses the boundary as (), where provider backoff and protocol
-    # recovery pace the next ordinary turn.
     try:
-        payload = _request_json(req, timeout)
-        content = _extract_content(payload, provider["name"])
+        if not provider["key"]:
+            raise RuntimeError("provider credential is not configured")
+        endpoint, body = provider_protocol.command_body(
+            provider["protocol"], provider.get("model", effective_model), max_tokens, effort, prompt)
+        result = _exchange(provider, endpoint, body, max_tokens)
+        content = result["choices"][0]["message"].get("content")
+        finish = result["choices"][0].get("finish_reason")
+        if finish == "length":
+            return _empty_action(OutputTruncated())
         if isinstance(content, str) and content.strip():
             _note_answered()
             cognitive_health.turn_completed(len(content.encode("utf-8")))
             return content
-        return _empty_action(_diagnose_empty(payload))
-    except urllib.error.HTTPError as exc:
-        # Invalid/retired model ids and provider authorization failures must
-        # remain visible as failed provider turns, but they must not escape
-        # through Janus and tear down the agent transition.  The operator
-        # control plane stays available to repair the configuration.
-        return _empty_action(exc)
-    except (
-        TimeoutError,
-        socket.timeout,
-        urllib.error.URLError,
-        ConnectionError,
-        OSError,
-        http.client.HTTPException,
-        json.JSONDecodeError,
-        KeyError,
-        IndexError,
-        TypeError,
-    ) as exc:
+        return _empty_action(EmptyResponse())
+    except (urllib.error.HTTPError, TimeoutError, socket.timeout, urllib.error.URLError,
+            ConnectionError, OSError, http.client.HTTPException, ValueError, KeyError,
+            IndexError, TypeError, RuntimeError) as exc:
         return _empty_action(exc)
 
 

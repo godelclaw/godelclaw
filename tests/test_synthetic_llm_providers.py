@@ -143,7 +143,9 @@ class ProviderRoutingTest(unittest.TestCase):
             synthetic_llm.chat(
                 "syn:large:text", 6000, "medium",
                 "A_cache_boundary_B_cache_boundary_C_cache_boundary_D")
-        self.assertEqual(seen["body"]["messages"][0]["content"], "ABCD")
+        self.assertEqual(seen["body"]["messages"], [
+            {"role": "system", "content": "ABC"},
+            {"role": "user", "content": "D"}])
 
     def test_claude_without_key_returns_empty_action_not_raise(self):
         self.enable_flag()
