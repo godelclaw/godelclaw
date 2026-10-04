@@ -6,6 +6,7 @@ retry; otherwise operator status can report a long-dead request as pending.
 """
 
 import json
+import math
 import os
 import tempfile
 import threading
@@ -116,6 +117,7 @@ def turn_started(provider="unknown", now=None):
                 "pending_since": now,
                 "in_flight_since": now,
                 "last_started_at": now,
+                "retry_at": 0,
                 "started_count": int(value.get("started_count", 0)) + 1,
                 "provider": _label(provider),
             })
@@ -147,6 +149,7 @@ def turn_completed(response_bytes=0, now=None):
                 "pending_since": 0,
                 "in_flight_since": 0,
                 "last_completed_at": now,
+                "retry_at": 0,
                 "completed_count": int(value.get("completed_count", 0)) + 1,
                 "last_response_bytes": size,
                 "last_outcome": "completed",
@@ -157,7 +160,7 @@ def turn_completed(response_bytes=0, now=None):
         return 0
 
 
-def turn_failed(kind="provider-error", now=None):
+def turn_failed(kind="provider-error", now=None, retry_after=0):
     """End the request while leaving its input obligation outstanding."""
     global _turn_outcome
     now = _stamp(now)
@@ -175,6 +178,7 @@ def turn_failed(kind="provider-error", now=None):
                 "in_flight_since": 0,
                 "obligation_since": obligation,
                 "last_failed_at": now,
+                "retry_at": now + max(0, float(retry_after)),
                 "failed_count": int(value.get("failed_count", 0)) + 1,
                 "last_failure_type": _label(kind, "provider-error"),
                 "last_outcome": "failed",
@@ -182,6 +186,20 @@ def turn_failed(kind="provider-error", now=None):
             _write(value)
         return 1
     except Exception:
+        return 0
+
+
+def retry_wait_seconds(now=None):
+    """Remaining provider backoff for the loop's interruptible wait.
+
+    The adapter returns immediately after recording failure. Operator input
+    can interrupt the ordinary channel wait; no provider sleep hides it.
+    """
+    try:
+        with _lock:
+            retry_at = float(_read().get("retry_at", 0) or 0)
+        return max(0, math.ceil(retry_at - _stamp(now)))
+    except (TypeError, ValueError, OverflowError):
         return 0
 
 

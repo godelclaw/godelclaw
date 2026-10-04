@@ -411,11 +411,15 @@
           ($enabled (== (py-call (lifecycle.cognition_enabled)) 1))
           ($loops (loop-budget $periphery))
           ($paused (loop-resting $periphery))
-          ($wait
+          ($policyWait
             (if $enabled
                 (policy-wait-seconds $policy $loops
                                      (loop-sleep $periphery) $paused)
                 60))
+          ;; Retry deadlines use the existing interruptible channel wait.
+          ($wait (if $enabled
+                     (max $policyWait (py-call (cognitive_health.retry_wait_seconds)))
+                     $policyWait))
           ($waitResult (if (tg:client-metta?) (tg:sleep-until-message $wait)
                            (py-call (telegram.sleep_until_message $wait))))
           ($timedOut (py-call (loop_modes.wait_timed_out $waitResult)))
