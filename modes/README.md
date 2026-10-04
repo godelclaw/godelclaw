@@ -3,8 +3,8 @@
 Iter and Omega are selectable cognitive loops in MeTTaClaw. Each configured
 instance keeps its own identity, credentials, process and mode state. A single
 instance can switch loops without sharing its state with another instance.
-Provider access currently uses Python host adapters; a native CeTTa LLM client
-remains future work.
+Provider access supports native CeTTa HTTP with MeTTa response decoding or the
+Python transport, preserving each core's command-text or structured-call protocol.
 
 Start with the [project README](../README.md) for installation and the
 [service guide](../systemd/README.md) for supervised deployment. This guide
@@ -36,9 +36,10 @@ Automatic framework fallback to PeTTa is opt-in via
 `METTACLAW_ENGINE_FALLBACK=petta`; an explicit `/engine petta` remains available.
 
 Iter renews its work after an idle boundary and can make provider calls without
-new input. Omega keeps its own wake/counter behavior. Framework fuel settings
-do not automatically impose quota control on these loops. Select and supervise
-each mode according to its actual pacing policy.
+new input. Omega keeps its own wake/counter behavior. Framework fuel settings remain separate from these loops. Optional managed
+admission limits and quota cooldowns are shared across modes; repository
+Iter/Omega defaults follow upstream without those added limits. See the
+[provider and policy guide](../README.md#operator-admission-and-upstream-profiles).
 
 ## Channel and control boundary
 

@@ -1,6 +1,7 @@
 ; Faithful control port of patham9/iter f4064d97849ecaccac7939315a3f1a68de15c3ef.
 ; Host values are boxed JSON; the provider/tools retain their upstream protocol.
 !(import! &self ./iter_host.py)
+!(import! &self ../../src/native_llm.metta)
 !(if (py-call (iter_host.native_processes)) (import! &self (library proc)) True)
 
 (= (iter:prune $history $i $limit)
@@ -54,8 +55,10 @@
           ($length (py-call (iter_host.get $memory "length")))
           ($_ (if (> $length 3000)
                   (py-call (iter_host.append $temporary (py-call (iter_host.message "user" (py-call (iter_host.memory_overflow $length)))))) True))
-          ($response (py-call (iter_host.request $history $temporary $tools
-                                (py-call (iter_host.memory_surface $memory (<= $length 3000))))))
+          ($surface (py-call (iter_host.memory_surface $memory (<= $length 3000))))
+          ($response (if (llm:native?)
+                       (llm:structured (py-call (iter_host.request_plan $history $temporary $tools $surface)))
+                       (py-call (iter_host.request $history $temporary $tools $surface))))
           ($message (py-call (iter_host.get $response "message")))
           ($content (py-call (iter_host.optional $message "content")))
           ($_ (if (py-call (iter_host.truth $content))

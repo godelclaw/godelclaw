@@ -63,9 +63,9 @@
 ; One call of this function contains exactly one io:submit. The caller's
 ; correlation value is retained in the returned handle; the host assigns ID.
 (= (native-chat:submit $correlation $base $model $max-tokens $effort $prompt)
-   (let $request
-     (native-chat:request $base $model $max-tokens $effort $prompt)
-     (native-chat:submitted $correlation (catch (io:submit $request)))))
+   (let* (($request (native-chat:request $base $model $max-tokens $effort $prompt))
+          ($submitted (catch (io:submit $request))))
+     (native-chat:submitted $correlation $submitted)))
 
 (: native-chat:submitted (-> Atom Atom Expression))
 (= (native-chat:submitted $correlation $result)

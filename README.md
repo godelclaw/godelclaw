@@ -164,31 +164,75 @@ retain their own adapters; the gateway is not a universal execution path.
 Its prototype transport is JSON over Unix sockets, with no native rho bridge
 qualified yet. Each instance uses its own gateway configuration and queue.
 
-Python currently supplies the live provider and host adapters. The isolated
-[`native_llm_chat.metta`](src/native_llm_chat.metta) module provides a CeTTa
-OpenAI-compatible chat boundary for local testing. Its caller submits one
-request, keeps the caller and transport correlation IDs, then routes each
-`io:event` to the matching pending handle. It is not wired into a live loop.
-The separation lets a channel, a cognitive loop and a tool worker have
-independent lifetimes while retaining explicit request/result boundaries.
+The provider client has two transports behind the same conversation boundary.
+Set `METTACLAW_LLM_TRANSPORT=native` on an HTTP-enabled CeTTa Python build to
+use [`native_llm.metta`](src/native_llm.metta): CeTTa submits one asynchronous
+request, and MeTTa decodes Chat Completions, Anthropic Messages or OpenAI
+Responses. SWI-PeTTa retains the Python HTTP adapter. Provider selection,
+request packaging, credentials and the admission ledger remain explicit host
+adapters; this is not yet a Python-free deployment.
 
-| Compared with `src/synthetic_llm.py` | Native chat boundary |
-| --- | --- |
-| Request | Same `model`, one user `message`, `max_tokens` and `reasoning.effort`; removes exactly the first three prompt layout markers. |
-| Response | Reads `choices[0].message.content`; preserves nonblank text and returns a typed, correlated failure for empty or malformed responses and HTTP status 400 or above. The Python adapter converts these to a paced `()` action and updates cognitive health. |
-| Transport | One `io:submit`, no retry, 120-second timeout and 1 MiB response cap. The Python adapter has a configurable timeout and no response byte cap. |
-| Credentials and state | Sends only `Content-Type`; a local endpoint or host-authenticated relay must hold the key. Model persistence, provider selection, Anthropic routing, usage accounting and pacing remain in Python. |
+Both paths preserve system/user roles, completion reasons, usage, tool call
+IDs and opaque provider reasoning. Anthropic effort is sent through
+`output_config`; its signed reasoning blocks are kept for the next tool turn.
+Anthropic system blocks use ephemeral caching; OpenAI Responses uses a stable
+prompt cache key. A truncated command-text reply is recorded as a failed turn
+and is not executed. Iter retains its upstream structured-call protocol.
 
-CeTTa's canonical JSON V1 values do not yet provide a direct constructor from
-a MeTTa `String`, so this module uses the supported compatibility JSON codec
-for both encoding and decoding. CeTTa's ephemeral `io:submit` also has no
-credential-reference argument; placing a bearer token in a MeTTa header atom
-would expose it to evaluation. Real requests require a build whose
-`io:capabilities` contains `http`. The offline checks in
-[`test_native_llm_chat.metta`](tests/test_native_llm_chat.metta) and
-[`test_native_llm_chat_petta.metta`](tests/test_native_llm_chat_petta.metta)
-exercise the pure and scripted event paths; their submit check runs only when
-HTTP is unavailable.
+Native requests carry `(http:credential "ALIAS")`, never a bearer token atom.
+The host authorizes the alias through `CETTA_IO_AUTH_<ALIAS>_URL_PREFIX`,
+`_HEADER`, `_ENV` and `_PREFIX`. The native worker resolves the environment-owned
+key for that scope, refuses credential redirects and duplicate credential
+headers, and blocks a response containing the key. The client configures these
+aliases from the chosen provider; custom aliases require host configuration.
+The default timeout is 120 seconds and the native response limit is 1 MiB;
+configure `SYNTHETIC_TIMEOUT` and `METTACLAW_LLM_RESPONSE_BYTES` as needed.
+
+### Operator admission and upstream profiles
+
+The admission ledger is shared across an instance's modes, while each mode
+retains its own cognitive state. It does not rewrite energy, fuel, prompts,
+transformations or the mode's pacing algorithm. Repository defaults add no
+request or token cap: Iter/Omega use `upstream`, other modes use `managed` with
+caps disabled. Select `METTACLAW_LLM_POLICY=managed` for an integrated deployment
+or `upstream` to bypass added admission limits and cooldowns. The original
+vendored sources and standalone conformance runners remain available.
+
+`METTACLAW_LLM_POLICY_PATH` optionally names a JSON file. Zero disables a cap;
+these defaults preserve existing framework fuel policies:
+
+```json
+{
+  "requests_per_hour": 0,
+  "output_tokens_per_day": 0,
+  "failures_per_window": 0,
+  "failure_window_seconds": 300,
+  "quota_cooldown_seconds": 300
+}
+```
+
+Add `profile` or per-mode overrides under `modes` when needed. Every numeric
+setting also has a `METTACLAW_LLM_<UPPERCASE_NAME>` environment override. The
+metadata-only SQLite ledger reserves a request's maximum output before sending;
+an uncertain timeout retains that reservation, and known usage settles it once.
+Daily output caps use UTC days; request and failure caps use rolling windows.
+Managed quota failures establish a provider cooldown across mode changes.
+Existing framework backoff remains interruptible. Limits apply per instance,
+not across separate instances sharing a provider account.
+
+The executable Lean model in `lean/pettaclaw/LlmBoundary.lean` in MeTTapedia
+proves selected completion and admission laws under explicit host assumptions.
+It does not verify the external provider or the complete C/Python implementation.
+Offline checks include provider wire fixtures, native credentials, signed tool
+batches, slow requests, duplicate/foreign events, truncation and both evaluators:
+
+```sh
+python3 -m unittest discover -s tests -p 'test_provider_protocol.py'
+python3 -m unittest discover -s tests -p 'test_llm_policy.py'
+CETTA_BIN=/path/to/cetta python3 -m unittest discover -s tests -p 'test_native_llm_boundary.py'
+```
+
+Run native checks with the Python environment used to build CeTTa.
 
 ## Memory
 

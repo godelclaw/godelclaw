@@ -47,6 +47,7 @@ def run(args, mode, name, scenario, evaluator, mutant=None):
         else:
             text = (MODES / "iter/core.metta").read_text()
             text = text.replace("./iter_host.py", str(MODES / "iter/iter_host.py"))
+            text = text.replace("../../src/native_llm.metta", str(MODES.parent / "src/native_llm.metta"))
             (root / "mutant.metta").write_text(mutant(text))
             entry.write_text(f'!(import! &self "{root}/mutant.metta")\n!(iter:start)\n')
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
@@ -112,6 +113,9 @@ def main():
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     matrix = json.loads((MODES / "conformance/scenarios.json").read_text())
+    if args.case and not any(row["id"] == args.case for mode in ("iter", "omega")
+                            if args.mode in (mode, "both") for row in matrix[mode]):
+        parser.error("unknown scenario for the selected mode")
     summary = {"cases": [], "failures": [], "mutants": []}
     references = {}
     for mode, cases in [("iter", iter_cases()), ("omega", omega_cases())]:

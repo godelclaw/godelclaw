@@ -209,7 +209,7 @@ def memory_overflow(length):
     return f"[MEMORY FOLDER TOTAL CHARACTER CAPACITY BY FILES NOT BEGINNING WITH _ EXCEEDED BY {length - 3000} CHARS. FIX THIS FIRST.]"
 
 
-def request(experience, temporary, loaded, surface):
+def request_plan(experience, temporary, loaded, surface):
     # Component/file and provider I/O, with request policy selected by core.metta.
     transformations = namespace["load_transformation_descriptions"]()
     prompt = Path("prompt.txt").read_text(encoding="utf-8", errors="replace").strip()
@@ -222,9 +222,14 @@ def request(experience, temporary, loaded, surface):
     if os.environ.get("METTACLAW_MODE_RUNTIME"):
         import runtime_host
         messages.insert(0, {"role": "system", "content": runtime_host.route_context()})
-    response = client.chat.completions.create(
-        model=namespace["MODEL"], messages=messages, tools=schemas,
-        tool_choice="required", max_tokens=2524, extra_body={"enable_thinking": True})
+    return Box(dict(model=namespace["MODEL"], messages=messages, tools=schemas,
+                    tool_choice="required", max_tokens=2524,
+                    extra_body={"enable_thinking": True}))
+
+
+def request(experience, temporary, loaded, surface):
+    response = client.chat.completions.create(**unbox(
+        request_plan(experience, temporary, loaded, surface)))
     choice = response.choices[0]
     return Box({"message": choice.message.model_dump(exclude_none=True),
                 "finish": getattr(choice, "finish_reason", None)})

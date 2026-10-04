@@ -1,5 +1,6 @@
 ;; Named, replaceable additions surrounding the two-equation process core.
 ;; This file does not decide success or failure and owns no process root.
+!(import! &self ./native_llm.metta)
 
 (= (addition-context-sources)
    (if (tg:client-metta?)
@@ -16,7 +17,7 @@
      $selected $legacy $system $activity $advertised))
 
 (= (addition-model-call $model $tokens $reasoning $request)
-   (py-call (synthetic_llm.chat $model $tokens $reasoning $request)))
+   (llm:command $model $tokens $reasoning $request))
 
 (= (addition-balance-response $raw)
    (model-response-balance $raw))
