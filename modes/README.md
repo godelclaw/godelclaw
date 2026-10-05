@@ -3,7 +3,7 @@
 Iter and Omega are selectable cognitive loops in MeTTaClaw. Each configured
 instance keeps its own identity, credentials, process and mode state. A single
 instance can switch loops without sharing its state with another instance.
-Provider access supports native CeTTa HTTP with MeTTa response decoding or the
+Provider access supports CeTTa's buffered `llm:v1:` library or the
 Python transport, preserving each core's command-text or structured-call protocol.
 
 Start with the [project README](../README.md) for installation and the
@@ -121,16 +121,16 @@ For long-running Omega on CeTTa, use a build containing
 [the suspended-cursor relocation fix](https://github.com/godelclaw/CeTTa/commit/b256939464c4b334016b8cc7500aa8933511d745).
 Earlier builds can pass startup checks and then fail during evaluator cleanup.
 
-Iter uses native tool-call JSON through the existing owned HTTP transport and
+Iter uses native tool-call JSON through the configured HTTP transport and
 the configured provider/model. Anthropic messages translate native tool-use
 IDs, argument objects, grouped tool results and token-limit stop reasons at
-this boundary. Claude requests use `tool_choice=auto`; Iter's existing loop
-rejects/retries replies with no tools. The adapter therefore leaves tool
-selection to the provider and retains the core's retry rule.
-The OpenAI-specific `enable_thinking` option is omitted on Anthropic, consistent
-with the existing text provider's default thinking settings. Omega uses the
-existing command-text provider adapter, including its Anthropic path. No new
-credential client exists.
+this boundary. The native generic codec preserves forced tool choice; the
+imported-mode adapter explicitly selects `auto-for-thinking` when translating
+Iter's `enable_thinking` to Anthropic adaptive thinking. Iter's existing loop
+retains its retry rule for responses with no tools. Omega keeps its command-text
+layout, including provider cache boundaries. Model selection and credential
+configuration remain host adapters. The [project README](../README.md#services-and-execution)
+describes the native and Python paths, their compatibility projections and limits.
 
 Each configured agent uses a separate durable CWP Telegram service, with its own
 client/operator sockets and independent command responder. Bot identity, model
@@ -282,7 +282,7 @@ remain distinct in the future native client.
 |---|---|
 | Iter Python loop | Replaced by `core.metta`; the complete pinned Python loop is the offline oracle. Requests, ordered results, control and persistence match the fixed matrix. |
 | Iter JSON representation | `Box` preserves opaque JSON/None; scalar comparisons use host JSON equality because PeTTa symbols and authored string literals have different native representations. |
-| Iter helper functions and prompts | Pinned helper sections 0–3 and prompts reused unchanged. The offline oracle uses the pinned Python SDK interface; production uses the existing owned HTTP adapter. No native client. |
+| Iter helper functions and prompts | Pinned helper sections 0–3 and prompts reused unchanged. The offline oracle uses the pinned Python SDK interface; production selects the Python adapter or CeTTa's buffered `llm:v1:` library. |
 | Iter worker launch | Existing `lib/proc` with the same five-second deadline, inherited environment and process group. A thin Python launcher redirects all streams to DEVNULL before exec, matching upstream worker streams. Embedded Python's `sys.executable` is replaced with the explicit host interpreter. |
 | `lib/proc` text | Local minimal patch accepts Python/Prolog text atoms in PeTTa mode; HE retains grounded-string validation. `proc_text_boundary.metta` and original golden fixture pass. |
 | Iter provider/channel/time | Scripted SDK-shaped replies, fake receive events and a fixed clock. The reference loop is observed at its existing loop boundary; test termination occurs after the requested iteration count. |
@@ -333,6 +333,7 @@ to the listed adapters and scenarios, with the host assumptions stated above.
 
 Mode registration, real providers/channels/tools and supervised startup are
 implemented by `launch.py`, `runtime_host.py` and the agent host hooks described
-above. The native CeTTa LLM client remains later work; credentials continue to
-use the existing provider transport. Keep generated traces, state and build
+above. The buffered native CeTTa client is now available; streaming and automatic
+lossless native replay in imported histories remain later work. Credentials use
+scoped host aliases or the Python adapter. Keep generated traces, state and build
 outputs in your own runtime or verification directories.

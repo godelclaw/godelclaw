@@ -123,20 +123,35 @@ class ModeRuntimeTests(unittest.TestCase):
     def test_cetta_modes_checkpoint_restart_and_switch(self):
         self.check_modes('cetta')
 
+    @unittest.skipUnless(os.environ.get('MODE_TEST_CETTA_BIN'), 'set MODE_TEST_CETTA_BIN for real CeTTa checks')
+    def test_cetta_native_modes_checkpoint_restart_and_switch(self):
+        self.check_modes('cetta', 'native')
+
     @unittest.skipUnless(os.environ.get('MODE_TEST_PETTA_ROOT'), 'set MODE_TEST_PETTA_ROOT for real PeTTa checks')
     def test_petta_modes_checkpoint_restart_and_switch(self):
         self.check_modes('petta')
 
-    def check_modes(self, engine):
+    def check_modes(self, engine, transport='python'):
         Provider.requests = []
         with tempfile.TemporaryDirectory() as temporary:
             state = Path(temporary)
             agent = state/'agent'
             (agent/'memory').mkdir(parents=True)
-            (agent/'src').symlink_to(ROOT/'src', target_is_directory=True)
+            (agent/'src').mkdir()
+            for source in (ROOT/'src').iterdir():
+                if source.name != '__pycache__':
+                    (agent/'src'/source.name).symlink_to(source, target_is_directory=source.is_dir())
             (agent/'channels').symlink_to(ROOT/'channels', target_is_directory=True)
             (state/'identity.txt').write_text('You are Fixture, a separate test identity.')
             (state/'lifecycle.json').write_text('{"schema":1,"state":"running"}')
+            # Upstream imports the SDK before install_iter replaces its client
+            # with our fixture provider. Neither transport may call that SDK.
+            (agent/'src/openai.py').write_text('class OpenAI:\n'
+                '    def __init__(self, *args, **kwargs):\n'
+                '        raise AssertionError("process fixture invoked provider SDK")\n')
+            (agent/'src/requests.py').write_text('def request(*args, **kwargs):\n'
+                '    raise AssertionError("process fixture bypassed durable channel")\n'
+                'get = post = request\n')
             provider = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Provider)
             threading.Thread(target=provider.serve_forever, daemon=True).start()
             channel = ChannelServer(state/'channel.sock')
@@ -147,7 +162,7 @@ class ModeRuntimeTests(unittest.TestCase):
                     (agent/'memory/loop_mode.json').write_text(json.dumps({'mode': mode}))
                     environment = fixture_environment.copy()
                     environment.update({
-                        'PYTHONPATH': str(ROOT/'src'),
+                        'PYTHONPATH': str(agent/'src'),
                         'PYTHONHOME': sys.prefix,
                         'LD_LIBRARY_PATH': str(Path(sys.prefix)/'lib'),
                         'PYTHONDONTWRITEBYTECODE': '1',
@@ -164,6 +179,9 @@ class ModeRuntimeTests(unittest.TestCase):
                         'SYNTHETIC_MODEL': 'fixture-model',
                         'SYNTHETIC_BASE_URL': f'http://127.0.0.1:{provider.server_port}/v1',
                         'SYNTHETIC_API_KEY': 'fixture-only',
+                        'METTACLAW_LLM_TRANSPORT': transport,
+                        'METTACLAW_LLM_LEDGER_PATH': str(state/'ledger.db'),
+                        'METTACLAW_LLM_POLICY': 'upstream',
                     })
                     environment.pop('METTACLAW_LOOP_MODE_PATH', None)
                     command = [sys.executable, str(ROOT/'modes/launch.py'), '--repo', str(agent),
@@ -194,7 +212,10 @@ class ModeRuntimeTests(unittest.TestCase):
                         self.assertEqual(active['mode'], mode)
                         self.assertEqual(Path(active['state_directory']), state/'modes'/mode)
                     if mode == 'iter':
-                        history = json.loads((state/'modes/iter/experience.json').read_text())
+                        checkpoint = state/'modes/iter/experience.json'
+                        self.assertTrue(checkpoint.exists(), 'no Iter checkpoint; ' +
+                            (state/'iter-1.log').read_text()[-4000:])
+                        history = json.loads(checkpoint.read_text())
                         tools = [m['content'] for m in history if m.get('role') == 'tool']
                         self.assertTrue(tools, 'no tool result was checkpointed')
                         self.assertTrue(all(m.endswith(': SUCCESS') for m in tools), tools)

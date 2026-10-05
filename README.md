@@ -167,17 +167,32 @@ qualified yet. Each instance uses its own gateway configuration and queue.
 The provider client has two transports behind the same conversation boundary.
 Set `METTACLAW_LLM_TRANSPORT=native` on an HTTP-enabled CeTTa Python build to
 use [`native_llm.metta`](src/native_llm.metta): CeTTa submits one asynchronous
-request, and MeTTa decodes Chat Completions, Anthropic Messages or OpenAI
-Responses. SWI-PeTTa retains the Python HTTP adapter. Provider selection,
-request packaging, credentials and the admission ledger remain explicit host
-adapters; this is not yet a Python-free deployment.
+request, and CeTTa's shared `llm`, `llm:command`, `llm:compat` and `llm:io`
+libraries construct requests and decode Chat Completions, Anthropic Messages or
+OpenAI Responses. This requires the versioned `llm:v1:` API and owner-selected
+`io:wait` in the chosen CeTTa build. SWI-PeTTa retains the Python HTTP adapter.
+Python owns provider/model selection, upstream prompt splitting, cache identity,
+credential scope and the admission ledger; this is not yet a Python-free deployment.
 
-Both paths preserve system/user roles, completion reasons, usage, tool call
-IDs and opaque provider reasoning. Anthropic effort is sent through
+The native library preserves ordered items and parts, call IDs, optional usage,
+raw completion reasons and native reasoning attachments. Imported modes still
+receive their existing chat projection or command text; those formats separate
+text, reasoning and tools and lose some ordering and metadata. The structured
+host result also exposes the complete `llm_result`, but mode histories have not
+been converted to lossless native replay. Anthropic effort is sent through
 `output_config`; its signed reasoning blocks are kept for the next tool turn.
 Anthropic system blocks use ephemeral caching; OpenAI Responses uses a stable
 prompt cache key. A truncated command-text reply is recorded as a failed turn
-and is not executed. Iter retains its upstream structured-call protocol.
+and is not executed. A truncated or unfinished tool batch is rejected before
+the imported loop can dispatch it. Iter retains its upstream structured-call
+protocol. Command wire layouts and compatible-provider reasoning options remain
+explicit compatibility policies rather than defaults of the generic codec.
+
+Each native plan has one local submission authority and a session epoch.
+Waiting consumes only its own HTTP handle; unrelated completions remain queued.
+Terminal observations cannot trigger another request. Cancellation and timeout
+still do not prove that the remote provider did no work. The library does not
+retry requests or execute tools. Streaming is not implemented in this release.
 
 Native requests carry `(http:credential "ALIAS")`, never a bearer token atom.
 The host authorizes the alias through `CETTA_IO_AUTH_<ALIAS>_URL_PREFIX`,
@@ -187,6 +202,9 @@ headers, and blocks a response containing the key. The client configures these
 aliases from the chosen provider; custom aliases require host configuration.
 The default timeout is 120 seconds and the native response limit is 1 MiB;
 configure `SYNTHETIC_TIMEOUT` and `METTACLAW_LLM_RESPONSE_BYTES` as needed.
+The transport byte cap is not a guarantee that the JSON codec accepts every
+body below it. Parser work and depth limits can reject a smaller body; these
+remain an explicit qualification limit for large contexts and replies.
 
 ### Operator admission and upstream profiles
 
@@ -220,8 +238,9 @@ Managed quota failures establish a provider cooldown across mode changes.
 Existing framework backoff remains interruptible. Limits apply per instance,
 not across separate instances sharing a provider account.
 
-The executable Lean model in `lean/pettaclaw/LlmBoundary.lean` in MeTTapedia
-proves selected completion and admission laws under explicit host assumptions.
+The executable [Lean model in MeTTapedia](https://github.com/godelclaw/MeTTapedia/blob/main/lean/pettaclaw/LlmBoundary.lean)
+proves selected completion, queue ownership, ordered replay, tool readiness and
+admission laws under explicit host assumptions.
 It does not verify the external provider or the complete C/Python implementation.
 Offline checks include provider wire fixtures, native credentials, signed tool
 batches, slow requests, duplicate/foreign events, truncation and both evaluators:
@@ -230,6 +249,7 @@ batches, slow requests, duplicate/foreign events, truncation and both evaluators
 python3 -m unittest discover -s tests -p 'test_provider_protocol.py'
 python3 -m unittest discover -s tests -p 'test_llm_policy.py'
 CETTA_BIN=/path/to/cetta python3 -m unittest discover -s tests -p 'test_native_llm_boundary.py'
+MODE_TEST_CETTA_BIN=/path/to/engine-bundle/cetta python3 -m unittest discover -s tests -p 'test_upstream_mode_runtime.py'
 ```
 
 Run native checks with the Python environment used to build CeTTa.

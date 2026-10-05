@@ -34,6 +34,13 @@ class NativeBoundaryTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.directory = Path(self.temporary.name)
+        # Iter's data helper imports its upstream SDK, even though this client
+        # must never construct or call one. Make that boundary executable.
+        modules = self.directory / "fixture_modules"
+        modules.mkdir()
+        (modules / "openai.py").write_text('class OpenAI:\n'
+            '    def __init__(self, *args, **kwargs):\n'
+            '        raise AssertionError("native client invoked the Python provider SDK")\n')
         self.peer = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Peer)
         self.peer.requests, self.peer.delay, self.peer.status = [], .35, 200
         self.peer.reply = {"id": "fixture", "choices": [{"message": {
@@ -44,7 +51,7 @@ class NativeBoundaryTests(unittest.TestCase):
         latch.write_text('{"schema":1,"state":"running"}')
         self.env = {**os.environ, "PYTHONHOME": sys.prefix,
             "LD_LIBRARY_PATH": str(Path(sys.prefix) / "lib"),
-            "PYTHONPATH": os.pathsep.join([str(ROOT / "src"), str(ROOT / "modes"), str(ROOT / "modes/iter")]),
+            "PYTHONPATH": os.pathsep.join([str(modules), str(ROOT / "src"), str(ROOT / "modes"), str(ROOT / "modes/iter")]),
             "METTACLAW_ACTIVE_ENGINE": "cetta", "METTACLAW_ENGINE": "cetta", "METTACLAW_LLM_TRANSPORT": "native",
             "METTACLAW_ENGINE_STATE_PATH": str(self.directory / "engine"),
             "METTACLAW_LOOP_MODE_PATH": str(self.directory / "loop-mode.json"),
@@ -72,6 +79,7 @@ class NativeBoundaryTests(unittest.TestCase):
             cwd=ROOT, env=self.env, capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr[-2000:])
         self.assertNotIn("fixture-secret", result.stdout + result.stderr)
+        self.last_stderr = result.stderr
         return result.stdout
 
     def test_slow_command_submits_once_and_uses_host_credential(self):
@@ -85,6 +93,41 @@ class NativeBoundaryTests(unittest.TestCase):
         self.assertEqual(body["messages"], [{"role": "system", "content": "system"},
             {"role": "user", "content": "user"}])
 
+    def test_command_wire_parity_in_both_dialects_for_all_protocols(self):
+        prompt = "S_cache_boundary_T_cache_boundary_U_cache_boundary_user _cache_boundary_ literal"
+        self.peer.delay = .01
+        cases = [("chat-completions", "fixture-model", self.peer.reply),
+                 ("anthropic", "claude-fixture", {"id": "a", "stop_reason": "end_turn",
+                    "content": [{"type": "text", "text": "(nop)"}]}),
+                 ("responses", "openai:fixture-model", {"id": "r", "status": "completed",
+                    "output": [{"type": "message", "role": "assistant",
+                                "content": [{"type": "output_text", "text": "(nop)"}]}]})]
+        self.env.update(ANTHROPIC_API_KEY="fixture-secret", OPENAI_API_KEY="fixture-secret",
+                        ANTHROPIC_BASE_URL=self.env["SYNTHETIC_BASE_URL"],
+                        OPENAI_BASE_URL=self.env["SYNTHETIC_BASE_URL"])
+        for lang in ("he", "petta"):
+            for protocol, model, reply in cases:
+                self.env["SYNTHETIC_MODEL"] = model
+                self.peer.reply = reply
+                before = len(self.peer.requests)
+                out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n'
+                    f'!(llm:command {json.dumps(model)} 42 "low" {json.dumps(prompt)})\n', lang)
+                self.assertIn("(nop)", out, f"{lang}:{protocol}: {self.last_stderr[-500:]}")
+                self.assertEqual(len(self.peer.requests) - before, 1)
+                effective = model.removeprefix("openai:")
+                path, expected = provider_protocol.command_body(protocol, effective, 42, "low", prompt)
+                actual_path, _, body = self.peer.requests[-1]
+                self.assertEqual(actual_path, "/v1" + path)
+                self.assertEqual(body, expected)
+
+    def test_a_plan_can_be_submitted_only_once(self):
+        self.peer.delay = .01
+        out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n'
+            '!(let $plan (py-call (native_llm_host.command_plan "fixture-model" 42 "low" "input"))\n'
+            '   (progn (println! (llm:run $plan)) (println! (llm:run $plan))))\n')
+        self.assertIn("(nop)", out)
+        self.assertEqual(len(self.peer.requests), 1)
+
     def test_codecs_keep_tools_reasoning_usage_and_stops(self):
         fixtures = [("anthropic", {"id": "a", "stop_reason": "tool_use", "content": [
             {"type": "thinking", "thinking": "opaque", "signature": "signed"},
@@ -94,7 +137,7 @@ class NativeBoundaryTests(unittest.TestCase):
             ("responses", {"status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"},
                 "output": [{"type": "reasoning", "id": "r", "summary": [], "encrypted_content": "opaque"},
                            {"type": "function_call", "call_id": "c", "name": "nop", "arguments": "{}"}]}),
-            ("responses", {"status": "completed", "output": [{"type": "message", "content": [
+            ("responses", {"status": "completed", "output": [{"type": "message", "role": "assistant", "content": [
                 {"type": "refusal", "refusal": "no"}]}]})]
         forms = f'!(import! &self "{ROOT}/src/llm_boundary.metta")\n' + "\n".join(
             f'!(json-stringify (llm:decode {json.dumps(protocol)} {json.dumps(json.dumps(wire))}))'
@@ -150,6 +193,20 @@ class NativeBoundaryTests(unittest.TestCase):
         out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n'
             '!(println! (RESULT (llm:command "fixture-model" 42 "low" "input")))\n')
         self.assertIn("(RESULT ())", out)
+        self.assertEqual(len(self.peer.requests), 1)
+
+    def test_truncated_tool_batch_is_refused_before_the_imported_loop_can_dispatch(self):
+        self.peer.delay = .01
+        self.peer.reply["choices"][0].update(finish_reason="length", message={"role": "assistant", "content": "",
+            "tool_calls": [{"id": "partial", "type": "function", "function": {"name": "nop", "arguments": "{}"}}]})
+        fixture = self.directory / "request_fixture.py"
+        request = {"messages": [{"role": "user", "content": "input"}], "max_tokens": 42}
+        fixture.write_text('from iter_host import Box\nimport json\ndef request(): return Box(json.loads(' +
+                           repr(json.dumps(request)) + '))\n')
+        out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n!(import! &self "{fixture}")\n'
+            '!(catch (llm:structured (py-call (request_fixture.request))))\n')
+        self.assertIn("Error", out)
+        self.assertNotIn("FINISH tool_calls", out)
         self.assertEqual(len(self.peer.requests), 1)
 
     def test_quota_cooldown_is_shared_and_upstream_can_bypass_it(self):

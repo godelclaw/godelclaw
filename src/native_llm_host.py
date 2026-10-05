@@ -4,11 +4,14 @@ This module performs no HTTP. Keys remain environment-owned host bytes;
 only scoped credential aliases, ordinary headers and non-secret plans cross
 the guest boundary. Upstream transformations remain upstream host helpers.
 """
+import copy
 import json
 import os
 from pathlib import Path
 import sys
 from types import SimpleNamespace
+import threading
+import uuid
 
 # Standalone pinned-core runners need not configure the framework's PYTHONPATH.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -17,7 +20,8 @@ import llm_policy
 import provider_protocol
 import synthetic_llm
 
-_foreign_events = []
+_session_epoch = uuid.uuid4().hex
+_claim_lock = threading.Lock()
 
 
 def enabled():
@@ -50,7 +54,7 @@ def _plan(kind, model, tokens, builder):
         provider = synthetic_llm._provider_for(selected)
         if not provider["key"]:
             raise RuntimeError("provider credential is not configured")
-        endpoint, body = builder(provider["protocol"], provider.get("model", selected))
+        request = builder(provider["protocol"], provider.get("model", selected))
         ticket = llm_policy.admit(provider["name"], tokens)
         alias = "LLM_" + provider["name"].upper()
         prefix = "CETTA_IO_AUTH_" + alias
@@ -66,8 +70,8 @@ def _plan(kind, model, tokens, builder):
             headers.append(["http:header", "anthropic-version", "2023-06-01"])
         cognitive_health.turn_started(provider["name"])
         return SimpleNamespace(kind=kind, ready="true", correlation=ticket, protocol=provider["protocol"],
-            provider=provider["name"], url=provider["base"]+endpoint, headers=headers,
-            body=json.dumps(body, ensure_ascii=False), sent=False,
+            epoch=_session_epoch, provider=provider["name"], base=provider["base"], headers=json.dumps(headers),
+            request=json.dumps(request, ensure_ascii=False), sent=False, claimed=False,
             timeout=int(synthetic_llm._float_env("SYNTHETIC_TIMEOUT", 120, 1)*1000),
             cap=int(os.environ.get("METTACLAW_LLM_RESPONSE_BYTES", 1048576)))
     except Exception as error:
@@ -78,18 +82,73 @@ def _plan(kind, model, tokens, builder):
 
 
 def command_plan(model, tokens, effort, prompt):
-    return _plan("command", model, tokens, lambda protocol, selected:
-        provider_protocol.command_body(protocol, selected, tokens, effort, prompt))
+    def conversation(protocol, selected):
+        stable, user = provider_protocol.split_prompt(prompt)
+        result = dict(model=selected, max_tokens=int(tokens), stable=stable, user=user,
+                      reasoning={"effort": str(effort)})
+        # Cache identity is an upstream caller policy, not provider encoding.
+        if stable:
+            result["cache_key"] = provider_protocol.cache_key("openai", selected, "".join(stable))
+        return result
+    return _plan("command", model, tokens, conversation)
 
 
 def structured_plan(request):
     value = getattr(request, "value", request)
+    def conversation(protocol, selected):
+        result = copy.deepcopy(value)
+        result["model"] = selected
+        extra = result.pop("extra_body", {})
+        if not isinstance(extra, dict):
+            raise ValueError("extra_body must be an object")
+        if protocol == "chat-completions":
+            # Keep the imported compatible-provider request layout explicit.
+            result["chat_profile"] = "compatible"
+        if protocol in ("anthropic", "responses"):
+            # The imported loops already use this mapping. The generic library
+            # preserves developer roles unless a caller explicitly selects it.
+            result["role_policy"] = "merge-system-developer"
+        if protocol == "anthropic":
+            thinking = extra.pop("enable_thinking", None)
+            if thinking is False:
+                raise ValueError("disabling thinking requires a model capability")
+            if thinking is True:
+                result["thinking"] = {"type": "adaptive"}
+                result["tool_choice_policy"] = "auto-for-thinking"
+            if "reasoning" in extra:
+                result.setdefault("reasoning", extra.pop("reasoning"))
+        # Native extensions are explicit. Known common options never get
+        # overwritten by a provider-specific extra_body.
+        extensions = result.pop("extensions", {})
+        if not isinstance(extensions, dict):
+            raise ValueError("extensions must be an object")
+        if set(extensions).intersection(extra):
+            raise ValueError("duplicate native extension")
+        extensions.update(extra)
+        if protocol == "responses":
+            system = [m.get("content", "") for m in result["messages"]
+                      if m.get("role") in ("system", "developer")]
+            if system:
+                extensions.setdefault("prompt_cache_key", provider_protocol.cache_key(
+                    "openai", selected, "\n\n".join(system)))
+        if extensions:
+            result["extensions"] = extensions
+        return result
     return _plan("structured", synthetic_llm.current_model(), value["max_tokens"],
-        lambda protocol, selected: provider_protocol.structured_body(protocol, selected, value))
+                 conversation)
 
 
 def field(plan, name):
     return getattr(plan, str(name))
+
+
+def claim(plan):
+    """One local submission authority; replaying the same plan cannot bill twice."""
+    with _claim_lock:
+        if plan.claimed:
+            return "false"
+        plan.claimed = True
+        return "true"
 
 
 def submitted(plan, transport_id):
@@ -98,21 +157,16 @@ def submitted(plan, transport_id):
     return True
 
 
-def park(event):
-    _foreign_events.append(event)
-    return True
-
-
-def take_foreign_events():
-    events = list(_foreign_events)
-    _foreign_events.clear()
-    return events
-
-
-def finish(plan, correlation, encoded):
-    if str(correlation) != plan.correlation:
+def finish(plan, epoch, correlation, encoded, canonical):
+    if str(epoch) != plan.epoch or str(correlation) != plan.correlation:
         return failed(plan, correlation, "correlation-error")
     result = json.loads(str(encoded))
+    boundary = json.loads(str(canonical))
+    reason = result["choices"][0].get("finish_reason", "unknown")
+    if reason not in ("stop", "tool_calls", "length", "refusal", "content_filter"):
+        return failed(plan, correlation, "unfinished-provider-response")
+    if reason in ("refusal", "content_filter") and result["choices"][0]["message"].get("tool_calls"):
+        return failed(plan, correlation, "refused-tool-call")
     if not isinstance(result.get("usage"), dict):
         result["usage"] = {}
     if not llm_policy.complete(plan.correlation, result):
@@ -122,10 +176,16 @@ def finish(plan, correlation, encoded):
     if plan.provider == "anthropic":
         synthetic_llm._tally_anthropic(result["usage"])
     if plan.kind == "structured":
+        if reason == "length" and result["choices"][0]["message"].get("tool_calls"):
+            # The imported loop can dispatch calls before checking finish. Keep
+            # that loop unchanged; reject this unsafe projection at its host
+            # boundary after settling the authoritative usage observation.
+            cognitive_health.turn_failed("OutputTruncated", retry_after=0)
+            raise RuntimeError("native provider truncated a tool batch") from None
         from iter_host import Box
         cognitive_health.turn_completed(len(str(encoded).encode()))
         return Box({"message": result["choices"][0]["message"],
-                    "finish": result["choices"][0].get("finish_reason")})
+                    "finish": reason, "llm_result": boundary})
     if result["choices"][0].get("finish_reason") == "length":
         return synthetic_llm._empty_action(synthetic_llm.OutputTruncated())
     content = result["choices"][0]["message"].get("content")
@@ -134,6 +194,13 @@ def finish(plan, correlation, encoded):
     synthetic_llm._note_answered()
     cognitive_health.turn_completed(len(content.encode()))
     return content
+
+
+def duplicate_plan(plan):
+    # Do not mutate the original plan's in-flight admission transaction.
+    if plan.kind == "command":
+        return synthetic_llm._empty_action(RuntimeError("duplicate native plan"))
+    raise RuntimeError("duplicate native plan")
 
 
 def failed(plan, correlation, kind, status=0):
