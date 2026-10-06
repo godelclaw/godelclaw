@@ -28,6 +28,12 @@ def command(repo, state, credential):
     offset = os.environ.get("METTACLAW_TELEGRAM_INITIAL_OFFSET", "")
     if offset:
         argv += ["--initial-offset", str(int(offset))]
+    poll_limit = os.environ.get("METTACLAW_TELEGRAM_POLL_LIMIT", "").strip()
+    if poll_limit:
+        limit = int(poll_limit)
+        if not 1 <= limit <= 100:
+            raise ValueError("invalid poll limit")
+        argv += ["--poll-limit", str(limit)]
     return argv
 
 
