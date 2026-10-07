@@ -1,0 +1,23 @@
+[Unit]
+Description=MeTTaClaw cognition (%i)
+Wants=network-online.target cetta-telegram@%i.socket cetta-telegram@%i.service pettaclaw-telegram-control@%i.service
+After=network-online.target cetta-telegram@%i.socket cetta-telegram@%i.service pettaclaw-telegram-control@%i.service
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=%h/pettaclaw-%i
+Environment=METTACLAW_INSTANCE=%i
+Environment=METTACLAW_SKIP_INITIALIZE=1
+EnvironmentFile=%h/.config/pettaclaw/%i-runtime.env
+EnvironmentFile=%h/.config/pettaclaw/%i-channel.env
+ExecStartPre=/usr/bin/test -S %t/cetta-telegram-%i/client.sock
+ExecStart=%h/pettaclaw-%i/run.sh
+Restart=always
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target

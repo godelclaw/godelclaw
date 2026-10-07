@@ -168,7 +168,7 @@ not start an agent or register a Telegram bot.
 |---|---|
 | `config/local.toml` | Evaluator paths, Python environment, provider endpoint/model, channel and storage locations. Seeded from [the defaults](config/default.toml). |
 | `config/secrets.env` | Provider credentials, bot token, operator IDs and allowed chats. See [the field examples](config/secrets.env.example). |
-| `memory/prompt.txt` | Your agent's identity, goals and operating instructions. Review and replace the sample prompt before starting. |
+| `memory/prompt.txt` | Your agent's identity, goals and operating instructions. Initialization seeds the reusable [default prompt](identity/default-prompt.txt); customize your private copy. |
 | `.env` | Generated settings; regenerate with `initialize.sh` after editing `config/local.toml`. |
 
 Set `paths.petta_root`, `paths.petta_py_env` and, if used, `paths.cetta_root` to
@@ -186,6 +186,13 @@ durable Telegram services described below.
 Configuration, credentials, conversations and runtime state are ignored by Git.
 Keep each instance's files separate. Public prompts and examples belong in the
 source tree only when they are intended for reuse.
+
+The managed default prompt combines Iter's attention to unresolved requests
+with Omega's goal and memory discipline, using the managed runtime's
+observe-before-deciding policy. It contains no operator identity, chat IDs,
+credentials or deployment paths. Initialization preserves an existing private
+prompt unless explicitly forced. The pinned standalone Iter/Omega prompts
+remain unchanged; their own protocols and pacing belong to those modes.
 
 ### 3. Install dependencies and check imports
 
@@ -218,6 +225,11 @@ For Iter/Omega, set up the durable channel and independent command responder
 first, then supervise cognition so mode changes can restart it. Follow the
 [service setup guide](systemd/README.md). These channel/control services use
 CeTTa even when the selected cognitive evaluator is PeTTa.
+
+For automatic startup after reboot, install and enable the cognition, socket,
+transport and command-responder units, then enable user lingering if they must
+start before interactive login. The [boot and recovery checks](systemd/README.md#start-at-boot-and-check-recovery)
+also distinguish a running process from successful provider and input handling.
 
 Use one checkout/configuration and one set of state directories and sockets per
 instance. Names such as `research` and `assistant` are examples you choose, not

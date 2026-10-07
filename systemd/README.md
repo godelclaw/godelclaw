@@ -78,36 +78,14 @@ Copy these templates into your user systemd directory:
 ```sh
 mkdir -p ~/.config/systemd/user
 cp systemd/cetta-telegram@.socket systemd/cetta-telegram@.service \
-  systemd/pettaclaw-telegram-control@.service ~/.config/systemd/user/
+  systemd/pettaclaw-telegram-control@.service systemd/pettaclaw@.service \
+  ~/.config/systemd/user/
 ```
 
-Provide a cognition unit for your instance. For example, save the following as
-`~/.config/systemd/user/pettaclaw@.service`:
-
-```ini
-[Unit]
-Description=MeTTaClaw cognition (%i)
-Wants=network-online.target cetta-telegram@%i.service pettaclaw-telegram-control@%i.service
-After=network-online.target cetta-telegram@%i.service pettaclaw-telegram-control@%i.service
-StartLimitIntervalSec=120
-StartLimitBurst=5
-
-[Service]
-Type=simple
-WorkingDirectory=%h/pettaclaw-%i
-Environment=METTACLAW_INSTANCE=%i
-Environment=METTACLAW_SKIP_INITIALIZE=1
-EnvironmentFile=%h/.config/pettaclaw/%i-runtime.env
-EnvironmentFile=%h/.config/pettaclaw/%i-channel.env
-ExecStart=%h/pettaclaw-%i/run.sh
-Restart=always
-RestartSec=5
-KillMode=control-group
-TimeoutStopSec=20
-
-[Install]
-WantedBy=default.target
-```
+The [cognition template](pettaclaw@.service) explicitly starts and orders itself
+after its socket, transport and command responder. Its startup check requires
+the client socket. A missing transport withholds provider admission; leaving
+cognition active does not by itself establish that the agent is making progress.
 
 Set `METTACLAW_INSTANCE=research` in `research-runtime.env` too, so the command
 responder uses the same instance name. Keep provider credentials in the
@@ -135,6 +113,58 @@ Check each unit's status and journal separately. `/modes` should answer through
 the independent responder, including while cognition is stopped. `/mode iter`
 or `/mode omega` selects the loop for the next supervised cognition process.
 Both require the durable channel; the responder always executes on CeTTa.
+
+## Start at boot and check recovery
+
+User units normally start when the user manager starts. To run them after boot
+without an interactive login, enable lingering for the account that owns them:
+
+```sh
+sudo loginctl enable-linger "$USER"
+loginctl show-user "$USER" -p Linger
+```
+
+Expect `Linger=yes`. This keeps the user manager available after logout too;
+see the upstream [loginctl documentation](https://www.freedesktop.org/software/systemd/man/252/loginctl.html).
+Enabling a unit and starting it are separate operations; the installation
+commands above do both. Check the configured instance before and after a reboot:
+
+```sh
+systemctl --user is-enabled cetta-telegram@research.socket \
+  cetta-telegram@research.service pettaclaw-telegram-control@research.service \
+  pettaclaw@research.service
+systemctl --user status cetta-telegram@research.socket \
+  cetta-telegram@research.service pettaclaw-telegram-control@research.service \
+  pettaclaw@research.service
+test -S "$XDG_RUNTIME_DIR/cetta-telegram-research/client.sock"
+journalctl --user -b -u cetta-telegram@research.service \
+  -u pettaclaw-telegram-control@research.service -u pettaclaw@research.service
+```
+
+Follow three boundaries when checking recovery:
+
+1. Transport: the private socket exists, polling succeeds, and the independent
+   command responder can answer an operator control while cognition is stopped.
+2. Cognition: inspect the configured `METTACLAW_COGNITIVE_HEALTH_PATH`. Compare
+   fresh started/completed/failed counters and timestamps; distinguish a
+   configured rest or quota cooldown from repeated failed admission. A fresh
+   completed provider turn is evidence beyond `active (running)`.
+3. Input: unacknowledged input survives restart and is incorporated into the
+   next prepared request. Input arriving after preparation must withhold stale
+   effects and remain pending for reconsideration. Successful history recording
+   acknowledges only the input actually prepared for that turn.
+
+The same-process `tests/input_batch_refresh_probe.metta` checks preparation
+across a failed turn and retains later input after acknowledgement. Its queue
+and acknowledgement model is in `verification/InputBatch.lean`. The independent
+channel integration fixture exercises restart, controls and stale-input guards.
+Run these with disposable state and a local mock channel; they do not require
+contacting a production bot.
+
+When upgrading several instances, use one reviewed runtime manifest and the
+[grouped updater](../README.md#choose-a-cognitive-mode). Keep each instance's
+prompt, credentials, memory and settings separate. Repeat the boot and progress
+checks for every instance; one healthy peer does not establish another's health.
 
 ## Optional services and existing deployment examples
 
