@@ -90,6 +90,16 @@ The thirteen durable checkpoints can also be compared with MeTTapedia's
 executable model using `scripts/check_host_strategy.py --help`. These are model
 laws and tested runtime correspondence, not a proof of the C/Python runtime.
 
+For recorded live safety, `scripts/audit_strategy.py --help` reads each supplied
+ledger in a read-only transaction, maps identities without exporting message or
+result text, and checks the event trace and final saved state with MeTTapedia's
+`StrategyTraceAudit.lean`. It checks captured authority, recorded revisions,
+reservation/result ordering, observation barriers and checked completion.
+Its receipt separates safety violations from unresolved effects. Run it from
+an independent operator process; it neither wakes nor changes an instance.
+Task-checker truth, external-effect delivery, clock/budget enforcement and useful
+progress require their own evidence and are outside this trace audit.
+
 ## Get started
 
 You need Python 3.11+, [SWI-Prolog](https://www.swi-prolog.org/) and a working
