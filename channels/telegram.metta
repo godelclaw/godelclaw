@@ -468,9 +468,11 @@
 
 (= (tg:activity-batch)
    (let $polled (tg:poll)
-     (let $prepared (tg:prepared-items)
+       ;; A fresh request includes all input that is now pending. Keeping an
+       ;; older nonempty presentation forever would deadlock the stale-input
+       ;; guard when steering arrives during a failed provider turn. Pending
+       ;; input remains durable; acknowledgement uses this turn's fixed mark.
        (let $items
-            (if (not (== $prepared ())) (tg:sorted-items $prepared)
               (let $pending (tg:sorted-items (tg:pending-items))
                 (if (== $pending ()) ()
                   (let ($last) (tg:last-seq $pending)
@@ -483,7 +485,7 @@
                             (let $p1 (py-call (telegram.metta_publish "context_frontier" $frontier))
                               (let $p2 (py-call (telegram.metta_publish "batch_update_ids" $ids))
                                 (let $p3 (py-call (telegram.metta_publish "context_epoch" $epoch))
-                                  $pending)))))))))))))
+                                  $pending))))))))))))
          (if (== $items ())
            (let $a (tg:set last-human 0)
              (let $b (tg:set last-tier "full")
@@ -497,7 +499,7 @@
            (let $routed (tg:route-batch $items () () ())
              (let $applied (tg:apply-route $routed)
                (let $published (tg:publish-counts)
-                 (str:join "\n" (tg:list (tg:texts $items)))))))))))
+                 (str:join "\n" (tg:list (tg:texts $items))))))))))
 
 (= (tg:last-seq $items)
    (let ($head $tail) (tg:uncons $items)
