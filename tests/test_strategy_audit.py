@@ -135,6 +135,11 @@ class StrategyAuditTest(unittest.TestCase):
                 self.assertTrue(terms)
                 self.assertTrue(expected)
 
+    def test_tool_failure_is_not_reported_as_a_semantic_violation(self):
+        self.assertEqual(audit_strategy.check_status(1, "maximum recursion depth reached"), "unavailable")
+        self.assertEqual(audit_strategy.check_status(1, "(some 7)\nproof rejected"), "fail")
+        self.assertEqual(audit_strategy.check_status(0, "none\nchecked"), "pass")
+
 
 if __name__ == "__main__":
     unittest.main()

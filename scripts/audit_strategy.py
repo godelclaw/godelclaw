@@ -13,12 +13,12 @@ import json
 import os
 from pathlib import Path
 import re
+import sqlite3
 import subprocess
 import sys
 
 
 def snapshot(path):
-    import sqlite3
     with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA query_only=ON")
@@ -217,6 +217,16 @@ def export_trace(view):
     return terms, expected, summary
 
 
+def check_status(returncode, output):
+    if returncode == 0:
+        return "pass"
+    if (re.search(r"^\(?some \d+\)?\s*$", output, re.MULTILINE)
+            or "Tactic `decide` proved that the proposition" in output and "is false" in output):
+        return "fail"
+    # A timeout, elaboration limit or broken toolchain provides no verdict.
+    return "unavailable"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ledger", type=Path, action="append", required=True)
@@ -257,14 +267,14 @@ def main():
             checked = subprocess.run(base + [str(certificate)], cwd=output, env=env,
                                      capture_output=True, text=True)
             (output / f"trace-{index}.log").write_text(checked.stdout + checked.stderr)
-            summary["recorded_safety"] = "pass" if checked.returncode == 0 else "fail"
+            summary["recorded_safety"] = check_status(checked.returncode, checked.stdout + checked.stderr)
             first = re.search(r"^\(?some (\d+)\)?\s*$", checked.stdout, re.MULTILINE)
             summary["first_violating_sequence"] = view["events"][int(first[1])]["sequence"] if first else None
             summary["recovery"] = "reconciliation-required" if summary["uncertain_effects"] else "clear"
             summary["model_sha256"] = hashlib.sha256(model_bytes).hexdigest()
             summaries.append(summary)
             failed |= checked.returncode != 0
-        except (OSError, ValueError, KeyError) as error:
+        except (OSError, ValueError, KeyError, sqlite3.Error) as error:
             summaries.append({"recorded_safety": "unavailable", "reason": str(error)})
             failed = True
     receipt = {"schema": 1, "checked_at": datetime.now(timezone.utc).isoformat(), "snapshots": summaries,
