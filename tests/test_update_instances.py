@@ -1,0 +1,92 @@
+import importlib.util
+import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest import mock
+
+
+spec = importlib.util.spec_from_file_location("update_instances", Path(__file__).resolve().parents[1] / "scripts/update_instances.py")
+update = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(update)
+
+
+class PairedUpdateTest(unittest.TestCase):
+    def exercise(self, failed=False, runtime_missing=False):
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            release = work / "release"
+            (release / "files/src").mkdir(parents=True)
+            (release / "files/run.sh").write_text("#!/bin/sh\n# new launcher\n")
+            (release / "files/src/core.py").write_text("# new core\n")
+            hashes = {n: update.sha(release / "files" / n) for n in ("run.sh", "src/core.py")}
+            (release / "manifest.json").write_text(json.dumps({"release": "checked", "files": hashes}))
+            instances = []
+            for name in ("alpha", "beta"):
+                root, state = work / name, work / (name + "-state")
+                (root / "src").mkdir(parents=True); state.mkdir()
+                (root / "run.sh").write_text("# old launcher\n")
+                (root / "src/core.py").write_text("# old core\n")
+                (state / "identity").write_text(name)
+                instances.append({"name": name, "root": str(root), "state_dir": str(state),
+                    "service": name, "checks": [["offline", name]],
+                    "required_runtime": {"METTACLAW_OBSERVED_STRATEGY": "1"},
+                    "expected": {n: update.sha(root / n) for n in hashes}})
+            plan = work / "plan.json"
+            plan.write_text(json.dumps({"instances": instances,
+                                        "boot_timeout": -1 if runtime_missing else 60}))
+            pids = {"alpha": "1", "beta": "1"}
+            def service(name, operation):
+                item = next(i for i in instances if i["name"] == name)
+                state = Path(item["state_dir"])
+                if operation == "restart":
+                    pids[name] = str(int(pids[name]) + 1)
+                    (state / "active-loop.json").write_text(json.dumps({"pid": int(pids[name])}))
+                elif (state / "recycle.requested").exists() and pids[name] == "1":
+                    pids[name] = "2"
+                elif ((state / "recycle.requested").exists()
+                      and (state / "recycle.requested").read_text().strip() == "rollback"):
+                    self.assertEqual((Path(item["root"]) / "src/core.py").read_text(), "# new core\n")
+                    self.assertTrue((Path(item["root"]) / ".runtime-update-hold").exists())
+                    pids[name] = str(int(pids[name]) + 1)
+                    (state / "recycle.requested").unlink()
+                return pids[name]
+            def check(command, **kwargs):
+                return subprocess.CompletedProcess(command, int(failed and command[-1] == "beta"), "CHECK_OK", "")
+            def settings(name, extra_keys=()):
+                state = next(i["state_dir"] for i in instances if i["name"] == name)
+                return {"METTACLAW_ACTIVE_LOOP_MODE": "godelclaw",
+                        "METTACLAW_OBSERVED_STRATEGY": "0" if runtime_missing and name == "beta" else "1",
+                        "METTACLAW_ENGINE_STATE_PATH": state + "/engine",
+                        "METTACLAW_RECYCLE_REQUEST_PATH": state + "/recycle.requested",
+                        "METTACLAW_WAKE_REQUEST_PATH": state + "/wake.requested"}
+            args = ["update_instances", "--plan", str(plan), "--release", str(release),
+                    "--receipt-dir", str(work / "receipt"), "--apply"]
+            with mock.patch.object(sys, "argv", args), mock.patch.object(update, "service", service), mock.patch.object(update, "running_settings", settings), mock.patch.object(update.subprocess, "run", check):
+                if runtime_missing:
+                    with self.assertRaises(TimeoutError): update.main()
+                elif failed:
+                    with self.assertRaises(RuntimeError): update.main()
+                else:
+                    self.assertEqual(update.main(), 0)
+            receipt = json.loads((work / "receipt/receipt.json").read_text())
+            self.assertEqual(receipt["status"], "rolled-back" if failed or runtime_missing else "activated")
+            for item in instances:
+                root = Path(item["root"])
+                self.assertFalse((root / ".runtime-update-hold").exists())
+                self.assertEqual((Path(item["state_dir"]) / "identity").read_text(), item["name"])
+                self.assertEqual((root / "src/core.py").read_text(), "# old core\n" if failed or runtime_missing else "# new core\n")
+
+    def test_both_receive_one_release_with_separate_state(self):
+        self.exercise()
+
+    def test_second_failure_rolls_back_both(self):
+        self.exercise(failed=True)
+
+    def test_inactive_runtime_configuration_cannot_pass_activation(self):
+        self.exercise(runtime_missing=True)
+
+
+if __name__ == "__main__": unittest.main()

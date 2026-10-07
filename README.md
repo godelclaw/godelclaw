@@ -47,6 +47,49 @@ mode's files without merging its history into another mode.
 See the [mode guide](modes/README.md) for upstream pins, provider differences,
 compatibility aliases, conformance results and the adapter ledger.
 
+Managed `godelclaw` and `coding` also use a protected request ledger. Accepted
+inputs, action reservations and correlated results survive prompt compaction,
+interruptions, restart and mode changes. Request preparation applies Iter's
+ordered transformations, then attaches protected work and result projections.
+The broker checks captured permissions and current input/control revisions
+before acting. A result is included before the next dependent model decision.
+Effectful batches admit one command; configured higher limits apply to known
+independent observations. A script or delegated batch still counts as one
+command. Timed command continuations return for reconsideration on waking.
+
+Set `agent.observed_strategy = false` to use the legacy managed host. Standalone
+Iter/Omega retain their pinned loops. Existing provider budgets and interruptible
+cooldowns remain in force. `nop`, rest and provider prose never establish task
+completion in the protected ledger. Completion needs an observed successful
+receipt and an operator-registered task checker; exact-output checkers and
+explicit operator confirmation are available through `scripts/strategy_ctl.py`.
+Natural-language task acceptance and the truth of prose remain host obligations.
+An interrupted effect without a saved result stays uncertain and requires
+reconciliation; it is not automatically repeated.
+
+`(requests)`, `(request-status "id")` and `(request-focus "id")` expose retained
+work. Search results without exhaustive, revision-matched coverage explicitly
+leave absence unproved. Large result projections include a truncation flag and
+digest; the full receipt remains in the instance's SQLite ledger.
+
+Grouped deployments use `scripts/update_instances.py --plan deployment.json
+--release release-directory --receipt-dir update-receipts --apply`. Keep the
+deployment plan private. It supplies separate instance directories, service
+names, expected old hashes, instance overlays and offline checks. The updater
+holds cognitive launchers, stages the same manifest into every instance, checks
+all of them, then activates them together. Backups and per-instance release
+receipts make failed qualification and rollback reviewable. Optional
+`required_runtime` settings are checked against the running process, including
+the strategy flag and selected transport. Rollback also uses ordinary turn
+boundaries; a stuck candidate remains held pending recovery. Instance additions
+belong in `src/instance_hooks.metta`, which shared releases preserve.
+
+Runtime checks: `python3 -m unittest tests.test_observed_strategy
+tests.test_strategy_host tests.test_update_instances tests.test_managed_strategy_runtime`.
+The thirteen durable checkpoints can also be compared with MeTTapedia's
+executable model using `scripts/check_host_strategy.py --help`. These are model
+laws and tested runtime correspondence, not a proof of the C/Python runtime.
+
 ## Get started
 
 You need Python 3.11+, [SWI-Prolog](https://www.swi-prolog.org/) and a working
@@ -207,6 +250,17 @@ body below it. Parser work and depth limits can reject a smaller body; these
 remain an explicit qualification limit for large contexts and replies.
 
 ### Operator admission and upstream profiles
+
+For feedback after each action in the managed `godelclaw` and `coding` loops,
+set `command_batch_limit = 1` under `[agent]` in `config/local.toml`.
+The configured default is five; the protected strategy restricts effectful
+batches to one and permits higher limits only for independent observations.
+`METTACLAW_COMMAND_BATCH_LIMIT` configures the same limit
+when no local value is set. The prompt and dispatcher use the same positive
+limit. Excess commands are recorded as deferred for reconsideration after the
+executed result; they are not automatically replayed. One command may contain
+a multi-step script or delegated tool batch. This setting leaves the vendored
+Iter and Omega dispatch protocols unchanged.
 
 The admission ledger is shared across an instance's modes, while each mode
 retains its own cognitive state. It does not rewrite energy, fuel, prompts,
