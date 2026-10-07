@@ -16,11 +16,18 @@ export METTACLAW_INSTANCE="$INSTANCE"
 # prevents a semantic probe from changing the live mode, working set, history,
 # transport offset, or receipts merely because it imports the real loop.
 REQUESTED_TARGET="${1:-run.metta}"
+CALLER_OBSERVED_STRATEGY="${METTACLAW_OBSERVED_STRATEGY:-0}"
 case "$REQUESTED_TARGET" in
     run.metta|"$ROOT/run.metta") NONLIVE_TARGET=0 ;;
     telegram-control) NONLIVE_TARGET=0 ;;
     *) NONLIVE_TARGET=1 ;;
 esac
+
+# A paired release holds only cognitive launchers while both instances are
+# staged and checked. Operator controls and isolated probes remain available.
+if [ "$NONLIVE_TARGET" = 0 ] && [ "$REQUESTED_TARGET" != telegram-control ]; then
+    while [ -f "$ROOT/.runtime-update-hold" ]; do sleep 1; done
+fi
 STATE_PATH_NAMES=(
     METTACLAW_ENGINE_STATE_PATH METTACLAW_ENGINE_FAILURE_PATH
     METTACLAW_TELEGRAM_OFFSET_PATH
@@ -39,6 +46,7 @@ STATE_PATH_NAMES=(
     METTACLAW_PINS_PATH METTACLAW_GOALS_PATH
     METTACLAW_PROVIDER_OBSERVATION_PATH
     METTACLAW_LLM_LEDGER_PATH METTACLAW_LLM_COMPLETION_PATH
+    METTACLAW_STRATEGY_PATH
 )
 declare -A CALLER_STATE_SET=()
 declare -A CALLER_STATE_VALUE=()
@@ -67,6 +75,7 @@ fi
 
 TEST_STATE_DIR=""
 if [ "$NONLIVE_TARGET" = 1 ]; then
+    export METTACLAW_OBSERVED_STRATEGY="$CALLER_OBSERVED_STRATEGY"
     TEST_STATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pettaclaw-probe.XXXXXX")"
     trap 'rm -rf -- "$TEST_STATE_DIR"' EXIT
     for state_name in "${STATE_PATH_NAMES[@]}"; do
@@ -154,6 +163,7 @@ export METTACLAW_TELEGRAM_LOG_PATH="${METTACLAW_TELEGRAM_LOG_PATH:-$STATE_HOME/$
 export METTACLAW_COGNITIVE_HEALTH_PATH="${METTACLAW_COGNITIVE_HEALTH_PATH:-$STATE_HOME/$INSTANCE/cognitive-health.json}"
 export METTACLAW_LLM_LEDGER_PATH="${METTACLAW_LLM_LEDGER_PATH:-$STATE_HOME/$INSTANCE/llm-budget.sqlite3}"
 export METTACLAW_LLM_COMPLETION_PATH="${METTACLAW_LLM_COMPLETION_PATH:-$STATE_HOME/$INSTANCE/llm-completion.json}"
+export METTACLAW_STRATEGY_PATH="${METTACLAW_STRATEGY_PATH:-$STATE_HOME/$INSTANCE/observed-strategy.sqlite3}"
 export METTACLAW_LIFECYCLE_PATH="${METTACLAW_LIFECYCLE_PATH:-$STATE_HOME/$INSTANCE/lifecycle.json}"
 export METTACLAW_DEPLOYMENT_STATE_PATH="${METTACLAW_DEPLOYMENT_STATE_PATH:-$STATE_HOME/$INSTANCE/deployment.json}"
 export METTACLAW_STIMULUS_FRONTIER_PATH="${METTACLAW_STIMULUS_FRONTIER_PATH:-$STATE_HOME/$INSTANCE/stimulus-frontier}"

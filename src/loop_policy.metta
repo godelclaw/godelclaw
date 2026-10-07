@@ -93,7 +93,8 @@
 (= (policy-iter-transformations $selected)
    (coordinate-get-or iter-transformations 0 (policy-record $selected)))
 (= (policy-command-batch-limit $selected)
-   (coordinate-get-or command-batch-limit 5 (policy-record $selected)))
+   (py-call (helper.command_batch_limit
+     (coordinate-get-or command-batch-limit 5 (policy-record $selected)))))
 
 ;; A rest in flight is exactly a banked budget waiting to be handed back,
 ;; so the periphery already answers "is renewal suspended?" and no separate

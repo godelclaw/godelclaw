@@ -1,0 +1,21 @@
+!(import! &self (library lib_import))
+!(import! &self ./lib_mettaclaw)
+(= (assertEqual $a $b) (assert (== $a $b)))
+
+;; New input arrives while the first scripted provider call is outstanding.
+;; Even a nonconversation effect must be withheld. The next call can recover.
+!(py-eval "__import__('helper').__dict__.update(_strategy_calls=0, _strategy_new_input=False, _strategy_prompts=[])")
+!(py-eval "__import__('strategy_host').__dict__.__setitem__('_stimulus_free', lambda: not __import__('helper')._strategy_new_input)")
+!(py-eval "__import__('synthetic_llm').__dict__.__setitem__('chat', lambda *args: (__import__('helper').__dict__.__setitem__('_strategy_calls', __import__('helper')._strategy_calls + 1), __import__('helper')._strategy_prompts.append(str(args[-1])), __import__('helper').__dict__.__setitem__('_strategy_new_input', __import__('helper')._strategy_calls == 1), __import__('cognitive_health').turn_started('probe'), __import__('cognitive_health').turn_completed(10), ('((shell \"printf STALE_MUST_NOT_RUN\"))' if __import__('helper')._strategy_calls == 1 else '((help shell))'))[-1])")
+!(py-eval "__import__('helper').__dict__.__setitem__('strategy_stale_ok', lambda: int(len(__import__('strategy_host').ledger().projection()['actions']) == 0 and __import__('helper')._strategy_calls == 1))")
+!(py-eval "__import__('helper').__dict__.__setitem__('strategy_recovered_ok', lambda: int(len(__import__('strategy_host').ledger().projection()['actions']) == 1 and __import__('helper')._strategy_calls == 2 and all('PROTECTED_STRATEGY' in p for p in __import__('helper')._strategy_prompts) and len(__import__('strategy_host').ledger().active()) > 0))")
+!(py-eval "(__import__('helper').__dict__.__setitem__('_working_boot_cache', {}), __import__('helper').__dict__.__setitem__('working_boot', lambda: 3))")
+!(initMemory)
+!(configure commchannel telegram)
+!(let* (($_ (py-call (loop_modes.set_mode "godelclaw")))
+         ($initial (initLoop))
+         ($first (process-step $initial (turnProcess (process-periphery $initial))))
+         ($_ (assertEqual (py-call (helper.strategy_stale_ok)) 1))
+         ($second (process-step $first (turnProcess (process-periphery $first))))
+         ($_ (assertEqual (py-call (helper.strategy_recovered_ok)) 1)))
+   (println! OBSERVED_STRATEGY_OK))

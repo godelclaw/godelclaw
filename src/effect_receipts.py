@@ -53,6 +53,9 @@ def _append(entry: dict) -> int:
 
 def record_command(turn, disposition, command, result) -> int:
     """Record one command after the dispatcher has classified its return."""
+    if os.environ.get("METTACLAW_OBSERVED_STRATEGY", "0") == "1":
+        import strategy_host
+        strategy_host.command_result(turn, disposition, command, result)
     entry = {
         "schema": 1,
         "recorded_at": time.time(),

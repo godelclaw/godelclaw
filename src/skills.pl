@@ -249,13 +249,21 @@ stimulus_frontier_free(Turn) :-
     Captured =:= Live.
 
 run_command_once(Turn, Command,
+                 ['COMMAND_WITHHELD:', [Command, "strategy requires reconsideration"]], []) :-
+    getenv('METTACLAW_OBSERVED_STRATEGY', '1'),
+    \+ catch('py-call'(['strategy_host.reserve_command', Turn, Command], 1), _, fail), !.
+run_command_once(Turn, Command,
                  ['COMMAND_RETURN:', [Command, Normalized]], Errors) :-
     catch(( once(command_effect(Command, Raw)) -> Status = ok(Raw)
                                               ; Status = failed ),
           Exception,
           Status = exception(Exception)),
     command_status(Status, Command, Value, Errors),
-    normalize_command_value(Value, Normalized),
+    normalize_command_value(Value, RawNormalized),
+    ( getenv('METTACLAW_OBSERVED_STRATEGY', '1')
+    -> 'py-call'(['strategy_host.annotate_result', Command, RawNormalized], Normalized)
+    ; Normalized = RawNormalized
+    ),
     command_disposition(Status, Disposition),
     record_command_receipt(Turn, Disposition, Command, Normalized).
 

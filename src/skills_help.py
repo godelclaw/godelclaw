@@ -6,9 +6,10 @@ turn that asks for it, and the checker answers format questions for free
 
 # skill -> (min_args, max_args). None = variadic tail.
 ARITY = {
+    "requests": (0, 0), "request-status": (1, 1), "request-focus": (1, 1),
     "remember": (1, 1), "query": (1, 1), "pin": (1, 1), "unpin": (1, 1),
     "goals": (0, 0), "goal-write": (1, 1), "goal-drop": (2, 2),
-    "rest": (0, 1),
+    "rest": (0, 2),
     "nop": (0, 0),
     "mode": (0, 0),
     "modes": (0, 0),
@@ -38,6 +39,14 @@ ARITY = {
 }
 
 PAGES = {
+    "requests": (
+        'usage: (requests)\n'
+        'Lists protected unfinished inputs and correlated pending results.\n'
+        'These survive history compaction, restarts and mode changes.\n'
+        'nop and rest do not discharge them. (request-status "id") reads\n'
+        'the original input. (request-focus "id") selects it for the next\n'
+        'decision; it does not claim completion. Completion requires its\n'
+        'operator-registered checker or explicit operator confirmation.'),
     "gateway-start": (
         'usage: (gateway-start "stable-request-id" "tool" "json-object")\n'
         'Use (gateway-tools) for configured names and input schemas. JSON\n'

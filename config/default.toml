@@ -32,6 +32,12 @@ owner = "$USER"
 # Any OpenAI-compatible provider. Put the key in config/secrets.env.
 synthetic_base_url = "https://api.synthetic.new/openai/v1"
 synthetic_model = "syn:large:text"
+# Top-level commands per model response in godelclaw/coding; a script or
+# delegated batch is one command. Iter/Omega retain their upstream dispatch.
+command_batch_limit = 5
+# Protected work, captured authority and durable action/result correlation in
+# managed godelclaw/coding. Standalone Iter/Omega keep their reference loops.
+observed_strategy = true
 
 [channel]
 # Communication channel: "telegram" (needs a bot token), "irc", or "mattermost".

@@ -1,0 +1,22 @@
+!(import! &self (library lib_import))
+!(import! &self ./lib_mettaclaw)
+(= (assertEqual $a $b) (assert (== $a $b)))
+
+;; Fail after the first command's result is saved. Reentering the same
+;; cognitive iteration must use a new broker key and preserve that result.
+!(py-eval "__import__('helper').__dict__.update(_fault_prompts=[], _fault_broker_end=__import__('strategy_host').broker_end)")
+!(py-eval "__import__('strategy_host').__dict__.__setitem__('_stimulus_free', lambda: True)")
+!(py-eval "__import__('synthetic_llm').__dict__.__setitem__('chat', lambda *args: (__import__('helper')._fault_prompts.append(str(args[-1])), __import__('cognitive_health').turn_started('probe'), __import__('cognitive_health').turn_completed(10), ('((shell \"printf FIRST_FAULT_WITNESS\"))' if len(__import__('helper')._fault_prompts) == 1 else '((shell \"printf SECOND_FAULT_WITNESS\"))'))[-1])")
+!(py-eval "__import__('strategy_host').__dict__.__setitem__('broker_end', lambda *args: (__import__('helper')._fault_broker_end(*args), (_ for _ in ()).throw(RuntimeError('forced-after-result')))[0] if len(__import__('helper')._fault_prompts) == 1 else __import__('helper')._fault_broker_end(*args))")
+!(py-eval "__import__('helper').__dict__.__setitem__('fault_recovery_ok', lambda: int(len(__import__('helper')._fault_prompts) == 2 and 'FIRST_FAULT_WITNESS' in __import__('helper')._fault_prompts[1] and [a['serial'] for a in __import__('strategy_host').ledger().projection()['actions']] == [0, 1] and [a['status'] for a in __import__('strategy_host').ledger().projection()['actions']] == ['returned', 'returned']))")
+!(py-eval "(__import__('helper').__dict__.__setitem__('_working_boot_cache', {}), __import__('helper').__dict__.__setitem__('working_boot', lambda: 3))")
+!(initMemory)
+!(configure commchannel telegram)
+!(let* (($_ (py-call (loop_modes.set_mode "godelclaw")))
+         ($initial (initLoop))
+         ($first (process-step $initial (turnProcess (process-periphery $initial))))
+         ($_ (assertEqual (loop-iteration (process-periphery $first))
+                          (loop-iteration (process-periphery $initial))))
+         ($second (process-step $first (turnProcess (process-periphery $first))))
+         ($_ (assertEqual (py-call (helper.fault_recovery_ok)) 1)))
+   (println! STRATEGY_FAULT_RECOVERY_OK))

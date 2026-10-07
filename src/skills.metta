@@ -166,9 +166,8 @@
                         sleep-interval-seconds $n
                         intent (py-call (helper.decode_safe_text $why))))))
 
-;; A burst ends either at its step bound or explicitly via nop. nop ends the
-;; breath and records that it ended so: the next renewal treats the task as
-;; complete, where a burst that only ran out of budget continues its task.
+;; A burst ends at its step bound or via nop. Ending a burst is a pacing
+;; decision; protected work remains active until its task checker accepts.
 (= (nop)
    (progn (loop-directive-set loops 0)
           (loop-directive-set burst-end nop)
@@ -176,6 +175,9 @@
 
 (= (mode) (py-call (loop_modes.mode_view)))
 (= (modes) (py-call (loop_modes.modes_view)))
+(= (requests) (py-call (strategy_host.view)))
+(= (request-status $request) (py-call (strategy_host.request_status $request)))
+(= (request-focus $request) (py-call (strategy_host.focus_request $request)))
 (= (mode-set $name) (py-call (loop_modes.set_mode $name)))
 
 ;; Telegram file/image delivery. The result string says what happened —

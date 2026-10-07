@@ -308,6 +308,12 @@ def int_env(name, default):
         return int(default)
 
 
+def command_batch_limit(default):
+    """Managed-loop admission limit; each composite command counts once."""
+    limit = int_env("METTACLAW_COMMAND_BATCH_LIMIT", default)
+    return limit if limit > 0 else int(default)
+
+
 def text_nonempty(value):
     """Return numeric truth for text crossing the Python/MeTTa boundary."""
     return 1 if str(value or "") else 0
@@ -692,7 +698,7 @@ def rest_notice_text(left):
 
 
 def adopt_active_engine():
-    """The command responder runs beside Lila's loop: the engine that loop
+    """The command responder runs beside the loop: the engine that loop
     runs is the one it published, not this process's own start value."""
     import telegram
     active = telegram.metta_value("active_engine", "")

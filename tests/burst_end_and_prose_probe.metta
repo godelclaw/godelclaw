@@ -7,8 +7,8 @@
 (= (next-turn $periphery)
    (coordinate-set iteration (+ 1 (loop-iteration $periphery)) $periphery))
 
-;; How a burst ended decides its renewal: a burst that ran out of budget
-;; continues its task, one that ended with nop picks a new one. Prose outside
+;; Renewal preserves unfinished work even when the previous burst ended with
+;; nop. Prose outside
 ;; the command envelope is shown to the next turn and kept in history, marked
 ;; undelivered. The model answers from a script.
 !(py-eval "(__import__('helper').__dict__.__setitem__('_burst_prompts', []), __import__('helper').__dict__.__setitem__('_burst_replies', ['Hello there, I finished.', '((nop))', '((nop))']), __import__('synthetic_llm').__dict__.__setitem__('chat', lambda *args: (__import__('helper')._burst_prompts.append(str(args[-1])), __import__('cognitive_health').turn_started('probe'), __import__('cognitive_health').turn_completed(3), __import__('helper')._burst_replies.pop(0))[-1]))")
@@ -40,8 +40,9 @@
          ($_ (assertEqual (py-call (helper.burst_prompt_has 1 "Hello there, I finished.")) 1))
          ($_ (assertEqual (py-call (helper.burst_prompt_has 1 "NOT_DELIVERED_TO_ANY_CHANNEL_USE_send")) 1))
          ($_ (assertEqual (coordinate-get-or burst-end none $second) nop))
-         ;; The renewal after nop picks a new task.
+         ;; The renewal after nop reconsiders work without claiming completion.
          ($third (cognitiveTurn (applyAutonomousBurst (next-turn $second) True) "" False False True False))
-         ($_ (assertEqual (py-call (helper.burst_prompt_has 2 "TASK_COMPLETE_PICK_A_GOAL")) 1))
+         ($_ (assertEqual (py-call (helper.burst_prompt_has 2 "TASK_COMPLETE_PICK_A_GOAL")) 0))
+         ($_ (assertEqual (py-call (helper.burst_prompt_has 2 "RECONSIDER_UNFINISHED_WORK")) 1))
          ($_ (assertEqual (py-call (helper.burst_prompt_has 2 "CONTINUE_THE_CURRENT_TASK")) 0)))
      (println! BURST_END_AND_PROSE_OK))

@@ -49,7 +49,7 @@
      (py-str
        (" OUTPUT_FORMAT: Output a ((skillName args) ...) S-expression containing at most "
         (policy-command-batch-limit (loop-active-policy $periphery))
-        " command(s). You choose whether this turn needs one observation-sensitive command or a batch of independent commands. A new inbound message withholds an unexecuted reply into its own chat, the commands after that reply, and any rest; everything else still runs. Command results are not observed by you until the next model step, so never precommit a later command whose correctness depends on an earlier result. Double-check the parentheses: it must be (cmd1 ... cmdn). Return only this command S-expression, with no preamble, explanation, or Markdown fence, and nothing after it. Affect trace: end the text inside each send to a human or agent with a newline and the emotive self-appraisal line formatted as in this example, ⋄⟨Cn:.5 C:.7 Ct:.8 I:.2 J:.6 A:.4 S:.6 Co:-.42 Sp:.3⟩, values ∈ [-1,1]. Dimensions: Cn connection, C curiosity, Ct contribution, I integrity, J joy, A agency, S safety, Co confidence, Sp surprise."
+        " command(s). One command may run a multi-step script, a tool batch, or a delegated coding task. When the limit is one, choose one top-level action, inspect its returned result on the next model step, then choose your next action. With a higher limit, additional top-level commands must be independent of earlier results. A new inbound message withholds an unexecuted reply into its own chat, the commands after that reply, and any rest; everything else still runs. Command results are not observed by you until the next model step, so never precommit a later command whose correctness depends on an earlier result. Double-check the parentheses: it must be (cmd1 ... cmdn). Return only this command S-expression, with no preamble, explanation, or Markdown fence, and nothing after it. Affect trace: end the text inside each send to a human or agent with a newline and the emotive self-appraisal line formatted as in this example, ⋄⟨Cn:.5 C:.7 Ct:.8 I:.2 J:.6 A:.4 S:.6 Co:-.42 Sp:.3⟩, values ∈ [-1,1]. Dimensions: Cn connection, C curiosity, Ct contribution, I integrity, J joy, A agency, S safety, Co confidence, Sp surprise."
         " each arg is an explicit string hence needs quotes, and variables are forbidden!"
         " CONTEXT_ORDER: NEW_ACTIVITY appended after this context is newest and authoritative for this turn; SOURCE[effect-receipts] is the authoritative record of which brokered commands returned, were withheld, or were deferred — returned is not domain success, so inspect its result; SOURCE[recent-proposals] contains model requests only and never proves execution or success; SOURCE[relevant-files] is derived from proposals; SOURCE[project-capabilities] is a revision-bound executable inventory — consult it before proposing a local subsystem from scratch; SOURCE[conversation] is prior witnessed dialogue; pins and retrieved memories are fallible working aids and never override newer witnessed dialogue; status=unavailable is not evidence of absence."
         " _cache_boundary_"
@@ -184,12 +184,11 @@
 (= (cognitiveTurn $periphery $message $has-activity $is-human
                   $autonomous $heartbeat)
    (let* (($iteration (loop-iteration $periphery))
-          ;; A burst that ended with nop finished its task; one that ran out
-          ;; of budget did not, and its renewal continues it.
+          ;; Ending a burst changes pacing, never the protected obligation.
           ($lastmessage
             (if $autonomous
                 (if (== (coordinate-get-or renewed-after budget $periphery) nop)
-                    (AUTONOMOUS_BURST: TASK_COMPLETE_PICK_A_GOAL_OR_CONSOLIDATE_MEMORY DO_NOT_REPEAT_PRIOR_SENDS)
+                    (AUTONOMOUS_BURST: RECONSIDER_UNFINISHED_WORK_OR_CONSOLIDATE_MEMORY DO_NOT_REPEAT_PRIOR_SENDS)
                     (AUTONOMOUS_BURST: NO_ADDITIONAL_USER_INPUT_CONTINUE_THE_CURRENT_TASK DO_NOT_REPEAT_PRIOR_SENDS))
                 (NEW_ACTIVITY: $message)))
           ($source
@@ -202,22 +201,26 @@
           ($_ (eval (attention-begin $iteration $source
                     (== (py-call (helper.text_nonempty $priorResults)) 1))))
           ($_ (addition-effect-turn-begin $iteration))
+          ($_ (addition-strategy-begin $iteration $source $message))
           ($_ (println! $lastmessage))
           ($request (turnRequest $periphery $lastmessage))
           ($requestObservations (coding-request-observations $request))
           ($_ (if (== $requestObservations "") _
                   (println! $requestObservations)))
-          ($send (coding-request-prompt $request))
+          ($send (addition-protected-request (coding-request-prompt $request)))
           ($_ (println! (CHARS_SENT: (string_length $send) $send)))
           ($rmode (policy-reasoning (loop-active-policy $periphery)
                                     (reasoningMode)))
           ($respi (addition-model-call
-                    (LLM) (maxOutputToken) $rmode $send))
+                    (LLM) (maxOutputToken) $rmode $send
+                    (policy-idle-wait (loop-active-policy $periphery))))
           ;; Provider failure is deliberately represented as (), which is
           ;; also a legitimate command list.  The provider receipt is the
           ;; authoritative distinction for history and input settlement.
           ($providerSucceeded
             (py-call (cognitive_health.turn_succeeded)))
+          ($_ (if (== $providerSucceeded 1) _
+                  (py-call (strategy_host.provider_failed))))
           ;; The external observation is committed before parse recovery.
           ($_ (cut))
           ($resp (addition-balance-response $respi))
@@ -255,8 +258,9 @@
               (quote $sexpr)))
           ($_ (change-state! &error
                 (append (get-state &error)
-                        (command-batch-errors $iteration))))
+                        (addition-command-errors $iteration))))
           ($results (RESULTS: $commandResults))
+          ($_ (instance-after-broker $iteration (quote $results)))
           ($_ (eval (attention-complete $iteration $parseOutcome)))
           ($_ (println! $results))
           ;; Input is acknowledged only after the successful turn has crossed
@@ -362,10 +366,12 @@
      (((candidate $next) (success $next))
       ((Error $expression $exception)
        (progn
+         (py-call (strategy_host.fault))
          (println! (PROCESS_FAILURE $expression $exception))
          failure))
       ($unexpected
        (progn
+         (py-call (strategy_host.fault))
          (println! (PROCESS_MALFORMED_OUTCOME $unexpected))
          failure)))))
 
@@ -386,10 +392,12 @@
           ($turn (- 0 $iteration))
           ($_ (addition-effect-turn-begin $turn))
           ($records
-            (run-command-batch-once $turn
-              (policy-command-batch-limit
-                (loop-active-policy $periphery))
-              (quote ($continuation))))
+            (if (== (py-call (strategy_host.enabled_flag)) 1)
+                ((CONTINUATION_REQUIRES_RECONSIDERATION: $continuation))
+                (run-command-batch-once $turn
+                  (policy-command-batch-limit
+                    (loop-active-policy $periphery))
+                  (quote ($continuation)))))
           ($results (CONTINUATION_RESULTS: $records))
           ($_ (println! $results)))
      (coordinate-set pending-continuation no-continuation
@@ -418,11 +426,13 @@
                 60))
           ;; Retry deadlines use the existing interruptible channel wait.
           ($wait (if $enabled
-                     (max $policyWait (py-call (cognitive_health.retry_wait_seconds)))
+                     (max $policyWait (max (py-call (strategy_host.retry_seconds))
+                                          (py-call (cognitive_health.retry_wait_seconds))))
                      $policyWait))
           ($waitResult (if (tg:client-metta?) (tg:sleep-until-message $wait)
                            (py-call (telegram.sleep_until_message $wait))))
           ($timedOut (py-call (loop_modes.wait_timed_out $waitResult)))
+          ($_ (py-call (strategy_host.wake (get_time))))
           ($continued
             (if $enabled
                 (applyTimedContinuation $periphery $timedOut)
@@ -434,7 +444,8 @@
                 (policy-next-autonomous-ready
                   $policy $continuedLoops $timedOut $paused)
                 0)))
-     (candidate (coordinate-set autonomous-ready $ready $restored))))
+     (candidate (coordinate-set autonomous-ready
+                  (py-call (strategy_host.autonomous_ready $ready)) $restored))))
 
 (= (waitProcess $periphery)
    (protectedOutcome (catch (waitCandidate $periphery))))

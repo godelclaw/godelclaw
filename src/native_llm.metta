@@ -1,6 +1,6 @@
 ; Provider transport runs in CeTTa; model selection, operator admission and
 ; upstream Python transformations stay at explicit host boundaries.
-!(import! &self ./native_llm_host.py)
+!(import! &self ./src/native_llm_host.py)
 (: llm:host-flag (-> Atom Bool))
 (= (llm:host-flag $value)
    (case $value ((True True) (true True) ("true" True) ($other False))))
