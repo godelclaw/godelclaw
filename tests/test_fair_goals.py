@@ -24,6 +24,17 @@ def definition(name, share=1, interval=None, urgency=0, checker="operator"):
 
 
 class FairGoalsTest(unittest.TestCase):
+    def test_json_literal_and_quoted_data_have_same_encoding(self):
+        data = '[{"goal":"review","evidence":"a (call) and \\"quoted\\" text"}]'
+        raw = '(goal-review-save "digest" ' + data + ')'
+        expected = '(goal-review-save "digest" ' + json.dumps(data) + ')'
+        self.assertEqual(fair.quote_review_json(raw), expected)
+        self.assertEqual(fair.quote_review_json(expected), expected)
+        self.assertEqual(fair.quote_review_json(json.dumps(raw)), json.dumps(raw))
+        self.assertEqual(fair.quote_review_json('(other "digest" ' + data + ')'), '(other "digest" ' + data + ')')
+        self.assertEqual(fair.quote_review_json(raw[:-1] + ' extra)'), raw[:-1] + ' extra)')
+        self.assertEqual(fair.quote_review_json('(goal-review-save "digest" [{)'), '(goal-review-save "digest" [{)')
+
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)

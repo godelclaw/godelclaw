@@ -102,7 +102,7 @@ PAGES = {
         'Use checker:inventory-review only for a goal whose outcome is a saved inventory review.\n'
         'Policies preserve service history; notes and timestamps do not certify completion.'),
     "goal-review-save": (
-        'usage: (goal-review-save "inventory-digest" "JSON array")\n'
+        'usage: (goal-review-save "inventory-digest" JSON-array-or-quoted-JSON-string)\n'
         'Read (goals) first. Cover every goal exactly once with goal, disposition (keep/defer/propose-close),\n'
         'assessment, evidence and next_action. Record uncertainties and existing constraints.\n'
         'The matching observed receipt completes only this review cycle; it does not complete or restart\n'

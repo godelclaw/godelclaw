@@ -30,7 +30,7 @@
        (progn (py-call (cognitive_health.turn_failed "strategy-not-ready")) "()")))
 
 (= (addition-balance-response $raw)
-   (model-response-balance $raw))
+   (model-response-balance (py-call (strategy_host.normalize_response $raw))))
 (= (addition-envelope-response $balanced)
    (model-response-envelope $balanced))
 (= (addition-read-response $response)

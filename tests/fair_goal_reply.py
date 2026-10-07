@@ -24,7 +24,7 @@ def reply(*args):
         entries = [dict(goal=g["name"], disposition="keep", assessment="Current fixture goal",
                         evidence="Inventory note; no external claim", next_action="Read current evidence")
                    for g in view["inventory"]]
-        return "((goal-review-save " + json.dumps(view["inventory_digest"]) + " " + json.dumps(json.dumps(entries)) + "))"
+        return "((goal-review-save " + json.dumps(view["inventory_digest"]) + " " + json.dumps(entries) + "))"
     return "((help shell))"
 
 

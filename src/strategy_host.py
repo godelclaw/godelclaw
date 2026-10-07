@@ -266,6 +266,11 @@ def goal_review_save(inventory_digest, entries):
         return "GOAL_REVIEW_WITHHELD " + str(error)
 
 
+def normalize_response(response):
+    import fair_goals
+    return fair_goals.quote_review_json(response) if fair_enabled() else str(response)
+
+
 def provider_failed():
     if enabled() and _sample is not None:
         import cognitive_health

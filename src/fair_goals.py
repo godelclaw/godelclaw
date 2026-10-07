@@ -13,6 +13,46 @@ from observed_strategy import digest, encoded
 
 
 POLICY = re.compile(r'^\(goal-policy ([^\s()]+) share:(\d+) every:(once|\d+) urgency:(\d+) checker:(operator|inventory-review)\)$')
+REVIEW_CALL = re.compile(r'\(goal-review-save\s+("(?:\\.|[^"\\])*"|[^\s()]+)\s+')
+
+
+def quote_review_json(text):
+    """Accept a JSON array literal as the review command's data argument.
+
+    Preserve its bytes inside a MeTTa string; never rewrite quoted content,
+    incomplete JSON, additional arguments, or any other command. This is an
+    encoding adapter, with the same checker for literal and quoted input.
+    """
+    text = str(text)
+    result, i = [], 0
+    while i < len(text):
+        if text[i] == '"':
+            start = i
+            i += 1
+            while i < len(text):
+                if text[i] == '\\':
+                    i += 2
+                elif text[i] == '"':
+                    i += 1
+                    break
+                else:
+                    i += 1
+            result.append(text[start:i])
+            continue
+        match = REVIEW_CALL.match(text, i)
+        if match and text[match.end():].startswith('['):
+            start = match.end()
+            try:
+                value, end = json.JSONDecoder().raw_decode(text, start)
+                if isinstance(value, list) and text[end:].lstrip().startswith(')'):
+                    result.extend((text[i:start], json.dumps(text[start:end], ensure_ascii=False)))
+                    i = end
+                    continue
+            except ValueError:
+                pass
+        result.append(text[i])
+        i += 1
+    return ''.join(result)
 
 
 def definitions(path):
