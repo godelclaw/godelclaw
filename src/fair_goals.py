@@ -171,6 +171,16 @@ def snapshot(store, now):
         schema(db)
         goals = accounts(db, now)
         chosen = select(goals)
+        if chosen is not None:
+            # Carry the latest checked review into the goal's next turn. It
+            # remains an assessment, not authority to close or revive work.
+            review = db.execute("SELECT r.inventory,r.entries FROM goal_reviews r JOIN actions a ON a.ticket=r.ticket JOIN requests q ON q.id=a.request WHERE q.status='achieved' AND a.observed=1 ORDER BY r.rowid DESC LIMIT 1").fetchone()
+            if review:
+                entry = next((e for e in json.loads(review["entries"]) if e["goal"] == chosen["name"]), None)
+                if entry:
+                    chosen["last_review"] = dict(entry,
+                        source_unchanged=chosen["definition"] in json.loads(review["inventory"]),
+                        judgment_verified=False)
         return {"inventory": inventory(goals), "inventory_digest": digest(inventory(goals)),
                 "selected": chosen,
                 "queue": [{k: g[k] for k in ("id", "name", "share", "service", "age", "round", "blocked", "finished", "interval", "baseUrgency")} for g in goals if g["present"]]}

@@ -124,7 +124,11 @@ def begin(turn, source, message):
     with _lock:
         _turn, _sample, _ticket, _position = str(turn), None, None, 0
         _goal_view, _prepared_capture = None, None
-        _input_turn = bool(str(message).strip() and str(source) in ("operator-event", "channel-event"))
+        # A multi-action foreground request keeps its observation/reconsider
+        # steps. Autonomous scheduling resumes at the loop's existing wake
+        # boundary, not merely because the next step has no new message.
+        _input_turn = bool(str(message).strip() and str(source) in ("operator-event", "channel-event")) or (
+            _input_turn and str(source) == "continuation-tick")
         store = ledger()
         import loop_modes
         import lifecycle

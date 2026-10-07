@@ -105,6 +105,8 @@ The eligible goal with least service/share receives the next autonomous
 provider attempt; age and urgency break ties. Integer cross-products preserve
 exact ratios. Zero share disables autonomous scheduling. Incoming input takes
 precedence. Budget denial adds no service; admitted failures keep their charge.
+Foreground continuation steps keep their request until the existing loop policy
+opens an autonomous opportunity; absence of a new message is not such a boundary.
 Completion, restart, compaction and mode changes do not erase accounting.
 New recurring goals start due; completing a cycle starts its configured wait.
 
@@ -114,6 +116,8 @@ inventory and an observed, correlated result. It certifies a recorded review,
 not the truth of the assessments or completion of the reviewed work. Review
 is scheduled through the same queue as other goals. Removing or disabling a
 goal never completes its protected request.
+The latest completed review accompanies the selected goal's next turn, with
+an explicit indication of whether its source definition has since changed.
 
 `python3 -m unittest tests.test_fair_goals` checks the runtime adapter.
 `scripts/audit_fair_goals.py --ledger STATE/observed-strategy.sqlite3

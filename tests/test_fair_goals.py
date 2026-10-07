@@ -207,6 +207,10 @@ class FairGoalsTest(unittest.TestCase):
         self.assertEqual(len(self.store.active()), 0)
         self.assertEqual(self.services(), [0, 1])
         self.assertEqual(fair.snapshot(self.store, 100)["queue"][1]["round"], 1)
+        advice = fair.snapshot(self.store, 100)["selected"]["last_review"]
+        self.assertEqual(advice["disposition"], "defer")
+        self.assertTrue(advice["source_unchanged"])
+        self.assertFalse(advice["judgment_verified"])
 
 
 class FairHostTest(unittest.TestCase):
@@ -263,6 +267,22 @@ class FairHostTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "changed"):
                 llm_policy.admit("fixture", 10)
         self.assertEqual(host.goal_snapshot()["queue"][0]["service"], 0)
+
+    def test_foreground_continuation_precedes_autonomous_opportunities(self):
+        with patch.dict(sys.modules, telegram=SimpleNamespace(_current_batch_update_ids={101})):
+            host.begin(2, "operator-event", "request with several steps")
+        self.prepare(); llm_policy.admit("fixture", 10)
+        focus = host._sample["focus"]
+        host.ledger().decide(host._sample["serial"], {"kind": "text"}, 0, "control")
+        host.begin(3, "continuation-tick", "")
+        self.prepare(); llm_policy.admit("fixture", 10)
+        self.assertEqual(host._sample["focus"], focus)
+        self.assertEqual(host.goal_snapshot()["queue"][0]["service"], 0)
+        host.ledger().decide(host._sample["serial"], {"kind": "text"}, 0, "control")
+        host.begin(4, "autonomous-trigger", "")
+        self.prepare(); llm_policy.admit("fixture", 10)
+        self.assertTrue(host._sample["focus"].startswith("goal:"))
+        self.assertEqual(host.goal_snapshot()["queue"][0]["service"], 1)
 
     def test_existing_goal_writer_accepts_policy_without_replacing_goal(self):
         import goals
