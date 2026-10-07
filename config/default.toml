@@ -38,6 +38,9 @@ command_batch_limit = 5
 # Protected work, captured authority and durable action/result correlation in
 # managed godelclaw/coding. Standalone Iter/Omega keep their reference loops.
 observed_strategy = true
+# Optional weighted provider-turn service over memory/goals.metta. Goal review
+# is an ordinary recurring goal, configured with a goal-policy record.
+fair_goals = false
 
 [channel]
 # Communication channel: "telegram" (needs a bot token), "irc", or "mattermost".

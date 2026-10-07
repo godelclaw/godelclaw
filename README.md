@@ -90,6 +90,42 @@ The thirteen durable checkpoints can also be compared with MeTTapedia's
 executable model using `scripts/check_host_strategy.py --help`. These are model
 laws and tested runtime correspondence, not a proof of the C/Python runtime.
 
+Weighted goal scheduling is opt-in with `agent.fair_goals = true`. Definitions
+remain in `memory/goals.metta`; service counters and cycle receipts live in the
+same SQLite checkpoint as protected requests. For example:
+
+```metta
+(goal investigate Research sti:0.5 lti:0.5 vibes:() blocked-by:none last-verified:never note:"Inspect the current evidence")
+(goal review Maintenance sti:0.5 lti:0.5 vibes:() blocked-by:none last-verified:never note:"Review the goal inventory and record next steps")
+(goal-policy investigate share:2 every:once urgency:0 checker:operator)
+(goal-policy review share:1 every:86400 urgency:10 checker:inventory-review)
+```
+
+The eligible goal with least service/share receives the next autonomous
+provider attempt; age and urgency break ties. Integer cross-products preserve
+exact ratios. Zero share disables autonomous scheduling. Incoming input takes
+precedence. Budget denial adds no service; admitted failures keep their charge.
+Completion, restart, compaction and mode changes do not erase accounting.
+New recurring goals start due; completing a cycle starts its configured wait.
+
+`(goals)` includes the inventory digest. `(help "goal-review-save")` describes
+the structured review artifact. Its checker requires coverage of that exact
+inventory and an observed, correlated result. It certifies a recorded review,
+not the truth of the assessments or completion of the reviewed work. Review
+is scheduled through the same queue as other goals. Removing or disabling a
+goal never completes its protected request.
+
+`python3 -m unittest tests.test_fair_goals` checks the runtime adapter.
+`scripts/audit_fair_goals.py --ledger STATE/observed-strategy.sqlite3
+--lean-output Decisions.lean` checks durable accounting and exports numeric
+decisions for independent replay against MeTTapedia's `FairGoalScheduling`.
+Run the emitted file with the qualified model on `LEAN_PATH`; export alone is
+not a Lean verdict. New goals join at the current service floor; reweighting
+starts a new share epoch. Bounded-wait proofs apply to finite stable cohorts
+with continued admitted opportunities, not unlimited arrivals or wall time.
+This is weighted virtual service, not Linux's complete EEVDF algorithm.
+Existing provider budgets, wake policies and strict upstream modes are unchanged.
+
 For recorded live safety, `scripts/audit_strategy.py --help` reads each supplied
 ledger in a read-only transaction, maps identities without exporting message or
 result text, and checks the event trace and final saved state with MeTTapedia's

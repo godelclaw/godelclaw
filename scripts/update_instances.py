@@ -62,7 +62,7 @@ def running_settings(name, extra_keys=()):
                                      "--property=ControlGroup", "--value"], text=True).strip()
     keys = {b"METTACLAW_ACTIVE_LOOP_MODE", b"METTACLAW_ENGINE_STATE_PATH",
             b"METTACLAW_RECYCLE_REQUEST_PATH", b"METTACLAW_WAKE_REQUEST_PATH"}
-    allowed = {"METTACLAW_OBSERVED_STRATEGY", "METTACLAW_STRATEGY_PATH",
+    allowed = {"METTACLAW_OBSERVED_STRATEGY", "METTACLAW_STRATEGY_PATH", "METTACLAW_FAIR_GOALS",
                "METTACLAW_ACTIVE_ENGINE", "CETTA_BIN", "METTACLAW_LLM_TRANSPORT",
                "METTACLAW_LLM_POLICY", "METTACLAW_COMMAND_BATCH_LIMIT", "METTACLAW_INSTANCE"}
     allowed.update(key.decode() for key in keys)

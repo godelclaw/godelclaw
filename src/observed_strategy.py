@@ -204,7 +204,7 @@ class Ledger:
                         db.execute("UPDATE actions SET observed=1 WHERE ticket=?", (ticket,))
                         self.event(db, "observe", ticket=ticket)
 
-    def capture(self, focus, boundary, router, now, guard="", wake_seconds=600):
+    def capture(self, focus, boundary, router, now, guard="", wake_seconds=600, goal_lease=None):
         with self.transaction() as db:
             request = db.execute("SELECT status FROM requests WHERE id=?", (focus,)).fetchone()
             busy = db.execute("SELECT 1 FROM actions WHERE status IN ('issued','uncertain') OR (receipt IS NOT NULL AND observed=0) LIMIT 1").fetchone()
@@ -215,10 +215,18 @@ class Ledger:
                     or now < self.get(db, "cooldown")):
                 return None
             serial = self.get(db, "next_sample")
+            goal_charge = None
+            if goal_lease is not None:
+                import fair_goals
+                goal_charge = fair_goals.charge_capture(self, db, goal_lease, focus, serial, now)
+                if goal_charge is None:
+                    return None
             snap = {"serial": serial, "revision": self.get(db, "revision"),
                     "mode": self.get(db, "mode"), "owner": self.get(db, "owner"),
                     "focus": focus, "boundary_digest": digest(boundary),
                     "router": router, "guard": guard}
+            if goal_charge is not None:
+                snap["goal"] = goal_charge
             db.execute("INSERT INTO samples VALUES (?,?,'pending')", (serial, encoded(snap)))
             self.put(db, "next_sample", serial + 1)
             self.put(db, "pending", serial)
@@ -269,12 +277,16 @@ class Ledger:
             self.event(db, "report", ticket=ticket, disposition=disposition, domain=domain)
             return True
 
-    def finish(self, request, ticket, checkers):
+    def finish(self, request, ticket, checkers, *, now=None):
+        import fair_goals
+        import time
+        now = time.time() if now is None else now
         with self.transaction() as db:
             work = db.execute("SELECT * FROM requests WHERE id=? AND status='active'", (request,)).fetchone()
             action = db.execute("SELECT * FROM actions WHERE ticket=? AND request=?", (ticket, request)).fetchone()
             busy = db.execute("SELECT 1 FROM actions WHERE status IN ('issued','uncertain') OR (receipt IS NOT NULL AND observed=0) LIMIT 1").fetchone()
-            if not work or not action or not action["observed"] or busy or self.get(db, "pending") is not None:
+            if (not work or not action or not action["observed"] or busy or self.get(db, "pending") is not None
+                    or not fair_goals.may_complete(self, db, request, now)):
                 return False
             receipt = json.loads(action["receipt"])
             checker = checkers.get(work["checker"])
@@ -282,6 +294,7 @@ class Ledger:
                     or checker is None or not checker(dict(work), receipt)):
                 return False
             db.execute("UPDATE requests SET status='achieved' WHERE id=?", (request,))
+            fair_goals.completed(self, db, request, now)
             self.event(db, "finish", request=request, ticket=ticket)
             return True
 
@@ -291,6 +304,9 @@ class Ledger:
         with self.transaction() as db:
             changed = db.execute("UPDATE requests SET status='cancelled' WHERE id=? AND status='active'", (request,)).rowcount
             if changed:
+                import fair_goals
+                import time
+                fair_goals.cancelled(self, db, request, time.time())
                 self.event(db, "cancel", request=request)
             return bool(changed)
 

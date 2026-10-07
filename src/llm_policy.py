@@ -117,6 +117,14 @@ def admit(provider, max_output, *, now=None, mode=None):
                      (ticket, now, maximum, provider, mode))
         # Expired accounting windows no longer own admission authority.
         conn.execute("DELETE FROM requests WHERE started<?", (now-172800,))
+    # A managed goal is charged at the actual admission boundary, before a
+    # provider can run. Strict upstream callers have no prepared host capture.
+    try:
+        import strategy_host
+        strategy_host.provider_admitted()
+    except BaseException:
+        fail(ticket, sent=False, now=now)
+        raise
     return ticket
 
 

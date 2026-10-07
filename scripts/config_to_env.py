@@ -85,6 +85,7 @@ def main():
     emit("SYNTHETIC_BASE_URL", agent.get("synthetic_base_url"))
     emit("METTACLAW_COMMAND_BATCH_LIMIT", agent.get("command_batch_limit"))
     emit("METTACLAW_OBSERVED_STRATEGY", agent.get("observed_strategy"))
+    emit("METTACLAW_FAIR_GOALS", agent.get("fair_goals"))
 
     emit("METTACLAW_CHANNEL", channel.get("kind"))
 

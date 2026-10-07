@@ -163,7 +163,9 @@ def export_trace(view):
             term = f".{kind} {identity(requests, event['request'])} {ticket(event['ticket'])}"
         elif kind == "cancel":
             term = f".cancel {identity(requests, event['request'])}"
-        elif kind in {"wake", "compact"}:
+        elif kind in {"wake", "compact", "goal-admit", "goal-reweight", "goal-charge", "goal-complete", "goal-cancel"}:
+            # The separate fair-goal monitor checks scheduling and charging;
+            # these transitions preserve the protected-request projection.
             term = ".neutral"
         else:
             raise ValueError("unmodeled event")

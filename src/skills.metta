@@ -205,6 +205,8 @@
 (= (goal-write $atom)
    (py-call (goals.goal_write (py-call (helper.decode_safe_text $atom)))))
 (= (goal-drop $name $reason) (py-call (goals.goal_drop $name $reason)))
+(= (goal-review-save $digest $entries)
+   (py-call (strategy_host.goal_review_save $digest (py-call (helper.decode_safe_text $entries)))))
 
 ;; Claude Code bridge + tmux interface. Headless claude-code remains gated by
 ;; the operator toggle. Every window on this Unix user's tmux server is shared

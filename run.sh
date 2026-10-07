@@ -17,6 +17,7 @@ export METTACLAW_INSTANCE="$INSTANCE"
 # transport offset, or receipts merely because it imports the real loop.
 REQUESTED_TARGET="${1:-run.metta}"
 CALLER_OBSERVED_STRATEGY="${METTACLAW_OBSERVED_STRATEGY:-0}"
+CALLER_FAIR_GOALS="${METTACLAW_FAIR_GOALS:-0}"
 case "$REQUESTED_TARGET" in
     run.metta|"$ROOT/run.metta") NONLIVE_TARGET=0 ;;
     telegram-control) NONLIVE_TARGET=0 ;;
@@ -76,6 +77,7 @@ fi
 TEST_STATE_DIR=""
 if [ "$NONLIVE_TARGET" = 1 ]; then
     export METTACLAW_OBSERVED_STRATEGY="$CALLER_OBSERVED_STRATEGY"
+    export METTACLAW_FAIR_GOALS="$CALLER_FAIR_GOALS"
     TEST_STATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pettaclaw-probe.XXXXXX")"
     trap 'rm -rf -- "$TEST_STATE_DIR"' EXIT
     for state_name in "${STATE_PATH_NAMES[@]}"; do

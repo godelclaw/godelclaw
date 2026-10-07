@@ -21,6 +21,9 @@ _sample = None
 _ticket = None
 _position = 0
 _focus = None
+_input_turn = False
+_goal_view = None
+_prepared_capture = None
 
 # These tools only inspect host state; their decisions commute without an
 # intervening observation. Unknown tools and effects require a new model step.
@@ -36,6 +39,25 @@ def enabled():
 
 def enabled_flag():
     return int(enabled())
+
+
+def fair_enabled():
+    return enabled() and os.environ.get("METTACLAW_FAIR_GOALS", "0") == "1"
+
+
+def goal_snapshot():
+    import fair_goals
+    import goals
+    store = ledger()
+    now = time.time()
+    fair_goals.synchronize(store, fair_goals.definitions(goals._goals_path()), now)
+    return fair_goals.snapshot(store, now)
+
+
+def _goal_projection():
+    return dict(inventory_digest=_goal_view["inventory_digest"],
+                selected=_goal_view["selected"] if not _input_turn else None,
+                queue=_goal_view["queue"], input_preempts=_input_turn)
 
 
 def ledger():
@@ -70,6 +92,7 @@ def guard():
     import lifecycle
     import loop_modes
     import skills_help
+    import goals
     return strategy.digest({
         "mode": loop_modes.process_mode(),
         "selection": _file_identity(loop_modes._path()),
@@ -78,6 +101,7 @@ def guard():
         "router": skills_help.ARITY,
         "permission": os.environ.get("METTACLAW_PERMITTED_TOOLS", "*"),
         "implementation": _file_identity(str(Path(__file__).with_name("skills.pl"))),
+        "goal_inventory": _file_identity(goals._goals_path()) if fair_enabled() else None,
     })
 
 
@@ -94,11 +118,13 @@ def _stimulus_free():
 
 
 def begin(turn, source, message):
-    global _turn, _sample, _ticket, _position, _focus
+    global _turn, _sample, _ticket, _position, _focus, _input_turn, _goal_view, _prepared_capture
     if not enabled():
         return 1
     with _lock:
         _turn, _sample, _ticket, _position = str(turn), None, None, 0
+        _goal_view, _prepared_capture = None, None
+        _input_turn = bool(str(message).strip() and str(source) in ("operator-event", "channel-event"))
         store = ledger()
         import loop_modes
         import lifecycle
@@ -127,6 +153,32 @@ def prepare(prompt):
     """Append protected work/results after replaceable transformations."""
     if not enabled():
         return str(prompt)
+    global _focus, _goal_view
+    if fair_enabled():
+        import fair_goals
+        _goal_view = goal_snapshot()
+        if not _input_turn:
+            focus = fair_goals.accept_selected(ledger(), _goal_view)
+            if focus is not None:
+                _focus = focus
+            elif _focus is None or _focus.startswith("goal:"):
+                active = [r for r in ledger().active() if not r["id"].startswith("goal:")]
+                if active:
+                    _focus = active[-1]["id"]
+                else:
+                    _focus = "autonomous"
+                    ledger().accept(_focus, "Ongoing autonomous work; rest and nop do not certify task completion.")
+        prompt = str(prompt) + "\nFAIR_GOALS " + strategy.encoded(_goal_projection()) + (
+            "\nFor autonomous work, attend to the selected goal for this turn. First check its current "
+            "constraints: dormant, waiting, completed or superseded notes do not authorize restarting work. "
+            "Selection grants no new permissions. Preserve unfinished user work. A provider attempt consumes "
+            "one service unit even on failure; it does not complete the goal. (goals) shows the inventory. "
+            "For an inventory-review goal, save a complete review with (goal-review-save digest json-array); "
+            "each entry needs goal, disposition (keep/defer/propose-close), assessment, evidence and next_action. "
+            "Record uncertainty honestly; this records a review, not proof that its judgments are true. "
+            "Do not send routine review reports unless requested. Use goal-write to record justified policy changes."
+            " If no goal is eligible, do not revive a blocked goal; attend to retained user work or rest."
+        )
     projection = ledger().protected(_focus)
     payload = strategy.encoded(projection)
     return str(prompt) + "\n\nPROTECTED_STRATEGY " + payload + (
@@ -138,7 +190,7 @@ def prepare(prompt):
 
 
 def capture(prompt, wake_seconds):
-    global _sample, _focus
+    global _sample, _focus, _prepared_capture
     if not enabled():
         return 1
     with _lock:
@@ -148,9 +200,15 @@ def capture(prompt, wake_seconds):
         # Observe only the exact projection that actually survived preparation.
         if strategy.encoded(projection) not in str(prompt):
             return 0
+        if fair_enabled() and (_goal_view is None or
+                "FAIR_GOALS " + strategy.encoded(_goal_projection()) not in str(prompt)):
+            return 0
         presented = {r["ticket"]: [r] for r in projection["results"]}
         store.observe(presented, presented)
         store.finish_exact_results()
+        if fair_enabled():
+            import fair_goals
+            fair_goals.finish_reviews(store, time.time())
         if not any(r["id"] == _focus for r in store.active()):
             active = store.active()
             if active:
@@ -166,8 +224,46 @@ def capture(prompt, wake_seconds):
         permitted = executable if configured == "*" else [t for t in configured.split(",") if t in executable]
         router = {"advertised": executable, "executable": executable,
                   "permitted": permitted}
+        if fair_enabled():
+            if _prepared_capture is not None or _sample is not None:
+                return 0
+            lease = None
+            if not _input_turn and _goal_view and _goal_view["selected"]:
+                lease = {k: _goal_view["selected"][k] for k in ("id", "round", "service")}
+                lease["inventory_digest"] = _goal_view["inventory_digest"]
+            _prepared_capture = dict(focus=_focus, boundary=str(prompt), router=router,
+                                     guard=guard(), wake_seconds=float(wake_seconds), goal_lease=lease)
+            # Both Python and native providers pass llm_policy.admit. Capture
+            # and goal charging happen there, only after budget admission.
+            return 1
         _sample = store.capture(_focus, str(prompt), router, time.time(), guard(), float(wake_seconds))
         return int(_sample is not None)
+
+
+def provider_admitted():
+    global _sample, _prepared_capture
+    if not fair_enabled() or _prepared_capture is None:
+        return
+    with _lock:
+        proposed = _prepared_capture
+        _prepared_capture = None
+        goal_snapshot()  # recheck source edits and newly eligible goals
+        if proposed["guard"] != guard() or not _stimulus_free():
+            raise RuntimeError("strategy changed before provider admission")
+        _sample = ledger().capture(now=time.time(), **proposed)
+        if _sample is None:
+            raise RuntimeError("strategy not ready for provider admission")
+
+
+def goal_review_save(inventory_digest, entries):
+    if not fair_enabled():
+        return "GOAL_REVIEW_DISABLED"
+    try:
+        import fair_goals
+        goal_snapshot()
+        return fair_goals.save_review(ledger(), _ticket, str(inventory_digest), str(entries), time.time())
+    except (ValueError, TypeError) as error:
+        return "GOAL_REVIEW_WITHHELD " + str(error)
 
 
 def provider_failed():
@@ -317,12 +413,13 @@ def autonomous_ready(scheduled):
 
 def fault():
     """A failed host transition preserves work and reconciles saved results."""
-    global _sample, _ticket
+    global _sample, _ticket, _prepared_capture
     if enabled():
         ledger().restore()
         ledger().recover_recorded_actions()
         _sample = None
         _ticket = None
+        _prepared_capture = None
         import cognitive_health
         cognitive_health.turn_failed("host-transition-error")
     return 1

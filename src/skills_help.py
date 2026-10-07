@@ -8,7 +8,7 @@ turn that asks for it, and the checker answers format questions for free
 ARITY = {
     "requests": (0, 0), "request-status": (1, 1), "request-focus": (1, 1),
     "remember": (1, 1), "query": (1, 1), "pin": (1, 1), "unpin": (1, 1),
-    "goals": (0, 0), "goal-write": (1, 1), "goal-drop": (2, 2),
+    "goals": (0, 0), "goal-write": (1, 1), "goal-drop": (2, 2), "goal-review-save": (2, 2),
     "rest": (0, 2),
     "nop": (0, 0),
     "mode": (0, 0),
@@ -96,7 +96,17 @@ PAGES = {
         '        vibes:(a b) blocked-by:none last-verified:never note:free text))\n'
         'Liberal: quoted string or bare atom, commas or spaces in vibes,\n'
         'vibes omitted entirely — all accepted and normalized.\n'
-        'blocked-by and note: hyphenate-multi-word-values.'),
+        'blocked-by and note: hyphenate-multi-word-values.\n'
+        'Scheduling: (goal-write (goal-policy name share:1 every:once urgency:0 checker:operator))\n'
+        'share is a nonnegative integer (0 disables autonomous service); every is once or seconds.\n'
+        'Use checker:inventory-review only for a goal whose outcome is a saved inventory review.\n'
+        'Policies preserve service history; notes and timestamps do not certify completion.'),
+    "goal-review-save": (
+        'usage: (goal-review-save "inventory-digest" "JSON array")\n'
+        'Read (goals) first. Cover every goal exactly once with goal, disposition (keep/defer/propose-close),\n'
+        'assessment, evidence and next_action. Record uncertainties and existing constraints.\n'
+        'The matching observed receipt completes only this review cycle; it does not complete or restart\n'
+        'the reviewed goals, certify judgments, send messages, or change their policies.'),
     "goal-drop": (
         'usage: (goal-drop "name" "reason")\n'
         'Needs the cull-review flag on that goal, OR a reason starting with\n'

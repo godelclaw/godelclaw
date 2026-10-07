@@ -1,4 +1,4 @@
-"""Autonomic goal-stack kernel (Lila's to-mama spec v0.2, 2026-07-18).
+"""Autonomic goal-stack bookkeeping over the instance's inventory.
 
 Pure bookkeeping over memory/goals.metta — no LLM tokens. The kernel runs
 at wake events (boot, human-armed turn, heartbeat re-arm), NOT every loop
@@ -277,7 +277,12 @@ def goals_view(goals_path=None):
     lines = _read_lines(_goals_path(goals_path))
     if not lines:
         return "(no goals yet — add one with (goal-write ...))"
-    return "\n".join(lines)
+    text = "\n".join(lines)
+    import strategy_host
+    if strategy_host.fair_enabled() and goals_path is None:
+        view = strategy_host.goal_snapshot()
+        text += "\nFAIR_GOALS " + json.dumps(view, ensure_ascii=False, sort_keys=True)
+    return text
 
 
 def affect_view(goals_path=None):
@@ -447,6 +452,17 @@ def goal_write(atom, goals_path=None):
     with _LOCK:
         path = _goals_path(goals_path)
         text = _normalize_goal_text(atom)
+        import fair_goals
+        policy = fair_goals.POLICY.fullmatch(text)
+        if policy:
+            lines = _read_lines(path) or []
+            goals, _flags, _budget, _other = _parse(lines)
+            name = policy.group(1)
+            if name not in {g["name"] for g in goals}:
+                return "rejected: goal-policy requires an existing goal"
+            lines = [line for line in lines if not line.startswith("(goal-policy " + name + " ")]
+            _write_lines(path, lines + [text])
+            return "goal policy %s updated; service history is preserved" % name
         mb = _BUDGET_RE.match(text)
         if mb:
             budget = float(mb.group(1))
