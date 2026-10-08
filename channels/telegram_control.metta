@@ -19,6 +19,7 @@
 !(import! &self system)
 !(import! &self ./src/helper.py)
 !(import! &self ./src/mode_channel.py)
+!(import! &self ./src/input_ack.py)
 !(import! &self ./channels/energy.metta)
 
 (= (tc:env $name $default) (system:getenv-or-default $name $default))
@@ -212,10 +213,26 @@
                    ((JsonArray ((JsonString "callback") (JsonString $key) (JsonString $data) (JsonString $lane) $message))
                     (let $reply (tc:guarded (catch (tc:tap $data)) $data)
                       (if (tc:answer-task $task $reply) 1 0)))
+                   ((JsonArray ((JsonString "input") (JsonString $lane) (JsonString $kind) (JsonString $role) $update))
+                    (let $noticed (tc:guarded (catch (tc:input-notice $task $lane $kind $role)) "receipt notice") 0))
                    ($other 0)))
              (+ $done (tc:handle $tail))))))))
 
-(= (tc:serve-once) (tc:handle (tc:tasks-after "" 256)))
+; A delayed receipt notice leaves ordinary input pending for cognition.
+; Submission and delivery have independent durable service identities.
+(= (tc:input-notice $task $lane $kind $role)
+   (let $key (tc:text (py-call (input_ack.key $task $lane $kind $role)))
+     (if (== $key "") 0
+       (let $text (tc:text (py-call (input_ack.text)))
+         (let $body (json-stringify (JsonArray ((JsonArray ((JsonString "send") (JsonString $text) (JsonString "plain"))))))
+           (case (tc:call 4 $key $body)
+             (((cwp:reply 66 $name $answer) (py-call (input_ack.submitted $task)))
+              ($other 0))))))))
+
+(= (tc:serve-once)
+   (let $tasks (tc:tasks-after "" 256)
+     (let $retained (py-call (input_ack.begin_scan (quote $tasks)))
+       (tc:handle $tasks))))
 
 ; Forever: answer what is waiting, then look again shortly.
 (= (tc:serve)

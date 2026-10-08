@@ -491,6 +491,29 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
                    "delayed send has a delivery receipt")
             print("mode send survives a 6s delivery and exited tool worker; /mode persists within 3s during delivery")
 
+            # 13. A queued operator input gets a receipt notice without a
+            # cognitive process. It stays pending, and restarting the responder
+            # resubmits the same identity without sending a duplicate notice.
+            batch("!(tg:ack-activity-batch)\n")
+            responder[0].terminate()
+            responder[0].communicate(timeout=10)
+            notice_env = dict(env, METTACLAW_OBSERVED_STRATEGY="1",
+                              METTACLAW_INPUT_ACK_SECONDS="0.05")
+            responder = start('!(import! &self ./channels/telegram_control.metta)\n!(tc:serve)\n', notice_env)
+            notice = "Received. Your message is queued; /activity shows whether I'm waiting, retrying, or resting."
+            question = "still waiting for this independent receipt probe"
+            api.add(201, CHAT, OPERATOR, question)
+            await_(lambda: notice in [t for _, t in api.texts()], "independent receipt notice")
+            pending = lambda: durable_telegram.Channel(str(path), os.devnull).pending(256)
+            assert any(question in body for _, body in pending()), "notice consumed cognitive input"
+            responder[0].terminate()
+            responder[0].communicate(timeout=10)
+            responder = start('!(import! &self ./channels/telegram_control.metta)\n!(tc:serve)\n', notice_env)
+            time.sleep(.8)
+            assert sum(t == notice for _, t in api.texts()) == 1, "restart duplicated receipt notice"
+            assert any(question in body for _, body in pending()), "restart consumed cognitive input"
+            print("independent receipt notice preserves input and survives restart without duplicate delivery")
+
             print("responder: /mode answered in %.0f ms with no loop running, as the Python handler words it; "
                   "/wake ends a rest; /delete stays with the loop client (responder RSS %d kB)" % (latency * 1000, rss))
         finally:

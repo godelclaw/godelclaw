@@ -25,6 +25,23 @@ def recover(raw):
 
 
 class ResponseRecoveryTest(unittest.TestCase):
+    def test_explicit_batch_envelope_preserves_order_and_text(self):
+        raw = '''((command-batch (pin "It's a note (not code)") (send "I've checked.")))'''
+        self.assertEqual(helper.normalize_command_batches(raw),
+                         '''((pin "It's a note (not code)") (send "I've checked."))''')
+
+    def test_batch_normalization_does_not_unwrap_command_arguments(self):
+        for raw in ['((metta (command-batch (send "data"))))',
+                    '((send "(command-batch (pin note))"))',
+                    '((command-batch "not a command"))',
+                    '((command-batch (pin "unfinished))']:
+            self.assertEqual(helper.normalize_command_batches(raw), raw)
+
+    def test_nested_batch_envelopes_preserve_each_command_once(self):
+        raw = '(command-batch (send "a") (command-batch (pin "b") (query "c")))'
+        self.assertEqual(helper.normalize_command_batches(raw),
+                         '((send "a") (pin "b") (query "c"))')
+
     def test_well_formed_batches_are_unchanged(self):
         for raw, expected in [
             ('((send "hi") (pin "state"))', '((send "hi") (pin "state"))'),

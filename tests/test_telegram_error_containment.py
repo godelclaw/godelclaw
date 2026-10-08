@@ -98,10 +98,10 @@ class Containment(unittest.TestCase):
         f.close()
         return f.name
 
-    def start(self, source):
+    def start(self, source, env=None):
         name = self.program(source)
         p = subprocess.Popen([CETTA, "--lang", "petta", "--import-mode", "ancestor-walk", name],
-                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=ROOT, env=self.env)
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=ROOT, env=env or self.env)
         self.processes.append((p, name))
         return p
 
@@ -139,6 +139,34 @@ class Containment(unittest.TestCase):
         later = self.service.add(["command", "4", "/fuel", "", "42.0"])
         self.assertEqual(self.answered(later)[0], "answer")
         self.assertIsNone(responder.poll(), "the responder ended")
+
+    def test_receipt_notice_does_not_consume_input_and_survives_responder_restart(self):
+        env = dict(self.env, METTACLAW_OBSERVED_STRATEGY="1",
+                   METTACLAW_INPUT_ACK_SECONDS="0.05")
+        source = "!(import! &self ./channels/telegram_control.metta)\n!(tc:serve)\n"
+        responder = self.start(source, env)
+        task = self.service.add(["input", "42.0", "message", "operator", {}])
+        peer = self.service.add(["input", "42.0", "message", "peer", {}])
+        until = time.monotonic() + 15
+        while time.monotonic() < until:
+            with self.service.lock:
+                notices = dict(self.service.submissions)
+            if notices:
+                break
+            time.sleep(0.05)
+        self.assertEqual(len(notices), 1)
+        self.assertIn("Received.", next(iter(notices.values())))
+        self.assertNotIn(task, self.service.results)
+        self.assertNotIn(peer, self.service.results)
+        self.assertIsNone(responder.poll())
+        responder.terminate(); responder.wait(timeout=10)
+        responder = self.start(source, env)
+        command = self.service.add(["command", "c", "/fuel", "", "42.0"])
+        self.assertEqual(self.answered(command)[0], "answer")
+        time.sleep(0.5)
+        self.assertEqual(self.service.submissions, notices)
+        self.assertNotIn(task, self.service.results)
+        self.assertIsNone(responder.poll())
 
     def test_energy_never_raises(self):
         env = dict(self.env, METTACLAW_ENERGY_PATH=str(self.dir / "missing" / "energy.json"),

@@ -24,6 +24,7 @@ _focus = None
 _input_turn = False
 _goal_view = None
 _prepared_capture = None
+_broker_feedback = {"reason": "no-current-capture"}
 
 # These tools only inspect host state; their decisions commute without an
 # intervening observation. Unknown tools and effects require a new model step.
@@ -189,7 +190,12 @@ def prepare(prompt):
         "\nTask completion requires a configured checker and an observed successful receipt. "
         "nop, rest, advertisements, proposals and provider text do not complete work. "
         "Searches with incomplete coverage or stale scope cannot establish absence. "
-        "Use one action unless all commands are independent host observations."
+        "Use one action unless all commands are independent host observations. "
+        "Write commands as a list, for example ((pin \"note\") (send \"message\")). "
+        "A withheld command did not run: inspect its reason and reconsider. "
+        "Do not claim a repair or saved rule succeeded until its successful tool receipt is observed. "
+        "Distinguish observed facts from causal or motive hypotheses. "
+        "Outgoing prose uses ordinary apostrophes; do not imitate history escape tokens."
     )
 
 
@@ -272,7 +278,9 @@ def goal_review_save(inventory_digest, entries):
 
 def normalize_response(response):
     import fair_goals
-    return fair_goals.quote_review_json(response) if fair_enabled() else str(response)
+    import helper
+    text = fair_goals.quote_review_json(response) if fair_enabled() else str(response)
+    return helper.normalize_command_batches(text) if enabled() else text
 
 
 def provider_failed():
@@ -297,10 +305,11 @@ def broker_turn(turn):
 
 
 def broker_begin(turn, commands, limit=1):
-    global _ticket, _position, _turn
+    global _ticket, _position, _turn, _broker_feedback
     if not enabled():
         return 1
     with _lock:
+        _broker_feedback = {"reason": "no-current-capture"}
         if _sample is None or int(turn) != int(_sample["serial"]) + 1:
             return 0
         _turn = str(turn)
@@ -311,6 +320,7 @@ def broker_begin(turn, commands, limit=1):
         router = _sample["router"]
         for command in commands:
             if not isinstance(command, (list, tuple)) or not command:
+                _broker_feedback = {"reason": "malformed-command"}
                 provider_failed()
                 return 0
             name = str(command[0])
@@ -318,6 +328,14 @@ def broker_begin(turn, commands, limit=1):
             if (not bounds or name not in router["executable"] or name not in router["permitted"]
                     or len(command) - 1 < bounds[0]
                     or (bounds[1] is not None and len(command) - 1 > bounds[1])):
+                reason = ("unknown-tool" if not bounds else
+                          "tool-not-executable" if name not in router["executable"] else
+                          "tool-not-permitted" if name not in router["permitted"] else
+                          "wrong-arity")
+                _broker_feedback = {"reason": reason, "tool": name[:80],
+                                    "given_arguments": len(command) - 1}
+                if bounds:
+                    _broker_feedback["arguments"] = list(bounds)
                 ledger().decide(_sample["serial"], {"kind": "denied", "tool": name,
                     "request": _focus, "owner": _sample["owner"]}, time.time(), guard())
                 return 0
@@ -330,9 +348,17 @@ def broker_begin(turn, commands, limit=1):
         }, time.time(), live_guard)
         _position = 0
         if _ticket in ("stale", "denied", "ignored", "failure", "text"):
+            _broker_feedback = {"reason": _ticket}
             _ticket = None
             return 0
+        _broker_feedback = {"reason": "admitted", "limit": int(limit)}
         return 1
+
+
+def broker_feedback():
+    """Explain admission without changing or granting tool authority."""
+    with _lock:
+        return strategy.encoded(_broker_feedback)
 
 
 def reserve_command(turn, command):

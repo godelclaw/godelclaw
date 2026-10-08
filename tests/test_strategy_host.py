@@ -61,11 +61,37 @@ class StrategyHostTest(unittest.TestCase):
         with mock.patch.object(host, "_stimulus_free", return_value=False):
             self.assertEqual(host.broker_begin(1, [["shell", "mutate"]]), 0)
         self.assertEqual(host.ledger().projection()["actions"], [])
+        self.assertEqual(json.loads(host.broker_feedback())["reason"], "stale")
 
     def test_transformed_advertisement_cannot_grant_a_tool(self):
         self.capture()
         self.assertEqual(host.broker_begin(1, [["invented", "payload"]]), 0)
         self.assertEqual(host.ledger().projection()["actions"], [])
+        self.assertEqual(json.loads(host.broker_feedback())["reason"], "unknown-tool")
+
+    def test_batch_envelope_is_syntax_only_and_keeps_one_action_limit(self):
+        raw = '((command-batch (pin "note") (send "message")))'
+        self.assertEqual(host.normalize_response(raw), '((pin "note") (send "message"))')
+        commands = [["pin", "note"], ["send", "message"]]
+        self.assertEqual(host.batch_limit(5, commands), 1)
+        self.capture()
+        self.assertEqual(host.broker_begin(1, commands, 1), 1)
+        action = host.ledger().projection()["actions"][0]
+        self.assertEqual(json.loads(action["command"])["limit"], 1)
+
+    def test_wrong_arity_reports_expected_arguments(self):
+        self.capture()
+        self.assertEqual(host.broker_begin(1, [["pin"]]), 0)
+        reason = json.loads(host.broker_feedback())
+        self.assertEqual(reason["reason"], "wrong-arity")
+        self.assertEqual(reason["arguments"], [1, 1])
+        self.assertEqual(reason["given_arguments"], 0)
+        self.assertEqual(host.ledger().projection()["actions"], [])
+
+    def test_upstream_profile_retains_original_response(self):
+        raw = '((command-batch (pin "note")))'
+        with mock.patch.dict(os.environ, {"METTACLAW_OBSERVED_STRATEGY": "0"}):
+            self.assertEqual(host.normalize_response(raw), raw)
 
     def test_only_known_independent_observations_batch(self):
         self.assertEqual(host.batch_limit(5, [["help", "shell"], ["vitals"]]), 5)

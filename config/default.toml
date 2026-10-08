@@ -34,6 +34,9 @@ synthetic_base_url = "https://api.synthetic.new/openai/v1"
 synthetic_model = "syn:large:text"
 # Provider request timeout, in seconds.
 llm_timeout_seconds = 120
+# Delay for an independent receipt notice while managed input stays queued;
+# zero disables notices. Standalone upstream profiles do not send them.
+input_ack_seconds = 15
 # Top-level commands per model response in godelclaw/coding; a script or
 # delegated batch is one command. Iter/Omega retain their upstream dispatch.
 command_batch_limit = 5

@@ -66,6 +66,11 @@ def main():
               file=sys.stderr)
         return 2
     channel = config.get("channel", {})
+    ack_delay = agent.get("input_ack_seconds", 15)
+    if (isinstance(ack_delay, bool) or not isinstance(ack_delay, (int, float))
+            or not math.isfinite(ack_delay) or ack_delay < 0):
+        print("agent.input_ack_seconds must be a finite nonnegative number", file=sys.stderr)
+        return 2
     telegram = config.get("telegram", {})
     search = config.get("search", {})
     context = config.get("context", {})
@@ -92,6 +97,7 @@ def main():
     emit("SYNTHETIC_MODEL", agent.get("synthetic_model"))
     emit("SYNTHETIC_BASE_URL", agent.get("synthetic_base_url"))
     emit("SYNTHETIC_TIMEOUT", timeout)
+    emit("METTACLAW_INPUT_ACK_SECONDS", ack_delay)
     emit("METTACLAW_COMMAND_BATCH_LIMIT", agent.get("command_batch_limit"))
     emit("METTACLAW_OBSERVED_STRATEGY", agent.get("observed_strategy"))
     emit("METTACLAW_FAIR_GOALS", agent.get("fair_goals"))

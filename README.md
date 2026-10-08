@@ -67,6 +67,12 @@ Natural-language task acceptance and the truth of prose remain host obligations.
 An interrupted effect without a saved result stays uncertain and requires
 reconciliation; it is not automatically repeated.
 
+The independent Telegram control responder can acknowledge operator messages
+while cognition is waiting. `agent.input_ack_seconds` sets the delay (15 seconds
+by default; zero disables it). Notices leave the input pending and use stable
+delivery identities to avoid repeated delivery after responder restarts. They
+are limited to one notice per lane per minute and require the managed strategy.
+
 `(requests)`, `(request-status "id")` and `(request-focus "id")` expose retained
 work. Search results without exhaustive, revision-matched coverage explicitly
 leave absence unproved. Large result projections include a truncation flag and

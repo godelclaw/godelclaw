@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ManagedRuntimeTest(unittest.TestCase):
-    def exercise(self, fixture, marker, expected_commands):
+    def exercise(self, fixture, marker, expected_commands, expected_deferred=None):
         engines = []
         if Path(os.environ.get("CETTA_BIN", "")).is_file():
             engines.append("cetta")
@@ -35,9 +35,19 @@ class ManagedRuntimeTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, (result.stdout + result.stderr)[-4000:])
                 self.assertIn("\n" + marker + "\n", result.stdout)
                 receipts = [json.loads(line) for line in (Path(temporary) / "effects.jsonl").read_text().splitlines()]
-                self.assertEqual([r["command"] for r in receipts],
+                executed = [r for r in receipts if "command" in r]
+                deferred = [r for r in receipts if "commands" in r]
+                self.assertEqual([r["command"] for r in executed],
                                  [str(command) for command in expected_commands])
-                self.assertEqual(len({str(r["turn"]) for r in receipts}), len(receipts))
+                self.assertEqual(len({str(r["turn"]) for r in executed}), len(executed))
+                self.assertEqual([r["commands"] for r in deferred],
+                                 [str(commands) for commands in expected_deferred or []])
+                self.assertTrue(all(r["disposition"] == "deferred" for r in deferred))
+
+    def test_batch_envelope_and_precise_feedback_on_available_engines(self):
+        self.exercise("tests/command_feedback_probe.metta", "COMMAND_FEEDBACK_OK",
+                      [["pin", "verified note"], ["help", "pin"]],
+                      [[["send", "must remain deferred"]]])
 
     def test_stale_reply_and_recovery_on_available_engines(self):
         self.exercise("tests/observed_strategy_probe.metta", "OBSERVED_STRATEGY_OK",

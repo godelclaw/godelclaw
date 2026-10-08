@@ -131,6 +131,48 @@ def _commands_in(form):
     return [c for sub in _top_level_forms(inner)[0] for c in _commands_in(sub)]
 
 
+def normalize_command_batches(raw):
+    """Unwrap explicit batch envelopes without reading or running commands.
+
+    Argument strings and ordinary command arguments remain byte-for-byte
+    intact. Permission, freshness and pacing checks belong to the broker.
+    An incomplete envelope is left for the normal parser to reject.
+    """
+    text = str(raw)
+    forms, clean = _top_level_forms(text)
+    if not clean:
+        return text
+    changed = False
+
+    def children_only(inner):
+        children, complete = _top_level_forms(inner)
+        rest = inner
+        for child in children:
+            rest = rest.replace(child, "", 1)
+        return children if complete and not rest.strip() else None
+
+    def unwrap(form, depth=0):
+        nonlocal changed
+        if depth >= 64:
+            return [form]
+        inner = form[1:-1].strip()
+        if inner.startswith("("):
+            children = children_only(inner)
+        elif inner.split(None, 1)[:1] == ["command-batch"]:
+            children = children_only(inner[len("command-batch"):].strip())
+            if children is None:
+                return [form]
+            changed = True
+        else:
+            return [form]
+        if children is None:
+            return [form]
+        return [command for child in children for command in unwrap(child, depth + 1)]
+
+    commands = [command for form in forms for command in unwrap(form)]
+    return "(" + " ".join(commands) + ")" if changed else text
+
+
 # ---- wake vitals -------------------------------------------------------------
 # Interoception measured by the runtime, never inferred by the model: how long
 # since the previous turn, and how loaded the machine is.  The prompt is built

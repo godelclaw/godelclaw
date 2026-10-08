@@ -64,7 +64,8 @@ def running_settings(name, extra_keys=()):
             b"METTACLAW_RECYCLE_REQUEST_PATH", b"METTACLAW_WAKE_REQUEST_PATH"}
     allowed = {"METTACLAW_OBSERVED_STRATEGY", "METTACLAW_STRATEGY_PATH", "METTACLAW_FAIR_GOALS",
                "METTACLAW_ACTIVE_ENGINE", "CETTA_BIN", "METTACLAW_LLM_TRANSPORT",
-               "METTACLAW_LLM_POLICY", "METTACLAW_COMMAND_BATCH_LIMIT", "METTACLAW_INSTANCE"}
+               "METTACLAW_LLM_POLICY", "METTACLAW_COMMAND_BATCH_LIMIT", "METTACLAW_INSTANCE",
+               "METTACLAW_INPUT_ACK_SECONDS"}
     allowed.update(key.decode() for key in keys)
     if set(extra_keys) - allowed:
         raise ValueError("runtime checks may inspect only nonsecret settings")

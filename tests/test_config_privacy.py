@@ -68,6 +68,23 @@ class ConfigPrivacyTest(unittest.TestCase):
         self.assertNotIn("METTACLAW_TELEGRAM_SENDER_NAMES", result.stdout)
         self.assertNotIn("METTACLAW_TELEGRAM_ALLOWED_CHAT_IDS", result.stdout)
 
+    def test_receipt_delay_is_validated_before_rendering(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "local.toml"
+            for value in ("-1", "nan", "inf", "true", '"private-value"'):
+                path.write_text('[agent]\ninput_ack_seconds = ' + value + '\n')
+                result = subprocess.run(
+                    ["python3", str(ROOT / "scripts" / "config_to_env.py"), str(path), str(ROOT)],
+                    capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stdout, "")
+                self.assertNotIn("private-value", result.stderr)
+            path.write_text('[agent]\ninput_ack_seconds = 0\n')
+            result = subprocess.run(
+                ["python3", str(ROOT / "scripts" / "config_to_env.py"), str(path), str(ROOT)],
+                capture_output=True, text=True, check=True)
+            self.assertIn("METTACLAW_INPUT_ACK_SECONDS='0'", result.stdout)
+
     def test_invalid_request_deadlines_fail_without_rendering_a_partial_config(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp) / "local.toml"
