@@ -3,6 +3,7 @@
 config/local.toml
 config/secrets.env
 config/channel.metta
+config/.edit.lock
 .mcp.json
 *.log
 *.pid

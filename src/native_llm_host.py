@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 from types import SimpleNamespace
 import threading
 import uuid
@@ -154,6 +155,7 @@ def claim(plan):
 def submitted(plan, transport_id):
     plan.sent = True
     plan.transport = int(transport_id)
+    plan.submitted_at = time.monotonic()
     return True
 
 
@@ -203,7 +205,30 @@ def duplicate_plan(plan):
     raise RuntimeError("duplicate native plan")
 
 
+def _record_failure(plan, kind, status=0):
+    """Keep diagnostic categories without logging request or response bytes."""
+    known = {"admission-error", "submit-error", "transport-error", "decode-error",
+             "http-status", "correlation-error", "duplicate-completion",
+             "invalid-phase", "retired-handle", "unfinished-provider-response",
+             "refused-tool-call"}
+    code = str(kind)
+    code = code if code in known else "provider-error"
+    provider = getattr(plan, "provider", "unknown")
+    if provider not in ("synthetic", "anthropic", "openai"):
+        provider = "unknown"
+    status = int(status)
+    status = status if 100 <= status <= 599 else 0
+    started = getattr(plan, "submitted_at", None)
+    elapsed = max(0, int((time.monotonic() - started) * 1000)) if started is not None else 0
+    deadline = int(getattr(plan, "timeout", 0))
+    sent = "true" if getattr(plan, "sent", False) else "false"
+    print(f"[native_llm] failed request: {code}; provider={provider}; "
+          f"status={status}; sent={sent}; elapsed_ms={elapsed}; deadline_ms={deadline}",
+          file=sys.stderr)
+
+
 def failed(plan, correlation, kind, status=0):
+    _record_failure(plan, kind, status)
     if getattr(plan, "ready", "false") == "true":
         llm_policy.fail(plan.correlation, status=int(status) or None, sent=plan.sent)
     error = getattr(plan, "error", RuntimeError(str(kind)))

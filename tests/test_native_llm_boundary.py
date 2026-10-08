@@ -26,7 +26,10 @@ class Peer(http.server.BaseHTTPRequestHandler):
         body = json.dumps(self.server.reply).encode()
         self.send_response(self.server.status)
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
 
 @unittest.skipUnless(os.environ.get("CETTA_BIN"), "set CETTA_BIN to an HTTP-enabled Python build")
@@ -215,9 +218,41 @@ class NativeBoundaryTests(unittest.TestCase):
             '!(llm:command "fixture-model" 42 "low" "input")\n' * 2)
         self.run_guest(forms)
         self.assertEqual(len(self.peer.requests), 1)
+        self.assertIn("failed request: http-status; provider=synthetic; status=429", self.last_stderr)
         self.env["METTACLAW_LLM_POLICY"] = "upstream"
         self.run_guest(forms)
         self.assertEqual(len(self.peer.requests), 3)
+
+    def test_configured_deadline_recovers_a_slow_request_and_preserves_failed_work(self):
+        self.peer.delay = 1.6
+        forms = f'!(import! &self "{ROOT}/src/native_llm.metta")\n' + (
+            '!(println! (RESULT (llm:command "fixture-model" 42 "low" "input")))\n')
+        self.env["SYNTHETIC_TIMEOUT"] = "1"
+        out = self.run_guest(forms)
+        self.assertIn("(RESULT ())", out)
+        self.assertIn("failed request: transport-error", self.last_stderr)
+        self.assertIn("deadline_ms=1000", self.last_stderr)
+        health = json.loads((self.directory / "health.json").read_text())
+        self.assertEqual(health["last_outcome"], "failed")
+        self.assertGreater(health["obligation_since"], 0)
+        self.env["SYNTHETIC_TIMEOUT"] = "3"
+        out = self.run_guest(forms)
+        self.assertIn("(RESULT (nop))", out)
+        self.assertNotIn("failed request:", self.last_stderr)
+        self.assertEqual(len(self.peer.requests), 2)
+        health = json.loads((self.directory / "health.json").read_text())
+        self.assertEqual(health["last_outcome"], "completed")
+
+    def test_failure_diagnostics_do_not_print_unknown_payloads(self):
+        fixture = self.directory / "diagnostic_fixture.py"
+        fixture.write_text('from types import SimpleNamespace\nimport native_llm_host\n'
+            'def probe():\n'
+            '    native_llm_host._record_failure(SimpleNamespace(provider="fixture-secret", '
+            'sent=False), "fixture-secret https://private.invalid", 0)\n'
+            '    return True\n')
+        self.run_guest(f'!(import! &self "{fixture}")\n!(py-call (diagnostic_fixture.probe))\n')
+        self.assertIn("failed request: provider-error; provider=unknown", self.last_stderr)
+        self.assertNotIn("private.invalid", self.last_stderr)
 
     def test_credential_scope_rejects_different_origin_and_redirects(self):
         self.env.update(CETTA_IO_AUTH_FIXTURE_URL_PREFIX=self.env["SYNTHETIC_BASE_URL"]+"/",

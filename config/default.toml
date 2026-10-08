@@ -32,6 +32,8 @@ owner = "$USER"
 # Any OpenAI-compatible provider. Put the key in config/secrets.env.
 synthetic_base_url = "https://api.synthetic.new/openai/v1"
 synthetic_model = "syn:large:text"
+# Provider request timeout, in seconds.
+llm_timeout_seconds = 120
 # Top-level commands per model response in godelclaw/coding; a script or
 # delegated batch is one command. Iter/Omega retain their upstream dispatch.
 command_batch_limit = 5

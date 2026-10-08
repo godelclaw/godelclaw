@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import sys
+import math
 
 try:
     import tomllib
@@ -57,6 +58,13 @@ def main():
 
     paths = config.get("paths", {})
     agent = config.get("agent", {})
+    timeout = agent.get("llm_timeout_seconds")
+    if timeout is not None and (isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout) or timeout < 1):
+        print("agent.llm_timeout_seconds must be a finite number of at least one second",
+              file=sys.stderr)
+        return 2
     channel = config.get("channel", {})
     telegram = config.get("telegram", {})
     search = config.get("search", {})
@@ -83,6 +91,7 @@ def main():
     emit("METTACLAW_OWNER", expand(agent.get("owner"), root))
     emit("SYNTHETIC_MODEL", agent.get("synthetic_model"))
     emit("SYNTHETIC_BASE_URL", agent.get("synthetic_base_url"))
+    emit("SYNTHETIC_TIMEOUT", timeout)
     emit("METTACLAW_COMMAND_BATCH_LIMIT", agent.get("command_batch_limit"))
     emit("METTACLAW_OBSERVED_STRATEGY", agent.get("observed_strategy"))
     emit("METTACLAW_FAIR_GOALS", agent.get("fair_goals"))

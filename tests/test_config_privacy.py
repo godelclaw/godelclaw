@@ -30,6 +30,7 @@ class ConfigPrivacyTest(unittest.TestCase):
         self.assertIn("/repos/CeTTa-runtime'", result.stdout)
         self.assertIn("METTACLAW_RECENT_ACTION_TURNS='12'", result.stdout)
         self.assertIn("METTACLAW_CONVERSATION_EVENTS='64'", result.stdout)
+        self.assertIn("SYNTHETIC_TIMEOUT='120'", result.stdout)
         self.assertNotIn("METTACLAW_REPORTS_ROOT", result.stdout)
         self.assertNotIn("METTACLAW_PROJECT_REGISTRY_PATH", result.stdout)
         self.assertNotIn(str(ROOT / "telegram_offset.txt"), result.stdout)
@@ -66,6 +67,19 @@ class ConfigPrivacyTest(unittest.TestCase):
         self.assertNotIn("METTACLAW_TELEGRAM_LIGHT_ARM_IDS", result.stdout)
         self.assertNotIn("METTACLAW_TELEGRAM_SENDER_NAMES", result.stdout)
         self.assertNotIn("METTACLAW_TELEGRAM_ALLOWED_CHAT_IDS", result.stdout)
+
+    def test_invalid_request_deadlines_fail_without_rendering_a_partial_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "local.toml"
+            for value in ("0", "-1", "nan", "inf", "true", '"private-value"'):
+                with self.subTest(value=value):
+                    path.write_text('[agent]\nllm_timeout_seconds = ' + value + '\n')
+                    result = subprocess.run(
+                        ["python3", str(ROOT / "scripts" / "config_to_env.py"),
+                         str(path), str(ROOT)], capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertEqual(result.stdout, "")
+                    self.assertNotIn("private-value", result.stderr)
 
 
 if __name__ == "__main__":

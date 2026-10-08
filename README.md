@@ -169,7 +169,25 @@ not start an agent or register a Telegram bot.
 | `config/local.toml` | Evaluator paths, Python environment, provider endpoint/model, channel and storage locations. Seeded from [the defaults](config/default.toml). |
 | `config/secrets.env` | Provider credentials, bot token, operator IDs and allowed chats. See [the field examples](config/secrets.env.example). |
 | `memory/prompt.txt` | Your agent's identity, goals and operating instructions. Initialization seeds the reusable [default prompt](identity/default-prompt.txt); customize your private copy. |
-| `.env` | Generated settings; regenerate with `initialize.sh` after editing `config/local.toml`. |
+| `.env` | Generated settings; startup regenerates this file from `config/local.toml`. |
+
+Use the configuration command to inspect, validate or change a nonsecret
+setting while preserving the other settings:
+
+```bash
+python3 scripts/config_ctl.py check
+python3 scripts/config_ctl.py get agent.llm_timeout_seconds
+python3 scripts/config_ctl.py --dry-run set agent.llm_timeout_seconds 300
+python3 scripts/config_ctl.py set agent.llm_timeout_seconds 300
+```
+
+The command returns JSON, serializes concurrent edits, validates before writing,
+and replaces each file atomically. It writes the authoritative TOML first and
+then generates `.env`; startup regenerates `.env` even when initialization is
+skipped. Existing processes adopt settings at their next normal restart. Keys
+absent from the default configuration and credential fields are rejected;
+credentials stay in `config/secrets.env`. Direct TOML edits can be validated
+with `check` and applied to the generated file with `render`.
 
 Set `paths.petta_root`, `paths.petta_py_env` and, if used, `paths.cetta_root` to
 your installations. The default provider adapter uses an OpenAI-compatible

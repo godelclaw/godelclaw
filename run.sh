@@ -62,6 +62,12 @@ if [ "${METTACLAW_SKIP_INITIALIZE:-0}" != "1" ] && [ -x "$ROOT/initialize.sh" ];
     "$ROOT/initialize.sh" >/dev/null
 fi
 
+# Configuration rendering is lightweight and independent of initialization.
+# A skipped initializer must not leave a stale generated environment at boot.
+if [ -f "$ROOT/config/local.toml" ] && [ -f "$ROOT/scripts/config_ctl.py" ]; then
+    "${PYTHON:-python3}" "$ROOT/scripts/config_ctl.py" render >/dev/null
+fi
+
 if [ -f "$ROOT/.env" ]; then
     set -a
     . "$ROOT/.env"
