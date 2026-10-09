@@ -76,13 +76,20 @@ def begin_scan(tasks):
             continue
         try:
             value = json.loads(str(body))
-            if isinstance(value, list) and len(value) == 5 and value[0] == "input":
+            if not isinstance(value, list) or not value:
+                known = False
+            elif value[0] == "input":
+                if len(value) != 5:
+                    known = False
+                    continue
                 if value[2] == "message" and value[3] == "operator":
                     update = value[4]
                     message = update.get("message") or update.get("edited_message")
                     stamp = message.get("date") if isinstance(message, dict) else None
                     dates.append(stamp if type(stamp) in (int, float) and
                                  0 < stamp <= 10**12 and math.isfinite(stamp) else None)
+            elif value[0] not in ("command", "callback", "delivery", "rejected", "released"):
+                known = False
         except (ValueError, TypeError, AttributeError, RecursionError):
             known = False
     _input_view = ({"pending": len(dates), "newestMessageAt": max(dates) if dates and None not in dates else None,

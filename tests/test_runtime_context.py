@@ -125,6 +125,12 @@ class RuntimeContextTest(unittest.TestCase):
             input_ack.begin_scan(tasks)
             self.assertIsNone(input_ack.input_view())
 
+    def test_unfamiliar_input_format_cannot_establish_an_empty_inbox(self):
+        import input_ack
+        for body in (["input", "new-format"], ["future-input", {}], {}):
+            input_ack.begin_scan([["task", json.dumps(body)]])
+            self.assertIsNone(input_ack.input_view())
+
     def test_memory_watermarks_do_not_claim_missing_document_count(self):
         self.assertIsNone(view.read(self.now)["memory"])
         self.memory()
