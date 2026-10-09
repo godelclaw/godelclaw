@@ -214,14 +214,14 @@
                     (let $reply (tc:guarded (catch (tc:tap $data)) $data)
                       (if (tc:answer-task $task $reply) 1 0)))
                    ((JsonArray ((JsonString "input") (JsonString $lane) (JsonString $kind) (JsonString $role) $update))
-                    (let $noticed (tc:guarded (catch (tc:input-notice $task $lane $kind $role)) "receipt notice") 0))
+                    (let $noticed (tc:guarded (catch (tc:input-notice $task $lane $kind $role $update)) "receipt notice") 0))
                    ($other 0)))
              (+ $done (tc:handle $tail))))))))
 
 ; A delayed receipt notice leaves ordinary input pending for cognition.
 ; Submission and delivery have independent durable service identities.
-(= (tc:input-notice $task $lane $kind $role)
-   (let $key (tc:text (py-call (input_ack.key $task $lane $kind $role)))
+(= (tc:input-notice $task $lane $kind $role $update)
+   (let $key (tc:text (py-call (input_ack.key $task $lane $kind $role (json-stringify $update))))
      (if (== $key "") 0
        (let $text (tc:text (py-call (input_ack.text)))
          (let $body (json-stringify (JsonArray ((JsonArray ((JsonString "send") (JsonString $text) (JsonString "plain"))))))
@@ -232,7 +232,8 @@
 (= (tc:serve-once)
    (let $tasks (tc:tasks-after "" 256)
      (let $retained (py-call (input_ack.begin_scan (quote $tasks)))
-       (tc:handle $tasks))))
+       (let $handled (tc:handle $tasks)
+         (let $cleaned (tc:guarded (catch (py-call (input_ack.pump))) "receipt cleanup") $handled)))))
 
 ; Forever: answer what is waiting, then look again shortly.
 (= (tc:serve)

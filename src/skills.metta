@@ -1,3 +1,4 @@
+!(import! &self ./src/topic_jobs.py)
 (= (getSkills)
    (;INTERNAL:
     "- Remember a particular string such as skills and memories: (remember \"string\")"
@@ -17,6 +18,10 @@
     "- List active/disabled hot-reloaded MeTTa Iter request transformations: (iter-transformations)"
     "- Directly install or replace a mutable MeTTa transformation for the next model turn; failures stutter locally: (iter-transform-write \"10_name.metta\" \"(= (iter-transform $visible) (success $visible))\")"
     "- Reversibly disable or enable one Iter transformation using the leading-underscore convention: (iter-transform-disable \"10_name.metta\") | (iter-transform-enable \"10_name.metta\")"
+    "- Inspect authoritative command receipts: (command-receipts)"
+    "- Separate topic notes, always keeping operator messages reachable: (topics) | (topic-select \"name\") | (topic-note \"notes\")"
+    "- Start a concurrent read-only model strand: (background-model \"topic\" \"question\") | (background-model \"topic\" \"question\" \"JSON dependency names\")"
+    "- Model strand evidence: (model-jobs) | (model-result \"id\"); inspect its receipt before (model-adopt \"id\") or (model-retire \"id\")"
     ;SHELL AND FILE I/O:
     "- Execute shell command, it returns the command output to you: (shell \"command string\")"
     "- Run a long command in the background; you are woken when it ends, with its exit status and output tail: (background \"command string\")"
@@ -273,3 +278,15 @@
 (= (mcp-call $server $tool $json)
    (let $args (py-call (helper.decode_safe_text $json))
         (py-call (mcp_bridge.call_tool $server $tool $args))))
+
+(= (command-receipts) (py-call (strategy_host.command_receipts)))
+(= (topics) (py-call (topic_jobs.topics)))
+(= (topic-select $name) (py-call (topic_jobs.select $name)))
+(= (topic-note $notes) (py-call (topic_jobs.note (py-call (helper.decode_safe_text $notes)))))
+(= (background-model $topic $question) (py-call (topic_jobs.start $topic (py-call (helper.decode_safe_text $question)))))
+(= (background-model $topic $question $dependencies)
+   (py-call (topic_jobs.start $topic (py-call (helper.decode_safe_text $question)) (py-call (helper.decode_safe_text $dependencies)))))
+(= (model-jobs) (py-call (topic_jobs.status)))
+(= (model-result $id) (py-call (topic_jobs.results $id)))
+(= (model-adopt $id) (py-call (topic_jobs.adopt $id)))
+(= (model-retire $id) (py-call (topic_jobs.retire $id)))

@@ -37,6 +37,12 @@ llm_timeout_seconds = 120
 # Delay for an independent receipt notice while managed input stays queued;
 # zero disables notices. Standalone upstream profiles do not send them.
 input_ack_seconds = 15
+# Ordinary input waits for a turn boundary. /steer invalidates unexecuted work;
+# /stop suspends. "legacy" retains the previous arrival freshness policy.
+input_policy = "cooperative"
+# Read-only CeTTa workers share provider budgets and the foreground allowance.
+background_models = 1
+background_tokens = 1024
 # Top-level commands per model response in godelclaw/coding; a script or
 # delegated batch is one command. Iter/Omega retain their upstream dispatch.
 command_batch_limit = 5

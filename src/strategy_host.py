@@ -31,7 +31,7 @@ _broker_feedback = {"reason": "no-current-capture"}
 INDEPENDENT_READS = frozenset({"help", "check", "vitals", "jobs", "goals",
                               "gateway-tools", "gateway-status", "llm-quota",
                               "llm-models", "energy", "modes", "tmux-windows",
-                              "requests", "request-status"})
+                              "requests", "request-status", "command-receipts", "topics", "model-jobs"})
 
 
 def enabled():
@@ -89,7 +89,7 @@ def _file_identity(path):
         return "missing"
 
 
-def guard():
+def guard(include_topic=True):
     import lifecycle
     import loop_modes
     import skills_help
@@ -103,6 +103,8 @@ def guard():
         "permission": os.environ.get("METTACLAW_PERMITTED_TOOLS", "*"),
         "implementation": _file_identity(str(Path(__file__).with_name("skills.pl"))),
         "goal_inventory": _file_identity(goals._goals_path()) if fair_enabled() else None,
+        "attention": __import__("attention").revision(),
+        "topic": __import__("topic_jobs").foreground_revision() if enabled() and include_topic else None,
     })
 
 
@@ -114,6 +116,9 @@ def _stimulus_free():
     import telegram
     if telegram.metta_client():
         unread = telegram._metta_unread_chats()
+        import attention
+        if attention.enabled():
+            return unread is not None and attention.revision() == telegram._effect_attention_revision
         return unread is not None and not unread
     return telegram.effect_turn_stimulus_free(_turn) == 1
 
@@ -159,6 +164,9 @@ def prepare(prompt):
     if not enabled():
         return str(prompt)
     global _focus, _goal_view
+    import topic_jobs
+    prompt = str(prompt) + "\n" + topic_jobs.context()
+    topic_jobs.notify()
     if fair_enabled():
         import fair_goals
         _goal_view = goal_snapshot()
@@ -214,6 +222,8 @@ def capture(prompt, wake_seconds):
                 "FAIR_GOALS " + strategy.encoded(_goal_projection()) not in str(prompt)):
             return 0
         presented = {r["ticket"]: [r] for r in projection["results"]}
+        import topic_jobs
+        topic_jobs.observe_receipts(presented)
         store.observe(presented, presented)
         store.finish_exact_results()
         if fair_enabled():
@@ -250,8 +260,12 @@ def capture(prompt, wake_seconds):
         return int(_sample is not None)
 
 
-def provider_admitted():
+def provider_admitted(ticket=None):
     global _sample, _prepared_capture
+    if os.environ.get("METTACLAW_TOPIC_WORKER_ID"):
+        import topic_jobs
+        topic_jobs.provider_admitted(os.environ["METTACLAW_TOPIC_WORKER_ID"], ticket)
+        return
     if not fair_enabled() or _prepared_capture is None:
         return
     with _lock:
@@ -392,6 +406,21 @@ def broker_end(turn, records):
     if enabled() and str(turn) == _turn and _ticket:
         ledger().report(_ticket, str(records))
     return records
+
+
+def command_receipts():
+    if not enabled():
+        return "command receipts require the managed strategy"
+    store = ledger()
+    with store.transaction() as db:
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE name='command_attempts'").fetchone():
+            return "[]"
+        rows = [dict(row) for row in db.execute("SELECT ticket,position,command,result FROM command_attempts ORDER BY rowid DESC LIMIT 20")]
+        for row in rows:
+            row["id"] = row["ticket"] + ":" + str(row["position"])
+            row["command"] = json.loads(row["command"])
+            row["result"] = json.loads(row["result"]) if row["result"] is not None else {"disposition": "uncertain", "reason": "no terminal receipt recorded; do not replay"}
+    return strategy.encoded(rows)
 
 
 def annotate_result(command, result):

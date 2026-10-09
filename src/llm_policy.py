@@ -121,7 +121,7 @@ def admit(provider, max_output, *, now=None, mode=None):
     # provider can run. Strict upstream callers have no prepared host capture.
     try:
         import strategy_host
-        strategy_host.provider_admitted()
+        strategy_host.provider_admitted(ticket)
     except BaseException:
         fail(ticket, sent=False, now=now)
         raise

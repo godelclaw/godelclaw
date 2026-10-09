@@ -56,6 +56,7 @@ _health_last_write = 0.0
 _effect_lock = threading.RLock()
 _effect_turn = None
 _effect_activity_epoch = None
+_effect_attention_revision = None
 _effect_sends = set()
 
 _CONTROL_COMMANDS = (
@@ -970,6 +971,8 @@ def ackActivityBatch():
         if update_ids and not _write_activity_receipt(
                 "activity_ack", update_ids):
             return 0
+        import input_ack
+        input_ack.processed_update_ids(update_ids)
         del _pending_messages[:count]
         _prepared_messages = []
         _current_batch_update_ids = set()
@@ -1783,6 +1786,8 @@ def _process_update(update):
     # one prompt before it had actually been drained for that
     # turn, then appear again as NEW_ACTIVITY on the next turn.
     if queued:
+        import attention
+        attention.ingress("update:" + str(update_id), "operator" if _is_operator(message.get("from")) else "peer", update)
         chat = message.get("chat") or {}
         sender = message.get("from") or {}
         with _msg_lock:
@@ -2155,6 +2160,8 @@ def metta_take_runtime_events():
 
 
 def handover_ack(ids):
+    import input_ack
+    input_ack.processed_update_ids(str(ids).split(","))
     import mode_channel
     return mode_channel.acknowledge_handover(str(ids).split(","))
 
@@ -2236,6 +2243,8 @@ def _metta_unread_chats():
         tasks = durable_telegram.Channel(path, os.devnull).pending(256)
     except (OSError, durable_telegram.ChannelError):
         return None
+    import attention
+    attention.observe_pending(tasks)
     unread = set()
     for _, observation in tasks:
         try:
@@ -2296,6 +2305,9 @@ def metta_resolve_chat(who):
 
 def metta_foreign_receipt(observation):
     """A receipt for a send this module made (a menu's text reply)."""
+    import input_ack
+    if input_ack.receipt(observation):
+        return 1
     value = json.loads(observation)
     if value[0] == "delivery":
         _durable_record(value[1], value[2], value[4])
@@ -2555,18 +2567,22 @@ def begin_effect_turn(turn):
     reduction while resolving later goals, but an already attempted external
     send must not become a second Telegram message.
     """
-    global _effect_turn, _effect_activity_epoch
+    global _effect_turn, _effect_activity_epoch, _effect_attention_revision
     turn = str(turn)
     # The context frontier was fixed atomically with the activity drain. A
     # message received after that drain must not be laundered into this turn by
     # capturing the newer live epoch here.
     with _msg_lock:
         context_epoch = _context_activity_epoch
+    import attention
+    if attention.enabled() and metta_client():
+        _metta_unread_chats()
     with _effect_lock:
         if turn != _effect_turn:
             _effect_turn = turn
             _effect_activity_epoch = context_epoch
             _effect_sends.clear()
+            _effect_attention_revision = attention.revision()
         stimulus_frontier.publish(
             turn, _effect_activity_epoch, _activity_epoch
         )
@@ -2608,6 +2624,9 @@ def effect_command_unaffected(turn, command):
       with _msg_lock:
         unread = {str(item[0])
                   for item in _pending_messages[len(_prepared_messages):]}
+    import attention
+    if attention.enabled() and str(command[0]) != "rest":
+        return int(attention.revision() == _effect_attention_revision)
     head = str(command[0])
     if head == "rest":
         return 0 if unread else 1
@@ -2640,6 +2659,11 @@ def effect_turn_stimulus_free(turn):
         # their old behavior; real model turns always call begin_effect_turn.
         if _effect_turn != turn or _effect_activity_epoch is None:
             return 1
+        import attention
+        if attention.enabled():
+            if metta_client() and _metta_unread_chats() is None:
+                return 0
+            return int(attention.revision() == _effect_attention_revision)
         if metta_client():
             unread = _metta_unread_chats()
             return 1 if unread == set() else 0

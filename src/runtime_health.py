@@ -284,6 +284,7 @@ def activity_report(now=None):
     if rest_intent and actually_resting:
         rest += ":" + " ".join(rest_intent.split())[:120]
     import fuel_modes
+    import topic_jobs
     return (
         "activity: {state} | steps={steps}@{steps_source} | fuel={fuel} | "
         "mode={mode} | "
@@ -291,7 +292,7 @@ def activity_report(now=None):
         "rest={rest} | continuation={continuation} | "
         "checkpoint-age={checkpoint} | "
         "turn={turn} | input={input_state} | obligation={obligation} | "
-        "last-outcome={outcome}"
+        "last-outcome={outcome} | background={background}"
     ).format(
         state=state, steps=steps, steps_source=steps_source,
         fuel=fuel_modes.current_fuel(),
@@ -305,6 +306,7 @@ def activity_report(now=None):
         input_state=input_state,
         obligation=obligation,
         outcome=cognition.get("last_outcome", "none"),
+        background=topic_jobs.activity(),
     )
 
 

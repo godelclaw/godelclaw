@@ -72,6 +72,47 @@ while cognition is waiting. `agent.input_ack_seconds` sets the delay (15 seconds
 by default; zero disables it). Notices leave the input pending and use stable
 delivery identities to avoid repeated delivery after responder restarts. They
 are limited to one notice per lane per minute and require the managed strategy.
+Confirmed notices are removed after the corresponding input has a successful
+turn and durable history acknowledgement. Failed turns leave the notice in
+place. Cleanup persists the service's correlated delivery ID before
+acknowledging it; it never guesses an ID or deletes a user message.
+
+Managed input uses `agent.input_policy = "cooperative"` by default. Ordinary
+messages queue for the next foreground turn boundary and do not invalidate
+an already drafted answer. `/steer ...` queues an explicit correction and
+invalidates unexecuted decisions; `/stop` uses the independent lifecycle
+responder. Suspended work stays in the ledger. `"legacy"` restores arrival
+freshness. `/activity` remains available without waiting for a provider and
+reports both foreground work and retained background jobs.
+
+Managed CeTTa also provides named working contexts and read-only concurrent
+model jobs. `(topic-select "research")` selects or creates notes;
+`(topic-note "...")` replaces them. `(background-model "research" "question")`
+starts a separate CeTTa process without blocking the foreground. An optional
+third argument is a JSON list of topic dependencies, for example
+`(background-model "analysis" "question" "[\"research\"]")`. Each worker
+captures notes, dependency revisions and peer job metadata; operator input
+remains reachable from every foreground topic. Shared knowledge must be
+declared as a dependency to receive a version check.
+
+`(model-jobs)` lists stable job IDs. Read a terminal result with
+`(model-result "id")`, then reconsider on the next model step before
+`(model-adopt "id")`. Adoption adds the observed evidence view to its original topic once,
+provided its owner, control and declared revisions still match. Stale results
+remain readable. `(model-retire "id")` releases retained capacity after
+observation, without erasing evidence or refunding provider work.
+Long results have a bounded excerpt, length, digest and truncation flag. The
+complete result stays in the checkpoint; adoption copies the displayed
+excerpt with its source reference, never its unseen remainder.
+`(command-receipts)` exposes attempted commands and their recorded outcomes.
+Provider prose cannot grant observation, completion or tool authority.
+
+`agent.background_models` defaults to one retained background call (zero
+disables admission; maximum eight). `agent.background_tokens` defaults to
+1024. These workers share provider limits and service allowance with the
+foreground. They return text only; the foreground broker owns tools and
+messages. Restart keeps an unfinished POST uncertain rather than repeating
+it. This is concurrent process execution, with a serialized effect broker.
 
 `(requests)`, `(request-status "id")` and `(request-focus "id")` expose retained
 work. Search results without exhaustive, revision-matched coverage explicitly

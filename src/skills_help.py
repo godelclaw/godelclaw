@@ -7,6 +7,9 @@ turn that asks for it, and the checker answers format questions for free
 # skill -> (min_args, max_args). None = variadic tail.
 ARITY = {
     "requests": (0, 0), "request-status": (1, 1), "request-focus": (1, 1),
+    "command-receipts": (0, 0), "topics": (0, 0), "topic-select": (1, 1),
+    "topic-note": (1, 1), "background-model": (2, 3), "model-jobs": (0, 0),
+    "model-result": (1, 1), "model-adopt": (1, 1), "model-retire": (1, 1),
     "remember": (1, 1), "query": (1, 1), "pin": (1, 1), "unpin": (1, 1),
     "goals": (0, 0), "goal-write": (1, 1), "goal-drop": (2, 2), "goal-review-save": (2, 2),
     "rest": (0, 2),
@@ -39,6 +42,15 @@ ARITY = {
 }
 
 PAGES = {
+    "command-receipts": 'usage: (command-receipts)\nLast 20 attempted commands, stable IDs and recorded dispositions/results. Uncertain is not success.',
+    "topics": 'usage: (topics)\nNamed agent-owned working contexts and their revisions. Operator input is always visible.',
+    "topic-select": 'usage: (topic-select "name")\nSelect or create named notes for subsequent model turns. Does not hide incoming messages.',
+    "topic-note": 'usage: (topic-note "notes")\nReplace active topic notes and advance its revision. Captured background answers then become stale.',
+    "background-model": 'usage: (background-model "topic" "question" "JSON dependency names")\nStart a read-only CeTTa model worker and return its stable ID immediately. Dependencies default to []. Shared budgets apply. Results return to the captured topic; no tools or sends run in the worker.',
+    "model-jobs": 'usage: (model-jobs)\nBounded recent model jobs: owners, state, observation and adoption.',
+    "model-result": 'usage: (model-result "id")\nRead a correlated result. Its returned tool receipt must reach a subsequent model step before adoption.',
+    "model-adopt": 'usage: (model-adopt "id")\nAfter review, append the observed, current evidence view once to its original topic notes. Long results adopt only the displayed excerpt; the full result stays retained. Changed dependencies refuse the merge.',
+    "model-retire": 'usage: (model-retire "id")\nRetire an observed terminal/uncertain job and release its slot. Does not replay a provider request or erase evidence.',
     "requests": (
         'usage: (requests)\n'
         'Lists protected unfinished inputs and correlated pending results.\n'
