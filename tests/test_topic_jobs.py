@@ -78,7 +78,13 @@ class NativeTopicJobsTest(unittest.TestCase):
 
     def stop_workers(self):
         for process in list(jobs._workers.values()):
-            process.kill(); process.wait()
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+        deadline = time.monotonic() + 10
+        while jobs._workers and time.monotonic() < deadline:
+            time.sleep(.02)
+        self.assertFalse(jobs._workers, "worker supervision did not settle before fixture cleanup")
 
     def start(self, topic, question, dependencies="[]"):
         result = jobs.start(topic, question, dependencies)

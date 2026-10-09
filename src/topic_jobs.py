@@ -156,7 +156,7 @@ def start(topic, question, dependencies="[]"):
         return "model job " + job + " failed to start; no provider was called"
     with _lock:
         _workers[job] = process
-    threading.Thread(target=_watch, args=(job, process), name="model-job-" + job[:8], daemon=True).start()
+    threading.Thread(target=_watch, args=(job, process, store), name="model-job-" + job[:8], daemon=True).start()
     return "model job " + job + " started for topic " + topic + "; foreground work can continue"
 
 
@@ -211,18 +211,19 @@ def record(job, state, result):
     return count
 
 
-def _watch(job, process):
+def _watch(job, process, store):
     process.wait()
-    store = _store()
-    with store.transaction() as db:
-        db.execute("UPDATE model_jobs SET state='uncertain',result='worker ended without a terminal receipt; do not replay the POST' WHERE id=? AND state IN ('queued','running')", (job,))
-    with _lock:
-        _workers.pop(job, None)
-    notify()
+    try:
+        with store.transaction() as db:
+            db.execute("UPDATE model_jobs SET state='uncertain',result='worker ended without a terminal receipt; do not replay the POST' WHERE id=? AND state IN ('queued','running')", (job,))
+        notify(store)
+    finally:
+        with _lock:
+            _workers.pop(job, None)
 
 
-def notify():
-    store = _store()
+def notify(store=None):
+    store = store or _store()
     with store.transaction() as db:
         rows = [dict(row) for row in db.execute("SELECT id,topic,state FROM model_jobs WHERE state NOT IN ('queued','running','retired') AND notified=0")]
     for row in rows:

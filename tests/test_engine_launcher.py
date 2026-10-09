@@ -158,6 +158,18 @@ class EngineLauncherTests(unittest.TestCase):
         self.assertIn("/fixture/channel.sock|fixture-token|\n", result.stdout)
         self.assertIn("client=metta", result.stdout)
 
+    def test_configuration_render_does_not_inherit_another_python_prefix(self):
+        (self.root / "scripts").mkdir()
+        (self.root / "config").mkdir()
+        (self.root / "config/local.toml").write_text("")
+        (self.root / "scripts/config_ctl.py").write_text(
+            "import os\nassert 'PYTHONHOME' not in os.environ\n"
+            "assert 'PYTHONPATH' not in os.environ\n")
+        result = self.launch(CETTA_REQUEST_RECYCLE=1,
+                             PYTHONHOME=str(self.base / "foreign-python-prefix"),
+                             PYTHONPATH=str(self.base / "foreign-modules"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_clean_unrequested_stop_preserves_engine(self):
         self.select("cetta")
         result = self.launch()
