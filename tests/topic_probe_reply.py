@@ -1,12 +1,26 @@
 """Scripted foreground decisions for the real concurrent-worker probe."""
 import json
+import os
 import time
+from urllib.parse import urlparse
 import cognitive_health
 import strategy_host
 import topic_jobs
 
 calls = 0
 job = None
+
+
+def setup():
+    origin = os.environ["METTACLAW_TOPIC_TEST_ORIGIN"]
+    parsed = urlparse(origin)
+    assert parsed.scheme == "http" and parsed.hostname == "127.0.0.1" and parsed.port
+    assert not parsed.username and not parsed.password
+    # Launchers may load an instance's provider defaults. This offline probe
+    # explicitly binds its child workers to the local fixture after loading.
+    os.environ.update(SYNTHETIC_BASE_URL=origin, SYNTHETIC_MODEL="fixture-model",
+                      SYNTHETIC_API_KEY="fixture-secret", SYNTHETIC_TIMEOUT="10")
+    return 1
 
 
 def reply(*args):

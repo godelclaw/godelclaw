@@ -1,6 +1,7 @@
 !(import! &self (library lib_import))
 !(import! &self ./lib_mettaclaw)
 !(import! &self ./tests/topic_probe_reply.py)
+!(py-call (topic_probe_reply.setup))
 !(py-eval "__import__('strategy_host').__dict__.__setitem__('_stimulus_free', lambda: True)")
 !(py-eval "__import__('synthetic_llm').__dict__.__setitem__('chat', __import__('topic_probe_reply').reply)")
 !(py-eval "(__import__('helper').__dict__.__setitem__('_working_boot_cache', {}), __import__('helper').__dict__.__setitem__('working_boot', lambda: 4))")

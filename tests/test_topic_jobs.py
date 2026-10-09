@@ -148,6 +148,7 @@ class NativeTopicJobsTest(unittest.TestCase):
 
     def test_native_foreground_observes_receipt_before_adoption(self):
         env = dict(os.environ, METTACLAW_ENGINE="cetta", METTACLAW_SKIP_INITIALIZE="1",
+                   METTACLAW_TOPIC_TEST_ORIGIN=os.environ["SYNTHETIC_BASE_URL"],
                    METTACLAW_LLM_TRANSPORT="python", METTACLAW_FAIR_GOALS="0",
                    METTACLAW_COMMAND_BATCH_LIMIT="1", METTACLAW_STRATEGY_PATH=str(self.root / "foreground.db"),
                    PETTA_PY_ENV=sys.prefix, XDG_STATE_HOME=str(self.root),

@@ -131,6 +131,29 @@ class EngineLauncherTests(unittest.TestCase):
         self.assertNotIn(str(self.root / "src" / ""), line)
         self.assertNotIn(str(self.root / "lib_nal.metta"), line)
 
+    def test_probe_does_not_inherit_configuration_channel_authority(self):
+        (self.root / ".env").write_text(
+            "export METTACLAW_TELEGRAM_SERVICE_SOCKET=/configuration/live.sock\n"
+            "export METTACLAW_TELEGRAM_BOT_TOKEN=configuration-token\n"
+            "export TELEGRAM_BOT_TOKEN=configuration-token\n")
+        (self.root / "utility.metta").write_text("")
+        self._script(self.cetta,
+            'printf "%s|%s|%s\\n" "$METTACLAW_TELEGRAM_SERVICE_SOCKET" '
+            '"$METTACLAW_TELEGRAM_BOT_TOKEN" "$TELEGRAM_BOT_TOKEN"')
+        env = dict(self.env, METTACLAW_ENGINE="cetta")
+        for key in ("METTACLAW_TELEGRAM_SERVICE_SOCKET", "METTACLAW_TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN"):
+            env.pop(key, None)
+        result = subprocess.run([str(self.root / "run.sh"), "utility.metta"], env=env,
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("\n||\n", "\n" + result.stdout)
+        env.update(METTACLAW_TELEGRAM_SERVICE_SOCKET="/fixture/channel.sock",
+                   METTACLAW_TELEGRAM_BOT_TOKEN="fixture-token")
+        result = subprocess.run([str(self.root / "run.sh"), "utility.metta"], env=env,
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("/fixture/channel.sock|fixture-token|\n", result.stdout)
+
     def test_clean_unrequested_stop_preserves_engine(self):
         self.select("cetta")
         result = self.launch()
