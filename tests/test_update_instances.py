@@ -14,7 +14,7 @@ spec.loader.exec_module(update)
 
 
 class PairedUpdateTest(unittest.TestCase):
-    def exercise(self, failed=False, runtime_missing=False):
+    def exercise(self, failed=False, runtime_missing=False, controls=False, control_failure=False):
         with tempfile.TemporaryDirectory() as temporary:
             work = Path(temporary)
             release = work / "release"
@@ -34,11 +34,22 @@ class PairedUpdateTest(unittest.TestCase):
                     "service": name, "checks": [["offline", name]],
                     "required_runtime": {"METTACLAW_OBSERVED_STRATEGY": "1"},
                     "expected": {n: update.sha(root / n) for n in hashes}})
+                if controls:
+                    instances[-1]["control_services"] = [name + "-control"]
             plan = work / "plan.json"
             plan.write_text(json.dumps({"instances": instances,
                                         "boot_timeout": -1 if runtime_missing else 60}))
             pids = {"alpha": "1", "beta": "1"}
+            control_restarts = []
+            qualified = []
             def service(name, operation):
+                if name.endswith("-control"):
+                    if operation == "restart":
+                        self.assertEqual(len(qualified), 2)
+                        control_restarts.append(name)
+                        if control_failure and len(control_restarts) == 1:
+                            raise RuntimeError("control startup failed")
+                    return "9"
                 item = next(i for i in instances if i["name"] == name)
                 state = Path(item["state_dir"])
                 if operation == "restart":
@@ -54,6 +65,7 @@ class PairedUpdateTest(unittest.TestCase):
                     (state / "recycle.requested").unlink()
                 return pids[name]
             def check(command, **kwargs):
+                qualified.append(command[-1])
                 return subprocess.CompletedProcess(command, int(failed and command[-1] == "beta"), "CHECK_OK", "")
             def settings(name, extra_keys=()):
                 state = next(i["state_dir"] for i in instances if i["name"] == name)
@@ -67,17 +79,22 @@ class PairedUpdateTest(unittest.TestCase):
             with mock.patch.object(sys, "argv", args), mock.patch.object(update, "service", service), mock.patch.object(update, "running_settings", settings), mock.patch.object(update.subprocess, "run", check):
                 if runtime_missing:
                     with self.assertRaises(TimeoutError): update.main()
-                elif failed:
+                elif failed or control_failure:
                     with self.assertRaises(RuntimeError): update.main()
                 else:
                     self.assertEqual(update.main(), 0)
             receipt = json.loads((work / "receipt/receipt.json").read_text())
-            self.assertEqual(receipt["status"], "rolled-back" if failed or runtime_missing else "activated")
+            rollback = failed or runtime_missing or control_failure
+            self.assertEqual(receipt["status"], "rolled-back" if rollback else "activated")
+            if controls:
+                self.assertEqual(control_restarts, [] if failed else
+                    ["alpha-control", "alpha-control"] if control_failure else
+                    ["alpha-control", "beta-control"])
             for item in instances:
                 root = Path(item["root"])
                 self.assertFalse((root / ".runtime-update-hold").exists())
                 self.assertEqual((Path(item["state_dir"]) / "identity").read_text(), item["name"])
-                self.assertEqual((root / "src/core.py").read_text(), "# old core\n" if failed or runtime_missing else "# new core\n")
+                self.assertEqual((root / "src/core.py").read_text(), "# old core\n" if rollback else "# new core\n")
 
     def test_both_receive_one_release_with_separate_state(self):
         self.exercise()
@@ -87,6 +104,15 @@ class PairedUpdateTest(unittest.TestCase):
 
     def test_inactive_runtime_configuration_cannot_pass_activation(self):
         self.exercise(runtime_missing=True)
+
+    def test_controls_restart_only_after_the_whole_group_qualifies(self):
+        self.exercise(controls=True)
+
+    def test_failed_qualification_never_restarts_controls(self):
+        self.exercise(failed=True, controls=True)
+
+    def test_control_failure_restores_the_old_group_and_responder(self):
+        self.exercise(controls=True, control_failure=True)
 
 
 if __name__ == "__main__": unittest.main()

@@ -121,6 +121,12 @@ def main():
     instances = plan["instances"]
     if len(instances) < 2:
         raise ValueError("a grouped update needs at least two instances")
+    control_services = [name for instance in instances for name in instance.get("control_services", [])]
+    if (any(not isinstance(instance.get("control_services", []), list) for instance in instances)
+            or any(not isinstance(name, str) or not name or name.startswith("-") for name in control_services)
+            or len(set(control_services)) != len(control_services)
+            or set(control_services) & {instance["service"] for instance in instances}):
+        raise ValueError("independent control services must be distinct from cognitive services")
     roots = [Path(i["root"]).resolve() for i in instances]
     if len(set(roots)) != len(roots):
         raise ValueError("instances must have separate roots")
@@ -174,6 +180,7 @@ def main():
         return 0
     held = []
     released = False
+    activated_controls = []
     try:
         if "run.sh" not in files:
             raise ValueError("paired cognitive activation requires the launcher gate")
@@ -210,9 +217,14 @@ def main():
                 raise ValueError("shared runtime changed during qualification")
             record["instances"][roots.index(root)]["after"] = actual
         record["status"] = "qualified"; save()
+        for name in control_services:
+            activated_controls.append(name)
+            service(name, "restart")
+        # Mark activation before the first restart, so a partial cognitive
+        # restart failure also acquires the candidate's rollback boundary.
+        released = True
         for instance, root, overlays, before, pid in entries:
             service(instance["service"], "restart")
-        released = True
         for hold in held:
             hold.unlink()
         deadline = time.monotonic() + float(plan.get("boot_timeout", 60))
@@ -232,6 +244,7 @@ def main():
                         booted &= all(actual_runtime.get(key) == value for key, value in required.items())
                     except RuntimeError:
                         booted = False
+            booted &= all(service(name, "show") != "0" for name in activated_controls)
             if booted:
                 break
             if time.monotonic() > deadline:
@@ -244,6 +257,8 @@ def main():
             path.write_text(json.dumps(marker, sort_keys=True) + "\n")
             record["instances"][index]["pid_after"] = marker["pid"]
         record["status"] = "activated"; save()
+        record["control_services"] = {name: service(name, "show") for name in activated_controls}
+        save()
         # Advance the private plan's expected base only after every instance
         # booted. A subsequent edit to shared code still fails preflight.
         (output / "plan-before.json").write_text(json.dumps(plan, indent=2) + "\n")
@@ -287,6 +302,8 @@ def main():
             current_pid = service(instance["service"], "show")
             if current_pid not in ("0", pid):
                 service(instance["service"], "restart")
+        for name in activated_controls:
+            service(name, "restart")
         for hold in held:
             hold.unlink(missing_ok=True)
         record["status"] = "rolled-back"; save()

@@ -126,6 +126,10 @@ names, expected old hashes, instance overlays and offline checks. The updater
 holds cognitive launchers, stages the same manifest into every instance, checks
 all of them, then activates them together. Backups and per-instance release
 receipts make failed qualification and rollback reviewable. Optional
+`control_services` per instance adds independent command responders to the
+same activation and rollback. They restart only after the whole group passes
+qualification, while cognitive launchers remain held.
+Optional
 `required_runtime` settings are checked against the running process, including
 the strategy flag and selected transport. Rollback also uses ordinary turn
 boundaries; a stuck candidate remains held pending recovery. Instance additions
