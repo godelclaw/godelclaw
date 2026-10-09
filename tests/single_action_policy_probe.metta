@@ -6,6 +6,7 @@
 ;; Scripted provider replies drive two actual cognitive turns. The first
 ;; command contains two shell operations; its separate suffix must not run.
 ;; The second request must contain the result and the deferred disposition.
+!(py-eval "__import__('strategy_host').__dict__.__setitem__('_stimulus_free', lambda: True)")
 !(py-eval "__import__('helper').__dict__.__setitem__('_single_action_prompts', [])")
 !(py-eval "__import__('helper').__dict__.__setitem__('_single_action_first', '((shell \"printf FIRST_SUBSTEP; printf SECOND_SUBSTEP\") (shell \"printf SUFFIX_EXECUTED\"))')")
 !(py-eval "__import__('synthetic_llm').__dict__.__setitem__('chat', lambda *args: (__import__('helper')._single_action_prompts.append(str(args[-1])), __import__('cognitive_health').turn_started('probe'), __import__('cognitive_health').turn_completed(32), (__import__('helper')._single_action_first if len(__import__('helper')._single_action_prompts) == 1 else '((help shell))'))[-1])")
