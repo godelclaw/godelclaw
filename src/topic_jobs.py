@@ -135,6 +135,7 @@ def start(topic, question, dependencies="[]"):
                     "notes": context["notes"], "broker_ticket": host._ticket,
                     "peers": [dict(row) for row in db.execute(
                         "SELECT id,topic,state FROM model_jobs WHERE state IN ('queued','running','uncertain') ORDER BY rowid DESC LIMIT 8")],
+                    "parent_serial": host._sample.get("serial") if host._sample else None,
                     "goal": host._sample.get("goal") if host._sample else None}
         db.execute("INSERT INTO model_jobs(id,topic,revision,snapshot,question,state,boot) VALUES (?,?,?,?,?,'queued',?)",
                    (job, topic, context["revision"], strategy.encoded(snapshot), question, _boot))
@@ -193,8 +194,12 @@ def provider_admitted(job, ticket):
             account = next((value for value in fair_goals.accounts(db, time.time()) if value["id"] == goal["id"] and value["round"] == goal["round"]), None)
             if not account or account["blocked"] or account["finished"]:
                 raise RuntimeError("goal changed before background admission")
+            before = account["service"]
             account["service"] += 1
             fair_goals.save(db, account)
+            store.event(db, "model-goal-charge", job=job, goal=goal["id"], cycle=goal["round"],
+                        before=before, after=account["service"], share=account["share"],
+                        parent_serial=snapshot["parent_serial"])
         db.execute("UPDATE model_jobs SET state='running',ticket=? WHERE id=?", (ticket, job))
         store.event(db, "model-admit", id=job, ticket=ticket, focus=snapshot["focus"])
 

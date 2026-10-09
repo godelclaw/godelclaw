@@ -17,8 +17,11 @@ def read(path):
     with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
         db.row_factory = sqlite3.Row
         db.execute("BEGIN")
-        return {table: [dict(r) for r in db.execute("SELECT * FROM " + table + " ORDER BY rowid")]
+        view = {table: [dict(r) for r in db.execute("SELECT * FROM " + table + " ORDER BY rowid")]
                 for table in ("goal_accounts", "samples", "events")}
+        view["model_jobs"] = ([dict(r) for r in db.execute("SELECT id,snapshot,ticket FROM model_jobs")]
+                              if db.execute("SELECT 1 FROM sqlite_master WHERE name='model_jobs'").fetchone() else [])
+        return view
 
 
 def natural(value):
@@ -41,6 +44,8 @@ def lean_goal(goal):
 def export(view):
     samples = {r["serial"]: json.loads(r["snapshot"]) for r in view["samples"]}
     services, charges = {}, {}
+    jobs = {row["id"]: row for row in view.get("model_jobs", [])}
+    auxiliary, admitted = {}, set()
     source = ["import FairGoalScheduling", "open GoalSystem FairGoalScheduling",
               "set_option maxRecDepth 16384", "set_option maxHeartbeats 4000000"]
     for row in view["events"]:
@@ -76,12 +81,41 @@ def export(view):
                        f"example : chargeGoal {natural(id)} 1 {lean_goal(chosen)} = " + lean_goal(dict(chosen, service=event["after"])) + " := by decide"]
             services[id] = event["after"]
             charges[serial] = id
+        elif kind == "model-goal-charge":
+            job, id, serial = event["job"], event["goal"], event["parent_serial"]
+            row = jobs.get(job)
+            if job in auxiliary or not row or serial not in samples:
+                raise ValueError("duplicate or unowned auxiliary charge")
+            snapshot = json.loads(row["snapshot"])
+            parent = samples[serial].get("goal")
+            if (not parent or snapshot.get("goal") != parent or snapshot.get("parent_serial") != serial
+                    or (parent["id"], parent["round"], parent["share"]) != (id,event["cycle"],event["share"])):
+                raise ValueError("auxiliary charge differs from its parent capture")
+            if services.get(id) != event["before"] or event["after"] != event["before"] + 1:
+                raise ValueError("auxiliary service accounting discontinuity")
+            # Auxiliary work consumes the selected parent's service. It is
+            # not a new fair-queue selection; prove its cost separately.
+            chosen = dict(id=id,share=event["share"],service=event["before"],age=0,round=event["cycle"],
+                          baseUrgency=0,blocked=False,finished=False,interval=None)
+            source.append(f"example : chargeGoal {natural(id)} 1 {lean_goal(chosen)} = " +
+                          lean_goal(dict(chosen,service=event["after"])) + " := by decide")
+            services[id] = event["after"]
+            auxiliary[job] = serial
+        elif kind == "model-admit":
+            row = jobs.get(event["id"])
+            if row and json.loads(row["snapshot"]).get("goal"):
+                if event["id"] not in auxiliary or event["id"] in admitted or row["ticket"] != event["ticket"]:
+                    raise ValueError("auxiliary provider admission has no unique charge")
+                admitted.add(event["id"])
     if set(charges) != {s for s, snap in samples.items() if "goal" in snap}:
         raise ValueError("captured goal has no charge")
     actual = {r["id"]: json.loads(r["state"])["service"] for r in view["goal_accounts"]}
     if actual != services:
         raise ValueError("saved accounts differ from history")
+    if admitted != set(auxiliary):
+        raise ValueError("auxiliary charge has no provider admission")
     return "\n".join(source) + "\n", dict(charges=len(charges), accounts=len(services),
+                                           auxiliary_charges=len(auxiliary),
                                            correspondence="pass", lean_replay="pending")
 
 

@@ -1,5 +1,6 @@
 """Real native provider workers, reversed completion and reviewed merges."""
 import http.server
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -188,6 +189,33 @@ class NativeTopicJobsTest(unittest.TestCase):
             self.assertEqual(db.execute("SELECT result FROM model_jobs WHERE id=?", (job,)).fetchone()[0], full)
         self.assertNotIn("UNSEEN_END", notes)
         self.assertIn("excerpt; complete result retained", notes)
+
+    def test_background_goal_cost_has_a_correlated_auditable_charge(self):
+        import fair_goals as fair
+        store = agent_checkpoint.ledger()
+        fair.synchronize(store, [dict(name="research",area="Research",note="Check evidence",blocked="none",
+                                     share=1,interval=None,baseUrgency=0,checker="operator")], time.time())
+        view = fair.snapshot(store,time.time()); goal = view["selected"]
+        focus = fair.accept_selected(store,view)
+        lease = {k:goal[k] for k in ("id","round","service")}; lease["inventory_digest"] = view["inventory_digest"]
+        router = dict(advertised=["background-model"],executable=["background-model"],permitted=["background-model"])
+        sample = store.capture(focus,"fixture",router,time.time(),host.guard(include_topic=False),goal_lease=lease)
+        ticket = store.decide(sample["serial"],dict(kind="command",tool="background-model",request=focus,
+                                                  owner=sample["owner"],command={}),time.time(),sample["guard"])
+        with mock.patch.multiple(host,_focus=focus,_sample=sample,_ticket=ticket):
+            job = self.start("research","fast goal evidence")
+            self.assertEqual(self.wait_result(job)["state"],"returned")
+        spec = importlib.util.spec_from_file_location("goal_auditor",ROOT / "scripts/audit_fair_goals.py")
+        audit = importlib.util.module_from_spec(spec); spec.loader.exec_module(audit)
+        data = audit.read(store.path)
+        source, result = audit.export(data)
+        self.assertEqual((result["charges"],result["auxiliary_charges"]),(1,1))
+        (self.root / "auxiliary.lean").write_text(source)
+        output = os.environ.get("METTACLAW_AUXILIARY_REPLAY_OUTPUT")
+        if output:
+            Path(output).write_text(source)
+        broken = dict(data,events=[r for r in data["events"] if json.loads(r["event"])["kind"] != "model-goal-charge"])
+        with self.assertRaises(ValueError): audit.export(broken)
 
     def test_capacity_and_restart_preserve_uncertainty_without_replaying_posts(self):
         with mock.patch.dict(os.environ, {"METTACLAW_BACKGROUND_MODELS": "1"}):
