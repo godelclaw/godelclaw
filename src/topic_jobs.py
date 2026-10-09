@@ -31,6 +31,10 @@ def _store():
             topic TEXT NOT NULL, revision INTEGER NOT NULL, snapshot TEXT NOT NULL,
             question TEXT NOT NULL, state TEXT NOT NULL, result TEXT, observed INTEGER NOT NULL DEFAULT 0,
             adopted INTEGER NOT NULL DEFAULT 0, boot TEXT NOT NULL, ticket TEXT, notified INTEGER NOT NULL DEFAULT 0)""")
+        columns = {row[1] for row in db.execute("PRAGMA table_info(model_jobs)")}
+        if "finished_at" not in columns:
+            # Historical results have no invented completion timestamp.
+            db.execute("ALTER TABLE model_jobs ADD COLUMN finished_at REAL")
         db.execute("INSERT OR IGNORE INTO topic_contexts VALUES ('conversation',0,'')")
         db.execute("INSERT OR IGNORE INTO meta VALUES ('active_topic','\"conversation\"')")
     return store
@@ -153,7 +157,7 @@ def start(topic, question, dependencies="[]"):
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except OSError:
         with store.transaction() as db:
-            db.execute("UPDATE model_jobs SET state='failed',result=? WHERE id=?", ("worker-start-failed", job))
+            db.execute("UPDATE model_jobs SET state='failed',result=?,finished_at=? WHERE id=?", ("worker-start-failed", time.time(), job))
         return "model job " + job + " failed to start; no provider was called"
     with _lock:
         _workers[job] = process
@@ -209,8 +213,8 @@ def record(job, state, result):
         raise ValueError("invalid model result")
     store = _store()
     with store.transaction() as db:
-        count = db.execute("UPDATE model_jobs SET state=?,result=? WHERE id=? AND state IN ('queued','running','uncertain')",
-                           (state, str(result), str(job))).rowcount
+        count = db.execute("UPDATE model_jobs SET state=?,result=?,finished_at=? WHERE id=? AND state IN ('queued','running','uncertain')",
+                           (state, str(result), time.time(), str(job))).rowcount
         if count:
             store.event(db, "model-result", id=str(job), state=state, digest=strategy.digest(str(result)))
     return count

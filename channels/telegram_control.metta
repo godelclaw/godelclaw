@@ -28,12 +28,13 @@
    (let $path (tc:socket) (cwp:call $path $code $name $body 5000)))
 
 (= (tc:tasks-after $after $limit)
-   (if (== $limit 0) ()
+   (if (== $limit 0) (("runtime-scan-unavailable" "[]"))
      (case (tc:call 1 $after "")
        (((cwp:reply 65 $task $body)
          (let $rest (tc:tasks-after $task (- $limit 1))
            (cons-atom ($task $body) $rest)))
-        ($other ())))))
+        ((cwp:reply 64 $name $body) ())
+        ($other (("runtime-scan-unavailable" "[]")))))))
 
 (= (tc:cut $text $n) (if (> (str:char-length $text) $n) (str:char-slice $text 0 $n) $text))
 

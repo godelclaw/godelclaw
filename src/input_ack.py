@@ -6,6 +6,7 @@ The service owns the input and the actual delivery receipts.
 
 import hashlib
 import json
+import math
 import os
 import time
 import agent_checkpoint
@@ -16,6 +17,7 @@ _pending = {}
 _last_notice = {}
 _limit = 256
 _last_pump = 0.0
+_input_view = None
 
 
 def _store():
@@ -58,6 +60,34 @@ def text():
 
 
 def begin_scan(tasks):
+    global _input_view
+    _input_view = None
+    # This is an observation of the durable service's pending inputs. It
+    # neither acknowledges them nor calls a model. Scan sentinels distinguish
+    # a completed empty scan from a transport failure or a bounded prefix.
+    dates, known = [], len(tasks) <= _limit
+    for item in tasks:
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            known = False
+            continue
+        task, body = item
+        if str(task) == "runtime-scan-unavailable":
+            known = False
+            continue
+        try:
+            value = json.loads(str(body))
+            if isinstance(value, list) and len(value) == 5 and value[0] == "input":
+                if value[2] == "message" and value[3] == "operator":
+                    update = value[4]
+                    message = update.get("message") or update.get("edited_message")
+                    stamp = message.get("date") if isinstance(message, dict) else None
+                    dates.append(stamp if type(stamp) in (int, float) and
+                                 0 < stamp <= 10**12 and math.isfinite(stamp) else None)
+        except (ValueError, TypeError, AttributeError, RecursionError):
+            known = False
+    _input_view = ({"pending": len(dates), "newestMessageAt": max(dates) if dates and None not in dates else None,
+                    "oldestMessageAt": min(dates) if dates and None not in dates else None,
+                    "observedAt": time.time()} if known else None)
     active = {str(task[0]) for task in tasks
               if isinstance(task, (list, tuple)) and len(task) == 2}
     for task in list(_pending):
@@ -68,6 +98,11 @@ def begin_scan(tasks):
         if lane not in lanes:
             del _last_notice[lane]
     return 1
+
+
+def input_view():
+    """A copy of the last complete scan, without text, identities or routes."""
+    return dict(_input_view) if _input_view is not None else None
 
 
 def key(task, lane, kind, role, update="{}"):

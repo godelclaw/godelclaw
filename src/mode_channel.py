@@ -187,7 +187,9 @@ def heartbeat():
             ready = code in (durable_telegram.IDLE, durable_telegram.TASK)
         except (OSError, durable_telegram.ChannelError):
             ready = False
+        import input_ack
         store(state() / "control-status.json", {"pid": os.getpid(),
-              "observed_at": time.time(), "channel_ready": ready})
+              "observed_at": time.time(), "channel_ready": ready,
+              "operator_inbox": input_ack.input_view() if ready else None})
         _last_health_at = time.monotonic()
     return 1

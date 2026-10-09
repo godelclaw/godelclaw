@@ -58,5 +58,9 @@ class ManagedRuntimeTest(unittest.TestCase):
                       [["shell", "printf FIRST_FAULT_WITNESS"],
                        ["shell", "printf SECOND_FAULT_WITNESS"]])
 
+    def test_runtime_observation_and_omission_on_available_engines(self):
+        self.exercise("tests/runtime_context_probe.metta", "RUNTIME_CONTEXT_OK",
+                      [["help", "vitals"], ["help", "vitals"]])
+
 
 if __name__ == "__main__": unittest.main()

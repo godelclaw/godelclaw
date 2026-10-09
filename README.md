@@ -538,6 +538,28 @@ with `METTACLAW_PROTECTED_ROOT`, `METTACLAW_SELFMOD_PROPOSAL_STORE`, and
 `METTACLAW_SELFMOD_REQUIRE_GOVERNANCE=1`; its executable is supplied through
 `METTACLAW_GGB_SELFMOD_CLI`.
 
+## Runtime observations in managed context
+
+The managed strategy adds one bounded `RUNTIME_STATE` packet after replaceable
+request transformations. It reports recorded provider/retry state, pending
+turn settlement, local channel readiness, operator inputs awaiting processing,
+recent command receipt counts and reasons, persisted memory-index sequence
+gap, and owned model results awaiting review. Budget numbers appear at a cap.
+The packet is limited to 2,400 characters; full details remain available through
+`vitals`, `command-receipts`, `model-jobs` and `llm-quota`.
+
+Missing, malformed, stale or unsupported readings remain explicitly unknown.
+Local channel readiness does not establish remote network reachability. Inbox
+ages use message timestamps in the last complete service scan; processing is
+distinct from answering. Failed or truncated scans remain unknown. A persisted
+index sequence gap is distinct from a count of missing memories. Receipt counts
+describe a recent bounded window, including records covering command batches.
+Returned provider or command data does not prove task completion.
+
+These observations grant no tool authority and acknowledge no messages or
+receipts. The captured packet must survive preparation before provider
+admission. Strict standalone Iter/Omega profiles retain their existing context.
+
 ## Credits and license
 
 This fork builds on [patham9/mettaclaw](https://github.com/patham9/mettaclaw).

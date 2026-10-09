@@ -24,6 +24,7 @@ _focus = None
 _input_turn = False
 _goal_view = None
 _prepared_capture = None
+_runtime_projection = None
 _broker_feedback = {"reason": "no-current-capture"}
 
 # These tools only inspect host state; their decisions commute without an
@@ -124,12 +125,13 @@ def _stimulus_free():
 
 
 def begin(turn, source, message):
-    global _turn, _sample, _ticket, _position, _focus, _input_turn, _goal_view, _prepared_capture
+    global _turn, _sample, _ticket, _position, _focus, _input_turn, _goal_view, _prepared_capture, _runtime_projection
     if not enabled():
         return 1
     with _lock:
         _turn, _sample, _ticket, _position = str(turn), None, None, 0
         _goal_view, _prepared_capture = None, None
+        _runtime_projection = None
         # A multi-action foreground request keeps its observation/reconsider
         # steps. Autonomous scheduling resumes at the loop's existing wake
         # boundary, not merely because the next step has no new message.
@@ -163,10 +165,13 @@ def prepare(prompt):
     """Append protected work/results after replaceable transformations."""
     if not enabled():
         return str(prompt)
-    global _focus, _goal_view
+    global _focus, _goal_view, _runtime_projection
     import topic_jobs
     prompt = str(prompt) + "\n" + topic_jobs.context()
     topic_jobs.notify()
+    import runtime_context
+    _runtime_projection = runtime_context.render()
+    prompt += "\n" + _runtime_projection
     if fair_enabled():
         import fair_goals
         _goal_view = goal_snapshot()
@@ -215,6 +220,8 @@ def capture(prompt, wake_seconds):
         import skills_help
         store = ledger()
         projection = store.protected(_focus)
+        if _runtime_projection is None or _runtime_projection not in str(prompt):
+            return 0
         # Observe only the exact projection that actually survived preparation.
         if strategy.encoded(projection) not in str(prompt):
             return 0
@@ -477,13 +484,14 @@ def autonomous_ready(scheduled):
 
 def fault():
     """A failed host transition preserves work and reconciles saved results."""
-    global _sample, _ticket, _prepared_capture
+    global _sample, _ticket, _prepared_capture, _runtime_projection
     if enabled():
         ledger().restore()
         ledger().recover_recorded_actions()
         _sample = None
         _ticket = None
         _prepared_capture = None
+        _runtime_projection = None
         import cognitive_health
         cognitive_health.turn_failed("host-transition-error")
     return 1

@@ -20,6 +20,7 @@ sys.path[:0] = [str(ROOT / "src")]
 TOKEN = "123456789:TEST_ONLY_abcdefghijklmnopqrstuvwxyz0123456789"
 import durable_telegram
 import input_ack
+import runtime_context
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -107,6 +108,13 @@ with tempfile.TemporaryDirectory(prefix="owned-notice-") as temporary:
             wait(lambda: len(api.sent) == 1, "owned receipt notice was not delivered")
             assert api.sent[0]["text"] == input_ack.TEXT
             assert api.deleted == [], "notice deleted before successful processing"
+            def inbox_count(count):
+                try:
+                    value = json.loads((folder / "modes/control-status.json").read_text())
+                    return value.get("operator_inbox", {}).get("pending") == count
+                except (OSError, ValueError, AttributeError):
+                    return False
+            wait(lambda: inbox_count(1), "complete service input scan did not reach health context")
             # A responder restart cannot send another notice under a new ID.
             worker.kill(); worker.wait(); worker = responder()
             time.sleep(.2)
@@ -118,6 +126,24 @@ with tempfile.TemporaryDirectory(prefix="owned-notice-") as temporary:
             assert api.deleted == [(42, 501)], api.deleted
             assert len(api.sent) == 1
             assert any(json.loads(body)[0] == "input" for _, body in channel.pending(32)), "notice cleanup consumed user input"
+            wait(lambda: inbox_count(1), "responder restart lost the still-pending input observation")
+            facts = runtime_context.read()
+            assert facts["humanInbox"]["pending"] == 1
+            assert facts["humanInbox"]["newestAgeSeconds"] > 0
+            assert "ordinary question" not in runtime_context.render(facts)
+            # The observer leaves the input in the service. Only the actual
+            # processing acknowledgement removes its pending occurrence.
+            pending = [(task, body) for task, body in channel.pending(32) if json.loads(body)[0] == "input"]
+            assert len(pending) == 1
+            channel.acknowledge(pending[0][0])
+            wait(lambda: inbox_count(0), "processed service input remained in the context gauge")
+            assert runtime_context.read()["humanInbox"]["pending"] == 0
+            service.kill(); service.wait()
+            wait(lambda: json.loads((folder / "modes/control-status.json").read_text()).get("channel_ready") is False,
+                 "failed channel did not publish loss of readiness")
+            failed = runtime_context.read()
+            assert failed["localChannelReady"] is False and failed["humanInbox"] is None
             print("PASS: exact owned notice deleted after processing; responder restart did not resend; input remains independently owned")
+            print("PASS: complete inbox scan reaches context, acknowledgement clears it, channel failure removes assurance")
         finally:
             worker.kill(); worker.wait(); service.kill(); service.wait(); listener.close()

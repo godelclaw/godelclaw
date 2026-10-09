@@ -1,0 +1,18 @@
+!(import! &self (library lib_import))
+!(import! &self ./lib_mettaclaw)
+!(py-eval "__import__('sys').path.insert(0, str(__import__('pathlib').Path(__import__('helper').__file__).resolve().parents[1] / 'tests'))")
+!(py-eval "__import__('runtime_context_fixture')")
+(= (assertEqual $a $b) (assert (== $a $b)))
+
+;; Exercise the real protected preparation/capture boundary in either engine.
+!(py-call (runtime_context_fixture.setup))
+!(initMemory)
+!(configure commchannel telegram)
+!(let* (($initial (initLoop))
+         ($first (process-step $initial (turnProcess (process-periphery $initial))))
+         ($_ (py-call (runtime_context_fixture.source_changed)))
+         ($second (process-step $first (turnProcess (process-periphery $first))))
+         ($_ (py-call (runtime_context_fixture.omit)))
+         ($third (process-step $second (turnProcess (process-periphery $second))))
+         ($_ (assertEqual (py-call (runtime_context_fixture.check)) 1)))
+   (println! RUNTIME_CONTEXT_OK))
