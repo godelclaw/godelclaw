@@ -72,16 +72,20 @@ def _plan(kind, model, tokens, builder):
         if provider["name"] == "anthropic":
             headers.append(["http:header", "anthropic-version", "2023-06-01"])
         settings = wait_settings()
+        stream = provider["protocol"] == "chat-completions" and settings["stream"]
+        cap = int(os.environ.get("METTACLAW_LLM_RESPONSE_BYTES", 8 * 1048576 if stream else 1048576))
+        if not 1024 <= cap <= 16 * 1048576:
+            raise ValueError("model response bound must be between 1 KiB and 16 MiB")
         import strategy_host
         captured_guard = strategy_host.guard() if strategy_host.enabled() else None
         cognitive_health.turn_started(provider["name"])
         return SimpleNamespace(kind=kind, ready="true", correlation=ticket, protocol=provider["protocol"],
             epoch=_session_epoch, provider=provider["name"], base=provider["base"], headers=json.dumps(headers),
             request=json.dumps(request, ensure_ascii=False), sent=False, claimed=False,
-            guard=captured_guard, stream=(provider["protocol"] == "chat-completions" and settings["stream"]),
+            guard=captured_guard, stream=stream,
             timeout=settings["hard"], connect=settings["connect"], first=settings["first"],
             idle=settings["idle"], soft=settings["soft"],
-            cap=int(os.environ.get("METTACLAW_LLM_RESPONSE_BYTES", 1048576)))
+            cap=cap)
     except Exception as error:
         if ticket:
             llm_policy.fail(ticket, sent=False)
@@ -98,7 +102,9 @@ def command_plan(model, tokens, effort, prompt):
         if stable:
             result["cache_key"] = provider_protocol.cache_key("openai", selected, "".join(stable))
         return result
-    return _plan("command", model, tokens, conversation)
+    plan = _plan("command", model, tokens, conversation)
+    plan.prompt_layout = provider_protocol.prompt_observation(prompt)
+    return plan
 
 
 def structured_plan(request):
@@ -244,14 +250,15 @@ def finish(plan, epoch, correlation, encoded, canonical):
     stale = plan.guard is not None and plan.guard != strategy_host.guard()
     native_lifetime.settle(plan, "late" if stale else "completed", str(canonical),
                            "captured-authority-changed" if stale else None)
+    result["transport"] = "native"
+    synthetic_llm._completion_metadata(result, getattr(plan, "prompt_layout", None))
     if stale:
+        native_lifetime.notify()
         # Evidence remains queryable; it does not become commands in a newer
         # scope. Structured callers receive no partially actionable batch.
         if plan.kind == "command":
             return synthetic_llm._empty_action(RuntimeError("late provider result retained"))
         raise RuntimeError("late provider result retained; captured authority changed")
-    result["transport"] = "native"
-    synthetic_llm._completion_metadata(result)
     if plan.provider == "anthropic":
         synthetic_llm._tally_anthropic(result["usage"])
     if plan.kind == "structured":

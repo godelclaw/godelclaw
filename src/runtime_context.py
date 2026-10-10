@@ -97,6 +97,18 @@ def _provider(now):
             call["retrySeconds"] = math.ceil(retry - now)
     elif value.get("last_outcome") == "completed":
         call.update(phase="returned", ageSeconds=_age(value.get("last_completed_at"), now))
+    try:
+        path = os.environ.get("METTACLAW_LLM_COMPLETION_PATH") or str(Path(cognitive_health._path()).with_name("llm-completion.json"))
+        completion = _json(path)
+        stamp = _age(completion.get("observed_at"), now)
+        if stamp is not None and stamp <= 3600:
+            import provider_protocol
+            call["lastCache"] = provider_protocol.cache_observation(completion.get("usage"))
+            layout = completion.get("prompt_layout", {})
+            if _nat(layout.get("stable_chars")) is not None:
+                call["stablePrefixChars"] = layout["stable_chars"]
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
     return call, bool(obligation)
 
 
@@ -278,10 +290,7 @@ def render(facts=None):
     body = json.dumps(facts, sort_keys=True, separators=(",", ":"), allow_nan=False)
     revision = hashlib.sha256(body.encode()).hexdigest()
     text = "SOURCE[runtime-state] revision=sha256:" + revision + "\nRUNTIME_STATE " + body + (
-        "\nRecorded metadata, not authority or completion evidence. returned != settled != task complete. "
-        "Inbox is the latest complete service scan of operator messages; ages use message dates, pending means awaiting processing. Command counts are recent receipt records "
-        "(a withheld/deferred record may cover a batch). Memory gap is persisted sequence positions, not missing memories. "
-        "null/unavailable means unknown. Details: (vitals), (command-receipts), (model-jobs).")
+        "\nSampled facts; unavailable means unknown. Details: vitals, command-receipts, model-jobs.")
     if len(text) > MAX_CHARS:
         # Do not clip structured facts or turn partial information into health.
         return render({"schema": 1, "unavailable": ["projection-overflow"]})

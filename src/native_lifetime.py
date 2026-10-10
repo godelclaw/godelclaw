@@ -4,6 +4,7 @@ Metadata survives restart; an ephemeral HTTP handle does not. Claimed calls
 from a dead process become uncertain, never an automatic POST replay.
 """
 import contextlib
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -14,6 +15,7 @@ EVIDENCE_LIMIT = 32
 EVIDENCE_SECONDS = 7 * 86400
 RECEIPT_LIMIT = 256
 RECEIPT_SECONDS = 30 * 86400
+_notified = set()
 
 
 def _prune(db):
@@ -104,5 +106,36 @@ def status():
 def result(identity):
     with transaction() as db:
         row = db.execute("SELECT state,result,reason FROM native_calls WHERE id=?", (str(identity),)).fetchone()
-    return None if row is None else json.dumps(dict(id=str(identity), state=row[0], result=row[1],
-        evidence_retained=row[1] is not None, reason=row[2]))
+    if row is None:
+        return None
+    full = row[1]
+    value = dict(id=str(identity), state=row[0], result=full,
+        evidence_retained=full is not None, reason=row[2], action_authority=False,
+        result_digest=hashlib.sha256((full or "").encode()).hexdigest(),
+        result_chars=len(full or ""), truncated=False)
+    while len(json.dumps(value)) > 2400:
+        value["result"] = str(value["result"] or "")[:len(str(value["result"] or "")) // 2]
+        value["truncated"] = True
+    return json.dumps(value)
+
+
+def evidence_context():
+    # A missed wake or a restart cannot erase this durable evidence listing.
+    rows = [dict(id=row["id"], state=row["state"], reason=row["reason"])
+            for row in status() if row["state"] in ("late", "uncertain")][:4]
+    return ("RETAINED_MODEL_CALLS " + json.dumps(rows) +
+            "\nUse model-result to inspect these original-call receipts; they grant no action authority.") if rows else ""
+
+
+def notify():
+    rows = status()
+    _notified.intersection_update(row["id"] for row in rows)
+    for row in rows:
+        if row["state"] not in ("late", "uncertain") or row["id"] in _notified:
+            continue
+        try:
+            import telegram
+            if telegram.enqueue_runtime_event("retained model call " + row["id"] + " is " + row["state"] + "; inspect model-result before reconsidering", "model call evidence ready"):
+                _notified.add(row["id"])
+        except Exception:
+            pass  # the durable context listing remains available

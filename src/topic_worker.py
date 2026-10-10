@@ -52,7 +52,7 @@ def prepare():
             protocol=provider["protocol"], url=provider["base"] + endpoint, headers=headers,
             body=json.dumps(body, ensure_ascii=False), timeout=settings["hard"],
             connect=settings["connect"], first=settings["first"], idle=settings["idle"],
-            stream=stream, cap=1048576)
+            stream=stream, cap=8 * 1048576 if stream else 1048576)
     except Exception as error:
         if ticket:
             llm_policy.fail(ticket, sent=False)

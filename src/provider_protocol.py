@@ -50,6 +50,34 @@ def cache_key(provider, model, system):
     return provider + ":" + model + ":" + hashlib.sha256(stable.encode()).hexdigest()[:24]
 
 
+def prompt_observation(prompt):
+    """Only sizes and prefix identities; no prompt bytes or token estimates."""
+    stable, user = split_prompt(prompt)
+    prefix = "".join(stable)
+    return dict(stable_chars=len(prefix), dynamic_chars=len(user),
+                stable_digest=hashlib.sha256(prefix.encode()).hexdigest(),
+                blocks=[dict(chars=len(part), digest=hashlib.sha256(part.encode()).hexdigest()) for part in stable])
+
+
+def cache_observation(usage):
+    def count(value):
+        return value if type(value) is int and 0 <= value <= 10**12 else None
+    if not isinstance(usage, dict):
+        return dict(status="unknown")
+    details = usage.get("prompt_tokens_details") or usage.get("input_tokens_details") or {}
+    cached = count(details.get("cached_tokens")) if isinstance(details, dict) else None
+    if cached is None:
+        cached = count(usage.get("cache_read_input_tokens", usage.get("prompt_cache_hit_tokens")))
+    total = count(usage.get("prompt_tokens", usage.get("input_tokens")))
+    if "cache_read_input_tokens" in usage and total is not None:
+        write = count(usage.get("cache_creation_input_tokens", 0))
+        total = total + cached + write if cached is not None and write is not None else None
+    if total is None or cached is None or cached > total:
+        return dict(status="unknown")
+    return dict(status="reported", input_tokens=total, cached_tokens=cached,
+                fraction=cached / total if total else 0.0)
+
+
 def command_body(protocol, model, tokens, effort, prompt):
     stable, user = split_prompt(prompt)
     system = "".join(stable)

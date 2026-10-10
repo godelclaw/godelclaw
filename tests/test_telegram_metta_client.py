@@ -516,7 +516,18 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
 
             # Processing the actual batch must pass exact IDs through the
             # MeTTa join into the host ledger, then retire the bot's notice.
-            lines, err = run('!(tg:start)\n!(tg:activity-batch)\n!(tg:ack-activity-batch)\n', notice_env)
+            ack_probe = temp / "ack_failure_probe.py"
+            ack_probe.write_text('import telegram\noriginal=telegram.handover_ack\n'
+                'def refuse():\n    telegram.handover_ack=lambda ids: 0\n    return 1\n'
+                'def restore():\n    telegram.handover_ack=original\n    return 1\n')
+            lines, err = run('!(tg:start)\n!(tg:activity-batch)\n'
+                '!(import! &self "' + str(ack_probe) + '")\n'
+                '!(py-call (ack_failure_probe.refuse))\n'
+                '!(tg:ack-activity-batch)\n'
+                '!(== (tg:prepared-items) ())\n'
+                '!(py-call (ack_failure_probe.restore))\n'
+                '!(tg:ack-activity-batch)\n', notice_env)
+            assert [line.lower() for line in lines[-4:]] == ['0', 'false', '1', '1'], lines
             assert lines[-1] == "1", (lines[-5:], err[-1000:])
             await_(lambda: any(name == "deleteMessage" for name, _ in api.calls),
                    "processed queue notice was deleted")

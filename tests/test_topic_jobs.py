@@ -64,6 +64,8 @@ class NativeTopicJobsTest(unittest.TestCase):
                "METTACLAW_MODEL_STATE_PATH": str(self.root / "model"), "SYNTHETIC_MODEL": "fixture-model",
                "SYNTHETIC_BASE_URL": "http://127.0.0.1:%d/v1" % self.peer.server_port,
                "SYNTHETIC_API_KEY": "fixture-secret", "SYNTHETIC_TIMEOUT": "10",
+               "METTACLAW_LLM_STREAM": "0", "METTACLAW_LLM_SOFT_SECONDS": "10",
+               "METTACLAW_LLM_HARD_SECONDS": "20",
                "METTACLAW_ENGINE_STATE_PATH": str(self.root / "engine"),
                "METTACLAW_COGNITIVE_HEALTH_PATH": str(self.root / "health.json"),
                "METTACLAW_WAKE_REQUEST_PATH": str(self.root / "wake")}

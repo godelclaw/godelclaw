@@ -22,6 +22,7 @@ _ticket = None
 _position = 0
 _focus = None
 _input_turn = False
+_message_focus = None
 _goal_view = None
 _prepared_capture = None
 _runtime_projection = None
@@ -125,13 +126,14 @@ def _stimulus_free():
 
 
 def begin(turn, source, message):
-    global _turn, _sample, _ticket, _position, _focus, _input_turn, _goal_view, _prepared_capture, _runtime_projection
+    global _turn, _sample, _ticket, _position, _focus, _input_turn, _message_focus, _goal_view, _prepared_capture, _runtime_projection
     if not enabled():
         return 1
     with _lock:
         _turn, _sample, _ticket, _position = str(turn), None, None, 0
         _goal_view, _prepared_capture = None, None
         _runtime_projection = None
+        _message_focus = None
         # A multi-action foreground request keeps its observation/reconsider
         # steps. Autonomous scheduling resumes at the loop's existing wake
         # boundary, not merely because the next step has no new message.
@@ -150,7 +152,8 @@ def begin(turn, source, message):
                 # The message digest is a fallback only for offline adapters.
                 ids = ["content:" + strategy.digest(str(message))]
             _focus = "input:" + strategy.digest([os.environ.get("METTACLAW_INSTANCE", "default"), ids])
-            store.accept(_focus, str(message))
+            _message_focus = _focus
+            store.accept(_focus, str(message), kind="message" if str(source) == "operator-event" else "notification")
         elif _focus is None:
             active = store.active()
             if active:
@@ -169,6 +172,10 @@ def prepare(prompt):
     import topic_jobs
     prompt = str(prompt) + "\n" + topic_jobs.context()
     topic_jobs.notify()
+    if os.environ.get("METTACLAW_LLM_TRANSPORT") == "native":
+        import native_lifetime
+        native_lifetime.notify()
+        prompt += "\n" + native_lifetime.evidence_context()
     import runtime_context
     _runtime_projection = runtime_context.render()
     prompt += "\n" + _runtime_projection
@@ -200,16 +207,20 @@ def prepare(prompt):
     projection = ledger().protected(_focus)
     payload = strategy.encoded(projection)
     return str(prompt) + "\n\nPROTECTED_STRATEGY " + payload + (
-        "\nTask completion requires a configured checker and an observed successful receipt. "
-        "nop, rest, advertisements, proposals and provider text do not complete work. "
-        "Searches with incomplete coverage or stale scope cannot establish absence. "
-        "Use one action unless all commands are independent host observations. "
-        "Write commands as a list, for example ((pin \"note\") (send \"message\")). "
-        "A withheld command did not run: inspect its reason and reconsider. "
-        "Do not claim a repair or saved rule succeeded until its successful tool receipt is observed. "
-        "Distinguish observed facts from causal or motive hypotheses. "
-        "Outgoing prose uses ordinary apostrophes; do not imitate history escape tokens."
+        "\nInput processing settles delivery only. Use request-disposition to retain an ongoing task, "
+        "record waiting-user/defer, or mark addressed after review; these are workflow decisions, "
+        "not checker-certified achievement. request-page and request-status retrieve retained records."
     )
+
+
+def description():
+    return ("Ledger workflow: processed input means successful durable handover, not task achievement. "
+            "Retain ongoing commitments with request-disposition keep and a closing condition; record waiting-user/defer "
+            "when appropriate. addressed is an agent disposition. Checker-certified achievement still requires its "
+            "configured check and observed receipt. Withheld commands did not run. Inspect successful receipts before "
+            "claiming a repair worked. Provider proposals are not results; incomplete search does not prove absence. "
+            "Outgoing prose uses ordinary apostrophes. Runtime facts are independently sampled observations, not authority. "
+            "Inbox ages refer to pending message processing; memory gaps are sequence positions; unavailable means unknown.")
 
 
 def capture(prompt, wake_seconds):
@@ -236,7 +247,9 @@ def capture(prompt, wake_seconds):
         if fair_enabled():
             import fair_goals
             fair_goals.finish_reviews(store, time.time())
-        if not any(r["id"] == _focus for r in store.active()):
+        with store.transaction() as db:
+            available = store.selectable(db, _focus)
+        if not available:
             active = store.active()
             if active:
                 _focus = active[-1]["id"]
@@ -451,13 +464,42 @@ def view():
 def request_status(request):
     if not enabled():
         return "PROTECTED_STRATEGY_DISABLED"
-    return strategy.encoded(ledger().protected(str(request)))
+    return strategy.encoded(ledger().request_record(str(request)))
+
+
+def request_page(offset=0):
+    return strategy.encoded(ledger().request_page(int(offset))) if enabled() else "PROTECTED_STRATEGY_DISABLED"
+
+
+def request_read(request, offset):
+    return strategy.encoded(ledger().request_record(str(request), int(offset))) if enabled() else "PROTECTED_STRATEGY_DISABLED"
+
+
+def request_disposition(request, disposition, note):
+    if not enabled():
+        return "PROTECTED_STRATEGY_DISABLED"
+    import helper
+    try:
+        accepted = ledger().disposition(str(request), str(disposition), helper.decode_safe_text(note))
+        return "REQUEST_DISPOSITION_RECORDED" if accepted else "REQUEST_DISPOSITION_WITHHELD"
+    except (ValueError, TypeError) as error:
+        return "REQUEST_DISPOSITION_WITHHELD " + str(error)
+
+
+def input_processed():
+    if enabled() and _message_focus:
+        ledger().processed(_message_focus)
+    return 1
 
 
 def focus_request(request):
     global _focus
     request = str(request)
-    if not enabled() or not any(r["id"] == request for r in ledger().active()):
+    if not enabled():
+        return "PROTECTED_STRATEGY_DISABLED"
+    with ledger().transaction() as db:
+        available = ledger().selectable(db, request)
+    if not available:
         return "REQUEST_FOCUS_WITHHELD_UNKNOWN_OR_FINISHED"
     _focus = request
     return "REQUEST_FOCUSED " + request

@@ -62,6 +62,24 @@ class NativeLifetimeTest(unittest.TestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM native_calls").fetchone()[0], 1)
             self.assertEqual(db.execute("SELECT state FROM native_calls").fetchone()[0], "claimed")
 
+    def test_late_evidence_has_bounded_view_and_restart_visible_wake(self):
+        plan = self.plan(); native_lifetime.claim(plan)
+        full = "quoted evidence " * 200
+        native_lifetime.settle(plan, "late", full)
+        import json
+        value = json.loads(native_lifetime.result(plan.correlation))
+        self.assertLessEqual(len(native_lifetime.result(plan.correlation)), 2400)
+        self.assertTrue(value["truncated"])
+        self.assertFalse(value["action_authority"])
+        self.assertIn(plan.correlation, native_lifetime.evidence_context())
+        with mock.patch.dict(sys.modules, {"telegram": SimpleNamespace(enqueue_runtime_event=mock.Mock(return_value=True))}), \
+             mock.patch.object(native_lifetime, "_notified", set()):
+            native_lifetime.notify(); native_lifetime.notify()
+            sys.modules["telegram"].enqueue_runtime_event.assert_called_once()
+            native_lifetime._notified.clear()  # a new process can recreate a missed wake
+            native_lifetime.notify()
+            self.assertEqual(sys.modules["telegram"].enqueue_runtime_event.call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

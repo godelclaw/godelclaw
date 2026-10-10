@@ -7,6 +7,7 @@ turn that asks for it, and the checker answers format questions for free
 # skill -> (min_args, max_args). None = variadic tail.
 ARITY = {
     "requests": (0, 0), "request-status": (1, 1), "request-focus": (1, 1),
+    "request-page": (1, 1), "request-read": (2, 2), "request-disposition": (3, 3),
     "command-receipts": (0, 0), "topics": (0, 0), "topic-select": (1, 1),
     "topic-note": (1, 1), "background-model": (2, 3), "model-jobs": (0, 0),
     "model-result": (1, 1), "model-adopt": (1, 1), "model-retire": (1, 1),
@@ -51,14 +52,11 @@ PAGES = {
     "model-result": 'usage: (model-result "id")\nRead a correlated result. Its returned tool receipt must reach a subsequent model step before adoption.',
     "model-adopt": 'usage: (model-adopt "id")\nAfter review, append the observed, current evidence view once to its original topic notes. Long results adopt only the displayed excerpt; the full result stays retained. Changed dependencies refuse the merge.',
     "model-retire": 'usage: (model-retire "id")\nRetire an observed terminal/uncertain job and release its slot. Does not replay a provider request or erase evidence.',
-    "requests": (
-        'usage: (requests)\n'
-        'Lists protected unfinished inputs and correlated pending results.\n'
-        'These survive history compaction, restarts and mode changes.\n'
-        'nop and rest do not discharge them. (request-status "id") reads\n'
-        'the original input. (request-focus "id") selects it for the next\n'
-        'decision; it does not claim completion. Completion requires its\n'
-        'operator-registered checker or explicit operator confirmation.'),
+    "requests": 'usage: (requests)\nCompact retained work and receipt view with counts. Input processing settles delivery, not task achievement. Use request-page for older records.',
+    "request-page": 'usage: (request-page "offset")\nRead eight retained request headlines, including processed messages and deferred work. next_offset continues the listing.',
+    "request-status": 'usage: (request-status "id")\nRead kind, workflow status, processing flag and original input excerpt. next_offset continues with request-read.',
+    "request-read": 'usage: (request-read "id" "offset")\nRead the next 4000 characters of the retained original input.',
+    "request-disposition": 'usage: (request-disposition "id" "keep|waiting-user|defer|addressed|reopen" "reason")\nkeep promotes an input to explicit ongoing work; include its closing condition. waiting-user and defer retain work for later. addressed is your reviewed workflow disposition, never checker-certified achievement. Goals and configured exact-output checkers retain their own completion rules.',
     "gateway-start": (
         'usage: (gateway-start "stable-request-id" "tool" "json-object")\n'
         'Use (gateway-tools) for configured names and input schemas. JSON\n'

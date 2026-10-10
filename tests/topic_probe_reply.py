@@ -19,7 +19,10 @@ def setup():
     # Launchers may load an instance's provider defaults. This offline probe
     # explicitly binds its child workers to the local fixture after loading.
     os.environ.update(SYNTHETIC_BASE_URL=origin, SYNTHETIC_MODEL="fixture-model",
-                      SYNTHETIC_API_KEY="fixture-secret", SYNTHETIC_TIMEOUT="10")
+                      SYNTHETIC_API_KEY="fixture-secret", SYNTHETIC_TIMEOUT="10",
+                      METTACLAW_LLM_STREAM="0", METTACLAW_LLM_SOFT_SECONDS="10",
+                      METTACLAW_LLM_HARD_SECONDS="20", METTACLAW_LLM_CONNECT_SECONDS="2",
+                      METTACLAW_LLM_FIRST_BYTE_SECONDS="10", METTACLAW_LLM_IDLE_SECONDS="10")
     return 1
 
 

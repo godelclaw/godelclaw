@@ -8,6 +8,22 @@ import provider_protocol as protocol
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_dynamic_input_does_not_change_prefix_identity_or_gain_cache_hints(self):
+        a = protocol.prompt_observation("STATIC_cache_boundary_A")
+        b = protocol.prompt_observation("STATIC_cache_boundary_longer B")
+        self.assertEqual(a["stable_digest"], b["stable_digest"])
+        self.assertNotEqual(a["dynamic_chars"], b["dynamic_chars"])
+        _, body = protocol.command_body("chat-completions", "m", 10, "low", "STATIC_cache_boundary_A")
+        self.assertNotIn("cache_control", body)
+        self.assertNotIn("prompt_cache_key", body)
+
+    def test_cache_usage_missing_invalid_and_zero_are_distinct(self):
+        self.assertEqual(protocol.cache_observation({})["status"], "unknown")
+        zero = protocol.cache_observation(dict(prompt_tokens=100, prompt_tokens_details=dict(cached_tokens=0)))
+        self.assertEqual(zero["fraction"], 0)
+        self.assertEqual(protocol.cache_observation(dict(prompt_tokens=100, prompt_tokens_details=dict(cached_tokens=101)))["status"], "unknown")
+        self.assertEqual(protocol.cache_observation(dict(input_tokens=10, cache_read_input_tokens=80,
+            cache_creation_input_tokens=10))["fraction"], .8)
     def test_command_roles_effort_and_layout_content(self):
         prompt = "S_cache_boundary_T_cache_boundary_U_cache_boundary_user _cache_boundary_ literal"
         path, body = protocol.command_body("anthropic", "claude-sonnet-5-5", 2524, "low", prompt)

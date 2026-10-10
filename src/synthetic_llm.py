@@ -329,7 +329,7 @@ def _authenticated_request(provider, endpoint, body):
                                   json.dumps(body).encode("utf-8"), headers)
 
 
-def _completion_metadata(result):
+def _completion_metadata(result, prompt_layout=None):
     """No messages, tool arguments, signatures, credentials or raw errors."""
     path = os.environ.get("METTACLAW_LLM_COMPLETION_PATH")
     if not path:
@@ -339,6 +339,9 @@ def _completion_metadata(result):
         value = {"finish_reason": result["choices"][0].get("finish_reason"),
                  "provider_stop": result.get("provider_stop"), "usage": result.get("usage", {}),
                  "transport": result.get("transport", "python"), "observed_at": time.time()}
+        value["cache"] = provider_protocol.cache_observation(value["usage"])
+        if prompt_layout is not None:
+            value["prompt_layout"] = prompt_layout
         # This is an observation, not admission authority.
         try:
             parent = os.path.dirname(path) or "."

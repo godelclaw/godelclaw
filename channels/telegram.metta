@@ -522,12 +522,14 @@
      (if (== $prepared ()) 1
        (if (tg:log-activity-ack (tg:list (tg:update-ids $prepared)))
          (if (tg:ack-all $prepared)
-   (let $handover (py-call (telegram.handover_ack (str:join "," (tg:list (tg:update-ids $prepared)))))
+           (let $handover (py-call (telegram.handover_ack (str:join "," (tg:list (tg:update-ids $prepared)))))
+             (if (== $handover 1)
              (let $gone (tg:forget-items $prepared)
                (let $reset (tg:set prepared-upto 0)
                  (let $b (tg:set batch-ids "")
                    (let $p (py-call (telegram.metta_publish "batch_update_ids" ""))
-                     (let $c (tg:publish-counts) 1))))))
+                     (let $c (tg:publish-counts) 1)))))
+               0))
            0)
          0))))
 

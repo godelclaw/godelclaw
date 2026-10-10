@@ -18,14 +18,16 @@ class StreamingPeer(boundary.Peer):
         self.send_header("Content-Type", "text/event-stream")
         self.end_headers()
         body = (": keepalive\n\n" + frame({"role": "assistant", "reasoning_content": "reason ž"}) +
+                frame({"reasoning_content": "r"}) * getattr(self.server, "reasoning_deltas", 0) +
                 frame({"content": "(nop)"}) + frame({}, "stop", usage={"prompt_tokens": 8, "completion_tokens": 3}))
         if not self.server.truncated:
             body += "data: [DONE]\n\n"
         encoded = body.encode()
         try:
             # Deliberately split UTF-8 code units and JSON/event boundaries.
-            for index in range(0, len(encoded), 7):
-                self.wfile.write(encoded[index:index+7]); self.wfile.flush()
+            step = 65536 if getattr(self.server, "reasoning_deltas", 0) else 7
+            for index in range(0, len(encoded), step):
+                self.wfile.write(encoded[index:index+step]); self.wfile.flush()
                 time.sleep(.002)
         except (BrokenPipeError, ConnectionResetError):
             pass
@@ -58,6 +60,15 @@ class NativeStreamingTest(unittest.TestCase):
         state, soft, result, reason = self.journal()[0]
         self.assertEqual((state, soft, reason), ("completed", 1, None))
         self.assertIn("(nop)", result)
+
+    def test_long_reasoning_stream_survives_sse_envelope_overhead(self):
+        self.peer.reasoning_deltas = 14000
+        self.env["METTACLAW_LLM_HARD_SECONDS"] = "10"
+        output = self.run_guest(f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'
+            '!(println! (RESULT (llm:command "fixture-model" 32768 "low" "input")))\n')
+        self.assertIn("(RESULT (nop))", output)
+        self.assertEqual(len(self.peer.requests), 1)
+        self.assertEqual(self.journal()[0][0], "completed")
 
     def test_detached_wait_returns_pending_and_later_delivers_same_call(self):
         output = self.run_guest(f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'

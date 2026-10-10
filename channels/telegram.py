@@ -2189,10 +2189,10 @@ def handover_ack(ids):
     import mode_channel
     # A failed durable acknowledgement must leave the notice unprocessed.
     if not mode_channel.acknowledge_handover(values):
-        return False
+        return 0
     import input_ack
     input_ack.processed_update_ids(values)
-    return True
+    return 1
 
 
 _METTA_SHARED = ("pending_count", "prepared_count", "sleep_until", "last_poll",

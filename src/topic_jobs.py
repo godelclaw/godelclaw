@@ -187,8 +187,8 @@ def provider_admitted(job, ticket):
         allowance = store.get(db, "allowance")
         if store.get(db, "paused") or (allowance is not None and allowance <= 0) or time.time() < store.get(db, "cooldown"):
             raise RuntimeError("model job admission is unavailable")
-        active = db.execute("SELECT status FROM requests WHERE id=?", (snapshot["focus"],)).fetchone()
-        if not active or active[0] != "active":
+        active = store.selectable(db, snapshot["focus"])
+        if not active:
             raise RuntimeError("model job owner is no longer active")
         if allowance is not None:
             store.put(db, "allowance", allowance - 1)
@@ -261,14 +261,14 @@ def results(job):
     store = _store()
     with store.transaction() as db:
         row = db.execute("SELECT * FROM model_jobs WHERE id=?", (str(job),)).fetchone()
-        if not row:
-            import native_lifetime
-            return native_lifetime.result(job) or "unknown model job"
-        if row["state"] in ("queued", "running"):
-            return strategy.encoded({"id": row["id"], "topic": row["topic"], "state": row["state"]})
-        # Retrieving evidence is distinct from its observation on the next
-        # model step. The strategy adapter records presented result digests.
-        return strategy.encoded(_evidence(row))
+    if not row:
+        import native_lifetime
+        return native_lifetime.result(job) or "unknown model job"
+    if row["state"] in ("queued", "running"):
+        return strategy.encoded({"id": row["id"], "topic": row["topic"], "state": row["state"]})
+    # Retrieving evidence is distinct from its observation on the next
+    # model step. The strategy adapter records presented result digests.
+    return strategy.encoded(_evidence(row))
 
 
 def observe_receipts(presented):

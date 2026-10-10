@@ -14,6 +14,7 @@
     "- Rest, then run one quoted command without another model call: (rest seconds (quote (command ...)))"
     "- Finish this fast burst without suspending autonomous renewal: (nop)"
     "- Inspect/select the persistent cognitive loop policy: (mode) | (modes) | (mode-set \"name\")"
+    "- Retained inputs and work: (requests) | (request-page \"offset\") | (request-status \"id\") | (request-read \"id\" \"offset\"); use (request-disposition \"id\" \"keep|waiting-user|defer|addressed|reopen\" \"reason and closing condition\")"
     ;ITER REPROGRAMMING:
     "- List active/disabled hot-reloaded MeTTa Iter request transformations: (iter-transformations)"
     "- Directly install or replace a mutable MeTTa transformation for the next model turn; failures stutter locally: (iter-transform-write \"10_name.metta\" \"(= (iter-transform $visible) (success $visible))\")"
@@ -183,6 +184,10 @@
 (= (requests) (py-call (strategy_host.view)))
 (= (request-status $request) (py-call (strategy_host.request_status $request)))
 (= (request-focus $request) (py-call (strategy_host.focus_request $request)))
+(= (request-page $offset) (py-call (strategy_host.request_page $offset)))
+(= (request-read $request $offset) (py-call (strategy_host.request_read $request $offset)))
+(= (request-disposition $request $disposition $reason)
+   (py-call (strategy_host.request_disposition $request $disposition $reason)))
 (= (mode-set $name) (py-call (loop_modes.set_mode $name)))
 
 ;; Telegram file/image delivery. The result string says what happened —

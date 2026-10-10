@@ -10,6 +10,7 @@ import hashlib
 import json
 from pathlib import Path
 import sqlite3
+import time
 import uuid
 
 
@@ -43,7 +44,16 @@ class Ledger:
                 CREATE INDEX IF NOT EXISTS request_status ON requests(status);
                 CREATE INDEX IF NOT EXISTS action_status ON actions(status);
                 CREATE INDEX IF NOT EXISTS action_observation ON actions(observed);
+                CREATE TABLE IF NOT EXISTS request_context (
+                    request TEXT PRIMARY KEY, kind TEXT NOT NULL,
+                    processed INTEGER NOT NULL DEFAULT 0, note TEXT NOT NULL DEFAULT '');
             """)
+            # Existing input identities were created at the delivery boundary,
+            # not by a task checker. Migration changes their kind, not outcome.
+            db.execute("""INSERT OR IGNORE INTO request_context(request,kind)
+                SELECT id, CASE WHEN id LIKE 'input:%' THEN 'message'
+                    WHEN id LIKE 'goal:%' THEN 'goal'
+                    WHEN id='autonomous' THEN 'autonomous' ELSE 'task' END FROM requests""")
             for key, value in {"owner": uuid.uuid4().hex, "revision": 0,
                                "mode": "godelclaw", "paused": False,
                                "next_sample": 0, "pending": None,
@@ -83,7 +93,12 @@ class Ledger:
     def event(db, kind, **fields):
         db.execute("INSERT INTO events(event) VALUES (?)", (encoded({"kind": kind, **fields}),))
 
-    def accept(self, key, content, checker="operator"):
+    def accept(self, key, content, checker="operator", *, kind=None):
+        kind = kind or ("message" if key.startswith("input:") else
+                        "goal" if key.startswith("goal:") else
+                        "autonomous" if key == "autonomous" else "task")
+        if kind not in ("message", "notification", "task", "goal", "autonomous"):
+            raise ValueError("unknown request kind")
         with self.transaction() as db:
             old = db.execute("SELECT content,checker FROM requests WHERE id=?", (key,)).fetchone()
             if old:
@@ -91,6 +106,7 @@ class Ledger:
                     raise ValueError("request identity reused for different intent")
                 return False
             db.execute("INSERT INTO requests VALUES (?,?,?,?)", (key, str(content), "active", checker))
+            db.execute("INSERT INTO request_context(request,kind) VALUES (?,?)", (key, kind))
             self.advance(db)
             self.event(db, "deliver", request=key)
             return True
@@ -130,26 +146,89 @@ class Ledger:
             self.advance(db)
             self.event(db, "restore")
 
+    @staticmethod
+    def selectable(db, key):
+        row = db.execute("SELECT r.status,c.kind FROM requests r JOIN request_context c ON c.request=r.id WHERE r.id=?", (key,)).fetchone()
+        return bool(row and (row[0] == "active" or
+                            (row[0] == "processed" and row[1] in ("message", "notification"))))
+
+    def processed(self, key):
+        """A durable input handover settles delivery, not the requested work."""
+        with self.transaction() as db:
+            row = db.execute("SELECT kind,processed FROM request_context WHERE request=?", (key,)).fetchone()
+            if not row or (row[0] not in ("message", "notification") and not key.startswith("input:")) or row[1]:
+                return False
+            db.execute("UPDATE request_context SET processed=1 WHERE request=?", (key,))
+            if row[0] in ("message", "notification"):
+                db.execute("UPDATE requests SET status='processed' WHERE id=? AND status='active'", (key,))
+            self.event(db, "input-processed", request=key)
+            return True
+
+    def disposition(self, key, disposition, note):
+        """Agent workflow decisions never produce checker-certified achievement."""
+        statuses = {"keep": "active", "waiting-user": "waiting-user",
+                    "defer": "deferred", "addressed": "addressed", "reopen": "active"}
+        if disposition not in statuses or not isinstance(note, str) or not 1 <= len(note) <= 800:
+            raise ValueError("use keep, waiting-user, defer, addressed or reopen with a short reason")
+        with self.transaction() as db:
+            row = db.execute("SELECT r.status,r.checker,c.kind,c.processed FROM requests r JOIN request_context c ON c.request=r.id WHERE r.id=?", (key,)).fetchone()
+            if not row or row[0] in ("achieved", "cancelled") or row[2] in ("goal", "autonomous"):
+                return False
+            if disposition == "addressed" and row[1] != "operator":
+                return False  # exact-output and other configured checks remain authoritative
+            if disposition == "addressed" and row[2] in ("message", "notification") and not row[3]:
+                return False
+            kind = "task" if disposition == "keep" else row[2]
+            db.execute("UPDATE requests SET status=? WHERE id=?", (statuses[disposition], key))
+            db.execute("UPDATE request_context SET kind=?,note=? WHERE request=?", (kind, note, key))
+            self.advance(db)
+            self.event(db, "request-disposition", request=key, disposition=disposition, note=note,
+                       certified_achievement=False)
+            return True
+
+    def request_page(self, offset=0, limit=8):
+        offset, limit = max(0, int(offset)), max(1, min(20, int(limit)))
+        with self.transaction() as db:
+            rows = [dict(r) for r in db.execute("""SELECT r.id,r.status,r.checker,c.kind,c.processed,
+                substr(r.content,1,180) AS summary,c.note FROM requests r JOIN request_context c ON c.request=r.id
+                ORDER BY r.rowid DESC LIMIT ? OFFSET ?""", (limit, offset))]
+            total = db.execute("SELECT COUNT(*) FROM requests").fetchone()[0]
+        return dict(records=rows, total=total, next_offset=offset + len(rows) if offset + len(rows) < total else None)
+
+    def request_record(self, key, offset=0):
+        offset = max(0, int(offset))
+        with self.transaction() as db:
+            row = db.execute("SELECT r.*,c.kind,c.processed,c.note FROM requests r JOIN request_context c ON c.request=r.id WHERE r.id=?", (key,)).fetchone()
+        if not row:
+            return dict(id=key, status="unknown")
+        result = dict(row); content = result.pop("content")
+        result.update(content=content[offset:offset+4000], content_digest=digest(content), offset=offset,
+                      next_offset=offset+4000 if offset+4000 < len(content) else None)
+        return result
+
     def protected(self, focus, result_chars=6000):
         with self.transaction() as db:
-            active = [{"id": r["id"], "summary": r["content"][:800],
+            active = [{"id": r["id"], "summary": r["content"][:180],
                        "content_digest": digest(r["content"]), "checker": r["checker"]}
-                      for r in db.execute("SELECT * FROM requests WHERE status='active' ORDER BY rowid")]
+                      for r in db.execute("SELECT * FROM requests WHERE status='active' ORDER BY (id=?) DESC,rowid DESC LIMIT 8", (focus,))]
             row = db.execute("SELECT content FROM requests WHERE id=?", (focus,)).fetchone()
+            counts = dict(db.execute("SELECT status,COUNT(*) FROM requests GROUP BY status"))
             results = []
             for item in db.execute("""SELECT ticket,receipt FROM actions
                     WHERE receipt IS NOT NULL AND
                     (observed=0 OR ticket=(SELECT ticket FROM actions
                         WHERE request=? AND receipt IS NOT NULL ORDER BY rowid DESC LIMIT 1))
-                    ORDER BY rowid""", (focus,)):
+                    ORDER BY rowid LIMIT 2""", (focus,)):
                 receipt = json.loads(item["receipt"])
                 payload = str(receipt["payload"])
                 results.append({**receipt, "payload": payload[:result_chars],
                                 "payload_digest": digest(payload),
                                 "truncated": len(payload) > result_chars})
-            uncertain = [r[0] for r in db.execute("SELECT ticket FROM actions WHERE status IN ('issued','uncertain') ORDER BY rowid")]
+            uncertain = [r[0] for r in db.execute("SELECT ticket FROM actions WHERE status IN ('issued','uncertain') ORDER BY rowid LIMIT 8")]
             return {"owner": self.get(db, "owner"), "focus": focus,
-                    "request": row[0] if row else "", "unfinished": active,
+                    "request": row[0][:4000] if row else "", "unfinished": active,
+                    "counts": counts, "omitted_active": max(0, counts.get("active", 0) - len(active)),
+                    "request_truncated": bool(row and len(row[0]) > 4000),
                     "results": results, "uncertain": uncertain}
 
     def active(self):
@@ -206,10 +285,10 @@ class Ledger:
 
     def capture(self, focus, boundary, router, now, guard="", wake_seconds=600, goal_lease=None):
         with self.transaction() as db:
-            request = db.execute("SELECT status FROM requests WHERE id=?", (focus,)).fetchone()
+            available = self.selectable(db, focus)
             busy = db.execute("SELECT 1 FROM actions WHERE status IN ('issued','uncertain') OR (receipt IS NOT NULL AND observed=0) LIMIT 1").fetchone()
             allowance = self.get(db, "allowance")
-            if (not request or request[0] != "active" or self.get(db, "paused")
+            if (not available or self.get(db, "paused")
                     or self.get(db, "pending") is not None or busy
                     or (allowance is not None and allowance <= 0)
                     or now < self.get(db, "cooldown")):

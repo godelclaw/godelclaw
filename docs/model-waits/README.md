@@ -40,6 +40,9 @@ remote result without provider-supported remote job retrieval.
 protocols retain buffered decoding. The native C worker receives bounded bytes;
 the host's pure protocol adapter assembles text, reasoning, indexed tool calls,
 finish and usage before the native MeTTa codec validates the canonical result.
+Streaming defaults to an 8 MiB body cap because token-delta envelopes can be
+much larger than the final answer; buffered responses default to 1 MiB.
+METTACLAW_LLM_RESPONSE_BYTES sets a checked override up to 16 MiB.
 Missing finish, missing `[DONE]`, mixed response identities, provider errors,
 incomplete events and partial tool batches fail closed. There is no generation
 POST retry or stream reconnect in the adapter.
@@ -78,3 +81,34 @@ The checked `AsyncWait` model accompanies `TopicAsync` and `CooperativeInput`
 in MeTTapedia. They establish model laws with explicit host assumptions;
 the loopback tests supply implementation evidence, not a proof of libcurl or
 the compiled host.
+
+## Request workflow and compact context
+
+A message is an input delivery record, not automatically a permanent task.
+The managed loop marks it processed only after the provider turn succeeds,
+its history is durable, and the input handover is acknowledged. Processing
+does not certify fulfillment. The current message remains selectable for
+continuation, and issued or uncertain actions and their receipts stay retained.
+
+`request-disposition id keep reason` retains explicit ongoing work; the reason
+should include its closing condition. `waiting-user` and `defer` retain work
+outside the active queue. `addressed` records the agent's reviewed workflow
+disposition, distinct from checker-certified `achieved`; `reopen` resumes it.
+Goal lifecycle and configured exact-output checkers retain their own rules.
+
+The prompt shows eight active headlines, counts and the current request, with
+bounded receipt excerpts. `request-page offset` pages through all retained
+records. `request-status id` and `request-read id offset` retrieve original
+inputs. Omitting an old record from the working view never deletes it.
+Old delivery records must be backfilled only from verified handover evidence.
+
+Stable instructions precede changing context and the provider cache boundary.
+The Chat Completions adapter, including Synthetic, sends no undocumented
+cache-control hint. Completion metadata records prefix sizes and hashes,
+and the provider's actual cache counters when supplied. Missing counters
+remain unknown. These observations do not predict cache reuse or billing.
+
+Late or interrupted native calls appear in a durable context listing and
+produce a local readiness wake; a wake can repeat after restart. `model-result`
+provides a bounded excerpt, digest and retained size, with no action authority.
+A newer decision must reconsider the evidence under current dependencies.

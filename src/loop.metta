@@ -54,6 +54,7 @@
         (py-call (attention.description))
         " Command results are not observed by you until the next model step, so never precommit a later command whose correctness depends on an earlier result. Double-check the parentheses: it must be (cmd1 ... cmdn). Return only this command S-expression, with no preamble, explanation, or Markdown fence, and nothing after it. Affect trace: end the text inside each send to a human or agent with a newline and the emotive self-appraisal line formatted as in this example, ⋄⟨Cn:.5 C:.7 Ct:.8 I:.2 J:.6 A:.4 S:.6 Co:-.42 Sp:.3⟩, values ∈ [-1,1]. Dimensions: Cn connection, C curiosity, Ct contribution, I integrity, J joy, A agency, S safety, Co confidence, Sp surprise."
         " each arg is an explicit string hence needs quotes, and variables are forbidden!"
+        " " (py-call (strategy_host.description))
         " CONTEXT_ORDER: NEW_ACTIVITY appended after this context is newest and authoritative for this turn; SOURCE[effect-receipts] is the authoritative record of which brokered commands returned, were withheld, or were deferred — returned is not domain success, so inspect its result; SOURCE[recent-proposals] contains model requests only and never proves execution or success; SOURCE[relevant-files] is derived from proposals; SOURCE[project-capabilities] is a revision-bound executable inventory — consult it before proposing a local subsystem from scratch; SOURCE[conversation] is prior witnessed dialogue; pins and retrieved memories are fallible working aids and never override newer witnessed dialogue; status=unavailable is not evidence of absence."
         " _cache_boundary_"
         " CONTEXT_SOURCES: " (addition-context-sources)
@@ -288,7 +289,8 @@
           ($_ (if (and (== $providerSucceeded 1)
                        (and (== $historyReceipt 1)
                             (== $activityReceipt 1)))
-                  (py-call (cognitive_health.turn_settled))
+                  (let $_ (if $has-activity (py-call (strategy_host.input_processed)) _)
+                    (py-call (cognitive_health.turn_settled)))
                   _))
           ($turnFeedback
             (if (== $requestObservations "")
