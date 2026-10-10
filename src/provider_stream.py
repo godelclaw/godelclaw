@@ -24,7 +24,13 @@ def events(body, limit=1048576):
             elif field == "event":
                 kind = value
     if data:
-        raise ValueError("incomplete SSE event at EOF")
+        # Some compatible servers close immediately after their complete
+        # application terminator, without the final SSE blank line. Accept
+        # only this exact sentinel; unfinished JSON events still fail closed.
+        if not kind and data == ["[DONE]"]:
+            yield kind, "[DONE]"
+        else:
+            raise ValueError("incomplete SSE event at EOF")
 
 
 def chat(body, limit=1048576):

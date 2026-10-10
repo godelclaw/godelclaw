@@ -46,6 +46,9 @@ METTACLAW_LLM_RESPONSE_BYTES sets a checked override up to 16 MiB.
 Missing finish, missing `[DONE]`, mixed response identities, provider errors,
 incomplete events and partial tool batches fail closed. There is no generation
 POST retry or stream reconnect in the adapter.
+Compatible servers may close directly after the exact `[DONE]` sentinel;
+that terminal marker need not have a trailing SSE blank line. A preceding
+validated finish is still required, and JSON events truncated at EOF are refused.
 
 The call journal records submission authority before networking, then the
 handle, soft-wait and byte observations, terminal evidence and precise failure

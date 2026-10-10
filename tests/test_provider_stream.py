@@ -41,12 +41,24 @@ class ProviderStreamTest(unittest.TestCase):
 
     def test_incomplete_and_foreign_data_cannot_produce_a_response(self):
         finished = frame({"content": "candidate"}, "stop")
-        for stream in (finished, finished + "data: [DONE]", frame({}) + "data: [DONE]\n\n",
+        for stream in (finished, finished + 'data: {"id":"reply"}', frame({}) + "data: [DONE]\n\n",
                        frame({"content": "x"}) + frame({}, "stop", "other") + "data: [DONE]\n\n",
                        finished + "data: [DONE]\n\n" + frame({}),
                        'event: error\ndata: {"error":"no"}\n\n'):
             with self.subTest(stream=stream), self.assertRaises(ValueError):
                 provider_stream.chat(stream)
+
+    def test_complete_done_marker_at_eof_is_not_a_truncated_answer(self):
+        complete = frame({"content": "ok"}, "stop")
+        for ending in ("data: [DONE]", "data: [DONE]\n", "data: [DONE]\r\n"):
+            with self.subTest(ending=ending):
+                result = json.loads(provider_stream.chat(complete + ending))
+                self.assertEqual(result["choices"][0]["message"]["content"], "ok")
+        for source in (frame({"content": "provisional"}) + "data: [DONE]",
+                       complete + "data: [DONE]x", complete + "data: [DONE]\ndata: {}",
+                       complete + "event: error\ndata: [DONE]"):
+            with self.subTest(source=source), self.assertRaises(ValueError):
+                provider_stream.chat(source)
 
     def test_partial_and_refused_tool_batches_are_not_actionable(self):
         tools = {"tool_calls": [dict(index=0, id="one", type="function", function=dict(name="tool", arguments="{"))]}

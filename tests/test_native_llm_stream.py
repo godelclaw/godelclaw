@@ -21,7 +21,7 @@ class StreamingPeer(boundary.Peer):
                 frame({"reasoning_content": "r"}) * getattr(self.server, "reasoning_deltas", 0) +
                 frame({"content": "(nop)"}) + frame({}, "stop", usage={"prompt_tokens": 8, "completion_tokens": 3}))
         if not self.server.truncated:
-            body += "data: [DONE]\n\n"
+            body += "data: [DONE]" + ("" if getattr(self.server, "terminal_eof", False) else "\n\n")
         encoded = body.encode()
         try:
             # Deliberately split UTF-8 code units and JSON/event boundaries.
@@ -66,6 +66,14 @@ class NativeStreamingTest(unittest.TestCase):
         self.env["METTACLAW_LLM_HARD_SECONDS"] = "10"
         output = self.run_guest(f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'
             '!(println! (RESULT (llm:command "fixture-model" 32768 "low" "input")))\n')
+        self.assertIn("(RESULT (nop))", output)
+        self.assertEqual(len(self.peer.requests), 1)
+        self.assertEqual(self.journal()[0][0], "completed")
+
+    def test_terminal_marker_without_sse_blankline_completes_once(self):
+        self.peer.terminal_eof = True
+        output = self.run_guest(f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'
+            '!(println! (RESULT (llm:command "fixture-model" 42 "low" "input")))\n')
         self.assertIn("(RESULT (nop))", output)
         self.assertEqual(len(self.peer.requests), 1)
         self.assertEqual(self.journal()[0][0], "completed")
