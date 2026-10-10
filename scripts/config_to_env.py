@@ -66,6 +66,21 @@ def main():
               file=sys.stderr)
         return 2
     channel = config.get("channel", {})
+    native_waits = {}
+    for name, default in (("hard", 1800), ("connect", 30), ("first_byte", 900), ("idle", 180)):
+        value = agent.get("llm_" + name + "_seconds", default)
+        if (type(value) not in (int, float) or not math.isfinite(value)
+                or not 0 < value <= 2147483):
+            print("invalid native model wait: " + name, file=sys.stderr)
+            return 2
+        native_waits[name] = value
+    if timeout is not None and native_waits["hard"] < timeout:
+        print("native model hard deadline precedes its soft wait", file=sys.stderr)
+        return 2
+    native_stream = agent.get("llm_stream", True)
+    if type(native_stream) is not bool:
+        print("agent.llm_stream must be boolean", file=sys.stderr)
+        return 2
     ack_delay = agent.get("input_ack_seconds", 15)
     if (isinstance(ack_delay, bool) or not isinstance(ack_delay, (int, float))
             or not math.isfinite(ack_delay) or ack_delay < 0):
@@ -105,6 +120,9 @@ def main():
     emit("SYNTHETIC_MODEL", agent.get("synthetic_model"))
     emit("SYNTHETIC_BASE_URL", agent.get("synthetic_base_url"))
     emit("SYNTHETIC_TIMEOUT", timeout)
+    for name, value in native_waits.items():
+        emit("METTACLAW_LLM_" + name.upper() + "_SECONDS", value)
+    emit("METTACLAW_LLM_STREAM", 1 if native_stream else 0)
     emit("METTACLAW_INPUT_ACK_SECONDS", ack_delay)
     emit("METTACLAW_INPUT_POLICY", input_policy)
     emit("METTACLAW_BACKGROUND_MODELS", background_models)

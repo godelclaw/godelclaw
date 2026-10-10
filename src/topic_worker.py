@@ -7,6 +7,8 @@ import llm_policy
 import provider_protocol
 import synthetic_llm
 import topic_jobs
+import native_llm_host
+import provider_stream
 
 
 def prepare():
@@ -32,6 +34,10 @@ def prepare():
                    "other_strands_at_capture": snapshot.get("peers", [])}, ensure_ascii=False) +
                   "_cache_boundary_" + question)
         endpoint, body = provider_protocol.command_body(provider["protocol"], provider.get("model", selected), tokens, "low", prompt)
+        settings = native_llm_host.wait_settings()
+        stream = settings["stream"] and provider["protocol"] == "chat-completions"
+        if stream:
+            body.update(stream=True, stream_options={"include_usage": True})
         ticket = llm_policy.admit(provider["name"], tokens)
         alias = "TOPIC_LLM_" + provider["name"].upper()
         prefix = "CETTA_IO_AUTH_" + alias
@@ -44,7 +50,9 @@ def prepare():
             headers.append(["http:header", "anthropic-version", "2023-06-01"])
         return SimpleNamespace(ready=1, job=job, ticket=ticket, sent=False,
             protocol=provider["protocol"], url=provider["base"] + endpoint, headers=headers,
-            body=json.dumps(body, ensure_ascii=False), timeout=int(float(os.environ.get("SYNTHETIC_TIMEOUT", "300"))*1000), cap=65536)
+            body=json.dumps(body, ensure_ascii=False), timeout=settings["hard"],
+            connect=settings["connect"], first=settings["first"], idle=settings["idle"],
+            stream=stream, cap=1048576)
     except Exception as error:
         if ticket:
             llm_policy.fail(ticket, sent=False)
@@ -67,7 +75,8 @@ def finish(plan, status, body):
         if not 200 <= status < 300:
             llm_policy.fail(plan.ticket, status=status, sent=True)
             return topic_jobs.record(plan.job, "failed", "http-status " + str(status))
-        result = provider_protocol.normalize_response(plan.protocol, json.loads(str(body)))
+        decoded = provider_stream.chat(str(body), plan.cap) if plan.stream else str(body)
+        result = provider_protocol.normalize_response(plan.protocol, json.loads(decoded))
         if not llm_policy.complete(plan.ticket, result):
             return topic_jobs.record(plan.job, "failed", "duplicate provider completion")
         choice = result["choices"][0]

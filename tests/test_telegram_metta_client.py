@@ -514,6 +514,15 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
             assert any(question in body for _, body in pending()), "restart consumed cognitive input"
             print("independent receipt notice preserves input and survives restart without duplicate delivery")
 
+            # Processing the actual batch must pass exact IDs through the
+            # MeTTa join into the host ledger, then retire the bot's notice.
+            lines, err = run('!(tg:start)\n!(tg:activity-batch)\n!(tg:ack-activity-batch)\n', notice_env)
+            assert lines[-1] == "1", (lines[-5:], err[-1000:])
+            await_(lambda: any(name == "deleteMessage" for name, _ in api.calls),
+                   "processed queue notice was deleted")
+            assert not any(question in body for _, body in pending()), "processed input stayed queued"
+            print("native acknowledgement clears exact input IDs and deletes the correlated notice")
+
             print("responder: /mode answered in %.0f ms with no loop running, as the Python handler words it; "
                   "/wake ends a rest; /delete stays with the loop client (responder RSS %d kB)" % (latency * 1000, rss))
         finally:

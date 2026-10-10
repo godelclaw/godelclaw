@@ -32,8 +32,16 @@ owner = "$USER"
 # Any OpenAI-compatible provider. Put the key in config/secrets.env.
 synthetic_base_url = "https://api.synthetic.new/openai/v1"
 synthetic_model = "syn:large:text"
-# Provider request timeout, in seconds.
+# Python transport hard timeout; native transport soft wait, in seconds.
 llm_timeout_seconds = 120
+# Native waits retain the same request after the soft limit. These are separate
+# transport limits; byte activity does not certify a complete model answer.
+llm_hard_seconds = 1800
+llm_connect_seconds = 30
+llm_first_byte_seconds = 900
+llm_idle_seconds = 180
+# Chat Completions SSE only. Other protocols retain buffered decoding.
+llm_stream = true
 # Delay for an independent receipt notice while managed input stays queued;
 # zero disables notices. Standalone upstream profiles do not send them.
 input_ack_seconds = 15

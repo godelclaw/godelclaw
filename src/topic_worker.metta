@@ -11,7 +11,7 @@
 
 (: topic-worker:wait (-> Atom Atom %Undefined%))
 (= (topic-worker:wait $plan $id)
-   (let $event (io:wait 250) (topic-worker:observe $plan $id $event)))
+   (let $event (io:wait $id 250) (topic-worker:observe $plan $id $event)))
 
 (: topic-worker:observe (-> Atom Atom Atom %Undefined%))
 (= (topic-worker:observe $plan $id $event)
@@ -28,6 +28,10 @@
             ($headers (py-call (topic_worker.field $plan "headers")))
             ($body (py-call (topic_worker.field $plan "body")))
             ($timeout (py-call (topic_worker.field $plan "timeout")))
+            ($connect (py-call (topic_worker.field $plan "connect")))
+            ($first (py-call (topic_worker.field $plan "first")))
+            ($idle (py-call (topic_worker.field $plan "idle")))
             ($cap (py-call (topic_worker.field $plan "cap")))
-            ($outcome (catch (io:submit (http:request "POST" $url $headers $body $timeout $cap)))))
+            ($outcome (catch (io:submit (http:request "POST" $url $headers $body $timeout $cap False
+                                                       (http:timeouts $connect $first $idle))))))
        (topic-worker:after-submit $plan $outcome)) 0))

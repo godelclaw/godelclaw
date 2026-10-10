@@ -120,11 +120,26 @@ def turn_started(provider="unknown", now=None):
                 "retry_at": 0,
                 "started_count": int(value.get("started_count", 0)) + 1,
                 "provider": _label(provider),
+                "response_bytes": 0,
+                "transport_quiet_ms": 0,
+                "soft_wait_elapsed": False,
             })
             _write(value)
         return 1
     except Exception:
         return 0
+
+
+def provider_progress(response_bytes, quiet_ms, soft_elapsed, hard_ms):
+    """Transport observations never imply a successful cognitive turn."""
+    with _lock:
+        value = _read()
+        if value.get("in_flight_since"):
+            value.update(transport_observed_at=time.time(), response_bytes=int(response_bytes),
+                         transport_quiet_ms=int(quiet_ms), soft_wait_elapsed=bool(soft_elapsed),
+                         hard_deadline_ms=int(hard_ms))
+            _write(value)
+    return 1
 
 
 def turn_completed(response_bytes=0, now=None):

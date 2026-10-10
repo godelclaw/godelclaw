@@ -66,7 +66,10 @@ def running_settings(name, extra_keys=()):
                "METTACLAW_ACTIVE_ENGINE", "CETTA_BIN", "METTACLAW_LLM_TRANSPORT",
                "METTACLAW_LLM_POLICY", "METTACLAW_COMMAND_BATCH_LIMIT", "METTACLAW_INSTANCE",
                "METTACLAW_INPUT_ACK_SECONDS", "METTACLAW_INPUT_POLICY",
-               "METTACLAW_BACKGROUND_MODELS", "METTACLAW_BACKGROUND_TOKENS"}
+               "METTACLAW_BACKGROUND_MODELS", "METTACLAW_BACKGROUND_TOKENS",
+               "METTACLAW_LLM_HARD_SECONDS", "METTACLAW_LLM_CONNECT_SECONDS",
+               "METTACLAW_LLM_FIRST_BYTE_SECONDS", "METTACLAW_LLM_IDLE_SECONDS",
+               "METTACLAW_LLM_STREAM"}
     allowed.update(key.decode() for key in keys)
     if set(extra_keys) - allowed:
         raise ValueError("runtime checks may inspect only nonsecret settings")

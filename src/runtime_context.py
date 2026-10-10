@@ -80,6 +80,12 @@ def _provider(now):
     call = {"phase": "idle"}
     if pending:
         call.update(phase="waiting", ageSeconds=_age(pending, now))
+        if value.get("soft_wait_elapsed") is True:
+            call["softWaitElapsed"] = True
+        if type(value.get("response_bytes")) is int:
+            call["transportBytes"] = max(0, value["response_bytes"])
+        if type(value.get("transport_quiet_ms")) is int:
+            call["transportQuietSeconds"] = max(0, value["transport_quiet_ms"]) // 1000
     elif value.get("last_outcome") == "failed":
         call.update(phase="backoff" if retry > now else "failed",
                     ageSeconds=_age(value.get("last_failed_at"), now))

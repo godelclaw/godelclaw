@@ -262,7 +262,8 @@ def results(job):
     with store.transaction() as db:
         row = db.execute("SELECT * FROM model_jobs WHERE id=?", (str(job),)).fetchone()
         if not row:
-            return "unknown model job"
+            import native_lifetime
+            return native_lifetime.result(job) or "unknown model job"
         if row["state"] in ("queued", "running"):
             return strategy.encoded({"id": row["id"], "topic": row["topic"], "state": row["state"]})
         # Retrieving evidence is distinct from its observation on the next
@@ -298,7 +299,9 @@ def status():
     recover()
     store = _store()
     with store.transaction() as db:
-        return strategy.encoded([dict(row) for row in db.execute("SELECT id,topic,revision,state,observed,adopted FROM model_jobs ORDER BY rowid DESC LIMIT 20")])
+        background = [dict(row) for row in db.execute("SELECT id,topic,revision,state,observed,adopted FROM model_jobs ORDER BY rowid DESC LIMIT 20")]
+    import native_lifetime
+    return strategy.encoded({"background": background, "foreground": native_lifetime.status()})
 
 
 def activity():

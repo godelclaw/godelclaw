@@ -2159,11 +2159,40 @@ def metta_take_runtime_events():
     return json.dumps(items, ensure_ascii=False)
 
 
+def handover_ids(ids):
+    """Validate a complete ID batch; error atoms grant no processing authority."""
+    if isinstance(ids, str):
+        values = [] if ids == "" else ids.split(",")
+    elif isinstance(ids, (list, tuple)):
+        values = ids
+    elif type(ids) is int:
+        values = [ids]
+    else:
+        raise ValueError("handover requires update IDs or comma-separated update IDs")
+    if len(values) > 256:
+        raise ValueError("handover update batch exceeds its bound")
+    result = []
+    for value in values:
+        if type(value) not in (int, str):
+            raise ValueError("invalid handover update ID")
+        text = str(value)
+        if (not text or len(text) > 19 or not text.isascii() or not text.isdigit()
+                or str(int(text)) != text or not 0 <= int(text) < 2**63):
+            raise ValueError("invalid handover update ID")
+        if text not in result:
+            result.append(text)
+    return result
+
+
 def handover_ack(ids):
-    import input_ack
-    input_ack.processed_update_ids(str(ids).split(","))
+    values = handover_ids(ids)
     import mode_channel
-    return mode_channel.acknowledge_handover(str(ids).split(","))
+    # A failed durable acknowledgement must leave the notice unprocessed.
+    if not mode_channel.acknowledge_handover(values):
+        return False
+    import input_ack
+    input_ack.processed_update_ids(values)
+    return True
 
 
 _METTA_SHARED = ("pending_count", "prepared_count", "sleep_until", "last_poll",

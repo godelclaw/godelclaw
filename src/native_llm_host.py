@@ -20,6 +20,8 @@ import cognitive_health
 import llm_policy
 import provider_protocol
 import synthetic_llm
+import native_lifetime
+import provider_stream
 
 _session_epoch = uuid.uuid4().hex
 _claim_lock = threading.Lock()
@@ -69,11 +71,16 @@ def _plan(kind, model, tokens, builder):
         headers = [["http:header", "Content-Type", "application/json"], ["http:credential", alias]]
         if provider["name"] == "anthropic":
             headers.append(["http:header", "anthropic-version", "2023-06-01"])
+        settings = wait_settings()
+        import strategy_host
+        captured_guard = strategy_host.guard() if strategy_host.enabled() else None
         cognitive_health.turn_started(provider["name"])
         return SimpleNamespace(kind=kind, ready="true", correlation=ticket, protocol=provider["protocol"],
             epoch=_session_epoch, provider=provider["name"], base=provider["base"], headers=json.dumps(headers),
             request=json.dumps(request, ensure_ascii=False), sent=False, claimed=False,
-            timeout=int(synthetic_llm._float_env("SYNTHETIC_TIMEOUT", 120, 1)*1000),
+            guard=captured_guard, stream=(provider["protocol"] == "chat-completions" and settings["stream"]),
+            timeout=settings["hard"], connect=settings["connect"], first=settings["first"],
+            idle=settings["idle"], soft=settings["soft"],
             cap=int(os.environ.get("METTACLAW_LLM_RESPONSE_BYTES", 1048576)))
     except Exception as error:
         if ticket:
@@ -148,6 +155,9 @@ def claim(plan):
     with _claim_lock:
         if plan.claimed:
             return "false"
+        if not native_lifetime.claim(plan):
+            llm_policy.fail(plan.correlation, sent=False)
+            return "false"
         plan.claimed = True
         return "true"
 
@@ -156,7 +166,64 @@ def submitted(plan, transport_id):
     plan.sent = True
     plan.transport = int(transport_id)
     plan.submitted_at = time.monotonic()
+    native_lifetime.submitted(plan, transport_id)
     return True
+
+
+def owns(plan, epoch, correlation, transport):
+    return "true" if (str(epoch) == plan.epoch and str(correlation) == plan.correlation
+                       and int(transport) == getattr(plan, "transport", None)) else "false"
+
+
+def wait_settings():
+    """The old provider timeout becomes a soft wait for native callers."""
+    def milliseconds(name, default, allow_zero=False):
+        value = float(os.environ.get(name, str(default)))
+        if not (0 if allow_zero else 0.001) <= value <= 2147483:
+            raise ValueError("invalid model wait setting")
+        return int(value * 1000)
+    soft = milliseconds("METTACLAW_LLM_SOFT_SECONDS", os.environ.get("SYNTHETIC_TIMEOUT", "300"))
+    hard = milliseconds("METTACLAW_LLM_HARD_SECONDS", 1800)
+    if hard < soft:
+        raise ValueError("hard model deadline precedes the soft wait")
+    return dict(soft=soft, hard=hard,
+                connect=milliseconds("METTACLAW_LLM_CONNECT_SECONDS", 30),
+                first=milliseconds("METTACLAW_LLM_FIRST_BYTE_SECONDS", 900),
+                idle=milliseconds("METTACLAW_LLM_IDLE_SECONDS", 180),
+                stream=os.environ.get("METTACLAW_LLM_STREAM", "0") == "1")
+
+
+def wire_body(plan, body):
+    value = json.loads(str(body))
+    if plan.stream:
+        value.update(stream=True, stream_options={"include_usage": True})
+    return json.dumps(value, ensure_ascii=False)
+
+
+def decoded_body(plan, body):
+    try:
+        value = provider_stream.chat(str(body), plan.cap) if plan.stream else str(body)
+        return json.dumps({"ok": True, "body": value})
+    except (ValueError, TypeError, KeyError, RecursionError):
+        return json.dumps({"ok": False})
+
+
+def waiting(plan, count=0, quiet=0):
+    """An admitted call settles before routine recycling or a pause boundary.
+
+    The independent responder still handles /stop and /activity; the broker
+    rejects effects when paused or steered. No new model request is made here.
+    """
+    now = time.monotonic()
+    soft = int((now - plan.submitted_at) * 1000 >= plan.soft)
+    if (now - getattr(plan, "last_progress_record", -float("inf")) < 2
+            and soft == getattr(plan, "last_soft", None)):
+        return 1
+    plan.last_progress_record = now
+    plan.last_soft = soft
+    native_lifetime.progress(plan, count, quiet, soft)
+    cognitive_health.provider_progress(count, quiet, soft, plan.timeout)
+    return 1
 
 
 def finish(plan, epoch, correlation, encoded, canonical):
@@ -173,6 +240,16 @@ def finish(plan, epoch, correlation, encoded, canonical):
         result["usage"] = {}
     if not llm_policy.complete(plan.correlation, result):
         return failed(plan, correlation, "duplicate-completion")
+    import strategy_host
+    stale = plan.guard is not None and plan.guard != strategy_host.guard()
+    native_lifetime.settle(plan, "late" if stale else "completed", str(canonical),
+                           "captured-authority-changed" if stale else None)
+    if stale:
+        # Evidence remains queryable; it does not become commands in a newer
+        # scope. Structured callers receive no partially actionable batch.
+        if plan.kind == "command":
+            return synthetic_llm._empty_action(RuntimeError("late provider result retained"))
+        raise RuntimeError("late provider result retained; captured authority changed")
     result["transport"] = "native"
     synthetic_llm._completion_metadata(result)
     if plan.provider == "anthropic":
@@ -210,7 +287,7 @@ def _record_failure(plan, kind, status=0):
     known = {"admission-error", "submit-error", "transport-error", "decode-error",
              "http-status", "correlation-error", "duplicate-completion",
              "invalid-phase", "retired-handle", "unfinished-provider-response",
-             "refused-tool-call"}
+             "refused-tool-call", "incomplete-stream", "ownership-error"}
     code = str(kind)
     code = code if code in known else "provider-error"
     provider = getattr(plan, "provider", "unknown")
@@ -231,6 +308,7 @@ def failed(plan, correlation, kind, status=0):
     _record_failure(plan, kind, status)
     if getattr(plan, "ready", "false") == "true":
         llm_policy.fail(plan.correlation, status=int(status) or None, sent=plan.sent)
+        native_lifetime.settle(plan, "failed", reason=str(kind)[:64])
     error = getattr(plan, "error", RuntimeError(str(kind)))
     if plan.kind == "command":
         return synthetic_llm._empty_action(error)

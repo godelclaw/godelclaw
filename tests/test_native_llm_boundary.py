@@ -228,6 +228,7 @@ class NativeBoundaryTests(unittest.TestCase):
         forms = f'!(import! &self "{ROOT}/src/native_llm.metta")\n' + (
             '!(println! (RESULT (llm:command "fixture-model" 42 "low" "input")))\n')
         self.env["SYNTHETIC_TIMEOUT"] = "1"
+        self.env["METTACLAW_LLM_HARD_SECONDS"] = "1"
         out = self.run_guest(forms)
         self.assertIn("(RESULT ())", out)
         self.assertIn("failed request: transport-error", self.last_stderr)
@@ -236,6 +237,7 @@ class NativeBoundaryTests(unittest.TestCase):
         self.assertEqual(health["last_outcome"], "failed")
         self.assertGreater(health["obligation_since"], 0)
         self.env["SYNTHETIC_TIMEOUT"] = "3"
+        self.env["METTACLAW_LLM_HARD_SECONDS"] = "3"
         out = self.run_guest(forms)
         self.assertIn("(RESULT (nop))", out)
         self.assertNotIn("failed request:", self.last_stderr)
