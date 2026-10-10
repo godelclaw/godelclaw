@@ -7,14 +7,14 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-WorkingDirectory=/home/oruzi/pettaclaw-godel
-Environment=HOME=/home/oruzi
+WorkingDirectory=%h/pettaclaw-godel
+Environment=HOME=%h
 Environment=METTACLAW_SKIP_INITIALIZE=1
 Environment=CETTA_BIN=%h/repos/CeTTa-runtime/cetta
 EnvironmentFile=-%h/.config/pettaclaw/godel-runtime.env
 EnvironmentFile=-%h/.config/pettaclaw/godel-telegram.env
-Environment=METTACLAW_LIFECYCLE_PATH=/home/oruzi/.local/state/pettaclaw-godel/lifecycle.json
-Environment=METTACLAW_DEPLOYMENT_STATE_PATH=/home/oruzi/.local/state/pettaclaw-godel/deployment.json
+Environment=METTACLAW_LIFECYCLE_PATH=%h/.local/state/pettaclaw-godel/lifecycle.json
+Environment=METTACLAW_DEPLOYMENT_STATE_PATH=%h/.local/state/pettaclaw-godel/deployment.json
 ExecStart=%h/pettaclaw-godel/run.sh
 Restart=always
 RestartSec=5
