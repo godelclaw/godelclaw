@@ -14,6 +14,7 @@ import os
 import pathlib
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -497,7 +498,10 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
             batch("!(tg:ack-activity-batch)\n")
             responder[0].terminate()
             responder[0].communicate(timeout=10)
+            os.unlink(responder[1])
             notice_env = dict(env, METTACLAW_OBSERVED_STRATEGY="1",
+                              METTACLAW_STRATEGY_PATH=str(temp / "notice-ledger.sqlite3"),
+                              METTACLAW_HISTORY_PATH=str(temp / "notice-history.metta"),
                               METTACLAW_INPUT_ACK_SECONDS="0.05")
             responder = start('!(import! &self ./channels/telegram_control.metta)\n!(tc:serve)\n', notice_env)
             notice = "Received. Your message is queued; /activity shows whether I'm waiting, retrying, or resting."
@@ -508,6 +512,7 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
             assert any(question in body for _, body in pending()), "notice consumed cognitive input"
             responder[0].terminate()
             responder[0].communicate(timeout=10)
+            os.unlink(responder[1])
             responder = start('!(import! &self ./channels/telegram_control.metta)\n!(tc:serve)\n', notice_env)
             time.sleep(.8)
             assert sum(t == notice for _, t in api.texts()) == 1, "restart duplicated receipt notice"
@@ -533,6 +538,52 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
                    "processed queue notice was deleted")
             assert not any(question in body for _, body in pending()), "processed input stayed queued"
             print("native acknowledgement clears exact input IDs and deletes the correlated notice")
+
+            # Group message IDs are scoped to their original chat. A visible
+            # reply may precede the input's durable processing boundary; it
+            # must not retire the notice or redirect it to a selected DM.
+            group_question = "group input for delayed durable settlement"
+            api.add(202, GROUP, OPERATOR, group_question)
+            await_(lambda: any(c == GROUP and t == notice for c, t in api.texts()),
+                   "independent group receipt notice")
+            def group_notice():
+                with sqlite3.connect(notice_env["METTACLAW_STRATEGY_PATH"]) as db:
+                    db.row_factory = sqlite3.Row
+                    row = db.execute("SELECT * FROM input_notices WHERE update_id='202'").fetchone()
+                    return dict(row) if row else None
+            await_(lambda: group_notice() and group_notice()["message_id"] is not None,
+                   "correlated group send receipt")
+            target = group_notice()["message_id"]
+            def group_deleted():
+                return any(name == "deleteMessage" and data["chat_id"] == GROUP and
+                           data["message_id"] == target for name, data in api.calls)
+            lines, err = run('!(tg:start)\n!(tg:activity-batch)\n'
+                '!(tg:send "visible group answer" "%d")\n' % GROUP, notice_env)
+            expect(lines, err, ["sent message"], "group reply delivery before settlement")
+            assert group_notice()["processed"] == 0 and not group_deleted()
+            assert any(group_question in body for _, body in pending())
+            responder[0].terminate()
+            responder[0].communicate(timeout=10)
+            os.unlink(responder[1])
+            responder = start('!(import! &self ./channels/telegram_control.metta)\n!(tc:serve)\n', notice_env)
+            lines, err = run('!(tg:start)\n!(tg:activity-batch)\n'
+                '!(py-call (helper.history_append "group processing history"))\n'
+                '!(import! &self "' + str(ack_probe) + '")\n'
+                '!(py-call (ack_failure_probe.refuse))\n'
+                '!(tg:ack-activity-batch)\n'
+                '!(== (tg:prepared-count) 0)\n'
+                '!(py-call (ack_failure_probe.restore))\n'
+                '!(tg:ack-activity-batch)\n', notice_env)
+            assert lines[-4:] == ['0', 'false', '1', '1'], (lines[-8:], err[-1000:])
+            assert (temp / "notice-history.metta").read_text().strip() == "group processing history"
+            await_(lambda: group_deleted() and group_notice()["state"] == "deleted",
+                   "processed group notice deletion confirmed")
+            assert group_notice()["processed"] == 1
+            assert not any(group_question in body for _, body in pending())
+            assert sum(c == GROUP and t == notice for c, t in api.texts()) == 1
+            assert all(data["chat_id"] == GROUP for name, data in api.calls
+                       if name == "deleteMessage" and data["message_id"] == target)
+            print("group notice survives visible reply and restart; exact durable acknowledgement clears it")
 
             print("responder: /mode answered in %.0f ms with no loop running, as the Python handler words it; "
                   "/wake ends a rest; /delete stays with the loop client (responder RSS %d kB)" % (latency * 1000, rss))

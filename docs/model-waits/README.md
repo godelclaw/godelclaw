@@ -80,6 +80,64 @@ python -m unittest discover -s tests -p 'test_native_lifetime.py'
 CETTA_BIN=/path/to/http-python-cetta python -m unittest discover -s tests -p 'test_native_llm*.py'
 ```
 
+The repair contracts have a separate kernel conformance gate. Obtain the
+MeTTapedia `feature/agent-lifetime-workflow-20261010` branch, install its Lean
+toolchain, and use a CeTTa build with Python and HTTP support:
+
+```sh
+python scripts/check_repair_contracts.py \
+  --models ../MeTTapedia/lean/pettaclaw \
+  --toolchain leanprover/lean4:v4.33.1 \
+  --cetta "$CETTA_BIN" \
+  --output-dir ./qualification/repair-contracts
+```
+
+`RepairArchitecture.lean` strengthens the coarse delivery and wait models with
+the actual host's processing, promotion, goal/checker guards, correlated notice
+receipts, deletion eligibility, call epochs and accounting preservation. It
+also checks explicit counterexamples for the old permanent-backlog and
+destructive-timeout policies. Inductive laws apply to arbitrary traces of the
+specified workflow and call transitions. Conditional queue progress assumes
+successful durable boundaries and service of pending heads.
+
+`NoticeProtocol.lean` composes input settlement, captured chat/thread routes,
+deletion intents and correlated confirmations. A visible reply alone cannot
+authorize cleanup. Failed attempts retain their route, key and message target;
+any finite number of failures followed by a confirming receipt closes the
+notice. These progress laws require service of the notice and confirmation
+before expiry. Expiry closes local tracking without asserting remote deletion.
+
+The gate mutates isolated fixture databases, executes the extracted MeTTa turn
+guard, and compares observed host outputs with the Lean functions. Every finite
+comparison is checked with `by decide`; deliberate corrupted observations must
+fail kernel checking. The receipt records source hashes, coverage and axioms.
+A failed rerun replaces an older passing receipt with an incomplete status.
+Source changes during a run invalidate qualification.
+
+The channel integration regression also exercises group notices with the
+real MeTTa client and a loopback Bot API: visible reply before processing,
+control restart, refused handover, successful retry and correlated deletion
+in the original group. Reproduce it with the CeTTa checkout's transport test
+fixtures and a Telegram service build:
+
+```sh
+CETTA_CHANNEL_ROOT=../CeTTa CETTA_SERVICE_BIN=/path/to/cetta-telegram-service \
+  CETTA_BIN=/path/to/http-python-cetta python tests/test_telegram_metta_client.py
+```
+
+This checks finite correspondence for these boundaries. It does not prove the
+Python/C/SQLite implementation, all crash interleavings, remote exactly-once
+execution, provider liveness, task completion, a fixed whole-prompt token
+bound, or a cache hit rate. Content excerpts and backlog item counts are
+bounded; identifiers, checker text and other prompt sources have separate
+contracts. Cache-prefix laws concern stable-first layout and eligibility for
+reuse. The provider decides whether to reuse a prefix.
+
+The older `audit_strategy.py`/`StrategyTraceAudit.lean` monitor predates the new
+workflow events and fails closed on them. It requires a workflow-aware adapter
+before it can certify complete current ledgers. Passing this repair gate does
+not constitute that complete-ledger certificate.
+
 The checked `AsyncWait` model accompanies `TopicAsync` and `CooperativeInput`
 in MeTTapedia. They establish model laws with explicit host assumptions;
 the loopback tests supply implementation evidence, not a proof of libcurl or
