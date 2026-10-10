@@ -67,6 +67,14 @@ Natural-language task acceptance and the truth of prose remain host obligations.
 An interrupted effect without a saved result stays uncertain and requires
 reconciliation; it is not automatically repeated.
 
+Input processing has its own lifecycle: a successful turn, durable history and
+durable handover mark a message processed without certifying its requested work.
+Agents can retain explicit tasks, wait for the user, defer, address or reopen
+work with `request-disposition`; goals retain their checked completion rules.
+The working prompt shows eight active headlines and counts. `request-page` and
+`request-read` retrieve retained records beyond that view. See the
+[request workflow and compact context guide](docs/model-waits/README.md#request-workflow-and-compact-context).
+
 The independent Telegram control responder can acknowledge operator messages
 while cognition is waiting. `agent.input_ack_seconds` sets the delay (15 seconds
 by default; zero disables it). Notices leave the input pending and use stable
@@ -344,7 +352,8 @@ use [`native_llm.metta`](src/native_llm.metta): CeTTa submits one asynchronous
 request, and CeTTa's shared `llm`, `llm:command`, `llm:compat` and `llm:io`
 libraries construct requests and decode Chat Completions, Anthropic Messages or
 OpenAI Responses. This requires the versioned `llm:v1:` API and owner-selected
-`io:wait` in the chosen CeTTa build. SWI-PeTTa retains the Python HTTP adapter.
+`io:wait`, progress observations and independent HTTP timeout settings in the
+chosen CeTTa build. SWI-PeTTa retains the Python HTTP adapter.
 Python owns provider/model selection, upstream prompt splitting, cache identity,
 credential scope and the admission ledger; this is not yet a Python-free deployment.
 
@@ -366,7 +375,14 @@ Each native plan has one local submission authority and a session epoch.
 Waiting consumes only its own HTTP handle; unrelated completions remain queued.
 Terminal observations cannot trigger another request. Cancellation and timeout
 still do not prove that the remote provider did no work. The library does not
-retry requests or execute tools. Streaming is not implemented in this release.
+retry requests or execute tools. Chat Completions streaming is assembled into a
+complete, validated result before publication; partial text and tools do not
+authorize actions. A soft wait retains the original call, while connection,
+initial silence, subsequent silence and an absolute transport backstop have
+separate limits. Read-only topic workers and the independent controls can
+continue while the foreground waits. See the
+[model request lifetime guide](docs/model-waits/README.md) for configuration,
+bounded late evidence, recovery and offline checks.
 
 Native requests carry `(http:credential "ALIAS")`, never a bearer token atom.
 The host authorizes the alias through `CETTA_IO_AUTH_<ALIAS>_URL_PREFIX`,
@@ -374,8 +390,10 @@ The host authorizes the alias through `CETTA_IO_AUTH_<ALIAS>_URL_PREFIX`,
 key for that scope, refuses credential redirects and duplicate credential
 headers, and blocks a response containing the key. The client configures these
 aliases from the chosen provider; custom aliases require host configuration.
-The default timeout is 120 seconds and the native response limit is 1 MiB;
-configure `SYNTHETIC_TIMEOUT` and `METTACLAW_LLM_RESPONSE_BYTES` as needed.
+The native soft wait defaults to 120 seconds, with a 1,800-second hard backstop.
+Streaming has an 8 MiB response bound; buffered responses retain the 1 MiB bound.
+Configure these through `config/local.toml`; `METTACLAW_LLM_RESPONSE_BYTES`
+provides a checked response-size override.
 The transport byte cap is not a guarantee that the JSON codec accepts every
 body below it. Parser work and depth limits can reject a smaller body; these
 remain an explicit qualification limit for large contexts and replies.
