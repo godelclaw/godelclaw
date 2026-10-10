@@ -58,6 +58,14 @@ def _plan(kind, model, tokens, builder):
         if not provider["key"]:
             raise RuntimeError("provider credential is not configured")
         request = builder(provider["protocol"], provider.get("model", selected))
+        if provider["name"] == "synthetic":
+            options = dict(request)
+            for field in ("reasoning", "reasoning_effort"):
+                if field in request.get("extensions", {}):
+                    if field in options:
+                        raise ValueError("conflicting Synthetic reasoning extension")
+                    options[field] = request["extensions"][field]
+            provider_protocol.synthetic_body(options)  # validate before budget admission
         ticket = llm_policy.admit(provider["name"], tokens)
         alias = "LLM_" + provider["name"].upper()
         prefix = "CETTA_IO_AUTH_" + alias
@@ -201,6 +209,8 @@ def wait_settings():
 
 def wire_body(plan, body):
     value = json.loads(str(body))
+    if plan.provider == "synthetic":
+        value = provider_protocol.synthetic_body(value)
     if plan.stream:
         value.update(stream=True, stream_options={"include_usage": True})
     return json.dumps(value, ensure_ascii=False)

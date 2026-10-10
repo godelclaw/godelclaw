@@ -320,6 +320,8 @@ class EmptyResponse(RuntimeError):
 
 
 def _authenticated_request(provider, endpoint, body):
+    if provider["name"] == "synthetic":
+        body = provider_protocol.synthetic_body(body)
     headers = {"Content-Type": "application/json"}
     if provider["name"] == "anthropic":
         headers.update({"x-api-key": provider["key"], "anthropic-version": "2023-06-01"})

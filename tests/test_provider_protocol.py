@@ -8,6 +8,20 @@ import provider_protocol as protocol
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_synthetic_effort_maps_once_without_mutating_generic_payload(self):
+        original = dict(model="fixture", messages=[], reasoning={"effort": "medium"})
+        converted = protocol.synthetic_body(original)
+        self.assertEqual(converted["reasoning_effort"], "medium")
+        self.assertNotIn("reasoning", converted)
+        self.assertEqual(original["reasoning"], {"effort": "medium"})
+        self.assertEqual(protocol.synthetic_body(converted), converted)
+        self.assertNotIn("reasoning_effort", protocol.synthetic_body(dict(reasoning={"effort": "default"})))
+        for body in (dict(reasoning={"effort": "xhigh"}), dict(reasoning={"budget": 10}),
+                     dict(reasoning={"effort": "medium"}, reasoning_effort="low"),
+                     dict(reasoning_effort="none")):
+            with self.subTest(body=body), self.assertRaises(ValueError):
+                protocol.synthetic_body(body)
+
     def test_dynamic_input_does_not_change_prefix_identity_or_gain_cache_hints(self):
         a = protocol.prompt_observation("STATIC_cache_boundary_A")
         b = protocol.prompt_observation("STATIC_cache_boundary_longer B")

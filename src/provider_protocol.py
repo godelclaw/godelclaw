@@ -78,6 +78,25 @@ def cache_observation(usage):
                 fraction=cached / total if total else 0.0)
 
 
+def synthetic_body(body):
+    """Map the compatible conversation's effort to Synthetic's wire field."""
+    result = dict(body)
+    reasoning = result.pop("reasoning", None)
+    if reasoning is not None:
+        if not isinstance(reasoning, dict) or set(reasoning) - {"effort"}:
+            raise ValueError("unsupported Synthetic reasoning options")
+        effort = reasoning.get("effort")
+        if effort not in (None, "", "default", "low", "medium", "high"):
+            raise ValueError("unsupported Synthetic reasoning effort")
+        if effort not in (None, "", "default"):
+            if "reasoning_effort" in result and result["reasoning_effort"] != effort:
+                raise ValueError("conflicting Synthetic reasoning effort")
+            result["reasoning_effort"] = effort
+    if "reasoning_effort" in result and result["reasoning_effort"] not in ("low", "medium", "high"):
+        raise ValueError("unsupported Synthetic reasoning effort")
+    return result
+
+
 def command_body(protocol, model, tokens, effort, prompt):
     stable, user = split_prompt(prompt)
     system = "".join(stable)

@@ -110,6 +110,10 @@ The Chat Completions adapter, including Synthetic, sends no undocumented
 cache-control hint. Completion metadata records prefix sizes and hashes,
 and the provider's actual cache counters when supplied. Missing counters
 remain unknown. These observations do not predict cache reuse or billing.
+Synthetic's adapter sends the requested `low`, `medium` or `high` effort as
+`reasoning_effort`, rather than the generic compatible-provider `reasoning`
+object. Unsupported or conflicting effort options are refused. Correct effort
+encoding does not guarantee a particular reasoning length or a completed answer.
 
 Late or interrupted native calls appear in a durable context listing and
 produce a local readiness wake; a wake can repeat after restart. `model-result`

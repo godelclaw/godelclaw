@@ -57,9 +57,36 @@ class NativeStreamingTest(unittest.TestCase):
         self.assertIn("(RESULT (nop))", output)
         self.assertEqual(len(self.peer.requests), 1)
         self.assertTrue(self.peer.requests[0][2]["stream"])
+        self.assertEqual(self.peer.requests[0][2]["reasoning_effort"], "low")
+        self.assertNotIn("reasoning", self.peer.requests[0][2])
         state, soft, result, reason = self.journal()[0]
         self.assertEqual((state, soft, reason), ("completed", 1, None))
         self.assertIn("(nop)", result)
+
+    def test_unsupported_synthetic_effort_never_admits_or_posts(self):
+        output = self.run_guest(f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'
+            '!(println! (RESULT (llm:command "fixture-model" 42 "xhigh" "input")))\n')
+        self.assertIn("(RESULT ())", output)
+        self.assertEqual(len(self.peer.requests), 0)
+        path = self.directory / "ledger.db"
+        if path.exists():
+            with sqlite3.connect(path) as db:
+                tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master")}
+                if "requests" in tables:
+                    self.assertEqual(db.execute("SELECT COUNT(*) FROM requests").fetchone()[0], 0)
+
+    def test_conflicting_synthetic_extension_is_refused_before_admission(self):
+        fixture = self.directory / "effort_fixture.py"
+        fixture.write_text('from types import SimpleNamespace\nimport native_llm_host\n'
+            'def ready():\n'
+            '    request = dict(messages=[dict(role="user",content="input")], max_tokens=42,\n'
+            '        reasoning={"effort":"low"}, extensions={"reasoning_effort":"high"})\n'
+            '    return native_llm_host.structured_plan(SimpleNamespace(value=request)).ready\n')
+        output = self.run_guest(f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'
+            f'!(import! &self "{fixture}")\n!(println! (READY (py-call (effort_fixture.ready))))\n')
+        self.assertIn('(READY false)', output)
+        self.assertEqual(len(self.peer.requests), 0)
+        self.assertFalse((self.directory / "ledger.db").exists())
 
     def test_long_reasoning_stream_survives_sse_envelope_overhead(self):
         self.peer.reasoning_deltas = 14000

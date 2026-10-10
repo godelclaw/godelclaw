@@ -119,6 +119,11 @@ class NativeBoundaryTests(unittest.TestCase):
                 self.assertEqual(len(self.peer.requests) - before, 1)
                 effective = model.removeprefix("openai:")
                 path, expected = provider_protocol.command_body(protocol, effective, 42, "low", prompt)
+                if protocol == "chat-completions":
+                    # Synthetic documents a scalar field, independent of the
+                    # generic compatible conversation's reasoning object.
+                    expected.pop("reasoning")
+                    expected["reasoning_effort"] = "low"
                 actual_path, _, body = self.peer.requests[-1]
                 self.assertEqual(actual_path, "/v1" + path)
                 self.assertEqual(body, expected)

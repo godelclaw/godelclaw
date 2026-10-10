@@ -34,6 +34,8 @@ def prepare():
                    "other_strands_at_capture": snapshot.get("peers", [])}, ensure_ascii=False) +
                   "_cache_boundary_" + question)
         endpoint, body = provider_protocol.command_body(provider["protocol"], provider.get("model", selected), tokens, "low", prompt)
+        if provider["name"] == "synthetic":
+            body = provider_protocol.synthetic_body(body)
         settings = native_llm_host.wait_settings()
         stream = settings["stream"] and provider["protocol"] == "chat-completions"
         if stream:
