@@ -266,6 +266,16 @@ def activity_report(now=None):
         state = "retrying"
         delay = max(0, int(float(cognition.get("retry_at", 0) or 0) - now))
         wake = "human-or-%ss" % delay if delay else "retry-ready"
+    import process_supervision
+    progress = process_supervision.observation(now)
+    if lifecycle_enabled and state in ("working", "retrying"):
+        if progress["state"] in ("stalled", "memory-pressure"):
+            state, wake = progress["state"], "supervisor"
+        elif progress["state"] == "waiting":
+            state, wake = "waiting", "provider-or-deadline"
+        elif (progress["state"] == "unknown" and checkpoint_age is not None
+              and checkpoint_age > 180 and (pending_age is None or pending_age > 180)):
+            state, wake = "unconfirmed", "check-supervisor"
     age = lambda value: "never" if value is None else "%ss" % value
     if pending_age is not None:
         turn = "pending:%s" % age(pending_age)
@@ -296,7 +306,7 @@ def activity_report(now=None):
         "rest={rest} | continuation={continuation} | "
         "checkpoint-age={checkpoint} | "
         "turn={turn} | input={input_state} | obligation={obligation} | "
-        "last-outcome={outcome} | background={background}"
+        "last-outcome={outcome} | progress={progress} | background={background}"
     ).format(
         state=state, steps=steps, steps_source=steps_source,
         fuel=fuel_modes.current_fuel(),
@@ -310,6 +320,7 @@ def activity_report(now=None):
         input_state=input_state,
         obligation=obligation,
         outcome=cognition.get("last_outcome", "none"),
+        progress=progress["state"],
         background=topic_jobs.activity(),
     )
 

@@ -5,12 +5,50 @@ operator-supplied caps; zero means disabled. No mode's energy/fuel state is
 rewritten here. The durable ledger contains metadata only, never prompts.
 """
 import contextlib
+import hashlib
 import json
 import os
 from pathlib import Path
 import sqlite3
 import time
 import uuid
+
+
+def _process_owner():
+    pid = os.getpid()
+    try:
+        started = Path("/proc", str(pid), "stat").read_text().rsplit(")", 1)[1].split()[19]
+    except (OSError, IndexError):
+        started = "portable"
+    return str(pid) + ":" + started
+
+
+_owner = _process_owner()
+
+
+def _owner_live(owner):
+    try:
+        pid, started = owner.split(":")
+        pid = int(pid)
+        if pid <= 0:
+            return False
+        if started == "portable":
+            if os.name != "posix":
+                return True  # No safe cross-process probe on this platform.
+            try:
+                os.kill(pid, 0)
+            except PermissionError:
+                return True
+            return True
+        fields = Path("/proc", str(pid), "stat").read_text().rsplit(")", 1)[1].split()
+        return fields[19] == started and fields[0] not in ("Z", "X")
+    except (OSError, ValueError, IndexError):
+        return False
+
+
+def fingerprint(request):
+    return hashlib.sha256(json.dumps(request, sort_keys=True, separators=(",", ":"),
+                                    ensure_ascii=False).encode()).hexdigest()
 
 
 class AdmissionDenied(RuntimeError):
@@ -77,6 +115,10 @@ def transaction():
         conn.execute("CREATE TABLE IF NOT EXISTS cooldowns (provider TEXT PRIMARY KEY, until REAL NOT NULL)")
         conn.commit()
         conn.execute("BEGIN IMMEDIATE")
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(requests)")}
+        for name in ("owner", "fingerprint"):
+            if name not in columns:
+                conn.execute("ALTER TABLE requests ADD COLUMN " + name + " TEXT NOT NULL DEFAULT ''")
         yield conn
         conn.commit()
     except BaseException:
@@ -86,7 +128,26 @@ def transaction():
         conn.close()
 
 
-def admit(provider, max_output, *, now=None, mode=None):
+def recover_interrupted():
+    """A dead owner's pending request has an unknown remote outcome.
+
+    Other live process owners may have legitimate concurrent calls. PID and
+    process-start pairing prevents a reused PID from inheriting their calls.
+    """
+    with transaction() as conn:
+        for ticket, owner in conn.execute("SELECT id,owner FROM requests WHERE status='pending'").fetchall():
+            if owner != _owner and not _owner_live(owner):
+                conn.execute("UPDATE requests SET status='unknown' WHERE id=?", (ticket,))
+
+
+def unknown_context():
+    with transaction() as conn:
+        rows = [dict(id=row[0], provider=row[1], mode=row[2], outcome="unknown") for row in conn.execute(
+            "SELECT id,provider,mode FROM requests WHERE status='unknown' ORDER BY started DESC LIMIT 5")]
+    return "" if not rows else "PROVIDER_RECOVERY " + json.dumps(rows, separators=(",", ":"))
+
+
+def admit(provider, max_output, *, now=None, mode=None, request_fingerprint=""):
     now = time.time() if now is None else float(now)
     mode = mode or active_mode()
     policy = configuration(mode)
@@ -94,8 +155,13 @@ def admit(provider, max_output, *, now=None, mode=None):
     if maximum <= 0:
         raise ValueError("max output tokens must be positive")
     ticket = uuid.uuid4().hex
+    recover_interrupted()
     with transaction() as conn:
         if policy["profile"] == "managed":
+            if request_fingerprint and conn.execute(
+                    "SELECT 1 FROM requests WHERE provider=? AND fingerprint=? AND status='unknown' LIMIT 1",
+                    (provider, request_fingerprint)).fetchone():
+                raise AdmissionDenied("provider-outcome-unknown", 0)
             cooldown = conn.execute("SELECT until FROM cooldowns WHERE provider=?", (provider,)).fetchone()
             if cooldown and cooldown[0] > now:
                 raise AdmissionDenied("provider-cooldown", cooldown[0] - now)
@@ -113,10 +179,10 @@ def admit(provider, max_output, *, now=None, mode=None):
             failed = conn.execute("SELECT started FROM requests WHERE provider=? AND status='failed' AND started>? ORDER BY started", (provider, now-span)).fetchall()
             if cap and len(failed) >= cap:
                 raise AdmissionDenied("retry-budget", failed[len(failed)-cap][0] + span - now)
-        conn.execute("INSERT INTO requests VALUES(?,?,?,'pending',NULL,?,?,NULL)",
-                     (ticket, now, maximum, provider, mode))
+        conn.execute("INSERT INTO requests(id,started,reserved,status,output,provider,mode,finish,owner,fingerprint) VALUES(?,?,?,'pending',NULL,?,?,NULL,?,?)",
+                     (ticket, now, maximum, provider, mode, _owner, request_fingerprint))
         # Expired accounting windows no longer own admission authority.
-        conn.execute("DELETE FROM requests WHERE started<?", (now-172800,))
+        conn.execute("DELETE FROM requests WHERE started<? AND status NOT IN ('pending','unknown')", (now-172800,))
     # A managed goal is charged at the actual admission boundary, before a
     # provider can run. Strict upstream callers have no prepared host capture.
     try:

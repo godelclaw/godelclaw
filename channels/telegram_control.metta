@@ -200,13 +200,27 @@
       ($other (format-args "unknown command {}" ($name))))))
 
 ; Answer every command task but /delete, and every tap, once each.
+(= (tc:parse $task $body)
+   (case (collapse (match &self (tc:cached $task $body $value) $value))
+     ((($value) $value)
+      (() (let $value (json-parse $body)
+            (let $_ (remove-atom &self (tc:cached $task $old $prior))
+              (let $_ (add-atom &self (tc:cached $task $body $value)) $value)))))))
+
+(= (tc:prune $tasks)
+   (if (== $tasks ()) 0
+     (let $task (car-atom $tasks)
+       (let $_ (if (== (py-call (input_ack.task_active $task)) 1) 0
+                 (remove-atom &self (tc:cached $task $body $value)))
+         (tc:prune (cdr-atom $tasks))))))
+
 (= (tc:handle $tasks)
    (if (== $tasks ()) 0
      (let $head (car-atom $tasks)
        (let $tail (cdr-atom $tasks)
          (let ($task $body) $head
            (let $done
-                (case (json-parse $body)
+                (case (tc:parse $task $body)
                   (((JsonArray ((JsonString "command") (JsonString $key) (JsonString $name) (JsonString $args) (JsonString $lane)))
                     (if (== $name "/delete") 0
                       (let $reply (tc:guarded (catch (tc:answer $name $args)) $name)
@@ -233,13 +247,15 @@
 (= (tc:serve-once)
    (let $tasks (tc:tasks-after "" 256)
      (let $retained (py-call (input_ack.begin_scan (quote $tasks)))
+       (let $_ (tc:prune (collapse (match &self (tc:cached $task $body $value) $task)))
        (let $handled (tc:handle $tasks)
-         (let $cleaned (tc:guarded (catch (py-call (input_ack.pump))) "receipt cleanup") $handled)))))
+         (let $cleaned (tc:guarded (catch (py-call (input_ack.pump))) "receipt cleanup") $handled))))))
 
-; Forever: answer what is waiting, then look again shortly.
+; Arm before scanning, so an arrival during the scan remains a wake-up.
 (= (tc:serve)
+   (let $_ (py-call (input_ack.arm_changes))
    (let $answered (catch (tc:serve-once))
      (let $pumped (catch (py-call (mode_channel.pump)))
        (let $health (catch (py-call (mode_channel.heartbeat)))
-         (let $slept (py-call (time.sleep 0.1))
-           (tc:serve))))))
+         (let $slept (py-call (input_ack.wait_changes))
+           (tc:serve)))))))

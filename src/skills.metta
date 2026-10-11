@@ -19,7 +19,7 @@
     "- List active/disabled hot-reloaded MeTTa Iter request transformations: (iter-transformations)"
     "- Directly install or replace a mutable MeTTa transformation for the next model turn; failures stutter locally: (iter-transform-write \"10_name.metta\" \"(= (iter-transform $visible) (success $visible))\")"
     "- Reversibly disable or enable one Iter transformation using the leading-underscore convention: (iter-transform-disable \"10_name.metta\") | (iter-transform-enable \"10_name.metta\")"
-    "- Inspect authoritative command receipts: (command-receipts)"
+    "- Inspect authoritative command receipts: (command-receipts), then (command-receipts \"NEXT_CURSOR\") for more"
     "- Separate topic notes, always keeping operator messages reachable: (topics) | (topic-select \"name\") | (topic-note \"notes\")"
     "- Start a concurrent read-only model strand: (background-model \"topic\" \"question\") | (background-model \"topic\" \"question\" \"JSON dependency names\")"
     "- Model strand evidence: (model-jobs) | (model-result \"id\"); inspect its receipt before (model-adopt \"id\") or (model-retire \"id\")"
@@ -285,6 +285,7 @@
         (py-call (mcp_bridge.call_tool $server $tool $args))))
 
 (= (command-receipts) (py-call (strategy_host.command_receipts)))
+(= (command-receipts $cursor) (py-call (strategy_host.command_receipts $cursor)))
 (= (topics) (py-call (topic_jobs.topics)))
 (= (topic-select $name) (py-call (topic_jobs.select $name)))
 (= (topic-note $notes) (py-call (topic_jobs.note (py-call (helper.decode_safe_text $notes)))))

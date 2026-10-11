@@ -968,10 +968,12 @@ def ackActivityBatch():
             update_id = _pending_fields(item)[4]
             if update_id is not None:
                 update_ids.append(str(update_id))
+        import input_ack
+        if not input_ack.committed(update_ids):
+            return 0
         if update_ids and not _write_activity_receipt(
                 "activity_ack", update_ids):
             return 0
-        import input_ack
         input_ack.processed_update_ids(update_ids)
         del _pending_messages[:count]
         _prepared_messages = []
@@ -2737,10 +2739,14 @@ def sleep_until_message(seconds):
         _wake_reason = ""
         _rest_notice_sent = False
         _sleep_until = deadline
+    import process_supervision
+    process_supervision.progress("channel-wait", min(1, max(0, deadline - time.time())))
     _health_update(force=True, loop_status="waiting",
                    waiting_since=time.time(), waiting_until=deadline)
     try:
         while True:
+            if helper.recycle_requested():
+                return "recycle requested"
             remaining = deadline - time.time()
             if remaining <= 0:
                 return "rested %ds" % seconds
@@ -2748,11 +2754,13 @@ def sleep_until_message(seconds):
                 with _wake_lock:
                     reason = _wake_reason or "wake request"
                 return "woken by %s" % reason
+            process_supervision.progress("channel-wait", min(1, max(0, deadline - time.time())))
     finally:
         with _wake_lock:
             _sleep_until = 0.0
             _wake_event.clear()
             _wake_reason = ""
+        process_supervision.progress("channel-resume")
         _health_update(force=True, loop_status="awake", waiting_until=0.0,
                        last_wait_completed_at=time.time())
 

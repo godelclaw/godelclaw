@@ -19,6 +19,53 @@ import socket
 import threading
 import time
 
+
+class Changes:
+    """Arm notifications before reading a durable snapshot; reread on any hint.
+
+    Overflow and timers trigger the same reread. Platforms without inotify
+    retain a bounded timer fallback, with no additional dependency.
+    """
+    def __init__(self, directories):
+        self.directories = tuple(str(path) for path in directories)
+        self.fd = -1
+        try:
+            import ctypes
+            self.libc = ctypes.CDLL(None, use_errno=True)
+            self.libc.inotify_init1.argtypes = [ctypes.c_int]
+            self.libc.inotify_add_watch.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_uint32]
+            self.fd = self.libc.inotify_init1(os.O_NONBLOCK | os.O_CLOEXEC)
+        except (AttributeError, OSError):
+            pass
+
+    def arm(self):
+        if self.fd < 0:
+            return 0
+        from pathlib import Path
+        for directory in self.directories:
+            path = Path(directory)
+            while not path.is_dir() and path != path.parent:
+                path = path.parent
+            self.libc.inotify_add_watch(self.fd, os.fsencode(path), 0x8 | 0x80 | 0x100 | 0x200 | 0x400 | 0x800)
+        try:
+            while os.read(self.fd, 65536):
+                pass
+        except BlockingIOError:
+            pass
+        return 1
+
+    def wait(self, seconds):
+        if self.fd < 0:
+            time.sleep(seconds)
+            return 0
+        import select
+        return int(bool(select.select([self.fd], [], [], seconds)[0]))
+
+    def close(self):
+        if self.fd >= 0:
+            os.close(self.fd)
+            self.fd = -1
+
 NEXT, RESULT, RECEIPT, SUBMIT = 1, 2, 3, 4
 IDLE, TASK, STORED, PENDING, UNKNOWN, CONFLICT, INVALID, UNAVAILABLE, LIMIT = range(64, 73)
 BODY_MAX = 65536

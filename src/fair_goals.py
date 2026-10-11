@@ -256,6 +256,16 @@ def cancelled(store, db, request, now):
 
 def save_review(store, ticket, inventory_digest, entries, now):
     """Record coverage of the inventory, not truth of the written assessments."""
+    # Some atom bridges preserve the string's surrounding quotes. Decode
+    # that representation before comparing the inventory identities.
+    inventory_digest = str(inventory_digest)
+    if inventory_digest.startswith('"'):
+        try:
+            inventory_digest = json.loads(inventory_digest)
+        except ValueError:
+            pass
+    if not isinstance(inventory_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", inventory_digest):
+        raise ValueError("inventory digest must be 64 hexadecimal characters; use inventory_digest from goals")
     if isinstance(entries, str):
         entries = json.loads(entries)
     with store.transaction() as db:

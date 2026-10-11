@@ -212,6 +212,20 @@ class FairGoalsTest(unittest.TestCase):
         self.assertTrue(advice["source_unchanged"])
         self.assertFalse(advice["judgment_verified"])
 
+    def test_review_accepts_quoted_digest_and_distinguishes_bad_digest_from_change(self):
+        self.defs[1].update(checker="inventory-review", baseUrgency=2000)
+        fair.synchronize(self.store, self.defs, 100)
+        snap = self.capture(); ticket = self.reply(snap, "command")
+        view = fair.snapshot(self.store, 100)
+        entries = [dict(goal=g["name"], disposition="keep", assessment="Open work",
+                        evidence="Current inventory", next_action="Inspect source") for g in view["inventory"]]
+        marker = fair.save_review(self.store, ticket, json.dumps(view["inventory_digest"]), entries, 100)
+        self.assertTrue(marker.startswith("GOAL_REVIEW_SAVED "))
+        with self.assertRaisesRegex(ValueError, "digest must be"):
+            fair.save_review(self.store, ticket, "inventory_digest", entries, 100)
+        with self.assertRaisesRegex(ValueError, "inventory changed"):
+            fair.save_review(self.store, ticket, "0" * 64, entries, 100)
+
 
 class FairHostTest(unittest.TestCase):
     def setUp(self):

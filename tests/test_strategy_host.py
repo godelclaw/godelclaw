@@ -160,10 +160,72 @@ class StrategyHostTest(unittest.TestCase):
         self.assertTrue(host.ledger().report(old_ticket, "late information"))
         self.assertEqual(host.reserve_command(2, new), 0)
 
+    def test_restart_quarantines_interrupted_read_before_admission(self):
+        self.capture()
+        command = ["recent-messages", "room", 6]
+        self.assertEqual(host.broker_begin(1, [command]), 1)
+        self.assertEqual(host.reserve_command(1, command), 1)
+        host._ledger = None; host._booted = False
+        host.begin(2, "continuation-tick", "")
+        self.capture()
+        self.assertEqual(host.broker_begin(2, [command]), 0)
+        feedback = json.loads(host.broker_feedback())
+        self.assertEqual(feedback["reason"], "command-quarantined")
+        self.assertFalse(feedback["execution"])
+        self.assertEqual(host.reserve_command(2, command), 0)
+        self.assertEqual(host.ledger().projection()["actions"][0]["status"], "uncertain")
+
+    def test_explicit_repair_does_not_override_unresolved_effect_authority(self):
+        self.capture()
+        command = ["shell", "mutation"]
+        self.assertEqual(host.broker_begin(1, [command]), 1)
+        self.assertEqual(host.reserve_command(1, command), 1)
+        host._ledger = None; host._booted = False
+        host.begin(2, "continuation-tick", "")
+        self.capture()
+        self.assertTrue(host.ledger().release_command(command, "code repaired"))
+        self.assertEqual(host.broker_begin(2, [command]), 0)
+        self.assertEqual(json.loads(host.broker_feedback())["reason"], "blocked-effects")
+
     def test_search_result_carries_incomplete_coverage(self):
         value = json.loads(host.annotate_result(["search", "scope"], ""))
         self.assertFalse(value["complete_coverage"])
         self.assertEqual(value["absence"], "unavailable")
+
+    def test_receipts_page_large_results_without_losing_content(self):
+        store = host.ledger()
+        original = {"disposition": "returned", "result": '🧪 "quoted"\\n' * 3000}
+        with store.transaction() as db:
+            db.execute("CREATE TABLE command_attempts (ticket TEXT,position INTEGER,command TEXT,result TEXT,PRIMARY KEY(ticket,position))")
+            db.execute("INSERT INTO command_attempts VALUES ('receipt',0,?,?)",
+                       (host.strategy.encoded(["help", "shell"]), host.strategy.encoded(original)))
+        cursor, pieces = "", []
+        while True:
+            response = host.command_receipts(cursor)
+            self.assertLessEqual(len(response.encode()), 8192)
+            page = json.loads(response)
+            for row in page["receipts"]:
+                self.assertEqual(row["id"], "receipt:0")
+                pieces.append(row["chunk"])
+            cursor = page["next_cursor"]
+            if cursor is None:
+                break
+        record = json.loads("".join(pieces))
+        self.assertEqual(record["result"], original)
+
+    def test_receipt_cursor_does_not_include_newer_arrivals(self):
+        store = host.ledger()
+        with store.transaction() as db:
+            db.execute("CREATE TABLE command_attempts (ticket TEXT,position INTEGER,command TEXT,result TEXT,PRIMARY KEY(ticket,position))")
+            for index in range(2):
+                db.execute("INSERT INTO command_attempts VALUES (?,0,'[\"help\"]',?)",
+                    (str(index), host.strategy.encoded({"result": "x" * 10000})))
+        first = json.loads(host.command_receipts())
+        self.assertTrue(first["next_cursor"])
+        with store.transaction() as db:
+            db.execute("INSERT INTO command_attempts VALUES ('new',0,'[\"help\"]',NULL)")
+        page = json.loads(host.command_receipts(first["next_cursor"]))
+        self.assertTrue(all(row["id"] != "new:0" for row in page["receipts"]))
 
     def test_failed_provider_does_not_drop_presented_result(self):
         self.capture(); command = ["help", "shell"]

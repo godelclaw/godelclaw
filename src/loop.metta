@@ -280,18 +280,6 @@
                                   $has-activity)
                     1)
                 0))
-          ($activityReceipt
-            (if (and $has-activity
-                     (and (== $providerSucceeded 1)
-                          (== $historyReceipt 1)))
-                (if (tg:client-metta?) (tg:ack-activity-batch) (py-call (telegram.ackActivityBatch)))
-                (if $has-activity 0 1)))
-          ($_ (if (and (== $providerSucceeded 1)
-                       (and (== $historyReceipt 1)
-                            (== $activityReceipt 1)))
-                  (let $_ (if $has-activity (py-call (strategy_host.input_processed)) _)
-                    (py-call (cognitive_health.turn_settled)))
-                  _))
           ($turnFeedback
             (if (== $requestObservations "")
                 (string-safe (repr $results))
@@ -305,6 +293,7 @@
           ($directed (loop-directives-apply $withResults))
           ($banked (applyRestBanking $directed))
           ($_ (loop-directives-clear))
+          ($_ (py-call (helper.turn_commit_stage $providerSucceeded $historyReceipt (if $has-activity 1 0))))
           ;; A model/effect episode has exactly one committed successor.  The
           ;; final cut prevents a bridge predicate's residual choice point
           ;; from replaying the same pure candidate after effects completed.
@@ -471,10 +460,17 @@
    (if (== (py-call (helper.recycle_requested)) 1)
      (py-call (helper.recycle_exit))
      (let* (($periphery (process-periphery $state))
+          ($_ (py-call (helper.turn_commit_reset)))
+          ($_ (py-call (process_supervision.progress "turn-start")))
           ($_ (println! (---------iteration (loop-iteration $periphery))))
           ($outcome (turnProcess $periphery))
+          ($_ (case $outcome (((success $p) 1) ($other (py-call (helper.turn_commit_reset))))))
           ($next (process-step $state $outcome))
-          ($_ (persistProcessState $next)))
+          ($checkpoint (persistProcessState $next))
+          ($_ (if (and (== $checkpoint 1) (== (py-call (helper.turn_commit_ready)) 1))
+                (let $acked (if (tg:client-metta?) (tg:ack-activity-batch) (py-call (telegram.ackActivityBatch)))
+                  (if (== $acked 1) (py-call (cognitive_health.turn_settled)) 0)) 0))
+          ($_ (py-call (helper.turn_commit_reset))))
      (if (== (py-call (helper.recycle_requested)) 1)
          (progn
            (println! (RECYCLE_AT_TURN_BOUNDARY

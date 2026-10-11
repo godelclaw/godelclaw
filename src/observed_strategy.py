@@ -49,6 +49,12 @@ class Ledger:
                 CREATE TABLE IF NOT EXISTS request_context (
                     request TEXT PRIMARY KEY, kind TEXT NOT NULL,
                     processed INTEGER NOT NULL DEFAULT 0, note TEXT NOT NULL DEFAULT '');
+                CREATE TABLE IF NOT EXISTS command_quarantine (
+                    command TEXT PRIMARY KEY, ticket TEXT NOT NULL,
+                    reason TEXT NOT NULL, releases INTEGER NOT NULL DEFAULT 0,
+                    allowed INTEGER NOT NULL DEFAULT 0);
+                CREATE TABLE IF NOT EXISTS processed_inputs (
+                    id TEXT PRIMARY KEY, processed REAL NOT NULL);
             """)
             # Existing input identities were created at the delivery boundary,
             # not by a task checker. Migration changes their kind, not outcome.
@@ -145,8 +151,44 @@ class Ledger:
             # The effect may have happened before a crash. Never treat it as
             # unissued, and permit a late, correctly correlated result.
             db.execute("UPDATE actions SET status='uncertain' WHERE status='issued'")
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='command_attempts'").fetchone():
+                db.execute("CREATE INDEX IF NOT EXISTS command_attempt_identity ON command_attempts(command)")
+                # A reserved command without a terminal receipt may have run.
+                # Preserve its uncertainty and prevent the same command from
+                # becoming the first action of another crash/restart cycle.
+                for row in db.execute("""SELECT c.command,c.ticket FROM command_attempts c
+                    JOIN actions a ON a.ticket=c.ticket
+                    WHERE c.result IS NULL AND a.status='uncertain'
+                      AND c.rowid=(SELECT MAX(latest.rowid) FROM command_attempts latest
+                                   WHERE latest.command=c.command)"""):
+                    db.execute("""INSERT INTO command_quarantine(command,ticket,reason)
+                        VALUES (?,?,'interrupted without terminal receipt')
+                        ON CONFLICT(command) DO UPDATE SET ticket=excluded.ticket,
+                            reason=excluded.reason,allowed=0
+                        WHERE command_quarantine.ticket<>excluded.ticket""", (row[0], row[1]))
             self.advance(db)
             self.event(db, "restore")
+
+    @staticmethod
+    def command_denial(db, command):
+        row = db.execute("SELECT * FROM command_quarantine WHERE command=?", (encoded(command),)).fetchone()
+        if row and not row["allowed"]:
+            return dict(reason="command-quarantined", command_digest=digest(command),
+                        interrupted_ticket=row["ticket"], detail=row["reason"],
+                        releases=row["releases"], execution=False)
+        return None
+
+    def release_command(self, command, reason):
+        """Explicit, bounded retry after investigation; no effect authority added."""
+        if not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 800:
+            raise ValueError("a repair reason is required")
+        with self.transaction() as db:
+            row = db.execute("SELECT * FROM command_quarantine WHERE command=?", (encoded(command),)).fetchone()
+            if not row or row["allowed"] or row["releases"] >= 2:
+                return False
+            db.execute("UPDATE command_quarantine SET allowed=1,releases=releases+1 WHERE command=?", (encoded(command),))
+            self.event(db, "command-retry-released", command_digest=digest(command), reason=reason)
+            return True
 
     @staticmethod
     def selectable(db, key):
@@ -157,14 +199,39 @@ class Ledger:
     def processed(self, key):
         """A durable input handover settles delivery, not the requested work."""
         with self.transaction() as db:
-            row = db.execute("SELECT kind,processed FROM request_context WHERE request=?", (key,)).fetchone()
-            if not row or (row[0] not in ("message", "notification") and not key.startswith("input:")) or row[1]:
-                return False
-            db.execute("UPDATE request_context SET processed=1 WHERE request=?", (key,))
-            if row[0] in ("message", "notification"):
-                db.execute("UPDATE requests SET status='processed' WHERE id=? AND status='active'", (key,))
-            self.event(db, "input-processed", request=key)
-            return True
+            return self._processed(db, key)
+
+    def _processed(self, db, key):
+        row = db.execute("SELECT kind,processed FROM request_context WHERE request=?", (key,)).fetchone()
+        if not row or (row[0] not in ("message", "notification") and not key.startswith("input:")) or row[1]:
+            return False
+        db.execute("UPDATE request_context SET processed=1 WHERE request=?", (key,))
+        if row[0] in ("message", "notification"):
+            db.execute("UPDATE requests SET status='processed' WHERE id=? AND status='active'", (key,))
+        self.event(db, "input-processed", request=key)
+        return True
+
+    def checkpoint(self, working, input_ids=(), request=None):
+        """Commit the successor and its settled input identities atomically.
+
+        Transport acknowledgement follows this commit. After a crash between
+        them, the service's still-pending input is acknowledged from this
+        journal without presenting it to cognition a second time.
+        """
+        with self.transaction() as db:
+            db.execute("INSERT INTO meta VALUES ('working_set',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (encoded(working),))
+            for identity in input_ids:
+                db.execute("INSERT OR IGNORE INTO processed_inputs VALUES (?,?)", (str(identity), working["saved_at"]))
+                if db.execute("SELECT 1 FROM sqlite_master WHERE name='input_notices'").fetchone():
+                    db.execute("UPDATE input_notices SET processed=1 WHERE update_id=?", (str(identity),))
+            if request:
+                self._processed(db, request)
+            self.event(db, "turn-checkpoint", settled_inputs=len(input_ids))
+
+    def working_checkpoint(self):
+        with self.transaction() as db:
+            row = db.execute("SELECT value FROM meta WHERE key='working_set'").fetchone()
+            return json.loads(row[0]) if row else None
 
     def disposition(self, key, disposition, note):
         """Agent workflow decisions never produce checker-certified achievement."""

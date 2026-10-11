@@ -359,9 +359,11 @@ def _completion_metadata(result, prompt_layout=None):
 
 
 def _exchange(provider, endpoint, body, max_tokens):
-    ticket = llm_policy.admit(provider["name"], max_tokens)
+    ticket = llm_policy.admit(provider["name"], max_tokens, request_fingerprint=llm_policy.fingerprint(body))
     cognitive_health.turn_started(provider["name"])
     try:
+        import process_supervision
+        process_supervision.provider_wait(_float_env("SYNTHETIC_TIMEOUT", 120.0, 1.0))
         payload = _request_json(_authenticated_request(provider, endpoint, body),
                                 _float_env("SYNTHETIC_TIMEOUT", 120.0, 1.0))
         result = provider_protocol.normalize_response(provider["protocol"], payload)

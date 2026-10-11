@@ -7,6 +7,9 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
+NotifyAccess=all
+WatchdogSec=180
+WatchdogSignal=SIGKILL
 WorkingDirectory=%h/pettaclaw-godel
 Environment=HOME=%h
 Environment=METTACLAW_SKIP_INITIALIZE=1

@@ -14,6 +14,18 @@ import runtime_health  # noqa: E402
 
 
 class RuntimeHealthTest(unittest.TestCase):
+    def test_completed_provider_turn_cannot_hide_a_stalled_command(self):
+        self.write(self.working, {"saved_at": 100, "loops": 50})
+        self.write(self.cognitive, {"schema": 2, "last_outcome": "completed", "last_completed_at": 110})
+        with mock.patch("loop_modes.current_mode", return_value="godelclaw"), \
+             mock.patch("engine_modes.active_engine", return_value="cetta"), \
+             mock.patch("synthetic_llm.current_model", return_value="fixture"), \
+             mock.patch("process_supervision.observation", return_value={"state": "stalled"}):
+            report = runtime_health.activity_report(now=1000)
+        self.assertIn("activity: stalled", report)
+        self.assertIn("turn=completed:890s-ago", report)
+        self.assertNotIn("activity: working", report)
+
     def test_failed_retry_with_checkpoint_fuel_is_not_working(self):
         self.write(self.working, {"saved_at": 999, "loops": 50})
         self.write(self.cognitive, {"schema": 2, "last_outcome": "failed",

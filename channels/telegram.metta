@@ -22,6 +22,8 @@
 !(import! &self fs)
 !(import! &self cwp)
 !(import! &self system)
+!(import! &self ./src/helper.py)
+!(import! &self ./src/process_supervision.py)
 !(import! &self ./channels/energy.metta)
 
 ;; ---------------------------------------------------------------- lists
@@ -467,13 +469,14 @@
        (if (py-call (os.path.exists $path)) (py-call (os.path.getsize $path)) 0))))
 
 (= (tg:activity-batch)
+   (let $recovered (tg:recover-committed (tg:pending-items))
    (let $polled (tg:poll)
        ;; A fresh request includes all input that is now pending. Keeping an
        ;; older nonempty presentation forever would deadlock the stale-input
        ;; guard when steering arrives during a failed provider turn. Pending
        ;; input remains durable; acknowledgement uses this turn's fixed mark.
        (let $items
-              (let $pending (tg:sorted-items (tg:pending-items))
+              (let $pending (tg:sorted-items (tg:uncommitted (tg:pending-items)))
                 (if (== $pending ()) ()
                   (let ($last) (tg:last-seq $pending)
                     (let $set (tg:set prepared-upto $last)
@@ -499,7 +502,23 @@
            (let $routed (tg:route-batch $items () () ())
              (let $applied (tg:apply-route $routed)
                (let $published (tg:publish-counts)
-                 (str:join "\n" (tg:list (tg:texts $items))))))))))
+                 (str:join "\n" (tg:list (tg:texts $items)))))))))))
+
+(= (tg:uncommitted $items)
+   (if (== $items ()) ()
+     (let ($head $tail) (tg:uncons $items)
+       (let ($seq $task $chat $text $bot $tier $uid) $head
+         (let $rest (tg:uncommitted $tail)
+           (if (== (py-call (input_ack.already_committed $uid)) 1) $rest
+             (cons-atom $head $rest)))))))
+(= (tg:recover-committed $items)
+   (if (== $items ()) 1
+     (let ($head $tail) (tg:uncons $items)
+       (let ($seq $task $chat $text $bot $tier $uid) $head
+         (let $_ (if (and (== (py-call (input_ack.already_committed $uid)) 1)
+                         (tg:ack-all ($head)))
+                   (tg:forget-items ($head)) ())
+           (tg:recover-committed $tail))))))
 
 (= (tg:last-seq $items)
    (let ($head $tail) (tg:uncons $items)
@@ -520,7 +539,8 @@
 (= (tg:ack-activity-batch)
    (let $prepared (tg:sorted-items (tg:prepared-items))
      (if (== $prepared ()) 1
-       (if (tg:log-activity-ack (tg:list (tg:update-ids $prepared)))
+       (if (and (== (py-call (input_ack.committed (str:join "," (tg:list (tg:update-ids $prepared))))) 1)
+                (tg:log-activity-ack (tg:list (tg:update-ids $prepared))))
          (if (tg:ack-all $prepared)
            (let $handover (py-call (telegram.handover_ack (str:join "," (tg:list (tg:update-ids $prepared)))))
              (if (== $handover 1)
@@ -634,7 +654,10 @@
 (= (tg:handle $task $value)
    (case $value
      (((JsonArray ((JsonString "input") (JsonString $lane) (JsonString $kind) (JsonString $role) $update))
-       (let $seen (tg:see $task) (tg:intake $task $lane $kind $role $update)))
+       (let $uid (tg:str (tg:at $update "update_id"))
+         (if (== (py-call (input_ack.already_committed $uid)) 1)
+           (tg:acknowledge $task)
+           (let $seen (tg:see $task) (tg:intake $task $lane $kind $role $update)))))
       ((JsonArray ((JsonString "delivery") (JsonString $key) (JsonNumber $pos) (JsonNumber $count) $result))
        (let $position (parse $pos)
          (let $outcome (tg:result $result)
@@ -775,6 +798,7 @@
 
 (= (tg:sleep-until-message $seconds)
    (let $n (if (< $seconds 0) 0 $seconds)
+     (let $_ (py-call (process_supervision.progress "channel-wait" 10))
      (let $deadline (+ (tg:now) $n)
        (let $a (tg:set wake-reason "")
         (let $stale (tg:drop-wake-request)
@@ -784,7 +808,8 @@
                (let $result (tg:rest-loop $deadline $n)
                  (let $d (tg:set sleep-until 0)
                    (let $q (py-call (telegram.metta_publish "sleep_until" 0))
-                     (let $e (tg:set wake-reason "") $result))))))))))))
+                     (let $e (tg:set wake-reason "")
+                       (let $_ (py-call (process_supervision.progress "channel-resume")) $result))))))))))))))
 
 ; A wake requested while she was not resting belongs to that time, as with
 ; the Python client: a new rest starts from a clean request.
@@ -803,12 +828,14 @@
            (tg:wake-request (if (== $reason "") "wake request" $reason)))))))
 
 (= (tg:rest-loop $deadline $seconds)
+   (if (== (py-call (helper.recycle_requested)) 1) "recycle requested"
    (let $polled (tg:poll)
+    (let $_ (py-call (process_supervision.progress "channel-wait" 10))
     (let $requested (tg:take-wake-request)
      (let $reason (tg:get wake-reason "")
        (if (not (== $reason "")) (format-args "woken by {}" ($reason))
          (if (>= (tg:now) $deadline) (format-args "rested {}s" ($seconds))
-           (let $slept (tg:sleep 0.25) (tg:rest-loop $deadline $seconds))))))))
+           (let $slept (tg:sleep 0.25) (tg:rest-loop $deadline $seconds))))))))))
 
 ;; ----------------------------------------------------------------- send
 
@@ -1209,33 +1236,69 @@
 ; sides, as "[hh:mm chat sender: text…]".
 (= (tg:recent-activity $n $chat $snippet)
    (let $path (tg:ledger)
-     (if (or (== $path "") (not (py-call (os.path.exists $path)))) ""
+     (if (or (<= $n 0) (or (== $path "") (not (py-call (os.path.exists $path))))) ""
        (let $needle (str:lower (format-args "{}" ($chat)))
-         (let $entries (tg:recent-entries (fs:read-lines $path) $needle $snippet)
-           (str:join " " (tg:list (tg:newest-in-order $entries $n))))))))
+         (let $reader (py-call (helper.reverse_lines_open $path))
+           (let $entries (catch (tg:recent-backward $reader $n $needle $snippet ()))
+             (let $_ (py-call (helper.reverse_lines_close $reader))
+               (case $entries
+                 (((Error $code $detail) (Error $code $detail))
+                  ($ok (str:join " " (tg:list $ok))))))))))))
+
+; Escapes can hide a matching title/id. Such lines always reach the parser.
+; This pre-test is a sound superset, not the authority for matching a chat.
+(= (tg:recent-candidate? $line $needle)
+   (or (tg:contains? $line "\\") (tg:contains? (str:lower $line) $needle)))
+
+(= (tg:recent-backward $reader $remaining $needle $snippet $chosen)
+   (if (<= $remaining 0) $chosen
+     (case (py-call (helper.reverse_lines_next $reader))
+       (((end) $chosen)
+        ((line $line)
+          (let $entry (tg:recent-entry $line $needle $snippet)
+            (if (== $entry "")
+              (tg:recent-backward $reader $remaining $needle $snippet $chosen)
+              (tg:recent-backward $reader (- $remaining 1) $needle $snippet
+                (cons-atom $entry $chosen)))))
+        ($bad (Error tg:recent-activity "invalid line cursor result"))))))
+
 (= (tg:recent-entries $lines $needle $snippet)
-   (if (== $lines ()) ()
+   (tg:recent-entries-acc $lines $needle $snippet ()))
+(= (tg:recent-entries-acc $lines $needle $snippet $chosen)
+   (if (== $lines ()) (tg:reverse-into $chosen ())
      (let ($line $rest) (tg:uncons $lines)
-       (let $more (tg:recent-entries $rest $needle $snippet)
-         (if (not (tg:contains? (str:lower $line) $needle)) $more
-           (case (json-parse $line)
-             (((JsonObject $pairs)
-               (let $record (JsonObject $pairs)
-                 (let $text (tg:str (tg:at $record "text"))
-                   (let $title (tg:str (tg:at $record "chat_title"))
-                     (if (or (not (tg:truthy (tg:at $record "allowed"))) (== $text "")) $more
-                       (if (not (or (tg:contains? (str:lower $title) $needle) (== $needle (tg:str (tg:at $record "chat_id"))))) $more
-                         (let $stamp (tg:str (tg:at $record "received_at"))
-                           (let $clock (if (>= (str:char-length $stamp) 16) (str:char-slice $stamp 11 16) "")
-                             (let $flat (str:join " " (str:split-whitespace $text))
-                               (let $short (if (> (str:char-length $flat) $snippet)
-                                             (str:concat (str:char-slice $flat 0 $snippet) "…") $flat)
-                                 (let $from (tg:str (tg:at $record "from"))
-                                   (cons-atom (format-args "[{} {} {}: {}]" ($clock $title $from $short)) $more))))))))))))
-              ($bad $more))))))))
+       (let $entry (tg:recent-entry $line $needle $snippet)
+         (tg:recent-entries-acc $rest $needle $snippet
+           (if (== $entry "") $chosen (cons-atom $entry $chosen)))))))
+(= (tg:reverse-into $items $chosen)
+   (if (== $items ()) $chosen
+     (let ($head $tail) (tg:uncons $items)
+       (tg:reverse-into $tail (cons-atom $head $chosen)))))
+(= (tg:recent-entry $line $needle $snippet)
+   (if (not (tg:recent-candidate? $line $needle)) ""
+     (case (json-parse $line)
+       (((JsonObject $pairs)
+         (let* (($record (JsonObject $pairs))
+                ($text (tg:str (tg:at $record "text")))
+                ($title (tg:str (tg:at $record "chat_title")))
+                ($stamp (tg:str (tg:at $record "received_at")))
+                ($clock (if (>= (str:char-length $stamp) 16) (str:char-slice $stamp 11 16) ""))
+                ($flat (str:join " " (str:split-whitespace $text)))
+                ($short (if (> (str:char-length $flat) $snippet)
+                          (str:concat (str:char-slice $flat 0 $snippet) "…") $flat))
+                ($from (tg:str (tg:at $record "from"))))
+           (if (or (not (tg:truthy (tg:at $record "allowed"))) (== $text "")) ""
+             (if (not (or (tg:contains? (str:lower $title) $needle)
+                          (== $needle (tg:str (tg:at $record "chat_id"))))) ""
+               (format-args "[{} {} {}: {}]" ($clock $title $from $short))))))
+        ($bad "")))))
+
 (= (tg:newest-in-order $items $n)
    (let $count (size-atom (tg:list $items))
-     (if (<= $count $n) $items (tg:newest-in-order (cdr-atom $items) $n))))
+     (tg:drop-count $items (- $count (if (< $n 0) 0 $n)))))
+(= (tg:drop-count $items $count)
+   (if (or (<= $count 0) (== $items ())) $items
+     (tg:drop-count (cdr-atom $items) (- $count 1))))
 
 ;; -------------------------------------------------------------- startup
 

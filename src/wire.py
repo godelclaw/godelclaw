@@ -309,7 +309,7 @@ def _patrick_file_arguments(rest, action_index):
 
 
 def decode_patrick_line_output(value):
-    text = str(value).replace("_quote_", '"').replace("_newline_", "\n")
+    text = str(value)
     if len(text.encode("utf-8")) > MAX_INPUT_BYTES:
         raise WireError(WireErrorCode.INPUT_TOO_LARGE, MAX_INPUT_BYTES, 0)
     if text.startswith("\ufeff"):
@@ -317,7 +317,9 @@ def decode_patrick_line_output(value):
 
     actions = []
     for action_index, block in enumerate(_patrick_command_blocks(text)):
-        line = block.strip()
+        # Establish command boundaries before decoding payload escape tokens.
+        # An encoded newline in relayed text must not gain command authority.
+        line = block.replace("_quote_", '"').replace("_newline_", "\n").strip()
         if line.startswith("(-"):
             line = "(pin -" + line[2:]
         elif line.startswith("-"):

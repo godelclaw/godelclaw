@@ -86,6 +86,10 @@ class CommandWireFixtureTests(unittest.TestCase):
 
 
 class PatrickLineDecoderTests(unittest.TestCase):
+    def test_escaped_newline_cannot_create_another_command(self):
+        decoded = decode_patrick_line_output('send hello_newline_shell echo injected')
+        self.assertEqual(decoded.actions, ('(send "hello\\nshell echo injected")',))
+
     def test_provenance_names_both_patrick_commits(self):
         self.assertEqual(
             PATRICK_LINE_DECODER_COMMITS,

@@ -18,6 +18,46 @@ _last_notice = {}
 _limit = 256
 _last_pump = 0.0
 _input_view = None
+_task_cache = {}
+_active_tasks = set()
+_changes = None
+
+
+def parsed_task(task, body):
+    task, body = str(task), str(body)
+    entry = _task_cache.get(task)
+    if entry is None or entry[0] != body:
+        if len(_task_cache) >= _limit + 1:
+            _task_cache.pop(next(iter(_task_cache)))
+        entry = (body, json.loads(body))
+        _task_cache[task] = entry
+    return entry[1]
+
+
+def task_active(task):
+    return int(str(task) in _active_tasks)
+
+
+def arm_changes():
+    global _changes
+    if _changes is None:
+        from pathlib import Path
+        import durable_telegram
+        import mode_channel
+        state = os.environ.get("METTACLAW_TELEGRAM_SERVICE_STATE_DIR")
+        if not state:
+            state = str(Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) /
+                        ("cetta-telegram-" + os.environ.get("METTACLAW_INSTANCE", "agent")))
+        outbox = mode_channel.state() / "channel-outbox"
+        outbox.mkdir(parents=True, exist_ok=True)
+        _changes = durable_telegram.Changes([state, outbox])
+    return _changes.arm()
+
+
+def wait_changes():
+    # New tasks wake immediately; the deadline also reconciles delivery
+    # receipts and delayed notices, even if a notification was unavailable.
+    return _changes.wait(2) if _changes is not None else 0
 
 
 def _store():
@@ -49,10 +89,26 @@ def processed_update_ids(ids):
         for identity in values:
             db.execute("INSERT OR IGNORE INTO processed_inputs VALUES (?,?)", (identity, time.time()))
             db.execute("UPDATE input_notices SET processed=1 WHERE update_id=?", (identity,))
-        # Telegram cannot delete notices older than 48 hours. Keep metadata
-        # beyond that interval to reconcile delayed acknowledgements/restarts.
-        db.execute("DELETE FROM processed_inputs WHERE processed<?", (time.time() - 604800,))
     return 1
+
+
+def committed(ids):
+    """Only a durable checkpoint can authorize managed input acknowledgement."""
+    if os.environ.get("METTACLAW_OBSERVED_STRATEGY", "0") != "1":
+        return 1
+    values = [str(value) for value in (ids.split(",") if isinstance(ids, str) else ids) if str(value)]
+    store = _store()
+    if store is None:
+        return 0
+    with store.transaction() as db:
+        return int(all(db.execute("SELECT 1 FROM processed_inputs WHERE id=?", (identity,)).fetchone()
+                       for identity in values))
+
+
+def already_committed(identity):
+    if os.environ.get("METTACLAW_OBSERVED_STRATEGY", "0") != "1" or not str(identity):
+        return 0
+    return committed([str(identity)])
 
 
 def text():
@@ -60,7 +116,7 @@ def text():
 
 
 def begin_scan(tasks):
-    global _input_view
+    global _input_view, _active_tasks
     _input_view = None
     # This is an observation of the durable service's pending inputs. It
     # neither acknowledges them nor calls a model. Scan sentinels distinguish
@@ -75,7 +131,7 @@ def begin_scan(tasks):
             known = False
             continue
         try:
-            value = json.loads(str(body))
+            value = parsed_task(task, body)
             if not isinstance(value, list) or not value:
                 known = False
             elif value[0] == "input":
@@ -97,6 +153,10 @@ def begin_scan(tasks):
                     "observedAt": time.time()} if known else None)
     active = {str(task[0]) for task in tasks
               if isinstance(task, (list, tuple)) and len(task) == 2}
+    _active_tasks = active
+    for task in list(_task_cache):
+        if task not in active:
+            del _task_cache[task]
     for task in list(_pending):
         if task not in active:
             del _pending[task]

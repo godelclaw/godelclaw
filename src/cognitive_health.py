@@ -105,6 +105,8 @@ def turn_started(provider="unknown", now=None):
     """
     global _turn_outcome
     now = _stamp(now)
+    import process_supervision
+    process_supervision.progress("provider-start")
     with _lock:
         _turn_outcome = "pending"
     try:
@@ -150,6 +152,8 @@ def turn_completed(response_bytes=0, now=None):
     """
     global _turn_outcome
     now = _stamp(now)
+    import process_supervision
+    process_supervision.progress("provider-result")
     with _lock:
         _turn_outcome = "completed"
     try:

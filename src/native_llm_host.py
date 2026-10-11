@@ -43,10 +43,21 @@ def gate():
     if engine_modes.recycle_requested():
         raise SystemExit(0)
     # The independent control responder continues while cognition is paused.
+    waiting = False
     while not lifecycle.cognition_enabled():
+        if not waiting:
+            import process_supervision
+            process_supervision.progress("operator-wait", 60)
+            waiting = True
         synthetic_llm.time.sleep(.25)
         if engine_modes.recycle_requested():
             raise SystemExit(0)
+        # This bounded wait has returned and the operator latch was read
+        # again. A frozen evaluator cannot reach this new wait boundary.
+        if waiting and process_supervision._wait_deadline <= process_supervision.time.monotonic():
+            process_supervision.progress("operator-wait", 60)
+    if waiting:
+        process_supervision.progress("operator-resume")
     return True
 
 
@@ -67,7 +78,7 @@ def _plan(kind, model, tokens, builder):
                         raise ValueError("conflicting Synthetic reasoning extension")
                     options[field] = request["extensions"][field]
             provider_protocol.synthetic_body(options)  # validate before budget admission
-        ticket = llm_policy.admit(provider["name"], tokens)
+        ticket = llm_policy.admit(provider["name"], tokens, request_fingerprint=llm_policy.fingerprint(request))
         alias = "LLM_" + provider["name"].upper()
         prefix = "CETTA_IO_AUTH_" + alias
         credential_env = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY",
@@ -182,6 +193,8 @@ def submitted(plan, transport_id):
     plan.sent = True
     plan.transport = int(transport_id)
     plan.submitted_at = time.monotonic()
+    import process_supervision
+    process_supervision.provider_wait(plan.timeout / 1000)
     native_lifetime.submitted(plan, transport_id)
     return True
 
@@ -241,6 +254,8 @@ def waiting(plan, count=0, quiet=0):
     plan.last_soft = soft
     native_lifetime.progress(plan, count, quiet, soft)
     cognitive_health.provider_progress(count, quiet, soft, plan.timeout)
+    import process_supervision
+    process_supervision.provider_data(count)
     return 1
 
 

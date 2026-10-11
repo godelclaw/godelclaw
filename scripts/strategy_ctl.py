@@ -27,6 +27,10 @@ def main():
     cancel = commands.add_parser("cancel")
     cancel.add_argument("request")
     cancel.add_argument("--confirm", action="store_true", required=True)
+    retry = commands.add_parser("retry-command", help="release one quarantined command after repair")
+    retry.add_argument("command", help="command as a JSON array")
+    retry.add_argument("--reason", required=True)
+    retry.add_argument("--confirm", action="store_true", required=True)
     args = parser.parse_args()
     store = Ledger(args.store)
     if args.operation == "status":
@@ -37,6 +41,14 @@ def main():
         result = store.cancel(args.request, operator_authorized=args.confirm)
     elif args.operation == "reconcile":
         result = store.report(args.ticket, args.result, domain="unknown")
+    elif args.operation == "retry-command":
+        try:
+            command = json.loads(args.command)
+        except ValueError:
+            parser.error("command must be a JSON array")
+        if not isinstance(command, list) or not command or not isinstance(command[0], str):
+            parser.error("command must be a nonempty JSON array beginning with a tool name")
+        result = store.release_command(command, args.reason)
     else:
         checker = lambda work, receipt: work["checker"] == "operator" and args.confirm
         result = (store.attest(args.request, args.ticket, checker)

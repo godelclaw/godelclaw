@@ -3,7 +3,55 @@ import json
 import os
 import re
 import sys
+import tempfile
 import time
+
+
+def reverse_lines_open(path):
+    """Read a stable file prefix backwards, retaining one block and one line.
+
+    The consumer chooses when to stop. No history window or line-count cutoff
+    is imposed, and appends after opening do not change the query's snapshot.
+    """
+    stream = open(str(path), "rb")
+    size = stream.seek(0, os.SEEK_END)
+
+    def lines():
+        try:
+            position, fragments, first = size, [], True
+            while position:
+                count = min(position, 65536)
+                position -= count
+                stream.seek(position)
+                pieces = stream.read(count).split(b"\n")
+                if len(pieces) == 1:
+                    fragments.append(pieces[0])
+                    continue
+                tail = b"".join([pieces[-1], *reversed(fragments)])
+                fragments = [pieces[0]]
+                if not first or tail:
+                    yield tail.rstrip(b"\r").decode("utf-8", errors="replace")
+                first = False
+                for part in reversed(pieces[1:-1]):
+                    yield part.rstrip(b"\r").decode("utf-8", errors="replace")
+            if size:
+                yield b"".join(reversed(fragments)).rstrip(b"\r").decode("utf-8", errors="replace")
+        finally:
+            stream.close()
+
+    return lines()
+
+
+def reverse_lines_next(reader):
+    try:
+        return ("line", next(reader))
+    except StopIteration:
+        return ("end",)
+
+
+def reverse_lines_close(reader):
+    reader.close()
+    return 1
 
 
 SAFE_TEXT_REPLACEMENTS = (
@@ -371,6 +419,9 @@ def recycle_requested():
         from . import engine_modes
     else:
         import engine_modes
+    import process_supervision
+    if process_supervision.recycle_due():
+        engine_modes.request_recycle()
     return int(engine_modes.recycle_requested())
 
 
@@ -418,6 +469,11 @@ def _working_set_path():
 
 
 def _working_read():
+    if os.environ.get("METTACLAW_OBSERVED_STRATEGY", "0") == "1":
+        import agent_checkpoint
+        checkpoint = agent_checkpoint.ledger().working_checkpoint()
+        if checkpoint is not None:
+            return checkpoint
     try:
         with open(_working_set_path(), encoding="utf-8") as fh:
             data = json.load(fh)
@@ -426,12 +482,61 @@ def _working_read():
         return {}
 
 
-def _working_write(data):
+_turn_commit = None
+
+
+def turn_commit_reset():
+    global _turn_commit
+    _turn_commit = None
+    return 1
+
+
+def turn_commit_stage(provider_succeeded, history_saved, has_activity):
+    global _turn_commit
+    if int(provider_succeeded) == 1 and int(history_saved) == 1:
+        import telegram
+        import strategy_host
+        _turn_commit = (tuple(telegram._current_batch_update_ids) if int(has_activity) else (),
+                        strategy_host._message_focus if int(has_activity) else None)
+    else:
+        _turn_commit = None
+    return 1
+
+
+def turn_commit_ready():
+    return int(_turn_commit is not None)
+
+
+def _working_write(data, settle=False):
+    committed = False
+    if os.environ.get("METTACLAW_OBSERVED_STRATEGY", "0") == "1":
+        import agent_checkpoint
+        ids, request = _turn_commit if settle and _turn_commit is not None else ((), None)
+        agent_checkpoint.ledger().checkpoint(data, ids, request)
+        committed = True
     path = _working_set_path()
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(data, fh)
-    os.replace(tmp, path)
+    parent = os.path.dirname(path) or "."
+    tmp = None
+    try:
+        os.makedirs(parent, exist_ok=True)
+        descriptor, tmp = tempfile.mkstemp(prefix=".working-set-", dir=parent)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+        directory = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    except OSError:
+        if not committed:
+            raise
+        # The file is an operator projection. Recovery uses the committed DB.
+    finally:
+        if tmp is not None and os.path.exists(tmp):
+            os.unlink(tmp)
 
 
 def working_set_save(loops, sleep, lastresults, hb_clock,
@@ -452,7 +557,9 @@ def working_set_save(loops, sleep, lastresults, hb_clock,
             "banked_loops": max(0, int(banked_loops)),
             "saved_at": time.time(),
         })
-        _working_write(data)
+        _working_write(data, settle=True)
+        import process_supervision
+        process_supervision.progress("turn-checkpoint")
         return 1
     except Exception:
         return 0

@@ -70,6 +70,25 @@ class AdmissionTests(unittest.TestCase):
         with self.assertRaises(llm_policy.AdmissionDenied):
             llm_policy.admit("a", 1, now=101)
 
+    def test_dead_owner_is_unknown_and_identical_request_is_not_reissued(self):
+        key = llm_policy.fingerprint({"messages": ["same request"]})
+        with patch.object(llm_policy, "_owner", "0:0"):
+            ticket = llm_policy.admit("a", 50, now=100, request_fingerprint=key)
+        with self.assertRaises(llm_policy.AdmissionDenied) as caught:
+            llm_policy.admit("a", 50, now=101, request_fingerprint=key)
+        self.assertEqual(caught.exception.reason, "provider-outcome-unknown")
+        self.assertEqual(llm_policy.snapshot()["requests"], {"unknown": 1})
+        self.assertEqual(llm_policy.snapshot()["accounted_output_tokens"], 50)
+        self.assertIn(ticket, llm_policy.unknown_context())
+        llm_policy.admit("a", 50, now=102, request_fingerprint=llm_policy.fingerprint({"messages": ["reconsider"]}))
+
+    def test_live_owner_is_not_mistaken_for_a_crashed_concurrent_call(self):
+        ticket = llm_policy.admit("a", 50, now=100)
+        with patch.object(llm_policy, "_owner", "different-session"):
+            llm_policy.recover_interrupted()
+        self.assertEqual(llm_policy.snapshot()["requests"], {"pending": 1})
+        self.assertTrue(llm_policy.complete(ticket, {"choices": [{"finish_reason": "stop"}]}))
+
     def test_quota_cooldown_and_upstream_bypass(self):
         ticket = llm_policy.admit("a", 10, now=100)
         llm_policy.fail(ticket, status=429, retry_after=600, now=100)

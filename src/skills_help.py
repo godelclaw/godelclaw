@@ -8,7 +8,7 @@ turn that asks for it, and the checker answers format questions for free
 ARITY = {
     "requests": (0, 0), "request-status": (1, 1), "request-focus": (1, 1),
     "request-page": (1, 1), "request-read": (2, 2), "request-disposition": (3, 3),
-    "command-receipts": (0, 0), "topics": (0, 0), "topic-select": (1, 1),
+    "command-receipts": (0, 1), "topics": (0, 0), "topic-select": (1, 1),
     "topic-note": (1, 1), "background-model": (2, 3), "model-jobs": (0, 0),
     "model-result": (1, 1), "model-adopt": (1, 1), "model-retire": (1, 1),
     "remember": (1, 1), "query": (1, 1), "pin": (1, 1), "unpin": (1, 1),
@@ -43,7 +43,7 @@ ARITY = {
 }
 
 PAGES = {
-    "command-receipts": 'usage: (command-receipts)\nLast 20 attempted commands, stable IDs and recorded dispositions/results. Uncertain is not success.',
+    "command-receipts": 'usage: (command-receipts) or (command-receipts "NEXT_CURSOR")\nPages of attempted commands with stable IDs and recorded dispositions/results. Follow next_cursor until null; concatenate chunk records by ID and character offset. Uncertain is not success.',
     "topics": 'usage: (topics)\nNamed agent-owned working contexts and their revisions. Operator input is always visible.',
     "topic-select": 'usage: (topic-select "name")\nSelect or create named notes for subsequent model turns. Does not hide incoming messages.',
     "topic-note": 'usage: (topic-note "notes")\nReplace active topic notes and advance its revision. Captured background answers then become stale.',

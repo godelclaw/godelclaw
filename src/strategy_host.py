@@ -7,6 +7,7 @@ uses the existing provider, budgets, Iter preparation and interruptible wait.
 import json
 import os
 from pathlib import Path
+import re
 import threading
 import time
 
@@ -173,6 +174,8 @@ def prepare(prompt):
     global _focus, _goal_view, _runtime_projection
     import topic_jobs
     prompt = str(prompt) + "\n" + topic_jobs.context()
+    import llm_policy
+    prompt += "\n" + llm_policy.unknown_context()
     topic_jobs.notify()
     if os.environ.get("METTACLAW_LLM_TRANSPORT") == "native":
         import native_lifetime
@@ -377,6 +380,20 @@ def broker_begin(turn, commands, limit=1):
                     "request": _focus, "owner": _sample["owner"]}, time.time(), guard())
                 return 0
         live_guard = guard() if _stimulus_free() else "new-input"
+        store = ledger()
+        with store.transaction() as db:
+            for command in commands[:int(limit)]:
+                denied = store.command_denial(db, command)
+                if denied:
+                    _broker_feedback = denied
+                    break
+            else:
+                denied = None
+        if denied:
+            _ticket = None
+            store.decide(_sample["serial"], {"kind": "denied", "tool": str(command[0]),
+                "request": _focus, "owner": _sample["owner"]}, time.time(), live_guard)
+            return 0
         # Batch authority is the intersection of every command's authority.
         _ticket = ledger().decide(_sample["serial"], {
             "kind": "command", "tool": str(commands[0][0]),
@@ -419,6 +436,9 @@ def reserve_command(turn, command):
             if not admission_frontier.may_issue(list(db.execute("SELECT * FROM actions")),
                     command, exclude=_ticket):
                 return 0
+            if store.command_denial(db, command):
+                return 0
+            db.execute("UPDATE command_quarantine SET allowed=0 WHERE command=?", (strategy.encoded(command),))
             db.execute("CREATE TABLE IF NOT EXISTS command_attempts (ticket TEXT, position INTEGER, command TEXT, result TEXT, PRIMARY KEY(ticket,position))")
             db.execute("INSERT INTO command_attempts VALUES (?,?,?,NULL)", (_ticket, _position, strategy.encoded(command)))
             store.event(db, "command-reserved", ticket=_ticket, position=_position)
@@ -434,6 +454,10 @@ def command_result(turn, disposition, command, result):
                        (strategy.encoded({"disposition": str(disposition), "result": str(result)}), _ticket,
                         _position - 1, strategy.encoded(command)))
             store.event(db, "command-result", ticket=_ticket, position=_position - 1)
+            if str(disposition) == "returned":
+                db.execute("UPDATE command_quarantine SET allowed=1 WHERE command=?", (strategy.encoded(command),))
+        import process_supervision
+        process_supervision.progress("command-receipt")
     return 1
 
 
@@ -443,19 +467,66 @@ def broker_end(turn, records):
     return records
 
 
-def command_receipts():
+def command_receipts(cursor=""):
+    """Bounded pages over immutable receipts, including lossless large records."""
     if not enabled():
         return "command receipts require the managed strategy"
+    cursor = str(cursor)
+    if cursor.startswith('"'):
+        try:
+            cursor = json.loads(cursor)
+        except ValueError:
+            pass
+    if cursor and (not isinstance(cursor, str) or not re.fullmatch(r"[0-9]{1,18}:[0-9]{1,18}", cursor)):
+        return strategy.encoded({"error": "invalid receipt cursor"})
+    bound, offset = map(int, cursor.split(":")) if cursor else (None, 0)
+    budget = 8192
+    page = {"receipts": [], "next_cursor": None}
     store = ledger()
     with store.transaction() as db:
         if not db.execute("SELECT 1 FROM sqlite_master WHERE name='command_attempts'").fetchone():
-            return "[]"
-        rows = [dict(row) for row in db.execute("SELECT ticket,position,command,result FROM command_attempts ORDER BY rowid DESC LIMIT 20")]
+            return strategy.encoded(page)
+        if bound is None:
+            bound = db.execute("SELECT MAX(rowid) FROM command_attempts").fetchone()[0] or 0
+        rows = db.execute("SELECT rowid,ticket,position,command,result FROM command_attempts WHERE rowid<=? ORDER BY rowid DESC LIMIT 32", (bound,))
         for row in rows:
-            row["id"] = row["ticket"] + ":" + str(row["position"])
-            row["command"] = json.loads(row["command"])
-            row["result"] = json.loads(row["result"]) if row["result"] is not None else {"disposition": "uncertain", "reason": "no terminal receipt recorded; do not replay"}
-    return strategy.encoded(rows)
+            identity = row["ticket"] + ":" + str(row["position"])
+            result = row["result"] or strategy.encoded({"disposition": "uncertain",
+                "reason": "no terminal receipt recorded; do not replay"})
+            raw = ('{"command":' + row["command"] + ',"id":' + strategy.encoded(identity)
+                   + ',"position":' + str(row["position"]) + ',"result":' + result
+                   + ',"ticket":' + strategy.encoded(row["ticket"]) + '}')
+            if row["rowid"] != bound:
+                offset = 0
+            if offset > len(raw):
+                return strategy.encoded({"error": "receipt cursor beyond record"})
+            after = row["rowid"] - 1
+            more = db.execute("SELECT 1 FROM command_attempts WHERE rowid<=? LIMIT 1", (after,)).fetchone()
+            next_cursor = str(after) + ":0" if more else None
+            if not offset and len(raw.encode()) < budget - 256:
+                candidate = {"receipts": page["receipts"] + [json.loads(raw)], "next_cursor": next_cursor}
+                if len(strategy.encoded(candidate).encode()) <= budget:
+                    page = candidate
+                    continue
+            if page["receipts"]:
+                page["next_cursor"] = str(row["rowid"]) + ":" + str(offset)
+                break
+            # A large record is sliced as text. Offsets count Unicode characters;
+            # the actual page limit counts encoded bytes, including JSON escapes.
+            def fragment(end):
+                return {"receipts": [{"id": identity, "chunk": raw[offset:end],
+                    "offset": offset, "total": len(raw)}], "next_cursor":
+                    str(row["rowid"]) + ":" + str(end) if end < len(raw) else next_cursor}
+            low, high = offset, min(len(raw), offset + budget)
+            while low < high:
+                middle = (low + high + 1) // 2
+                if len(strategy.encoded(fragment(middle)).encode()) <= budget:
+                    low = middle
+                else:
+                    high = middle - 1
+            page = fragment(low)
+            break
+    return strategy.encoded(page)
 
 
 def annotate_result(command, result):
@@ -549,6 +620,11 @@ def fault():
         _ticket = None
         _prepared_capture = None
         _runtime_projection = None
-        import cognitive_health
-        cognitive_health.turn_failed("host-transition-error")
+        import engine_modes
+        if engine_modes.recycle_requested():
+            with ledger().transaction() as db:
+                ledger().event(db, "recycle-requested")
+        else:
+            import cognitive_health
+            cognitive_health.turn_failed("host-transition-error")
     return 1
