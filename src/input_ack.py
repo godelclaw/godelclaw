@@ -50,7 +50,7 @@ def arm_changes():
                         ("cetta-telegram-" + os.environ.get("METTACLAW_INSTANCE", "agent")))
         outbox = mode_channel.state() / "channel-outbox"
         outbox.mkdir(parents=True, exist_ok=True)
-        _changes = durable_telegram.Changes([state, outbox])
+        _changes = durable_telegram.Changes([state, outbox], ignore_names=("pump.lock", "sequence"))
     return _changes.arm()
 
 

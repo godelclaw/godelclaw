@@ -26,8 +26,9 @@ class Changes:
     Overflow and timers trigger the same reread. Platforms without inotify
     retain a bounded timer fallback, with no additional dependency.
     """
-    def __init__(self, directories):
+    def __init__(self, directories, ignore_names=()):
         self.directories = tuple(str(path) for path in directories)
+        self.ignore_names = frozenset(ignore_names)
         self.fd = -1
         try:
             import ctypes
@@ -59,7 +60,30 @@ class Changes:
             time.sleep(seconds)
             return 0
         import select
-        return int(bool(select.select([self.fd], [], [], seconds)[0]))
+        import struct
+        deadline = time.monotonic() + seconds
+        while True:
+            remaining = max(0, deadline - time.monotonic())
+            if not select.select([self.fd], [], [], remaining)[0]:
+                return 0
+            try:
+                events = os.read(self.fd, 65536)
+            except BlockingIOError:
+                continue
+            offset = 0
+            while offset < len(events):
+                if len(events) - offset < 16:
+                    return 1  # An uncertain hint requires a fresh snapshot.
+                _, mask, _, size = struct.unpack_from("iIII", events, offset)
+                name = os.fsdecode(events[offset + 16:offset + 16 + size].split(b"\0", 1)[0])
+                offset += 16 + size
+                # Overflow, a removed watch and directory changes always wake.
+                # A writable lock descriptor closes even without a write;
+                # those local bookkeeping events must not wake their own loop.
+                if mask & (0x4000 | 0x8000 | 0x400 | 0x800) or name not in self.ignore_names:
+                    return 1
+            if time.monotonic() >= deadline:
+                return 0
 
     def close(self):
         if self.fd >= 0:

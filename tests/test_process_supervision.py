@@ -5,6 +5,8 @@ from pathlib import Path
 import socket
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from unittest import mock
 
@@ -79,6 +81,32 @@ class SupervisionTests(unittest.TestCase):
 
 
 class ChangesTests(unittest.TestCase):
+    def test_local_pump_lock_does_not_wake_its_own_responder(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            lock = Path(temporary, "pump.lock")
+            lock.touch()
+            changes = durable_telegram.Changes([temporary], ignore_names=("pump.lock",))
+            self.addCleanup(changes.close)
+            if changes.fd < 0:
+                self.skipTest("inotify unavailable")
+            changes.arm()
+            with lock.open("a"):
+                pass
+            self.assertEqual(changes.wait(.02), 0)
+
+    def test_filtered_event_preserves_a_later_durable_arrival(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            changes = durable_telegram.Changes([temporary], ignore_names=("pump.lock",))
+            self.addCleanup(changes.close)
+            if changes.fd < 0:
+                self.skipTest("inotify unavailable")
+            changes.arm()
+            Path(temporary, "pump.lock").write_text("local bookkeeping")
+            arrived = threading.Timer(.02, lambda: Path(temporary, "journal").write_text("new task"))
+            arrived.start()
+            self.addCleanup(arrived.join)
+            self.assertEqual(changes.wait(1), 1)
+
     def test_arrival_during_snapshot_is_not_a_lost_wakeup(self):
         with tempfile.TemporaryDirectory() as temporary:
             changes = durable_telegram.Changes([temporary])
