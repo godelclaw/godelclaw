@@ -221,7 +221,9 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
             # 2. The turn was never acknowledged (the process ended): the next
             #    process reads the same messages again, from the service.
             again, lines, err = batch()
-            assert again == expected, again
+            assert again == expected, (again, lines, err, expected,
+                __import__("durable_telegram").Channel(str(path), os.devnull).pending(64),
+                ledger.read_text()[-3000:], service.poll())
             # 3. Acknowledged, they are gone from the service.
             lines, err = run('!(tg:start)\n!(tg:activity-batch)\n!(tg:ack-activity-batch)\n!(tg:pending-count)\n', env)
             assert lines[-2:] == ["1", "0"], lines[-4:]

@@ -515,9 +515,8 @@
    (if (== $items ()) 1
      (let ($head $tail) (tg:uncons $items)
        (let ($seq $task $chat $text $bot $tier $uid) $head
-         (let $_ (if (and (== (py-call (input_ack.already_committed $uid)) 1)
-                         (tg:ack-all ($head)))
-                   (tg:forget-items ($head)) ())
+         (let $_ (if (== (py-call (input_ack.already_committed $uid)) 1)
+                   (if (tg:ack-all ($head)) (tg:forget-items ($head)) ()) ())
            (tg:recover-committed $tail))))))
 
 (= (tg:last-seq $items)
@@ -539,8 +538,8 @@
 (= (tg:ack-activity-batch)
    (let $prepared (tg:sorted-items (tg:prepared-items))
      (if (== $prepared ()) 1
-       (if (and (== (py-call (input_ack.committed (str:join "," (tg:list (tg:update-ids $prepared))))) 1)
-                (tg:log-activity-ack (tg:list (tg:update-ids $prepared))))
+       (if (if (== (py-call (input_ack.committed (str:join "," (tg:list (tg:update-ids $prepared))))) 1)
+                (tg:log-activity-ack (tg:list (tg:update-ids $prepared))) False)
          (if (tg:ack-all $prepared)
            (let $handover (py-call (telegram.handover_ack (str:join "," (tg:list (tg:update-ids $prepared)))))
              (if (== $handover 1)

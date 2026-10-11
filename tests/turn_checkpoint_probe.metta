@@ -6,6 +6,7 @@
 !(tg:activity-add "" "42" "first input" False "full" "101" False)
 !(tg:activity-batch)
 !(assert (== (tg:ack-activity-batch) 0))
+!(assert (not (py-call (os.path.exists (tg:ledger)))))
 !(assert (== (tg:pending-count) 1))
 !(py-call (helper.turn_commit_stage 1 1 1))
 !(tg:activity-add "" "42" "later input" False "full" "102" False)
