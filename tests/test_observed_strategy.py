@@ -11,6 +11,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from observed_strategy import Ledger, digest, search_observation
+import admission_frontier
 
 
 ROUTER = {"advertised": ["tool"], "executable": ["tool"], "permitted": ["tool"]}
@@ -98,11 +99,12 @@ class ObservedStrategyTest(unittest.TestCase):
         self.assertEqual(len(self.store.projection()["actions"]), 1)
         self.receipt("duplicate")
 
-    def test_07_capture_requires_correlated_observation(self):
+    def test_07_effect_requires_correlated_observation(self):
         ticket = self.returned()
-        self.assertIsNone(self.capture())
+        self.assertFalse(admission_frontier.may_issue(self.store.projection()["actions"], ["tool"]))
         self.store.observe([ticket], {ticket: [{"ticket": ticket, "payload_digest": "wrong"}]})
-        self.assertIsNone(self.capture())
+        self.assertEqual(self.store.projection()["actions"][0]["observed"], 0)
+        self.assertFalse(admission_frontier.may_issue(self.store.projection()["actions"], ["tool"]))
         self.observe(ticket)
         self.assertIsNotNone(self.capture(now=1))
         self.receipt("observation")
@@ -148,8 +150,22 @@ class ObservedStrategyTest(unittest.TestCase):
         recovered = Ledger(self.store.path)
         self.assertTrue(recovered.report(ticket, "late", domain="success"))
         self.assertFalse(recovered.report(ticket, "duplicate", domain="success"))
-        self.assertIsNone(self.capture())
         self.receipt("late")
+        snapshot = self.capture()
+        self.assertIsNotNone(snapshot)
+        self.assertEqual(self.command(serial=snapshot["serial"]), "blocked-effects")
+        self.assertEqual(recovered.projection()["actions"][0]["receipt"],
+                         self.store.projection()["actions"][0]["receipt"])
+
+    def test_thinking_continues_but_effect_waits_for_exact_observation(self):
+        ticket = self.returned()
+        snapshot = self.capture()
+        self.assertIsNotNone(snapshot)
+        self.assertEqual(self.command(serial=snapshot["serial"]), "blocked-effects")
+        self.assertEqual(self.store.projection()["actions"][0]["observed"], 0)
+        self.observe(ticket)
+        snapshot = self.capture()
+        self.assertNotEqual(self.command(serial=snapshot["serial"]), "blocked-effects")
 
     def test_receipts_and_obligations_survive_reopening(self):
         ticket = self.returned(domain="unknown")
@@ -164,7 +180,8 @@ class ObservedStrategyTest(unittest.TestCase):
         mutations = [
             ([( 'snap["revision"] == self.get(db, "revision")', 'True')],
              'test_03_new_input_invalidates_old_reply'),
-            ([( 'or busy', 'or False')], 'test_07_capture_requires_correlated_observation'),
+            ([( 'elif not admission_frontier.may_issue(', 'elif False and not admission_frontier.may_issue(')],
+             'test_thinking_continues_but_effect_waits_for_exact_observation'),
             ([( 'router["executable"]', 'router["advertised"]'),
               ( 'router["permitted"]', 'router["advertised"]')],
              'test_01_preparation_does_not_grant_authority'),

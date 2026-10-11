@@ -115,6 +115,25 @@ excerpt with its source reference, never its unseen remainder.
 `(command-receipts)` exposes attempted commands and their recorded outcomes.
 Provider prose cannot grant observation, completion or tool authority.
 
+Provider admission and effect admission are separate. A missing command receipt
+remains an explicit unknown outcome, but does not prevent a fresh model turn.
+Declared observation tools may run while an effect is unresolved. New mutations
+wait until unresolved effects have correlated, observed receipts. Unknown tools
+conservatively count as effects; only the admitted batch prefix is classified,
+so deferred commands acquire no execution authority. No uncertain command is
+automatically replayed or treated as successful. Execution reservation rechecks
+the current context revision as well as source, routing and input guards.
+
+`/activity` reports `retrying` after a failed turn even when checkpoint fuel
+remains. Admission diagnostics expose bounded reason codes without printing
+prompts, credentials or arbitrary exception messages.
+`tests/test_admission_frontier.py` exercises the durable recovery boundary.
+`scripts/check_admission_frontier.py --model-root path/to/lean/pettaclaw
+--output-dir qualification` compares host decisions and SQL replays with
+MeTTapedia's executable `AdmissionFrontier.lean` model and audits its axioms.
+Observation contracts and finite correspondence do not verify the Python,
+SQLite, provider or CeTTa implementations.
+
 `agent.background_models` defaults to one retained background call (zero
 disables admission; maximum eight). `agent.background_tokens` defaults to
 1024. These workers share provider limits and service allowance with the

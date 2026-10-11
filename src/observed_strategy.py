@@ -13,6 +13,8 @@ import sqlite3
 import time
 import uuid
 
+import admission_frontier
+
 
 def encoded(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -224,12 +226,18 @@ class Ledger:
                 results.append({**receipt, "payload": payload[:result_chars],
                                 "payload_digest": digest(payload),
                                 "truncated": len(payload) > result_chars})
-            uncertain = [r[0] for r in db.execute("SELECT ticket FROM actions WHERE status IN ('issued','uncertain') ORDER BY rowid LIMIT 8")]
+            unresolved = list(db.execute("SELECT * FROM actions WHERE status IN ('issued','uncertain') ORDER BY rowid"))
+            uncertain = [r["ticket"] for r in unresolved[:8]]
+            uncertainty = [{"ticket": r["ticket"], "tool": r["tool"],
+                            "kind": "observation" if admission_frontier.observational(r["command"]) else "effect",
+                            "state": r["status"], "result": "unavailable", "replay": False}
+                           for r in unresolved[:8]]
             return {"owner": self.get(db, "owner"), "focus": focus,
                     "request": row[0][:4000] if row else "", "unfinished": active,
                     "counts": counts, "omitted_active": max(0, counts.get("active", 0) - len(active)),
                     "request_truncated": bool(row and len(row[0]) > 4000),
-                    "results": results, "uncertain": uncertain}
+                    "results": results, "uncertain": uncertain,
+                    "uncertainty": uncertainty, "omitted_uncertain": max(0, len(unresolved)-8)}
 
     def active(self):
         with self.transaction() as db:
@@ -283,15 +291,20 @@ class Ledger:
                         db.execute("UPDATE actions SET observed=1 WHERE ticket=?", (ticket,))
                         self.event(db, "observe", ticket=ticket)
 
+    def admission_denial(self, focus, now):
+        """Diagnostic projection; only capture's transaction grants admission."""
+        with self.transaction() as db:
+            return admission_frontier.thought_denial(available=self.selectable(db, focus),
+                paused=self.get(db, "paused"), pending=self.get(db, "pending"),
+                allowance=self.get(db, "allowance"), cooldown=self.get(db, "cooldown"), now=now)
+
     def capture(self, focus, boundary, router, now, guard="", wake_seconds=600, goal_lease=None):
         with self.transaction() as db:
             available = self.selectable(db, focus)
-            busy = db.execute("SELECT 1 FROM actions WHERE status IN ('issued','uncertain') OR (receipt IS NOT NULL AND observed=0) LIMIT 1").fetchone()
             allowance = self.get(db, "allowance")
-            if (not available or self.get(db, "paused")
-                    or self.get(db, "pending") is not None or busy
-                    or (allowance is not None and allowance <= 0)
-                    or now < self.get(db, "cooldown")):
+            if admission_frontier.thought_denial(available=available,
+                    paused=self.get(db, "paused"), pending=self.get(db, "pending"),
+                    allowance=allowance, cooldown=self.get(db, "cooldown"), now=now):
                 return None
             serial = self.get(db, "next_sample")
             goal_charge = None
@@ -334,6 +347,9 @@ class Ledger:
                         or response.get("tool") not in router["executable"]
                         or response.get("tool") not in router["permitted"]):
                     kind = "denied"
+                elif not admission_frontier.may_issue(list(db.execute("SELECT * FROM actions")),
+                        response.get("command")):
+                    kind = "blocked-effects"
                 else:
                     ticket = "%s:%s" % (snap["owner"], serial)
                     db.execute("INSERT INTO actions(ticket,request,serial,tool,command,status) VALUES (?,?,?,?,?,'issued')",
@@ -363,7 +379,7 @@ class Ledger:
         with self.transaction() as db:
             work = db.execute("SELECT * FROM requests WHERE id=? AND status='active'", (request,)).fetchone()
             action = db.execute("SELECT * FROM actions WHERE ticket=? AND request=?", (ticket, request)).fetchone()
-            busy = db.execute("SELECT 1 FROM actions WHERE status IN ('issued','uncertain') OR (receipt IS NOT NULL AND observed=0) LIMIT 1").fetchone()
+            busy = admission_frontier.effect_blockers(list(db.execute("SELECT * FROM actions")))
             if (not work or not action or not action["observed"] or busy or self.get(db, "pending") is not None
                     or not fair_goals.may_complete(self, db, request, now)):
                 return False

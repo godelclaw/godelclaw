@@ -114,7 +114,10 @@ class StrategyHostTest(unittest.TestCase):
         host._ledger = None; host._booted = False
         self.assertEqual(host.ledger().projection()["actions"][0]["status"], "uncertain")
         host.begin(2, "continuation-tick", "")
-        self.assertEqual(host.capture(host.prepare("reconsider"), 60), 0)
+        self.assertEqual(host.capture(host.prepare("reconsider"), 60), 1)
+        self.assertEqual(host.broker_begin(2, [["shell", "another mutation"]]), 0)
+        self.assertEqual(json.loads(host.broker_feedback())["reason"], "blocked-effects")
+        self.assertEqual(host.ledger().projection()["actions"][0]["status"], "uncertain")
 
     def test_exact_task_checker_finishes_only_its_observed_result(self):
         store = host.ledger()
@@ -127,6 +130,35 @@ class StrategyHostTest(unittest.TestCase):
         store.observe([ticket], {ticket: [result]})
         self.assertEqual(store.finish_exact_results(), 1)
         self.assertFalse(any(r["id"] == "exact" for r in store.active()))
+
+    def test_missing_observation_does_not_authorize_deferred_suffix_or_replay(self):
+        self.capture()
+        command = ["recent-messages", "room", 6]
+        self.assertEqual(host.broker_begin(1, [command, ["rest", 900, "later"]], 1), 1)
+        self.assertEqual(host.reserve_command(1, ["recent-messages", "other room", 6]), 0)
+        self.assertEqual(host.reserve_command(1, command), 1)
+        self.assertEqual(host.reserve_command(1, ["rest", 900, "later"]), 0)
+        host._ledger = None; host._booted = False
+        host.begin(2, "continuation-tick", "")
+        self.capture()
+        self.assertEqual(host.reserve_command(1, command), 0)
+        self.assertEqual(host.broker_begin(2, [["shell", "fresh action"]]), 1)
+        self.assertEqual(host.reserve_command(2, ["shell", "fresh action"]), 1)
+        self.assertEqual(host.ledger().projection()["actions"][0]["status"], "uncertain")
+
+    def test_late_receipt_after_decision_withholds_reserved_command(self):
+        self.capture()
+        old = ["recent-messages", "room", 6]
+        self.assertEqual(host.broker_begin(1, [old]), 1)
+        self.assertEqual(host.reserve_command(1, old), 1)
+        old_ticket = host._ticket
+        host._ledger = None; host._booted = False
+        host.begin(2, "continuation-tick", "")
+        self.capture()
+        new = ["shell", "fresh mutation"]
+        self.assertEqual(host.broker_begin(2, [new]), 1)
+        self.assertTrue(host.ledger().report(old_ticket, "late information"))
+        self.assertEqual(host.reserve_command(2, new), 0)
 
     def test_search_result_carries_incomplete_coverage(self):
         value = json.loads(host.annotate_result(["search", "scope"], ""))

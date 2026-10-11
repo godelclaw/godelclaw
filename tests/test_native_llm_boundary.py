@@ -85,6 +85,45 @@ class NativeBoundaryTests(unittest.TestCase):
         self.last_stderr = result.stderr
         return result.stdout
 
+    def test_unknown_action_does_not_prevent_native_provider_request(self):
+        (self.directory / "fixture_modules/frontier_probe.py").write_text('''
+import os
+import strategy_host as host
+
+def prepare(kind):
+    # The surrounding integration test supplies a stable, empty input frontier.
+    host._stimulus_free = lambda: True
+    host.guard = lambda: "fixture-control"
+    host.begin(1, "autonomous-trigger", "")
+    assert host.capture(host.prepare("first request"), 60) == 1
+    command = ["help", "shell"] if kind == "observation" else ["shell", "not executed"]
+    assert host.broker_begin(1, [command]) == 1
+    assert host.reserve_command(1, command) == 1
+    host.ledger().restore()
+    host.begin(2, "continuation-tick", "")
+    prompt = host.prepare("fresh context")
+    assert host.capture(prompt, 60) == 1
+    return prompt
+
+def retained():
+    row = host.ledger().projection()["actions"][0]
+    assert row["status"] == "uncertain" and row["receipt"] is None and row["observed"] == 0
+    return "unknown-retained"
+''')
+        self.env.update(METTACLAW_OBSERVED_STRATEGY="1", METTACLAW_FAIR_GOALS="0")
+        self.env["PYTHONPATH"] += os.pathsep + str(ROOT / "channels")
+        for kind in ("observation", "effect"):
+            with self.subTest(kind=kind):
+                self.env["METTACLAW_STRATEGY_PATH"] = str(self.directory / (kind + ".sqlite3"))
+                out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n'
+                    f'!(import! &self "{self.directory}/fixture_modules/frontier_probe.py")\n'
+                    f'!(let $prompt (py-call (frontier_probe.prepare "{kind}")) '
+                    '(llm:command "fixture-model" 42 "low" $prompt))\n'
+                    '!(py-call (frontier_probe.retained))\n')
+                self.assertIn("(nop)", out)
+                self.assertIn("unknown-retained", out)
+        self.assertEqual(len(self.peer.requests), 2)
+
     def test_slow_command_submits_once_and_uses_host_credential(self):
         out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n'
             '!(llm:command "fixture-model" 42 "low" "system_cache_boundary_user")\n')

@@ -90,9 +90,11 @@ def _empty_action(reason):
     cap = _float_env("SYNTHETIC_EMPTY_BACKOFF_CAP", 300.0, 0.0)
     wait = min(cap, base * (2 ** min(_consecutive_empty - 1, 20))) if base else 0.0
     wait = max(wait, getattr(reason, "retry_after", 0))
-    cognitive_health.turn_failed(type(reason).__name__, retry_after=wait)
+    import admission_frontier
+    code = admission_frontier.failure_code(reason)
+    cognitive_health.turn_failed(code, retry_after=wait)
     # Exception messages may contain URLs, headers or response bodies.
-    print("[synthetic_llm] failed provider turn: " + type(reason).__name__ +
+    print("[synthetic_llm] failed provider turn: " + code +
           f"; retry in {wait:.0f}s", file=sys.stderr)
     return "()"
 

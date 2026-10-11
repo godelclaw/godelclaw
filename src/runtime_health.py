@@ -262,6 +262,10 @@ def activity_report(now=None):
         wake = "human-or-heartbeat"
         steps = loops
         steps_source = "checkpoint"
+    if state == "working" and pending_age is None and cognition.get("last_outcome") == "failed":
+        state = "retrying"
+        delay = max(0, int(float(cognition.get("retry_at", 0) or 0) - now))
+        wake = "human-or-%ss" % delay if delay else "retry-ready"
     age = lambda value: "never" if value is None else "%ss" % value
     if pending_age is not None:
         turn = "pending:%s" % age(pending_age)

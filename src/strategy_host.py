@@ -11,6 +11,7 @@ import threading
 import time
 
 import observed_strategy as strategy
+import admission_frontier
 
 
 _lock = threading.RLock()
@@ -104,6 +105,7 @@ def guard(include_topic=True):
         "router": skills_help.ARITY,
         "permission": os.environ.get("METTACLAW_PERMITTED_TOOLS", "*"),
         "implementation": _file_identity(str(Path(__file__).with_name("skills.pl"))),
+        "admission": _file_identity(str(Path(__file__).with_name("admission_frontier.py"))),
         "goal_inventory": _file_identity(goals._goals_path()) if fair_enabled() else None,
         "attention": __import__("attention").revision(),
         "topic": __import__("topic_jobs").foreground_revision() if enabled() and include_topic else None,
@@ -293,10 +295,11 @@ def provider_admitted(ticket=None):
         _prepared_capture = None
         goal_snapshot()  # recheck source edits and newly eligible goals
         if proposed["guard"] != guard() or not _stimulus_free():
-            raise RuntimeError("strategy changed before provider admission")
+            raise admission_frontier.AdmissionDenied("strategy-changed")
         _sample = ledger().capture(now=time.time(), **proposed)
         if _sample is None:
-            raise RuntimeError("strategy not ready for provider admission")
+            code = ledger().admission_denial(proposed["focus"], time.time())
+            raise admission_frontier.AdmissionDenied(code or "goal-not-selectable")
 
 
 def goal_review_save(inventory_digest, entries):
@@ -381,7 +384,7 @@ def broker_begin(turn, commands, limit=1):
             "command": {"commands": commands, "limit": int(limit)},
         }, time.time(), live_guard)
         _position = 0
-        if _ticket in ("stale", "denied", "ignored", "failure", "text"):
+        if _ticket in ("stale", "denied", "ignored", "failure", "text", "blocked-effects"):
             _broker_feedback = {"reason": _ticket}
             _ticket = None
             return 0
@@ -404,6 +407,18 @@ def reserve_command(turn, command):
             return 0
         store = ledger()
         with store.transaction() as db:
+            if (store.get(db, "revision") != _sample["revision"] or
+                    store.get(db, "mode") != _sample["mode"] or store.get(db, "paused")):
+                return 0
+            action = db.execute("SELECT command,status FROM actions WHERE ticket=?", (_ticket,)).fetchone()
+            if not action or action["status"] != "issued":
+                return 0
+            prefix = admission_frontier.admitted_prefix(action["command"])
+            if prefix is None or _position >= len(prefix) or prefix[_position] != command:
+                return 0
+            if not admission_frontier.may_issue(list(db.execute("SELECT * FROM actions")),
+                    command, exclude=_ticket):
+                return 0
             db.execute("CREATE TABLE IF NOT EXISTS command_attempts (ticket TEXT, position INTEGER, command TEXT, result TEXT, PRIMARY KEY(ticket,position))")
             db.execute("INSERT INTO command_attempts VALUES (?,?,?,NULL)", (_ticket, _position, strategy.encoded(command)))
             store.event(db, "command-reserved", ticket=_ticket, position=_position)

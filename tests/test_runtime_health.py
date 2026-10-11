@@ -14,6 +14,19 @@ import runtime_health  # noqa: E402
 
 
 class RuntimeHealthTest(unittest.TestCase):
+    def test_failed_retry_with_checkpoint_fuel_is_not_working(self):
+        self.write(self.working, {"saved_at": 999, "loops": 50})
+        self.write(self.cognitive, {"schema": 2, "last_outcome": "failed",
+            "last_failed_at": 980, "in_flight_since": 0, "retry_at": 1100})
+        with mock.patch("loop_modes.current_mode", return_value="godelclaw"), \
+             mock.patch("loop_modes.autonomous", return_value=False), \
+             mock.patch("engine_modes.active_engine", return_value="cetta"), \
+             mock.patch("synthetic_llm.current_model", return_value="fixture"):
+            report = runtime_health.activity_report(now=1000)
+        self.assertIn("activity: retrying", report)
+        self.assertIn("wake=human-or-100s", report)
+        self.assertNotIn("activity: working", report)
+
     def test_external_control_and_upstream_checkpoint_replace_legacy_client_health(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)

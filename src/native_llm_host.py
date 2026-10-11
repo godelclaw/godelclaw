@@ -52,6 +52,7 @@ def gate():
 
 def _plan(kind, model, tokens, builder):
     ticket = None
+    provider = None
     try:
         selected = synthetic_llm.current_model(str(model))
         provider = synthetic_llm._provider_for(selected)
@@ -98,6 +99,7 @@ def _plan(kind, model, tokens, builder):
         if ticket:
             llm_policy.fail(ticket, sent=False)
         return SimpleNamespace(kind=kind, ready="false", error=error,
+                               provider=provider["name"] if provider else "unknown",
                                correlation="unsubmitted", sent=False)
 
 
@@ -316,8 +318,12 @@ def _record_failure(plan, kind, status=0):
     elapsed = max(0, int((time.monotonic() - started) * 1000)) if started is not None else 0
     deadline = int(getattr(plan, "timeout", 0))
     sent = "true" if getattr(plan, "sent", False) else "false"
+    import admission_frontier
+    error = getattr(plan, "error", None)
+    reason = admission_frontier.failure_code(error)
+    detail = "; reason=" + reason if reason in admission_frontier.DENIAL_CODES else ""
     print(f"[native_llm] failed request: {code}; provider={provider}; "
-          f"status={status}; sent={sent}; elapsed_ms={elapsed}; deadline_ms={deadline}",
+          f"status={status}; sent={sent}; elapsed_ms={elapsed}; deadline_ms={deadline}{detail}",
           file=sys.stderr)
 
 
