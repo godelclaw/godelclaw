@@ -31,6 +31,13 @@ def record(name, value=0):
     return True
 
 
+def completed(label, handle, body):
+    expected = {"slow-completed": "slow", "short-completed": "short"}[str(label)]
+    if str(body) != expected:
+        raise AssertionError(f"response body does not belong to {label}: {body}")
+    return record(label, handle)
+
+
 class Peer(http.server.BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass

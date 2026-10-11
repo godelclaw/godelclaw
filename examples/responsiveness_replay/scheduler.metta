@@ -13,7 +13,7 @@
    (case (io:poll $id)
      (((io:event $received (http:response 200 $body))
        (if (== $received $id)
-         (let $_ (py-call (probe_host.record $label $id)) True)
+         (let $_ (py-call (probe_host.completed $label $id $body)) True)
          (py-call (probe_host.fail $received))))
       ((io:idle) False)
       ($other (py-call (probe_host.fail $other))))))
