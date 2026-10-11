@@ -30,6 +30,11 @@ def main():
         destination = args.output / "files" / path
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, destination)
+        # Overrides supply content; the canonical source supplies executable
+        # permissions. A freshly written override must not disable a launcher.
+        canonical = args.source / path
+        if canonical.is_file():
+            destination.chmod(canonical.stat().st_mode & 0o777)
         hashes[name] = hashlib.sha256(destination.read_bytes()).hexdigest()
     identity = hashlib.sha256(json.dumps(hashes, sort_keys=True).encode()).hexdigest()
     (args.output / "manifest.json").write_text(json.dumps(

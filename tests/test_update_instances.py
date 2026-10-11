@@ -13,6 +13,30 @@ update = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(update)
 
 
+class ReleasePermissionsTest(unittest.TestCase):
+    def test_content_override_preserves_launcher_permissions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            source = work / "source"
+            source.mkdir()
+            (source / "run.sh").write_text("#!/bin/sh\nexit 0\n")
+            (source / "run.sh").chmod(0o750)
+            override = work / "override"
+            override.write_text("#!/bin/sh\nexit 1\n")
+            override.chmod(0o640)
+            selection = work / "selection.json"
+            selection.write_text(json.dumps(["run.sh"]))
+            overrides = work / "overrides.json"
+            overrides.write_text(json.dumps({"run.sh": str(override)}))
+            script = Path(__file__).resolve().parents[1] / "scripts/build_runtime_release.py"
+            subprocess.run([sys.executable, str(script), "--source", str(source),
+                "--selection", str(selection), "--overrides", str(overrides),
+                "--output", str(work / "release")], check=True, capture_output=True)
+            launcher = work / "release/files/run.sh"
+            self.assertEqual(launcher.read_bytes(), override.read_bytes())
+            self.assertEqual(launcher.stat().st_mode & 0o777, 0o750)
+
+
 class PairedUpdateTest(unittest.TestCase):
     def exercise(self, failed=False, runtime_missing=False, controls=False, control_failure=False):
         with tempfile.TemporaryDirectory() as temporary:
