@@ -503,6 +503,7 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
             os.unlink(responder[1])
             notice_env = dict(env, METTACLAW_OBSERVED_STRATEGY="1",
                               METTACLAW_STRATEGY_PATH=str(temp / "notice-ledger.sqlite3"),
+                              METTACLAW_WORKING_SET_PATH=str(temp / "notice-working.json"),
                               METTACLAW_HISTORY_PATH=str(temp / "notice-history.metta"),
                               METTACLAW_INPUT_ACK_SECONDS="0.05")
             responder = start('!(import! &self ./channels/telegram_control.metta)\n!(tc:serve)\n', notice_env)
@@ -528,6 +529,8 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
                 'def refuse():\n    telegram.handover_ack=lambda ids: 0\n    return 1\n'
                 'def restore():\n    telegram.handover_ack=original\n    return 1\n')
             lines, err = run('!(tg:start)\n!(tg:activity-batch)\n'
+                '!(py-call (helper.turn_commit_stage 1 1 1))\n'
+                '!(py-call (helper.working_set_save 9 1 "notice successor" 0))\n'
                 '!(import! &self "' + str(ack_probe) + '")\n'
                 '!(py-call (ack_failure_probe.refuse))\n'
                 '!(tg:ack-activity-batch)\n'
@@ -570,6 +573,8 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
             responder = start('!(import! &self ./channels/telegram_control.metta)\n!(tc:serve)\n', notice_env)
             lines, err = run('!(tg:start)\n!(tg:activity-batch)\n'
                 '!(py-call (helper.history_append "group processing history"))\n'
+                '!(py-call (helper.turn_commit_stage 1 1 1))\n'
+                '!(py-call (helper.working_set_save 10 1 "group successor" 0))\n'
                 '!(import! &self "' + str(ack_probe) + '")\n'
                 '!(py-call (ack_failure_probe.refuse))\n'
                 '!(tg:ack-activity-batch)\n'
