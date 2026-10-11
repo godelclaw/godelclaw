@@ -128,4 +128,3 @@ class DurableFrontierTests(unittest.TestCase):
         self.store.policy(allowance=1, cooldown=2)
         self.assertEqual(self.store.admission_denial("task", 1), "admission-cooldown")
         self.assertIsNotNone(self.store.capture("task", "ready", self.router, 2))
-
