@@ -65,6 +65,11 @@ must recheck it after arming a wake to prevent a lost arrival. A completion
 must be recorded before releasing its owned buffers. It can be retained as
 evidence even when its captured authority no longer permits effects.
 
+Overall pump progress and per-operation progress need separate health records.
+Busy timers must not make a stalled provider look healthy indefinitely. An
+operation keeps its own start, byte-progress and terminal evidence alongside
+the scheduler's service stamp.
+
 The MeTTa driver should return `done`, `yield` or `await` with a continuation;
 `await` must return to the scheduler. Polling the same call in a recursive
 function still monopolizes cognition, even though the transport runs on
@@ -127,6 +132,14 @@ retained bytes per activity, share immutable context where safe, and release
 roots only after settlement and required observation. Resource admission must
 charge parked results too. Reserving an interactive slot needs matching token,
 byte and cost capacity, not merely a second transport handle.
+
+Recycling must save activity continuations without claiming that a pending
+remote operation completed. If transport remains inside the recycled process,
+an interrupted submitted request becomes uncertain. An independently owned,
+durable transport service could retain and record it across a cognitive
+restart; the current HTTP handles alone do not provide this property. Recall
+can build a small activity-specific context from provenance-bearing memory,
+while its original evidence remains available outside the active prompt.
 
 Policies for scheduling, dependency checks, timer releases, coalescing missed
 ticks, retry eligibility and recall belong in authored MeTTa. Native C should
