@@ -1,0 +1,4 @@
+# Standalone Omega core: upstream providers and configuration.
+# Embedding and optional plugin dependencies are outside this core profile.
+openai==2.38.0
+PyYAML==6.0.3

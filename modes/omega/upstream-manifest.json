@@ -1144,9 +1144,9 @@
     },
     {
       "path": "config/config.yaml",
-      "classification": "deployment-or-optional-addon",
-      "vendored": false,
-      "reason": "Outside isolated core qualification; retained by the pinned upstream reference."
+      "classification": "standalone-configuration",
+      "vendored": true,
+      "sha256": "fa54b62b8683ef5583fa461a700207788758543bfdc74f5650fa8803cb3922f3"
     },
     {
       "path": "config/logging.conf",
@@ -1516,15 +1516,15 @@
     },
     {
       "path": "providers/openai.py",
-      "classification": "provider/channel-addon",
-      "vendored": false,
-      "reason": "Outside isolated core qualification; retained by the pinned upstream reference."
+      "classification": "standalone-provider",
+      "vendored": true,
+      "sha256": "3a819a6140564e11fd9f290e18a7ae1f3bf22825d68c6451a3ff66fbf59a6520"
     },
     {
       "path": "providers/openaiapi.py",
-      "classification": "provider/channel-addon",
-      "vendored": false,
-      "reason": "Outside isolated core qualification; retained by the pinned upstream reference."
+      "classification": "standalone-provider",
+      "vendored": true,
+      "sha256": "26dc8fcc5465486bd81d242580280be9630ec725b5c8bf82b59fa9eef6689fc2"
     },
     {
       "path": "providers/openrouter.py",

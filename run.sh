@@ -2,6 +2,10 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "$0")" && pwd)"
+# Terminal modes do not initialize an agent identity or load instance secrets.
+if [ "${1:-}" = "--mode" ]; then
+    exec "${METTACLAW_MODE_PYTHON:-python3}" "$ROOT/modes/launch.py" --profile standalone "$@"
+fi
 PETTA_ROOT="${PETTA_ROOT:-${HOME:-}/repos/PeTTa}"
 export METTACLAW_PETTA_RUNNER="${METTACLAW_PETTA_RUNNER:-$PETTA_ROOT/run.sh}"
 PETTA_PY_ENV="${PETTA_PY_ENV:-${HOME:-}/miniforge3/envs/petta}"
@@ -294,7 +298,7 @@ if [ "$TARGET" = "$ROOT/run.metta" ] && [ -f "$ROOT/modes/launch.py" ]; then
     case "$LOOP_MODE" in
         iter|omega)
             exec "$PETTA_PY_ENV/bin/python3" "$ROOT/modes/launch.py" \
-                --repo "$ROOT" --mode "$LOOP_MODE" --engine "$METTACLAW_ENGINE"
+                --repo "$ROOT" --mode "$LOOP_MODE" --engine "$METTACLAW_ENGINE" --profile supervised
             ;;
         *)
             "$PETTA_PY_ENV/bin/python3" -c \

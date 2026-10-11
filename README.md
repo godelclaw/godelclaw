@@ -12,13 +12,55 @@ whose compact agent core was inspired by Nanobot. It adds CeTTa execution,
 selectable Iter and Omega loops, independent channel controls, and an optional
 execution gateway.
 
-**Branch:** this guide describes `integration/upstream-modes-20260930`.
+**Branch:** this guide describes `feature/native-llm-boundary-20261004`.
 [`main`](https://github.com/godelclaw/mettaclaw/tree/main) contains the earlier
 framework; use the branch in the installation command below for these modes.
 
 [Get started](#get-started) · [Modes](#choose-a-cognitive-mode) ·
 [Service setup](systemd/README.md) · [Mode internals and verification](modes/README.md) ·
 [Execution gateway](src/execution_gateway/README.md)
+
+## Run ITER or Omega at a terminal
+
+These launch paths need a Python-enabled [CeTTa](https://github.com/godelclaw/CeTTa)
+bundle and the selected mode's small dependency file. They do not require
+Telegram, a service installation, or the framework's full `requirements.txt`.
+Use a Python environment matching the Python version linked into CeTTa
+(`BUILD=python`); virtual environments are supported.
+
+```sh
+git clone --branch feature/native-llm-boundary-20261004 \
+  https://github.com/godelclaw/mettaclaw.git
+cd mettaclaw
+export CETTA_BIN=/path/to/python-enabled-cetta/cetta
+python3 -m pip install -r modes/iter/requirements.txt
+./run.sh --mode iter
+```
+
+ITER uses upstream's `LLM_MODEL`, `BASE_URL`, and `AI_API_KEY` variables and
+their pinned defaults. Set them to your model endpoint before starting. It
+keeps upstream's prompt, tools, transformations and context policy. Input and
+replies use the terminal; worker sends are forwarded to the foreground.
+
+Omega's standalone **core** uses upstream's provider SDK and `OMEGA_*`
+configuration, with terminal I/O, history and text recall. Its embedding,
+NAL/PLN and optional plugin startup are omitted; this profile does not run
+the entire Omega distribution. For an OpenAI-compatible local endpoint:
+
+```sh
+python3 -m pip install -r modes/omega/requirements.txt
+OMEGA_provider=OpenAIAPI OMEGA_model=your-model \
+OMEGA_openaiapi_url=http://localhost:11434/v1 OPENAIAPI_API_KEY=dummy \
+  ./run.sh --mode omega
+```
+
+The default Omega provider and model remain those of the pinned source.
+No framework identity or instance configuration is loaded by these commands.
+State persists under `$XDG_STATE_HOME/mettaclaw/<checkout-name>/standalone`
+(or the usual user state directory). `--state-dir ./my-state` selects another
+location; `--prompt ./my-prompt.txt` adds instructions when creating new state.
+Ctrl-C stops the foreground launch. See [mode details](modes/README.md#standalone-terminal-launches)
+for scope, supported providers and verification.
 
 ## Choose a cognitive mode
 
@@ -231,7 +273,7 @@ record the versions used for the mode checks.
 ### 1. Clone and initialize
 
 ```sh
-git clone --branch integration/upstream-modes-20260930 \
+git clone --branch feature/native-llm-boundary-20261004 \
   https://github.com/godelclaw/mettaclaw.git
 cd mettaclaw
 ./initialize.sh

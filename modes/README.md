@@ -9,7 +9,59 @@ Python transport, preserving each core's command-text or structured-call protoco
 Start with the [project README](../README.md) for installation and the
 [service guide](../systemd/README.md) for supervised deployment. This guide
 describes the mode interfaces, pinned sources, compatibility adapters and
-verification scope on `integration/upstream-modes-20260930`.
+verification scope on `feature/native-llm-boundary-20261004`.
+
+## Standalone terminal launches
+
+From a clean checkout, install `iter/requirements.txt` for ITER, or
+`omega/requirements.txt` for the Omega core, in the Python environment used
+by a Python-enabled CeTTa bundle. ITER needs the OpenAI-compatible SDK;
+Omega additionally needs PyYAML. Neither profile loads Torch, Chroma,
+sentence-transformers, MCP, or a Telegram service.
+
+```sh
+export CETTA_BIN=/path/to/python-enabled-cetta/cetta
+./run.sh --mode iter
+./run.sh --mode omega
+```
+
+Configure the model endpoint before starting:
+
+| Mode | Upstream configuration retained |
+|---|---|
+| ITER | `LLM_MODEL`, `BASE_URL`, `AI_API_KEY`; the pinned defaults apply when absent. |
+| Omega core | `OMEGA_provider`, `OMEGA_model`, and upstream provider settings. `OpenAIAPI` uses `OMEGA_openaiapi_url`, `OMEGA_openaiapi_model`, and the key variable named by `OMEGA_api_token_var` (default `OPENAIAPI_API_KEY`). The vendored modules also register `ASICloud`, `Anthropic`, and `OpenAI`. |
+
+The two commands select the standalone profile explicitly. They do not read
+an instance's identity, model-selection file, pause latch, or Telegram inbox,
+even when invoked from a configured service's environment. ITER keeps the
+upstream SDK request and tool-return protocol. Its terminal channel forwards
+worker output at the foreground checkpoint because upstream workers suppress
+stdout. Omega keeps its pinned core loop and provider modules; its transport
+is terminal-only and memory uses the existing history/text adapter. Embedding,
+NAL/PLN and arbitrary plugin startup are not part of this profile. The runtime's
+`adapter-ledger.json` records these differences.
+
+State is outside the checkout and survives restart. Use `--state-dir PATH`
+for a separate instance, and `--prompt FILE` to append your own instructions
+when seeding new state. Existing prompts, tools, channels and memory files
+are retained. Add-on experimentation should use a separate state directory.
+An optional SWI-PeTTa engine remains available with `--engine petta` and
+`PETTA_ROOT`, using that engine's own Python bridge dependencies.
+
+Direct launcher calls accept `--profile standalone` or `--profile supervised`.
+Without an explicit profile, a configured Telegram socket selects supervised
+operation; otherwise startup selects the terminal. The existing agent service
+launcher requests the supervised profile explicitly.
+
+Qualification uses a local HTTP peer and actual terminal input, checks replies,
+upstream request fields and saved history, and verifies that instance controls
+cannot leak into standalone startup:
+
+```sh
+MODE_TEST_CETTA_BIN=/path/to/python-enabled-cetta/cetta \
+python3 -m unittest discover -s tests -p test_standalone_modes.py
+```
 
 ## Select and operate a mode
 

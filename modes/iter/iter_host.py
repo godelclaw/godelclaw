@@ -111,6 +111,9 @@ def concat(a, b):
 
 def initialize():
     global client
+    if os.getenv("METTACLAW_MODE_PROFILE") == "standalone":
+        import runtime_host
+        runtime_host.drain_terminal()
     if os.getenv("ITER_FIXTURE_ROOT"):
         import iter_fixture
         iter_fixture.install(namespace)
@@ -129,7 +132,7 @@ def initialize():
 
 
 def observe(experience, post, steps, burst, pending, bucket):
-    if os.getenv("METTACLAW_MODE_RUNTIME"):
+    if os.getenv("METTACLAW_MODE_RUNTIME") and os.getenv("METTACLAW_MODE_PROFILE") != "standalone":
         import runtime_host
         runtime_host.iter_boundary()
     if os.getenv("ITER_FIXTURE_ROOT"):
@@ -149,7 +152,10 @@ def receive():
 
 def save(experience):
     namespace["save_experience"](unbox(experience))
-    if os.getenv("METTACLAW_MODE_RUNTIME"):
+    if os.getenv("METTACLAW_MODE_PROFILE") == "standalone":
+        import runtime_host
+        runtime_host.drain_terminal()
+    elif os.getenv("METTACLAW_MODE_RUNTIME"):
         import runtime_host
         with open("experience.json", "rb") as stream:
             os.fsync(stream.fileno())
@@ -219,7 +225,7 @@ def request_plan(experience, temporary, loaded, surface):
     messages, schemas, error = namespace["apply_transformation"](messages, unbox(loaded)["schemas"])
     if error:
         messages += [{"role": "user", "content": error}]
-    if os.environ.get("METTACLAW_MODE_RUNTIME"):
+    if os.environ.get("METTACLAW_MODE_RUNTIME") and os.getenv("METTACLAW_MODE_PROFILE") != "standalone":
         import runtime_host
         messages.insert(0, {"role": "system", "content": runtime_host.route_context()})
     return Box(dict(model=namespace["MODEL"], messages=messages, tools=schemas,

@@ -4,6 +4,7 @@ Only lifecycle, provider, filesystem and CWP channel boundaries live here.
 The cognitive loops remain in iter/core.metta and Omega/src/loop.metta.
 """
 import json
+import importlib.util
 import os
 import sys
 import time
@@ -31,6 +32,35 @@ def shared():
 
 def mode():
     return os.environ["METTACLAW_ACTIVE_LOOP_MODE"]
+
+
+def standalone():
+    return os.environ.get("METTACLAW_MODE_PROFILE") == "standalone"
+
+
+def standalone_flag():
+    return "true" if standalone() else "false"
+
+
+def terminal():
+    spec = importlib.util.spec_from_file_location("mode_terminal", root() / "terminal.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def terminal_enqueue(content):
+    path = root() / "terminal-outbox" / (f"{time.time_ns():020d}-{os.getpid()}.json")
+    mode_channel.store(path, {"text": str(content)})
+    return True
+
+
+def drain_terminal():
+    for path in sorted((root() / "terminal-outbox").glob("*.json")):
+        item = json.loads(path.read_text())
+        print(item["text"], flush=True)
+        path.unlink()
+    return True
 
 
 def atomic(path, value):
@@ -66,6 +96,8 @@ def channel():
 
 def gate():
     """Stop/switch only between provider/tool turns; controls stay separate."""
+    if standalone():
+        return True
     while True:
         if engine_modes.recycle_requested():
             record("recycle")
@@ -95,6 +127,8 @@ def receive():
     menu taps belong exclusively to the independent command responder.
     """
     gate()
+    if standalone():
+        return terminal().receive()
     offered = []
     texts = []
     client = channel()
@@ -139,6 +173,8 @@ def receive():
 
 
 def commit_inputs():
+    if standalone():
+        return True
     path = root() / "offered-input.json"
     tasks = read_json(path, [])
     if not tasks:
@@ -158,12 +194,20 @@ def commit_inputs():
 
 
 def send(message, destination="telegram"):
+    if standalone():
+        if str(destination) not in ("telegram", "terminal"):
+            raise ValueError("standalone mode has only the terminal channel")
+        terminal().send(str(message))
+        sys.stdout.flush()
+        return "SUCCESS"
     result = mode_channel.enqueue(str(message), str(destination))
     record("send-queued", destination=str(destination), characters=len(str(message)))
     return result
 
 
 def route_context():
+    if standalone():
+        return ""
     return mode_channel.context()
 
 
@@ -179,15 +223,16 @@ def recover_outbox():
 
 def boot():
     if mode() == "omega":
-        import helper
-        helper.TWO_ARG_COMMANDS.add("send-channel")
+        import omega_helper
+        omega_helper.TWO_ARG_COMMANDS.add("send-channel")
     # Provider failure backoff is operational pacing. Keep mode/stop controls
     # responsive while retaining the existing adapter's backoff durations.
-    synthetic_llm.time = SimpleNamespace(**{
-        name: (sleep if name == "sleep" else getattr(time, name))
-        for name in dir(time) if not name.startswith("_")})
-    loop_modes.record_active(mode(), os.getpid(), str(root()))
-    recover_outbox()
+    if not standalone():
+        synthetic_llm.time = SimpleNamespace(**{
+            name: (sleep if name == "sleep" else getattr(time, name))
+            for name in dir(time) if not name.startswith("_")})
+        loop_modes.record_active(mode(), os.getpid(), str(root()))
+        recover_outbox()
     record("boot", pid=os.getpid(), engine=os.environ["METTACLAW_ACTIVE_ENGINE"])
     print("[mode-runtime] started " + mode(), flush=True)
     return True
@@ -259,6 +304,20 @@ def install_iter():
 
 
 def config(key, default):
+    if standalone():
+        import config as omega_config
+        defaults = {"commchannel": "terminal", "embeddingprovider": "Disabled",
+                    "memoryDirectory": str(root() / "repos/Omega/memory")}
+        value = omega_config.config_get_by_key(str(key), defaults.get(str(key), default))
+        if str(key) == "commchannel":
+            if os.environ.get("OMEGA_commchannel", "terminal") != "terminal":
+                raise ValueError("standalone Omega core supports commchannel=terminal")
+            return "terminal"
+        if str(key) == "embeddingprovider":
+            return "Disabled"
+        if str(key) == "spamShield":
+            return "true" if str(value).lower() == "true" else "false"
+        return value
     overrides = {"commchannel": "telegram", "provider": "Configured",
                  "memoryDirectory": str(root() / "repos/Omega/memory"),
                  "embeddingprovider": "Disabled"}
@@ -267,7 +326,37 @@ def config(key, default):
     return overrides.get(str(key), default)
 
 
+def init_config():
+    if standalone():
+        import config as omega_config
+        omega_config.init_config([])
+    return True
+
+
+def start_provider(provider):
+    if standalone():
+        import providers as omega_providers
+        # Import by path: putting this directory on PYTHONPATH would make
+        # Omega's openai.py plugin shadow the SDK with the same name.
+        spec = importlib.util.spec_from_file_location("lib_llm_ext",
+            root() / "repos/Omega/providers/lib_llm_ext.py")
+        library = importlib.util.module_from_spec(spec)
+        sys.modules["lib_llm_ext"] = library
+        spec.loader.exec_module(library)
+        for name in ("openaiapi", "openai"):
+            spec = importlib.util.spec_from_file_location("omega_provider_" + name,
+                root() / "repos/Omega/providers" / (name + ".py"))
+            plugin = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(plugin)
+            plugin.loadOmegaPlugin()
+        omega_providers.llmProviderStart(str(provider))
+    return True
+
+
 def provider(prompt, max_tokens, reasoning):
+    if standalone():
+        import providers as omega_providers
+        return omega_providers.llmProviderChat(str(prompt), int(max_tokens), str(reasoning))
     return synthetic_llm.chat(provider_model(), max_tokens, reasoning, provider_prompt(prompt))
 
 
@@ -281,6 +370,8 @@ def provider_model():
 
 
 def provider_prompt(prompt):
+    if standalone():
+        return str(prompt)
     return route_context() + "\n\n" + str(prompt)
 
 
@@ -293,12 +384,17 @@ def provider_retry_boundary():
 
 def omega_sleep(seconds):
     commit_inputs()
-    cognitive_health.turn_settled()
+    if not standalone():
+        cognitive_health.turn_settled()
     record("boundary")
     return sleep(seconds)
 
 
 def get_prompt(provider):
+    if standalone():
+        path = root() / ("repos/Omega/memory/prompt_" + str(provider) + ".txt")
+        if path.exists():
+            return path.read_text()
     return (root() / "repos/Omega/memory/prompt.txt").read_text()
 
 
@@ -321,6 +417,11 @@ def append_history(text):
 
 def string_replace(text, separators, replacement):
     return "".join(str(replacement) if char in str(separators) else char for char in str(text))
+
+
+def join_path(parts):
+    import omega_helper
+    return omega_helper.joinPath(parts)
 
 
 def read_file(path):

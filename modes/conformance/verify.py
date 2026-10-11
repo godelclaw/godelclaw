@@ -50,10 +50,10 @@ def run(args, mode, name, scenario, evaluator, mutant=None):
             text = text.replace("../../src/native_llm.metta", str(MODES.parent / "src/native_llm.metta"))
             (root / "mutant.metta").write_text(mutant(text))
             entry.write_text(f'!(import! &self "{root}/mutant.metta")\n!(iter:start)\n')
-    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+    env = {"PATH": os.pathsep.join([str(args.python.parent), os.environ.get("PATH", "/usr/bin:/bin")]),
            "LC_ALL": "C.UTF-8", "LANG": "C.UTF-8",
-           "PYTHONHOME": str(args.python.parent.parent),
-           "LD_LIBRARY_PATH": str(args.python.parent.parent / "lib"),
+           "PYTHONNOUSERSITE": "1",
+           "LD_LIBRARY_PATH": str(args.python.resolve().parent.parent / "lib"),
            "PYTHONPATH": str(MODES / "iter") if mode == "iter" else str(root),
            f"{mode.upper()}_FIXTURE_ROOT": str(root),
            "ITER_PYTHON": str(args.python), "LLM_MODEL": "fixture-model",
