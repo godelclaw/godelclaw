@@ -238,7 +238,8 @@ def notify(store=None):
     for row in rows:
         try:
             import telegram
-            telegram.enqueue_runtime_event("model job " + row["id"] + " for topic " + row["topic"] + " is " + row["state"] + "; use model-result to observe it", "model result ready")
+            telegram.enqueue_runtime_event("model job " + row["id"] + " for topic " + row["topic"] + " is " + row["state"] + "; use model-result to observe it", "model result ready",
+                                           identity="runtime:model-job:" + row["id"] + ":" + row["state"])
         except Exception:
             continue
         with store.transaction() as db:

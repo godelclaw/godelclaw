@@ -6,6 +6,7 @@ import tempfile
 import re
 import threading
 import time
+import uuid
 
 import requests
 
@@ -697,17 +698,24 @@ def _set_last(chat_id, text, from_bot=False, arm_tier="full", update_id=None):
 RUNTIME_CHAT = "runtime"
 
 
-def enqueue_runtime_event(text, reason="runtime event"):
+def enqueue_runtime_event(text, reason="runtime event", *, identity=None):
     """Deliver a runtime event as ordinary activity for the next turn and end
     any rest.  A plain send afterwards still goes where it would have."""
     global _activity_epoch
+    identity = _runtime_id("runtime:" + uuid.uuid4().hex if identity is None else identity)
+    import input_ack
+    if input_ack.already_committed(identity): return True
+    if identity in _current_batch_update_ids: return True
     if metta_client():
-        _metta_queue({"chat": RUNTIME_CHAT, "text": "[runtime] " + str(text), "from_bot": False,
-                      "tier": "light", "update_id": "", "wake": str(reason)})
+        with _metta_lock:
+            if any(e.get("update_id") == identity for e in _metta_events): return True
+            _metta_events.append({"chat": RUNTIME_CHAT, "text": "[runtime] " + str(text), "from_bot": False,
+                                 "tier": "light", "update_id": identity, "wake": str(reason)})
         return True
     with _msg_lock:
+        if any(e[4] == identity for e in _pending_messages): return True
         _pending_messages.append(
-            (RUNTIME_CHAT, "[runtime] " + str(text), False, "light", None))
+            (RUNTIME_CHAT, "[runtime] " + str(text), False, "light", identity))
         _activity_epoch += 1
         if _effect_turn is not None and _effect_activity_epoch is not None:
             stimulus_frontier.publish(
@@ -929,7 +937,8 @@ def getActivityBatch():
         if update_id is not None:
             _current_batch_update_ids.add(str(update_id))
         if chat == RUNTIME_CHAT:
-            runtime = (chat, from_bot, tier)
+            if runtime is None or not from_bot:
+                runtime = (chat, from_bot, tier)
             continue
         newest = (chat, from_bot, tier)
         if not from_bot:
@@ -943,8 +952,8 @@ def getActivityBatch():
     else:
         # Only runtime events: replies keep their target, and the agent's
         # own finished work arms a burst so it can act on the result.
-        _last_from_bot = False
-        _last_message_is_human = True
+        _last_from_bot = bool(runtime[1])
+        _last_message_is_human = not _last_from_bot
         _last_arm_tier = runtime[2]
     return "\n".join(texts)
 
@@ -2187,6 +2196,12 @@ def handover_ids(ids):
     return result
 
 
+def _runtime_id(value):
+    if not isinstance(value,str) or not re.fullmatch(r"runtime:[A-Za-z0-9_.:-]{1,160}",value):
+        raise ValueError("invalid runtime occurrence ID")
+    return value
+
+
 def activity_source_ack(ids):
     """Settle checkpointed input at its source; mailbox IDs are not Telegram IDs."""
     if isinstance(ids, str):
@@ -2198,28 +2213,34 @@ def activity_source_ack(ids):
     else:
         raise ValueError("invalid activity source batch")
     import mailbox_agent
-    mail, updates = [], []
+    import input_ack
+    mail, updates, runtime = [], [], []
     # Validate the complete batch before granting any processing authority.
     for value in values:
         if isinstance(value, str) and value.startswith("mailbox:"):
             mailbox_agent.source_ticket(value,os.environ.get("METTACLAW_INSTANCE", ""))
             if value not in mail: mail.append(value)
+        elif isinstance(value,str) and value.startswith("runtime:"):
+            runtime.append(_runtime_id(value))
         else:
             updates.append(value)
     updates = handover_ids(updates)
+    if len(runtime) > 256:
+        raise ValueError("runtime source batch exceeds its bound")
+    if runtime and not input_ack.committed(runtime): return 0
     if mail and not mailbox_agent.acknowledge(mail):
         return 0
-    return handover_ack(updates)
+    return handover_ack(updates) if updates else 1
 
 
 def enqueue_mailbox_event(text, identity, sibling=None):
     """Offer inert native data with a stable identity to the attention queue.
     A sibling agent's note is peer input, not operator input, and its wakes
-    are capped; a note over the cap waits for the next turn."""
+    have already been admitted against the native mailbox's wake budget."""
     import mailbox_agent
     mailbox_agent.source_ticket(identity,os.environ.get("METTACLAW_INSTANCE", ""))
     peer = bool(sibling)
-    wake = ("sibling mail" if mailbox_agent.sibling_wake(sibling) else "") if peer else "mailbox arrival"
+    wake = "sibling mail" if peer else "mailbox arrival"
     if metta_client():
         _metta_queue({"chat":RUNTIME_CHAT,"text":"[mailbox] "+str(text),"from_bot":peer,
                       "tier":"light","update_id":identity,"wake":wake})

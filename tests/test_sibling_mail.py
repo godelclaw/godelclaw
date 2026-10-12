@@ -53,18 +53,10 @@ class PeerQueueTest(unittest.TestCase):
     def setUp(self):
         patch = mock.patch.dict(os.environ, {"METTACLAW_INSTANCE": "lila", "METTACLAW_TELEGRAM_CLIENT": "metta"})
         patch.start(); self.addCleanup(patch.stop)
-        wakes = mock.patch.object(mailbox_agent, "_sibling_wakes", {})
-        wakes.start(); self.addCleanup(wakes.stop)
         events = mock.patch.object(telegram, "_metta_events", [])
         events.start(); self.addCleanup(events.stop)
         request = mock.patch.object(telegram, "_request_wake")
         self.request = request.start(); self.addCleanup(request.stop)
-
-    def test_wakes_are_capped_per_sibling_per_hour(self):
-        allowed = [mailbox_agent.sibling_wake("godel", now=1000 + i) for i in range(8)]
-        self.assertEqual(allowed, [True] * mailbox_agent.SIBLING_WAKES_PER_HOUR + [False] * 2)
-        self.assertTrue(mailbox_agent.sibling_wake("other", now=1010))
-        self.assertTrue(mailbox_agent.sibling_wake("godel", now=1000 + 3600))
 
     def test_sibling_note_is_peer_input_and_operator_mail_is_unchanged(self):
         telegram.enqueue_mailbox_event('{"from":"godel"}', "mailbox:lila:inbox-a", "godel")
@@ -73,11 +65,15 @@ class PeerQueueTest(unittest.TestCase):
         self.assertEqual((peer["from_bot"], peer["wake"]), (True, "sibling mail"))
         self.assertEqual((operator["from_bot"], operator["wake"]), (False, "mailbox arrival"))
 
-    def test_a_note_over_the_cap_waits_without_a_wake(self):
-        for i in range(mailbox_agent.SIBLING_WAKES_PER_HOUR + 1):
-            telegram.enqueue_mailbox_event("{}", "mailbox:lila:inbox-%d" % i, "godel")
-        self.assertEqual([e["wake"] for e in telegram._metta_events][-2:], ["sibling mail", ""])
-        self.assertEqual(self.request.call_count, mailbox_agent.SIBLING_WAKES_PER_HOUR)
+    def test_python_client_keeps_peer_standing_in_both_mixed_batch_orders(self):
+        for order in (("godel", None), (None, "godel"), ("godel",)):
+            with mock.patch.dict(os.environ, METTACLAW_TELEGRAM_CLIENT="python"), \
+                    mock.patch.object(telegram,"_pending_messages",[]), \
+                    mock.patch.object(telegram,"_prepared_messages",[]):
+                for n, sibling in enumerate(order):
+                    telegram.enqueue_mailbox_event("{}", "mailbox:lila:inbox-%d" % n, sibling)
+                telegram.getActivityBatch()
+                self.assertEqual(telegram.lastMessageIsHuman(), int(None in order))
 
 
 @unittest.skipUnless(CETTA, "set MODE_TEST_CETTA_BIN")
@@ -103,6 +99,105 @@ class PeerRouteTest(unittest.TestCase):
         self.assertEqual(self.last_human("(%s)" % operator), "1")
         self.assertEqual(self.last_human("(%s %s)" % (peer, operator)), "1")
         self.assertEqual(self.last_human("(%s %s)" % (operator, peer)), "1")
+
+    def test_an_admitted_peer_arms_idle_cognition_without_becoming_human(self):
+        program = ('!(import! &self ./src/helper.py)\n!(import! &self ./channels/telegram.py)\n'
+                   '!(import! &self ./src/open_assemblage.metta)\n'
+                   '!(import! &self ./src/loop_policy.metta)\n'
+                   '!(import! &self ./src/loop.metta)\n'
+                   '!(import! &self ./channels/telegram.metta)\n'
+                   '!(import! &self ./tests/peer_activity_fixture.py)\n'
+                   '!(py-call (peer_activity_fixture.arm))\n'
+                   '!(assert (== (loop-budget (applyPeerActivity (coordinate loops 0 coordinates-empty) True False)) 2))\n'
+                   '!(assert (== (tg:get last-human 0) 0))\n'
+                   '!(py-call (peer_activity_fixture.unrelated))\n'
+                   '!(assert (== (loop-budget (applyPeerActivity (coordinate loops 0 coordinates-empty) True False)) 0))\n'
+                   '!(py-call (peer_activity_fixture.clear))\n'
+                   '!(println! PEER_IDLE_OK)\n')
+        with tempfile.NamedTemporaryFile("w", suffix=".metta", dir=ROOT, delete=False) as f:
+            f.write(program)
+        try:
+            with tempfile.TemporaryDirectory() as state:
+                env = dict(os.environ, METTACLAW_MAILBOX_CONFIG="", METTACLAW_TELEGRAM_CLIENT="metta",
+                           PYTHONPATH=os.pathsep.join([str(ROOT / "src"), str(ROOT / "channels")]),
+                           METTACLAW_STRATEGY_PATH=str(Path(state) / "checkpoint.db"))
+                result = subprocess.run([CETTA,"--lang","petta","--import-mode","ancestor-walk",f.name],
+                                        cwd=ROOT,env=env,capture_output=True,text=True,timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr+result.stdout)
+            self.assertIn("PEER_IDLE_OK", result.stdout.splitlines())
+        finally:
+            os.unlink(f.name)
+
+
+SERVER = os.environ.get("CETTA_SPACE_SERVICE")
+WORKER = os.environ.get("CETTA_VALUE_WORKER")
+
+
+@unittest.skipUnless(SERVER and WORKER, "set CETTA_SPACE_SERVICE and CETTA_VALUE_WORKER")
+class DurablePeerBudgetTest(unittest.TestCase):
+    def setUp(self):
+        sys.path[:0] = [str(TOOLS), str(TOOLS.parent / "tests")]
+        from test_native_mailbox import Fixture
+        from native_mailbox import Mailbox
+        self.Mailbox = Mailbox
+        self.fixture = Fixture(); self.addCleanup(self.fixture.close)
+        self.config = {"version": 1, "instance": "peer-test", "name": "lila",
+                       "socket": self.fixture.socket, "space": "inbox", "tools": str(TOOLS),
+                       "worker": WORKER, "channels": {"inbox": "local"},
+                       "auto_receive": ["inbox"], "siblings": {"godel": "unused"},
+                       "peer_wakes_per_hour": 2, "watch_ms": 100}
+        self.events = []
+        self.times = []
+
+    def inbox(self):
+        def offer(text, identity, **kw):
+            import time
+            self.events.append((identity, kw)); self.times.append(time.monotonic())
+            return True
+        inbox = mailbox_agent.Inbox(self.config, committed=lambda _: False,
+                                    offer=offer)
+        self.addCleanup(inbox.close)
+        return inbox
+
+    def send(self, *identities):
+        box = self.Mailbox(self.fixture.socket, "inbox", WORKER)
+        try:
+            for identity in identities:
+                box.send(identity, "inbox", identity, "local", "From: godel\n\nhello")
+        finally:
+            box.close()
+
+    def test_budget_and_unoffered_arrival_survive_both_restarts(self):
+        self.send("one", "two", "three")
+        first = self.inbox()
+        for _ in range(3): first.scan(first.box)
+        self.assertEqual(len(self.events), 2)
+        self.assertEqual(len(first.status()["active"]), 3)
+        first.close(); self.events.clear(); self.fixture.restart()
+        second = self.inbox(); second.scan(second.box)
+        # Pending grants are reoffered, without granting the third a new wake.
+        self.assertEqual(len(self.events), 2)
+        self.assertIn("peer wake budget", second.status()["backpressure"])
+        with mock.patch.object(mailbox_agent.time, "time", return_value=__import__("time").time() + 3601):
+            second.scan(second.box)
+        self.assertEqual(len(self.events), 3)
+
+    def test_budget_deadline_is_a_wake_source_without_another_store_write(self):
+        with mock.patch.object(mailbox_agent, "PEER_WINDOW_SECONDS", 1, create=True):
+            self.config["peer_wakes_per_hour"] = 1
+            self.send("one", "two")
+            inbox = self.inbox(); inbox.start()
+            import time
+            end = time.monotonic() + 5
+            while len(self.events) < 2 and time.monotonic() < end:
+                time.sleep(.02)
+            self.assertEqual(len(self.events), 2, inbox.status())
+            self.assertGreaterEqual(self.times[1] - self.times[0], .75)
+
+    def test_invalid_budget_is_rejected_before_any_arrival_is_consumed(self):
+        self.send("one")
+        self.config["peer_wakes_per_hour"] = 0
+        with self.assertRaises(ValueError): self.inbox()
 
 
 if __name__ == "__main__":

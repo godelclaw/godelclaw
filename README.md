@@ -461,6 +461,10 @@ mailboxes to the agent's existing attention and checkpoint paths. Set
   "worker": "/path/to/installed-cetta/cetta-value-worker",
   "channels": {"inbox": "local", "codex-review": "codex"},
   "auto_receive": ["inbox"],
+  "name": "agent",
+  "siblings": {"peer": "/path/to/peer/inbox"},
+  "peer_wakes_per_hour": 6,
+  "peer_turns": 2,
   "max_active": 256,
   "preview_chars": 2048,
   "codex": {
@@ -485,6 +489,19 @@ envelope with a fresh occurrence identity. Its configuration uses the same
 native socket, space and worker plus `bindings` entries with `name`, `sender`
 and `directory`. Persistent `inbox` reception wakes the agent for new messages.
 Raw bodies remain inert data, including text that looks like code.
+
+`(mailbox-send "peer" "text")` sends to a configured sibling and returns the
+complete occurrence ID. The `From:` stamp identifies its claimed sender;
+folder access controls delivery. Configured sibling mail has peer standing
+and leaves human reply routing unchanged. Wake grants are stored in the native
+mailbox, survive restarts, and are charged once per pending occurrence.
+Arrivals over the hourly allowance stay Ready until the next grant deadline;
+the watcher retries then without model polling. Admitted peer input can arm a
+small response from an idle loop. It does not gain operator authority.
+
+Internal completion notices also carry occurrence IDs. New events with equal
+text remain distinct; replaying a checkpointed receipt does not wake cognition
+again. These IDs are settled locally rather than sent to Telegram.
 
 The watcher is armed at boot and retries initialization if the native service
 is unavailable. Recovery needs no subsequent skill call or model polling.

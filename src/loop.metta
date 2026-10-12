@@ -125,6 +125,14 @@
                     (coordinate-set loops $armed $periphery))))))
        $periphery))
 
+;; A funded peer arrival can resume idle cognition without human authority.
+;; Its wake grant is retained in the native mailbox across process restarts.
+(= (applyPeerActivity $periphery $has-activity $is-human)
+   (if (and $has-activity (not $is-human))
+       (let $grant (py-call (mailbox_agent.peer_turns))
+         (coordinate-set loops (max (loop-budget $periphery) $grant) $periphery))
+       $periphery))
+
 ;; Rest banks the budget instead of spending it. The skill can only post a
 ;; directive; only the loop can read how much life is actually left, so the
 ;; transfer happens here, at the end of the turn that asked to rest.
@@ -320,10 +328,11 @@
           ($isHuman (eval (lastMessageIsHuman)))
           ($humanApplied
             (applyHumanActivity $decremented $hasActivity $isHuman))
+          ($peerApplied (applyPeerActivity $humanApplied $hasActivity $isHuman))
           ($now (get_time))
-          ($heartbeat (heartbeatDue $humanApplied $now))
+          ($heartbeat (heartbeatDue $peerApplied $now))
           ($heartbeatApplied
-            (applyHeartbeat $humanApplied $now $heartbeat))
+            (applyHeartbeat $peerApplied $now $heartbeat))
           ($autonomous
             (policy-autonomous-turn
               (loop-active-policy $heartbeatApplied)

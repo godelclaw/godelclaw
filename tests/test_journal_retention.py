@@ -73,6 +73,25 @@ class RetentionTest(unittest.TestCase):
         self.assertEqual(calls[-2:], [["stop", "channel.socket", "channel.service"],
                                       ["start", "channel.socket", "channel.service"]])
 
+    def test_partial_stop_failure_still_restores_previously_active_units(self):
+        calls = []
+
+        def systemctl(command, **_):
+            calls.append(command[2:])
+            if command[2] == "stop":
+                raise retention.subprocess.CalledProcessError(1, command)
+            return mock.Mock(returncode=0)
+
+        args = ["--journal", str(self.journal), "--archive", str(self.root / "archive"),
+                "--cetta", "cetta", "--unit", "channel.socket", "--unit", "channel.service"]
+        with mock.patch.object(sys, "argv", ["retention"] + args), \
+                mock.patch.object(retention.subprocess, "run", systemctl), \
+                mock.patch.object(retention, "run") as archive:
+            with self.assertRaises(retention.subprocess.CalledProcessError):
+                retention.main()
+        archive.assert_not_called()
+        self.assertEqual(calls[-1], ["start", "channel.socket", "channel.service"])
+
 
 if __name__ == "__main__":
     unittest.main()

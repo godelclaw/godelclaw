@@ -65,7 +65,8 @@ PAGES = {
         'Deliver a note to your sibling agent\'s mailbox; Telegram is not involved.\n'
         'The note starts with your name and arrives as peer mail, not operator\n'
         'input. It wakes the sibling at most 6 times an hour from you; later notes\n'
-        'wait for their next turn. Returns MAILED with the note ID.'),
+        'stay stored until the wake allowance is available. Returns MAILED with\n'
+        'the complete message occurrence ID; the recipient has its own ticket.'),
     "mailbox-read": (
         'usage: (mailbox-read "ticket") or (mailbox-read "ticket" offset count)\n'
         'Read inert reply text in character pages; the configured preview limit\n'

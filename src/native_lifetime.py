@@ -165,7 +165,8 @@ def notify():
     for identity, state in rows:
         try:
             import telegram
-            telegram.enqueue_runtime_event("retained model call " + identity + " is " + state + "; inspect model-result before reconsidering", "model call evidence ready")
+            telegram.enqueue_runtime_event("retained model call " + identity + " is " + state + "; inspect model-result before reconsidering", "model call evidence ready",
+                                           identity="runtime:model-call:" + identity + ":" + state)
         except Exception:
             continue  # the durable context listing remains available
         with transaction() as db:

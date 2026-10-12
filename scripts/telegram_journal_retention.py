@@ -107,9 +107,9 @@ def main():
     args = parser.parse_args()
     active = [u for u in args.unit
               if subprocess.run(["systemctl", "--user", "is-active", "--quiet", u]).returncode == 0]
-    if active:
-        subprocess.run(["systemctl", "--user", "stop"] + active, check=True)
     try:
+        if active:
+            subprocess.run(["systemctl", "--user", "stop"] + active, check=True)
         run(args)
     finally:
         if active:
