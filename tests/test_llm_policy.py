@@ -70,6 +70,20 @@ class AdmissionTests(unittest.TestCase):
         with self.assertRaises(llm_policy.AdmissionDenied):
             llm_policy.admit("a", 1, now=101)
 
+    def test_background_admission_preserves_interactive_token_and_request_budget(self):
+        os.environ["METTACLAW_LLM_OUTPUT_TOKENS_PER_DAY"] = "100"
+        os.environ["METTACLAW_LLM_REQUESTS_PER_HOUR"] = "2"
+        llm_policy.admit("a", 60, now=100, reserved_output=40, reserved_requests=1)
+        with self.assertRaises(llm_policy.AdmissionDenied):
+            llm_policy.admit("a", 1, now=101, reserved_output=40, reserved_requests=1)
+        llm_policy.admit("a", 40, now=102)
+
+    def test_fully_reserved_hour_has_no_background_admission(self):
+        os.environ["METTACLAW_LLM_REQUESTS_PER_HOUR"] = "1"
+        with self.assertRaises(llm_policy.AdmissionDenied):
+            llm_policy.admit("a", 1, now=100, reserved_requests=1)
+        llm_policy.admit("a", 1, now=101)
+
     def test_dead_owner_is_unknown_and_identical_request_is_not_reissued(self):
         key = llm_policy.fingerprint({"messages": ["same request"]})
         with patch.object(llm_policy, "_owner", "0:0"):

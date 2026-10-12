@@ -47,7 +47,9 @@ class Changes:
             path = Path(directory)
             while not path.is_dir() and path != path.parent:
                 path = path.parent
-            self.libc.inotify_add_watch(self.fd, os.fsencode(path), 0x8 | 0x80 | 0x100 | 0x200 | 0x400 | 0x800)
+            # A long-lived SQLite writer commits by modifying its open WAL.
+            # CLOSE_WRITE alone wakes only when that writer later exits.
+            self.libc.inotify_add_watch(self.fd, os.fsencode(path), 0x2 | 0x8 | 0x80 | 0x100 | 0x200 | 0x400 | 0x800)
         try:
             while os.read(self.fd, 65536):
                 pass

@@ -267,7 +267,7 @@ def retained():
         self.run_guest(forms)
         self.assertEqual(len(self.peer.requests), 3)
 
-    def test_configured_deadline_recovers_a_slow_request_and_preserves_failed_work(self):
+    def test_configured_deadline_preserves_unknown_work_and_does_not_replay_it(self):
         self.peer.delay = 1.6
         forms = f'!(import! &self "{ROOT}/src/native_llm.metta")\n' + (
             '!(println! (RESULT (llm:command "fixture-model" 42 "low" "input")))\n')
@@ -283,6 +283,12 @@ def retained():
         self.env["SYNTHETIC_TIMEOUT"] = "3"
         self.env["METTACLAW_LLM_HARD_SECONDS"] = "3"
         out = self.run_guest(forms)
+        self.assertIn("(RESULT ())", out)
+        self.assertIn("reason=provider-outcome-unknown", self.last_stderr)
+        self.assertEqual(len(self.peer.requests), 1)
+        # A distinct observed request can make progress; replaying the old
+        # transport with a larger timeout cannot settle its unknown outcome.
+        out = self.run_guest(forms.replace('"input"', '"fresh observed input"'))
         self.assertIn("(RESULT (nop))", out)
         self.assertNotIn("failed request:", self.last_stderr)
         self.assertEqual(len(self.peer.requests), 2)

@@ -7,6 +7,7 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import time
 import llm_policy
@@ -34,7 +35,8 @@ def _prune(db):
 
 def process_start(pid):
     try:
-        return Path("/proc", str(int(pid)), "stat").read_text().rsplit(")", 1)[1].split()[19]
+        fields = Path("/proc", str(int(pid)), "stat").read_text().rsplit(")", 1)[1].split()
+        return None if fields[0] in ("Z", "X") else fields[19]
     except (OSError, ValueError, IndexError):
         return None
 
@@ -48,6 +50,10 @@ def transaction():
             guard TEXT, transport INTEGER, soft_elapsed INTEGER NOT NULL DEFAULT 0,
             bytes INTEGER NOT NULL DEFAULT 0, quiet_ms INTEGER NOT NULL DEFAULT 0,
             result TEXT, reason TEXT)""")
+        columns = {row[1] for row in db.execute("PRAGMA table_info(native_calls)")}
+        for name in ("activity", "lane"):
+            if name not in columns:
+                db.execute(f"ALTER TABLE native_calls ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
         _prune(db)
         yield db
 
@@ -59,17 +65,32 @@ def recover():
                 continue
             db.execute("UPDATE native_calls SET state='uncertain',reason='process-interrupted-remote-outcome-unknown',updated=? WHERE id=?",
                        (time.time(), row[0]))
-            db.execute("UPDATE requests SET status='failed',output=NULL,finish='interrupted-unknown' WHERE id=? AND status='pending'", (row[0],))
+            db.execute("UPDATE requests SET status='unknown',output=NULL,finish='interrupted-unknown' WHERE id=? AND status='pending'", (row[0],))
 
 
 def claim(plan):
     recover()
     with transaction() as db:
-        if db.execute("SELECT 1 FROM native_calls WHERE state IN ('claimed','submitted')").fetchone():
-            return False
+        active = db.execute("SELECT activity,lane FROM native_calls WHERE state IN ('claimed','submitted')").fetchall()
+        activity = getattr(plan, "activity", "")
+        lane = getattr(plan, "lane", "")
+        if not activity:
+            if active:
+                return False
+        else:
+            if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", str(activity)) or lane not in ("interactive", "background"):
+                return False
+            capacity = int(os.environ.get("METTACLAW_ACTIVITY_CALL_CAPACITY", "2"))
+            reserve = int(os.environ.get("METTACLAW_ACTIVITY_INTERACTIVE_RESERVE", "1"))
+            if not 1 <= reserve < capacity <= 16:
+                raise ValueError("invalid activity call capacity")
+            if any(not row[0] or row[0] == activity for row in active) or len(active) >= capacity:
+                return False
+            if lane == "background" and sum(row[1] == "background" for row in active) >= capacity - reserve:
+                return False
         now = time.time()
-        db.execute("INSERT INTO native_calls(id,epoch,pid,process_start,created,updated,state,guard) VALUES (?,?,?,?,?,?,'claimed',?)",
-                   (plan.correlation, plan.epoch, os.getpid(), process_start(os.getpid()), now, now, getattr(plan, "guard", None)))
+        db.execute("INSERT INTO native_calls(id,epoch,pid,process_start,created,updated,state,guard,activity,lane) VALUES (?,?,?,?,?,?,'claimed',?,?,?)",
+                   (plan.correlation, plan.epoch, os.getpid(), process_start(os.getpid()), now, now, getattr(plan, "guard", None), activity, lane))
     return True
 
 
@@ -86,13 +107,17 @@ def progress(plan, count, quiet, soft):
 
 
 def settle(plan, state, result=None, reason=None):
-    if state not in ("completed", "late", "failed"):
+    if state not in ("completed", "late", "failed", "uncertain"):
         raise ValueError("invalid native call outcome")
     if result is not None and len(result.encode()) > plan.cap * 4:
         raise ValueError("native evidence exceeds its bound")
     with transaction() as db:
-        return db.execute("UPDATE native_calls SET state=?,result=?,reason=?,updated=? WHERE id=? AND epoch=? AND state IN ('claimed','submitted')",
-                          (state, result, reason, time.time(), plan.correlation, plan.epoch)).rowcount == 1
+        changed = db.execute("UPDATE native_calls SET state=?,result=?,reason=?,updated=? WHERE id=? AND epoch=? AND state IN ('claimed','submitted')",
+                             (state, result, reason, time.time(), plan.correlation, plan.epoch)).rowcount == 1
+        if changed and state == "uncertain":
+            db.execute("UPDATE requests SET status='unknown',output=NULL,finish='transport-unknown' WHERE id=?",
+                       (plan.correlation,))
+        return changed
 
 
 def status():

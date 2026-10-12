@@ -78,7 +78,13 @@ def _plan(kind, model, tokens, builder):
                         raise ValueError("conflicting Synthetic reasoning extension")
                     options[field] = request["extensions"][field]
             provider_protocol.synthetic_body(options)  # validate before budget admission
-        ticket = llm_policy.admit(provider["name"], tokens, request_fingerprint=llm_policy.fingerprint(request))
+        reserve = {}
+        if (os.environ.get("METTACLAW_ACTIVITY_CALL_SCOPE") and
+                os.environ.get("METTACLAW_ACTIVITY_CALL_LANE") == "background"):
+            reserve = dict(reserved_output=int(os.environ.get("METTACLAW_ACTIVITY_RESERVED_OUTPUT", "0")),
+                           reserved_requests=int(os.environ.get("METTACLAW_ACTIVITY_INTERACTIVE_RESERVE", "1")))
+        ticket = llm_policy.admit(provider["name"], tokens,
+            request_fingerprint=llm_policy.fingerprint(request), **reserve)
         alias = "LLM_" + provider["name"].upper()
         prefix = "CETTA_IO_AUTH_" + alias
         credential_env = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY",
@@ -100,6 +106,8 @@ def _plan(kind, model, tokens, builder):
         captured_guard = strategy_host.guard() if strategy_host.enabled() else None
         cognitive_health.turn_started(provider["name"])
         return SimpleNamespace(kind=kind, ready="true", correlation=ticket, protocol=provider["protocol"],
+            activity=os.environ.get("METTACLAW_ACTIVITY_CALL_SCOPE", ""),
+            lane=os.environ.get("METTACLAW_ACTIVITY_CALL_LANE", ""),
             epoch=_session_epoch, provider=provider["name"], base=provider["base"], headers=json.dumps(headers),
             request=json.dumps(request, ensure_ascii=False), sent=False, claimed=False,
             guard=captured_guard, stream=stream,
@@ -335,8 +343,9 @@ def _record_failure(plan, kind, status=0):
     sent = "true" if getattr(plan, "sent", False) else "false"
     import admission_frontier
     error = getattr(plan, "error", None)
-    reason = admission_frontier.failure_code(error)
-    detail = "; reason=" + reason if reason in admission_frontier.DENIAL_CODES else ""
+    reason = error.reason if isinstance(error, llm_policy.AdmissionDenied) else admission_frontier.failure_code(error)
+    detail = "; reason=" + reason if (reason in admission_frontier.DENIAL_CODES or
+                                     reason == "provider-outcome-unknown") else ""
     print(f"[native_llm] failed request: {code}; provider={provider}; "
           f"status={status}; sent={sent}; elapsed_ms={elapsed}; deadline_ms={deadline}{detail}",
           file=sys.stderr)
@@ -346,7 +355,8 @@ def failed(plan, correlation, kind, status=0):
     _record_failure(plan, kind, status)
     if getattr(plan, "ready", "false") == "true":
         llm_policy.fail(plan.correlation, status=int(status) or None, sent=plan.sent)
-        native_lifetime.settle(plan, "failed", reason=str(kind)[:64])
+        uncertain = plan.sent and str(kind) == "transport-error"
+        native_lifetime.settle(plan, "uncertain" if uncertain else "failed", reason=str(kind)[:64])
     error = getattr(plan, "error", RuntimeError(str(kind)))
     if plan.kind == "command":
         return synthetic_llm._empty_action(error)

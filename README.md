@@ -445,6 +445,48 @@ continue while the foreground waits. See the
 [model request lifetime guide](docs/model-waits/README.md) for configuration,
 bounded late evidence, recovery and offline checks.
 
+The experimental [`activity_worker.py`](src/activity_worker.py) adapter can
+serve CeTTa's independent durable activity host. Each captured model request
+runs the existing native client in its own process. Tools come from a fixed
+host registry; model text never dispatches a tool. An interactive lane retains
+configured process capacity and managed request/token headroom while background
+activities wait. Legacy unscoped model calls remain single-flight and cannot
+overlap these scoped calls on the same admission ledger.
+
+The worker records a start before launching a process and a result before
+publishing it under its original CWP1 identity. After a crash, a saved result is
+recovered; a start without a result becomes unknown and is never resubmitted.
+Transport failures after submission likewise retain uncertainty and deny an
+identical managed request. Cancellation revokes the continuation's authority;
+it does not claim that a remote provider stopped. Linux parent-death handling
+scopes direct child lifetimes. Registered tools must remain in their owned
+process group; arbitrary daemonizing tool trees are not qualified.
+
+Private worker payloads retire after the native `STORED` receipt, including
+cleanup interrupted by a crash. Retained worker results are configurable,
+and pending work is never pruned. The adapter checks its engine, code, tool
+and configuration fingerprint at each launch. Run it from an immutable release;
+this check is not an atomic hot-code loader or a pin of every Python dependency.
+
+The offline integration replay uses the actual C coordinator, isolated native
+LLM processes and a delayed local Chat Completions server. It submits a delayed
+tool and model together, then new input, a short model request and periodic work.
+It also kills the coordinator and workers and checks late and lost replies:
+
+```sh
+CETTA_ACTIVITY_SERVICE=/path/to/activity-service \
+  CETTA_ACTIVITY_ENGINE=/path/to/python-enabled/cetta \
+  python3 tests/test_activity_runtime.py
+```
+
+Use `CETTA_ACTIVITY_PYTHON_PREFIX` if the engine's embedded Python needs a
+different environment. No paid calls occur. The native service, continuation
+policy and build instructions are in CeTTa's
+[durable activity host](https://github.com/godelclaw/CeTTa/tree/feature/durable-responsive-activities-20261012/docs/durable).
+The live foreground loop has not been migrated to this adapter. Immutable full
+context snapshots, action receipts and durable Telegram replies still need
+integration before replacing that loop.
+
 Native requests carry `(http:credential "ALIAS")`, never a bearer token atom.
 The host authorizes the alias through `CETTA_IO_AUTH_<ALIAS>_URL_PREFIX`,
 `_HEADER`, `_ENV` and `_PREFIX`. The native worker resolves the environment-owned

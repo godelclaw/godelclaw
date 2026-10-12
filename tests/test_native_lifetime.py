@@ -39,6 +39,43 @@ class NativeLifetimeTest(unittest.TestCase):
         self.assertEqual(native_lifetime.status()[0]["state"], "uncertain")
         self.assertIn("remote-outcome-unknown", native_lifetime.result(plan.correlation))
         self.assertEqual(llm_policy.snapshot()["accounted_output_tokens"], 10)
+        with llm_policy.transaction() as db:
+            self.assertEqual(db.execute("SELECT status FROM requests WHERE id=?", (plan.correlation,)).fetchone()[0], "unknown")
+
+    def test_scoped_calls_reserve_interactive_capacity(self):
+        first = self.plan(); first.activity = "long-work"; first.lane = "background"
+        second = self.plan(); second.activity = "more-work"; second.lane = "background"
+        reply = self.plan(); reply.activity = "conversation"; reply.lane = "interactive"
+        with mock.patch.dict(os.environ, {"METTACLAW_ACTIVITY_CALL_CAPACITY": "2",
+                                         "METTACLAW_ACTIVITY_INTERACTIVE_RESERVE": "1"}):
+            self.assertTrue(native_lifetime.claim(first))
+            self.assertFalse(native_lifetime.claim(second))
+            self.assertTrue(native_lifetime.claim(reply))
+            self.assertFalse(native_lifetime.claim(self.plan()))
+            duplicate = self.plan(); duplicate.activity = "conversation"; duplicate.lane = "interactive"
+            self.assertFalse(native_lifetime.claim(duplicate))
+            self.assertTrue(native_lifetime.settle(reply, "completed", "owned reply"))
+            self.assertTrue(native_lifetime.claim(duplicate))
+
+    def test_transport_uncertainty_blocks_the_same_managed_request(self):
+        with mock.patch.dict(os.environ, {"METTACLAW_LLM_POLICY": "managed"}):
+            plan = self.plan()
+            with llm_policy.transaction() as db:
+                db.execute("UPDATE requests SET fingerprint='captured-request' WHERE id=?", (plan.correlation,))
+            self.assertTrue(native_lifetime.claim(plan)); native_lifetime.submitted(plan, 3)
+            self.assertTrue(native_lifetime.settle(plan, "uncertain", reason="transport-error"))
+            with self.assertRaises(llm_policy.AdmissionDenied) as denied:
+                llm_policy.admit("synthetic", 10, request_fingerprint="captured-request")
+            self.assertEqual(denied.exception.reason, "provider-outcome-unknown")
+            self.assertEqual(llm_policy.snapshot()["accounted_output_tokens"], 10)
+
+    def test_zombie_process_cannot_keep_a_native_call_claim_alive(self):
+        fields = ["Z"] + ["0"] * 18 + ["process-birth"]
+        with mock.patch.object(Path, "read_text", return_value="42 (fixture) " + " ".join(fields)):
+            self.assertIsNone(native_lifetime.process_start(42))
+        fields[0] = "S"
+        with mock.patch.object(Path, "read_text", return_value="42 (fixture) " + " ".join(fields)):
+            self.assertEqual(native_lifetime.process_start(42), "process-birth")
 
     def test_correlated_late_reply_is_retained_and_settles_once(self):
         plan = self.plan(); native_lifetime.claim(plan)

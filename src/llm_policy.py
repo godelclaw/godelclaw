@@ -147,11 +147,15 @@ def unknown_context():
     return "" if not rows else "PROVIDER_RECOVERY " + json.dumps(rows, separators=(",", ":"))
 
 
-def admit(provider, max_output, *, now=None, mode=None, request_fingerprint=""):
+def admit(provider, max_output, *, now=None, mode=None, request_fingerprint="",
+          reserved_output=0, reserved_requests=0):
     now = time.time() if now is None else float(now)
     mode = mode or active_mode()
     policy = configuration(mode)
     maximum = int(max_output)
+    reserved_output, reserved_requests = int(reserved_output), int(reserved_requests)
+    if reserved_output < 0 or reserved_requests < 0:
+        raise ValueError("reserved capacity must be nonnegative")
     if maximum <= 0:
         raise ValueError("max output tokens must be positive")
     ticket = uuid.uuid4().hex
@@ -167,12 +171,13 @@ def admit(provider, max_output, *, now=None, mode=None, request_fingerprint=""):
                 raise AdmissionDenied("provider-cooldown", cooldown[0] - now)
             cap = policy["requests_per_hour"]
             rows = conn.execute("SELECT started FROM requests WHERE started>? ORDER BY started", (now - 3600,)).fetchall()
-            if cap and len(rows) >= cap:
-                raise AdmissionDenied("request-budget", rows[len(rows)-cap][0] + 3600 - now)
+            if cap and len(rows) + reserved_requests >= cap:
+                delay = rows[max(0, len(rows) + reserved_requests - cap)][0] + 3600 - now if rows else 3600
+                raise AdmissionDenied("request-budget", delay)
             day = int(now // 86400) * 86400
             used = conn.execute("SELECT COALESCE(SUM(COALESCE(output,reserved)),0) FROM requests WHERE started>=?", (day,)).fetchone()[0]
             cap = policy["output_tokens_per_day"]
-            if cap and used + maximum > cap:
+            if cap and used + maximum + reserved_output > cap:
                 raise AdmissionDenied("output-token-budget", day + 86400 - now)
             cap = policy["failures_per_window"]
             span = policy["failure_window_seconds"]
