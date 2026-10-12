@@ -125,10 +125,15 @@ def status(now=None):
         started_at = float(channel.get("started_at", 0) or saved_at or 0)
         if started_at and now - started_at > stale_after:
             problems.append("model-turn-receipt-missing")
-    docs, _indexed, behind = memory_health.drift()
-    threshold = memory_health.threshold()
-    if docs and behind > threshold:
-        problems.append("memory-index-drift")
+    configured = memory_health.backend()
+    if configured["mode"] == "native":
+        if not memory_health.native_reachable(configured["socket"]):
+            problems.append("memory-service-unreachable")
+    else:
+        docs, _indexed, behind = memory_health.drift()
+        threshold = memory_health.threshold()
+        if docs and behind > threshold:
+            problems.append("memory-index-drift")
     return {
         "state": "ok" if not problems else "problem",
         "lifecycle": lifecycle.view(),

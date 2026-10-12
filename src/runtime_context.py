@@ -181,6 +181,10 @@ def _commands():
 
 def _memory():
     import memory_health
+    configured = memory_health.backend()
+    if configured["mode"] == "native":
+        return {"backend": "native", "collection": configured["name"],
+                "reachable": memory_health.native_reachable(configured["socket"])}
     with _database(Path(memory_health._chroma_dir()) / "chroma.sqlite3") as db:
         row = db.execute("SELECT id FROM collections WHERE name=?",
                          (memory_health._collection(),)).fetchone()

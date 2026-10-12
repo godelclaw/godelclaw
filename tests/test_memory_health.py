@@ -98,3 +98,27 @@ class MemoryHealthTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NativeBackendHealthTest(unittest.TestCase):
+    def test_native_mode_checks_the_service_not_chroma(self):
+        import json, socket, tempfile, threading
+        with tempfile.TemporaryDirectory() as directory:
+            sock_path = os.path.join(directory, "memory.sock")
+            config = os.path.join(directory, "memory_backend.json")
+            with open(config, "w", encoding="utf-8") as handle:
+                json.dump({"mode": "native", "name": "memories-test", "socket": sock_path}, handle)
+            with mock.patch.dict(os.environ, {"METTACLAW_MEMORY_BACKEND_CONFIG": config}):
+                self.assertEqual(memory_health.report(),
+                                 "memory-health: native backend memories-test — service UNREACHABLE")
+                server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                server.bind(sock_path); server.listen(1)
+                try:
+                    self.assertEqual(memory_health.report(),
+                                     "memory-health: native backend memories-test — service reachable")
+                finally:
+                    server.close()
+
+    def test_without_a_backend_config_chroma_is_measured(self):
+        with mock.patch.dict(os.environ, {"METTACLAW_MEMORY_BACKEND_CONFIG": "/nonexistent/backend.json"}):
+            self.assertEqual(memory_health.backend(), {"mode": "chroma"})
