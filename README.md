@@ -509,6 +509,8 @@ One native revision watcher serves the agent's waits; one optional Codex
 subscription thread serves all its Codex waits. These run outside the model
 turn. The current foreground model/tool episode still completes at its own
 attention boundary before the agent can reason about the newly queued input.
+An optional `health_path` publishes watcher diagnostics without advancing
+scheduler progress or acknowledging input.
 This integration does not qualify the experimental activity worker below.
 
 The experimental [`activity_worker.py`](src/activity_worker.py) adapter can

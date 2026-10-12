@@ -174,7 +174,8 @@ class MailboxAgentTests(unittest.TestCase):
             self.assertEqual(client.list_spaces(),before)
 
     def test_wait_returns_and_native_owner_restart_does_not_interrupt_other_work(self):
-        inbox=self.inbox()
+        health=self.root/"watcher-health.json"
+        inbox=self.inbox(health_path=str(health))
         started=time.monotonic(); inbox.wait("ticket","review","reply")
         registered=time.monotonic()-started
         deadline=time.monotonic()+2
@@ -187,6 +188,13 @@ class MailboxAgentTests(unittest.TestCase):
         while not self.events and time.monotonic()<deadline: time.sleep(.01)
         self.assertEqual(len(self.events),1,inbox.error)
         self.assertEqual(ticks,10)
+        deadline=time.monotonic()+2
+        while time.monotonic()<deadline:
+            state=json.loads(health.read_text())
+            if state["watching"] and not state["error"]: break
+            time.sleep(.01)
+        self.assertTrue(state["watching"])
+        self.assertEqual(state["error"],"")
         print("AGENT_MAILBOX "+json.dumps({"register_ms":round(registered*1000,3),"periodic_steps":ticks,"model_polls":0}))
 
     def test_real_telegram_queue_and_checkpoint_source_ack_preserve_the_reply_target(self):

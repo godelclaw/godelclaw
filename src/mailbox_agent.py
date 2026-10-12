@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import socket
 import sys
+import tempfile
 import threading
 
 _runtime = None
@@ -290,7 +291,29 @@ class Inbox:
                     self.codex=mailbox_codex_runtime.CodexSubscriptions(self)
                 self.thread = threading.Thread(target=self._run,name="native-mailbox-"+self.instance,daemon=True)
                 self.thread.start()
+                self._health()
         return 1
+
+    def _health(self):
+        """Diagnostic state is separate from scheduler progress or settlement."""
+        path=self.config.get("health_path")
+        if not path: return
+        target=Path(path)
+        value={"instance":self.instance,"watching":self.monitor is not None,
+               "error":self.error,"backpressure":self.pressure,
+               "scans":self.scans,"notifications":self.notifications}
+        try:
+            target.parent.mkdir(parents=True,exist_ok=True)
+            fd,temporary=tempfile.mkstemp(prefix=".mailbox-health-",dir=target.parent)
+        except OSError: return
+        try:
+            with os.fdopen(fd,"w") as stream:
+                json.dump(value,stream); stream.write("\n")
+            os.replace(temporary,target)
+        except OSError: pass
+        finally:
+            try: os.unlink(temporary)
+            except FileNotFoundError: pass
 
     def _run(self):
         box = None
@@ -303,6 +326,7 @@ class Inbox:
                             raise RuntimeError("mailbox storage identity changed")
                     captured = self.scan(box)
                     self.error = ""
+                    self._health()
                     while not self.stopped.is_set():
                         changed = box.space.watch(captured,self.watch_ms)
                         if changed[0] == self.wire.S("changed"):
@@ -314,6 +338,7 @@ class Inbox:
                         try: box.close()
                         except Exception: pass
                         box = None; self.monitor = None
+                    self._health()
                     # Recovery reopens the same identity and checks state. No
                     # mutation plan or paid external operation is replayed.
                     self.stopped.wait(1)
@@ -322,6 +347,7 @@ class Inbox:
                 try: box.close()
                 except Exception: pass
             self.monitor = None
+            self._health()
 
     def close(self):
         if self.stopped.is_set(): return
