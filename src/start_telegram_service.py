@@ -1,7 +1,10 @@
 """Start one agent's durable Telegram service without starting cognition."""
 import argparse
+import json
 import os
 from pathlib import Path
+import re
+import urllib.request
 
 
 def agent_name():
@@ -30,6 +33,34 @@ def write_commands(repo, path):
     temporary.write_text(text, encoding="utf-8")
     os.replace(temporary, path)
     return path
+
+
+_DECLARATION = re.compile(r'^\(tg-cmd:command "/([a-z0-9_]{1,32})" [a-z]+ "([^"]{1,200})"\)', re.MULTILINE)
+
+
+def menu_commands(text):
+    """Telegram's slash menu, read from the same declarations the service uses."""
+    return [{"command": name, "description": help_text[:256]}
+            for name, help_text in _DECLARATION.findall(text)]
+
+
+def register_menu(commands_path, credential, timeout=10):
+    """Publish the declared commands to Telegram's menu. Best effort: a failure
+    never stops the channel, and nothing about the credential is printed."""
+    try:
+        commands = menu_commands(Path(commands_path).read_text(encoding="utf-8"))
+        token = Path(credential).read_text(encoding="utf-8").strip()
+        request = urllib.request.Request(
+            "https://api.telegram.org/bot%s/setMyCommands" % token,
+            data=json.dumps({"commands": commands}).encode("utf-8"),
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            ok = json.loads(response.read().decode("utf-8")).get("ok") is True
+        print("command menu: %d commands %s" % (len(commands), "registered" if ok else "refused"))
+        return ok
+    except Exception as error:
+        print("command menu not registered: %s" % type(error).__name__)
+        return False
 
 
 def command(repo, state, credential):
@@ -73,9 +104,13 @@ def main():
     parser.add_argument("--credential", type=Path)
     parser.add_argument("--write-commands", type=Path,
                         help="only write this agent's command file to PATH and exit")
+    parser.add_argument("--register-menu", action="store_true",
+                        help="with --write-commands: also publish the commands to Telegram's menu")
     args = parser.parse_args()
     if args.write_commands:
-        write_commands(args.repo, args.write_commands)
+        path = write_commands(args.repo, args.write_commands)
+        if args.register_menu and args.credential is not None:
+            register_menu(path, args.credential)
         return
     if args.state is None or args.credential is None:
         parser.error("--state and --credential are required to start the service")
@@ -84,6 +119,7 @@ def main():
     except (KeyError, ValueError):
         # Configuration values and credentials are deliberately not logged.
         raise SystemExit("invalid durable Telegram service configuration") from None
+    register_menu(argv[argv.index("--commands") + 1], args.credential)
     os.execv(argv[0], argv)
 
 

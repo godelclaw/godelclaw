@@ -93,3 +93,46 @@ class ResumeSelfTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CommandMenuTest(unittest.TestCase):
+    def test_menu_lists_every_declared_command_including_help(self):
+        shared = (ROOT / "channels" / "telegram_commands.metta").read_text(encoding="utf-8")
+        names = [c["command"] for c in launcher.menu_commands(shared)]
+        self.assertEqual(names[0], "help")
+        self.assertIn("stop", names)
+        self.assertIn("model", names)
+        self.assertEqual(len(names), len(set(names)))
+        self.assertEqual(len(names), shared.count("(tg-cmd:command "))
+
+    def test_menu_registration_failure_never_raises(self):
+        with tempfile.TemporaryDirectory() as directory:
+            commands = pathlib.Path(directory) / "commands.metta"
+            commands.write_text('(tg-cmd:command "/help" help "List these commands")\n', encoding="utf-8")
+            token = pathlib.Path(directory) / "token"
+            token.write_text("123:secret\n", encoding="utf-8")
+            with mock.patch.object(launcher.urllib.request, "urlopen", side_effect=OSError("offline")):
+                self.assertFalse(launcher.register_menu(commands, token))
+
+    def test_menu_registration_sends_the_declared_commands(self):
+        with tempfile.TemporaryDirectory() as directory:
+            commands = pathlib.Path(directory) / "commands.metta"
+            commands.write_text('(tg-cmd:command "/help" help "List these commands")\n'
+                                '(tg-cmd:command "/stop" stop "Stop cognition")\n', encoding="utf-8")
+            token = pathlib.Path(directory) / "token"
+            token.write_text("123:secret\n", encoding="utf-8")
+            sent = {}
+
+            class Response:
+                def __enter__(self): return self
+                def __exit__(self, *exc): return False
+                def read(self): return b'{"ok": true, "result": true}'
+
+            def urlopen(request, timeout):
+                sent["url"], sent["body"] = request.full_url, __import__("json").loads(request.data)
+                return Response()
+
+            with mock.patch.object(launcher.urllib.request, "urlopen", side_effect=urlopen):
+                self.assertTrue(launcher.register_menu(commands, token))
+            self.assertTrue(sent["url"].endswith("/bot123:secret/setMyCommands"))
+            self.assertEqual([c["command"] for c in sent["body"]["commands"]], ["help", "stop"])
