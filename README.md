@@ -496,6 +496,10 @@ the terminal transcript. `(mailbox-status)` reports waits and watcher health;
 "ticket")` cancels an unmatched wait. A reply that wins the receive race stays
 ready. Tickets are never reused for different work.
 
+The configured App Server must own a followed room; another active writer
+can refuse subscription. Mailbox protocol modules are isolated from clients
+already loaded by recall or other providers, keeping their value classes intact.
+
 The native receive consumes the message and saves its continuation atomically
 within one physical space. The cognitive checkpoint is a separate commit in
 the existing agent ledger. Ready state stays retained until that checkpoint
