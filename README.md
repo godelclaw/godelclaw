@@ -486,6 +486,10 @@ native socket, space and worker plus `bindings` entries with `name`, `sender`
 and `directory`. Persistent `inbox` reception wakes the agent for new messages.
 Raw bodies remain inert data, including text that looks like code.
 
+The watcher is armed at boot and retries initialization if the native service
+is unavailable. Recovery needs no subsequent skill call or model polling.
+This retry path emits diagnostic health state, never scheduler progress.
+
 For a particular reply, `(mailbox-wait "ticket" "channel" "correlation")`
 registers and returns immediately. `(mailbox-codex "ticket" "thread-id"
 "turn-id")` records its subscription intention in the same batch, then
@@ -508,6 +512,9 @@ crash after it settles without another presentation. This does not establish
 exactly-once remote actions. Action receipts and budget reservation remain
 the existing command/provider layers' responsibilities. Completed bodies and
 identity receipts are retained; no unsafe automatic deletion is introduced.
+An acknowledgement failure returns pending status instead of escaping through
+the engine. The watcher later reconciles the durable checkpoint and settles
+the retained receive. Both Telegram client paths contain source failures.
 
 One native revision watcher serves the agent's waits; one optional Codex
 subscription thread serves all its Codex waits. These run outside the model

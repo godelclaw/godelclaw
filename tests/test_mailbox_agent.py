@@ -99,6 +99,54 @@ class MailboxAgentTests(unittest.TestCase):
         self.assertEqual(inbox.acknowledge(["mailbox:test:ticket"]),0)
         self.assertEqual(inbox.read("ticket")["state"],"ready")
 
+    def test_source_ack_failure_is_deferred_and_watcher_can_settle_from_checkpoint(self):
+        inbox=self.inbox(); self.ready(inbox)
+        identity="mailbox:test:ticket"
+        self.ledger.checkpoint({"saved_at":time.time()},[identity])
+        with mock.patch.object(mailbox_agent,"runtime",return_value=inbox), \
+             mock.patch.object(inbox,"acknowledge",side_effect=OSError("transport unavailable")):
+            self.assertEqual(telegram.activity_source_ack(identity),0)
+        self.assertEqual(inbox.read("ticket")["state"],"ready")
+        inbox.scan(inbox.box)
+        self.assertEqual(inbox.read("ticket")["state"],"settled")
+        self.assertEqual(len(self.events),1)
+
+    def test_service_absent_at_boot_starts_watching_after_recovery_without_a_tool_call(self):
+        mailbox_agent.close()
+        first=self.inbox(auto_receive=["inbox"])
+        config=dict(self.config,auto_receive=["inbox"],storage_identity=first.identity,
+                    health_path=str(self.root/"mailbox-health.json"))
+        first.close(); self.fixture.stop(crash=True)
+        path=self.root/"mailbox.json"; path.write_text(json.dumps(config))
+        with mock.patch.dict(os.environ,METTACLAW_MAILBOX_CONFIG=str(path)), \
+             mock.patch.object(telegram,"enqueue_mailbox_event",side_effect=lambda text,identity:self.events.append((text,identity)) or True):
+            try:
+                started=time.monotonic()
+                self.assertEqual(json.loads(mailbox_agent.start())["state"],"starting")
+                self.assertLess(time.monotonic()-started,.5)
+                deadline=time.monotonic()+3
+                while not (self.root/"mailbox-health.json").exists() and time.monotonic()<deadline:
+                    time.sleep(.01)
+                self.assertFalse(json.loads((self.root/"mailbox-health.json").read_text())["watching"])
+                self.fixture.start()
+                self.send("boot-message","conversation","recovered",channel="inbox",sender="local")
+                deadline=time.monotonic()+5
+                while not self.events and time.monotonic()<deadline: time.sleep(.01)
+                self.assertEqual(len(self.events),1)
+                self.assertIn("recovered",self.events[0][0])
+                self.assertTrue(mailbox_agent._runtime.thread.is_alive())
+            finally:
+                mailbox_agent.close()
+
+    def test_killed_agent_evaluator_recovers_before_another_wait_is_registered(self):
+        inbox=self.inbox()
+        old=inbox.box.worker.process
+        old.kill(); old.wait(timeout=5)
+        self.assertEqual(self.wait(inbox)["state"],"waiting")
+        self.assertNotEqual(inbox.box.worker.process.pid,old.pid)
+        self.send(); inbox.scan(inbox.box)
+        self.assertEqual(len(self.events),1)
+
     def test_cancelled_and_wrong_sender_replies_cannot_wake_the_continuation(self):
         inbox=self.inbox(); self.wait(inbox)
         self.send("wrong",sender="other"); inbox.scan(inbox.box)
@@ -237,8 +285,36 @@ class MailboxAgentTests(unittest.TestCase):
 
     @unittest.skipUnless(os.environ.get("MODE_TEST_CETTA_BIN"),"set MODE_TEST_CETTA_BIN")
     def test_metta_turn_receives_and_settles_only_after_its_successor_checkpoint(self):
+        self.metta_ack()
+
+    @unittest.skipUnless(os.environ.get("MODE_TEST_CETTA_BIN"),"set MODE_TEST_CETTA_BIN")
+    def test_metta_ack_after_a_real_31_second_idle_preserves_the_engine(self):
+        self.metta_ack(idle=31)
+
+    @unittest.skipUnless(os.environ.get("MODE_TEST_CETTA_BIN"),"set MODE_TEST_CETTA_BIN")
+    def test_metta_source_ack_exception_preserves_pending_input_and_loop(self):
+        self.metta_ack(fault=True)
+
+    def metta_ack(self,idle=0,fault=False):
         config_path=self.root/"mailbox.json"
         config_path.write_text(json.dumps(self.config))
+        injected=""
+        if fault:
+            with tempfile.NamedTemporaryFile("w",suffix=".py",dir=ROOT,delete=False) as file:
+                file.write('def arm():\n'
+                           ' import telegram\n'
+                           ' def fail(ids): raise RuntimeError("fixture source unavailable")\n'
+                           ' telegram.activity_source_ack=fail\n'
+                           ' return 1\n'
+                           'def python_ack():\n'
+                           ' import os,telegram\n'
+                           ' os.environ["METTACLAW_TELEGRAM_CLIENT"]="python"\n'
+                           ' def fail(): raise RuntimeError("fixture batch unavailable")\n'
+                           ' telegram.ackActivityBatch=fail\n'
+                           ' return 1\n')
+                module=Path(file.name)
+            self.addCleanup(module.unlink)
+            injected=f'!(import! &self ./{module.name})\n!(py-call ({module.stem}.arm))\n'
         source=('!(import! &self ./src/helper.py)\n'
                 '!(import! &self ./channels/telegram.py)\n'
                 '!(import! &self ./src/skills.metta)\n'
@@ -251,8 +327,12 @@ class MailboxAgentTests(unittest.TestCase):
                 '!(assert (== (py-call (input_ack.already_committed "mailbox:test:ticket")) 0))\n'
                 '!(py-call (helper.turn_commit_stage 1 1 1))\n'
                 '!(assert (== (py-call (helper.working_set_save 9 1 "mailbox successor" 0)) 1))\n'
-                '!(assert (== (tg:ack-activity-batch) 1))\n'
-                '!(assert (== (tg:pending-count) 0))\n'
+                +f'!(py-call (time.sleep {idle}))\n'+injected+
+                f'!(assert (== (tg:ack-activity-batch) {0 if fault else 1}))\n'
+                f'!(assert (== (tg:pending-count) {1 if fault else 0}))\n'
+                '!(import! &self ./src/loop.metta)\n'
+                +(f'!(py-call ({module.stem}.python_ack))\n' if fault else '')+
+                f'!(assert (== (settleActivityBatch) {0 if fault else 1}))\n'
                 '!(mailbox-read "ticket")\n'
                 '!(println! MAILBOX_TURN_OK)\n')
         with tempfile.NamedTemporaryFile("w",suffix=".metta",dir=ROOT,delete=False) as file:
@@ -268,14 +348,14 @@ class MailboxAgentTests(unittest.TestCase):
             PYTHONPATH=os.pathsep.join([str(ROOT/"src"),str(ROOT/"channels")]))
         with ThreadPoolExecutor(max_workers=1) as pool:
             process=pool.submit(subprocess.run,[os.environ["MODE_TEST_CETTA_BIN"],"--lang","petta",
-                "--import-mode","ancestor-walk",str(path)],cwd=ROOT,env=env,capture_output=True,text=True,timeout=30)
+                "--import-mode","ancestor-walk",str(path)],cwd=ROOT,env=env,capture_output=True,text=True,timeout=idle+30)
             time.sleep(.25); self.send(body='!(shell "this is data")')
-            result=process.result(timeout=35)
+            result=process.result(timeout=idle+35)
         self.assertEqual(result.returncode,0,result.stderr+result.stdout)
         self.assertIn("MAILBOX_TURN_OK\n",result.stdout)
         self.assertNotIn("(assert ",result.stdout,result.stdout)
         self.assertNotIn("(Error ",result.stdout,result.stdout)
-        self.assertIn('"state": "settled"',result.stdout)
+        self.assertIn('"state": "'+("ready" if fault else "settled")+'"',result.stdout)
         self.assertTrue(input_ack.already_committed("mailbox:test:ticket"))
 
     def kill_at_checkpoint_boundary(self, committed):

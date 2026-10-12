@@ -456,6 +456,11 @@
                  no-continuation) 0 1)
          (coordinate-get-or banked-loops 0 $periphery)))))
 
+(= (settleActivityBatch)
+   (case (catch (if (tg:client-metta?) (tg:ack-activity-batch)
+                   (py-call (telegram.ackActivityBatch))))
+     ((1 1) ($other 0))))
+
 (= (processLoop $state)
    (if (== (py-call (helper.recycle_requested)) 1)
      (py-call (helper.recycle_exit))
@@ -468,7 +473,7 @@
           ($next (process-step $state $outcome))
           ($checkpoint (persistProcessState $next))
           ($_ (if (and (== $checkpoint 1) (== (py-call (helper.turn_commit_ready)) 1))
-                (let $acked (if (tg:client-metta?) (tg:ack-activity-batch) (py-call (telegram.ackActivityBatch)))
+                (let $acked (settleActivityBatch)
                   (if (== $acked 1) (py-call (cognitive_health.turn_settled)) 0)) 0))
           ($_ (py-call (helper.turn_commit_reset))))
      (if (== (py-call (helper.recycle_requested)) 1)
