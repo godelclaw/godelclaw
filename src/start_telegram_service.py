@@ -56,10 +56,10 @@ def register_menu(commands_path, credential, timeout=10):
             headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(request, timeout=timeout) as response:
             ok = json.loads(response.read().decode("utf-8")).get("ok") is True
-        print("command menu: %d commands %s" % (len(commands), "registered" if ok else "refused"))
+        print("command menu: %d commands %s" % (len(commands), "registered" if ok else "refused"), flush=True)
         return ok
     except Exception as error:
-        print("command menu not registered: %s" % type(error).__name__)
+        print("command menu not registered: %s" % type(error).__name__, flush=True)
         return False
 
 
