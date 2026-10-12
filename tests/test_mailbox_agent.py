@@ -8,6 +8,7 @@ import subprocess
 import select
 import tempfile
 import time
+import types
 import unittest
 from unittest import mock
 
@@ -170,7 +171,7 @@ class MailboxAgentTests(unittest.TestCase):
             space=client.open(self.config["space"])
             client.call("drop",space.uuid,space.id,space.revision,client.hello()[4])
             before=client.list_spaces()
-            with self.assertRaises(ServiceError): self.inbox(storage_identity=identity)
+            with self.assertRaises(mailbox_agent._api(self.config)[1].ServiceError): self.inbox(storage_identity=identity)
             self.assertEqual(client.list_spaces(),before)
 
     def test_wait_returns_and_native_owner_restart_does_not_interrupt_other_work(self):
@@ -196,6 +197,16 @@ class MailboxAgentTests(unittest.TestCase):
         self.assertTrue(state["watching"])
         self.assertEqual(state["error"],"")
         print("AGENT_MAILBOX "+json.dumps({"register_ms":round(registered*1000,3),"periodic_steps":ticks,"model_polls":0}))
+
+    def test_existing_recall_client_cannot_replace_the_mailbox_protocol(self):
+        legacy=types.ModuleType("space_service_client")
+        legacy.Space=type("LegacySpace",(),{})  # an older client has no query_first
+        with mock.patch.dict(sys.modules,{"space_service_client":legacy}):
+            inbox=self.inbox(); self.ready(inbox)
+            self.assertEqual(len(self.events),1)
+            self.assertEqual(inbox.read("ticket")["body"],"a reply")
+            self.assertIs(sys.modules["space_service_client"],legacy)
+            self.assertIsNot(inbox.wire,legacy)
 
     def test_real_telegram_queue_and_checkpoint_source_ack_preserve_the_reply_target(self):
         inbox=self.inbox(); inbox.offer=mailbox_agent._offer
@@ -315,7 +326,7 @@ class MailboxAgentTests(unittest.TestCase):
         self.assertTrue(any(method=="thread/read" for method,_ in wire.calls),first.status())
         before=list(wire.calls)
         for index in range(4):
-            with first.lock: first.box.space.add(E("PeriodicDuty",index))
+            with first.lock: first.box.space.add(first.wire.E("PeriodicDuty",index))
             time.sleep(.025)
         self.assertEqual(wire.calls,before)
         first.close()
@@ -334,7 +345,7 @@ class MailboxAgentTests(unittest.TestCase):
         data=json.loads(second.read("review-1")["body"])
         self.assertEqual(data["messages"][0]["text"],"done")
         self.assertEqual(len(data["messages"]),1)
-        self.assertEqual(second.box.space.match_count(E("PeriodicDuty",mailbox_agent._api(self.config)[1].Var(0))),4)
+        self.assertEqual(second.box.space.match_count(second.wire.E("PeriodicDuty",second.wire.Var(0))),4)
         self.assertTrue(all(method in ("initialize","initialized","thread/resume","thread/read") for method,_ in wire.calls))
         self.ledger.checkpoint({"saved_at":time.time()},["mailbox:test:review-1"])
         second.acknowledge(["mailbox:test:review-1"])

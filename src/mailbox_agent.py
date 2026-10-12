@@ -7,6 +7,9 @@ then settles it without offering it again. No cross-store atomicity is claimed.
 from __future__ import annotations
 import atexit
 import hashlib
+import importlib
+import importlib.machinery
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -42,14 +45,18 @@ def source_ticket(value, instance):
 
 
 def _api(config):
-    # Only operator-selected installed code can implement these handlers.
+    # Isolate this release from older clients already loaded by recall or
+    # other providers. Never replace their global modules or value classes.
     tools = str(Path(config["tools"]).resolve())
-    if tools not in sys.path:
-        sys.path.insert(0, tools)
-    import native_mailbox
-    import space_service_client
+    package="_cetta_mailbox_sdk_"+hashlib.sha256(tools.encode()).hexdigest()[:16]
+    if package not in sys.modules:
+        spec=importlib.machinery.ModuleSpec(package,loader=None,is_package=True)
+        spec.submodule_search_locations=[tools]
+        sys.modules.setdefault(package,importlib.util.module_from_spec(spec))
+    native_mailbox=importlib.import_module(package+".native_mailbox")
+    space_service_client=importlib.import_module(package+".space_service_client")
     if Path(native_mailbox.__file__).resolve().parent != Path(tools):
-        raise RuntimeError("different native mailbox implementation already imported")
+        raise RuntimeError("configured native mailbox implementation differs")
     return native_mailbox, space_service_client
 
 

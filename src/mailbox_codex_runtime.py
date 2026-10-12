@@ -1,5 +1,6 @@
 """One event-driven Codex subscription connection for an agent's durable waits."""
 import os
+import importlib
 import select
 import socket
 import threading
@@ -7,11 +8,11 @@ import threading
 
 class CodexSubscriptions:
     def __init__(self, inbox):
-        from mailbox_codex import CodexBridge, transport
+        sdk=importlib.import_module(inbox.native.__package__+".mailbox_codex")
         self.inbox=inbox
-        self.bridge_type=CodexBridge
+        self.bridge_type=sdk.CodexBridge
         self.config=inbox.config["codex"]
-        self.factory=transport(self.config["transport_module"])
+        self.factory=sdk.transport(self.config["transport_module"])
         self.lock=threading.Lock()
         self.bindings=()
         self.read,self.write=os.pipe2(os.O_NONBLOCK|os.O_CLOEXEC)
