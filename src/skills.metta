@@ -1,4 +1,5 @@
 !(import! &self ./src/topic_jobs.py)
+!(import! &self ./src/mailbox_agent.py)
 (= (getSkills)
    (;INTERNAL:
     "- Remember a particular string such as skills and memories: (remember \"string\")"
@@ -23,6 +24,8 @@
     "- Separate topic notes, always keeping operator messages reachable: (topics) | (topic-select \"name\") | (topic-note \"notes\")"
     "- Start a concurrent read-only model strand: (background-model \"topic\" \"question\") | (background-model \"topic\" \"question\" \"JSON dependency names\")"
     "- Model strand evidence: (model-jobs) | (model-result \"id\"); inspect its receipt before (model-adopt \"id\") or (model-retire \"id\")"
+    "- Wait for a configured mailbox without blocking or polling: (mailbox-wait \"stable-ticket\" \"channel\" \"correlation\"). An arrival wakes you with inert data. (mailbox-status) lists pending waits; (mailbox-read \"ticket\") reads a reply, (mailbox-read \"ticket\" offset count) pages it; (mailbox-cancel \"ticket\") cancels an unmatched wait."
+    "- Subscribe to an existing Codex-room turn: (mailbox-codex \"stable-ticket\" \"thread-id\" \"turn-id\"). It returns immediately and wakes you with the terminal transcript; no model call or thread polling is started."
     ;SHELL AND FILE I/O:
     "- Execute shell command, it returns the command output to you: (shell \"command string\")"
     "- Run a long command in the background; you are woken when it ends, with its exit status and output tail: (background \"command string\")"
@@ -78,6 +81,16 @@
 (= (jobs) (py-call (jobs.status)))
 (= (job-output $id) (py-call (jobs.output $id)))
 (= (job-stop $id) (py-call (jobs.stop $id)))
+
+;; Only the host checkpoint settles a mailbox reply. Worker content is data.
+(= (mailbox-wait $ticket $channel $correlation)
+   (py-call (mailbox_agent.wait $ticket $channel $correlation)))
+(= (mailbox-status) (py-call (mailbox_agent.status)))
+(= (mailbox-read $ticket) (py-call (mailbox_agent.read $ticket)))
+(= (mailbox-read $ticket $offset) (py-call (mailbox_agent.read $ticket $offset)))
+(= (mailbox-read $ticket $offset $count) (py-call (mailbox_agent.read $ticket $offset $count)))
+(= (mailbox-cancel $ticket) (py-call (mailbox_agent.cancel $ticket)))
+(= (mailbox-codex $ticket $thread $turn) (py-call (mailbox_agent.watch_codex $ticket $thread $turn)))
 (= (vitals) (py-call (helper.vitals)))
 
 ;; Shared execution code, separate agent-owned queues. These requests never

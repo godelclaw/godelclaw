@@ -445,6 +445,72 @@ continue while the foreground waits. See the
 [model request lifetime guide](docs/model-waits/README.md) for configuration,
 bounded late evidence, recovery and offline checks.
 
+### Native mailboxes
+
+[`mailbox_agent.py`](src/mailbox_agent.py) connects CeTTa's native named
+mailboxes to the agent's existing attention and checkpoint paths. Set
+`METTACLAW_MAILBOX_CONFIG` to an operator-owned JSON configuration:
+
+```json
+{
+  "version": 1,
+  "instance": "agent",
+  "socket": "/path/to/cetta-mailbox.sock",
+  "space": "agent-mailboxes",
+  "tools": "/path/to/installed-cetta/tools",
+  "worker": "/path/to/installed-cetta/cetta-value-worker",
+  "channels": {"inbox": "local", "codex-review": "codex"},
+  "auto_receive": ["inbox"],
+  "max_active": 256,
+  "preview_chars": 2048,
+  "codex": {
+    "channel": "codex-review",
+    "transport_module": "/path/to/installed/codex-room",
+    "app_server_socket": "/path/to/codex/control.sock"
+  }
+}
+```
+
+The instance must match `METTACLAW_INSTANCE`, and durable agent checkpoints
+must be enabled. After initial setup, pin `storage_identity` to the native
+store UUID and space ID. Use an immutable worker and policy release: the
+mailbox records their fingerprint, the handler ABI and channel authorities.
+A changed fingerprint requires explicit migration. Folder locations can
+change independently of a logical channel. Writers to a configured folder
+hold its delivery capability; the sender label itself is not authentication.
+
+Start CeTTa's `tools/mailbox_bridge.py` separately for directory bindings.
+`tools/mailbox_post.py` accepts a body file or stdin and publishes a complete
+envelope with a fresh occurrence identity. Its configuration uses the same
+native socket, space and worker plus `bindings` entries with `name`, `sender`
+and `directory`. Persistent `inbox` reception wakes the agent for new messages.
+Raw bodies remain inert data, including text that looks like code.
+
+For a particular reply, `(mailbox-wait "ticket" "channel" "correlation")`
+registers and returns immediately. `(mailbox-codex "ticket" "thread-id"
+"turn-id")` records its subscription intention in the same batch, then
+listens through one App Server connection for the agent's active Codex waits.
+It starts no model turn and makes no idle transcript polls. Restart reconciles
+the terminal transcript. `(mailbox-status)` reports waits and watcher health;
+`(mailbox-read "ticket" offset count)` pages the reply; `(mailbox-cancel
+"ticket")` cancels an unmatched wait. A reply that wins the receive race stays
+ready. Tickets are never reused for different work.
+
+The native receive consumes the message and saves its continuation atomically
+within one physical space. The cognitive checkpoint is a separate commit in
+the existing agent ledger. Ready state stays retained until that checkpoint
+records `mailbox:instance:ticket`. A crash before it reoffers the input; a
+crash after it settles without another presentation. This does not establish
+exactly-once remote actions. Action receipts and budget reservation remain
+the existing command/provider layers' responsibilities. Completed bodies and
+identity receipts are retained; no unsafe automatic deletion is introduced.
+
+One native revision watcher serves the agent's waits; one optional Codex
+subscription thread serves all its Codex waits. These run outside the model
+turn. The current foreground model/tool episode still completes at its own
+attention boundary before the agent can reason about the newly queued input.
+This integration does not qualify the experimental activity worker below.
+
 The experimental [`activity_worker.py`](src/activity_worker.py) adapter can
 serve CeTTa's independent durable activity host. Each captured model request
 runs the existing native client in its own process. Tools come from a fixed

@@ -38,6 +38,7 @@ OBSERVATION_TOOLS = frozenset({
     "read-file", "read-lines", "ls-tree", "grep-files", "recent-messages",
     "query", "search", "search-tavily", "search-ddg", "sibling-status",
     "mcp-servers", "mcp-tools", "mcp-tool-info", "iter-transformations",
+    "mailbox-status", "mailbox-read",
 })
 
 

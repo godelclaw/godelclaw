@@ -974,7 +974,8 @@ def ackActivityBatch():
         if update_ids and not _write_activity_receipt(
                 "activity_ack", update_ids):
             return 0
-        input_ack.processed_update_ids(update_ids)
+        if not activity_source_ack(update_ids):
+            return 0
         del _pending_messages[:count]
         _prepared_messages = []
         _current_batch_update_ids = set()
@@ -2184,6 +2185,47 @@ def handover_ids(ids):
         if text not in result:
             result.append(text)
     return result
+
+
+def activity_source_ack(ids):
+    """Settle checkpointed input at its source; mailbox IDs are not Telegram IDs."""
+    if isinstance(ids, str):
+        values = [] if ids == "" else ids.split(",")
+    elif isinstance(ids, (list, tuple)):
+        values = list(ids)
+    elif type(ids) is int:
+        values = [ids]
+    else:
+        raise ValueError("invalid activity source batch")
+    import mailbox_agent
+    mail, updates = [], []
+    # Validate the complete batch before granting any processing authority.
+    for value in values:
+        if isinstance(value, str) and value.startswith("mailbox:"):
+            mailbox_agent.source_ticket(value,os.environ.get("METTACLAW_INSTANCE", ""))
+            if value not in mail: mail.append(value)
+        else:
+            updates.append(value)
+    updates = handover_ids(updates)
+    if mail and not mailbox_agent.acknowledge(mail):
+        return 0
+    return handover_ack(updates)
+
+
+def enqueue_mailbox_event(text, identity):
+    """Offer inert native data with a stable identity to the attention queue."""
+    import mailbox_agent
+    mailbox_agent.source_ticket(identity,os.environ.get("METTACLAW_INSTANCE", ""))
+    if metta_client():
+        _metta_queue({"chat":RUNTIME_CHAT,"text":"[mailbox] "+str(text),"from_bot":False,
+                      "tier":"light","update_id":identity,"wake":"mailbox arrival"})
+    else:
+        global _activity_epoch
+        with _msg_lock:
+            _pending_messages.append((RUNTIME_CHAT,"[mailbox] "+str(text),False,"light",identity))
+            _activity_epoch += 1
+    _request_wake("mailbox arrival")
+    return True
 
 
 def handover_ack(ids):
