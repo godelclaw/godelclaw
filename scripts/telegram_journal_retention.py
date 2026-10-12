@@ -1,6 +1,8 @@
 """Archive old received Telegram updates out of a channel journal, then remove them.
 
-Run only while the channel service is stopped; the store has one writer.
+The store has one writer, so the channel service must be stopped during a run.
+With --unit, the units named that are active are stopped for the run and
+started again afterwards, whatever the outcome.
 
 1. Select host.received records except the newest --keep, and never one whose
    update still has a pending host.inbox entry.
@@ -100,10 +102,21 @@ def main():
     parser.add_argument("--archive", type=Path, required=True, help="archive directory")
     parser.add_argument("--cetta", required=True, help="a CeTTa binary with durable support")
     parser.add_argument("--keep", type=int, default=150, help="newest received records to keep")
-    parser.add_argument("--unit", help="refuse to run while this systemd user unit is active")
+    parser.add_argument("--unit", action="append", default=[],
+                        help="systemd user unit that writes the journal (repeatable; socket first)")
     args = parser.parse_args()
-    if args.unit and subprocess.run(["systemctl", "--user", "is-active", "--quiet", args.unit]).returncode == 0:
-        raise SystemExit("refusing: %s is active; stop it first" % args.unit)
+    active = [u for u in args.unit
+              if subprocess.run(["systemctl", "--user", "is-active", "--quiet", u]).returncode == 0]
+    if active:
+        subprocess.run(["systemctl", "--user", "stop"] + active, check=True)
+    try:
+        run(args)
+    finally:
+        if active:
+            subprocess.run(["systemctl", "--user", "start"] + active, check=True)
+
+
+def run(args):
     journal = args.journal.resolve()
     epoch, revision, old = candidates(journal, args.keep)
     now = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
