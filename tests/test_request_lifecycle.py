@@ -1,9 +1,11 @@
 """Delivery, retained commitments, workflow disposition and bounded context."""
 import json
+import os
 import sqlite3
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -95,3 +97,42 @@ class RequestLifecycleTest(unittest.TestCase):
 
 
 if __name__ == "__main__": unittest.main()
+
+
+class RequestIdentityTest(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.path = Path(directory.name) / "observed-strategy.sqlite3"
+        self.store = Ledger(self.path)
+
+    def run_host(self, *args):
+        import strategy_host as host
+        with mock.patch.dict(os.environ, {"METTACLAW_OBSERVED_STRATEGY": "1",
+                                          "METTACLAW_STRATEGY_PATH": str(self.path),
+                                          "METTACLAW_INSTANCE": "godel"}), \
+                mock.patch.object(host, "_ledger", None), mock.patch.object(host, "_booted", False):
+            return host.request_disposition(*args)
+
+    def test_mailbox_ticket_resolves_to_its_own_request(self):
+        self.store.accept("input:one", "[mailbox] note", kind="notification")
+        self.store.link_inputs("input:one", ["mailbox:godel:inbox-abc"])
+        self.store.processed("input:one")
+        reply = self.run_host("inbox-abc", "addressed", "read and answered")
+        self.assertEqual(reply, "REQUEST_DISPOSITION_RECORDED for request input:one (mailbox ticket inbox-abc)")
+        self.assertEqual(self.store.request_record("input:one")["status"], "addressed")
+
+    def test_batched_ticket_names_the_request_and_preserves_other_work(self):
+        self.store.accept("input:batch", "[mailbox] note + chat", kind="message")
+        self.store.link_inputs("input:batch", ["mailbox:godel:inbox-xyz", "4242"])
+        reply = self.run_host("inbox-xyz", "addressed", "done")
+        self.assertIn("arrived in request input:batch together with 1 other input", reply)
+        self.assertEqual(self.store.request_record("input:batch")["status"], "active")
+
+    def test_refusals_say_why(self):
+        self.assertIn("unknown ID nope", self.run_host("nope", "keep", "x"))
+        self.store.accept("goal:o:1:0", "Goal g, cycle 0.")
+        self.assertIn("retire the goal with goal-drop", self.run_host("goal:o:1:0", "defer", "later"))
+        self.store.accept("input:fresh", "hello", kind="message")
+        self.assertIn("addressed only after a turn has processed it",
+                      self.run_host("input:fresh", "addressed", "done"))

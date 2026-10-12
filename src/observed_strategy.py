@@ -55,6 +55,10 @@ class Ledger:
                     allowed INTEGER NOT NULL DEFAULT 0);
                 CREATE TABLE IF NOT EXISTS processed_inputs (
                     id TEXT PRIMARY KEY, processed REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS request_inputs (
+                    request TEXT NOT NULL, input TEXT NOT NULL,
+                    PRIMARY KEY(request, input));
+                CREATE INDEX IF NOT EXISTS request_input ON request_inputs(input);
             """)
             # Existing input identities were created at the delivery boundary,
             # not by a task checker. Migration changes their kind, not outcome.
@@ -233,19 +237,39 @@ class Ledger:
             row = db.execute("SELECT value FROM meta WHERE key='working_set'").fetchone()
             return json.loads(row[0]) if row else None
 
+    def link_inputs(self, request, inputs):
+        """Record which arrivals a request was formed from."""
+        with self.transaction() as db:
+            db.executemany("INSERT OR IGNORE INTO request_inputs(request,input) VALUES (?,?)",
+                           [(request, str(i)) for i in inputs])
+
+    def requests_with_input(self, input_id):
+        with self.transaction() as db:
+            requests = [r for (r,) in db.execute("SELECT request FROM request_inputs WHERE input=?", (input_id,))]
+            return [dict(request=r, inputs=[i for (i,) in db.execute(
+                "SELECT input FROM request_inputs WHERE request=? ORDER BY input", (r,))]) for r in requests]
+
     def disposition(self, key, disposition, note):
-        """Agent workflow decisions never produce checker-certified achievement."""
+        """Agent workflow decisions never produce checker-certified achievement.
+        A refusal leaves its reason in self.refusal."""
         statuses = {"keep": "active", "waiting-user": "waiting-user",
                     "defer": "deferred", "addressed": "addressed", "reopen": "active"}
         if disposition not in statuses or not isinstance(note, str) or not 1 <= len(note) <= 800:
             raise ValueError("use keep, waiting-user, defer, addressed or reopen with a short reason")
         with self.transaction() as db:
             row = db.execute("SELECT r.status,r.checker,c.kind,c.processed FROM requests r JOIN request_context c ON c.request=r.id WHERE r.id=?", (key,)).fetchone()
-            if not row or row[0] in ("achieved", "cancelled") or row[2] in ("goal", "autonomous"):
-                return False
-            if disposition == "addressed" and row[1] != "operator":
-                return False  # exact-output and other configured checks remain authoritative
-            if disposition == "addressed" and row[2] in ("message", "notification") and not row[3]:
+            self.refusal = (
+                "unknown request ID" if not row else
+                "the request is already %s" % row[0] if row[0] in ("achieved", "cancelled") else
+                "goal cycles are not disposed; retire the goal with goal-drop" if row[2] == "goal" else
+                "autonomous work has no disposition" if row[2] == "autonomous" else
+                # exact-output and other configured checks remain authoritative
+                "this request has its own checker and completes when the check passes"
+                if disposition == "addressed" and row[1] != "operator" else
+                "a message is addressed only after a turn has processed it"
+                if disposition == "addressed" and row[2] in ("message", "notification") and not row[3] else
+                None)
+            if self.refusal:
                 return False
             kind = "task" if disposition == "keep" else row[2]
             db.execute("UPDATE requests SET status=? WHERE id=?", (statuses[disposition], key))

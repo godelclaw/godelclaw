@@ -172,6 +172,7 @@ def begin(turn, source, message):
             _focus = "input:" + strategy.digest([os.environ.get("METTACLAW_INSTANCE", "default"), ids])
             _message_focus = _focus
             store.accept(_focus, str(message), kind="message" if str(source) == "operator-event" else "notification")
+            store.link_inputs(_focus, ids)
         elif _focus is None:
             active = store.active()
             if active:
@@ -576,13 +577,37 @@ def request_read(request, offset):
     return strategy.encoded(ledger().request_record(str(request), int(offset))) if enabled() else "PROTECTED_STRATEGY_DISABLED"
 
 
+def _request_for_ticket(store, value):
+    """A mailbox ticket names the request formed from that one arrival."""
+    instance = os.environ.get("METTACLAW_INSTANCE", "")
+    identity = value if value.startswith("mailbox:") else "mailbox:%s:%s" % (instance, value)
+    matches = store.requests_with_input(identity)
+    if not matches:
+        return None, ("unknown ID %s: neither a request ID nor the mailbox ticket of a recorded "
+                      "request; (requests) lists request IDs" % value)
+    match = matches[-1]
+    if len(match["inputs"]) > 1:
+        return None, ("mailbox ticket %s arrived in request %s together with %d other input(s); a "
+                      "disposition applies to the whole request, so use that ID if you mean all of it"
+                      % (value, match["request"], len(match["inputs"]) - 1))
+    return match["request"], None
+
+
 def request_disposition(request, disposition, note):
     if not enabled():
         return "PROTECTED_STRATEGY_DISABLED"
     import helper
+    store, request = ledger(), str(request)
+    target = request
+    if store.request_record(request).get("status") == "unknown":
+        target, refusal = _request_for_ticket(store, request)
+        if target is None:
+            return "REQUEST_DISPOSITION_WITHHELD: " + refusal
     try:
-        accepted = ledger().disposition(str(request), str(disposition), helper.decode_safe_text(note))
-        return "REQUEST_DISPOSITION_RECORDED" if accepted else "REQUEST_DISPOSITION_WITHHELD"
+        if store.disposition(target, str(disposition), helper.decode_safe_text(note)):
+            return "REQUEST_DISPOSITION_RECORDED" + (
+                "" if target == request else " for request %s (mailbox ticket %s)" % (target, request))
+        return "REQUEST_DISPOSITION_WITHHELD: %s (request %s)" % (store.refusal, target)
     except (ValueError, TypeError) as error:
         return "REQUEST_DISPOSITION_WITHHELD " + str(error)
 
