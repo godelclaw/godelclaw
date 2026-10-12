@@ -99,7 +99,7 @@ class NativeLifetimeTest(unittest.TestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM native_calls").fetchone()[0], 1)
             self.assertEqual(db.execute("SELECT state FROM native_calls").fetchone()[0], "claimed")
 
-    def test_late_evidence_has_bounded_view_and_restart_visible_wake(self):
+    def test_late_evidence_has_bounded_view_and_one_durable_wake(self):
         plan = self.plan(); native_lifetime.claim(plan)
         full = "quoted evidence " * 200
         native_lifetime.settle(plan, "late", full)
@@ -109,13 +109,32 @@ class NativeLifetimeTest(unittest.TestCase):
         self.assertTrue(value["truncated"])
         self.assertFalse(value["action_authority"])
         self.assertIn(plan.correlation, native_lifetime.evidence_context())
-        with mock.patch.dict(sys.modules, {"telegram": SimpleNamespace(enqueue_runtime_event=mock.Mock(return_value=True))}), \
-             mock.patch.object(native_lifetime, "_notified", set()):
+        failing = mock.Mock(side_effect=RuntimeError("channel unavailable"))
+        with mock.patch.dict(sys.modules, {"telegram": SimpleNamespace(enqueue_runtime_event=failing)}):
+            native_lifetime.notify()  # a missed wake is tried again
+        enqueue = mock.Mock(return_value=True)
+        with mock.patch.dict(sys.modules, {"telegram": SimpleNamespace(enqueue_runtime_event=enqueue)}):
             native_lifetime.notify(); native_lifetime.notify()
-            sys.modules["telegram"].enqueue_runtime_event.assert_called_once()
-            native_lifetime._notified.clear()  # a new process can recreate a missed wake
+            enqueue.assert_called_once()
+        # A restart does not announce it again: the same notice would name an
+        # input that was already addressed. The context listing stays.
+        self.assertIn(plan.correlation, native_lifetime.evidence_context())
+
+    def test_outcomes_from_before_the_notified_column_count_as_announced(self):
+        late = self.plan(); native_lifetime.claim(late)
+        native_lifetime.settle(late, "late", "evidence")
+        pending = self.plan()
+        with native_lifetime.transaction() as db:
+            db.execute("ALTER TABLE native_calls DROP COLUMN notified")
+            db.execute("INSERT INTO native_calls(id,epoch,pid,process_start,created,updated,state) "
+                       "VALUES (?,?,0,'gone',1,1,'submitted')", (pending.correlation, "old"))
+        enqueue = mock.Mock(return_value=True)
+        with mock.patch.dict(sys.modules, {"telegram": SimpleNamespace(enqueue_runtime_event=enqueue)}):
             native_lifetime.notify()
-            self.assertEqual(sys.modules["telegram"].enqueue_runtime_event.call_count, 2)
+        # Only the call interrupted by the dead process is announced.
+        enqueue.assert_called_once()
+        self.assertIn(pending.correlation, enqueue.call_args[0][0])
+        self.assertIn("uncertain", enqueue.call_args[0][0])
 
 
 if __name__ == "__main__":

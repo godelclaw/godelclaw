@@ -16,7 +16,6 @@ EVIDENCE_LIMIT = 32
 EVIDENCE_SECONDS = 7 * 86400
 RECEIPT_LIMIT = 256
 RECEIPT_SECONDS = 30 * 86400
-_notified = set()
 
 
 def _prune(db):
@@ -54,6 +53,10 @@ def transaction():
         for name in ("activity", "lane"):
             if name not in columns:
                 db.execute(f"ALTER TABLE native_calls ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
+        if "notified" not in {row[1] for row in db.execute("PRAGMA table_info(native_calls)")}:
+            db.execute("ALTER TABLE native_calls ADD COLUMN notified INTEGER NOT NULL DEFAULT 0")
+            # Processes before this column announced the outcomes they saw.
+            db.execute("UPDATE native_calls SET notified=1 WHERE state NOT IN ('claimed','submitted')")
         _prune(db)
         yield db
 
@@ -153,14 +156,17 @@ def evidence_context():
 
 
 def notify():
-    rows = status()
-    _notified.intersection_update(row["id"] for row in rows)
-    for row in rows:
-        if row["state"] not in ("late", "uncertain") or row["id"] in _notified:
-            continue
+    # Once per call, across restarts: a repeated identical notice would name
+    # an input that was already addressed, and could not be taken up again.
+    recover()
+    with transaction() as db:
+        rows = db.execute("SELECT id,state FROM native_calls WHERE state IN ('late','uncertain') "
+                          "AND notified=0 ORDER BY created").fetchall()
+    for identity, state in rows:
         try:
             import telegram
-            if telegram.enqueue_runtime_event("retained model call " + row["id"] + " is " + row["state"] + "; inspect model-result before reconsidering", "model call evidence ready"):
-                _notified.add(row["id"])
+            telegram.enqueue_runtime_event("retained model call " + identity + " is " + state + "; inspect model-result before reconsidering", "model call evidence ready")
         except Exception:
-            pass  # the durable context listing remains available
+            continue  # the durable context listing remains available
+        with transaction() as db:
+            db.execute("UPDATE native_calls SET notified=1 WHERE id=?", (identity,))
