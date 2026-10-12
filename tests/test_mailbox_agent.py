@@ -187,6 +187,17 @@ class MailboxAgentTests(unittest.TestCase):
         self.send("0","conversation","same body","inbox","local"); inbox.scan(inbox.box)
         self.assertEqual(len(self.events),3)
 
+    def test_sibling_mail_is_offered_with_its_sender_and_other_stamps_are_not(self):
+        peers = []
+        box = mailbox_agent.Inbox(dict(self.config,auto_receive=["inbox"],siblings={"godel":str(self.root/"godel")}),
+            offer=lambda text,identity,sibling=None:self.events.append((text,identity)) or peers.append(sibling) or True)
+        self.boxes.append(box)
+        self.send("1","conversation","From: godel\n\nhello","inbox","local"); box.scan(box.box)
+        self.send("2","conversation","From: mallory\n\nhello","inbox","local"); box.scan(box.box)
+        self.assertEqual(peers,["godel",None])
+        self.assertEqual(json.loads(self.events[0][0])["from"],"godel")
+        self.assertNotIn("from",json.loads(self.events[1][0]))
+
     def test_backpressure_keeps_the_next_message_and_releases_it_after_settlement(self):
         inbox=self.inbox(auto_receive=["inbox"],max_active=1)
         for index in range(2): self.send(str(index),"conversation",str(index),"inbox","local")

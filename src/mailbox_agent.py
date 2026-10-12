@@ -18,6 +18,8 @@ import socket
 import sys
 import tempfile
 import threading
+import time
+import uuid
 
 _runtime = None
 _runtime_lock = threading.RLock()
@@ -25,6 +27,12 @@ _starter = None
 _starter_stop = None
 _name = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")
 ABI = "agent-input-v1"
+# A sibling's note starts with this line; the receiver honours it only for a
+# configured sibling, and only to lower the note's standing to peer mail.
+_from = re.compile(r"From: ([A-Za-z0-9_.-]{1,64})\n\n")
+SIBLING_WAKES_PER_HOUR = 6
+SEND_CHARS = 32768
+_sibling_wakes = {}
 
 
 def _write_health(path, value):
@@ -63,7 +71,7 @@ def source_ticket(value, instance):
     return ticket
 
 
-def _api(config):
+def _tool(config, name):
     # Isolate this release from older clients already loaded by recall or
     # other providers. Never replace their global modules or value classes.
     tools = str(Path(config["tools"]).resolve())
@@ -72,11 +80,56 @@ def _api(config):
         spec=importlib.machinery.ModuleSpec(package,loader=None,is_package=True)
         spec.submodule_search_locations=[tools]
         sys.modules.setdefault(package,importlib.util.module_from_spec(spec))
-    native_mailbox=importlib.import_module(package+".native_mailbox")
-    space_service_client=importlib.import_module(package+".space_service_client")
-    if Path(native_mailbox.__file__).resolve().parent != Path(tools):
+    module=importlib.import_module(package+"."+name)
+    if Path(module.__file__).resolve().parent != Path(tools):
         raise RuntimeError("configured native mailbox implementation differs")
-    return native_mailbox, space_service_client
+    return module
+
+
+def _api(config):
+    return _tool(config,"native_mailbox"), _tool(config,"space_service_client")
+
+
+def _siblings(config):
+    siblings = dict(config.get("siblings") or {})
+    if any(not isinstance(k,str) or not _name.fullmatch(k) or k == _own_name(config) or
+           not isinstance(v,str) or not v for k,v in siblings.items()):
+        raise ValueError("siblings map agent names to inbox directories")
+    return siblings
+
+
+def _own_name(config):
+    # The mailbox name siblings address this agent by; the instance by default.
+    return config.get("name", config.get("instance"))
+
+
+def sibling_wake(name, now=None):
+    """A sibling's notes wake this agent at most SIBLING_WAKES_PER_HOUR times an
+    hour; later notes wait for its next turn, so two agents cannot ping-pong."""
+    now = time.time() if now is None else now
+    recent = [t for t in _sibling_wakes.get(name, ()) if now - t < 3600]
+    allowed = len(recent) < SIBLING_WAKES_PER_HOUR
+    if allowed: recent.append(now)
+    _sibling_wakes[name] = recent
+    return allowed
+
+
+def send(to, text):
+    """Deliver a note to a sibling's inbox, stamped with this agent's name."""
+    config = json.loads(Path(os.environ["METTACLAW_MAILBOX_CONFIG"]).read_text())
+    siblings = _siblings(config)
+    text = str(text)
+    if to not in siblings:
+        return "MAILBOX_SEND_REFUSED: no sibling mailbox named %s; siblings: %s" % (to, ", ".join(sorted(siblings)) or "none")
+    if not text.strip() or len(text) > SEND_CHARS:
+        return "MAILBOX_SEND_REFUSED: a note needs 1 to %d characters" % SEND_CHARS
+    identity = uuid.uuid4().hex
+    try:
+        _tool(config,"mailbox_bridge").deliver(siblings[to], identity, identity, "local",
+                                               "From: %s\n\n%s" % (_own_name(config), text))
+    except OSError as error:
+        return "MAILBOX_SEND_FAILED: %s" % error
+    return "MAILED %s id=%s chars=%d" % (to, identity[:12], len(text))
 
 
 def _committed(identity):
@@ -86,8 +139,10 @@ def _committed(identity):
     return bool(input_ack.already_committed(identity))
 
 
-def _offer(text, identity):
+def _offer(text, identity, sibling=None):
     import telegram
+    if sibling:
+        return telegram.enqueue_mailbox_event(text, identity, sibling)
     return telegram.enqueue_mailbox_event(text, identity)
 
 
@@ -103,6 +158,7 @@ class Inbox:
                                     for k,v in self.channels.items()):
             raise ValueError("mailbox channels require configured senders")
         self.auto_receive = tuple(config.get("auto_receive", ()))
+        self.siblings = _siblings(config)
         if (len(set(self.auto_receive)) != len(self.auto_receive) or
             any(channel not in self.channels for channel in self.auto_receive)):
             raise ValueError("persistent inbox requires configured channels")
@@ -304,7 +360,13 @@ class Inbox:
                 data = {"ticket":ticket,"channel":message[3],"correlation":message[4],
                         "sender":message[5],"characters":len(message[6]),
                         "body":message[6][:self.preview],"read_more":len(message[6])>self.preview}
-                if self.offer(json.dumps(data,ensure_ascii=False),identity):
+                stamp = _from.match(message[6]) if message[3] in self.auto_receive else None
+                if stamp and stamp.group(1) in self.siblings:
+                    data["from"] = stamp.group(1)
+                    offered = self.offer(json.dumps(data,ensure_ascii=False),identity,sibling=data["from"])
+                else:
+                    offered = self.offer(json.dumps(data,ensure_ascii=False),identity)
+                if offered:
                     self.offered.add(ticket)
         if self.codex: self.codex.update(codex_bindings)
         return captured

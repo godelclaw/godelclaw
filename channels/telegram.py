@@ -2212,19 +2212,24 @@ def activity_source_ack(ids):
     return handover_ack(updates)
 
 
-def enqueue_mailbox_event(text, identity):
-    """Offer inert native data with a stable identity to the attention queue."""
+def enqueue_mailbox_event(text, identity, sibling=None):
+    """Offer inert native data with a stable identity to the attention queue.
+    A sibling agent's note is peer input, not operator input, and its wakes
+    are capped; a note over the cap waits for the next turn."""
     import mailbox_agent
     mailbox_agent.source_ticket(identity,os.environ.get("METTACLAW_INSTANCE", ""))
+    peer = bool(sibling)
+    wake = ("sibling mail" if mailbox_agent.sibling_wake(sibling) else "") if peer else "mailbox arrival"
     if metta_client():
-        _metta_queue({"chat":RUNTIME_CHAT,"text":"[mailbox] "+str(text),"from_bot":False,
-                      "tier":"light","update_id":identity,"wake":"mailbox arrival"})
+        _metta_queue({"chat":RUNTIME_CHAT,"text":"[mailbox] "+str(text),"from_bot":peer,
+                      "tier":"light","update_id":identity,"wake":wake})
     else:
         global _activity_epoch
         with _msg_lock:
-            _pending_messages.append((RUNTIME_CHAT,"[mailbox] "+str(text),False,"light",identity))
+            _pending_messages.append((RUNTIME_CHAT,"[mailbox] "+str(text),peer,"light",identity))
             _activity_epoch += 1
-    _request_wake("mailbox arrival")
+    if wake:
+        _request_wake(wake)
     return True
 
 

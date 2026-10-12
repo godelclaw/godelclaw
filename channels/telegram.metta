@@ -459,8 +459,11 @@
          (if (not (== $runtime ())) (runtime $runtime) ())))
      (let ($head $tail) (tg:uncons $items)
        (let ($seq $task $chat $text $bot $tier $uid) $head
+         ;; A runtime item from a peer (a sibling's mail) leaves the batch
+         ;; non-human unless another runtime item in it is not from a peer.
          (if (== $chat "runtime")
-           (tg:route-batch $tail $human $newest $tier)
+           (tg:route-batch $tail $human $newest
+             (if $bot (if (== $runtime ()) (peer $tier) $runtime) $tier))
            (tg:route-batch $tail (if $bot $human ($chat $bot $tier)) ($chat $bot $tier) $runtime))))))
 
 (= (tg:ledger-size)
@@ -529,6 +532,8 @@
 (= (tg:apply-route $routed)
    (case $routed
      ((() True)
+      ((runtime (peer $tier))
+       (let $a (tg:set last-human 0) (let $b (tg:set last-tier $tier) True)))
       ((runtime $tier)
        (let $a (tg:set last-human 1) (let $b (tg:set last-tier $tier) True)))
       (($chat $bot $tier)
