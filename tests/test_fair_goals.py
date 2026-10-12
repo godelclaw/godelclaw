@@ -329,3 +329,57 @@ class FairHostTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GoalRetirementTest(unittest.TestCase):
+    def test_retired_goal_cycles_close_without_achievement_and_stay_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = Ledger(root / "strategy.sqlite3")
+            fair.synchronize(store, [definition("ggb"), definition("other")], 100)
+            view = fair.snapshot(store, 100)
+            fair.accept_selected(store, view)
+            with store.transaction() as db:
+                owner = store.get(db, "owner")
+                ids = dict(db.execute("SELECT name,id FROM goal_accounts"))
+            selected = view["selected"]["name"]
+            prefix = "goal:%s:%s:" % (owner, ids[selected])
+            closed = store.retire(prefix, "composted: superseded")
+            self.assertEqual(len(closed), 1)
+            with store.transaction() as db:
+                status = db.execute("SELECT status FROM requests WHERE id=?", (closed[0],)).fetchone()[0]
+                achieved = db.execute("SELECT COUNT(*) FROM requests WHERE status='achieved'").fetchone()[0]
+            self.assertEqual(status, "cancelled")
+            self.assertEqual(achieved, 0)
+            # Removing the definition takes the goal out of scheduling; a
+            # restart (a fresh ledger on the same file) keeps it out.
+            others = [d for d in (definition("ggb"), definition("other")) if d["name"] != selected]
+            fair.synchronize(store, others, 200)
+            reopened = Ledger(root / "strategy.sqlite3")
+            fair.synchronize(reopened, others, 300)
+            queue = fair.snapshot(reopened, 300)["queue"]
+            self.assertNotIn(selected, [g["name"] for g in queue])
+            self.assertEqual(reopened.retire(prefix, "again"), [])
+
+
+class GoalDropClosesLedgerCyclesTest(unittest.TestCase):
+    def test_goal_drop_retires_the_open_cycle(self):
+        import goals
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ledger_path = root / "observed-strategy.sqlite3"
+            goals_path = root / "goals.metta"
+            goals_path.write_text(
+                '(goal ggb Research sti:0.5 lti:0.5 vibes:() blocked-by:none last-verified:never note:"old hook")\n'
+                '(goal-policy ggb share:1 every:once urgency:0 checker:operator)\n', encoding="utf-8")
+            store = Ledger(ledger_path)
+            fair.synchronize(store, fair.definitions(goals_path), 100)
+            fair.accept_selected(store, fair.snapshot(store, 100))
+            with patch.dict(os.environ, {"METTACLAW_OBSERVED_STRATEGY": "1",
+                                         "METTACLAW_STRATEGY_PATH": str(ledger_path)}), \
+                    patch.object(host, "_ledger", None), patch.object(host, "_booted", False):
+                result = goals.goal_drop("ggb", "superseded by mailboxes", str(goals_path))
+            self.assertIn("1 open cycle(s) closed, not achieved", result)
+            with store.transaction() as db:
+                statuses = [r[0] for r in db.execute("SELECT status FROM requests WHERE id LIKE 'goal:%'")]
+            self.assertEqual(statuses, ["cancelled"])

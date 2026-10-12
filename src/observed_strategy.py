@@ -460,6 +460,20 @@ class Ledger:
             self.event(db, "finish", request=request, ticket=ticket)
             return True
 
+    def retire(self, prefix, note):
+        """Close the open cycles of a goal its agent retired; never an achievement."""
+        with self.transaction() as db:
+            rows = [r[0] for r in db.execute(
+                "SELECT id FROM requests WHERE substr(id,1,?)=? AND status IN ('active','deferred','waiting-user')",
+                (len(prefix), prefix))]
+            for request in rows:
+                db.execute("UPDATE requests SET status='cancelled' WHERE id=?", (request,))
+                db.execute("UPDATE request_context SET note=? WHERE request=?", (note[:800], request))
+                self.event(db, "goal-retire", request=request, note=note[:800], certified_achievement=False)
+            if rows:
+                self.advance(db)
+            return rows
+
     def cancel(self, request, operator_authorized=False):
         if not operator_authorized:
             return False

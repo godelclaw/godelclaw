@@ -144,9 +144,10 @@ PAGES = {
         'the reviewed goals, certify judgments, send messages, or change their policies.'),
     "goal-drop": (
         'usage: (goal-drop "name" "reason")\n'
-        'Needs the cull-review flag on that goal, OR a reason starting with\n'
-        '"solved" plus a last-verified date on the goal. Composting is\n'
-        'deliberate — a goal you merely dislike is edited, not dropped.'),
+        'Retires the goal with your reason: it leaves scheduling, goes to the\n'
+        'compost log, and its open cycles close without counting as achieved.\n'
+        'Reason "solved" claims achievement and needs a last-verified date.\n'
+        'goal-write brings a retired goal back.'),
     "pin": (
         'usage: (pin "short state line")  |  (unpin "fragment")\n'
         'Persists to disk, survives restarts, shown every turn under PINNED.\n'

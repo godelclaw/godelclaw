@@ -68,10 +68,14 @@ class GoalKernelTests(unittest.TestCase):
                   encoding="utf-8") as fh:
             self.assertIn("probmetta", fh.read())
 
-    def test_4b_unflagged_drop_rejected(self):
+    def test_4b_agent_retires_with_any_reason(self):
         path = self.stack([FREE])
-        self.assertTrue(goals.goal_drop("attune", "bored", path)
-                        .startswith("rejected"))
+        self.assertTrue(goals.goal_drop("attune", "", path).startswith("rejected"))
+        self.assertIn("composted (superseded by native mailboxes)",
+                      goals.goal_drop("attune", "superseded by native mailboxes", path))
+        self.assertNotIn("(goal attune", goals.goals_view(path))
+        with open(os.path.join(self.tmp.name, "goals_compost.log"), encoding="utf-8") as fh:
+            self.assertIn("superseded by native mailboxes", fh.read())
 
     def test_4c_cull_flag_clears_after_recovery(self):
         weak = GOAL.replace("sti:0.8", "sti:0.01").replace("lti:0.3", "lti:0.01")

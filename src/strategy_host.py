@@ -50,6 +50,21 @@ def fair_enabled():
     return enabled() and os.environ.get("METTACLAW_FAIR_GOALS", "0") == "1"
 
 
+def retire_goal(name, reason):
+    """Close the open cycles of a goal the agent retired. Returns how many."""
+    if not enabled():
+        return 0
+    store = ledger()
+    with store.transaction() as db:
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE name='goal_accounts'").fetchone():
+            return 0
+        row = db.execute("SELECT id FROM goal_accounts WHERE name=?", (str(name),)).fetchone()
+        owner = store.get(db, "owner")
+    if not row:
+        return 0
+    return len(store.retire("goal:%s:%s:" % (owner, row[0]), "composted: " + str(reason)))
+
+
 def goal_snapshot():
     import fair_goals
     import goals

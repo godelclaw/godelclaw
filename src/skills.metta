@@ -8,7 +8,7 @@
     "- Remove pins containing a fragment: (unpin \"fragment\")"
     "- Goal stack + mood (kernel decays STI, consolidates LTI, flags stuck/cull-review at each wake): (goals)"
     "- Add/update one goal (liberal format, see (help \"goal-write\")): (goal-write (goal name Area sti:0.8 lti:0.3 vibes:(a b) blocked-by:none last-verified:never note:why it matters))"
-    "- Compost a goal (needs cull-review flag, or reason solved with last-verified set): (goal-drop \"name\" \"reason\")"
+    "- Retire a goal with a reason, or close it with reason solved once last-verified is set; it goes to the compost log and goal-write can bring it back: (goal-drop \"name\" \"reason\")"
     "- Rest now, ending this burst until the next human message: (rest)"
     "- Rest now and poll more slowly while idle: (rest seconds)"
     "- Rest with a stated intention shown at your next waking: (rest seconds \"why\")"

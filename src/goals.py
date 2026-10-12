@@ -498,9 +498,20 @@ def goal_write(atom, goals_path=None):
         return verdict
 
 
+def _retire_in_ledger(name, reason):
+    """Close the goal's open cycles in the request ledger, never as achieved."""
+    try:
+        import strategy_host
+        return strategy_host.retire_goal(name, reason)
+    except Exception:
+        return 0
+
+
 def goal_drop(name, reason, goals_path=None):
-    """Remove a goal. Allowed only via death-review (cull-review flag) or as
-    solved with a real last-verified — never-verified goals cannot be solved."""
+    """Remove a goal and compost it. Reason 'solved' claims achievement and
+    needs a real last-verified; any other reason retires the goal. Its open
+    ledger cycles close without counting as achieved, and goal-write can
+    bring the goal back."""
     with _LOCK:
         path = _goals_path(goals_path)
         name, reason = str(name), str(reason)
@@ -513,14 +524,12 @@ def goal_drop(name, reason, goals_path=None):
         if not match:
             return "no goal named %s" % name
         g = match[0]
-        if reason == "solved":
-            if g["verified"] == "never":
-                return ("rejected: last-verified is 'never' — verify progress "
-                        "(goal-write with a last-verified timestamp) before "
-                        "claiming solved")
-        elif (name, "cull-review") not in flags:
-            return ("rejected: drop requires the cull-review flag (death-review) "
-                    "or reason 'solved' on a verified goal")
+        if not reason.strip():
+            return "rejected: give a reason, or 'solved' for a verified goal"
+        if reason == "solved" and g["verified"] == "never":
+            return ("rejected: last-verified is 'never' — verify progress "
+                    "(goal-write with a last-verified timestamp) before "
+                    "claiming solved, or retire it with another reason")
         try:
             with open(_compost_path(path), "a", encoding="utf-8") as fh:
                 fh.write("%s %s %s\n" % (
@@ -533,4 +542,6 @@ def goal_drop(name, reason, goals_path=None):
         _write_lines(path, _emit(goals, flags,
                                  budget if budget is not None else DEFAULT_BUDGET,
                                  other, state.get("mood") or None))
-        return "goal %s composted (%s) — remember a compost note" % (name, reason)
+    closed = _retire_in_ledger(name, reason)
+    return "goal %s composted (%s)%s — remember a compost note" % (
+        name, reason, "; %d open cycle(s) closed, not achieved" % closed if closed else "")
