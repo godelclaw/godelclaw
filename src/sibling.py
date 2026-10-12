@@ -125,3 +125,28 @@ def sibling_on():
                 % _CLAWS[sib]["label"])
     return ("sibling-on incomplete: marker cleared but service is %r (%s) — "
             "the watchdog will retry within 30 min" % (state, out))
+
+
+def resume_self():
+    """Operator start: undo a pause of this body's own service.
+
+    An operator /start outranks a sibling's pause, so it clears this body's
+    pause marker and starts its service when it is not active. It reports
+    only what it observed afterwards.
+    """
+    me = _me()
+    if not me:
+        return "resume: cannot tell which body this is"
+    notes = []
+    try:
+        if os.path.isfile(_marker(me)):
+            os.remove(_marker(me))
+            notes.append("pause marker cleared")
+    except OSError as exc:
+        return "resume failed removing pause marker: %s" % exc
+    if _active(me) != "active":
+        code, out = _systemctl("start", _CLAWS[me]["unit"])
+        state = _active(me)
+        notes.append("service %s" % state if code == 0 else
+                     "service start failed (%s)" % out)
+    return "; ".join(notes) if notes else "service already active"

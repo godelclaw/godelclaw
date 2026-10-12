@@ -163,11 +163,19 @@
    (case $name
      (("/start"
        (let $reply (py-call (lifecycle.start))
-         (let $woken (if (== (py-call (lifecycle.cognition_enabled)) 1) (tc:wake "operator start") ())
-           (tc:text $reply))))
+         (let $resumed (py-call (sibling.resume_self))
+           (if (== (py-call (lifecycle.cognition_enabled)) 1)
+             (let $woken (tc:wake "operator start")
+               (let $note (tc:text $resumed) (format-args "Started. Cognition is enabled; {}." ($note))))
+             (let $view (tc:text (py-call (lifecycle.view)))
+               (format-args "Start recorded, but cognition is still disabled: {}" ($view)))))))
       ("/stop"
        (let $reply (py-call (lifecycle.stop))
-         (let $woken (tc:wake "operator stop") (tc:text $reply))))
+         (let $woken (tc:wake "operator stop")
+           (if (== (py-call (lifecycle.cognition_enabled)) 0)
+             "Stopped. Cognition is paused and nothing is sent until /start."
+             (let $view (tc:text (py-call (lifecycle.view)))
+               (format-args "Stop recorded, but cognition still reads enabled: {}" ($view)))))))
       ("/wake" (let $woken (tc:wake "/wake") "Waking."))
       ("/claude_code_authorization" (tc:text (py-call (helper.claude_code_toggle))))
       ("/health" (tc:text (py-call (runtime_health.report))))

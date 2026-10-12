@@ -75,29 +75,15 @@ class ContextSourcesTest(unittest.TestCase):
         self.assertIn("active-query-declaration", ids)
         self.assertEqual(ids[-1], "conversation")
 
-    def test_development_state_separates_pending_proposals_from_active_iter(self):
+    def test_development_state_shows_active_iter_and_no_proposals(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             transformations = root / "transformations"
             proposals = root / "proposals"
             transformations.mkdir()
-            proposal_id = "a" * 64
-            proposal = proposals / proposal_id
-            proposal.mkdir(parents=True)
+            (proposals / ("a" * 64)).mkdir(parents=True)
             (transformations / "10_active.metta").write_text(
                 "(= (iter-transform $visible) (success $visible))\n",
-                encoding="utf-8",
-            )
-            (proposal / "manifest.json").write_text(
-                __import__("json").dumps({
-                    "proposal_id": proposal_id,
-                    "state": "ready",
-                    "operation": "edit",
-                    "target": "src/loop.metta",
-                    "candidate_sha256": "b" * 64,
-                    "syntax": {"status": "pass"},
-                    "semantic": {"status": "not-requested"},
-                }),
                 encoding="utf-8",
             )
             with mock.patch.dict(os.environ, {
@@ -106,11 +92,9 @@ class ContextSourcesTest(unittest.TestCase):
             }):
                 observed = __import__("json").loads(development_state.view())
 
-        pending = observed["protected_source_proposals"]["pending"]
         active = observed["iter_transformations"]["active"]
-        self.assertEqual(pending[0]["proposal_id"], proposal_id)
-        self.assertEqual(pending[0]["state"], "ready")
         self.assertEqual(active[0]["name"], "10_active.metta")
+        self.assertNotIn("protected_source_proposals", observed)
         self.assertNotIn("promotion", observed["iter_transformations"])
 
     def test_broker_receipt_crosses_the_real_context_bundle(self):

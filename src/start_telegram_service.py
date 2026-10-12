@@ -4,6 +4,34 @@ import os
 from pathlib import Path
 
 
+def agent_name():
+    """The agent's name for command replies, from METTACLAW_AGENT_NAME.
+
+    The channel service accepts 1..32 bytes without control characters, quotes
+    or backslashes; anything else leaves the name out, and replies then say
+    "the agent".
+    """
+    name = os.environ.get("METTACLAW_AGENT_NAME", "").strip()
+    data = name.encode("utf-8")
+    if not 0 < len(data) <= 32 or any(b < 32 or b == 127 for b in data) or '"' in name or "\\" in name:
+        return None
+    return name
+
+
+def write_commands(repo, path):
+    """Write this agent's command declarations: the shared file plus its name."""
+    text = (Path(repo) / "channels/telegram_commands.metta").read_text(encoding="utf-8")
+    name = agent_name()
+    if name is not None:
+        text = text.rstrip("\n") + '\n\n(tg-cmd:agent "%s")\n' % name
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(text, encoding="utf-8")
+    os.replace(temporary, path)
+    return path
+
+
 def command(repo, state, credential):
     def required(name):
         value = os.environ.get(name, "").strip()
@@ -20,7 +48,8 @@ def command(repo, state, credential):
     argv = [binary, "--run", "--root", root, "--state-dir", str(state),
             "--worker", os.environ.get("METTACLAW_INSTANCE", "agent"), "--program", "channel",
             "--listener-fd", "3", "--operator-fd", "4", "--credential-file", str(credential),
-            "--commands", str(repo / "channels/telegram_commands.metta"), "--command-deadline-ms", "3000"]
+            "--commands", str(write_commands(repo, Path(state) / "commands.metta")),
+            "--command-deadline-ms", "3000"]
     for chat in sorted(chats):
         argv += ["--chat", str(chat)]
     for operator in sorted(operators):
@@ -40,9 +69,16 @@ def command(repo, state, credential):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", type=Path, required=True)
-    parser.add_argument("--state", type=Path, required=True)
-    parser.add_argument("--credential", type=Path, required=True)
+    parser.add_argument("--state", type=Path)
+    parser.add_argument("--credential", type=Path)
+    parser.add_argument("--write-commands", type=Path,
+                        help="only write this agent's command file to PATH and exit")
     args = parser.parse_args()
+    if args.write_commands:
+        write_commands(args.repo, args.write_commands)
+        return
+    if args.state is None or args.credential is None:
+        parser.error("--state and --credential are required to start the service")
     try:
         argv = command(args.repo, args.state, args.credential)
     except (KeyError, ValueError):

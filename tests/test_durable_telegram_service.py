@@ -178,7 +178,7 @@ with tempfile.TemporaryDirectory(prefix="lila-durable-telegram-") as temp:
             wait(lambda: (42, "Waking.") in api.sent, "wake answered by the client")
             api.add(75, 42, 7, "/engine")
             wait(lambda: (42, "engine: cetta") in api.sent, "engine answered by the client")
-            assert not any(t.startswith("No answer from Lila") for c, t in api.sent), api.sent
+            assert not any(t.startswith("No answer from") for c, t in api.sent), api.sent
             # From someone who is not an operator it is ordinary conversation.
             api.add(76, 42, 5, "/help")
             wait(lambda: tg.pendingActivityCount() == 3, "non-operator command as activity")

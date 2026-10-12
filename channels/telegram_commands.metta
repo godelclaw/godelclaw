@@ -1,18 +1,18 @@
-; Lila's operator commands, as the CeTTa Telegram channel service reads them
-; (--commands). Declarations only; the service refuses anything else.
+; An agent's operator commands, as the CeTTa Telegram channel service reads
+; them (--commands). Declarations only; the service refuses anything else.
+; This file is shared by every agent. src/start_telegram_service.py writes each
+; agent's own copy with (tg-cmd:agent NAME) from METTACLAW_AGENT_NAME.
 ;
 ; help, stop and start are the service's own: it answers them at once, and
-; stop holds everything Lila submits until start. Every delegated command is
-; asked of Lila's command responder, never of her cognition; if that answer
-; is late, the service replies with a notice and edits it when the answer
-; arrives. The menus answer with buttons; a tap on one is asked of the
+; stop holds everything the agent submits until start. Every delegated command
+; is asked of the agent's command responder, never of its cognition; if that
+; answer is late, the service replies with a notice and edits it when the
+; answer arrives. The menus answer with buttons; a tap on one is asked of the
 ; responder the same way and answered within the same deadline.
 
-(tg-cmd:agent "Lila")
-
 (tg-cmd:command "/help" help "List these commands")
-(tg-cmd:command "/stop" stop "Stop cognition and hold everything Lila sends")
-(tg-cmd:command "/start" start "Enable cognition and let her messages out again")
+(tg-cmd:command "/stop" stop "Stop cognition and hold everything the agent sends")
+(tg-cmd:command "/start" start "Enable cognition and let the agent's messages out again")
 (tg-cmd:command "/wake" delegated "End the current rest")
 (tg-cmd:command "/activity" delegated "Show whether cognition is working, resting, or idle")
 (tg-cmd:command "/health" delegated "Show runtime, channel, and memory health")

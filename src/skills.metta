@@ -33,10 +33,10 @@
     "- The machine and you right now, on demand: uptime, load, memory and its stalls, swap, heaviest processes: (vitals)"
     "- Independent execution gateway, when configured: (gateway-tools) lists named tools and input schemas; (gateway-start \"stable-id\" \"tool\" \"json-object\") returns immediately; inspect completion with (gateway-status \"stable-id\") or request cancellation with (gateway-cancel \"stable-id\")."
     "- Read file to string: (read-file \"filename\")"
-    "- Propose an exact protected-file replacement: (write-file \"filename\" \"string\")"
-    "- Propose appending one line to a protected file: (append-file \"filename\" \"string\")"
+    "- Replace a file with exactly this content; the previous version is kept as a backup: (write-file \"filename\" \"string\")"
+    "- Append one line to an existing file: (append-file \"filename\" \"string\")"
     "- Read a numbered window of a file: (read-lines \"filename\" start count)"
-    "- Propose an exact unique-string edit to protected code: (edit-file \"filename\" \"old-string\" \"new-string\")"
+    "- Replace a string that occurs exactly once in a file: (edit-file \"filename\" \"old-string\" \"new-string\")"
     "- Compact directory tree, dirs first with file sizes: (ls-tree \"dir\" depth)"
     "- Search text across files under a dir, bounded output: (grep-files \"pattern\" \"dir\")",
 	    ;COMMUNICATION CHANNELS:
@@ -110,13 +110,13 @@
    (py-call (fsops.read_file $file)))
 
 (= (write-file $file $str)
-   (py-call (ggb_bridge_ext.ggbProposeWrite $file $str)))
+   (py-call (file_tools.write_file $file $str)))
 
 (= (edit-file $file $old $new)
-   (py-call (ggb_bridge_ext.ggbProposeEdit $file $old $new)))
+   (py-call (file_tools.edit_file $file $old $new)))
 
 (= (append-file $file $str)
-   (py-call (ggb_bridge_ext.ggbProposeAppend $file $str)))
+   (py-call (file_tools.append_file $file $str)))
 
 !(import_prolog_functions_from_file ./src/skills.pl
                                     (shell first_char run-command-batch-once command-batch-errors))
