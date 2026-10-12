@@ -517,7 +517,7 @@
        (let ($seq $task $chat $text $bot $tier $uid) $head
          (let $_ (if (== (py-call (input_ack.already_committed $uid)) 1)
                    (if (tg:ack-all ($head))
-                     (if (== (py-call (telegram.activity_source_ack $uid)) 1)
+                     (if (== (tg:safe-source-ack $uid) 1)
                          (tg:forget-items ($head)) ()) ()) ())
            (tg:recover-committed $tail))))))
 
@@ -537,13 +537,17 @@
            (let $b (tg:set last-human (if $bot 0 1))
              (let $c (tg:set last-tier (if $bot "full" $tier)) True))))))))
 
+(= (tg:safe-source-ack $ids)
+   (case (catch (py-call (telegram.activity_source_ack $ids)))
+     ((1 1) ($other 0))))
+
 (= (tg:ack-activity-batch)
    (let $prepared (tg:sorted-items (tg:prepared-items))
      (if (== $prepared ()) 1
        (if (if (== (py-call (input_ack.committed (str:join "," (tg:list (tg:update-ids $prepared))))) 1)
                 (tg:log-activity-ack (tg:list (tg:update-ids $prepared))) False)
          (if (tg:ack-all $prepared)
-           (let $handover (py-call (telegram.activity_source_ack (str:join "," (tg:list (tg:update-ids $prepared)))))
+           (let $handover (tg:safe-source-ack (str:join "," (tg:list (tg:update-ids $prepared))))
              (if (== $handover 1)
              (let $gone (tg:forget-items $prepared)
                (let $reset (tg:set prepared-upto 0)

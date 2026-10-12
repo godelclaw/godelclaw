@@ -21,8 +21,27 @@ import threading
 
 _runtime = None
 _runtime_lock = threading.RLock()
+_starter = None
+_starter_stop = None
 _name = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")
 ABI = "agent-input-v1"
+
+
+def _write_health(path, value):
+    if not path: return
+    target = Path(path)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(prefix=".mailbox-health-", dir=target.parent)
+    except OSError: return
+    try:
+        with os.fdopen(fd, "w") as stream:
+            json.dump(value, stream); stream.write("\n")
+        os.replace(temporary, target)
+    except OSError: pass
+    finally:
+        try: os.unlink(temporary)
+        except OSError: pass
 
 
 def _token(value):
@@ -303,24 +322,10 @@ class Inbox:
 
     def _health(self):
         """Diagnostic state is separate from scheduler progress or settlement."""
-        path=self.config.get("health_path")
-        if not path: return
-        target=Path(path)
         value={"instance":self.instance,"watching":self.monitor is not None,
                "error":self.error,"backpressure":self.pressure,
                "scans":self.scans,"notifications":self.notifications}
-        try:
-            target.parent.mkdir(parents=True,exist_ok=True)
-            fd,temporary=tempfile.mkstemp(prefix=".mailbox-health-",dir=target.parent)
-        except OSError: return
-        try:
-            with os.fdopen(fd,"w") as stream:
-                json.dump(value,stream); stream.write("\n")
-            os.replace(temporary,target)
-        except OSError: pass
-        finally:
-            try: os.unlink(temporary)
-            except FileNotFoundError: pass
+        _write_health(self.config.get("health_path"), value)
 
     def _run(self):
         box = None
@@ -393,8 +398,36 @@ def _call(method, *args):
         return json.dumps({"state":"refused","reason":str(error)},ensure_ascii=False)
 
 
+def _start_when_available(stop):
+    while not stop.is_set():
+        try:
+            box = runtime()
+            if stop.is_set(): return
+            if box: box.start()
+            return
+        except Exception as error:
+            try:
+                config = json.loads(Path(os.environ["METTACLAW_MAILBOX_CONFIG"]).read_text())
+                _write_health(config.get("health_path"),
+                    {"instance": config.get("instance"), "watching": False,
+                     "error": type(error).__name__ + ": " + str(error),
+                     "backpressure": "", "scans": 0, "notifications": 0})
+            except Exception: pass
+            stop.wait(1)
+
+
 def start():
-    return _call("start")
+    """Arm recovery at boot without waiting for an optional store to start."""
+    global _starter, _starter_stop
+    if not os.environ.get("METTACLAW_MAILBOX_CONFIG"):
+        return json.dumps({"state": "disabled"})
+    with _runtime_lock:
+        if _starter is None or not _starter.is_alive():
+            _starter_stop = threading.Event()
+            _starter = threading.Thread(target=_start_when_available,
+                args=(_starter_stop,), name="native-mailbox-start", daemon=True)
+            _starter.start()
+    return json.dumps({"state": "starting"})
 
 
 def wait(ticket, channel, correlation):
@@ -419,13 +452,26 @@ def status():
 
 def acknowledge(identities):
     if not identities: return 1
-    box = runtime()
-    return box.acknowledge(identities) if box else 0
+    box = None
+    try:
+        box = runtime()
+        return box.acknowledge(identities) if box else 0
+    except Exception as error:
+        # The cognitive checkpoint is already durable. Keep the source
+        # ready for watcher reconciliation rather than crash the engine.
+        if box:
+            box.error = type(error).__name__ + ": " + str(error)
+            box._health()
+        return 0
 
 
 @atexit.register
 def close():
-    global _runtime
+    global _runtime, _starter, _starter_stop
+    if _starter_stop: _starter_stop.set()
+    if _starter and _starter is not threading.current_thread():
+        _starter.join(timeout=5)
     with _runtime_lock:
         if _runtime is not None:
             _runtime.close(); _runtime = None
+        _starter = _starter_stop = None
