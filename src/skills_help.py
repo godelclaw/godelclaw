@@ -28,7 +28,7 @@ ARITY = {
     "job-output": (1, 1), "job-stop": (1, 1), "vitals": (0, 0),
 
 
-    "read-file": (1, 1), "write-file": (2, 2),
+    "read-file": (1, 2), "write-file": (2, 2),
     "append-file": (2, 2), "read-lines": (1, 3), "edit-file": (3, 3),
     "ls-tree": (1, 4), "grep-files": (2, 4),
     "send": (1, 1), "send-telegram-chat": (2, 2),
@@ -148,7 +148,8 @@ PAGES = {
         'nested let. repr of an unevaluated call stringifies the CALL: force\n'
         'results first: (let $r (f x) (repr $r)).'),
     "read-file": (
-        'usage: (read-file "path")\n'
+        'usage: (read-file "path" [max-bytes])\n'
+        'Default: 2000000 bytes; 0 means unlimited. Oversized files return a reason, never cut text.\n'
         'Whole file, or a reason: "read failed: no such file: X (cwd Y)".\n'
         'Relative paths resolve from the loop cwd shown in that message —\n'
         'when in doubt use absolute paths.'),

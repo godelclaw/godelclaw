@@ -1,0 +1,8 @@
+!(import! &self ./src/fsops.py)
+!(import_prolog_functions_from_file ./src/file_io_python.pl (file_io_python_read))
+!(import_prolog_function atomic_list_concat)
+!(import_prolog_function swrite)
+(= (file-io:read $path $max-bytes)
+   (file_io_python_read $path $max-bytes))
+(= (file-io:join $parts) (atomic_list_concat $parts ""))
+(= (file-io:number $value) (swrite $value))

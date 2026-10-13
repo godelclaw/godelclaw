@@ -553,7 +553,12 @@ support it; measured usage reports actual cache hits, not an assumed guarantee.
 Shell defaults to 120 seconds. `(shell "command" 600)` changes the deadline for
 that call; zero means no deadline. Timeout results retain partial stdout and
 stderr. `read-lines` preserves complete lines and defaults to 2,000 lines.
-`read-file` accepts an optional byte limit (zero means unlimited). `grep-files`
+`read-file` uses CeTTa's native file library on CeTTa and a Python I/O adapter
+on SWI-PeTTa. Both use the same MeTTa presentation, preserve complete file
+contents (including long lines and NULs), replace malformed UTF-8, and distinguish
+empty files from failed reads. The optional byte limit defaults to 2000000;
+zero means unlimited, and exceeding the limit returns a reason instead of
+truncated text. `grep-files`
 and `ls-tree` expose pagination; `tmux-peek` includes scrollback. Peer mailbox
 messages use ordinary input wakes without a separate hourly quota.
 

@@ -33,7 +33,7 @@
     "- Run a long command in the background; you are woken when it ends, with its exit status and output tail: (background \"command string\")"
     "- Background jobs and their state: (jobs) | the end of a job's output: (job-output \"id\") | stop one: (job-stop \"id\")"
     "- The machine and you right now, on demand: uptime, load, memory and its stalls, swap, heaviest processes: (vitals)"
-    "- Read file to string: (read-file \"filename\")"
+    "- Read file to string: (read-file \"filename\" [max-bytes]); default 2000000, 0 for unlimited. Oversized files return a reason, never cut text."
     "- Replace a file with exactly this content; the previous version is kept as a backup: (write-file \"filename\" \"string\")"
     "- Append one line to an existing file: (append-file \"filename\" \"string\")"
     "- Read a numbered window of a file: (read-lines \"filename\" start count)"
@@ -117,15 +117,7 @@
 (= (gateway-status $id) (py-call (gateway_bridge.status $id)))
 (= (gateway-cancel $id) (py-call (gateway_bridge.cancel $id)))
 
-;; read-file explains failure instead of silently returning nothing: the old
-;; Prolog chain FAILED (empty result, no reason) on a missing/unreadable path,
-;; which cost real time — the file existed but a relative path did not resolve
-;; from the loop's cwd, and nothing said so.
-(= (read-file $file $maxBytes)
-   (py-call (fsops.read_file $file $maxBytes)))
-
-(= (read-file $file)
-   (py-call (fsops.read_file $file)))
+!(import! &self ./src/file_io)
 
 (= (write-file $file $str)
    (py-call (file_tools.write_file $file $str)))

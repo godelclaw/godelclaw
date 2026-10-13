@@ -11,6 +11,25 @@ MAX_FILE_BYTES = 2_000_000
 SKIP_DIRS = {".git", "__pycache__", "node_modules", "chroma_db", ".venv"}
 
 
+def read_text_result(path, max_bytes=MAX_FILE_BYTES):
+    """SWI-PeTTa's I/O backend; presentation belongs to file_io.metta."""
+    path, max_bytes = str(path), max(0, int(max_bytes))
+    try:
+        with open(path, "rb") as file:
+            data = file.read(max_bytes + 1) if max_bytes else file.read()
+        if max_bytes and len(data) > max_bytes:
+            return ["limit", max_bytes]
+        return ["ok", data.decode("utf-8", errors="replace")]
+    except FileNotFoundError:
+        return ["missing", os.getcwd()]
+    except IsADirectoryError:
+        return ["directory", ""]
+    except PermissionError:
+        return ["denied", ""]
+    except OSError as error:
+        return ["error", type(error).__name__, str(error)]
+
+
 def read_file(path, max_bytes=MAX_FILE_BYTES):
     """Whole file as a string, or a reason. Never a silent empty result:
     'read failed: no such file: X (cwd Y)' is actionable; '' is a mystery."""

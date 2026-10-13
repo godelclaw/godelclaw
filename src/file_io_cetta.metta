@@ -1,0 +1,6 @@
+!(import! &self fs)
+!(import! &self str)
+(= (file-io:read $path $max-bytes)
+   (fs:read-text-result $path $max-bytes "replace"))
+(= (file-io:join $parts) (str:join "" $parts))
+(= (file-io:number $value) (str:number->string $value))
