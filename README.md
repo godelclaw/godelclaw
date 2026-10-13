@@ -425,11 +425,9 @@ Raw bodies remain inert data, including text that looks like code.
 `(mailbox-send "peer" "text")` sends to a configured sibling and returns the
 complete occurrence ID. The `From:` stamp identifies its claimed sender;
 folder access controls delivery. Configured sibling mail has peer standing
-and leaves human reply routing unchanged. Wake grants are stored in the native
-mailbox, survive restarts, and are charged once per pending occurrence.
-Arrivals over the hourly allowance stay Ready until the next grant deadline;
-the watcher retries then without model polling. Admitted peer input can arm a
-small response from an idle loop. It does not gain operator authority.
+and leaves human reply routing unchanged. Peer arrivals wake cognition with
+the ordinary input burst, without hourly quotas or wake grants. They do not
+gain operator authority.
 
 Internal completion notices also carry occurrence IDs. New events with equal
 text remain distinct; replaying a checkpointed receipt does not wake cognition
