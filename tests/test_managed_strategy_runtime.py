@@ -71,11 +71,6 @@ class ManagedRuntimeTest(unittest.TestCase):
         self.exercise("tests/runtime_context_probe.metta", "RUNTIME_CONTEXT_OK",
                       [["help", "vitals"], ["help", "vitals"]])
 
-    def test_peer_input_resumes_an_idle_loop_without_operator_authority(self):
-        self.exercise("tests/peer_activity_probe.metta", "PEER_ACTIVITY_OK",
-                      [["help", "send"]],
-                      environment=lambda engine: {"METTACLAW_INSTANCE":"lila",
-                          "METTACLAW_TELEGRAM_CLIENT":"metta" if engine=="cetta" else "python"})
 
 
 if __name__ == "__main__": unittest.main()

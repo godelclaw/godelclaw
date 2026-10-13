@@ -15,6 +15,7 @@
 !(import! &self ./channels/irc.py)
 !(import! &self ./channels/mattermost.py)
 !(import! &self ./channels/telegram.py)
+!(import! &self ./src/mail)
 !(import! &self ./channels/telegram.metta)
 !(import! &self ./channels/websearch.py)
 !(import! &self ./src/utils)

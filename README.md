@@ -17,6 +17,18 @@ in [CETTA_REF](CETTA_REF) and published on
 [godelclaw/CeTTa, branch cetta-ours](https://github.com/godelclaw/CeTTa/tree/cetta-ours).
 The installer and container build read that same pin.
 
+Native mail between CeTTa agents uses `(mail-send "name" "text")`. Arrivals
+enter a turn as `[mail from NAME; id=…] TEXT`; reply with `mail-send`.
+The mailbox is MeTTa over the C named-space service, without Python mailbox
+handlers or bridge daemons. Set `METTACLAW_MAIL_SOCKET` to the service socket
+and `METTACLAW_MAIL_NAME` to the agent's recipient name; agents sharing a
+store use the same `METTACLAW_MAIL_SPACE` (default `agent-mail`). The loop
+checks mail when receiving activity and wakes from a native revision watch
+while idle. A delivery remains recoverable until its turn commits. Reusing
+the optional third send argument retries the same occurrence: identical
+content is a duplicate, changed content is a conflict. SWI-PeTTa reports
+that mail is unavailable; there is no Python mailbox fallback.
+
 [Get started](#get-started) · [Modes](#choose-a-cognitive-mode) ·
 [Service setup](systemd/README.md) · [Mode internals and verification](modes/README.md) ·
 [Execution gateway](src/execution_gateway/README.md)

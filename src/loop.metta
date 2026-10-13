@@ -319,10 +319,16 @@
           ($isHuman (eval (lastMessageIsHuman)))
           ($humanApplied
             (applyHumanActivity $decremented $hasActivity $isHuman))
+          ($mailApplied
+            (if (mail:active?)
+              (coordinate-set loops
+                (max (loop-budget $humanApplied)
+                     (policy-burst-budget (loop-active-policy $humanApplied))) $humanApplied)
+              $humanApplied))
           ($now (get_time))
-          ($heartbeat (heartbeatDue $humanApplied $now))
+          ($heartbeat (heartbeatDue $mailApplied $now))
           ($heartbeatApplied
-            (applyHeartbeat $humanApplied $now $heartbeat))
+            (applyHeartbeat $mailApplied $now $heartbeat))
           ($autonomous
             (policy-autonomous-turn
               (loop-active-policy $heartbeatApplied)
@@ -424,8 +430,7 @@
                     (py-call (helper.wait_seconds $requestedWait
                               (loop-last-heartbeat $periphery) (heartbeatInterval)))
                     $requestedWait))
-          ($waitResult (if (tg:client-metta?) (tg:sleep-until-message $wait)
-                           (py-call (telegram.sleep_until_message $wait))))
+          ($waitResult (channel:sleep-until-message $wait $enabled))
           ($timedOut (py-call (loop_modes.wait_timed_out $waitResult)))
           ($_ (py-call (strategy_host.wake (get_time))))
           ($continued
@@ -458,9 +463,9 @@
          (coordinate-get-or banked-loops 0 $periphery)))))
 
 (= (settleActivityBatch)
-   (case (catch (if (tg:client-metta?) (tg:ack-activity-batch)
-                   (py-call (telegram.ackActivityBatch))))
-     ((1 1) ($other 0))))
+   (let $channel (catch (if (tg:client-metta?) (tg:ack-activity-batch)
+                           (py-call (telegram.ackActivityBatch))))
+     (if (== $channel 1) (mail:ack) 0)))
 
 (= (processLoop $state)
    (if (== (py-call (helper.recycle_requested)) 1)

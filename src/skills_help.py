@@ -26,6 +26,7 @@ ARITY = {
 
 
     "read-file": (1, 2), "write-file": (2, 2),
+    "mail-send": (2, 3), "mail-receive": (0, 0),
     "append-file": (2, 2), "read-lines": (1, 3), "edit-file": (3, 3),
     "ls-tree": (1, 4), "grep-files": (2, 4),
     "send": (1, 1), "send-telegram-chat": (2, 2),
@@ -44,6 +45,13 @@ ARITY = {
 }
 
 PAGES = {
+    "mail-send": ('usage: (mail-send "name" "text" ["stable-id"])\n'
+                  'Native CeTTa mail, delivered automatically as peer input.\n'
+                  'Reply with mail-send. Reusing an ID with the same content is a duplicate;\n'
+                  'different content is a conflict. IDs are optional; no filing commands.'),
+    "mail-receive": ('usage: (mail-receive)\n'
+                     'Check native mail now. Arrivals also enter turns automatically;\n'
+                     'acknowledgement follows a committed turn. CeTTa only.'),
     "task-read": 'usage: (task-read "call-id" "offset")\nRead an exact recorded call/result pair. Offsets count characters; next=null ends it.',
     "task-history": 'usage: (task-history "request-id" "offset")\nTask-scoped ordered call/result index, including compacted history.',
     "task-note": 'usage: (task-note "findings, uncertainties, next steps" "JSON list of call IDs")\nAppend a task note with evidence references. A note is an interpretation, not certified truth.',

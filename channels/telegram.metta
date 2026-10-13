@@ -807,6 +807,8 @@
      ()))
 
 (= (tg:sleep-until-message $seconds)
+   (tg:sleep-until-message $seconds True))
+(= (tg:sleep-until-message $seconds $enabled)
    (let $n (if (< $seconds 0) 0 $seconds)
      (let $_ (py-call (process_supervision.progress "channel-wait" 10))
      (let $deadline (+ (tg:now) $n)
@@ -815,7 +817,7 @@
          (let $b (tg:set rest-notice 0)
            (let $c (tg:set sleep-until $deadline)
              (let $p (py-call (telegram.metta_publish "sleep_until" $deadline))
-               (let $result (tg:rest-loop $deadline $n)
+               (let $result (tg:rest-loop $deadline $n $enabled)
                  (let $d (tg:set sleep-until 0)
                    (let $q (py-call (telegram.metta_publish "sleep_until" 0))
                      (let $e (tg:set wake-reason "")
@@ -837,15 +839,17 @@
          (let $gone (py-call (os.remove $file))
            (tg:wake-request (if (== $reason "") "wake request" $reason)))))))
 
-(= (tg:rest-loop $deadline $seconds)
+(= (tg:rest-loop $deadline $seconds $enabled)
    (if (== (py-call (helper.recycle_requested)) 1) "recycle requested"
+   (if (and $enabled (mail:pending?)) "woken by mail"
    (let $polled (tg:poll)
     (let $_ (py-call (process_supervision.progress "channel-wait" 10))
     (let $requested (tg:take-wake-request)
      (let $reason (tg:get wake-reason "")
        (if (not (== $reason "")) (format-args "woken by {}" ($reason))
          (if (>= (tg:now) $deadline) (format-args "rested {}s" ($seconds))
-           (let $slept (tg:sleep 0.25) (tg:rest-loop $deadline $seconds))))))))))
+           (let $slept (if (and $enabled (mail:enabled?)) (mail:idle-wait 250) (tg:sleep 0.25))
+             (tg:rest-loop $deadline $seconds $enabled)))))))))))
 
 ;; ----------------------------------------------------------------- send
 

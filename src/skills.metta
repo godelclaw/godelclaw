@@ -1,6 +1,7 @@
 !(import! &self ./src/topic_jobs.py)
 (= (getSkills)
    (;INTERNAL:
+    "- Send native peer mail: (mail-send \"name\" \"text\"). Incoming mail enters a turn automatically; reply with mail-send. (mail-receive) checks now. CeTTa only."
     "- Remember a particular string such as skills and memories: (remember \"string\")"
     "- Query long-term embedding memory for skills and memories with short phrases only: (query \"short phrase\")"
     "- Pin a working-memory line — persists across restarts, shown every turn under PINNED, cap 12: (pin \"string\")"

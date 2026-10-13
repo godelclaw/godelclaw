@@ -34,17 +34,41 @@
                          (py-call (mattermost.start_mattermost (MM_URL) (MM_CHANNEL_ID) (MM_BOT_TOKEN))))))))
 
 ;Receive the latest user message considering all communication channels:
-(= (receive)
+(= (receive-channel)
    (if (== (commchannel) telegram)
        (if (tg:client-metta?) (tg:activity-batch) (py-call (telegram.getActivityBatch)))
        (if (== (commchannel) irc)
            (py-call (irc.getLastMessage))
            (py-call (mattermost.getLastMessage)))))
 
+; Conversation arrivals retain their own acknowledgement path. Native mail
+; is its own input, so settling a conversation cannot settle unrelated mail.
+(= (receive)
+   (let $_ (mail:reset)
+     (let $conversation (receive-channel)
+       (if (mail:empty? $conversation) (mail:receive) $conversation))))
+
+; Existing channel adapters never route or acknowledge native mail.
+(= (channel:sleep-until-message $seconds $enabled)
+   (if (tg:client-metta?) (tg:sleep-until-message $seconds $enabled)
+     (if (mail:enabled?)
+       (let $deadline (+ (get_time) $seconds) (channel:mail-wait $deadline $seconds $enabled))
+       (py-call (telegram.sleep_until_message $seconds)))))
+(= (channel:mail-wait $deadline $seconds $enabled)
+   (if (== (py-call (helper.recycle_requested)) 1) "recycle requested"
+     (let $incoming (receive-channel)
+       (if (not (mail:empty? $incoming)) "woken by channel"
+         (if (and $enabled (mail:pending?)) "woken by mail"
+           (if (>= (get_time) $deadline) (format-args "rested {}s" ($seconds))
+             (let $waited (if $enabled (mail:idle-wait 250) (tg:sleep 0.25))
+               (let $_ (py-call (process_supervision.progress "channel-wait" 10))
+                 (channel:mail-wait $deadline $seconds $enabled)))))))))
+
 (= (lastMessageIsHuman)
+   (if (mail:active?) False
    (if (== (commchannel) telegram)
        (== (if (tg:client-metta?) (tg:last-message-is-human) (py-call (telegram.lastMessageIsHuman))) 1)
-       True))
+       True)))
 
 ;Send a message to all communication channels:
 (= (send $msg)
