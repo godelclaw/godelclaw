@@ -54,7 +54,7 @@ def read_file(path, max_bytes=MAX_FILE_BYTES):
         return "read failed (%s): %s" % (type(exc).__name__, exc)
 
 
-def read_lines(path, start=1, count=2000):
+def line_window_result(path, start=1, count=2000):
     """Stream the requested numbered window, preserving complete lines."""
     import itertools
     path, start, count = str(path), max(1, int(start)), max(1, int(count))
@@ -62,21 +62,29 @@ def read_lines(path, start=1, count=2000):
         with open(path, encoding="utf-8", errors="replace") as fh:
             window = list(itertools.islice(fh, start - 1, start - 1 + count))
             more = bool(fh.readline())
-        if not window:
-            return f"READ_OK_EMPTY_FILE: {path} exists and holds zero bytes" if start == 1 and os.path.getsize(path) == 0 else f"{path}: no lines at or after {start}"
         body = "\n".join(f"{start+i:5d}\t{line.rstrip(chr(10)).rstrip(chr(13))}"
                          for i, line in enumerate(window))
-        end = start + len(window) - 1
-        return f"{path}: showing {start}-{end}" + (f"; next start {end+1}" if more else "; end of file") + "\n" + body
+        return ["window", start, len(window), more, body, os.path.getsize(path) == 0]
     except OSError as exc:
-        return f"read-lines failed: {exc}"
+        return ["error", str(exc)]
 
 
-def ls_tree(root, depth=2, limit=1000, offset=0):
+def read_lines(path, start=1, count=2000):
+    result = line_window_result(path, start, count)
+    if result[0] == "error":
+        return "read-lines failed: " + result[1]
+    _, start, size, more, body, empty = result
+    if not size:
+        return f"READ_OK_EMPTY_FILE: {path} exists and holds zero bytes" if start == 1 and empty else f"{path}: no lines at or after {start}"
+    end = start + size - 1
+    return f"{path}: showing {start}-{end}" + (f"; next start {end+1}" if more else "; end of file") + "\n" + body
+
+
+def tree_page_result(root, depth=2, limit=1000, offset=0, skips=SKIP_DIRS):
     """Directory entries with an explicit continuation, no fixed depth cap."""
     root, depth, limit, offset = str(root), max(1, int(depth)), max(1, int(limit)), max(0, int(offset))
     if not os.path.isdir(root):
-        return f"ls-tree failed: not a directory: {root}"
+        return ["not-directory", root]
     def walk(directory, level):
         try:
             entries = sorted(os.scandir(directory), key=lambda e: (e.is_file(), e.name))
@@ -84,7 +92,7 @@ def ls_tree(root, depth=2, limit=1000, offset=0):
             yield "  " * level + f"[{exc}]"
             return
         for entry in entries:
-            if entry.name in SKIP_DIRS:
+            if entry.name in skips:
                 continue
             if entry.is_dir(follow_symlinks=False):
                 yield "  " * level + entry.name + "/"
@@ -95,10 +103,18 @@ def ls_tree(root, depth=2, limit=1000, offset=0):
     import itertools
     entries = list(itertools.islice(walk(root, 0), offset, offset + limit + 1))
     more = len(entries) > limit
-    return root + "\n" + "\n".join(entries[:limit]) + (f"\n[more entries; next offset {offset+limit}]" if more else "")
+    return ["page", "\n".join(entries[:limit]), more, offset+limit]
 
 
-def grep_files(pattern, root, limit=200, offset=0):
+def ls_tree(root, depth=2, limit=1000, offset=0):
+    result = tree_page_result(root, depth, limit, offset)
+    if result[0] == "not-directory":
+        return f"ls-tree failed: not a directory: {root}"
+    _, body, more, next_offset = result
+    return str(root) + "\n" + body + (f"\n[more entries; next offset {next_offset}]" if more else "")
+
+
+def grep_page_result(pattern, root, limit=200, offset=0, skips=SKIP_DIRS):
     """Search complete text lines; caller chooses page length and offset."""
     root, limit, offset = str(root), max(1, int(limit)), max(0, int(offset))
     try:
@@ -111,7 +127,7 @@ def grep_files(pattern, root, limit=200, offset=0):
             yield root
             return
         for directory, dirs, names in os.walk(root):
-            dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
+            dirs[:] = sorted(d for d in dirs if d not in skips)
             for name in sorted(names):
                 yield os.path.join(directory, name)
     files = paths()
@@ -128,8 +144,14 @@ def grep_files(pattern, root, limit=200, offset=0):
                         if matched > offset:
                             hits.append(f"{path}:{number}: {line.rstrip()}")
                         if len(hits) > limit:
-                            return "\n".join(hits[:limit]) + f"\n[more matches; next offset {offset+limit}]"
+                            return ["matches", "\n".join(hits[:limit]), True, offset+limit, scanned, "\n".join(errors)]
         except OSError as exc:
             errors.append(f"{path}: {exc}")
-    return ("\n".join(hits) if hits else f"no matches in this page for {pattern!r} under {root} ({scanned} files scanned)") + (
-        "\n[unreadable files]\n" + "\n".join(errors) if errors else "")
+    return ["matches", "\n".join(hits), False, offset+limit, scanned, "\n".join(errors)]
+
+
+def grep_files(pattern, root, limit=200, offset=0):
+    _, body, more, next_offset, scanned, errors = grep_page_result(pattern, root, limit, offset)
+    return (body if body else f"no matches in this page for {pattern!r} under {root} ({scanned} files scanned)") + (
+        f"\n[more matches; next offset {next_offset}]" if more else "") + (
+        "\n[unreadable files]\n" + errors if errors else "")

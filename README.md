@@ -150,11 +150,11 @@ without prematurely firing a later timer.
 ## Get started
 
 For CeTTa, install Python 3.11+, GCC, Make, `pkg-config`, Python development
-headers, GMP, libcurl and [SWI-Prolog](https://www.swi-prolog.org/). On Ubuntu:
+headers, GMP, libcurl, PCRE2 and [SWI-Prolog](https://www.swi-prolog.org/). On Ubuntu:
 
 ```sh
 sudo apt install build-essential git pkg-config python3-dev python3-venv \
-  libgmp-dev libcurl4-openssl-dev swi-prolog-nox
+  libgmp-dev libcurl4-openssl-dev libpcre2-dev swi-prolog-nox
 ```
 
 `python3 scripts/build_cetta.py` fetches the exact [CETTA_REF](CETTA_REF), builds
@@ -558,8 +558,17 @@ on SWI-PeTTa. Both use the same MeTTa presentation, preserve complete file
 contents (including long lines and NULs), replace malformed UTF-8, and distinguish
 empty files from failed reads. The optional byte limit defaults to 2000000;
 zero means unlimited, and exceeding the limit returns a reason instead of
-truncated text. `grep-files`
-and `ls-tree` expose pagination; `tmux-peek` includes scrollback. Peer mailbox
+truncated text. `read-lines`, `ls-tree`, `grep-files`, `write-file`, `append-file` and
+`edit-file` also select native CeTTa I/O or the SWI-PeTTa Python backend through
+that shared MeTTa interface. Line windows stream universal newlines and preserve
+complete lines; directory listing and search expose pagination. Native search
+uses PCRE2 with Unicode properties, supports lookarounds and named groups, skips
+binary files, and reports read errors. PCRE2 is a separate regex dialect from
+Python `re`; exotic pattern extensions can differ. Invalid patterns are searched
+literally in both backends. Writes replace files atomically, retain permissions,
+and return content hashes and collision-free backup paths. Exact edits require
+one occurrence, and append retains the existing bytes. `tmux-peek` includes
+scrollback. Peer mailbox
 messages use ordinary input wakes without a separate hourly quota.
 
 Credential redaction, configured chat permissions, occurrence identities for

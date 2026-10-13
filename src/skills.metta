@@ -119,15 +119,6 @@
 
 !(import! &self ./src/file_io)
 
-(= (write-file $file $str)
-   (py-call (file_tools.write_file $file $str)))
-
-(= (edit-file $file $old $new)
-   (py-call (file_tools.edit_file $file $old $new)))
-
-(= (append-file $file $str)
-   (py-call (file_tools.append_file $file $str)))
-
 !(import_prolog_functions_from_file ./src/skills.pl
                                     (shell first_char run-command-batch-once command-batch-errors))
 
@@ -231,15 +222,6 @@
 ;; Filesystem awareness: line-numbered reads, exact-string edits with
 ;; uniqueness enforced, bounded tree/search. Result strings are the
 ;; verification — no blind writes, no re-reading to check what landed.
-(= (read-lines $f) (read-lines $f 1 2000))
-(= (read-lines $f $start) (read-lines $f $start 2000))
-(= (read-lines $f $start $count) (py-call (fsops.read_lines $f $start $count)))
-(= (ls-tree $dir) (ls-tree $dir 2))
-(= (ls-tree $dir $depth $limit) (py-call (fsops.ls_tree $dir $depth $limit)))
-(= (ls-tree $dir $depth $limit $offset) (py-call (fsops.ls_tree $dir $depth $limit $offset)))
-(= (ls-tree $dir $depth) (py-call (fsops.ls_tree $dir $depth)))
-(= (grep-files $pat $dir)
-   (py-call (fsops.grep_files (py-call (helper.decode_safe_text $pat)) $dir)))
 
 ;; Autonomic goal-stack (to-mama spec v0.2): kernel math runs at wake events;
 ;; these skills are the semantic interface (appraisal, birth, death-review).
@@ -320,9 +302,6 @@
 (= (topic-note $notes) (py-call (topic_jobs.note (py-call (helper.decode_safe_text $notes)))))
 (= (model-jobs) (py-call (topic_jobs.status)))
 (= (model-result $id) (py-call (topic_jobs.results $id)))
-
-(= (grep-files $pat $dir $limit) (py-call (fsops.grep_files $pat $dir $limit)))
-(= (grep-files $pat $dir $limit $offset) (py-call (fsops.grep_files $pat $dir $limit $offset)))
 
 (= (context-policy) (py-call (context_budget.policy)))
 (= (context-policy $tokens) (py-call (context_budget.policy $tokens)))

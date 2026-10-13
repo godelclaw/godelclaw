@@ -69,6 +69,9 @@ def main():
         parser.error("source is at a different revision; use a matching checkout or a new build directory")
     if subprocess.run(["git", "diff", "--quiet", "HEAD", "--"], cwd=source).returncode:
         parser.error("source has tracked changes; commit them and select that revision before building")
+    if subprocess.run(["pkg-config", "--exists", "libpcre2-8"], stdout=subprocess.DEVNULL,
+                      stderr=subprocess.DEVNULL).returncode:
+        parser.error("native file search requires PCRE2 development headers (libpcre2-dev)")
     flags = ["BUILD=python", "ENABLE_HTTP=1", "ENABLE_DURABLE=1",
              "ENABLE_MANAGED_SYMBOLS=1", "ENABLE_LIB_PROLOG=1",
              "ENABLE_JSON_GSLT=1", "PYTHON_CONFIG=" + args.python_config]

@@ -33,10 +33,12 @@ def _backup(target: Path, previous: bytes) -> Path:
     directory = _backup_dir()
     directory.mkdir(parents=True, exist_ok=True)
     name = "%s-%s-%s" % (time.strftime("%Y%m%dT%H%M%S"), _digest(previous)[:12], target.name)
-    backup = directory / name
-    with open(backup, "wb") as handle:
+    fd, backup = tempfile.mkstemp(prefix=name + "-", dir=directory)
+    with os.fdopen(fd, "wb") as handle:
         handle.write(previous)
-    return backup
+        handle.flush()
+        os.fsync(handle.fileno())
+    return Path(backup)
 
 
 def _replace(target: Path, data: bytes) -> None:
@@ -66,50 +68,52 @@ def _replace(target: Path, data: bytes) -> None:
         pass
 
 
-def _write(target: Path, data: bytes, operation: str) -> str:
+def _write_result(target: Path, data: bytes):
     previous = target.read_bytes() if target.is_file() else None
     backup = _backup(target, previous) if previous is not None else None
     _replace(target, data)
-    receipt = "WROTE %s op=%s bytes=%d sha256=%s" % (
-        target, operation, len(data), _digest(data)[:16])
-    if backup is not None:
-        receipt += " previous=%s" % backup
-    return receipt
+    return ["written", str(target), len(data), _digest(data)[:16], str(backup) if backup else ""]
 
 
-def write_file(path, content) -> str:
+def update_result(path, operation, first, second="", backup_directory=None):
     target = _resolve(path)
     try:
-        return _write(target, str(content).encode("utf-8"), "write")
-    except (OSError, UnicodeError) as exc:
-        return "write failed: %s: %s" % (target, exc)
+        if operation == "write":
+            data = str(first).encode("utf-8")
+        elif operation == "append":
+            data = target.read_bytes() + (str(first) + "\n").encode("utf-8")
+        elif operation == "edit":
+            if not first:
+                return ["error", "old-string is empty"]
+            text = target.read_text(encoding="utf-8")
+            count = text.count(str(first))
+            if count != 1:
+                return ["count", count, str(target)]
+            data = text.replace(str(first), str(second), 1).encode("utf-8")
+        else:
+            return ["error", "unknown file operation"]
+        return _write_result(target, data)
+    except (OSError, UnicodeError) as error:
+        return ["error", str(error)]
 
 
-def edit_file(path, old, new) -> str:
-    target = _resolve(path)
-    old, new = str(old), str(new)
-    if not old:
-        return "edit failed: old-string is empty"
-    try:
-        text = target.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
-        return "edit failed: %s: %s" % (target, exc)
-    count = text.count(old)
-    if count != 1:
-        return "edit failed: old-string occurs %d times in %s; it must occur exactly once" % (count, target)
-    try:
-        return _write(target, text.replace(old, new, 1).encode("utf-8"), "edit")
-    except (OSError, UnicodeError) as exc:
-        return "edit failed: %s: %s" % (target, exc)
+def _present(operation, result):
+    if result[0] == "written":
+        _, path, size, digest, backup = result
+        return f"WROTE {path} op={operation} bytes={size} sha256={digest}" + (f" previous={backup}" if backup else "")
+    if result[0] == "count":
+        _, count, path = result
+        return f"edit failed: old-string occurs {count} times in {path}; it must occur exactly once"
+    return f"{operation} failed: {result[1]}"
 
 
-def append_file(path, line) -> str:
-    target = _resolve(path)
-    try:
-        current = target.read_bytes()
-    except OSError as exc:
-        return "append failed: %s: %s" % (target, exc)
-    try:
-        return _write(target, current + (str(line) + "\n").encode("utf-8"), "append")
-    except (OSError, UnicodeError) as exc:
-        return "append failed: %s: %s" % (target, exc)
+def write_file(path, content):
+    return _present("write", update_result(path, "write", content))
+
+
+def edit_file(path, old, new):
+    return _present("edit", update_result(path, "edit", old, new))
+
+
+def append_file(path, line):
+    return _present("append", update_result(path, "append", line))
