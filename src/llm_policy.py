@@ -1,9 +1,4 @@
-"""Optional operator admission policy shared by every cognitive mode.
-
-Upstream profiles do not add pacing, caps, or retries. Managed profiles use
-operator-supplied caps; zero means disabled. No mode's energy/fuel state is
-rewritten here. The durable ledger contains metadata only, never prompts.
-"""
+"""Provider usage accounting and transport retry deadlines. No work quotas."""
 import contextlib
 import hashlib
 import json
@@ -79,9 +74,7 @@ def configuration(mode=None):
     if profile not in ("upstream", "managed"):
         raise ValueError("LLM profile must be upstream or managed")
     result = {"profile": profile}
-    fields = {"requests_per_hour": 0, "output_tokens_per_day": 0,
-              "failures_per_window": 0, "failure_window_seconds": 300,
-              "quota_cooldown_seconds": 300}
+    fields = {"quota_cooldown_seconds": 300}
     for name, default_value in fields.items():
         raw = os.environ.get("METTACLAW_LLM_" + name.upper(),
                              overrides.get(name, config.get(name, default_value)))
@@ -162,34 +155,13 @@ def admit(provider, max_output, *, now=None, mode=None, request_fingerprint="",
     recover_interrupted()
     with transaction() as conn:
         if policy["profile"] == "managed":
-            if request_fingerprint and conn.execute(
-                    "SELECT 1 FROM requests WHERE provider=? AND fingerprint=? AND status='unknown' LIMIT 1",
-                    (provider, request_fingerprint)).fetchone():
-                raise AdmissionDenied("provider-outcome-unknown", 0)
             cooldown = conn.execute("SELECT until FROM cooldowns WHERE provider=?", (provider,)).fetchone()
             if cooldown and cooldown[0] > now:
                 raise AdmissionDenied("provider-cooldown", cooldown[0] - now)
-            cap = policy["requests_per_hour"]
-            rows = conn.execute("SELECT started FROM requests WHERE started>? ORDER BY started", (now - 3600,)).fetchall()
-            if cap and len(rows) + reserved_requests >= cap:
-                delay = rows[max(0, len(rows) + reserved_requests - cap)][0] + 3600 - now if rows else 3600
-                raise AdmissionDenied("request-budget", delay)
-            day = int(now // 86400) * 86400
-            used = conn.execute("SELECT COALESCE(SUM(COALESCE(output,reserved)),0) FROM requests WHERE started>=?", (day,)).fetchone()[0]
-            cap = policy["output_tokens_per_day"]
-            if cap and used + maximum + reserved_output > cap:
-                raise AdmissionDenied("output-token-budget", day + 86400 - now)
-            cap = policy["failures_per_window"]
-            span = policy["failure_window_seconds"]
-            failed = conn.execute("SELECT started FROM requests WHERE provider=? AND status='failed' AND started>? ORDER BY started", (provider, now-span)).fetchall()
-            if cap and len(failed) >= cap:
-                raise AdmissionDenied("retry-budget", failed[len(failed)-cap][0] + span - now)
         conn.execute("INSERT INTO requests(id,started,reserved,status,output,provider,mode,finish,owner,fingerprint) VALUES(?,?,?,'pending',NULL,?,?,NULL,?,?)",
                      (ticket, now, maximum, provider, mode, _owner, request_fingerprint))
         # Expired accounting windows no longer own admission authority.
         conn.execute("DELETE FROM requests WHERE started<? AND status NOT IN ('pending','unknown')", (now-172800,))
-    # A managed goal is charged at the actual admission boundary, before a
-    # provider can run. Strict upstream callers have no prepared host capture.
     try:
         import strategy_host
         strategy_host.provider_admitted(ticket)
@@ -225,7 +197,7 @@ def fail(ticket, *, status=None, retry_after=None, sent=True, now=None):
         if policy["profile"] == "managed" and status in (402, 429):
             delay = policy["quota_cooldown_seconds"]
             if retry_after is not None:
-                delay = max(delay, min(86400, max(0, float(retry_after))))
+                delay = max(0, float(retry_after))
             until = now + delay
             conn.execute("INSERT INTO cooldowns VALUES(?,?) ON CONFLICT(provider) DO UPDATE SET until=MAX(until,excluded.until)", (row[0], until))
     return True

@@ -157,130 +157,41 @@ responder. Suspended work stays in the ledger. `"legacy"` restores arrival
 freshness. `/activity` remains available without waiting for a provider and
 reports both foreground work and retained background jobs.
 
-Managed CeTTa also provides named working contexts and read-only concurrent
-model jobs. `(topic-select "research")` selects or creates notes;
-`(topic-note "...")` replaces them. `(background-model "research" "question")`
-starts a separate CeTTa process without blocking the foreground. An optional
-third argument is a JSON list of topic dependencies, for example
-`(background-model "analysis" "question" "[\"research\"]")`. Each worker
-captures notes, dependency revisions and peer job metadata; operator input
-remains reachable from every foreground topic. Shared knowledge must be
-declared as a dependency to receive a version check.
+The task transcript carries the originating request, later input, ordered tool
+calls and their results. A continued task keeps its earlier evidence across
+turns and restarts. New chat input adds conversation context; continued work
+emphasizes the task history. `(task-history "task-id")`, `(task-read "record-id"
+0)` and `(request-read "request-id" 0)` recover original evidence.
 
-`(model-jobs)` lists stable job IDs. Read a terminal result with
-`(model-result "id")`, then reconsider on the next model step before
-`(model-adopt "id")`. Adoption adds the observed evidence view to its original topic once,
-provided its owner, control and declared revisions still match. Stale results
-remain readable. `(model-retire "id")` releases retained capacity after
-observation, without erasing evidence or refunding provider work.
-Long results have a bounded excerpt, length, digest and truncation flag. The
-complete result stays in the checkpoint; adoption copies the displayed
-excerpt with its source reference, never its unseen remainder.
-`(command-receipts)` exposes attempted commands and their recorded outcomes.
-Provider prose cannot grant observation, completion or tool authority.
+The dispatcher executes emitted commands in order and records a result for each.
+A failed read, unknown tool, changed goal, new message, or bookkeeping update does
+not discard later commands. `/stop` interrupts unexecuted work. The model chooses
+which decisions require another observation; the host does not guess dependencies.
+Interrupted actions retain an explicit unknown outcome and are not automatically
+replayed. They do not prevent fresh work.
 
-Provider admission and effect admission are separate. A missing command receipt
-remains an explicit unknown outcome, but does not prevent a fresh model turn.
-Declared observation tools may run while an effect is unresolved. New mutations
-wait until unresolved effects have correlated, observed receipts. Unknown tools
-conservatively count as effects; only the admitted batch prefix is classified,
-so deferred commands acquire no execution authority. No uncertain command is
-automatically replayed or treated as successful. Execution reservation rechecks
-the current context revision as well as source, routing and input guards.
+`(context-policy)` shows the task context target. `(context-policy 65536)` changes
+it and persists the choice. The default is 32,768 estimated tokens, within the
+selected model's remaining capacity. Estimates are calibrated against provider
+usage separately for each model. Older call/result pairs remain on disk with
+retrieval pointers. Compaction does not mark work complete. Notes are optional
+working aids; there is no pending-command or resolution chore.
 
-`/activity` reports `retrying` after a failed turn even when checkpoint fuel
-remains. Admission diagnostics expose bounded reason codes without printing
-prompts, credentials or arbitrary exception messages.
-`tests/test_admission_frontier.py` exercises the durable recovery boundary.
-`scripts/check_admission_frontier.py --model-root path/to/lean/pettaclaw
---output-dir qualification` compares host decisions and SQL replays with
-MeTTapedia's executable `AdmissionFrontier.lean` model and audits its axioms.
-Observation contracts and finite correspondence do not verify the Python,
-SQLite, provider or CeTTa implementations.
+`(topic-select "research")` and `(topic-note "...")` retain named notes. Historical
+background model results remain readable with `model-jobs` and `model-result`;
+the unused background execution and adoption machinery has been removed.
 
-`agent.background_models` defaults to one retained background call (zero
-disables admission; maximum eight). `agent.background_tokens` defaults to
-1024. These workers share provider limits and service allowance with the
-foreground. They return text only; the foreground broker owns tools and
-messages. Restart keeps an unfinished POST uncertain rather than repeating
-it. This is concurrent process execution, with a serialized effect broker.
+The agent chooses its next goal. `(goal-retire "name" "reason")` records retirement
+separately from achievement and preserves it across restart. A delivered answer
+settles the corresponding arrival automatically and resumes its waiting parent;
+this is conversation workflow, not proof that the underlying task was achieved.
 
-`(requests)`, `(request-status "id")` and `(request-focus "id")` expose retained
-work. Search results without exhaustive, revision-matched coverage explicitly
-leave absence unproved. Large result projections include a truncation flag and
-digest; the full receipt remains in the instance's SQLite ledger.
-
-Grouped deployments use `scripts/update_instances.py --plan deployment.json
---release release-directory --receipt-dir update-receipts --apply`. Keep the
-deployment plan private. It supplies separate instance directories, service
-names, expected old hashes, instance overlays and offline checks. The updater
-holds cognitive launchers, stages the same manifest into every instance, checks
-all of them, then activates them together. Backups and per-instance release
-receipts make failed qualification and rollback reviewable. Optional
-`control_services` per instance adds independent command responders to the
-same activation and rollback. They restart only after the whole group passes
-qualification, while cognitive launchers remain held.
-Optional
-`required_runtime` settings are checked against the running process, including
-the strategy flag and selected transport. Rollback also uses ordinary turn
-boundaries; a stuck candidate remains held pending recovery. Instance additions
-belong in `src/instance_hooks.metta`, which shared releases preserve.
-
-Runtime checks: `python3 -m unittest tests.test_observed_strategy
-tests.test_strategy_host tests.test_update_instances tests.test_managed_strategy_runtime`.
-The thirteen durable checkpoints can also be compared with MeTTapedia's
-executable model using `scripts/check_host_strategy.py --help`. These are model
-laws and tested runtime correspondence, not a proof of the C/Python runtime.
-
-Weighted goal scheduling is opt-in with `agent.fair_goals = true`. Definitions
-remain in `memory/goals.metta`; service counters and cycle receipts live in the
-same SQLite checkpoint as protected requests. For example:
-
-```metta
-(goal investigate Research sti:0.5 lti:0.5 vibes:() blocked-by:none last-verified:never note:"Inspect the current evidence")
-(goal review Maintenance sti:0.5 lti:0.5 vibes:() blocked-by:none last-verified:never note:"Review the goal inventory and record next steps")
-(goal-policy investigate share:2 every:once urgency:0 checker:operator)
-(goal-policy review share:1 every:86400 urgency:10 checker:inventory-review)
-```
-
-The eligible goal with least service/share receives the next autonomous
-provider attempt; age and urgency break ties. Integer cross-products preserve
-exact ratios. Zero share disables autonomous scheduling. Incoming input takes
-precedence. Budget denial adds no service; admitted failures keep their charge.
-Foreground continuation steps keep their request until the existing loop policy
-opens an autonomous opportunity; absence of a new message is not such a boundary.
-Completion, restart, compaction and mode changes do not erase accounting.
-New recurring goals start due; completing a cycle starts its configured wait.
-
-`(goals)` includes the inventory digest. `(help "goal-review-save")` describes
-the structured review artifact. Its checker requires coverage of that exact
-inventory and an observed, correlated result. It certifies a recorded review,
-not the truth of the assessments or completion of the reviewed work. Review
-is scheduled through the same queue as other goals. Removing or disabling a
-goal never completes its protected request.
-The latest completed review accompanies the selected goal's next turn, with
-an explicit indication of whether its source definition has since changed.
-
-`python3 -m unittest tests.test_fair_goals` checks the runtime adapter.
-`scripts/audit_fair_goals.py --ledger STATE/observed-strategy.sqlite3
---lean-output Decisions.lean` checks durable accounting and exports numeric
-decisions for independent replay against MeTTapedia's `FairGoalScheduling`.
-Run the emitted file with the qualified model on `LEAN_PATH`; export alone is
-not a Lean verdict. New goals join at the current service floor; reweighting
-starts a new share epoch. Bounded-wait proofs apply to finite stable cohorts
-with continued admitted opportunities, not unlimited arrivals or wall time.
-This is weighted virtual service, not Linux's complete EEVDF algorithm.
-Existing provider budgets, wake policies and strict upstream modes are unchanged.
-
-For recorded live safety, `scripts/audit_strategy.py --help` reads each supplied
-ledger in a read-only transaction, maps identities without exporting message or
-result text, and checks the event trace and final saved state with MeTTapedia's
-`StrategyTraceAudit.lean`. It checks captured authority, recorded revisions,
-reservation/result ordering, observation barriers and checked completion.
-Its receipt separates safety violations from unresolved effects. Run it from
-an independent operator process; it neither wakes nor changes an instance.
-Task-checker truth, external-effect delivery, clock/budget enforcement and useful
-progress require their own evidence and are outside this trace audit.
+`(rest 60 (shell "printf ready"))` schedules the command without a model call.
+The quoted form `(rest 60 (quote (shell "printf ready")))` remains accepted.
+`(rest 60 "review the result")` retains a note for the next waking. Rest banks
+remaining burst energy. Timers survive restart; an action interrupted while
+running is reported as unknown and is not replayed. The life heartbeat can wake
+without prematurely firing a later timer.
 
 ## Get started
 
@@ -485,10 +396,8 @@ mailboxes to the agent's existing attention and checkpoint paths. Set
   "auto_receive": ["inbox"],
   "name": "agent",
   "siblings": {"peer": "/path/to/peer/inbox"},
-  "peer_wakes_per_hour": 6,
-  "peer_turns": 2,
   "max_active": 256,
-  "preview_chars": 2048,
+  "preview_chars": 32768,
   "codex": {
     "channel": "codex-review",
     "transport_module": "/path/to/installed/codex-room",
@@ -628,64 +537,41 @@ The transport byte cap is not a guarantee that the JSON codec accepts every
 body below it. Parser work and depth limits can reject a smaller body; these
 remain an explicit qualification limit for large contexts and replies.
 
-### Operator admission and upstream profiles
+### Provider calls and tools
 
-For feedback after each action in the managed `godelclaw` and `coding` loops,
-set `command_batch_limit = 1` under `[agent]` in `config/local.toml`.
-The configured default is five; the protected strategy restricts effectful
-batches to one and permits higher limits only for independent observations.
-`METTACLAW_COMMAND_BATCH_LIMIT` configures the same limit
-when no local value is set. The prompt and dispatcher use the same positive
-limit. Excess commands are recorded as deferred for reconsideration after the
-executed result; they are not automatically replayed. One command may contain
-a multi-step script or delegated tool batch. This setting leaves the vendored
-Iter and Omega dispatch protocols unchanged.
+Provider accounting records usage and results without request, token, or failure
+quotas. Actual transport failures and provider rate limits can delay retry.
+`Retry-After` takes precedence over fallback pacing. Parse errors and tool errors
+return immediately. A length-limited response retains complete commands.
 
-The admission ledger is shared across an instance's modes, while each mode
-retains its own cognitive state. It does not rewrite energy, fuel, prompts,
-transformations or the mode's pacing algorithm. Repository defaults add no
-request or token cap: Iter/Omega use `upstream`, other modes use `managed` with
-caps disabled. Select `METTACLAW_LLM_POLICY=managed` for an integrated deployment
-or `upstream` to bypass added admission limits and cooldowns. The original
-vendored sources and standalone conformance runners remain available.
+Reasoning uses the provider default unless the agent or instance selects an
+explicit effort. The stable prompt prefix requests caching on providers that
+support it; measured usage reports actual cache hits, not an assumed guarantee.
 
-`METTACLAW_LLM_POLICY_PATH` optionally names a JSON file. Zero disables a cap;
-these defaults preserve existing framework fuel policies:
+Shell defaults to 120 seconds. `(shell "command" 600)` changes the deadline for
+that call; zero means no deadline. Timeout results retain partial stdout and
+stderr. `read-lines` preserves complete lines and defaults to 2,000 lines.
+`read-file` accepts an optional byte limit (zero means unlimited). `grep-files`
+and `ls-tree` expose pagination; `tmux-peek` includes scrollback. Peer mailbox
+messages use ordinary input wakes without a separate hourly quota.
 
-```json
-{
-  "requests_per_hour": 0,
-  "output_tokens_per_day": 0,
-  "failures_per_window": 0,
-  "failure_window_seconds": 300,
-  "quota_cooldown_seconds": 300
-}
-```
+Credential redaction, configured chat permissions, occurrence identities for
+message delivery, memory supervision, and the operator stop remain in place.
+An uncertain Telegram delivery never causes an automatic resend and does not
+block new messages to that chat.
 
-Add `profile` or per-mode overrides under `modes` when needed. Every numeric
-setting also has a `METTACLAW_LLM_<UPPERCASE_NAME>` environment override. The
-metadata-only SQLite ledger reserves a request's maximum output before sending;
-an uncertain timeout retains that reservation, and known usage settles it once.
-Daily output caps use UTC days; request and failure caps use rolling windows.
-Managed quota failures establish a provider cooldown across mode changes.
-Existing framework backoff remains interruptible. Limits apply per instance,
-not across separate instances sharing a provider account.
-
-The executable [Lean model in MeTTapedia](https://github.com/godelclaw/MeTTapedia/blob/main/lean/pettaclaw/LlmBoundary.lean)
-proves selected completion, queue ownership, ordered replay, tool readiness and
-admission laws under explicit host assumptions.
-It does not verify the external provider or the complete C/Python implementation.
-Offline checks include provider wire fixtures, native credentials, signed tool
-batches, slow requests, duplicate/foreign events, truncation and both evaluators:
+Offline checks include real evaluator dispatch, failed reads followed by useful
+work, long-running shells, retained timeout output, timer restoration, prompt
+compaction, native provider protocols and native mailbox delivery:
 
 ```sh
-python3 -m unittest discover -s tests -p 'test_provider_protocol.py'
-python3 -m unittest discover -s tests -p 'test_llm_policy.py'
+python3 -m unittest discover -s tests -p 'test_command_dispatch.py'
+python3 -m unittest discover -s tests -p 'test_task_context.py'
+CETTA_BIN=/path/to/cetta python3 -m unittest discover -s tests -p 'test_command_dispatch_engine.py'
 CETTA_BIN=/path/to/cetta python3 -m unittest discover -s tests -p 'test_native_llm_boundary.py'
-MODE_TEST_CETTA_BIN=/path/to/engine-bundle/cetta python3 -m unittest discover -s tests -p 'test_upstream_mode_runtime.py'
 ```
 
-Run native checks with the Python environment used to build CeTTa.
+Use the Python environment linked into CeTTa for native checks.
 
 ## Memory
 
@@ -760,31 +646,11 @@ System also added it into its Atom Space storage (embedding vector omitted):
 
 <img width="379" height="69" alt="image" src="https://github.com/user-attachments/assets/6aa59deb-33b4-42b9-a535-ae153b4b7a18" />
 
-## Proposal-bound self-modification
+## Source edits
 
-The file tools create immutable proposals instead of rewriting the running
-agent. A proposal contains the exact candidate bytes, their SHA-256 digest,
-the prior target digest, and provenance. MeTTa candidates are parsed by PeTTa's
-`top_forms` and `sread` without calling `process_form`. Optional semantic
-evaluation runs directly with the agent process's authority; it is validation,
-not a sandbox, and may perform effects present in the candidate.
-
-Promotion is a separate, explicit operation. Digest binding, stale-base checks,
-and atomic replacement prevent an unverified proposal from being confused with
-the promoted candidate:
-
-```sh
-python3 scripts/selfmod_supervisor.py verify PROPOSAL_ID \
-  --root PROTECTED_ROOT --store PROPOSAL_STORE
-python3 scripts/selfmod_supervisor.py promote PROPOSAL_ID \
-  --root PROTECTED_ROOT --store PROPOSAL_STORE
-```
-
-Add `--semantic` to require direct PeTTa evaluation. Configure locations
-with `METTACLAW_PROTECTED_ROOT`, `METTACLAW_SELFMOD_PROPOSAL_STORE`, and
-`PETTA_ROOT`. Optional external governance is enabled only when
-`METTACLAW_SELFMOD_REQUIRE_GOVERNANCE=1`; its executable is supplied through
-`METTACLAW_GGB_SELFMOD_CLI`.
+File tools write directly with their ordinary backup and error reporting.
+There is no proposal/promotion workflow. Historical proposals are retained as
+records; they are not automatically applied after removing the old machinery.
 
 ## Runtime observations in managed context
 
@@ -792,7 +658,7 @@ The managed strategy adds one bounded `RUNTIME_STATE` packet after replaceable
 request transformations. It reports recorded provider/retry state, pending
 turn settlement, local channel readiness, operator inputs awaiting processing,
 recent command receipt counts and reasons, persisted memory-index sequence
-gap, and owned model results awaiting review. Budget numbers appear at a cap.
+gap.
 The packet is limited to 2,400 characters; full details remain available through
 `vitals`, `command-receipts`, `model-jobs` and `llm-quota`.
 
@@ -805,8 +671,7 @@ describe a recent bounded window, including records covering command batches.
 Returned provider or command data does not prove task completion.
 
 These observations grant no tool authority and acknowledge no messages or
-receipts. The captured packet must survive preparation before provider
-admission. Strict standalone Iter/Omega profiles retain their existing context.
+receipts. The packet informs the model and does not gate execution. Strict standalone Iter/Omega profiles retain their existing context.
 
 ## Credits and license
 

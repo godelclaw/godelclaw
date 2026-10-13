@@ -380,13 +380,12 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
                              '!(py-call (telegram.effect_command_unaffected "t9" ("send-telegram-chat" "42" "x")))\n'
                              '!(py-call (telegram.effect_command_unaffected "t9" ("send-telegram-chat" "%d" "x")))\n'
                              % (out, GROUP), env)
-            # A message the turn has not read withholds a send into its own
-            # chat only; another chat's send goes ahead.
-            assert lines[-2:] == ["0", "1"], (lines, err[-500:])
+            # New input queues; neither emitted reply is discarded.
+            assert lines[-2:] == ["1", "1"], (lines, err[-500:])
             lines, err = run('!(tg:start)\n!(fs:write "%s" (tg:activity-batch))\n!(tg:ack-activity-batch)\n'
                              '!(py-call (telegram.pendingActivityCount))\n' % out, env)
             assert lines[-2:] == ["1", "0"], lines
-            print("runtime events, published counts and the unread-input guard work from the MeTTa client")
+            print("runtime events, published counts and queued new input work from the MeTTa client")
 
             # 10. The command responder, a process of its own with no model
             #     call, answers settings commands while no loop client runs at

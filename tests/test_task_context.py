@@ -12,7 +12,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT / "channels")]
 from observed_strategy import Ledger, encoded
 import task_context
-import admission_frontier
 
 
 class TaskContextTests(unittest.TestCase):
@@ -86,10 +85,7 @@ class TaskContextTests(unittest.TestCase):
         self.call([["read-file", "missing"], ["send", "premature claim"]], ["read failed: missing"])
         view = task_context.projection(self.store, "guide")
         self.assertEqual([p["disposition"] for p in view["transcript"]], ["returned", "not_run"])
-        self.assertEqual(view["pending"][0]["command"], ["send", "premature claim"])
-        identity = view["pending"][0]["id"]
-        task_context.resolve(self.store, identity, "obsolete claim abandoned after failed read")
-        self.assertFalse(task_context.projection(self.store, "guide")["pending"])
+        self.assertNotIn("pending", view)
         self.assertEqual(len(self.store.projection()["actions"]), 1)
 
     def test_compaction_preserves_notes_pending_and_exact_source_recovery(self):
@@ -101,9 +97,9 @@ class TaskContextTests(unittest.TestCase):
         task_context.note(self.store, "guide", "Earlier source supports a conditional result, not unconditional success.", encoded([identity]))
         view = task_context.compact(task_context.projection(self.store, "guide"), 4500)
         self.assertLessEqual(len(encoded(view).encode()), 4500)
-        self.assertTrue(view["transcript"][0]["compacted"])
+        self.assertTrue(view["archive"])
         self.assertEqual(view["transcript"][-1]["disposition"], "not_run")
-        self.assertTrue(view["notes"] and view["pending"])
+        self.assertTrue(view["notes"])
         pieces, offset = [], 0
         while offset is not None:
             page = task_context.read(Ledger(self.path), identity, offset, 173)
@@ -159,19 +155,6 @@ class TaskContextTests(unittest.TestCase):
             parts.append(page["text"]);offset=page["next"]
         self.assertEqual(json.loads("".join(parts))["requests"],original["requests"])
 
-    def test_hard_link_targets_are_not_independent_writes(self):
-        first=Path(self.tmp.name)/"first";second=Path(self.tmp.name)/"second"
-        first.write_text("old");second.hardlink_to(first)
-        self.assertTrue(admission_frontier.needs_observation(["write-file",str(second),"new"],[["write-file",str(first),"other"]]))
-
-    def test_dependency_boundary_is_not_an_action_count(self):
-        before = [["read-file", str(i)] for i in range(30)]
-        self.assertFalse(admission_frontier.needs_observation(["read-file", "last"], before))
-        self.assertTrue(admission_frontier.needs_observation(["send", "I checked everything"], before))
-        writes = [["write-file", str(Path(self.tmp.name)/str(i)), "fixed text"] for i in range(30)]
-        for i, command in enumerate(writes):
-            self.assertFalse(admission_frontier.needs_observation(command, writes[:i]))
-        self.assertTrue(admission_frontier.needs_observation(writes[0], writes[1:]+writes[:1]))
 
 
 if __name__ == "__main__":

@@ -30,8 +30,6 @@ ABI = "agent-input-v1"
 # A sibling's note starts with this line; the receiver honours it only for a
 # configured sibling, and only to lower the note's standing to peer mail.
 _from = re.compile(r"From: ([A-Za-z0-9_.-]{1,128})\n\n")
-SIBLING_WAKES_PER_HOUR = 6
-PEER_WINDOW_SECONDS = 3600
 SEND_CHARS = 32768
 
 
@@ -109,7 +107,7 @@ def peer_turns():
     box = _runtime
     if box is None: return 0
     identities = {source_id(box.instance, ticket) for ticket in box.peer_offered.copy()}
-    return box.peer_turn_budget if identities.intersection(telegram._current_batch_update_ids) else 0
+    return int(bool(identities.intersection(telegram._current_batch_update_ids)))
 
 
 def send(to, text, correlation=""):
@@ -218,17 +216,12 @@ class Inbox:
             any(channel not in self.channels for channel in self.auto_receive)):
             raise ValueError("persistent inbox requires configured channels")
         self.capacity = config.get("max_active", 256)
-        self.preview = config.get("preview_chars", 2048)
+        self.preview = config.get("preview_chars", 32768)
         self.watch_ms = config.get("watch_ms", 30000)
-        self.peer_limit = config.get("peer_wakes_per_hour", SIBLING_WAKES_PER_HOUR)
-        self.peer_turn_budget = config.get("peer_turns", 2)
         if (type(self.capacity) is not int or not 1 <= self.capacity < 65536 or
             type(self.preview) is not int or not 0 < self.preview <= 65536 or
             type(self.watch_ms) is not int or not 0 < self.watch_ms <= 60000):
             raise ValueError("invalid mailbox admission, preview or watch budget")
-        if (type(self.peer_limit) is not int or not 1 <= self.peer_limit <= 256 or
-            type(self.peer_turn_budget) is not int or not 1 <= self.peer_turn_budget <= 20):
-            raise ValueError("invalid peer wake or turn budget")
         self.native, self.wire = _api(config)
         if config.get("storage_identity") is not None:
             identity = config["storage_identity"]
@@ -250,7 +243,6 @@ class Inbox:
         self.offered = set()
         self.peer_offered = set()
         self.task_arrivals = {}
-        self.peer_retry_at = None
         self.error = ""
         self.pressure = ""
         self.notifications = self.scans = 0
@@ -289,36 +281,6 @@ class Inbox:
             self.channels.get(wait[3]) != wait[5]):
             raise RuntimeError("mailbox registration authority or program mismatch")
         return wait
-
-    def _peer_wake(self, box, sender, ticket):
-        """Reserve a wake once per occurrence, using the native batch boundary.
-
-        Full budgets leave Ready untouched. A deadline retries admission;
-        restarts reconcile the same grant instead of resetting the budget.
-        """
-        E, Var = self.wire.E, self.wire.Var
-        now = int(time.time() * 1000)
-        period = int(PEER_WINDOW_SECONDS * 1000)
-        def operation(revision):
-            old = box._one(box._rows(E("AgentMailboxPeerBudget",1,self.instance,sender,Var(0)),revision))
-            entries = old[-1] if old else ()
-            if (not isinstance(entries,tuple) or len(entries) > 256 or
-                any(not isinstance(e,tuple) or len(e)!=2 or not isinstance(e[0],str) or
-                    type(e[1]) is not int or e[1] < 0 for e in entries)):
-                raise RuntimeError("invalid stored peer wake budget")
-            if any(e[0] == ticket for e in entries): return True, None
-            recent = tuple(e for e in entries if now - e[1] < period)
-            if len(recent) >= self.peer_limit:
-                return False, (min(e[1] for e in recent) + period) / 1000
-            replacement = E("AgentMailboxPeerBudget",1,self.instance,sender,recent+((ticket,now),))
-            ops = (E("remove",old),) if old else ()
-            box.space.batch(*ops,E("add",replacement))
-            return True, None
-        allowed, due = box._operation(operation)
-        if due is not None:
-            self.peer_retry_at = due if self.peer_retry_at is None else min(self.peer_retry_at,due)
-            self.pressure = "peer wake budget"
-        return allowed
 
     def wait(self, ticket, channel, correlation, *, intent=None, task="", note=""):
         """Register one stable ticket and return immediately, including on replay."""
@@ -360,8 +322,8 @@ class Inbox:
 
     def read(self, ticket, offset=0, count=None):
         """Read inert text by a bounded page; reading grants no settlement."""
-        count = self.preview if count is None else count
-        if type(offset) is not int or offset<0 or type(count) is not int or not 0<count<=self.preview:
+        count = 32768 if count is None else count
+        if type(offset) is not int or offset<0 or type(count) is not int or count<=0:
             raise ValueError("invalid mailbox read page")
         E, Var = self.wire.E, self.wire.Var
         with self.lock:
@@ -404,7 +366,6 @@ class Inbox:
             except (OSError,ValueError): health={"state":"unavailable"}
         return {"instance":self.instance,"active":[{"ticket":row[2],"state":row[0].name} for row in active],
                 "error":self.error,"backpressure":self.pressure,"codex_error":self.codex.error if self.codex else "",
-                "peer_retry_at":self.peer_retry_at,
                 "directory_bridge":health,
                 "notifications":self.notifications,"scans":self.scans}
 
@@ -448,7 +409,6 @@ class Inbox:
         box.space.describe()
         captured = box.space.revision  # before reads, closing the query/watch race
         self.pressure = ""
-        self.peer_retry_at = None
         # Exact receives get their correlated message before the generic inbox
         # listener can consume it. Resolution is itself an atomic COMM.
         for row in box.active(self.tag,self.capacity+1):
@@ -513,7 +473,6 @@ class Inbox:
                 stamp = _from.match(message[6]) if message[3] in self.auto_receive else None
                 if stamp and stamp.group(1) in self.siblings:
                     data["from"] = stamp.group(1)
-                    if not self._peer_wake(box,data["from"],ticket): continue
                     self.peer_offered.add(ticket)
                     offered = self.offer(json.dumps(data,ensure_ascii=False),identity,sibling=data["from"])
                 else:
@@ -538,7 +497,6 @@ class Inbox:
         """Diagnostic state is separate from scheduler progress or settlement."""
         value={"instance":self.instance,"watching":self.monitor is not None,
                "error":self.error,"backpressure":self.pressure,
-               "peer_retry_at":self.peer_retry_at,
                "scans":self.scans,"notifications":self.notifications}
         _write_health(self.config.get("health_path"), value)
 
@@ -556,10 +514,6 @@ class Inbox:
                     self._health()
                     while not self.stopped.is_set():
                         wait_ms = self.watch_ms
-                        if self.peer_retry_at is not None:
-                            left = self.peer_retry_at - time.time()
-                            if left <= 0: break
-                            wait_ms = min(wait_ms,max(1,int(left*1000)))
                         changed = box.space.watch(captured,wait_ms)
                         if changed[0] == self.wire.S("changed"):
                             self.notifications += 1

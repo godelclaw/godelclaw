@@ -46,6 +46,7 @@ class PairedUpdateTest(unittest.TestCase):
             (release / "files/run.sh").write_text("#!/bin/sh\n# new launcher\n")
             (release / "files/src/core.py").write_text("# new core\n")
             hashes = {n: update.sha(release / "files" / n) for n in ("run.sh", "src/core.py")}
+            hashes["src/obsolete.py"] = None
             (release / "manifest.json").write_text(json.dumps({"release": "checked", "files": hashes}))
             instances = []
             for name in ("alpha", "beta"):
@@ -53,6 +54,7 @@ class PairedUpdateTest(unittest.TestCase):
                 (root / "src").mkdir(parents=True); state.mkdir()
                 (root / "run.sh").write_text("# old launcher\n")
                 (root / "src/core.py").write_text("# old core\n")
+                (root / "src/obsolete.py").write_text("# removed feature\n")
                 (state / "identity").write_text(name)
                 instances.append({"name": name, "root": str(root), "state_dir": str(state),
                     "service": name, "checks": [["offline", name]],
@@ -116,6 +118,9 @@ class PairedUpdateTest(unittest.TestCase):
                     ["alpha-control", "beta-control"])
             for item in instances:
                 root = Path(item["root"])
+                self.assertEqual((root / "src/obsolete.py").exists(), bool(rollback))
+                if rollback:
+                    self.assertEqual((root / "src/obsolete.py").read_text(), "# removed feature\n")
                 self.assertFalse((root / ".runtime-update-hold").exists())
                 self.assertEqual((Path(item["state_dir"]) / "identity").read_text(), item["name"])
                 self.assertEqual((root / "src/core.py").read_text(), "# old core\n" if rollback else "# new core\n")

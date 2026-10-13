@@ -150,7 +150,7 @@ class NativeStreamingTest(unittest.TestCase):
         self.assertIn("(RESULT (nop))", output)
         self.assertEqual(len(self.peer.requests), 1)
 
-    def test_steered_result_is_retained_as_evidence_without_action(self):
+    def test_new_input_does_not_discard_a_completed_response(self):
         fixture = self.directory / "guard_fixture.py"
         fixture.write_text('import strategy_host\nrevision="captured"\n'
             'strategy_host.enabled=lambda: True\nstrategy_host.guard=lambda: revision\n'
@@ -161,9 +161,9 @@ class NativeStreamingTest(unittest.TestCase):
             '  (let $state (llm:begin $plan)\n'
             '    (progn (py-call (guard_fixture.steer))\n'
             '           (println! (RESULT (llm:after-submit $plan $state))))))\n')
-        self.assertIn("(RESULT ())", output)
+        self.assertIn("(RESULT (nop))", output)
         state, _, evidence, reason = self.journal()[0]
-        self.assertEqual((state, reason), ("late", "captured-authority-changed"))
+        self.assertEqual((state, reason), ("completed", None))
         self.assertIn("(nop)", evidence)
         self.assertEqual(len(self.peer.requests), 1)
 

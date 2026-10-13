@@ -104,6 +104,8 @@ def _provider(now):
         if stamp is not None and stamp <= 3600:
             import provider_protocol
             call["lastCache"] = provider_protocol.cache_observation(completion.get("usage"))
+            if completion.get("finish_reason") == "length":
+                call["responseCut"] = "output limit reached; complete calls retained; trailing incomplete call was not run"
             layout = completion.get("prompt_layout", {})
             if _nat(layout.get("stable_chars")) is not None:
                 call["stablePrefixChars"] = layout["stable_chars"]
@@ -241,23 +243,7 @@ def _background(now):
 
 
 def _budget(now):
-    import llm_policy
-    policy = llm_policy.configuration()
-    if policy["profile"] != "managed" or not any(policy[name] for name in
-            ("requests_per_hour", "output_tokens_per_day")):
-        return "no-volume-caps", None
-    with _database(llm_policy.ledger_path()) as db:
-        hour = db.execute("SELECT COUNT(*) FROM requests WHERE started>?", (now - 3600,)).fetchone()[0]
-        day = int(now // 86400) * 86400
-        output = db.execute("SELECT COALESCE(SUM(COALESCE(output,reserved)),0) FROM requests WHERE started>=?",
-                            (day,)).fetchone()[0]
-    limits = (policy["requests_per_hour"], policy["output_tokens_per_day"])
-    if not ((limits[0] and hour >= limits[0]) or (limits[1] and output >= limits[1])):
-        return "within-caps", None
-    numbers = [hour, output, *limits]
-    if any(_nat(value) is None for value in numbers):
-        raise ValueError("unsupported budget observation")
-    return "at-cap", dict(zip(("attemptsHour", "accountedOutputToday", "requestsHourLimit", "outputDayLimit"), numbers))
+    return "no-volume-caps", None
 
 
 def read(now=None):
@@ -273,7 +259,7 @@ def read(now=None):
         unavailable.append("provider-and-settlement")
     for name, reader in (("localChannelReady", lambda: _channel(now)),
                          ("humanInbox", lambda: _inbox(now)), ("commands", _commands),
-                         ("memory", _memory), ("background", lambda: _background(now))):
+                         ("memory", _memory)):
         try:
             facts[name] = reader()
         except failures:

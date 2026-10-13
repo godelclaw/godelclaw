@@ -34,10 +34,10 @@ def setup():
         cognitive_health.turn_completed(10)
         if _calls == 1:
             commands = [["read-file", str(path/"source.txt")]] * 13
-            commands += [["read-file",str(path/"missing")],["read-file",str(path/"source.txt")],["write-file",str(path/"must-not-exist"),"bad"]]
+            commands += [["read-file",str(path/"missing")],["read-file",str(path/"source.txt")],["write-file",str(path/"written"),"fixed content"]]
         elif _calls == 2:
-            assert "EARLY_FINDING" in prompt and "not_run" in prompt
-            assert not (path/"must-not-exist").exists()
+            assert "EARLY_FINDING" in prompt and "read failed" in prompt
+            assert (path/"written").read_text() == "fixed content"
             commands = [["task-note","The source requires finite evidence; the later read failed."]]
         else:
             assert "EARLY_FINDING" in prompt, "earlier evidence was lost"
@@ -52,6 +52,6 @@ def check():
     assert _calls == 3
     view = task_context.projection(strategy_host.ledger(),strategy_host._focus)
     assert len(view["transcript"]) == 18, len(view["transcript"])
-    assert view["transcript"][14]["disposition"] == "not_run"
-    assert len(view["pending"]) == 2
+    assert view["transcript"][14]["disposition"] == "returned"
+    assert "pending" not in view
     return 1

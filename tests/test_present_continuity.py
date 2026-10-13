@@ -116,10 +116,10 @@ class LoopWiringTests(unittest.TestCase):
         self.assertIn("(process-step $state $outcome)", self.loop)
 
     def test_timed_rest_carries_quoted_continuation_as_data(self):
-        self.assertIn("(= (rest $seconds (quote $continuation))", self.skills)
+        self.assertIn("(= (rest-command $seconds (quote $continuation))", self.skills)
         self.assertIn("pending-continuation", self.skills)
         self.assertIn("(continuation-value $continuation)", self.skills)
-        start = self.skills.index("(= (rest $seconds (quote $continuation))")
+        start = self.skills.index("(= (rest-command $seconds (quote $continuation))")
         end = self.skills.index("(= (rest $seconds $why)", start)
         self.assertNotIn("(helper.intent_save", self.skills[start:end])
 
@@ -127,7 +127,7 @@ class LoopWiringTests(unittest.TestCase):
         self.assertIn("(runRestContinuation", self.loop)
         self.assertIn("(addition-effect-turn-begin $turn)", self.loop)
         self.assertNotIn("(telegram.begin_effect_turn", self.loop)
-        self.assertIn("(run-command-batch-once $turn", self.loop)
+        self.assertIn("(run-command-batch-once $actual", self.loop)
         self.assertIn("(policy-command-batch-limit", self.loop)
         continuation = self.loop.index("(runRestContinuation")
         wait = self.loop.index("(waitCandidate")

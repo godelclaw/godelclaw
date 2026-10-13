@@ -6,17 +6,17 @@ turn that asks for it, and the checker answers format questions for free
 
 # skill -> (min_args, max_args). None = variadic tail.
 ARITY = {
-    "task-read": (1, 2), "task-history": (1, 2), "task-note": (1, 2), "task-resolve": (2, 2),
+    "task-read": (1, 2), "task-history": (1, 2), "task-note": (1, 2),
     "mailbox-wait": (3, 4), "mailbox-status": (0, 0),
     "mailbox-read": (1, 3), "mailbox-cancel": (1, 1),
     "mailbox-codex": (3, 3), "mailbox-send": (2, 3), "mailbox-reply": (2, 2),
     "requests": (0, 0), "request-status": (1, 1), "request-focus": (1, 1),
     "request-page": (1, 1), "request-read": (2, 2), "request-disposition": (3, 3),
     "command-receipts": (0, 1), "topics": (0, 0), "topic-select": (1, 1),
-    "topic-note": (1, 1), "background-model": (2, 3), "model-jobs": (0, 0),
-    "model-result": (1, 1), "model-adopt": (1, 1), "model-retire": (1, 1),
+    "topic-note": (1, 1),  "model-jobs": (0, 0),
+    "model-result": (1, 1),
     "remember": (1, 1), "query": (1, 1), "pin": (1, 1), "unpin": (1, 1),
-    "goals": (0, 0), "goal-write": (1, 1), "goal-drop": (2, 2), "goal-review-save": (2, 2),
+    "goals": (0, 0), "goal-write": (1, 1), "goal-drop": (2, 2),
     "rest": (0, 2),
     "nop": (0, 0),
     "mode": (0, 0),
@@ -24,13 +24,13 @@ ARITY = {
     "mode-set": (1, 1),
     "iter-transformations": (0, 0), "iter-transform-write": (2, 2),
     "iter-transform-disable": (1, 1), "iter-transform-enable": (1, 1),
-    "shell": (1, 1), "background": (1, 1), "jobs": (0, 0),
+    "shell": (1, 2), "background": (1, 1), "jobs": (0, 0),
     "job-output": (1, 1), "job-stop": (1, 1), "vitals": (0, 0),
-    "gateway-tools": (0, 0), "gateway-start": (3, 3),
-    "gateway-status": (1, 1), "gateway-cancel": (1, 1),
+
+
     "read-file": (1, 1), "write-file": (2, 2),
-    "append-file": (2, 2), "read-lines": (3, 3), "edit-file": (3, 3),
-    "ls-tree": (2, 2), "grep-files": (2, 2),
+    "append-file": (2, 2), "read-lines": (1, 3), "edit-file": (3, 3),
+    "ls-tree": (1, 4), "grep-files": (2, 4),
     "send": (1, 1), "send-telegram-chat": (2, 2),
     "send-file": (1, 2), "send-image": (1, 2),
     "delete-my-recent": (2, 2), "delete-message-exact": (2, 2),
@@ -50,7 +50,7 @@ PAGES = {
     "task-read": 'usage: (task-read "call-id" "offset")\nRead an exact recorded call/result pair. Offsets count characters; next=null ends it.',
     "task-history": 'usage: (task-history "request-id" "offset")\nTask-scoped ordered call/result index, including compacted history.',
     "task-note": 'usage: (task-note "findings, uncertainties, next steps" "JSON list of call IDs")\nAppend a task note with evidence references. A note is an interpretation, not certified truth.',
-    "task-resolve": 'usage: (task-resolve "call-id" "decision and reason")\nRecord a decision about pending work. Does not execute a call, certify achievement, or clear effect uncertainty.',
+
     "mailbox-codex": (
         'usage: (mailbox-codex "stable-ticket" "thread-id" "turn-id")\n'
         'Subscribe to an existing turn using the configured Codex-room transport.\n'
@@ -74,13 +74,12 @@ PAGES = {
         'Correlation is optional. Register the matching mailbox-wait before requesting a reply, and ask the peer to reply using the same correlation. '
         'Deliver a note to your sibling agent\'s mailbox; Telegram is not involved.\n'
         'The note starts with your name and arrives as peer mail, not operator\n'
-        'input. It wakes the sibling at most 6 times an hour from you; later notes\n'
-        'stay stored until the wake allowance is available. Returns MAILED with\n'
+        'input. Arrivals wake the sibling. Returns MAILED with\n'
         'the complete message occurrence ID; the recipient has its own ticket.'),
     "mailbox-read": (
         'usage: (mailbox-read "ticket") or (mailbox-read "ticket" offset count)\n'
-        'Read inert reply text in character pages; the configured preview limit\n'
-        'bounds each page. Reading does not acknowledge or execute the reply.\n'
+        'Read inert text in character pages; default 32768, caller may request more.\n'
+        'Reading does not acknowledge or execute the reply.\n'
         'Only a completed, durable cognitive checkpoint settles its arrival.'),
     "mailbox-cancel": (
         'usage: (mailbox-cancel "ticket")\nCancel an unmatched receive.\n'
@@ -89,48 +88,20 @@ PAGES = {
     "topics": 'usage: (topics)\nNamed agent-owned working contexts and their revisions. Operator input is always visible.',
     "topic-select": 'usage: (topic-select "name")\nSelect or create named notes for subsequent model turns. Does not hide incoming messages.',
     "topic-note": 'usage: (topic-note "notes")\nReplace active topic notes and advance its revision. Captured background answers then become stale.',
-    "background-model": 'usage: (background-model "topic" "question" "JSON dependency names")\nStart a read-only CeTTa model worker and return its stable ID immediately. Dependencies default to []. Shared budgets apply. Results return to the captured topic; no tools or sends run in the worker.',
+
     "model-jobs": 'usage: (model-jobs)\nBounded recent model jobs: owners, state, observation and adoption.',
     "model-result": 'usage: (model-result "id")\nRead a correlated result. Its returned tool receipt must reach a subsequent model step before adoption.',
-    "model-adopt": 'usage: (model-adopt "id")\nAfter review, append the observed, current evidence view once to its original topic notes. Long results adopt only the displayed excerpt; the full result stays retained. Changed dependencies refuse the merge.',
-    "model-retire": 'usage: (model-retire "id")\nRetire an observed terminal/uncertain job and release its slot. Does not replay a provider request or erase evidence.',
+
+
     "requests": 'usage: (requests)\nCompact retained work and receipt view with counts. Input processing settles delivery, not task achievement. Use request-page for older records.',
     "request-page": 'usage: (request-page "offset")\nRead eight retained request headlines, including processed messages and deferred work. next_offset continues the listing.',
     "request-status": 'usage: (request-status "id")\nRead kind, workflow status, processing flag and original input excerpt. next_offset continues with request-read.',
     "request-read": 'usage: (request-read "id" "offset")\nRead the next 4000 characters of the retained original input.',
     "request-disposition": 'usage: (request-disposition "id" "keep|waiting-user|defer|addressed|reopen" "reason")\nkeep promotes an input to explicit ongoing work; include its closing condition. waiting-user and defer retain work for later. addressed is your reviewed workflow disposition, never checker-certified achievement. Goals and configured exact-output checkers retain their own completion rules.',
-    "gateway-start": (
-        'usage: (gateway-start "stable-request-id" "tool" "json-object")\n'
-        'Use (gateway-tools) for configured names and input schemas. JSON\n'
-        'quotes can be written as _quote_ inside a MeTTa string. Submission\n'
-        'returns a queued/running receipt, NOT the completed tool result.\n'
-        'Inspect (gateway-status "stable-request-id") on a later turn;\n'
-        '(gateway-cancel "stable-request-id") requests cancellation.\n'
-        'The first deadline is 30 seconds. Reuse the ID to recover an existing\n'
-        'operation, not to repeat it. Changed intent conflicts. An uncertain\n'
-        'write must be reconciled, never blindly resubmitted with a fresh ID.\n'
-        'The separately launched gateway survives cognition restarts.\n'
-        'If not configured or unavailable, a structured error is returned.'),
-    "gateway-tools": (
-        'usage: (gateway-tools)\n'
-        'Lists the configured tool names, effect classes and JSON input schemas.\n'
-        'The live pilot exposes read-only tools; no shell or social sender.'),
-    "gateway-status": (
-        'usage: (gateway-status "stable-request-id")\n'
-        'Returns state, result/error and transition receipts. queued or running\n'
-        'is not completion; a null value means the ID was not found.'),
-    "gateway-cancel": (
-        'usage: (gateway-cancel "stable-request-id")\n'
-        'Withholds queued work or asks a running child to stop. A started write\n'
-        'can already have acted and remains uncertain when interrupted.'),
-    "shell": (
-        'usage: (shell "command string")\n'
-        'One string, no apostrophes inside. Hard timeout: 5 seconds. Output\n'
-        'comes back as the result. Never mutate, sleep, then inspect in one\n'
-        'call: a timeout does not roll back an earlier external effect.\n'
-        'fails: (shell ls /tmp) — unquoted args make it a 3-arg call and no\n'
-        '3-arg shell exists. Quote the whole command: (shell "ls /tmp").\n'
-        'Anything that may take longer than 5 seconds: (background ...).'),
+    "shell": ('usage: (shell "command") or (shell "command" timeout_seconds)\n'
+              'Run under sh; default timeout is 120 seconds, or METTACLAW_SHELL_TIMEOUT_SECONDS. '
+              'Zero disables the deadline. A timeout returns partial output. '
+              'For immediate return with completion notification use background.'),
     "background": (
         'usage: (background "command string")\n'
         'Runs under bash with no time limit and returns at once with a job\n'
@@ -153,12 +124,7 @@ PAGES = {
         'share is a nonnegative integer (0 disables autonomous service); every is once or seconds.\n'
         'Use checker:inventory-review only for a goal whose outcome is a saved inventory review.\n'
         'Policies preserve service history; notes and timestamps do not certify completion.'),
-    "goal-review-save": (
-        'usage: (goal-review-save "inventory-digest" JSON-array-or-quoted-JSON-string)\n'
-        'Read (goals) first. Cover every goal exactly once with goal, disposition (keep/defer/propose-close),\n'
-        'assessment, evidence and next_action. Record uncertainties and existing constraints.\n'
-        'The matching observed receipt completes only this review cycle; it does not complete or restart\n'
-        'the reviewed goals, certify judgments, send messages, or change their policies.'),
+
     "goal-drop": (
         'usage: (goal-drop "name" "reason")\n'
         'Retires the goal with your reason: it leaves scheduling, goes to the\n'
@@ -351,3 +317,62 @@ def verdict(original, rendered):
 def _compact(v, limit=90):
     s = str(v)
     return s if len(s) <= limit else s[:limit] + "…"
+
+
+# Equation heads supply the arities for runtime-defined skills, so new skills
+# do not need a second hand-kept registry merely to be callable.
+def equation_arities():
+    import re
+    from pathlib import Path
+    result = {}
+    for directory in (Path(__file__).parent, Path(__file__).resolve().parents[1] / "channels"):
+        for path in sorted(directory.glob("*.metta")):
+            text = path.read_text()
+            for match in re.finditer(r"^\(=\s+\(", text, re.M):
+                start = match.end()-1
+                depth, quoted, escaped, end = 0, False, False, start
+                for end in range(start,len(text)):
+                    c=text[end]
+                    if escaped:
+                        escaped=False
+                    elif c == "\\" and quoted:
+                        escaped=True
+                    elif c == '"':
+                        quoted=not quoted
+                    elif not quoted:
+                        if c == '(':
+                            depth+=1
+                        elif c == ')':
+                            depth-=1
+                            if depth == 0:
+                                break
+                forms=[text[start:end+1]]
+                # _top_level_forms scans the remaining file, including bodies;
+                # only the first balanced form is the equation's left side.
+                if not forms:
+                    continue
+                fields = _split_top(forms[0])
+                if fields and not fields[0].startswith('$'):
+                    result.setdefault(fields[0],set()).add(len(fields)-1)
+    return result
+
+
+def command_error(command):
+    if not isinstance(command, (list,tuple)) or not command or not isinstance(command[0],str):
+        return "COMMAND_ERROR: expected (skill arguments...)"
+    bounds = ARITY.get(command[0])
+    if bounds and (len(command)-1 < bounds[0] or bounds[1] is not None and len(command)-1 > bounds[1]):
+        return "COMMAND_ERROR: wrong number of arguments. " + help(command[0])
+    return ""
+
+
+_equations = equation_arities()
+ARITY.update({name:(min(counts),max(counts)) for name,counts in _equations.items()
+              if name in ARITY or name in PAGES or name in ("memory-health", "memory-compact", "context-policy")})
+ARITY.pop('rest-command', None)
+ARITY['shell'] = (1,2)  # implemented in Prolog
+PAGES['context-policy'] = 'usage: (context-policy) or (context-policy task_tokens)\nInspect or change the task context target; actual model capacity also applies. Older evidence remains in task-history/task-read.'
+PAGES['task-resolve'] = 'No resolution bookkeeping is required. Calls remain in task-history.'
+
+for _retired in ("background-model", "model-adopt", "model-retire", "goal-review-save", "task-resolve"):
+    ARITY.pop(_retired, None)

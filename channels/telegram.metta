@@ -972,7 +972,7 @@
               ((failed $code) (format-args "send failed: Telegram rejected {}" ($code)))
               ((not-sent) "send failed: the message was not sent")
               ((uncertain $why)
-               (format-args "send uncertain ({}): Telegram may or may not have it; this chat holds later messages until an operator resolves it ({})" ($why $key)))
+               (format-args "send uncertain ({}): Telegram may or may not have it; this occurrence will not be retried; later messages may proceed ({})" ($why $key)))
               ((released) (format-args "send uncertain (released): an operator released this chat; the message may or may not have arrived ({})" ($key)))))))))))
 
 (= (tg:nth $items $n)
@@ -1305,7 +1305,7 @@
                 ($stamp (tg:str (tg:at $record "received_at")))
                 ($clock (if (>= (str:char-length $stamp) 16) (str:char-slice $stamp 11 16) ""))
                 ($flat (str:join " " (str:split-whitespace $text)))
-                ($short (if (> (str:char-length $flat) $snippet)
+                ($short (if (and (> $snippet 0) (> (str:char-length $flat) $snippet))
                           (str:concat (str:char-slice $flat 0 $snippet) "…") $flat))
                 ($from (tg:str (tg:at $record "from"))))
            (if (or (not (tg:truthy (tg:at $record "allowed"))) (== $text "")) ""

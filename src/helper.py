@@ -565,6 +565,60 @@ def working_set_save(loops, sleep, lastresults, hb_clock,
         return 0
 
 
+def rest_schedule(seconds, command):
+    """Persist the one rest continuation alongside the existing working set."""
+    data = _working_read()
+    data['rest_timer'] = dict(deadline=time.time()+max(0,float(seconds)),
+                              command=command, status='waiting')
+    _working_write(data)
+    return 1
+
+
+def rest_cancel():
+    data = _working_read()
+    data.pop('rest_timer', None)
+    _working_write(data)
+    return 1
+
+
+def rest_pending():
+    timer = _working_read().get('rest_timer', {})
+    if timer.get('status') == 'waiting':
+        return ['continuation-value', timer['command']]
+    return 'no-continuation'
+
+
+def rest_due(timed_out):
+    timer = _working_read().get('rest_timer')
+    return int(timer['status'] == 'waiting' and time.time() >= timer['deadline']) if timer else int(timed_out)
+
+
+def rest_claim():
+    data = _working_read()
+    timer = data.get('rest_timer')
+    if timer:
+        timer['status'] = 'running'
+        _working_write(data)
+    return 1
+
+
+def rest_finish():
+    return rest_cancel()
+
+
+def wait_seconds(requested, last_heartbeat, interval):
+    """Wake for the earlier timer or life heartbeat without firing a timer early."""
+    now = time.time()
+    deadlines = [max(0, float(requested))]
+    if float(interval) > 0:
+        deadlines.append(max(0, float(last_heartbeat)+float(interval)-now))
+    timer = _working_read().get('rest_timer', {})
+    if timer.get('status') == 'waiting':
+        deadlines.append(max(0, timer['deadline']-now))
+    import math
+    return math.ceil(min(deadlines))
+
+
 def intent_save(why):
     """Store the agent's stated rest intention; it greets the next
     waking (WOKE_FROM_REST) and survives any boundary in between."""
@@ -591,6 +645,14 @@ def working_boot():
         marker = "CONTINUITY: resumed " + time.strftime("%Y-%m-%d %H:%M:%S")
         if intent:
             marker += " | WOKE_FROM_REST: " + str(intent)
+        timer = data.get('rest_timer', {})
+        if timer.get('status') == 'waiting':
+            import math
+            cache['sleepInterval'] = max(0, math.ceil(timer['deadline']-time.time()))
+        elif timer.get('status') == 'running':
+            marker += ' | SCHEDULED_COMMAND_INTERRUPTED: outcome unknown; not replayed: ' + repr(timer.get('command'))
+            data.pop('rest_timer', None)
+            _working_write(data)
         prior = str(cache.get("lastresults", ""))
         # The marker lives only in the waking view; the snapshot keeps
         # pristine content so markers never stack across boots.
@@ -891,3 +953,20 @@ def menu_state(kind):
     else:
         state = {"text": "", "current": "", "names": []}
     return json.dumps(state, ensure_ascii=False)
+
+
+def str_env(name, default=""):
+    return os.environ.get(str(name), str(default))
+
+
+def complete_command_prefix(text):
+    """A length-cut response may contain complete calls before its cut tail."""
+    text = str(text).strip()
+    forms, complete = _top_level_forms(text)
+    if complete:
+        return text
+    # For a command-list envelope, its children can be complete even when
+    # the enclosing list and its final child were cut by the provider.
+    children, _ = _top_level_forms(text[1:] if text.startswith("((") else text)
+    print("[model-response] output truncated; retained %d complete calls" % len(children))
+    return "(" + " ".join(children) + ")"

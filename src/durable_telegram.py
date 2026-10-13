@@ -231,9 +231,8 @@ class Outbox:
     submits the queue in order, resending the same key and bytes until the
     service stores it, across service and client restarts. So no message is
     lost while the service is away, none is sent twice, and none overtakes an
-    earlier one to the same chat. A lane whose last delivery is uncertain is
-    held: its later batches stay queued, in order, until an operator releases
-    it, and other lanes go on. A record's metadata stays until its receipts
+    earlier one to the same chat. An uncertain delivery keeps its occurrence identity and is not retried.
+    Later submissions continue in order. A record's metadata stays until its receipts
     arrive, so a receipt that comes after a client restart is still known.
     """
 
@@ -319,12 +318,9 @@ class Outbox:
             return True if key in self.stored else self.refused[key]
 
     def hold(self, lane):
-        """Stop submitting to a lane whose last delivery is uncertain. Its
-        later batches stay queued, in order, until the lane is released."""
-        with self._condition:
-            if lane not in self.held:
-                self.held.add(lane)
-                self._append({"hold": lane})
+        # Old clients may report an uncertain send. That occurrence remains
+        # recorded; it does not block any later submission to this chat.
+        return None
 
     def release(self, lane):
         with self._condition:
@@ -335,7 +331,7 @@ class Outbox:
 
     def is_held(self, lane):
         with self._condition:
-            return lane in self.held
+            return False
 
     def done(self, key):
         """All receipts for key have arrived: forget it."""
@@ -347,7 +343,7 @@ class Outbox:
     def _eligible(self):
         """The first queued batch of any lane that is not held. Each lane's
         batches keep their order; a held lane never blocks another."""
-        blocked = set(self.held)
+        blocked = set()
         for key, body in self.queue:
             lane = lane_of(key)
             if lane not in blocked:

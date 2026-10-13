@@ -88,13 +88,6 @@ def main():
         return 2
     telegram = config.get("telegram", {})
     input_policy = agent.get("input_policy", "cooperative")
-    background_models = agent.get("background_models", 1)
-    background_tokens = agent.get("background_tokens", 1024)
-    if (input_policy not in ("cooperative", "legacy") or
-            type(background_models) is not int or not 0 <= background_models <= 8 or
-            type(background_tokens) is not int or not 1 <= background_tokens <= 4096):
-        print("invalid agent input policy or background model limits", file=sys.stderr)
-        return 2
     search = config.get("search", {})
     context = config.get("context", {})
     memory = config.get("memory", {})
@@ -125,11 +118,9 @@ def main():
     emit("METTACLAW_LLM_STREAM", 1 if native_stream else 0)
     emit("METTACLAW_INPUT_ACK_SECONDS", ack_delay)
     emit("METTACLAW_INPUT_POLICY", input_policy)
-    emit("METTACLAW_BACKGROUND_MODELS", background_models)
-    emit("METTACLAW_BACKGROUND_TOKENS", background_tokens)
-    emit("METTACLAW_COMMAND_BATCH_LIMIT", agent.get("command_batch_limit"))
     emit("METTACLAW_OBSERVED_STRATEGY", agent.get("observed_strategy"))
-    emit("METTACLAW_FAIR_GOALS", agent.get("fair_goals"))
+    emit("METTACLAW_SHELL_TIMEOUT_SECONDS", agent.get("shell_timeout_seconds", 120))
+    emit("METTACLAW_REASONING_EFFORT", agent.get("reasoning_effort", "default"))
 
     emit("METTACLAW_CHANNEL", channel.get("kind"))
 

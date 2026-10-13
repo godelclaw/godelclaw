@@ -1,4 +1,4 @@
-"""Sibling mail: a stamped note, peer standing, a capped wake and a peer route."""
+"""Sibling mail: a stamped note, peer standing, ordinary input wake and a peer route."""
 
 import json
 import os
@@ -108,7 +108,7 @@ class PeerRouteTest(unittest.TestCase):
                    '!(import! &self ./channels/telegram.metta)\n'
                    '!(import! &self ./tests/peer_activity_fixture.py)\n'
                    '!(py-call (peer_activity_fixture.arm))\n'
-                   '!(assert (== (loop-budget (applyPeerActivity (coordinate loops 0 coordinates-empty) True False)) 2))\n'
+                   '!(assert (== (loop-budget (applyPeerActivity (coordinate loops 0 coordinates-empty) True False)) 50))\n'
                    '!(assert (== (tg:get last-human 0) 0))\n'
                    '!(py-call (peer_activity_fixture.unrelated))\n'
                    '!(assert (== (loop-budget (applyPeerActivity (coordinate loops 0 coordinates-empty) True False)) 0))\n'
@@ -167,37 +167,23 @@ class DurablePeerBudgetTest(unittest.TestCase):
         finally:
             box.close()
 
-    def test_budget_and_unoffered_arrival_survive_both_restarts(self):
-        self.send("one", "two", "three")
-        first = self.inbox()
-        for _ in range(3): first.scan(first.box)
-        self.assertEqual(len(self.events), 2)
-        self.assertEqual(len(first.status()["active"]), 3)
-        first.close(); self.events.clear(); self.fixture.restart()
-        second = self.inbox(); second.scan(second.box)
-        # Pending grants are reoffered, without granting the third a new wake.
-        self.assertEqual(len(self.events), 2)
-        self.assertIn("peer wake budget", second.status()["backpressure"])
-        with mock.patch.object(mailbox_agent.time, "time", return_value=__import__("time").time() + 3601):
-            second.scan(second.box)
-        self.assertEqual(len(self.events), 3)
+    def test_more_than_six_peer_notes_arrive_without_wake_grants(self):
+        self.send(*(str(i) for i in range(8)))
+        inbox=self.inbox()
+        for _ in range(12): inbox.scan(inbox.box)
+        self.assertEqual(len(self.events),8)
+        self.assertFalse(inbox.status()['backpressure'])
+        identities={event[0] for event in self.events}
+        inbox.close(); self.events.clear(); self.fixture.restart()
+        restarted=self.inbox()
+        for _ in range(12): restarted.scan(restarted.box)
+        self.assertEqual({event[0] for event in self.events},identities)
 
-    def test_budget_deadline_is_a_wake_source_without_another_store_write(self):
-        with mock.patch.object(mailbox_agent, "PEER_WINDOW_SECONDS", 1, create=True):
-            self.config["peer_wakes_per_hour"] = 1
-            self.send("one", "two")
-            inbox = self.inbox(); inbox.start()
-            import time
-            end = time.monotonic() + 5
-            while len(self.events) < 2 and time.monotonic() < end:
-                time.sleep(.02)
-            self.assertEqual(len(self.events), 2, inbox.status())
-            self.assertGreaterEqual(self.times[1] - self.times[0], .75)
-
-    def test_invalid_budget_is_rejected_before_any_arrival_is_consumed(self):
-        self.send("one")
-        self.config["peer_wakes_per_hour"] = 0
-        with self.assertRaises(ValueError): self.inbox()
+    def test_old_quota_settings_do_not_block_receiving(self):
+        self.config['peer_wakes_per_hour']=0
+        self.send('one')
+        inbox=self.inbox();inbox.scan(inbox.box)
+        self.assertEqual(len(self.events),1)
 
 
 if __name__ == "__main__":

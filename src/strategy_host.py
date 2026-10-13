@@ -12,7 +12,6 @@ import threading
 import time
 
 import observed_strategy as strategy
-import admission_frontier
 
 
 _lock = threading.RLock()
@@ -25,8 +24,6 @@ _position = 0
 _focus = None
 _input_turn = False
 _message_focus = None
-_goal_view = None
-_prepared_capture = None
 _runtime_projection = None
 _broker_feedback = {"reason": "no-current-capture"}
 _context_trigger = "continuation-tick"
@@ -41,7 +38,8 @@ def enabled_flag():
 
 
 def fair_enabled():
-    return enabled() and os.environ.get("METTACLAW_FAIR_GOALS", "0") == "1"
+    # Goal choice belongs to the agent, not a rotating host scheduler.
+    return False
 
 
 def retire_goal(name, reason):
@@ -59,19 +57,10 @@ def retire_goal(name, reason):
     return len(store.retire("goal:%s:%s:" % (owner, row[0]), "composted: " + str(reason)))
 
 
-def goal_snapshot():
-    import fair_goals
-    import goals
-    store = ledger()
-    now = time.time()
-    fair_goals.synchronize(store, fair_goals.definitions(goals._goals_path()), now)
-    return fair_goals.snapshot(store, now)
 
 
-def _goal_projection():
-    return dict(inventory_digest=_goal_view["inventory_digest"],
-                selected=_goal_view["selected"] if not _input_turn else None,
-                queue=_goal_view["queue"], input_preempts=_input_turn)
+
+
 
 
 def ledger():
@@ -91,59 +80,20 @@ def ledger():
     return _ledger
 
 
-def _file_identity(path):
-    if not path:
-        return "unset"
-    try:
-        value = Path(path)
-        stat = value.stat()
-        return [stat.st_mtime_ns, stat.st_ino, strategy.digest(value.read_bytes().hex())]
-    except FileNotFoundError:
-        return "missing"
+
 
 
 def guard(include_topic=True):
-    import lifecycle
-    import loop_modes
-    import skills_help
-    import goals
-    return strategy.digest({
-        "mode": loop_modes.process_mode(),
-        "selection": _file_identity(loop_modes._path()),
-        "lifecycle": _file_identity(str(lifecycle._path())),
-        "running": lifecycle.cognition_enabled(),
-        "router": skills_help.ARITY,
-        "permission": os.environ.get("METTACLAW_PERMITTED_TOOLS", "*"),
-        "implementation": _file_identity(str(Path(__file__).with_name("skills.pl"))),
-        "admission": _file_identity(str(Path(__file__).with_name("admission_frontier.py"))),
-        "goal_inventory": _file_identity(goals._goals_path()) if fair_enabled() else None,
-        "attention": __import__("attention").revision(),
-        "topic": __import__("topic_jobs").foreground_revision() if enabled() and include_topic else None,
-    })
-
-
-def _stimulus_free():
-    import effect_frontier
-    if effect_frontier.selected_backend() == "tmux-shadow":
-        import effect_backend
-        return effect_backend.turn_stimulus_free(_turn) == 1
-    import telegram
-    if telegram.metta_client():
-        unread = telegram._metta_unread_chats()
-        import attention
-        if attention.enabled():
-            return unread is not None and attention.revision() == telegram._effect_attention_revision
-        return unread is not None and not unread
-    return telegram.effect_turn_stimulus_free(_turn) == 1
+    # Retained for old snapshot readers. State edits do not cancel proposals.
+    return "sequential-tools-v1"
 
 
 def begin(turn, source, message):
-    global _turn, _sample, _ticket, _position, _focus, _input_turn, _message_focus, _goal_view, _prepared_capture, _runtime_projection, _context_trigger, _task_projection
+    global _turn, _sample, _ticket, _position, _focus, _input_turn, _message_focus, _runtime_projection, _context_trigger, _task_projection
     if not enabled():
         return 1
     with _lock:
         _turn, _sample, _ticket, _position = str(turn), None, None, 0
-        _goal_view, _prepared_capture = None, None
         _runtime_projection = None
         _message_focus = None
         # A multi-action foreground request keeps its observation/reconsider
@@ -156,6 +106,11 @@ def begin(turn, source, message):
         previous = _focus or task_context.current(store)
         resume_parent = None
         _focus = task_context.resume(store, previous)
+        if _focus is None and previous and str(source) not in ("operator-event", "channel-event"):
+            with store.transaction() as db:
+                state = db.execute("SELECT status FROM requests WHERE id=?", (previous,)).fetchone()
+            if state and state[0] == "addressed":
+                _focus = previous
         _context_trigger, _task_projection = str(source), None
         import loop_modes
         import lifecycle
@@ -182,12 +137,8 @@ def begin(turn, source, message):
                 if len({a["task"] for a in arrivals}) == 1:
                     resume_parent = arrivals[0]["task"]
         elif _focus is None:
-            active = store.active()
-            if active:
-                _focus = active[-1]["id"]
-            else:
-                _focus = "autonomous"
-                store.accept(_focus, "Ongoing autonomous work; rest and nop do not certify task completion.")
+            _focus = "autonomous"
+            store.accept(_focus, "Ongoing autonomous work; rest and nop do not certify task completion.")
         task_context.begin(store, _focus, source, previous,
                            getattr(telegram, "_reply_chat_id", ""), parent=resume_parent)
         return 1
@@ -197,11 +148,9 @@ def prepare(prompt, output_tokens=32768):
     """Append protected work/results after replaceable transformations."""
     if not enabled():
         return str(prompt)
-    global _focus, _goal_view, _runtime_projection, _task_projection
+    global _focus, _runtime_projection, _task_projection
     import topic_jobs
     prompt = str(prompt) + "\n" + topic_jobs.context()
-    import llm_policy
-    prompt += "\n" + llm_policy.unknown_context()
     topic_jobs.notify()
     if os.environ.get("METTACLAW_LLM_TRANSPORT") == "native":
         import native_lifetime
@@ -210,49 +159,16 @@ def prepare(prompt, output_tokens=32768):
     import runtime_context
     _runtime_projection = runtime_context.render()
     prompt += "\n" + _runtime_projection
-    if fair_enabled():
-        import fair_goals
-        _goal_view = goal_snapshot()
-        if not _input_turn:
-            focus = fair_goals.accept_selected(ledger(), _goal_view)
-            if focus is not None:
-                _focus = focus
-            elif _focus is None or _focus.startswith("goal:"):
-                active = [r for r in ledger().active() if not r["id"].startswith("goal:")]
-                if active:
-                    _focus = active[-1]["id"]
-                else:
-                    _focus = "autonomous"
-                    ledger().accept(_focus, "Ongoing autonomous work; rest and nop do not certify task completion.")
-        prompt = str(prompt) + "\nFAIR_GOALS " + strategy.encoded(_goal_projection()) + (
-            "\nFor autonomous work, attend to the selected goal for this turn. First check its current "
-            "constraints: dormant, waiting, completed or superseded notes do not authorize restarting work. "
-            "Selection grants no new permissions. Preserve unfinished user work. A provider attempt consumes "
-            "one service unit even on failure; it does not complete the goal. (goals) shows the inventory. "
-            "For an inventory-review goal, save a complete review with (goal-review-save digest json-array); "
-            "each entry needs goal, disposition (keep/defer/propose-close), assessment, evidence and next_action. "
-            "Record uncertainty honestly; this records a review, not proof that its judgments are true. "
-            "Do not send routine review reports unless requested. Use goal-write to record justified policy changes."
-            " If no goal is eligible, do not revive a blocked goal; attend to retained user work or rest."
-        )
-    projection = ledger().protected(_focus)
-    payload = strategy.encoded(projection)
-    prompt = str(prompt) + "\n\nPROTECTED_STRATEGY " + payload + (
-        "\nInput processing settles delivery only. Use request-disposition to retain an ongoing task, "
-        "record waiting-user/defer, or mark addressed after review; these are workflow decisions, "
-        "not checker-certified achievement. request-page and request-status retrieve retained records."
-    )
     import task_context
     task_context.focus(ledger(), _focus)
     view = task_context.projection(ledger(), _focus, _context_trigger)
+    import context_budget
     capacity = context_capacity(output_tokens)
-    # UTF-8 bytes are a conservative token estimate, explicitly labelled.
-    # Missing provider metadata never invents a model window.
-    available = None if capacity is None else capacity - len(prompt.encode()) - 64
-    view = (task_context.index_view(view,"selected model window is not known; metadata refresh pending")
-            if available is None else task_context.compact(view, available))
+    available = context_budget.available(prompt, capacity)
+    view = task_context.compact(view, available, measure=context_budget.tokens)
     _task_projection = "TASK_CONTEXT " + strategy.encoded(view)
     return prompt + "\n\n" + _task_projection
+
 
 
 def context_capacity(output_tokens=32768):
@@ -307,119 +223,37 @@ def task_note(text, sources="[]"):
 
 
 def task_resolve(identity, reason):
-    import task_context
-    return task_context.resolve(ledger(), str(identity), str(reason))
+    return "No resolution bookkeeping is required. Calls and results remain in task-history."
 
 
 def description():
-    return ("Ledger workflow: processed input means successful durable handover, not task achievement. "
-            "Retain ongoing commitments with request-disposition keep and a closing condition; record waiting-user/defer "
-            "when appropriate. addressed is an agent disposition. Checker-certified achievement still requires its "
-            "configured check and observed receipt. Withheld commands did not run. Inspect successful receipts before "
-            "claiming a repair worked. Provider proposals are not results; incomplete search does not prove absence. "
-            "Outgoing prose uses ordinary apostrophes. Runtime facts are independently sampled observations, not authority. "
-            "Inbox ages refer to pending message processing; memory gaps are sequence positions; unavailable means unknown. "
-            "TASK_CONTEXT retains the task and interruptions across turns. Resume unfinished work after answering an interruption. "
-            "Use task-note with call IDs to retain findings and uncertainties; notes are your interpretations. "
-            "task-read retrieves a compacted result, task-history indexes earlier pairs, task-resolve records a decision "
-            "about pending work. It never replays a call. Mark a finished interruption addressed to resume its parent.")
+    return ("TASK_CONTEXT contains the request, earlier calls and their results. Resume the task after interruptions. "
+            "task-history and task-read retrieve older evidence; task-note is an optional scratchpad. "
+            "No disposition or resolution bookkeeping is required. context-policy adjusts the task context target. ")
 
 
 def capture(prompt, wake_seconds):
-    global _sample, _focus, _prepared_capture
+    global _sample
     if not enabled():
         return 1
     with _lock:
-        import skills_help
-        store = ledger()
-        projection = store.protected(_focus)
-        if _runtime_projection is None or _runtime_projection not in str(prompt):
-            return 0
-        if _task_projection is None or _task_projection not in str(prompt):
-            return 0
-        # Observe only the exact projection that actually survived preparation.
-        if strategy.encoded(projection) not in str(prompt):
-            return 0
-        if fair_enabled() and (_goal_view is None or
-                "FAIR_GOALS " + strategy.encoded(_goal_projection()) not in str(prompt)):
-            return 0
-        presented = {r["ticket"]: [r] for r in projection["results"]}
-        import topic_jobs
-        topic_jobs.observe_receipts(presented)
-        store.observe(presented, presented)
-        store.finish_exact_results()
-        if fair_enabled():
-            import fair_goals
-            fair_goals.finish_reviews(store, time.time())
-        with store.transaction() as db:
-            available = store.selectable(db, _focus)
-        if not available:
-            active = store.active()
-            if active:
-                _focus = active[-1]["id"]
-            else:
-                _focus = "autonomous"
-                store.accept(_focus, "Ongoing autonomous work; rest and nop do not certify task completion.")
-            # The request already in hand describes the finished focus. The
-            # next preparation will capture the newly selected obligation.
-            return 0
-        executable = sorted(skills_help.ARITY)
-        configured = os.environ.get("METTACLAW_PERMITTED_TOOLS", "*")
-        permitted = executable if configured == "*" else [t for t in configured.split(",") if t in executable]
-        router = {"advertised": executable, "executable": executable,
-                  "permitted": permitted}
-        if fair_enabled():
-            if _prepared_capture is not None or _sample is not None:
-                return 0
-            lease = None
-            if not _input_turn and _goal_view and _goal_view["selected"]:
-                lease = {k: _goal_view["selected"][k] for k in ("id", "round", "service")}
-                lease["inventory_digest"] = _goal_view["inventory_digest"]
-            _prepared_capture = dict(focus=_focus, boundary=str(prompt), router=router,
-                                     guard=guard(), wake_seconds=float(wake_seconds), goal_lease=lease)
-            # Both Python and native providers pass llm_policy.admit. Capture
-            # and goal charging happen there, only after budget admission.
-            return 1
-        _sample = store.capture(_focus, str(prompt), router, time.time(), guard(), float(wake_seconds))
+        import lifecycle
+        ledger().control(paused=not lifecycle.cognition_enabled())
+        _sample = ledger().capture(_focus, str(prompt), {}, time.time())
         return int(_sample is not None)
 
 
 def provider_admitted(ticket=None):
-    global _sample, _prepared_capture
-    if os.environ.get("METTACLAW_TOPIC_WORKER_ID"):
-        import topic_jobs
-        topic_jobs.provider_admitted(os.environ["METTACLAW_TOPIC_WORKER_ID"], ticket)
-        return
-    if not fair_enabled() or _prepared_capture is None:
-        return
-    with _lock:
-        proposed = _prepared_capture
-        _prepared_capture = None
-        goal_snapshot()  # recheck source edits and newly eligible goals
-        if proposed["guard"] != guard() or not _stimulus_free():
-            raise admission_frontier.AdmissionDenied("strategy-changed")
-        _sample = ledger().capture(now=time.time(), **proposed)
-        if _sample is None:
-            code = ledger().admission_denial(proposed["focus"], time.time())
-            raise admission_frontier.AdmissionDenied(code or "goal-not-selectable")
+    return None
 
 
 def goal_review_save(inventory_digest, entries):
-    if not fair_enabled():
-        return "GOAL_REVIEW_DISABLED"
-    try:
-        import fair_goals
-        goal_snapshot()
-        return fair_goals.save_review(ledger(), _ticket, str(inventory_digest), str(entries), time.time())
-    except (ValueError, TypeError) as error:
-        return "GOAL_REVIEW_WITHHELD " + str(error)
+    return "Goal inventory reviews are no longer required. Use goals and goal-write as needed."
 
 
 def normalize_response(response):
-    import fair_goals
     import helper
-    text = fair_goals.quote_review_json(response) if fair_enabled() else str(response)
-    return helper.normalize_command_batches(text) if enabled() else text
+    return helper.normalize_command_batches(str(response)) if enabled() else str(response)
 
 
 def provider_failed():
@@ -431,19 +265,13 @@ def provider_failed():
 
 
 def batch_limit(requested, commands):
-    if not enabled():
-        return max(1, int(requested))
-    return max(1, len(commands))
+    return len(commands)
 
 
 def batch_description(requested):
-    if enabled():
-        return ("Output a ((skillName args) ...) S-expression. Independent reads and host-declared "
-                "independent effects may run together without a count cap. A call that needs an earlier "
-                "result waits for your next observation. Failure stops the remaining proposal; every "
-                "unexecuted call is retained with its reason. Scripts may express conditional follow-up "
-                "work explicitly. Inspect receipts before reporting success. ")
-    return "Output a ((skillName args) ...) S-expression containing at most %s command(s). " % requested
+    return ("Output a ((skillName args) ...) S-expression. Each call runs in order and returns its own result. "
+            "Use another model step when choosing an action requires a result, or express conditional "
+            "work in a script. ")
 
 
 def broker_turn(turn):
@@ -457,71 +285,42 @@ def broker_begin(turn, commands, limit=1):
     if not enabled():
         return 1
     with _lock:
-        _broker_feedback = {"reason": "no-current-capture"}
         if _sample is None or int(turn) != int(_sample["serial"]) + 1:
+            _broker_feedback = {"reason": "no-current-capture"}
             return 0
         _turn = str(turn)
         import task_context
-        task_context.proposal(ledger(), _sample["serial"], _focus, commands, "awaiting admission")
-        if not commands:
-            ledger().decide(_sample["serial"], {"kind": "text"}, time.time(), guard())
-            return 1
-        import skills_help
-        router = _sample["router"]
-        for command in commands:
-            if not isinstance(command, (list, tuple)) or not command:
-                _broker_feedback = {"reason": "malformed-command"}
-                task_context.proposal(ledger(), _sample["serial"], _focus, commands, "malformed-command")
-                provider_failed()
-                return 0
-            name = str(command[0])
-            bounds = skills_help.ARITY.get(name)
-            if (not bounds or name not in router["executable"] or name not in router["permitted"]
-                    or len(command) - 1 < bounds[0]
-                    or (bounds[1] is not None and len(command) - 1 > bounds[1])):
-                reason = ("unknown-tool" if not bounds else
-                          "tool-not-executable" if name not in router["executable"] else
-                          "tool-not-permitted" if name not in router["permitted"] else
-                          "wrong-arity")
-                _broker_feedback = {"reason": reason, "tool": name[:80],
-                                    "given_arguments": len(command) - 1}
-                task_context.proposal(ledger(), _sample["serial"], _focus, commands, reason)
-                if bounds:
-                    _broker_feedback["arguments"] = list(bounds)
-                ledger().decide(_sample["serial"], {"kind": "denied", "tool": name,
-                    "request": _focus, "owner": _sample["owner"]}, time.time(), guard())
-                return 0
-        live_guard = guard() if _stimulus_free() else "new-input"
-        store = ledger()
-        with store.transaction() as db:
-            for command in commands[:int(limit)]:
-                denied = store.command_denial(db, command)
-                if denied:
-                    _broker_feedback = denied
-                    break
-            else:
-                denied = None
-        if denied:
-            task_context.proposal(ledger(), _sample["serial"], _focus, commands, str(denied))
-            _ticket = None
-            store.decide(_sample["serial"], {"kind": "denied", "tool": str(command[0]),
-                "request": _focus, "owner": _sample["owner"]}, time.time(), live_guard)
-            return 0
-        # Batch authority is the intersection of every command's authority.
-        _ticket = ledger().decide(_sample["serial"], {
-            "kind": "command", "tool": str(commands[0][0]),
-            "request": _focus, "owner": _sample["owner"],
-            "command": {"commands": commands, "limit": int(limit)},
-        }, time.time(), live_guard)
+        task_context.proposal(ledger(), _sample["serial"], _focus, commands, "not run: batch interrupted")
         _position = 0
-        if _ticket in ("stale", "denied", "ignored", "failure", "text", "blocked-effects"):
-            task_context.proposal(ledger(), _sample["serial"], _focus, commands, str(_ticket))
-            _broker_feedback = {"reason": _ticket}
+        if not commands:
+            ledger().decide(_sample["serial"], {"kind": "text"}, time.time())
             _ticket = None
-            return 0
-        _broker_feedback = {"reason": "admitted", "limit": int(limit)}
-        task_context.proposal(ledger(), _sample["serial"], _focus, commands, "not executed; reconsider this proposal")
+            return 1
+        _ticket = ledger().decide(_sample["serial"], {
+            "kind": "command", "tool": "batch", "request": _focus,
+            "owner": _sample["owner"], "command": {"commands": commands, "limit": len(commands)},
+        }, time.time())
+        _broker_feedback = {"reason": "recorded"}
         return 1
+
+
+def begin_continuation(turn, commands):
+    """Record an agent-scheduled command without a provider round trip."""
+    global _sample
+    if not enabled():
+        return int(turn)
+    begin(turn, "scheduled-command", "")
+    _sample = ledger().capture(_focus, "agent scheduled continuation", {}, time.time())
+    if _sample is None:
+        return int(turn)
+    actual = int(_sample["serial"]) + 1
+    broker_begin(actual, commands)
+    return actual
+
+
+def stopped():
+    import lifecycle
+    return int(not lifecycle.cognition_enabled())
 
 
 def broker_feedback():
@@ -535,30 +334,12 @@ def reserve_command(turn, command):
     if not enabled():
         return 1
     with _lock:
-        if str(turn) != _turn or not _ticket or guard() != _sample["guard"] or not _stimulus_free():
+        if str(turn) != _turn or not _ticket:
             return 0
         store = ledger()
         with store.transaction() as db:
-            if (store.get(db, "revision") != _sample["revision"] or
-                    store.get(db, "mode") != _sample["mode"] or store.get(db, "paused")):
-                return 0
-            action = db.execute("SELECT command,status FROM actions WHERE ticket=?", (_ticket,)).fetchone()
-            if not action or action["status"] != "issued":
-                return 0
-            prefix = admission_frontier.admitted_prefix(action["command"])
-            if prefix is None or _position >= len(prefix) or prefix[_position] != command:
-                return 0
-            if admission_frontier.needs_observation(command, prefix[:_position]):
-                return 0
-            if not admission_frontier.may_issue(list(db.execute("SELECT * FROM actions")),
-                    command, exclude=_ticket):
-                return 0
-            if store.command_denial(db, command):
-                return 0
-            db.execute("UPDATE command_quarantine SET allowed=0 WHERE command=?", (strategy.encoded(command),))
             db.execute("CREATE TABLE IF NOT EXISTS command_attempts (ticket TEXT, position INTEGER, command TEXT, result TEXT, PRIMARY KEY(ticket,position))")
             db.execute("INSERT INTO command_attempts VALUES (?,?,?,NULL)", (_ticket, _position, strategy.encoded(command)))
-            store.event(db, "command-reserved", ticket=_ticket, position=_position)
         _position += 1
         return 1
 
@@ -571,41 +352,44 @@ def command_result(turn, disposition, command, result):
                        (strategy.encoded({"disposition": str(disposition), "result": str(result)}), _ticket,
                         _position - 1, strategy.encoded(command)))
             store.event(db, "command-result", ticket=_ticket, position=_position - 1)
-            if str(disposition) == "returned":
-                db.execute("UPDATE command_quarantine SET allowed=1 WHERE command=?", (strategy.encoded(command),))
+        _close_answered_message(command, str(result))
         import process_supervision
         process_supervision.progress("command-receipt")
     return 1
 
 
+
+def _close_answered_message(command, result):
+    """A delivered answer settles the current arrival without a filing chore.
+
+    This is a delivery/workflow status, never a theorem of task achievement.
+    The task transcript remains available when an ongoing burst continues.
+    """
+    if not command or not _focus:
+        return
+    name = command[0]
+    if name not in ("send", "send-telegram-chat", "mailbox-reply"):
+        return
+    if not (result.startswith("sent message ") or result.startswith("MAILED ")):
+        return
+    store = ledger()
+    with store.transaction() as db:
+        row = db.execute("SELECT c.kind,f.chat FROM request_context c LEFT JOIN task_frames f ON f.request=c.request WHERE c.request=?", (_focus,)).fetchone()
+        if not row or row[0] not in ("message", "notification"):
+            return
+        if name == "send-telegram-chat" and str(command[1]) != str(row[1]):
+            return
+        if name == "mailbox-reply":
+            suffix = ":" + str(command[1])
+            inputs = [r[0] for r in db.execute("SELECT input FROM request_inputs WHERE request=?", (_focus,))]
+            if not inputs or not all(i.endswith(suffix) for i in inputs):
+                return
+        db.execute("UPDATE requests SET status='addressed' WHERE id=? AND status IN ('active','processed')", (_focus,))
+        store.event(db,"answer-delivered",request=_focus)
+
+
 def result_permits_suffix(command, record):
-    """Interpret the dispatcher's explicit failure/result boundary."""
-    if not isinstance(record, (list, tuple)) or not record or record[0] != "COMMAND_RETURN:":
-        return 0
-    result = record[1][1]
-    import action_graph
-    if not action_graph.result_permits_dependent_suffix(command, result):
-        return 0
-    text = str(result).strip().lower()
-    if command[0].startswith("mailbox-"):
-        try:
-            value = json.loads(str(result))
-            if isinstance(value, dict) and value.get("state") in ("refused", "disabled", "error", "cancelled"):
-                return 0
-        except (TypeError, ValueError):
-            pass
-    failures = ("read failed", "read-lines failed", "edit-file failed", "write-file failed",
-                "append-file failed", "ls-tree failed", "shell_error", "timeout_error",
-                "mailbox_send_failed", "mailbox_send_refused", "mailbox_reply_refused", "error(", "(error ")
-    if text.startswith(failures):
-        return 0
-    # An exception/no-result is authoritative even when its rendered body is unfamiliar.
-    if enabled() and _ticket:
-        with ledger().transaction() as db:
-            row = db.execute("SELECT result FROM command_attempts WHERE ticket=? AND position=?",
-                             (_ticket, _position - 1)).fetchone()
-        if row and row[0] and json.loads(row[0])["disposition"] != "returned":
-            return 0
+    # Failure is a result for the agent to interpret, not a batch veto.
     return 1
 
 
@@ -681,14 +465,6 @@ def command_receipts(cursor=""):
 
 
 def annotate_result(command, result):
-    if not enabled() or not isinstance(command, (list, tuple)) or not command:
-        return result
-    if str(command[0]) in {"search", "search-tavily", "search-ddg", "grep-files", "query"}:
-        # These adapters do not provide a checked exhaustive scope certificate.
-        # Keep their useful results, while making absence explicitly unproved.
-        return strategy.encoded({"result": str(result), "scope": command[1:],
-                                 "complete_coverage": False,
-                                 "absence": "unavailable"})
     return result
 
 
@@ -769,33 +545,26 @@ def focus_request(request):
 
 
 def retry_seconds():
-    if not enabled():
-        return 0
-    with ledger().transaction() as db:
-        return max(0, int(ledger().get(db, "cooldown") - time.time()) + 1)
+    # Provider transport retry policy lives in llm_policy/cognitive_health.
+    return 0
 
 
 def wake(now):
-    return ledger().wake(float(now)) if enabled() else 0
+    return 0
 
 
 def autonomous_ready(scheduled):
-    if not enabled() or not int(scheduled):
-        return int(scheduled)
-    with ledger().transaction() as db:
-        deadline = ledger().get(db, "next_wake")
-        return int(deadline is None or time.time() > deadline)
+    return int(scheduled)
 
 
 def fault():
     """A failed host transition preserves work and reconciles saved results."""
-    global _sample, _ticket, _prepared_capture, _runtime_projection
+    global _sample, _ticket, _runtime_projection
     if enabled():
         ledger().restore()
         ledger().recover_recorded_actions()
         _sample = None
         _ticket = None
-        _prepared_capture = None
         _runtime_projection = None
         import engine_modes
         if engine_modes.recycle_requested():

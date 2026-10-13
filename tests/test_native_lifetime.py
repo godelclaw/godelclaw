@@ -57,17 +57,16 @@ class NativeLifetimeTest(unittest.TestCase):
             self.assertTrue(native_lifetime.settle(reply, "completed", "owned reply"))
             self.assertTrue(native_lifetime.claim(duplicate))
 
-    def test_transport_uncertainty_blocks_the_same_managed_request(self):
+    def test_transport_uncertainty_does_not_block_fresh_request(self):
         with mock.patch.dict(os.environ, {"METTACLAW_LLM_POLICY": "managed"}):
             plan = self.plan()
             with llm_policy.transaction() as db:
                 db.execute("UPDATE requests SET fingerprint='captured-request' WHERE id=?", (plan.correlation,))
             self.assertTrue(native_lifetime.claim(plan)); native_lifetime.submitted(plan, 3)
             self.assertTrue(native_lifetime.settle(plan, "uncertain", reason="transport-error"))
-            with self.assertRaises(llm_policy.AdmissionDenied) as denied:
-                llm_policy.admit("synthetic", 10, request_fingerprint="captured-request")
-            self.assertEqual(denied.exception.reason, "provider-outcome-unknown")
-            self.assertEqual(llm_policy.snapshot()["accounted_output_tokens"], 10)
+            new=llm_policy.admit("synthetic",10,request_fingerprint="captured-request")
+            self.assertNotEqual(new, plan.correlation)
+            self.assertEqual(llm_policy.snapshot()["accounted_output_tokens"],20)
 
     def test_zombie_process_cannot_keep_a_native_call_claim_alive(self):
         fields = ["Z"] + ["0"] * 18 + ["process-birth"]

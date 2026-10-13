@@ -13,7 +13,6 @@ import sqlite3
 import time
 import uuid
 
-import admission_frontier
 
 
 def encoded(value):
@@ -49,10 +48,6 @@ class Ledger:
                 CREATE TABLE IF NOT EXISTS request_context (
                     request TEXT PRIMARY KEY, kind TEXT NOT NULL,
                     processed INTEGER NOT NULL DEFAULT 0, note TEXT NOT NULL DEFAULT '');
-                CREATE TABLE IF NOT EXISTS command_quarantine (
-                    command TEXT PRIMARY KEY, ticket TEXT NOT NULL,
-                    reason TEXT NOT NULL, releases INTEGER NOT NULL DEFAULT 0,
-                    allowed INTEGER NOT NULL DEFAULT 0);
                 CREATE TABLE IF NOT EXISTS processed_inputs (
                     id TEXT PRIMARY KEY, processed REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS request_inputs (
@@ -70,9 +65,7 @@ class Ledger:
                     WHEN id='autonomous' THEN 'autonomous' ELSE 'task' END FROM requests""")
             for key, value in {"owner": uuid.uuid4().hex, "revision": 0,
                                "mode": "godelclaw", "paused": False,
-                               "next_sample": 0, "pending": None,
-                               "cooldown": 0, "allowance": None,
-                               "next_wake": None, "wake_loops": 0}.items():
+                               "next_sample": 0, "pending": None}.items():
                 db.execute("INSERT OR IGNORE INTO meta VALUES (?,?)", (key, encoded(value)))
         self.path.chmod(0o600)
 
@@ -141,12 +134,6 @@ class Ledger:
                 self.advance(db)
                 self.event(db, "control", mode=self.get(db, "mode"), paused=self.get(db, "paused"))
 
-    def policy(self, *, allowance=None, cooldown=None):
-        with self.transaction() as db:
-            if allowance is not None:
-                self.put(db, "allowance", max(0, int(allowance)))
-            if cooldown is not None:
-                self.put(db, "cooldown", max(self.get(db, "cooldown"), cooldown))
 
     def restore(self):
         with self.transaction() as db:
@@ -157,44 +144,8 @@ class Ledger:
             # The effect may have happened before a crash. Never treat it as
             # unissued, and permit a late, correctly correlated result.
             db.execute("UPDATE actions SET status='uncertain' WHERE status='issued'")
-            if db.execute("SELECT 1 FROM sqlite_master WHERE name='command_attempts'").fetchone():
-                db.execute("CREATE INDEX IF NOT EXISTS command_attempt_identity ON command_attempts(command)")
-                # A reserved command without a terminal receipt may have run.
-                # Preserve its uncertainty and prevent the same command from
-                # becoming the first action of another crash/restart cycle.
-                for row in db.execute("""SELECT c.command,c.ticket FROM command_attempts c
-                    JOIN actions a ON a.ticket=c.ticket
-                    WHERE c.result IS NULL AND a.status='uncertain'
-                      AND c.rowid=(SELECT MAX(latest.rowid) FROM command_attempts latest
-                                   WHERE latest.command=c.command)"""):
-                    db.execute("""INSERT INTO command_quarantine(command,ticket,reason)
-                        VALUES (?,?,'interrupted without terminal receipt')
-                        ON CONFLICT(command) DO UPDATE SET ticket=excluded.ticket,
-                            reason=excluded.reason,allowed=0
-                        WHERE command_quarantine.ticket<>excluded.ticket""", (row[0], row[1]))
             self.advance(db)
             self.event(db, "restore")
-
-    @staticmethod
-    def command_denial(db, command):
-        row = db.execute("SELECT * FROM command_quarantine WHERE command=?", (encoded(command),)).fetchone()
-        if row and not row["allowed"]:
-            return dict(reason="command-quarantined", command_digest=digest(command),
-                        interrupted_ticket=row["ticket"], detail=row["reason"],
-                        releases=row["releases"], execution=False)
-        return None
-
-    def release_command(self, command, reason):
-        """Explicit, bounded retry after investigation; no effect authority added."""
-        if not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 800:
-            raise ValueError("a repair reason is required")
-        with self.transaction() as db:
-            row = db.execute("SELECT * FROM command_quarantine WHERE command=?", (encoded(command),)).fetchone()
-            if not row or row["allowed"] or row["releases"] >= 2:
-                return False
-            db.execute("UPDATE command_quarantine SET allowed=1,releases=releases+1 WHERE command=?", (encoded(command),))
-            self.event(db, "command-retry-released", command_digest=digest(command), reason=reason)
-            return True
 
     @staticmethod
     def selectable(db, key):
@@ -319,18 +270,11 @@ class Ledger:
                 results.append({**receipt, "payload": payload[:result_chars],
                                 "payload_digest": digest(payload),
                                 "truncated": len(payload) > result_chars})
-            unresolved = list(db.execute("SELECT * FROM actions WHERE status IN ('issued','uncertain') ORDER BY rowid"))
-            uncertain = [r["ticket"] for r in unresolved[:8]]
-            uncertainty = [{"ticket": r["ticket"], "tool": r["tool"],
-                            "kind": "observation" if admission_frontier.observational(r["command"]) else "effect",
-                            "state": r["status"], "result": "unavailable", "replay": False}
-                           for r in unresolved[:8]]
             return {"owner": self.get(db, "owner"), "focus": focus,
                     "request": row[0][:4000] if row else "", "unfinished": active,
                     "counts": counts, "omitted_active": max(0, counts.get("active", 0) - len(active)),
                     "request_truncated": bool(row and len(row[0]) > 4000),
-                    "results": results, "uncertain": uncertain,
-                    "uncertainty": uncertainty, "omitted_uncertain": max(0, len(unresolved)-8)}
+                    "results": results}
 
     def active(self):
         with self.transaction() as db:
@@ -385,39 +329,21 @@ class Ledger:
                         self.event(db, "observe", ticket=ticket)
 
     def admission_denial(self, focus, now):
-        """Diagnostic projection; only capture's transaction grants admission."""
         with self.transaction() as db:
-            return admission_frontier.thought_denial(available=self.selectable(db, focus),
-                paused=self.get(db, "paused"), pending=self.get(db, "pending"),
-                allowance=self.get(db, "allowance"), cooldown=self.get(db, "cooldown"), now=now)
+            return "cognition-paused" if self.get(db, "paused") else None
 
     def capture(self, focus, boundary, router, now, guard="", wake_seconds=600, goal_lease=None):
         with self.transaction() as db:
-            available = self.selectable(db, focus)
-            allowance = self.get(db, "allowance")
-            if admission_frontier.thought_denial(available=available,
-                    paused=self.get(db, "paused"), pending=self.get(db, "pending"),
-                    allowance=allowance, cooldown=self.get(db, "cooldown"), now=now):
+            if self.get(db, "paused"):
                 return None
             serial = self.get(db, "next_sample")
-            goal_charge = None
-            if goal_lease is not None:
-                import fair_goals
-                goal_charge = fair_goals.charge_capture(self, db, goal_lease, focus, serial, now)
-                if goal_charge is None:
-                    return None
             snap = {"serial": serial, "revision": self.get(db, "revision"),
                     "mode": self.get(db, "mode"), "owner": self.get(db, "owner"),
                     "focus": focus, "boundary_digest": digest(boundary),
                     "router": router, "guard": guard}
-            if goal_charge is not None:
-                snap["goal"] = goal_charge
             db.execute("INSERT INTO samples VALUES (?,?,'pending')", (serial, encoded(snap)))
             self.put(db, "next_sample", serial + 1)
             self.put(db, "pending", serial)
-            if allowance is not None:
-                self.put(db, "allowance", allowance - 1)
-            self.put(db, "next_wake", now + max(0, wake_seconds))
             self.event(db, "capture", serial=serial, focus=focus,
                        boundary_digest=digest(boundary), router=router)
             return snap
@@ -428,27 +354,12 @@ class Ledger:
                 return "ignored"
             row = db.execute("SELECT snapshot FROM samples WHERE serial=?", (serial,)).fetchone()
             snap = json.loads(row[0])
-            current = (snap["revision"] == self.get(db, "revision")
-                       and snap["mode"] == self.get(db, "mode")
-                       and not self.get(db, "paused") and snap["guard"] == guard)
             self.put(db, "pending", None)
-            kind = response.get("kind", "text") if current else "stale"
+            kind = response.get("kind", "text")
             if kind == "command":
-                router = snap["router"]
-                if (response.get("request") != snap["focus"]
-                        or response.get("owner") != snap["owner"]
-                        or response.get("tool") not in router["executable"]
-                        or response.get("tool") not in router["permitted"]):
-                    kind = "denied"
-                elif not admission_frontier.may_issue(list(db.execute("SELECT * FROM actions")),
-                        response.get("command")):
-                    kind = "blocked-effects"
-                else:
-                    ticket = "%s:%s" % (snap["owner"], serial)
-                    db.execute("INSERT INTO actions(ticket,request,serial,tool,command,status) VALUES (?,?,?,?,?,'issued')",
-                               (ticket, snap["focus"], serial, response["tool"], encoded(response.get("command"))))
-            if kind == "failure":
-                self.put(db, "cooldown", max(self.get(db, "cooldown"), now + max(1, retry_after)))
+                ticket = "%s:%s" % (snap["owner"], serial)
+                db.execute("INSERT INTO actions(ticket,request,serial,tool,command,status) VALUES (?,?,?,?,?,'issued')",
+                           (ticket, snap["focus"], serial, response["tool"], encoded(response.get("command"))))
             db.execute("UPDATE samples SET status=? WHERE serial=?", (kind, serial))
             self.event(db, "reply", serial=serial, disposition=kind)
             return ticket if kind == "command" else kind
@@ -466,15 +377,12 @@ class Ledger:
             return True
 
     def finish(self, request, ticket, checkers, *, now=None):
-        import fair_goals
         import time
         now = time.time() if now is None else now
         with self.transaction() as db:
             work = db.execute("SELECT * FROM requests WHERE id=? AND status='active'", (request,)).fetchone()
             action = db.execute("SELECT * FROM actions WHERE ticket=? AND request=?", (ticket, request)).fetchone()
-            busy = admission_frontier.effect_blockers(list(db.execute("SELECT * FROM actions")))
-            if (not work or not action or not action["observed"] or busy or self.get(db, "pending") is not None
-                    or not fair_goals.may_complete(self, db, request, now)):
+            if (not work or not action or not action["observed"]):
                 return False
             receipt = json.loads(action["receipt"])
             checker = checkers.get(work["checker"])
@@ -482,7 +390,6 @@ class Ledger:
                     or checker is None or not checker(dict(work), receipt)):
                 return False
             db.execute("UPDATE requests SET status='achieved' WHERE id=?", (request,))
-            fair_goals.completed(self, db, request, now)
             self.event(db, "finish", request=request, ticket=ticket)
             return True
 
@@ -506,9 +413,6 @@ class Ledger:
         with self.transaction() as db:
             changed = db.execute("UPDATE requests SET status='cancelled' WHERE id=? AND status IN ('active','waiting-mailbox')", (request,)).rowcount
             if changed:
-                import fair_goals
-                import time
-                fair_goals.cancelled(self, db, request, time.time())
                 self.event(db, "cancel", request=request)
             return bool(changed)
 
@@ -533,15 +437,6 @@ class Ledger:
             self.event(db, "attest", request=request, ticket=ticket)
             return True
 
-    def wake(self, now):
-        with self.transaction() as db:
-            deadline = self.get(db, "next_wake")
-            if deadline is not None and now > deadline:
-                self.put(db, "wake_loops", 2)
-                self.put(db, "next_wake", None)
-                self.event(db, "wake", now=now)
-                return 2
-            return self.get(db, "wake_loops")
 
     def projection(self):
         with self.transaction() as db:

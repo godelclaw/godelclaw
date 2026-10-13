@@ -158,20 +158,20 @@ class ActivityBatchTests(unittest.TestCase):
         finally:
             telegram._log_path = old_log
 
-    def test_new_stimulus_invalidates_the_captured_effect_frontier(self):
+    def test_new_stimulus_does_not_cancel_emitted_commands(self):
         telegram._set_last("1", "in prompt", from_bot=False)
         self.assertEqual(telegram.getActivityBatch(), "in prompt")
         telegram.begin_effect_turn("turn-1")
         self.assertEqual(telegram.effect_turn_stimulus_free("turn-1"), 1)
         telegram._set_last("1", "arrived during work", from_bot=False)
-        self.assertEqual(telegram.effect_turn_stimulus_free("turn-1"), 0)
+        self.assertEqual(telegram.effect_turn_stimulus_free("turn-1"), 1)
 
-    def test_reentry_does_not_launder_a_new_stimulus_into_old_turn(self):
+    def test_new_stimulus_stays_queued_across_reentry(self):
         telegram.getActivityBatch()
         telegram.begin_effect_turn("turn-1")
         telegram._set_last("1", "new", from_bot=False)
         telegram.begin_effect_turn("turn-1")
-        self.assertEqual(telegram.effect_turn_stimulus_free("turn-1"), 0)
+        self.assertEqual(telegram.effect_turn_stimulus_free("turn-1"), 1)
 
     def test_operator_revocation_interrupts_the_unexecuted_suffix(self):
         telegram.getActivityBatch()

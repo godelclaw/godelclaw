@@ -356,7 +356,7 @@ class GatewayTest(unittest.TestCase):
             with self.subTest(engine=engine):
                 self.assertEqual(result.returncode, 0, (result.stdout + result.stderr)[-3500:])
                 self.assertIn("GATEWAY_SKILL_CONTINUES", result.stdout)
-                self.assertIn('usage: (gateway-start', result.stdout)
+                self.assertNotIn('usage: (gateway-start', result.stdout)
                 receipt = self.wait("skill-read", agent)
                 self.assertEqual(receipt["state"], "succeeded")
                 self.assertEqual(receipt["result"]["agent"], agent)

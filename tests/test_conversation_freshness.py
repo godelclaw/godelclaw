@@ -1,10 +1,4 @@
-"""New input withholds only what it could change.
-
-A message the model has not read yet withholds a conversation effect into the
-same chat, and a rest; a message in one chat never withholds a send to
-another, and commands that do not speak run as chosen.
-"""
-
+"""New input queues; only the operator stop interrupts emitted calls."""
 import os
 import sys
 import unittest
@@ -52,11 +46,11 @@ class ConversationFreshnessTest(unittest.TestCase):
         self.assertEqual(self.unaffected("send-telegram-chat", OLD, "hi"), 1)
         self.assertEqual(self.unaffected("send", "hi"), 1)
 
-    def test_send_into_the_chat_with_unread_input_waits(self):
-        self.assertEqual(self.unaffected("send-telegram-chat", NEW, "hi"), 0)
+    def test_unread_input_does_not_discard_an_emitted_reply(self):
+        self.assertEqual(self.unaffected("send-telegram-chat", NEW, "hi"), 1)
         telegram._reply_chat_id = NEW
-        self.assertEqual(self.unaffected("send", "hi"), 0)
-        self.assertEqual(self.unaffected("send-file", "/tmp/x", "c"), 0)
+        self.assertEqual(self.unaffected("send", "hi"), 1)
+        self.assertEqual(self.unaffected("send-file", "/tmp/x", "c"), 1)
 
     def test_commands_that_do_not_speak_run(self):
         for command in (("pin", "state"), ("query", "q"), ("shell", "ls"),
@@ -64,8 +58,8 @@ class ConversationFreshnessTest(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self.unaffected(*command), 1)
 
-    def test_rest_waits_while_anything_is_unread(self):
-        self.assertEqual(self.unaffected("rest", 7200, "later"), 0)
+    def test_rest_is_not_rejected_by_unread_input(self):
+        self.assertEqual(self.unaffected("rest", 7200, "later"), 1)
         telegram._pending_messages = list(telegram._prepared_messages)
         self.assertEqual(self.unaffected("rest", 7200, "later"), 1)
 
@@ -76,9 +70,9 @@ class ConversationFreshnessTest(unittest.TestCase):
             self.assertEqual(
                 self.unaffected("send-telegram-chat", OLD, "hi"), 0)
 
-    def test_unregistered_turn_is_not_vouched_for(self):
+    def test_direct_tool_use_needs_no_registration(self):
         self.assertEqual(
-            telegram.effect_command_unaffected(6, ["pin", "state"]), 0)
+            telegram.effect_command_unaffected(6, ["pin", "state"]), 1)
 
 
 if __name__ == "__main__":

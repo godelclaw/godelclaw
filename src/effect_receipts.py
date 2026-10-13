@@ -64,11 +64,6 @@ def record_command(turn, disposition, command, result) -> int:
         "command": _text(command),
         "result": _text(result),
     }
-    try:
-        import action_graph
-        entry["action_graph"] = action_graph.metadata(command)
-    except Exception:
-        pass
     return _append(entry)
 
 
@@ -82,13 +77,6 @@ def record_suffix(turn, disposition, commands, reason) -> int:
         "commands": _text(commands),
         "reason": _text(reason, 240),
     }
-    try:
-        import action_graph
-        entry["action_graph"] = [
-            action_graph.metadata(command) for command in commands
-        ]
-    except Exception:
-        pass
     return _append(entry)
 
 

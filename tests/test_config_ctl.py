@@ -67,7 +67,7 @@ class ConfigEditingTests(unittest.TestCase):
         self.assertEqual((self.root / "config/local.toml").read_bytes(), before)
 
     def test_concurrent_edits_preserve_both_settings(self):
-        commands = [("agent.llm_timeout_seconds", "300"), ("agent.command_batch_limit", "1")]
+        commands = [("agent.llm_timeout_seconds", "300"), ("agent.shell_timeout_seconds", "240")]
         starts = [subprocess.Popen([sys.executable, str(self.root / "scripts/config_ctl.py"),
                   "set", key, value], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                   for key, value in commands]
@@ -76,7 +76,7 @@ class ConfigEditingTests(unittest.TestCase):
             self.assertEqual(process.returncode, 0, error)
         environment = (self.root / ".env").read_text()
         self.assertIn("SYNTHETIC_TIMEOUT='300'", environment)
-        self.assertIn("METTACLAW_COMMAND_BATCH_LIMIT='1'", environment)
+        self.assertIn("METTACLAW_SHELL_TIMEOUT_SECONDS='240'", environment)
 
 
 if __name__ == "__main__":

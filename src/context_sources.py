@@ -150,7 +150,7 @@ def _loaders(conversation=None):
         (specs["active-query-declaration"], active_queries.view),
         (specs["affect-gestalt"], goals.affect_view),
         (specs["pins"], pins.view),
-        (specs["effect-receipts"], lambda: "Task receipts are in TASK_CONTEXT and PROTECTED_STRATEGY." if strategy_host.enabled() else effect_receipts.view()),
+        (specs["effect-receipts"], lambda: "Task receipts are in TASK_CONTEXT." if strategy_host.enabled() else effect_receipts.view()),
         (specs["development-state"], development_state.view),
         (specs["recent-proposals"],
          lambda: "Task proposals and their dispositions are in TASK_CONTEXT." if strategy_host.enabled() else helper.recent_actions(history, limit=turns)),
@@ -186,13 +186,8 @@ def layout(observations):
 def bundle(conversation=None):
     """One ordered context bundle; never raises across the MeTTa boundary."""
     try:
-        import active_queries
-        import context_certificate
         observations = _PROJECTOR.project(_loaders(conversation))
         projection = layout(observations)
-        certificate = context_certificate.issue(
-            observations, active_queries.from_observations(observations),
-            projection)
-        return projection + "\n\n" + context_certificate.render(certificate)
+        return projection
     except Exception:
         return "SOURCE[context-bundle] status=unavailable"

@@ -70,22 +70,19 @@ class CooperativeAttentionTest(unittest.TestCase):
         peer.receipts[key] = [["delivered", 500]]
         return peer, key
 
-    def test_ordinary_arrival_keeps_decision_but_rest_yields_to_input(self):
+    def test_ordinary_arrival_keeps_all_emitted_decisions(self):
         telegram.begin_effect_turn(1)
         telegram._set_last("42", "later ordinary message", update_id=1)
         self.assertEqual(telegram.effect_turn_stimulus_free(1), 1)
         self.assertEqual(telegram.effect_command_unaffected(1, ["send", "drafted answer"]), 1)
-        self.assertEqual(telegram.effect_command_unaffected(1, ["rest"]), 0)
+        self.assertEqual(telegram.effect_command_unaffected(1, ["rest"]), 1)
         self.assertEqual(len(telegram._pending_messages), 1)
 
-    def test_explicit_authenticated_correction_blocks_unexecuted_work(self):
+    def test_steer_is_ordinary_input_without_invented_control_authority(self):
         telegram.begin_effect_turn(1)
-        self.assertEqual(attention.ingress("input-1", "operator", self.update("/steer correction")), 1)
-        self.assertEqual(telegram.effect_turn_stimulus_free(1), 0)
-        self.assertEqual(telegram.effect_command_unaffected(1, ["send", "stale"]), 0)
-        self.assertEqual(attention.ingress("input-1", "operator", self.update("/steer correction")), 0)
-        telegram.begin_effect_turn(2)
-        self.assertEqual(telegram.effect_turn_stimulus_free(2), 1)
+        self.assertEqual(attention.ingress('input-1', 'operator', self.update('/steer correction')), 0)
+        self.assertEqual(telegram.effect_turn_stimulus_free(1), 1)
+        self.assertEqual(attention.revision(), 0)
 
     def test_peer_or_other_bot_cannot_steer(self):
         self.assertEqual(attention.ingress("p", "peer", self.update("/steer")), 0)

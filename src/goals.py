@@ -452,17 +452,7 @@ def goal_write(atom, goals_path=None):
     with _LOCK:
         path = _goals_path(goals_path)
         text = _normalize_goal_text(atom)
-        import fair_goals
-        policy = fair_goals.POLICY.fullmatch(text)
-        if policy:
-            lines = _read_lines(path) or []
-            goals, _flags, _budget, _other = _parse(lines)
-            name = policy.group(1)
-            if name not in {g["name"] for g in goals}:
-                return "rejected: goal-policy requires an existing goal"
-            lines = [line for line in lines if not line.startswith("(goal-policy " + name + " ")]
-            _write_lines(path, lines + [text])
-            return "goal policy %s updated; service history is preserved" % name
+
         mb = _BUDGET_RE.match(text)
         if mb:
             budget = float(mb.group(1))

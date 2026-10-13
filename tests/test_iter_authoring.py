@@ -11,7 +11,6 @@ ROOT = Path(__file__).resolve().parents[1]
 import sys
 sys.path.insert(0, str(ROOT / "src"))
 import iter_authoring as authoring  # noqa: E402
-import ggb_bridge_ext  # noqa: E402
 
 
 class IterAuthoringTests(unittest.TestCase):
@@ -171,41 +170,6 @@ class IterAuthoringTests(unittest.TestCase):
             source,
         )
 
-    def test_proposal_only_surface_cannot_activate_but_direct_authoring_can(self):
-        """Witness the exact hosted gap that upstream Iter does not impose."""
-
-        root = Path(self.temporary.name) / "protected"
-        self.directory = root / "memory" / "transformations"
-        self.directory.mkdir(parents=True)
-        proposals = Path(self.temporary.name) / "pending-proposals"
-        source = self.source("activated")
-        environment = {
-            "METTACLAW_PROTECTED_ROOT": str(root),
-            "METTACLAW_ITER_PROCESS_DIR": str(self.directory),
-            "METTACLAW_SELFMOD_PROPOSAL_STORE": str(proposals),
-            "METTACLAW_SELFMOD_REQUIRE_GOVERNANCE": "0",
-            "METTACLAW_SELFMOD_SEMANTIC_CHECK": "0",
-        }
-        with mock.patch.dict(os.environ, environment, clear=False):
-            proposed = ggb_bridge_ext.ggbProposeWrite(
-                "memory/transformations/10_value.metta", source, "gap witness"
-            )
-            after_proposal = authoring._snapshot_revision(self.directory)
-            target_absent_after_proposal = not (
-                self.directory / "10_value.metta"
-            ).exists()
-
-            repaired = self.decode(
-                authoring.write_transformation("10_value.metta", source)
-            )
-            after_direct_write = authoring._snapshot_revision(self.directory)
-
-        self.assertIn("PROPOSAL_READY", proposed)
-        self.assertIn("promotion=pending", proposed)
-        self.assertEqual(after_proposal, authoring._snapshot_revision(Path("/nonexistent")))
-        self.assertTrue(target_absent_after_proposal)
-        self.assertEqual(repaired["state"], "installed")
-        self.assertNotEqual(after_direct_write, after_proposal)
 
 
 if __name__ == "__main__":

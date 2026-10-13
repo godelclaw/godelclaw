@@ -125,14 +125,16 @@ def _plan(kind, model, tokens, builder):
 def command_plan(model, tokens, effort, prompt):
     def conversation(protocol, selected):
         stable, user = provider_protocol.split_prompt(prompt)
-        result = dict(model=selected, max_tokens=int(tokens), stable=stable, user=user,
-                      reasoning={"effort": str(effort)})
+        result = dict(model=selected, max_tokens=int(tokens), stable=stable, user=user)
+        if str(effort) not in ("default", "", "None"):
+            result["reasoning"] = {"effort": str(effort)}
         # Cache identity is an upstream caller policy, not provider encoding.
         if stable:
             result["cache_key"] = provider_protocol.cache_key("openai", selected, "".join(stable))
         return result
     plan = _plan("command", model, tokens, conversation)
     plan.prompt_layout = provider_protocol.prompt_observation(prompt)
+    plan.prompt_text = str(prompt)
     return plan
 
 
@@ -282,34 +284,23 @@ def finish(plan, epoch, correlation, encoded, canonical):
     if not llm_policy.complete(plan.correlation, result):
         return failed(plan, correlation, "duplicate-completion")
     import strategy_host
-    stale = plan.guard is not None and plan.guard != strategy_host.guard()
-    native_lifetime.settle(plan, "late" if stale else "completed", str(canonical),
-                           "captured-authority-changed" if stale else None)
+    native_lifetime.settle(plan, "completed", str(canonical))
     result["transport"] = "native"
     synthetic_llm._completion_metadata(result, getattr(plan, "prompt_layout", None))
-    if stale:
-        native_lifetime.notify()
-        # Evidence remains queryable; it does not become commands in a newer
-        # scope. Structured callers receive no partially actionable batch.
-        if plan.kind == "command":
-            return synthetic_llm._empty_action(RuntimeError("late provider result retained"))
-        raise RuntimeError("late provider result retained; captured authority changed")
+    if hasattr(plan, "prompt_text"):
+        import context_budget
+        context_budget.observe(plan.prompt_text, result.get("usage", {}))
     if plan.provider == "anthropic":
         synthetic_llm._tally_anthropic(result["usage"])
     if plan.kind == "structured":
-        if reason == "length" and result["choices"][0]["message"].get("tool_calls"):
-            # The imported loop can dispatch calls before checking finish. Keep
-            # that loop unchanged; reject this unsafe projection at its host
-            # boundary after settling the authoritative usage observation.
-            cognitive_health.turn_failed("OutputTruncated", retry_after=0)
-            raise RuntimeError("native provider truncated a tool batch") from None
         from iter_host import Box
         cognitive_health.turn_completed(len(str(encoded).encode()))
         return Box({"message": result["choices"][0]["message"],
                     "finish": reason, "llm_result": boundary})
-    if result["choices"][0].get("finish_reason") == "length":
-        return synthetic_llm._empty_action(synthetic_llm.OutputTruncated())
     content = result["choices"][0]["message"].get("content")
+    if reason == "length":
+        import helper
+        content = helper.complete_command_prefix(content or "")
     if not isinstance(content, str) or not content.strip():
         return synthetic_llm._empty_action(synthetic_llm.EmptyResponse())
     synthetic_llm._note_answered()
@@ -351,17 +342,28 @@ def _record_failure(plan, kind, status=0):
           file=sys.stderr)
 
 
+def response_retry_after(plan, seconds):
+    value = float(seconds)
+    plan.retry_after = value if value >= 0 else None
+    return 1
+
 def failed(plan, correlation, kind, status=0):
     _record_failure(plan, kind, status)
     if getattr(plan, "ready", "false") == "true":
-        llm_policy.fail(plan.correlation, status=int(status) or None, sent=plan.sent)
+        llm_policy.fail(plan.correlation, status=int(status) or None, sent=plan.sent,
+                        retry_after=getattr(plan, "retry_after", None))
         uncertain = plan.sent and str(kind) == "transport-error"
         native_lifetime.settle(plan, "uncertain" if uncertain else "failed", reason=str(kind)[:64])
-    error = getattr(plan, "error", RuntimeError(str(kind)))
+    error = getattr(plan, "error", TimeoutError(str(kind)) if str(kind) == "transport-error" else RuntimeError(str(kind)))
+    error.status = int(status) or None
+    if getattr(plan, "retry_after", None) is not None:
+        error.retry_after = plan.retry_after
     if plan.kind == "command":
         return synthetic_llm._empty_action(error)
-    cognitive_health.turn_failed(type(error).__name__, retry_after=getattr(error, "retry_after", 15))
-    if llm_policy.configuration()["profile"] == "managed" and os.environ.get("METTACLAW_MODE_RUNTIME"):
+    synthetic_llm._empty_action(error)
+    if os.environ.get("METTACLAW_MODE_RUNTIME"):
         import runtime_host
-        runtime_host.sleep(min(getattr(error, "retry_after", 15), 15))
+        wait = cognitive_health.retry_wait_seconds()
+        if wait:
+            runtime_host.sleep(wait)
     raise RuntimeError("native provider failed: " + type(error).__name__) from None

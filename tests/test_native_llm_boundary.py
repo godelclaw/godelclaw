@@ -25,6 +25,8 @@ class Peer(http.server.BaseHTTPRequestHandler):
         time.sleep(self.server.delay)
         body = json.dumps(self.server.reply).encode()
         self.send_response(self.server.status)
+        if getattr(self.server,"retry_after",None) is not None:
+            self.send_header("Retry-After",str(self.server.retry_after))
         self.end_headers()
         try:
             self.wfile.write(body)
@@ -235,25 +237,24 @@ def retained():
         self.assertEqual(body["messages"][0]["content"][0], signed)
         self.assertEqual(body["messages"][1]["content"][0]["tool_use_id"], "c1")
 
-    def test_truncated_text_is_not_executed(self):
+    def test_length_finish_keeps_complete_commands(self):
         self.peer.reply["choices"][0]["finish_reason"] = "length"
         out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n'
             '!(println! (RESULT (llm:command "fixture-model" 42 "low" "input")))\n')
-        self.assertIn("(RESULT ())", out)
+        self.assertIn("(RESULT (nop))", out)
         self.assertEqual(len(self.peer.requests), 1)
 
-    def test_truncated_tool_batch_is_refused_before_the_imported_loop_can_dispatch(self):
+    def test_length_finish_keeps_complete_structured_calls(self):
         self.peer.delay = .01
         self.peer.reply["choices"][0].update(finish_reason="length", message={"role": "assistant", "content": "",
             "tool_calls": [{"id": "partial", "type": "function", "function": {"name": "nop", "arguments": "{}"}}]})
         fixture = self.directory / "request_fixture.py"
         request = {"messages": [{"role": "user", "content": "input"}], "max_tokens": 42}
         fixture.write_text('from iter_host import Box\nimport json\ndef request(): return Box(json.loads(' +
-                           repr(json.dumps(request)) + '))\n')
+                           repr(json.dumps(request)) + '))\ndef check(box):\n    value=box.value\n    assert value["finish"] == "length"\n    assert value["message"]["tool_calls"][0]["id"] == "partial"\n    return "COMPLETE_CALL_KEPT"\n')
         out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n!(import! &self "{fixture}")\n'
-            '!(catch (llm:structured (py-call (request_fixture.request))))\n')
-        self.assertIn("Error", out)
-        self.assertNotIn("FINISH tool_calls", out)
+            '!(let $box (llm:structured (py-call (request_fixture.request))) (println! (py-call (request_fixture.check $box))))\n')
+        self.assertIn("COMPLETE_CALL_KEPT", out)
         self.assertEqual(len(self.peer.requests), 1)
 
     def test_quota_cooldown_is_shared_and_upstream_can_bypass_it(self):
@@ -266,6 +267,19 @@ def retained():
         self.env["METTACLAW_LLM_POLICY"] = "upstream"
         self.run_guest(forms)
         self.assertEqual(len(self.peer.requests), 3)
+
+    def test_native_retry_after_reaches_the_shared_cooldown(self):
+        self.peer.status=429
+        self.peer.retry_after=2
+        before=time.time()
+        self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n'
+                       '!(llm:command "fixture-model" 42 "default" "input")\n')
+        import sqlite3
+        with sqlite3.connect(self.directory/'ledger.db') as db:
+            until=db.execute('SELECT until FROM cooldowns').fetchone()[0]
+        self.assertGreaterEqual(until,before+2)
+        self.assertLess(until,time.time()+2.1)
+        self.assertIn('retry in 2s',self.last_stderr)
 
     def test_configured_deadline_preserves_unknown_work_and_does_not_replay_it(self):
         self.peer.delay = 1.6
@@ -283,15 +297,13 @@ def retained():
         self.env["SYNTHETIC_TIMEOUT"] = "3"
         self.env["METTACLAW_LLM_HARD_SECONDS"] = "3"
         out = self.run_guest(forms)
-        self.assertIn("(RESULT ())", out)
-        self.assertIn("reason=provider-outcome-unknown", self.last_stderr)
-        self.assertEqual(len(self.peer.requests), 1)
-        # A distinct observed request can make progress; replaying the old
-        # transport with a larger timeout cannot settle its unknown outcome.
+        self.assertIn("(RESULT (nop))", out)
+        self.assertEqual(len(self.peer.requests), 2)
+        # A fresh explicit request can proceed; the old outcome remains unknown.
         out = self.run_guest(forms.replace('"input"', '"fresh observed input"'))
         self.assertIn("(RESULT (nop))", out)
         self.assertNotIn("failed request:", self.last_stderr)
-        self.assertEqual(len(self.peer.requests), 2)
+        self.assertEqual(len(self.peer.requests), 3)
         health = json.loads((self.directory / "health.json").read_text())
         self.assertEqual(health["last_outcome"], "completed")
 

@@ -204,8 +204,11 @@ def main():
                 current = files[name] if name == "run.sh" else expected
                 if sha(root / name) != current:
                     raise ValueError("destination changed while reaching boundary: " + name)
-            for name in files:
-                install(release / "files" / name, root / name)
+            for name, value in files.items():
+                if value is None:
+                    (root / name).unlink(missing_ok=True)
+                else:
+                    install(release / "files" / name, root / name)
             for name, source in overlays.items():
                 install(source, root / name)
             for check_index, command in enumerate(instance["checks"]):

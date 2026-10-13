@@ -130,6 +130,12 @@
 (= (llm:observe-plan $plan $state $epoch $correlation $protocol $id $event)
    (case $event
      (((io:idle) $state)
+      ((io:event $received (http:response-with-metadata $status $body (http:retry-after $seconds)))
+       (if (== $id $received)
+         (let $_ (py-call (native_llm_host.response_retry_after $plan $seconds))
+                (llm:observe-plan $plan $state $epoch $correlation $protocol $id
+                  (io:event $received (http:response $status $body))))
+         $state))
       ((io:event $received (http:response $status $body))
        (if (== $id $received)
          (if (and (>= $status 200) (< $status 300))
@@ -186,7 +192,7 @@
 (: llm:submit-http (-> Atom Atom Atom Atom Atom Atom Atom Atom %Undefined%))
 (= (llm:submit-http $url $headers $body $hard $cap $connect $first $idle)
    (io:try-submit (http:request "POST" $url $headers $body $hard $cap False
-                              (http:timeouts $connect $first $idle))))
+                              (http:timeouts $connect $first $idle retry-after))))
 (: llm:status-http (-> Atom %Undefined%))
 (= (llm:status-http $id) (io:try-status $id))
 (: llm:wait-http (-> Atom Number %Undefined%))

@@ -1089,7 +1089,7 @@ def recent_activity(n=10, chat=None, snippet_chars=110):
                     continue
             ts = str(rec.get("received_at", ""))[11:16]  # ISO -> hh:mm
             snippet = " ".join(str(rec.get("text", "")).split())
-            if len(snippet) > snippet_chars:
+            if snippet_chars > 0 and len(snippet) > snippet_chars:
                 snippet = snippet[:snippet_chars] + "…"
             entries.append(f"[{ts} {rec.get('chat_title', '?')} "
                            f"{rec.get('from', '?')}: {snippet}]")
@@ -2044,10 +2044,6 @@ def _durable_send_message(chat_id, body):
     key, results = _durable_submit(
         chat_id, [["send", piece, "plain"] for piece in pieces],
         {"kind": "send", "chat": str(chat_id), "pieces": pieces})
-    if results == "queued" and _durable_outbox.is_held(durable_telegram.lane_of(key)):
-        return ("send held: an earlier message to this chat may not have "
-                "arrived; this one waits, in order, for an operator decision "
-                "(%s)" % key)
     if results == "queued":
         return ("send queued: the Telegram service is not answering; it goes "
                 "out in order when the service returns (%s)" % key)
@@ -2067,11 +2063,10 @@ def _durable_send_message(chat_id, body):
         elif result[0] == "not-sent":
             return "send failed: the message was not sent"
         else:
-            print("[telegram] chat lane %s held: delivery of %s is uncertain (%s)"
+            print("[telegram] chat lane %s: delivery of %s is uncertain (%s)"
                   % (durable_telegram.lane_of(key), key, result[1]))
             return ("send uncertain (%s): Telegram may or may not have it; "
-                    "this chat holds later messages until an operator "
-                    "resolves it (%s)" % (result[1], key))
+                    "this occurrence will not be retried; later messages may proceed (%s)" % (result[1], key))
     reply = "sent message %s to chat %s" % (ids[0], chat_id)
     if len(ids) > 1:
         reply += " (in %d parts: %s)" % (len(ids), ", ".join(map(str, ids)))
@@ -2692,83 +2687,15 @@ def begin_effect_turn(turn):
 
 # Conversation effects, by how they name their chat: an explicit first
 # argument, or the default reply target of a plain send.
-_CHAT_ARGUMENT_EFFECTS = frozenset({
-    "send-telegram-chat", "delete-my-recent", "delete-message-exact",
-})
-_REPLY_TARGET_EFFECTS = frozenset({"send", "send-file", "send-image"})
-
-
 def effect_command_unaffected(turn, command):
-    """Whether input newer than this turn's frontier leaves command as chosen.
-
-    The model has not read that input.  A message into the same chat can
-    change what should be said there, so a conversation effect into it is
-    withheld, and a rest would sleep through any of it, so a rest waits too.
-    Input in one chat never withholds a send to another, and other commands
-    run as chosen.  The operator latch still stops everything.
-    """
-    turn = str(turn)
-    with _effect_lock:
-        registered = _effect_turn == turn and _effect_activity_epoch is not None
-    if not registered:
-        return 0
+    """Compatibility entry point: only the operator's stop interrupts calls."""
     import lifecycle
-    if not lifecycle.cognition_enabled():
-        return 0
-    if not isinstance(command, (list, tuple)) or not command:
-        return 1
-    if metta_client():
-        unread = _metta_unread_chats()
-        if unread is None:
-            return 0
-    else:
-      with _msg_lock:
-        unread = {str(item[0])
-                  for item in _pending_messages[len(_prepared_messages):]}
-    import attention
-    if attention.enabled() and str(command[0]) != "rest":
-        return int(attention.revision() == _effect_attention_revision)
-    head = str(command[0])
-    if head == "rest":
-        return 0 if unread else 1
-    if head in _CHAT_ARGUMENT_EFFECTS:
-        target = str(command[1]) if len(command) > 1 else _reply_target("")
-    elif head in _REPLY_TARGET_EFFECTS:
-        target = _reply_target("")
-    else:
-        return 1
-    return 0 if str(target) in unread else 1
+    return int(bool(lifecycle.cognition_enabled()))
 
 
 def effect_turn_stimulus_free(turn):
-    """Whether no ordinary inbound stimulus crossed this turn's frontier.
-
-    This is a cooperative, between-effects guard. It does not claim to cancel
-    a command already running or to roll back an external effect.
-    """
-    turn = str(turn)
-    with _effect_lock:
-        registered = _effect_turn == turn and _effect_activity_epoch is not None
-    if registered:
-        import lifecycle
-        if not lifecycle.cognition_enabled():
-            return 0
-    with _msg_lock:
-        live_epoch = _activity_epoch
-    with _effect_lock:
-        # Direct dispatcher uses outside a registered cognitive turn retain
-        # their old behavior; real model turns always call begin_effect_turn.
-        if _effect_turn != turn or _effect_activity_epoch is None:
-            return 1
-        import attention
-        if attention.enabled():
-            if metta_client() and _metta_unread_chats() is None:
-                return 0
-            return int(attention.revision() == _effect_attention_revision)
-        if metta_client():
-            unread = _metta_unread_chats()
-            return 1 if unread == set() else 0
-        return 1 if live_epoch == _effect_activity_epoch else 0
+    import lifecycle
+    return int(bool(lifecycle.cognition_enabled()))
 
 
 def send_effect_message(text, chat_id=""):
@@ -2788,6 +2715,7 @@ def send_effect_message_to_chat(chat_id, text):
 
 
 def sleep_until_message(seconds):
+    import helper
     """Rest until the deadline or until the operator speaks or says /wake.
 
     A blocking sleep makes the agent unreachable for its whole duration and

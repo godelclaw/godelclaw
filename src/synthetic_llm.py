@@ -82,14 +82,34 @@ def _note_answered():
     _consecutive_empty = 0
 
 
+def retry_after_seconds(headers):
+    if not headers:
+        return None
+    value = headers.get("retry-after")
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        try:
+            from email.utils import parsedate_to_datetime
+            return max(0.0, parsedate_to_datetime(value).timestamp() - time.time())
+        except (TypeError, ValueError, AttributeError, OverflowError):
+            return None
+
+
 def _empty_action(reason):
     """Record failure and let the independent, interruptible loop own waiting."""
     global _consecutive_empty
-    _consecutive_empty += 1
+    status = getattr(reason, "code", getattr(reason, "status", None))
+    transient = (isinstance(reason, (TimeoutError, ConnectionError, urllib.error.URLError))
+                 and not isinstance(reason, urllib.error.HTTPError)) or status == 429 or (isinstance(status, int) and status >= 500)
+    _consecutive_empty = _consecutive_empty + 1 if transient else 0
     base = _float_env("SYNTHETIC_EMPTY_BACKOFF", 15.0, 0.0)
     cap = _float_env("SYNTHETIC_EMPTY_BACKOFF_CAP", 300.0, 0.0)
-    wait = min(cap, base * (2 ** min(_consecutive_empty - 1, 20))) if base else 0.0
-    wait = max(wait, getattr(reason, "retry_after", 0))
+    wait = min(cap, base * (2 ** min(_consecutive_empty - 1, 20))) if transient and base else 0.0
+    retry = getattr(reason, "retry_after", None)
+    retry = retry if retry is not None else retry_after_seconds(getattr(reason, "headers", None))
+    if retry is not None:
+        wait = max(0, float(retry))
     import admission_frontier
     code = admission_frontier.failure_code(reason)
     cognitive_health.turn_failed(code, retry_after=wait)
@@ -374,13 +394,7 @@ def _exchange(provider, endpoint, body, max_tokens):
         return result
     except BaseException as error:
         status = getattr(error, "code", None)
-        retry = None
-        headers = getattr(error, "headers", None)
-        if headers:
-            try:
-                retry = float(headers.get("retry-after"))
-            except (TypeError, ValueError):
-                pass
+        retry = retry_after_seconds(getattr(error, "headers", None))
         llm_policy.fail(ticket, status=status, retry_after=retry)
         raise
 
@@ -407,7 +421,10 @@ def chat(model, max_tokens, effort, prompt):
         content = result["choices"][0]["message"].get("content")
         finish = result["choices"][0].get("finish_reason")
         if finish == "length":
-            return _empty_action(OutputTruncated())
+            import helper
+            content = helper.complete_command_prefix(content or "")
+        import context_budget
+        context_budget.observe(prompt, result.get("usage", {}))
         if isinstance(content, str) and content.strip():
             _note_answered()
             cognitive_health.turn_completed(len(content.encode("utf-8")))

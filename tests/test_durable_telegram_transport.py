@@ -320,24 +320,17 @@ class DurableTransportTest(unittest.TestCase):
         self.assertEqual(durable_telegram.Outbox(self.tg._durable, self.outbox_path).entries, {})
         self.tg._durable_outbox = restarted
 
-    def test_an_uncertain_chat_holds_locally_until_released_while_others_flow(self):
-        self.service.answer = lambda k, c: [["delivery", k, 0, 1,
-            ["uncertain", "transport"] if c[0][1] == "lost" else ["delivered", 80]]]
-        self.assertTrue(self.tg.send_message("lost", "42").startswith("send uncertain"))
-        with mock.patch.dict(os.environ, {"METTACLAW_TELEGRAM_SERVICE_TIMEOUT": "1"}):
-            held = self.tg.send_message("later", "42")
-        self.assertTrue(held.startswith("send held"), held)
-        self.assertTrue(self.tg.send_message("elsewhere", "84").startswith("sent message 80"))
-        submitted = [json.loads(e[2])[0][1] for e in self.service.events if e[0] == "submit"]
-        self.assertEqual(submitted, ["lost", "elsewhere"])
-        restarted = durable_telegram.Outbox(self.tg._durable, self.outbox_path)
-        self.assertTrue(restarted.is_held("42.0"))
+    def test_uncertain_delivery_does_not_block_new_messages_or_replay(self):
+        self.service.answer = lambda k,c: [['delivery',k,0,1,
+            ['uncertain','transport'] if c[0][1]=='lost' else ['delivered',80]]]
+        self.assertTrue(self.tg.send_message('lost','42').startswith('send uncertain'))
+        self.assertTrue(self.tg.send_message('later','42').startswith('sent message 80'))
+        self.assertTrue(self.tg.send_message('elsewhere','84').startswith('sent message 80'))
+        restarted=durable_telegram.Outbox(self.tg._durable,self.outbox_path)
+        self.assertFalse(restarted.is_held('42.0'))
         restarted.stop()
-        lost_key = [e[1] for e in self.service.events if e[0] == "submit"][0]
-        self.service.add(["released", "42.0", lost_key, 0])
-        self.wait(lambda: [json.loads(e[2])[0][1] for e in self.service.events if e[0] == "submit"]
-                  == ["lost", "elsewhere", "later"])
-        self.assertFalse(self.tg._durable_outbox.is_held("42.0"))
+        submitted=[json.loads(e[2])[0][1] for e in self.service.events if e[0]=='submit']
+        self.assertEqual(submitted,['lost','later','elsewhere'])
 
     def test_deletion_writes_its_tombstone(self):
         self.service.answer = lambda k, c: [["delivery", k, 0, 1, ["delivered", 0]]]

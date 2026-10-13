@@ -110,7 +110,9 @@ def command_body(protocol, model, tokens, effort, prompt):
         return "/messages", body
     if protocol == "responses":
         body = {"model": model, "input": user, "max_output_tokens": int(tokens),
-                "reasoning": {"effort": str(effort)}, "store": False}
+                "store": False}
+        if str(effort) not in ("default", "", "None"):
+            body["reasoning"] = {"effort": str(effort)}
         if stable:
             body.update(instructions=system, prompt_cache_key=cache_key("openai", model, system))
         return "/responses", body
@@ -118,8 +120,10 @@ def command_body(protocol, model, tokens, effort, prompt):
         raise ValueError("unsupported provider protocol")
     messages = ([{"role": "system", "content": system}] if stable else [])
     messages.append({"role": "user", "content": user})
-    return "/chat/completions", {"model": model, "messages": messages,
-        "max_tokens": int(tokens), "reasoning": {"effort": str(effort)}}
+    body = {"model": model, "messages": messages, "max_tokens": int(tokens)}
+    if str(effort) not in ("default", "", "None"):
+        body["reasoning"] = {"effort": str(effort)}
+    return "/chat/completions", body
 
 
 def anthropic_body(request, model):

@@ -61,7 +61,7 @@ class TurnAdditionShapeTests(unittest.TestCase):
         self.assertIn("(applyProtocolPacing", policy)
         self.assertIn("(max 1 $retry)", policy)
         loop = (ROOT / "src" / "loop.metta").read_text(encoding="utf-8")
-        self.assertIn("(applyProtocolPacing (sleepInterval) 60", loop)
+        self.assertIn("(applyProtocolPacing (sleepInterval) 0", loop)
 
 
 if __name__ == "__main__":

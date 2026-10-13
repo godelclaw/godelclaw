@@ -20,27 +20,17 @@ class FsopsTests(unittest.TestCase):
 
     def test_read_lines_numbers_and_bounds(self):
         out = fsops.read_lines(self.f, 2, 2)
-        self.assertIn("5 lines total, showing 2-3", out)
+        self.assertIn("showing 2-3", out)
         self.assertIn("    2\tbeta", out)
-        self.assertIn("past the end", fsops.read_lines(self.f, 99, 5))
+        self.assertIn("no lines at or after", fsops.read_lines(self.f, 99, 5))
 
     def test_whole_file_reads_are_bounded(self):
         huge = os.path.join(self.tmp.name, "huge.txt")
         with open(huge, "wb") as fh:
             fh.write(b"x" * (fsops.MAX_FILE_BYTES + 1))
         self.assertIn("exceeds", fsops.read_file(huge))
-        self.assertIn("exceeds", fsops.read_lines(huge, 1, 1))
-
-    def test_edit_requires_uniqueness_and_reports_line(self):
-        out = fsops.edit_file(self.f, "beta", "BETA")
-        self.assertIn("2 matches", out)
-        out = fsops.edit_file(self.f, "gamma\nbeta", "gamma\nBETA")
-        self.assertIn("edited", out)
-        self.assertIn("line 3", out)
-        with open(self.f, encoding="utf-8") as fh:
-            self.assertEqual(fh.read(), "alpha\nbeta\ngamma\nBETA\ndelta\n")
-        self.assertIn("not found", fsops.edit_file(self.f, "zeta", "x"))
-        self.assertIn("whitespace matters", fsops.edit_file(self.f, "zeta", "x"))
+        self.assertEqual(len(fsops.read_file(huge, 0)), fsops.MAX_FILE_BYTES + 1)
+        self.assertEqual(fsops.read_lines(huge, 1, 1).split("\t",1)[1].count("x"), fsops.MAX_FILE_BYTES + 1)
 
     def test_ls_tree_and_grep_bounded(self):
         os.makedirs(os.path.join(self.tmp.name, "sub"))

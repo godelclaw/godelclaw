@@ -145,7 +145,7 @@ class RestControlTest(unittest.TestCase):
     def test_plain_and_timed_rest_clear_stale_continuations(self):
         source = (ROOT / "src" / "skills.metta").read_text(encoding="utf-8")
         start = source.index("(= (rest)")
-        continuation = source.index("(= (rest $seconds (quote", start)
+        continuation = source.index("(= (rest-command $seconds (quote", start)
         ordinary = source[start:continuation]
         self.assertEqual(
             ordinary.count("pending-continuation"), 2,
@@ -154,7 +154,7 @@ class RestControlTest(unittest.TestCase):
 
     def test_continuation_requires_explicit_quote(self):
         source = (ROOT / "src" / "skills.metta").read_text(encoding="utf-8")
-        self.assertIn("(= (rest $seconds (quote $continuation))", source)
+        self.assertIn("(= (rest-command $seconds (quote $continuation))", source)
         self.assertIn("(= (rest $seconds $why)", source)
 
     def test_positive_fractional_remainder_is_reported_as_one_second(self):

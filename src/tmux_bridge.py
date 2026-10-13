@@ -28,10 +28,10 @@ def windows():
 
 def peek(window, lines=25):
     try:
-        n = max(1, min(200, int(lines)))
+        n = max(1, int(lines))
     except (TypeError, ValueError):
         n = 25
-    code, out = _run("capture-pane", "-p", "-t", str(window))
+    code, out = _run("capture-pane", "-p", "-S", str(-n), "-t", str(window))
     if code != 0:
         return ("tmux-peek failed: %s — name a window from (tmux-windows), "
                 "e.g. \"session:window\"" % out)

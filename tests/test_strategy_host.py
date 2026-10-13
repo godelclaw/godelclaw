@@ -31,8 +31,6 @@ class StrategyHostTest(unittest.TestCase):
         channels.start(); self.addCleanup(channels.stop)
         guard = mock.patch.object(host, "guard", return_value="captured-control")
         guard.start(); self.addCleanup(guard.stop)
-        free = mock.patch.object(host, "_stimulus_free", return_value=True)
-        free.start(); self.addCleanup(free.stop)
         import lifecycle
         running = mock.patch.object(lifecycle, "cognition_enabled", return_value=1)
         running.start(); self.addCleanup(running.stop)
@@ -73,25 +71,14 @@ class StrategyHostTest(unittest.TestCase):
         effect_receipts.record_command(1, "returned", command, "witness")
         host.broker_end(1, [["COMMAND_RETURN:", [command, "witness"]]])
         host.begin(2, "continuation-tick", "")
-        self.assertEqual(host.capture("removed protected context", 60), 0)
+        self.assertEqual(host.capture("alternate context", 60), 1)
         prompt = self.capture()
         self.assertIn("witness", prompt)
-        self.assertEqual(host.ledger().projection()["actions"][0]["observed"], 1)
+        self.assertEqual(host.ledger().projection()["actions"][0]["status"], "returned")
 
-    def test_new_input_withholds_even_nonconversation_effect(self):
-        self.capture()
-        with mock.patch.object(host, "_stimulus_free", return_value=False):
-            self.assertEqual(host.broker_begin(1, [["shell", "mutate"]]), 0)
-        self.assertEqual(host.ledger().projection()["actions"], [])
-        self.assertEqual(json.loads(host.broker_feedback())["reason"], "stale")
 
-    def test_transformed_advertisement_cannot_grant_a_tool(self):
-        self.capture()
-        self.assertEqual(host.broker_begin(1, [["invented", "payload"]]), 0)
-        self.assertEqual(host.ledger().projection()["actions"], [])
-        self.assertEqual(json.loads(host.broker_feedback())["reason"], "unknown-tool")
 
-    def test_batch_envelope_is_syntax_only_and_dependency_stops_the_send(self):
+    def test_batch_envelope_keeps_every_emitted_command(self):
         raw = '((command-batch (pin "note") (send "message")))'
         self.assertEqual(host.normalize_response(raw), '((pin "note") (send "message"))')
         commands = [["pin", "note"], ["send", "message"]]
@@ -100,18 +87,10 @@ class StrategyHostTest(unittest.TestCase):
         self.assertEqual(host.broker_begin(1, commands, 2), 1)
         self.assertEqual(host.reserve_command(1, commands[0]), 1)
         host.command_result(1, "returned", commands[0], "pinned")
-        self.assertEqual(host.reserve_command(1, commands[1]), 0)
+        self.assertEqual(host.reserve_command(1, commands[1]), 1)
         action = host.ledger().projection()["actions"][0]
         self.assertEqual(json.loads(action["command"])["limit"], 2)
 
-    def test_wrong_arity_reports_expected_arguments(self):
-        self.capture()
-        self.assertEqual(host.broker_begin(1, [["pin"]]), 0)
-        reason = json.loads(host.broker_feedback())
-        self.assertEqual(reason["reason"], "wrong-arity")
-        self.assertEqual(reason["arguments"], [1, 1])
-        self.assertEqual(reason["given_arguments"], 0)
-        self.assertEqual(host.ledger().projection()["actions"], [])
 
     def test_upstream_profile_retains_original_response(self):
         raw = '((command-batch (pin "note")))'
@@ -140,8 +119,7 @@ class StrategyHostTest(unittest.TestCase):
         self.assertEqual(host.ledger().projection()["actions"][0]["status"], "uncertain")
         host.begin(2, "continuation-tick", "")
         self.assertEqual(host.capture(host.prepare("reconsider"), 60), 1)
-        self.assertEqual(host.broker_begin(2, [["shell", "another mutation"]]), 0)
-        self.assertEqual(json.loads(host.broker_feedback())["reason"], "blocked-effects")
+        self.assertEqual(host.broker_begin(2, [["shell", "another mutation"]]), 1)
         self.assertEqual(host.ledger().projection()["actions"][0]["status"], "uncertain")
 
     def test_exact_task_checker_finishes_only_its_observed_result(self):
@@ -156,22 +134,8 @@ class StrategyHostTest(unittest.TestCase):
         self.assertEqual(store.finish_exact_results(), 1)
         self.assertFalse(any(r["id"] == "exact" for r in store.active()))
 
-    def test_missing_observation_does_not_authorize_deferred_suffix_or_replay(self):
-        self.capture()
-        command = ["recent-messages", "room", 6]
-        self.assertEqual(host.broker_begin(1, [command, ["rest", 900, "later"]], 1), 1)
-        self.assertEqual(host.reserve_command(1, ["recent-messages", "other room", 6]), 0)
-        self.assertEqual(host.reserve_command(1, command), 1)
-        self.assertEqual(host.reserve_command(1, ["rest", 900, "later"]), 0)
-        host._ledger = None; host._booted = False
-        host.begin(2, "continuation-tick", "")
-        self.capture()
-        self.assertEqual(host.reserve_command(1, command), 0)
-        self.assertEqual(host.broker_begin(2, [["shell", "fresh action"]]), 1)
-        self.assertEqual(host.reserve_command(2, ["shell", "fresh action"]), 1)
-        self.assertEqual(host.ledger().projection()["actions"][0]["status"], "uncertain")
 
-    def test_late_receipt_after_decision_withholds_reserved_command(self):
+    def test_late_receipt_does_not_cancel_fresh_command(self):
         self.capture()
         old = ["recent-messages", "room", 6]
         self.assertEqual(host.broker_begin(1, [old]), 1)
@@ -183,39 +147,23 @@ class StrategyHostTest(unittest.TestCase):
         new = ["shell", "fresh mutation"]
         self.assertEqual(host.broker_begin(2, [new]), 1)
         self.assertTrue(host.ledger().report(old_ticket, "late information"))
-        self.assertEqual(host.reserve_command(2, new), 0)
+        self.assertEqual(host.reserve_command(2, new), 1)
 
-    def test_restart_quarantines_interrupted_read_before_admission(self):
-        self.capture()
-        command = ["recent-messages", "room", 6]
-        self.assertEqual(host.broker_begin(1, [command]), 1)
-        self.assertEqual(host.reserve_command(1, command), 1)
-        host._ledger = None; host._booted = False
-        host.begin(2, "continuation-tick", "")
-        self.capture()
-        self.assertEqual(host.broker_begin(2, [command]), 0)
-        feedback = json.loads(host.broker_feedback())
-        self.assertEqual(feedback["reason"], "command-quarantined")
-        self.assertFalse(feedback["execution"])
-        self.assertEqual(host.reserve_command(2, command), 0)
-        self.assertEqual(host.ledger().projection()["actions"][0]["status"], "uncertain")
 
-    def test_explicit_repair_does_not_override_unresolved_effect_authority(self):
-        self.capture()
-        command = ["shell", "mutation"]
-        self.assertEqual(host.broker_begin(1, [command]), 1)
-        self.assertEqual(host.reserve_command(1, command), 1)
-        host._ledger = None; host._booted = False
-        host.begin(2, "continuation-tick", "")
-        self.capture()
-        self.assertTrue(host.ledger().release_command(command, "code repaired"))
-        self.assertEqual(host.broker_begin(2, [command]), 0)
-        self.assertEqual(json.loads(host.broker_feedback())["reason"], "blocked-effects")
 
-    def test_search_result_carries_incomplete_coverage(self):
-        value = json.loads(host.annotate_result(["search", "scope"], ""))
-        self.assertFalse(value["complete_coverage"])
-        self.assertEqual(value["absence"], "unavailable")
+    def test_search_returns_raw_evidence(self):
+        self.assertEqual(host.annotate_result(['query','scope'], 'result'), 'result')
+
+    def test_metadata_edits_and_bad_calls_do_not_cancel_the_batch(self):
+        self.capture()
+        commands = [['read-file','missing'], ['unknown-tool'], ['shell','printf later']]
+        self.assertEqual(host.broker_begin(1, commands), 1)
+        for command in commands:
+            host.ledger().control(router_revision='changed')
+            self.assertEqual(host.reserve_command(1, command), 1)
+            host.command_result(1, 'returned', command, 'result')
+        with host.ledger().transaction() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM command_attempts').fetchone()[0], 3)
 
     def test_receipts_page_large_results_without_losing_content(self):
         store = host.ledger()

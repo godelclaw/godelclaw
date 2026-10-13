@@ -1,7 +1,0 @@
-!(import! &self (library lib_import))
-!(import! &self ./src/ggb_bridge_ext.py)
-!(println! (GOVERNANCE_RAW (py-call (ggb_bridge_ext.ggbGovernanceGate tick))))
-!(println! (GOVERNANCE_NUMERIC_RAW (py-call (ggb_bridge_ext.ggbGovernancePassed tick))))
-!(if (== (py-call (ggb_bridge_ext.ggbGovernancePassed tick)) 1)
-     (println! "GOVERNANCE_NUMERIC_PASS")
-     (println! "GOVERNANCE_NUMERIC_BLOCK"))

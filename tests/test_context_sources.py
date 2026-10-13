@@ -119,8 +119,7 @@ class ContextSourcesTest(unittest.TestCase):
         self.assertIn("SOURCE[effect-receipts] status=known", per_turn)
         self.assertIn("partial(failed)", per_turn)
         self.assertIn("SOURCE[recent-proposals]", per_turn)
-        self.assertTrue(per_turn.rsplit("\n\n", 1)[-1].startswith(
-            "CONTEXT_CERTIFICATE "))
+        self.assertNotIn("CONTEXT_CERTIFICATE", per_turn)
 
     def test_layout_orders_sources_least_changeable_first(self):
         observations = [
@@ -138,39 +137,6 @@ class ContextSourcesTest(unittest.TestCase):
             ["pins", "effect-receipts"],
         ])
 
-    def test_atlas_query_receipt_enters_the_next_certificate_projection(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = pathlib.Path(directory) / "receipts.jsonl"
-            with mock.patch.dict(os.environ, {
-                "METTACLAW_EFFECT_RECEIPT_PATH": str(path),
-                "METTACLAW_HISTORY_PATH": str(
-                    pathlib.Path(directory) / "history.metta"),
-                "METTACLAW_TELEGRAM_LOG_PATH": str(
-                    pathlib.Path(directory) / "updates.jsonl"),
-            }):
-                effect_receipts.record_atlas_result(
-                    "zahrada-atlas-shadow",
-                    "atlas_query",
-                    {
-                        "view_id": "view:" + "a" * 64,
-                        "state_revision": "state:" + "b" * 64,
-                        "status": "ContextualFamily",
-                        "receipt": {
-                            "receipt_id": "receipt:" + "c" * 64
-                        },
-                    },
-                )
-                rendered = context_sources.bundle()
-        certificate_line = rendered.splitlines()[-1].partition(" ")[2]
-        import json
-        certificate = json.loads(certificate_line)
-        self.assertIn(
-            "effect-receipts",
-            {source["source_id"] for source in certificate["sources"]},
-        )
-        self.assertIn("zahrada-atlas-shadow", rendered)
-        self.assertIn("state:" + "b" * 64, rendered)
-        self.assertIn("receipt:" + "c" * 64, rendered)
 
     def test_bad_optional_query_file_does_not_erase_base_context(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -184,10 +150,7 @@ class ContextSourcesTest(unittest.TestCase):
                     pathlib.Path(directory) / "updates.jsonl"),
             }):
                 rendered = context_sources.bundle()
-        certificate_line = rendered.splitlines()[-1].partition(" ")[2]
-        import json
-        certificate = json.loads(certificate_line)
-        self.assertIn("operator-stimulus", certificate["active_queries"])
+        self.assertNotIn("CONTEXT_CERTIFICATE", rendered)
         self.assertRegex(
             rendered,
             r"SOURCE\[active-query-declaration\] "

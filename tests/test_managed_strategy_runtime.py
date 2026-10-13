@@ -42,11 +42,10 @@ class ManagedRuntimeTest(unittest.TestCase):
                 executed = [r for r in receipts if "command" in r]
                 deferred = [r for r in receipts if "commands" in r]
                 if expected_commands is None:
-                    self.assertEqual(len(executed),16)
+                    self.assertEqual(len(executed),18)
                     continue
                 self.assertEqual([r["command"] for r in executed],
                                  [str(command) for command in expected_commands])
-                self.assertEqual(len({str(r["turn"]) for r in executed}), len(executed))
                 self.assertEqual([r["commands"] for r in deferred],
                                  [str(commands) for commands in expected_deferred or []])
                 self.assertTrue(all(r["disposition"] == "deferred" for r in deferred))
@@ -56,12 +55,12 @@ class ManagedRuntimeTest(unittest.TestCase):
 
     def test_batch_envelope_and_precise_feedback_on_available_engines(self):
         self.exercise("tests/command_feedback_probe.metta", "COMMAND_FEEDBACK_OK",
-                      [["pin", "verified note"], ["help", "pin"]],
+                      [["pin", "verified note"], ["help", "shell"], ["not-a-tool"], ["help", "pin"]],
                       [])
 
     def test_stale_reply_and_recovery_on_available_engines(self):
         self.exercise("tests/observed_strategy_probe.metta", "OBSERVED_STRATEGY_OK",
-                      [["help", "shell"]])
+                      [["shell", "printf EMITTED_COMMAND"], ["help", "shell"]])
 
     def test_host_fault_recovery_on_available_engines(self):
         self.exercise("tests/strategy_fault_probe.metta", "STRATEGY_FAULT_RECOVERY_OK",

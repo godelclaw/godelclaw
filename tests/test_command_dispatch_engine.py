@@ -372,7 +372,7 @@ class CommandDispatchEngineTest(unittest.TestCase):
             self.assertEqual(receipts[0]["disposition"], "returned")
             self.assertEqual(receipt_path.stat().st_mode & 0o777, 0o600)
 
-    def test_cetta_withholds_effect_after_witnessed_new_stimulus(self):
+    def test_cetta_queues_new_stimulus_without_discarding_emitted_call(self):
         petta = self._petta_root()
         cetta = self._cetta_binary()
         if not cetta.is_file() or not (petta / "lib" / "lib_import.metta").is_file():
@@ -402,8 +402,23 @@ class CommandDispatchEngineTest(unittest.TestCase):
                 capture_output=True, text=True, timeout=30,
             )
             self.assertEqual(result.returncode, 0, result.stderr[-2000:])
-            self.assertFalse(effect.exists(), result.stdout)
-            self.assertIn("COMMAND_BATCH_INTERRUPTED:", result.stdout)
+            self.assertTrue(effect.exists(), result.stdout)
+            self.assertNotIn("COMMAND_BATCH_INTERRUPTED:", result.stdout)
+
+    def test_plain_rest_command_survives_restart_and_runs_once(self):
+        if not self._cetta_binary().is_file():
+            self.skipTest('CeTTa unavailable')
+        with tempfile.TemporaryDirectory() as td:
+            env=self._cetta_env()
+            env.update(METTACLAW_ENGINE='cetta',CETTA_BIN=str(self._cetta_binary()),
+                METTACLAW_OBSERVED_STRATEGY='0',METTACLAW_SKIP_INITIALIZE='1',
+                METTACLAW_WORKING_SET_PATH=td+'/working.json',METTACLAW_TIMER_PROBE=td+'/effect')
+            p=subprocess.run(['./run.sh','tests/rest_timer_probe.metta'],cwd=ROOT,
+                             env=env,capture_output=True,text=True,timeout=40)
+            self.assertEqual(p.returncode,0,p.stderr[-1500:])
+            self.assertIn('REST_TIMER_RESTART_OK',p.stdout)
+            self.assertIn('NOT_EAGER',p.stdout)
+            self.assertEqual(pathlib.Path(td+'/effect').read_text(),'scheduled')
 
     def test_cetta_runs_timed_continuation(self):
         petta = self._petta_root()

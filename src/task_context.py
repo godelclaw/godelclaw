@@ -20,8 +20,6 @@ def install(db):
         CREATE TABLE IF NOT EXISTS task_notes (
             sequence INTEGER PRIMARY KEY AUTOINCREMENT, request TEXT NOT NULL,
             text TEXT NOT NULL, sources TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS task_resolutions (
-            call TEXT PRIMARY KEY, reason TEXT NOT NULL);
         CREATE INDEX IF NOT EXISTS task_parent ON task_frames(parent);
         CREATE INDEX IF NOT EXISTS task_proposal_request ON task_proposals(request);
         INSERT OR IGNORE INTO meta VALUES ('context_focus','null');
@@ -110,7 +108,6 @@ def _pairs(store, db, members):
             proposals[serial] = dict(serial=serial, request=action["request"],
                                      commands=encoded(commands), disposition="legacy")
     attempts_exist = db.execute("SELECT 1 FROM sqlite_master WHERE name='command_attempts'").fetchone()
-    resolved = dict(db.execute("SELECT call,reason FROM task_resolutions"))
     owner = store.get(db, "owner")
     pairs = []
     for serial, proposed in sorted(proposals.items()):
@@ -123,11 +120,13 @@ def _pairs(store, db, members):
             attempt = attempts.get(position)
             if attempt:
                 result = json.loads(attempt["result"]) if attempt["result"] is not None else {
-                    "disposition": "uncertain", "result": "Reserved; no terminal receipt. Do not replay."}
+                    "disposition": "uncertain", "result": "Interrupted; outcome unknown. This call was not automatically replayed."}
             else:
+                if proposed["disposition"] == "legacy":
+                    continue
                 result = {"disposition": "not_run", "result": proposed["disposition"]}
             pairs.append(dict(id=identity, request=proposed["request"], command=command,
-                              **result, resolution=resolved.get(identity)))
+                              **result))
     return pairs
 
 
@@ -180,12 +179,7 @@ def note(store, request, text, sources="[]"):
 
 
 def resolve(store, identity, reason):
-    pair = read(store, identity)
-    if not str(reason).strip():
-        raise ValueError("a disposition needs a reason")
-    with store.transaction() as db:
-        db.execute("INSERT OR IGNORE INTO task_resolutions VALUES (?,?)", (identity, str(reason)))
-    return "TASK_DECISION_RECORDED: no action was replayed or certified"
+    return "No resolution bookkeeping is required."
 
 
 def projection(store, request, trigger="continuation-tick"):
@@ -201,64 +195,70 @@ def projection(store, request, trigger="continuation-tick"):
         if db.execute("SELECT 1 FROM sqlite_master WHERE name='task_mailbox_waits'").fetchone():
             waits = [dict(r) for r in db.execute("SELECT * FROM task_mailbox_waits WHERE request IN (" + marks + ")",members)]
         pairs = _pairs(store, db, members)
-        pending = [dict(id=p["id"], command=p["command"], disposition=p["disposition"])
-                   for p in pairs if not p["resolution"] and p["disposition"] in
-                   ("not_run", "withheld", "uncertain", "exception", "no_result")]
     return dict(root=root, focus=request, trigger=str(trigger), requests=requests,
-                notes=notes, pending=pending, waits=waits, transcript=pairs, archive=None,
-                semantics="Calls and results are evidence; notes are agent interpretations. Pending calls need a decision, never automatic replay.")
+                notes=notes, waits=waits, transcript=pairs, archive=None)
 
 
-def compact(view, byte_budget=None):
-    """Replace whole older pairs by addresses, keeping their result disposition.
+def compact(view, byte_budget=None, *, measure=None):
+    """Fit recent whole pairs; older evidence remains addressable on disk.
 
-    This is a view only. It does not discard source data or turn an output
-    snippet into a claim of success. Notes and requests remain protected.
+    The caller supplies a token estimator in production. Byte length remains
+    the default for offline consumers of the original API.
     """
-    view = json.loads(encoded(view))
+    measure = measure or (lambda text: len(text.encode()))
     if byte_budget is None:
         return view
-    size = len(encoded(view).encode())
-    if size <= byte_budget:
-        return view
-    for index, pair in enumerate(view["transcript"]):
-        stub = dict(id=pair["id"], request=pair["request"],
-            command=pair["command"], disposition=pair["disposition"],
-            compacted=True, result_digest=digest(pair),
-            retrieve=["task-read", pair["id"], 0], resolution=pair["resolution"])
-        size += len(encoded(stub).encode()) - len(encoded(pair).encode())
-        view["transcript"][index] = stub
-        if size <= byte_budget:
-            return view
-    # Every omitted pair remains queryable through the task history index.
-    pairs = view["transcript"]
-    for index, pair in enumerate(pairs[:-1]):
-        old = view["archive"]
-        view["archive"] = dict(count=index+1, first=pairs[0]["id"], last=pair["id"],
-                                retrieve=["task-history", view["root"], 0])
-        size -= len(encoded(pair).encode()) + 1
-        size += len(encoded(view["archive"]).encode()) - len(encoded(old).encode())
-        if size <= byte_budget:
-            view["transcript"] = pairs[index+1:]
-            return view
-    # A pasted request or a large pending index may itself exceed the window.
-    # Keep an explicit recoverable frame, rather than crash or silently drop it.
-    result = index_view(view,"task frame exceeds available context")
-    if len(encoded(result).encode()) > byte_budget:
-        raise ValueError("model window cannot hold the task frame; reduce other context sources")
+    budget = max(0, int(byte_budget))
+    result = json.loads(encoded(view))
+    pairs = result.pop("transcript")
+    result.update(transcript=[], archive=None)
+    def archive(count):
+        return dict(count=count, retrieve=["task-history", view["root"], 0]) if count else None
+    # Prefer current request/ancestry, notes and live continuations. Completed
+    # sibling conversations are recoverable but need not fill every next turn.
+    result["waits"] = [w for w in result["waits"] if w.get("state",w.get("status")) not in ("settled","cancelled")]
+    if measure(encoded(result)) > budget // 2:
+        originals = result["requests"]
+        result["requests"] = [r for r in originals if r["id"] in (view["root"],view["focus"])]
+        result["frame"] = dict(compacted=True, retrieve=["task-read", "task-frame:"+view["root"], 0],
+                               requests=len(originals), notes=len(result["notes"]))
+        # Long pasted inputs are paged visibly, retaining both their beginning
+        # and newest end. The full input is never overwritten.
+        allowance = max(256, budget // max(4, 2*len(result["requests"])))
+        for item in result["requests"]:
+            text = item["content"]
+            while measure(text) > allowance and len(text) > 512:
+                text = text[:len(text)//4] + "\n[excerpt; full request via request-read]\n" + text[-len(text)//4:]
+            if text != item["content"]:
+                item.update(content=text, truncated=True, retrieve=["request-read", item["id"], 0])
+        while result["notes"] and measure(encoded(result)) > budget // 2:
+            result["notes"].pop(0)
+    chosen=[]
+    for index in range(len(pairs)-1,-1,-1):
+        candidate = [pairs[index]] + chosen
+        result.update(transcript=candidate, archive=archive(index))
+        if measure(encoded(result)) <= budget:
+            chosen=candidate
+            continue
+        # The newest oversized output has an explicit pointer and preview;
+        # an oversized older output does not displace newer evidence.
+        if not chosen:
+            pair=pairs[index]
+            text=str(pair.get("result", ""))
+            stub=dict(id=pair["id"], command=pair["command"], disposition=pair["disposition"],
+                      compacted=True, retrieve=["task-read",pair["id"],0])
+            stub["result_preview"]=text[:2000] + ("\n[output excerpt]\n" + text[-2000:] if len(text)>4000 else text[2000:])
+            result["transcript"]=[stub]
+            if measure(encoded(result)) <= budget:
+                chosen=[stub]
+        result.update(transcript=chosen, archive=archive(len(pairs)-len(chosen)))
+        break
     return result
 
 
 def index_view(view, reason):
-    result = dict(root=view["root"], focus=view["focus"], trigger=view["trigger"],
-        requests=[dict(id=r["id"], status=r["status"], content=r["content"][:240],
-                      truncated=len(r["content"]) > 240, retrieve=["request-read",r["id"],0])
-                  for r in view["requests"] if r["id"] in (view["root"],view["focus"])],
-        frame=dict(compacted=True, requests=len(view["requests"]), notes=len(view["notes"]),
-                   pending=len(view["pending"]), retrieve=["task-read","task-frame:"+view["root"],0]),
-        transcript=[], archive=dict(retrieve=["task-history",view["root"],0]),
-        semantics="Task frame is paged. Retrieve its constraints, corrections, notes and pending work before making dependent decisions.")
-    result["frame"]["reason"] = str(reason)
+    result=compact(view,4096)
+    result["context_note"]=str(reason)
     return result
 
 

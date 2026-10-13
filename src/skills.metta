@@ -15,26 +15,24 @@
     "- Rest, then run one quoted command without another model call: (rest seconds (quote (command ...)))"
     "- Finish this fast burst without suspending autonomous renewal: (nop)"
     "- Inspect/select the persistent cognitive loop policy: (mode) | (modes) | (mode-set \"name\")"
-    "- Retained inputs and work: (requests) | (request-page \"offset\") | (request-status \"id\") | (request-read \"id\" \"offset\"); use (request-disposition \"id\" \"keep|waiting-user|defer|addressed|reopen\" \"reason and closing condition\")"
+    "- Retained inputs and work: (requests) | (request-page \"offset\") | (request-status \"id\") | (request-read \"id\" \"offset\")"
     ;ITER REPROGRAMMING:
     "- List active/disabled hot-reloaded MeTTa Iter request transformations: (iter-transformations)"
     "- Directly install or replace a mutable MeTTa transformation for the next model turn; failures stutter locally: (iter-transform-write \"10_name.metta\" \"(= (iter-transform $visible) (success $visible))\")"
     "- Reversibly disable or enable one Iter transformation using the leading-underscore convention: (iter-transform-disable \"10_name.metta\") | (iter-transform-enable \"10_name.metta\")"
     "- Inspect authoritative command receipts: (command-receipts), then (command-receipts \"NEXT_CURSOR\") for more"
-    "- Task evidence: (task-history \"request-id\" \"offset\") indexes pairs; (task-read \"call-id\" \"offset\") recovers full results. (task-note \"findings, uncertainties and next steps\" \"JSON list of call IDs\") retains source references; (task-resolve \"call-id\" \"decision and reason\") resolves a pending decision without replaying it."
+    "- Context target: (context-policy) or (context-policy task_tokens). Older evidence remains retrievable."
+    "- Task evidence: (task-history \"request-id\" \"offset\") indexes pairs; (task-read \"call-id\" \"offset\") recovers full results. (task-note \"findings, uncertainties and next steps\" \"JSON list of call IDs\") retains source references."
     "- Separate topic notes, always keeping operator messages reachable: (topics) | (topic-select \"name\") | (topic-note \"notes\")"
-    "- Start a concurrent read-only model strand: (background-model \"topic\" \"question\") | (background-model \"topic\" \"question\" \"JSON dependency names\")"
-    "- Model strand evidence: (model-jobs) | (model-result \"id\"); inspect its receipt before (model-adopt \"id\") or (model-retire \"id\")"
     "- Wait for a configured mailbox without blocking or polling: (mailbox-wait \"stable-ticket\" \"channel\" \"correlation\"). An arrival wakes you with inert data. (mailbox-status) lists pending waits; (mailbox-read \"ticket\") reads a reply, (mailbox-read \"ticket\" offset count) pages it; (mailbox-cancel \"ticket\") cancels an unmatched wait."
     "- Subscribe to an existing Codex-room turn: (mailbox-codex \"stable-ticket\" \"thread-id\" \"turn-id\"). It returns immediately and wakes you with the terminal transcript; no model call or thread polling is started."
-    "- Write to your sibling agent's mailbox, not through Telegram: (mailbox-send \"name\" \"text\"). The note carries your name and arrives as peer mail; it wakes them at most 6 times an hour from you, later notes stay stored until their wake allowance is available. Their notes to you arrive as [mailbox] data with \"from\"."
+    "- Write to your sibling agent's mailbox, not through Telegram: (mailbox-send \"name\" \"text\"). The note carries your name and arrives as peer mail; arrivals wake them with an ordinary burst. Their notes to you arrive as [mailbox] data with \"from\"."
     "- Reply to peer mail using (mailbox-reply \"received-ticket\" \"text\"). This preserves the sender and correlation so the peer resumes their waiting task. Use mailbox-send for a new conversation."
     ;SHELL AND FILE I/O:
-    "- Execute shell command, it returns the command output to you: (shell \"command string\")"
+    "- Shell: (shell \"command\" [timeout-seconds]); default 120s, 0 for no deadline. Partial output survives timeout."
     "- Run a long command in the background; you are woken when it ends, with its exit status and output tail: (background \"command string\")"
     "- Background jobs and their state: (jobs) | the end of a job's output: (job-output \"id\") | stop one: (job-stop \"id\")"
     "- The machine and you right now, on demand: uptime, load, memory and its stalls, swap, heaviest processes: (vitals)"
-    "- Independent execution gateway, when configured: (gateway-tools) lists named tools and input schemas; (gateway-start \"stable-id\" \"tool\" \"json-object\") returns immediately; inspect completion with (gateway-status \"stable-id\") or request cancellation with (gateway-cancel \"stable-id\")."
     "- Read file to string: (read-file \"filename\")"
     "- Replace a file with exactly this content; the previous version is kept as a backup: (write-file \"filename\" \"string\")"
     "- Append one line to an existing file: (append-file \"filename\" \"string\")"
@@ -77,7 +75,7 @@
     "- Man page for any skill (usage, example, common failure): (help \"skill-name\")"
     "- Dry-run a command string through the real parser, nothing executes: (check \"(shell \\\"ls /tmp\\\")\")"))
 
-;; Background jobs: the shell skill's 5-second limit does not apply, and the
+;; Background jobs return immediately, and the
 ;; runtime wakes the agent when a job ends.  Vitals are read on demand.
 (= (background $command)
    (py-call (jobs.start (py-call (helper.decode_safe_text $command)))))
@@ -119,6 +117,9 @@
 ;; Prolog chain FAILED (empty result, no reason) on a missing/unreadable path,
 ;; which cost real time — the file existed but a relative path did not resolve
 ;; from the loop's cwd, and nothing said so.
+(= (read-file $file $maxBytes)
+   (py-call (fsops.read_file $file $maxBytes)))
+
 (= (read-file $file)
    (py-call (fsops.read_file $file)))
 
@@ -157,7 +158,8 @@
 ;; and handed back when the rest ends, so a short nap no longer costs a whole
 ;; breath. The loop does the banking because only it can see the periphery.
 (= (rest)
-   (progn (loop-directive-set rest-request 1)
+   (progn (py-call (helper.rest_cancel))
+          (loop-directive-set rest-request 1)
           (loop-directive-set pending-continuation (quote no-continuation))
           (RESTING budget-banked)))
 
@@ -165,18 +167,20 @@
    ;; Rest duration remains the agent's decision. An authenticated operator
    ;; message or /wake may deliberately end it; other activity queues.
    (let $n (max 1 (py-call (int $seconds)))
-        (progn (loop-directive-set rest-request 1)
+        (progn (py-call (helper.rest_cancel))
+               (loop-directive-set rest-request 1)
                (loop-directive-set sleep-interval $n)
                (loop-directive-set pending-continuation
                                    (quote no-continuation))
                (RESTING budget-banked sleep-interval-seconds $n))))
 
-(= (rest $seconds (quote $continuation))
+(= (rest-command $seconds (quote $continuation))
    ;; The opaque constructor keeps the command inert when it is read from the
    ;; generic coordinate store.  The wait adapter is the sole consumer that
    ;; unwraps it after the timer expires.
    (let $n (max 1 (py-call (int $seconds)))
-        (progn (loop-directive-set rest-request 1)
+        (progn (py-call (helper.rest_schedule $n (quote $continuation)))
+               (loop-directive-set rest-request 1)
                (loop-directive-set sleep-interval $n)
                (loop-directive-set pending-continuation
                                    (continuation-value $continuation))
@@ -188,7 +192,8 @@
    ;; Preserve the original intention-bearing rest.  Unlike a quoted command,
    ;; text is context for the next waking rather than executable data.
    (let $n (max 1 (py-call (int $seconds)))
-        (progn (loop-directive-set rest-request 1)
+        (progn (py-call (helper.rest_cancel))
+               (loop-directive-set rest-request 1)
                (loop-directive-set sleep-interval $n)
                (loop-directive-set pending-continuation
                                    (quote no-continuation))
@@ -230,7 +235,12 @@
 ;; Filesystem awareness: line-numbered reads, exact-string edits with
 ;; uniqueness enforced, bounded tree/search. Result strings are the
 ;; verification — no blind writes, no re-reading to check what landed.
+(= (read-lines $f) (read-lines $f 1 2000))
+(= (read-lines $f $start) (read-lines $f $start 2000))
 (= (read-lines $f $start $count) (py-call (fsops.read_lines $f $start $count)))
+(= (ls-tree $dir) (ls-tree $dir 2))
+(= (ls-tree $dir $depth $limit) (py-call (fsops.ls_tree $dir $depth $limit)))
+(= (ls-tree $dir $depth $limit $offset) (py-call (fsops.ls_tree $dir $depth $limit $offset)))
 (= (ls-tree $dir $depth) (py-call (fsops.ls_tree $dir $depth)))
 (= (grep-files $pat $dir)
    (py-call (fsops.grep_files (py-call (helper.decode_safe_text $pat)) $dir)))
@@ -253,18 +263,6 @@
 (= (tmux-peek $win $n) (py-call (tmux_bridge.peek $win $n)))
 (= (tmux-send $win $text)
    (py-call (tmux_bridge.send $win (py-call (helper.decode_safe_text $text)))))
-
-;; Receipt-bound terminal capabilities used by qualification and by a future
-;; live broker only after it passes qualification. With the shadow effect
-;; provider, the dispatcher intercepts these already-parsed commands before
-;; eval and handles them on an isolated tmux socket. In ordinary operation the
-;; equations are inert refusal values and grant no authority.
-(= (tmux-new-shell-after $receipt $name)
-   (SHADOW_EFFECT_REQUIRES_QUALIFICATION_BACKEND $receipt $name))
-(= (tmux-send-observed $receipt $text)
-   (SHADOW_EFFECT_REQUIRES_QUALIFICATION_BACKEND $receipt $text))
-(= (shadow-finish $summary)
-   (SHADOW_EFFECT_REQUIRES_QUALIFICATION_BACKEND $summary))
 
 ;; Progressive disclosure: one-line catalog above, full page on demand.
 ;; check parses with the loop's OWN reader (sread), so its verdict is the
@@ -324,10 +322,12 @@
 (= (topics) (py-call (topic_jobs.topics)))
 (= (topic-select $name) (py-call (topic_jobs.select $name)))
 (= (topic-note $notes) (py-call (topic_jobs.note (py-call (helper.decode_safe_text $notes)))))
-(= (background-model $topic $question) (py-call (topic_jobs.start $topic (py-call (helper.decode_safe_text $question)))))
-(= (background-model $topic $question $dependencies)
-   (py-call (topic_jobs.start $topic (py-call (helper.decode_safe_text $question)) (py-call (helper.decode_safe_text $dependencies)))))
 (= (model-jobs) (py-call (topic_jobs.status)))
 (= (model-result $id) (py-call (topic_jobs.results $id)))
-(= (model-adopt $id) (py-call (topic_jobs.adopt $id)))
-(= (model-retire $id) (py-call (topic_jobs.retire $id)))
+
+(= (grep-files $pat $dir $limit) (py-call (fsops.grep_files $pat $dir $limit)))
+(= (grep-files $pat $dir $limit $offset) (py-call (fsops.grep_files $pat $dir $limit $offset)))
+
+(= (context-policy) (py-call (context_budget.policy)))
+(= (context-policy $tokens) (py-call (context_budget.policy $tokens)))
+!(import! &self ./src/context_budget.py)

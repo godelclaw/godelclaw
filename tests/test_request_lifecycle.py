@@ -39,7 +39,7 @@ class RequestLifecycleTest(unittest.TestCase):
         self.store.processed("input:1")
         self.store.restore()
         self.assertEqual(self.store.projection()["actions"][0]["status"], "uncertain")
-        self.assertIsNone(self.store.capture("input:1", "context", ROUTER, 0))
+        self.assertIsNotNone(self.store.capture("input:1", "context", ROUTER, 0))
         self.store.report(ticket, "actual late receipt")
         receipt = self.store.protected("input:1")["results"][0]
         self.store.observe([ticket], {ticket: [receipt]})

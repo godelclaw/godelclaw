@@ -140,15 +140,9 @@ class RuntimeContextTest(unittest.TestCase):
             db.execute("UPDATE max_seq_id SET seq_id=21 WHERE segment_id='v'")
         self.assertIsNone(view.read(self.now)["memory"])
 
-    def test_background_ages_are_owned_unobserved_and_never_invented(self):
-        self.background()
-        self.assertEqual(view.read(self.now)["background"],
-                         {"pending": 1, "review": 2, "uncertain": 1, "oldestReviewSeconds": 45})
-
-    def test_legacy_results_keep_unknown_age(self):
+    def test_legacy_background_results_are_not_prompt_bookkeeping(self):
         self.background(legacy=True)
-        self.assertEqual(view.read(self.now)["background"]["review"], 1)
-        self.assertIsNone(view.read(self.now)["background"]["oldestReviewSeconds"])
+        self.assertIsNone(view.read(self.now)["background"])
 
     def test_recent_receipt_window_and_closed_reason_labels(self):
         records = [{"command": "CANARY_PRIVATE", "result": "CANARY_PRIVATE", "disposition": "returned"}] * 20
@@ -166,18 +160,11 @@ class RuntimeContextTest(unittest.TestCase):
         self.assertEqual(counts["failed"], 1)
         self.assertEqual(counts["uncertain"], 0)
 
-    def test_budget_only_exposes_numbers_at_cap_and_retains_unknown_usage_reservation(self):
-        self.database("budget.db", """CREATE TABLE requests(started REAL,output INTEGER,reserved INTEGER);
-            INSERT INTO requests VALUES(1999999990,14,100),(1999999991,NULL,1000);""")
-        self.assertNotIn("budget", view.read(self.now))
-        with mock.patch.dict(os.environ, {"METTACLAW_LLM_OUTPUT_TOKENS_PER_DAY": "1000"}):
-            facts = view.read(self.now)
-            self.assertEqual(facts["budgetStatus"], "at-cap")
-            self.assertEqual(facts["budget"]["accountedOutputToday"], 1014)
-        with mock.patch.dict(os.environ, {"METTACLAW_LLM_OUTPUT_TOKENS_PER_DAY": "2000"}):
-            facts = view.read(self.now)
-            self.assertEqual(facts["budgetStatus"], "within-caps")
-            self.assertNotIn("budget", facts)
+    def test_old_volume_caps_do_not_reappear_in_context(self):
+        with mock.patch.dict(os.environ, {'METTACLAW_LLM_OUTPUT_TOKENS_PER_DAY':'1'}):
+            facts=view.read(self.now)
+            self.assertEqual(facts['budgetStatus'],'no-volume-caps')
+            self.assertNotIn('budget',facts)
 
     def test_reading_cannot_write_checkpoint_or_call_provider(self):
         self.memory(); self.background()
@@ -189,7 +176,7 @@ class RuntimeContextTest(unittest.TestCase):
         after = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in self.root.iterdir() if p.is_file()}
         self.assertEqual(before, after)
         self.assertEqual(facts["memory"]["persistedSequenceGap"], 3)
-        self.assertEqual(facts["background"]["review"], 2)
+        self.assertIsNone(facts["background"])
         with view._database(self.root / "strategy.db") as db:
             with self.assertRaises(sqlite3.OperationalError):
                 db.execute("DELETE FROM model_jobs")
@@ -228,9 +215,9 @@ class RuntimeContextTest(unittest.TestCase):
             packet = host._runtime_projection
             self.assertEqual(prompt.count("RUNTIME_STATE "), 1)
             self.assertIn("retained human request", prompt)
-            self.assertEqual(host.capture(prompt.replace(packet, ""), 60), 0)
+            self.assertEqual(host.capture(prompt.replace(packet, ""), 60), 1)
             self.assertEqual(host.ledger().projection()["actions"], core_before["actions"])
-            self.assertEqual(host.capture(prompt.replace('"localChannelReady":', '"erasedChannel":'), 60), 0)
+            self.assertEqual(host.capture(prompt.replace('"localChannelReady":', '"erasedChannel":'), 60), 1)
             self.assertEqual(host.capture(prompt, 60), 1)
             self.assertEqual(host.ledger().active()[0]["status"], "active")
 

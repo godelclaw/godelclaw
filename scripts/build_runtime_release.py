@@ -36,6 +36,11 @@ def main():
         if canonical.is_file():
             destination.chmod(canonical.stat().st_mode & 0o777)
         hashes[name] = hashlib.sha256(destination.read_bytes()).hexdigest()
+    for name in selection.get("remove", []) if isinstance(selection, dict) else []:
+        path = Path(name)
+        if path.is_absolute() or ".." in path.parts or name in hashes:
+            raise ValueError("removed paths must be distinct relative paths")
+        hashes[name] = None
     identity = hashlib.sha256(json.dumps(hashes, sort_keys=True).encode()).hexdigest()
     (args.output / "manifest.json").write_text(json.dumps(
         {"schema": 1, "release": identity, "files": hashes}, indent=2) + "\n")

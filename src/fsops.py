@@ -7,24 +7,20 @@ explicit, so no blind writes and no re-reading to check what landed."""
 import os
 import re
 
-MAX_LINES = 200
-MAX_MATCHES = 30
-MAX_LINE_CHARS = 200
 MAX_FILE_BYTES = 2_000_000
-MAX_FILES_SCANNED = 2000
 SKIP_DIRS = {".git", "__pycache__", "node_modules", "chroma_db", ".venv"}
 
 
-def read_file(path):
+def read_file(path, max_bytes=MAX_FILE_BYTES):
     """Whole file as a string, or a reason. Never a silent empty result:
     'read failed: no such file: X (cwd Y)' is actionable; '' is a mystery."""
-    path = str(path)
+    path, max_bytes = str(path), max(0, int(max_bytes))
     try:
         with open(path, "rb") as f:
-            data = f.read(MAX_FILE_BYTES + 1)
-        if len(data) > MAX_FILE_BYTES:
+            data = f.read(max_bytes + 1) if max_bytes else f.read()
+        if max_bytes and len(data) > max_bytes:
             return ("read failed: %s exceeds %d bytes — use read-lines for a "
-                    "bounded window" % (path, MAX_FILE_BYTES))
+                    "window, or supply a larger max_bytes (0 means unlimited)" % (path, max_bytes))
         if not data:
             # An empty file and a failed read must never look alike.
             return "READ_OK_EMPTY_FILE: %s exists and holds zero bytes" % path
@@ -39,133 +35,82 @@ def read_file(path):
         return "read failed (%s): %s" % (type(exc).__name__, exc)
 
 
-def read_lines(path, start=1, count=60):
-    """Numbered window of a file; the numbers are what edit anchors need."""
-    path = str(path)
+def read_lines(path, start=1, count=2000):
+    """Stream the requested numbered window, preserving complete lines."""
+    import itertools
+    path, start, count = str(path), max(1, int(start)), max(1, int(count))
     try:
-        with open(path, "rb") as fh:
-            data = fh.read(MAX_FILE_BYTES + 1)
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            window = list(itertools.islice(fh, start - 1, start - 1 + count))
+            more = bool(fh.readline())
+        if not window:
+            return f"READ_OK_EMPTY_FILE: {path} exists and holds zero bytes" if start == 1 and os.path.getsize(path) == 0 else f"{path}: no lines at or after {start}"
+        body = "\n".join(f"{start+i:5d}\t{line.rstrip(chr(10)).rstrip(chr(13))}"
+                         for i, line in enumerate(window))
+        end = start + len(window) - 1
+        return f"{path}: showing {start}-{end}" + (f"; next start {end+1}" if more else "; end of file") + "\n" + body
     except OSError as exc:
         return f"read-lines failed: {exc}"
-    if len(data) > MAX_FILE_BYTES:
-        return (f"read-lines failed: {path} exceeds {MAX_FILE_BYTES} bytes; "
-                "use shell tools that stream a bounded range")
-    if not data:
-        # An empty file and a failed read must never look alike.
-        return f"READ_OK_EMPTY_FILE: {path} exists and holds zero bytes"
-    lines = data.decode("utf-8", errors="replace").splitlines()
-    start = max(1, int(start))
-    count = min(int(count), MAX_LINES)
-    window = lines[start - 1:start - 1 + count]
-    if not window:
-        return f"{path}: {len(lines)} lines total; start {start} is past the end"
-    body = "\n".join(f"{start + i:5d}\t{l[:MAX_LINE_CHARS]}"
-                     for i, l in enumerate(window))
-    return (f"{path}: {len(lines)} lines total, showing "
-            f"{start}-{start + len(window) - 1}\n{body}")
 
 
-def edit_file(path, old, new):
-    """Exact-string replacement. The errors are the instructions."""
-    path, old, new = str(path), str(old), str(new)
-    if not old:
-        return "edit-file failed: old-string is empty"
-    try:
-        with open(path, encoding="utf-8") as fh:
-            text = fh.read()
-    except OSError as exc:
-        return f"edit-file failed: {exc}"
-    n = text.count(old)
-    if n == 0:
-        return ("edit-file failed: old-string not found in %s — read-lines "
-                "the region and copy the exact text (whitespace matters)" % path)
-    if n > 1:
-        return ("edit-file failed: old-string has %d matches in %s — include "
-                "surrounding lines to make it unique" % (n, path))
-    line = text[:text.index(old)].count("\n") + 1
-    text = text.replace(old, new, 1)
-    tmp = path + ".tmp"
-    try:
-        with open(tmp, "w", encoding="utf-8") as fh:
-            fh.write(text)
-        os.replace(tmp, path)
-    except OSError as exc:
-        return f"edit-file failed writing: {exc}"
-    return (f"edited {path}: 1 replacement at line {line} "
-            f"(file now {text.count(chr(10)) + 1} lines)")
-
-
-def ls_tree(root, depth=2):
-    """Compact indented tree: dirs first, sizes on files, bounded."""
-    root = str(root)
-    depth = min(max(int(depth), 1), 4)
+def ls_tree(root, depth=2, limit=1000, offset=0):
+    """Directory entries with an explicit continuation, no fixed depth cap."""
+    root, depth, limit, offset = str(root), max(1, int(depth)), max(1, int(limit)), max(0, int(offset))
     if not os.path.isdir(root):
         return f"ls-tree failed: not a directory: {root}"
-    out, count = [root], 0
-
-    def walk(d, level):
-        nonlocal count
+    def walk(directory, level):
         try:
-            entries = sorted(os.scandir(d), key=lambda e: (e.is_file(), e.name))
+            entries = sorted(os.scandir(directory), key=lambda e: (e.is_file(), e.name))
         except OSError as exc:
-            out.append("  " * level + f"[{exc}]")
+            yield "  " * level + f"[{exc}]"
             return
-        for e in entries:
-            if e.name in SKIP_DIRS or e.name.startswith(".git"):
+        for entry in entries:
+            if entry.name in SKIP_DIRS:
                 continue
-            if count >= 120:
-                out.append("  " * level + "… (truncated at 120 entries)")
-                return
-            count += 1
-            if e.is_dir(follow_symlinks=False):
-                out.append("  " * level + e.name + "/")
+            if entry.is_dir(follow_symlinks=False):
+                yield "  " * level + entry.name + "/"
                 if level + 1 < depth:
-                    walk(e.path, level + 1)
+                    yield from walk(entry.path, level + 1)
             else:
-                try:
-                    size = e.stat(follow_symlinks=False).st_size
-                except OSError:
-                    size = -1
-                out.append("  " * level + f"{e.name}  ({size}b)")
-
-    walk(root, 0)
-    return "\n".join(out)
+                yield "  " * level + entry.name
+    import itertools
+    entries = list(itertools.islice(walk(root, 0), offset, offset + limit + 1))
+    more = len(entries) > limit
+    return root + "\n" + "\n".join(entries[:limit]) + (f"\n[more entries; next offset {offset+limit}]" if more else "")
 
 
-def grep_files(pattern, root):
-    """path:line: text matches, bounded; regex or literal fallback."""
-    root = str(root)
+def grep_files(pattern, root, limit=200, offset=0):
+    """Search complete text lines; caller chooses page length and offset."""
+    root, limit, offset = str(root), max(1, int(limit)), max(0, int(offset))
     try:
         rx = re.compile(str(pattern))
     except re.error:
         rx = re.compile(re.escape(str(pattern)))
-    hits, scanned = [], 0
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames
-                       if d not in SKIP_DIRS and not d.startswith(".git")]
-        for name in filenames:
-            if scanned >= MAX_FILES_SCANNED or len(hits) >= MAX_MATCHES:
-                break
-            fp = os.path.join(dirpath, name)
-            try:
-                if os.path.getsize(fp) > MAX_FILE_BYTES:
+    hits, matched, scanned, errors = [], 0, 0, []
+    def paths():
+        if os.path.isfile(root):
+            yield root
+            return
+        for directory, dirs, names in os.walk(root):
+            dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
+            for name in sorted(names):
+                yield os.path.join(directory, name)
+    files = paths()
+    for path in files:
+        try:
+            with open(path, "rb") as fh:
+                if b"\0" in fh.read(1024):
                     continue
-                with open(fp, "rb") as fh:
-                    head = fh.read(1024)
-                    if b"\0" in head:
-                        continue
-                scanned += 1
-                with open(fp, encoding="utf-8", errors="replace") as fh:
-                    for i, line in enumerate(fh, 1):
-                        if rx.search(line):
-                            hits.append(f"{fp}:{i}: {line.strip()[:MAX_LINE_CHARS]}")
-                            if len(hits) >= MAX_MATCHES:
-                                break
-            except OSError:
-                continue
-        if scanned >= MAX_FILES_SCANNED or len(hits) >= MAX_MATCHES:
-            break
-    if not hits:
-        return f"no matches for {pattern!r} under {root} ({scanned} files scanned)"
-    note = " (result cap reached)" if len(hits) >= MAX_MATCHES else ""
-    return f"{len(hits)} matches{note}:\n" + "\n".join(hits)
+            scanned += 1
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                for number, line in enumerate(fh, 1):
+                    if rx.search(line):
+                        matched += 1
+                        if matched > offset:
+                            hits.append(f"{path}:{number}: {line.rstrip()}")
+                        if len(hits) > limit:
+                            return "\n".join(hits[:limit]) + f"\n[more matches; next offset {offset+limit}]"
+        except OSError as exc:
+            errors.append(f"{path}: {exc}")
+    return ("\n".join(hits) if hits else f"no matches in this page for {pattern!r} under {root} ({scanned} files scanned)") + (
+        "\n[unreadable files]\n" + "\n".join(errors) if errors else "")

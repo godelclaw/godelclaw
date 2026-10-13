@@ -112,6 +112,8 @@ class RuntimeProbeTest(unittest.TestCase):
             }) + "\n", encoding="utf-8")
             for probe, marker in self.PROBES:
                 with self.subTest(probe=probe):
+                    probe_state = pathlib.Path(directory) / pathlib.Path(probe).stem
+                    probe_state.mkdir(exist_ok=True)
                     iter_directory = (
                         pathlib.Path(directory) / "native-iter-multiturn"
                         if probe == "tests/native_iter_multiturn_probe.metta"
@@ -129,19 +131,19 @@ class RuntimeProbeTest(unittest.TestCase):
                         "METTACLAW_SKIP_INITIALIZE": "1",
                         "METTACLAW_ENGINE": engine,
                         "METTACLAW_ENGINE_STATE_PATH": os.path.join(
-                            directory, "engine"),
+                            probe_state, "engine"),
                         "METTACLAW_LOOP_MODE_PATH": os.path.join(
-                            directory, "loop-mode.json"),
+                            probe_state, "loop-mode.json"),
                         "METTACLAW_CHROMA_DIR": os.path.join(
-                            directory, "chroma"),
+                            probe_state, "chroma"),
                         "METTACLAW_ITER_PROCESS_DIR": os.fspath(
                             iter_directory),
                         "METTACLAW_ITER_PROCESS_TIMEOUT_SECONDS": "0.2",
                         "METTACLAW_PROMPT_PATH": os.fspath(prompt_path),
                         "METTACLAW_HISTORY_PATH": os.path.join(
-                            directory, "history.metta"),
+                            probe_state, "history.metta"),
                         "METTACLAW_WORKING_SET_PATH": os.path.join(
-                            directory, "working-set.json"),
+                            probe_state, "working-set.json"),
                         "METTACLAW_PINS_PATH": os.fspath(pins_path),
                         "METTACLAW_LIFECYCLE_PATH": os.fspath(lifecycle),
                         "METTACLAW_DEPLOYMENT_STATE_PATH": os.fspath(
@@ -158,8 +160,8 @@ class RuntimeProbeTest(unittest.TestCase):
                     )
                     self.assert_witness(result, marker, label)
                     if probe == "tests/interactive_batch_policy_probe.metta":
-                        mode_path = pathlib.Path(directory) / "loop-mode.json"
-                        history_path = pathlib.Path(directory) / "history.metta"
+                        mode_path = probe_state / "loop-mode.json"
+                        history_path = probe_state / "history.metta"
                         self.assertTrue(mode_path.is_file())
                         self.assertIn("coding", mode_path.read_text(
                             encoding="utf-8"))
@@ -170,13 +172,11 @@ class RuntimeProbeTest(unittest.TestCase):
                         pins_path = pathlib.Path(directory) / "pins.txt"
                         pins = (pins_path.read_text(encoding="utf-8")
                                 if pins_path.is_file() else "")
-                        # New input withholds only the reply into its
-                        # own chat and what depends on it; a pin that does
-                        # not speak still records the turn's work.
+                        # New input queues while every emitted call runs.
                         self.assertIn("pin-after-new-input-lands", pins)
-                        self.assertNotIn(
+                        self.assertIn(
                             "pin-after-withheld-send-must-not-land", pins)
-                        self.assertIn("COMMAND_BATCH_INTERRUPTED",
+                        self.assertNotIn("COMMAND_BATCH_INTERRUPTED",
                                       result.stdout)
 
     def test_context_projection_crosses_cetta_provider_boundary(self):
