@@ -21,6 +21,7 @@
     "- Directly install or replace a mutable MeTTa transformation for the next model turn; failures stutter locally: (iter-transform-write \"10_name.metta\" \"(= (iter-transform $visible) (success $visible))\")"
     "- Reversibly disable or enable one Iter transformation using the leading-underscore convention: (iter-transform-disable \"10_name.metta\") | (iter-transform-enable \"10_name.metta\")"
     "- Inspect authoritative command receipts: (command-receipts), then (command-receipts \"NEXT_CURSOR\") for more"
+    "- Task evidence: (task-history \"request-id\" \"offset\") indexes pairs; (task-read \"call-id\" \"offset\") recovers full results. (task-note \"findings, uncertainties and next steps\" \"JSON list of call IDs\") retains source references; (task-resolve \"call-id\" \"decision and reason\") resolves a pending decision without replaying it."
     "- Separate topic notes, always keeping operator messages reachable: (topics) | (topic-select \"name\") | (topic-note \"notes\")"
     "- Start a concurrent read-only model strand: (background-model \"topic\" \"question\") | (background-model \"topic\" \"question\" \"JSON dependency names\")"
     "- Model strand evidence: (model-jobs) | (model-result \"id\"); inspect its receipt before (model-adopt \"id\") or (model-retire \"id\")"
@@ -86,6 +87,8 @@
 ;; Only the host checkpoint settles a mailbox reply. Worker content is data.
 (= (mailbox-wait $ticket $channel $correlation)
    (py-call (mailbox_agent.wait $ticket $channel $correlation)))
+(= (mailbox-wait $ticket $channel $correlation $note)
+   (py-call (mailbox_agent.wait $ticket $channel $correlation (py-call (helper.decode_safe_text $note)))))
 (= (mailbox-status) (py-call (mailbox_agent.status)))
 (= (mailbox-read $ticket) (py-call (mailbox_agent.read $ticket)))
 (= (mailbox-read $ticket $offset) (py-call (mailbox_agent.read $ticket $offset)))
@@ -95,6 +98,9 @@
 (= (mailbox-send $to $text)
    (let $safe (string-replace $text "\n" "\\n")
      (py-call (mailbox_agent.send $to (py-call (helper.decode_safe_text $safe))))))
+(= (mailbox-send $to $text $correlation)
+   (let $safe (string-replace $text "\n" "\\n")
+     (py-call (mailbox_agent.send $to (py-call (helper.decode_safe_text $safe)) $correlation))))
 (= (vitals) (py-call (helper.vitals)))
 
 ;; Shared execution code, separate agent-owned queues. These requests never
@@ -303,6 +309,15 @@
 
 (= (command-receipts) (py-call (strategy_host.command_receipts)))
 (= (command-receipts $cursor) (py-call (strategy_host.command_receipts $cursor)))
+(= (task-read $id) (py-call (strategy_host.task_read $id)))
+(= (task-read $id $offset) (py-call (strategy_host.task_read $id $offset)))
+(= (task-history $id) (py-call (strategy_host.task_history $id)))
+(= (task-history $id $offset) (py-call (strategy_host.task_history $id $offset)))
+(= (task-note $text) (py-call (strategy_host.task_note (py-call (helper.decode_safe_text $text)))))
+(= (task-note $text $sources)
+   (py-call (strategy_host.task_note (py-call (helper.decode_safe_text $text)) (py-call (helper.decode_safe_text $sources)))))
+(= (task-resolve $id $reason)
+   (py-call (strategy_host.task_resolve $id (py-call (helper.decode_safe_text $reason)))))
 (= (topics) (py-call (topic_jobs.topics)))
 (= (topic-select $name) (py-call (topic_jobs.select $name)))
 (= (topic-note $notes) (py-call (topic_jobs.note (py-call (helper.decode_safe_text $notes)))))

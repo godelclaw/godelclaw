@@ -36,6 +36,8 @@ shell(Cmd, Out) :-
     ( Status = exit(124) -> Out = timeout_error
     ; Status = exit(137) -> Out = timeout_error
     ; Status = killed(_) -> Out = timeout_error
+    ; Status = exit(Code), Code =\= 0, Text \== "" ->
+        format(string(Out), "SHELL_ERROR exit ~w\n~s", [Code, Text])
     ; Text == "" ->
         %% Empty output was indistinguishable from a failed command, so a
         %% mistyped shell string looked exactly like "no matches found".
@@ -113,7 +115,7 @@ run_command_list_unless_stimulus(Turn, Commands, Records, Errors) :-
        ( command_result_permits_suffix(Command, Record)
        -> run_command_list_unless_stimulus(Turn, Rest,
                                            RestRecords, RestErrors)
-       ;  partition_after_stimulus(Rest, Independent, Dependent),
+       ;  failed_command_partition(Rest, Independent, Dependent),
           failed_effect_record(Turn, Command, Dependent,
                                InterruptedRecords),
           run_command_list_once(Turn, Independent,
@@ -133,6 +135,15 @@ partition_after_stimulus(Commands, Independent, Dependent) :-
     catch('py-call'(['action_graph.partition_after_stimulus', Commands],
                     [Independent, Dependent]), _, fail), !.
 partition_after_stimulus(Commands, [], Commands).
+
+failed_command_partition(Rest, [], Rest) :-
+    getenv('METTACLAW_OBSERVED_STRATEGY', '1'), !.
+failed_command_partition(Rest, Independent, Dependent) :-
+    partition_after_stimulus(Rest, Independent, Dependent).
+
+command_result_permits_suffix(Command, Record) :-
+    getenv('METTACLAW_OBSERVED_STRATEGY', '1'), !,
+    catch('py-call'(['strategy_host.result_permits_suffix', Command, Record], 1), _, fail).
 
 command_result_permits_suffix(Command,
                               ['COMMAND_RETURN:', [Command, Result]]) :-

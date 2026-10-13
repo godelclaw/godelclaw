@@ -8,6 +8,7 @@ establish freshness of old observations. No operation is automatically replayed.
 """
 
 import json
+from pathlib import Path
 
 
 DENIAL_CODES = frozenset({"request-not-selectable", "cognition-paused",
@@ -31,6 +32,7 @@ def failure_code(error):
 # These inspect retained state or return information. Keep scheduling/goal
 # writes, arbitrary shell/MeTTa/MCP code and outgoing messages outside this set.
 OBSERVATION_TOOLS = frozenset({
+    "task-read", "task-history",
     "help", "check", "vitals", "jobs", "job-output", "gateway-tools",
     "gateway-status", "llm-quota", "llm-models", "energy", "modes", "mode",
     "tmux-windows", "tmux-peek", "requests", "request-status", "request-page",
@@ -82,6 +84,37 @@ def effect_blockers(rows, exclude=None):
 
 def may_issue(rows, proposal, exclude=None):
     return observational(proposal) or not effect_blockers(rows, exclude)
+
+
+def needs_observation(command, before):
+    """Host contracts for preselected calls, independent of a numeric cap.
+
+    Reads can be collected together. Disjoint file writes and addressed sends
+    may proceed together. Unclassified effect relationships need the model's
+    next observation. These contracts do not decide whether prose is truthful.
+    """
+    if not before or observational(command) or command[0] in ("rest", "nop"):
+        return False
+    # A fixed request may follow successful registration of its reply route.
+    # This is an explicit host continuation, not a guess about unseen data.
+    if (command[0] == "mailbox-send" and len(command) == 4 and
+            all(c[0] == "mailbox-wait" and len(c) >= 4 and c[3] == command[3] for c in before)):
+        return False
+    writes = {"write-file", "append-file", "edit-file"}
+    def target(call):
+        if call[0] in writes and len(call) > 1:
+            path = Path(str(call[1])).expanduser().resolve()
+            try:
+                stat = path.stat()
+                return "file", (stat.st_dev, stat.st_ino)
+            except FileNotFoundError:
+                return "file", str(path)
+        if call[0] in ("mailbox-send", "send-telegram-chat") and len(call) > 1:
+            return call[0], str(call[1])
+        return None
+    own = target(command)
+    return any(not own or not target(prior) or own[0] != target(prior)[0]
+               or own[1] == target(prior)[1] for prior in before)
 
 
 def thought_denial(*, available, paused, pending, allowance, cooldown, now):

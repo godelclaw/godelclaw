@@ -1142,7 +1142,7 @@ def _collapse_message_revisions(records):
 
 
 def conversation_window(max_chars=30000, max_events=48,
-                        max_event_chars=6000):
+                        max_event_chars=6000, chat_id=None):
     """Render a causal, role-preserving window from the append-only ledger.
 
     The update log is the source of truth.  ``getActivityBatch`` fixes a byte
@@ -1187,6 +1187,8 @@ def conversation_window(max_chars=30000, max_events=48,
 
         rendered = []
         for rec in _collapse_message_revisions(records):
+            if chat_id and str(rec.get("chat_id", "")) != str(chat_id):
+                continue
             text_value = rec.get("text") or rec.get("caption")
             if not rec.get("allowed") or not text_value:
                 continue

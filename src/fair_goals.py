@@ -84,7 +84,7 @@ def definitions(path):
 
 
 def runnable(goal):
-    return (not goal["blocked"] and not goal["finished"] and goal["share"] > 0
+    return (not goal.get("waiting",False) and not goal["blocked"] and not goal["finished"] and goal["share"] > 0
             and (goal["interval"] is None or goal["age"] >= goal["interval"]))
 
 
@@ -116,13 +116,17 @@ def accounts(db, now):
         if not state["finished"]:
             state["age"] += elapsed
         state["clock"] = max(state["clock"], int(now))
-        result.append(dict(state, id=row["id"], name=row["name"]))
+        goal = dict(state,id=row["id"],name=row["name"])
+        owner = json.loads(db.execute("SELECT value FROM meta WHERE key='owner'").fetchone()[0])
+        request = db.execute("SELECT status FROM requests WHERE id=?",(cycle_key(owner,goal),)).fetchone()
+        goal["waiting"] = bool(request and request[0] == "waiting-mailbox")
+        result.append(goal)
     return result
 
 
 def save(db, goal):
     db.execute("UPDATE goal_accounts SET state=? WHERE id=?", (encoded(
-        {k: v for k, v in goal.items() if k not in ("id", "name")}), goal["id"]))
+        {k: v for k, v in goal.items() if k not in ("id", "name", "waiting")}), goal["id"]))
 
 
 def inventory(goals):
@@ -183,7 +187,7 @@ def snapshot(store, now):
                         judgment_verified=False)
         return {"inventory": inventory(goals), "inventory_digest": digest(inventory(goals)),
                 "selected": chosen,
-                "queue": [{k: g[k] for k in ("id", "name", "share", "service", "age", "round", "blocked", "finished", "interval", "baseUrgency")} for g in goals if g["present"]]}
+                "queue": [{k: g[k] for k in ("id", "name", "share", "service", "age", "round", "blocked", "waiting", "finished", "interval", "baseUrgency")} for g in goals if g["present"]]}
 
 
 def cycle_key(owner, goal):
@@ -214,7 +218,7 @@ def charge_capture(store, db, lease, focus, serial, now):
     goal["service"] += 1
     save(db, goal)
     # The numeric projection can be replayed by Lean without private names.
-    queue = [{k: g[k] for k in ("id", "share", "service", "age", "round", "blocked", "finished", "interval", "baseUrgency")} for g in goals]
+    queue = [{k: g[k] for k in ("id", "share", "service", "age", "round", "blocked", "waiting", "finished", "interval", "baseUrgency")} for g in goals]
     next(g for g in queue if g["id"] == goal["id"])["service"] = before
     store.event(db, "goal-charge", goal=goal["id"], cycle=goal["round"], serial=serial,
                 before=before, after=goal["service"], share=goal["share"], queue=queue)

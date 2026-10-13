@@ -112,7 +112,7 @@ def peer_turns():
     return box.peer_turn_budget if identities.intersection(telegram._current_batch_update_ids) else 0
 
 
-def send(to, text):
+def send(to, text, correlation=""):
     """Deliver a note to a sibling's inbox, stamped with this agent's name."""
     config = json.loads(Path(os.environ["METTACLAW_MAILBOX_CONFIG"]).read_text())
     siblings = _siblings(config)
@@ -123,7 +123,7 @@ def send(to, text):
         return "MAILBOX_SEND_REFUSED: a note needs 1 to %d characters" % SEND_CHARS
     identity = uuid.uuid4().hex
     try:
-        _tool(config,"mailbox_bridge").deliver(siblings[to], identity, identity, "local",
+        _tool(config,"mailbox_bridge").deliver(siblings[to], identity, str(correlation) or identity, "local",
                                                "From: %s\n\n%s" % (_own_name(config), text))
     except OSError as error:
         return "MAILBOX_SEND_FAILED: %s" % error
@@ -192,6 +192,7 @@ class Inbox:
         self.codex = None
         self.offered = set()
         self.peer_offered = set()
+        self.task_arrivals = {}
         self.peer_retry_at = None
         self.error = ""
         self.pressure = ""
@@ -262,19 +263,22 @@ class Inbox:
             self.pressure = "peer wake budget"
         return allowed
 
-    def wait(self, ticket, channel, correlation, *, intent=None):
+    def wait(self, ticket, channel, correlation, *, intent=None, task="", note=""):
         """Register one stable ticket and return immediately, including on replay."""
         _token(ticket)
         if ticket.startswith("inbox-"):
             raise ValueError("inbox- tickets are reserved for persistent arrivals")
         if channel not in self.channels:
             raise ValueError("mailbox channel has no configured binding")
-        if channel in self.auto_receive:
-            raise ValueError("persistent inbox already receives this channel; use mailbox-status")
         with self.lock:
+            options = {"context": (str(task), str(note) or "Resume the waiting task.")} if task else {}
             state = self.box.register(ticket,channel,correlation,self.channels[channel],
                 self._owner(ticket),1,self.wire.E("MailboxResume",1,self.tag,ticket),
-                capacity=self.capacity,intent=intent)
+                capacity=self.capacity,intent=intent,**options)
+        if state == "duplicate":
+            state = self.read(ticket)["state"]
+        if task:
+            self.reconcile_tasks(self.box,self.box.active(self.tag,self.capacity+1))
         self.start()
         return {"ticket":ticket,"state":state,"channel":channel,"correlation":correlation}
 
@@ -289,6 +293,7 @@ class Inbox:
         with self.lock:
             self._registration(self.box,ticket)
             value = self.box.cancel(ticket,self._owner(ticket),1)
+            self.reconcile_tasks(self.box,self.box.active(self.tag,self.capacity+1))
         return {"ticket":ticket,"state":self._json(value)}
 
     def _json(self, value):
@@ -346,11 +351,54 @@ class Inbox:
                 "directory_bridge":health,
                 "notifications":self.notifications,"scans":self.scans}
 
+    def reconcile_tasks(self, box, active):
+        """Recover the local scheduling projection from committed native waits.
+
+        The native receive is authoritative. A crash before the local update
+        is repaired on the next scan; completion and cancellation unpark work.
+        This never dispatches an outgoing request again.
+        """
+        contexts = []
+        for row in active:
+            context = box.task_context(row[2])
+            if context:
+                if context[3] != self.tag:
+                    raise RuntimeError("task continuation belongs to another program")
+                contexts.append((row[2],context[4],context[5],row[0].name))
+        import agent_checkpoint
+        store = agent_checkpoint.ledger()
+        with store.transaction() as db:
+            db.execute("CREATE TABLE IF NOT EXISTS task_mailbox_waits(ticket TEXT PRIMARY KEY, request TEXT, note TEXT, state TEXT)")
+            old = [dict(r) for r in db.execute("SELECT * FROM task_mailbox_waits WHERE state IN ('MailboxWait','MailboxReady')")]
+        present = {r[2] for r in active}
+        for previous in old:
+            if previous["ticket"] not in present:
+                outcome = box.resolve(previous["ticket"])
+                contexts.append((previous["ticket"],previous["request"],previous["note"],outcome[0].name))
+        with store.transaction() as db:
+            for ticket, request, note, state in contexts:
+                db.execute("INSERT INTO task_mailbox_waits VALUES (?,?,?,?) ON CONFLICT(ticket) DO UPDATE SET state=excluded.state",
+                           (ticket,request,note,state))
+            for request in {c[1] for c in contexts}:
+                states = [r[0] for r in db.execute("SELECT state FROM task_mailbox_waits WHERE request=?",(request,))]
+                # Any ready result makes the task runnable; remaining receives
+                # remain durable obligations in the frame.
+                waiting = 'MailboxWait' in states and 'MailboxReady' not in states
+                if waiting:
+                    db.execute("UPDATE requests SET status='waiting-mailbox' WHERE id=? AND status IN ('active','processed')",(request,))
+                else:
+                    db.execute("UPDATE requests SET status='active' WHERE id=? AND status='waiting-mailbox'",(request,))
+
     def scan(self, box):
         box.space.describe()
         captured = box.space.revision  # before reads, closing the query/watch race
         self.pressure = ""
         self.peer_retry_at = None
+        # Exact receives get their correlated message before the generic inbox
+        # listener can consume it. Resolution is itself an atomic COMM.
+        for row in box.active(self.tag,self.capacity+1):
+            if not row[2].startswith("inbox-"):
+                box.resolve(row[2])
         # A persistent receiver selects one occurrence per channel per pass.
         # Backpressure leaves the rest pending; full active views still include
         # every registered interactive wait, rather than a fixed oldest prefix.
@@ -370,9 +418,12 @@ class Inbox:
                 self.pressure = "native store capacity"
         active = box.active(self.tag,self.capacity+1)
         self.scans += 1
+        self.reconcile_tasks(box,active)
         retained = {row[2] for row in active}
         self.offered.intersection_update(retained)
         self.peer_offered.intersection_update(retained)
+        self.task_arrivals = {key:value for key,value in self.task_arrivals.items()
+                              if value["ticket"] in retained}
         codex_bindings=[]
         for row in active:
             ticket = row[2]
@@ -398,6 +449,12 @@ class Inbox:
                 data = {"ticket":ticket,"channel":message[3],"correlation":message[4],
                         "sender":message[5],"characters":len(message[6]),
                         "body":message[6][:self.preview],"read_more":len(message[6])>self.preview}
+                context = box.task_context(ticket) if hasattr(box,"task_context") else None
+                if context:
+                    if context[3] != self.tag:
+                        raise RuntimeError("task continuation belongs to another program")
+                    data.update(task=context[4],resume_note=context[5])
+                    self.task_arrivals[identity] = {"task":context[4],"note":context[5],"ticket":ticket}
                 stamp = _from.match(message[6]) if message[3] in self.auto_receive else None
                 if stamp and stamp.group(1) in self.siblings:
                     data["from"] = stamp.group(1)
@@ -497,10 +554,10 @@ def runtime():
         return _runtime
 
 
-def _call(method, *args):
+def _call(method, *args, **kwargs):
     try:
         box = runtime()
-        value = getattr(box,method)(*args) if box else {"state":"disabled"}
+        value = getattr(box,method)(*args,**kwargs) if box else {"state":"disabled"}
         return json.dumps(value,ensure_ascii=False)
     except Exception as error:
         return json.dumps({"state":"refused","reason":str(error)},ensure_ascii=False)
@@ -538,8 +595,23 @@ def start():
     return json.dumps({"state": "starting"})
 
 
-def wait(ticket, channel, correlation):
-    return _call("wait",ticket,channel,correlation)
+def wait(ticket, channel, correlation, note=""):
+    import strategy_host
+    task = strategy_host._focus if strategy_host.enabled() else ""
+    result = _call("wait",ticket,channel,correlation,task=task,note=note)
+    status = json.loads(result).get("state")
+    if task and status == "waiting":
+        store = strategy_host.ledger()
+        with store.transaction() as db:
+            store.event(db,"task-wait",request=task,ticket=str(ticket),note=str(note))
+    return result
+
+
+def task_arrivals(identities):
+    box = _runtime
+    if box is None: return []
+    arrivals = getattr(box,"task_arrivals",{})
+    return [arrivals[i] for i in identities if i in arrivals]
 
 
 def cancel(ticket):

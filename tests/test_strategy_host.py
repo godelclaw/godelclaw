@@ -69,15 +69,18 @@ class StrategyHostTest(unittest.TestCase):
         self.assertEqual(host.ledger().projection()["actions"], [])
         self.assertEqual(json.loads(host.broker_feedback())["reason"], "unknown-tool")
 
-    def test_batch_envelope_is_syntax_only_and_keeps_one_action_limit(self):
+    def test_batch_envelope_is_syntax_only_and_dependency_stops_the_send(self):
         raw = '((command-batch (pin "note") (send "message")))'
         self.assertEqual(host.normalize_response(raw), '((pin "note") (send "message"))')
         commands = [["pin", "note"], ["send", "message"]]
-        self.assertEqual(host.batch_limit(5, commands), 1)
+        self.assertEqual(host.batch_limit(5, commands), 2)
         self.capture()
-        self.assertEqual(host.broker_begin(1, commands, 1), 1)
+        self.assertEqual(host.broker_begin(1, commands, 2), 1)
+        self.assertEqual(host.reserve_command(1, commands[0]), 1)
+        host.command_result(1, "returned", commands[0], "pinned")
+        self.assertEqual(host.reserve_command(1, commands[1]), 0)
         action = host.ledger().projection()["actions"][0]
-        self.assertEqual(json.loads(action["command"])["limit"], 1)
+        self.assertEqual(json.loads(action["command"])["limit"], 2)
 
     def test_wrong_arity_reports_expected_arguments(self):
         self.capture()
@@ -93,9 +96,9 @@ class StrategyHostTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"METTACLAW_OBSERVED_STRATEGY": "0"}):
             self.assertEqual(host.normalize_response(raw), raw)
 
-    def test_only_known_independent_observations_batch(self):
-        self.assertEqual(host.batch_limit(5, [["help", "shell"], ["vitals"]]), 5)
-        self.assertEqual(host.batch_limit(5, [["shell", "mutation"], ["send", "done"]]), 1)
+    def test_count_limit_does_not_decide_dependency_admission(self):
+        self.assertEqual(host.batch_limit(1, [["help", "shell"], ["vitals"]]), 2)
+        self.assertEqual(host.batch_limit(1, [["shell", "mutation"], ["send", "done"]]), 2)
 
     def test_restart_recovers_complete_saved_result_without_repeating(self):
         self.capture()

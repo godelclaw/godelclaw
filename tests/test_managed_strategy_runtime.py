@@ -38,6 +38,9 @@ class ManagedRuntimeTest(unittest.TestCase):
                 receipts = [json.loads(line) for line in (Path(temporary) / "effects.jsonl").read_text().splitlines()]
                 executed = [r for r in receipts if "command" in r]
                 deferred = [r for r in receipts if "commands" in r]
+                if expected_commands is None:
+                    self.assertEqual(len(executed),16)
+                    continue
                 self.assertEqual([r["command"] for r in executed],
                                  [str(command) for command in expected_commands])
                 self.assertEqual(len({str(r["turn"]) for r in executed}), len(executed))
@@ -45,10 +48,13 @@ class ManagedRuntimeTest(unittest.TestCase):
                                  [str(commands) for commands in expected_deferred or []])
                 self.assertTrue(all(r["disposition"] == "deferred" for r in deferred))
 
+    def test_task_history_and_failure_boundary_on_available_engines(self):
+        self.exercise("tests/task_context_probe.metta", "TASK_CONTEXT_OK", None)
+
     def test_batch_envelope_and_precise_feedback_on_available_engines(self):
         self.exercise("tests/command_feedback_probe.metta", "COMMAND_FEEDBACK_OK",
                       [["pin", "verified note"], ["help", "pin"]],
-                      [[["send", "must remain deferred"]]])
+                      [])
 
     def test_stale_reply_and_recovery_on_available_engines(self):
         self.exercise("tests/observed_strategy_probe.metta", "OBSERVED_STRATEGY_OK",

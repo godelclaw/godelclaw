@@ -1132,6 +1132,9 @@
            (format-args "TELEGRAM ROUTE: no primary chat is configured; plain (send ...) uses the current reply chat{}. Prefer an explicit addressed send when multiple chats are visible." ($shown)))))))
 
 (= (tg:conversation-window $max-events)
+   (tg:conversation-window-for $max-events ""))
+
+(= (tg:conversation-window-for $max-events $chat)
    (let $route (tg:route-view)
      (let $path (tg:ledger)
        (if (or (== $path "") (not (py-call (os.path.exists $path))))
@@ -1141,7 +1144,7 @@
              (let $end (if (or (< $frontier 0) (> $frontier $size)) $size $frontier)
                (let $start (if (> $end 524288) (- $end 524288) 0)
                  (let $records (tg:window-records (fs:read-lines-between $path $start $end) (tg:get batch-ids ""))
-                   (let $events (tg:render-events (tg:newest-revisions $records))
+                   (let $events (tg:render-events (tg:newest-revisions (tg:context-chat-records $records $chat)))
                      ; The whole source must fit its 30000-character context budget
                      ; with the route line first: the route is where a plain send
                      ; goes, and a trimmed front would drop it.
@@ -1150,6 +1153,14 @@
                        (let $history (if (== $chosen ()) "(no prior conversation events)"
                                        (str:join "\n\n" (tg:list $chosen)))
                          (format-args "{}\n\n{}" ($route $history)))))))))))))))
+
+(= (tg:context-chat-records $records $chat)
+   (if (== $chat "") $records
+     (if (== $records ()) ()
+       (let ($record $rest) (tg:uncons $records)
+         (let $more (tg:context-chat-records $rest $chat)
+           (if (== (tg:str (tg:at $record "chat_id")) $chat)
+               (cons-atom $record $more) $more))))))
 
 (= (tg:window-records $lines $excluded)
    (if (== $lines ()) ()

@@ -29,14 +29,8 @@ _goal_view = None
 _prepared_capture = None
 _runtime_projection = None
 _broker_feedback = {"reason": "no-current-capture"}
-
-# These tools only inspect host state; their decisions commute without an
-# intervening observation. Unknown tools and effects require a new model step.
-INDEPENDENT_READS = frozenset({"help", "check", "vitals", "jobs", "goals",
-                              "gateway-tools", "gateway-status", "llm-quota",
-                              "llm-models", "energy", "modes", "tmux-windows",
-                              "requests", "request-status", "command-receipts", "topics", "model-jobs"})
-
+_context_trigger = "continuation-tick"
+_task_projection = None
 
 def enabled():
     return os.environ.get("METTACLAW_OBSERVED_STRATEGY", "0") == "1"
@@ -144,7 +138,7 @@ def _stimulus_free():
 
 
 def begin(turn, source, message):
-    global _turn, _sample, _ticket, _position, _focus, _input_turn, _message_focus, _goal_view, _prepared_capture, _runtime_projection
+    global _turn, _sample, _ticket, _position, _focus, _input_turn, _message_focus, _goal_view, _prepared_capture, _runtime_projection, _context_trigger, _task_projection
     if not enabled():
         return 1
     with _lock:
@@ -158,6 +152,10 @@ def begin(turn, source, message):
         _input_turn = bool(str(message).strip() and str(source) in ("operator-event", "channel-event")) or (
             _input_turn and str(source) == "continuation-tick")
         store = ledger()
+        import task_context
+        previous = _focus or task_context.current(store)
+        _focus = task_context.resume(store, previous)
+        _context_trigger, _task_projection = str(source), None
         import loop_modes
         import lifecycle
         import telegram
@@ -173,6 +171,15 @@ def begin(turn, source, message):
             _message_focus = _focus
             store.accept(_focus, str(message), kind="message" if str(source) == "operator-event" else "notification")
             store.link_inputs(_focus, ids)
+            import mailbox_agent
+            arrivals = mailbox_agent.task_arrivals(ids)
+            if arrivals:
+                with store.transaction() as db:
+                    for arrival in arrivals:
+                        db.execute("UPDATE requests SET status='active' WHERE id=? AND status='waiting-mailbox'", (arrival["task"],))
+                        store.event(db,"task-resume",**arrival)
+                if len({a["task"] for a in arrivals}) == 1:
+                    previous = arrivals[0]["task"]
         elif _focus is None:
             active = store.active()
             if active:
@@ -180,14 +187,16 @@ def begin(turn, source, message):
             else:
                 _focus = "autonomous"
                 store.accept(_focus, "Ongoing autonomous work; rest and nop do not certify task completion.")
+        task_context.begin(store, _focus, source, previous,
+                           getattr(telegram, "_reply_chat_id", ""))
         return 1
 
 
-def prepare(prompt):
+def prepare(prompt, output_tokens=32768):
     """Append protected work/results after replaceable transformations."""
     if not enabled():
         return str(prompt)
-    global _focus, _goal_view, _runtime_projection
+    global _focus, _goal_view, _runtime_projection, _task_projection
     import topic_jobs
     prompt = str(prompt) + "\n" + topic_jobs.context()
     import llm_policy
@@ -227,11 +236,72 @@ def prepare(prompt):
         )
     projection = ledger().protected(_focus)
     payload = strategy.encoded(projection)
-    return str(prompt) + "\n\nPROTECTED_STRATEGY " + payload + (
+    prompt = str(prompt) + "\n\nPROTECTED_STRATEGY " + payload + (
         "\nInput processing settles delivery only. Use request-disposition to retain an ongoing task, "
         "record waiting-user/defer, or mark addressed after review; these are workflow decisions, "
         "not checker-certified achievement. request-page and request-status retrieve retained records."
     )
+    import task_context
+    task_context.focus(ledger(), _focus)
+    view = task_context.projection(ledger(), _focus, _context_trigger)
+    capacity = context_capacity(output_tokens)
+    # UTF-8 bytes are a conservative token estimate, explicitly labelled.
+    # Missing provider metadata never invents a model window.
+    available = None if capacity is None else capacity - len(prompt.encode()) - 64
+    view = task_context.compact(view, available)
+    _task_projection = "TASK_CONTEXT " + strategy.encoded(view)
+    return prompt + "\n\n" + _task_projection
+
+
+def context_capacity(output_tokens=32768):
+    import synthetic_llm
+    configured = os.environ.get("METTACLAW_CONTEXT_WINDOW_TOKENS")
+    if configured:
+        window = int(configured)
+    else:
+        model = synthetic_llm.current_model()
+        rows = synthetic_llm._cached_observation("models").get("value")
+        rows = rows if isinstance(rows,list) else []
+        window = next((r.get("context") for r in rows if isinstance(r,dict) and r.get("id") == model), None)
+        if window is None:
+            return None
+        window = int(window)
+    return max(0, window - int(output_tokens))
+
+
+def conversation_mode():
+    return "chat" if not enabled() or _context_trigger == "operator-event" else "task"
+
+
+def waiting_for_mailbox():
+    if not enabled() or not _focus:
+        return 0
+    with ledger().transaction() as db:
+        row = db.execute("SELECT status FROM requests WHERE id=?", (_focus,)).fetchone()
+    return int(bool(row and row[0] == "waiting-mailbox"))
+
+
+def task_read(identity, offset=0):
+    import task_context
+    try:
+        return strategy.encoded(task_context.read(ledger(), str(identity), int(offset)))
+    except (ValueError, TypeError) as error:
+        return "TASK_READ_FAILED: " + str(error)
+
+
+def task_history(request, offset=0):
+    import task_context
+    return strategy.encoded(task_context.history(ledger(), str(request), int(offset)))
+
+
+def task_note(text, sources="[]"):
+    import task_context
+    return task_context.note(ledger(), _focus, str(text), str(sources))
+
+
+def task_resolve(identity, reason):
+    import task_context
+    return task_context.resolve(ledger(), str(identity), str(reason))
 
 
 def description():
@@ -241,7 +311,11 @@ def description():
             "configured check and observed receipt. Withheld commands did not run. Inspect successful receipts before "
             "claiming a repair worked. Provider proposals are not results; incomplete search does not prove absence. "
             "Outgoing prose uses ordinary apostrophes. Runtime facts are independently sampled observations, not authority. "
-            "Inbox ages refer to pending message processing; memory gaps are sequence positions; unavailable means unknown.")
+            "Inbox ages refer to pending message processing; memory gaps are sequence positions; unavailable means unknown. "
+            "TASK_CONTEXT retains the task and interruptions across turns. Resume unfinished work after answering an interruption. "
+            "Use task-note with call IDs to retain findings and uncertainties; notes are your interpretations. "
+            "task-read retrieves a compacted result, task-history indexes earlier pairs, task-resolve records a decision "
+            "about pending work. It never replays a call. Mark a finished interruption addressed to resume its parent.")
 
 
 def capture(prompt, wake_seconds):
@@ -253,6 +327,8 @@ def capture(prompt, wake_seconds):
         store = ledger()
         projection = store.protected(_focus)
         if _runtime_projection is None or _runtime_projection not in str(prompt):
+            return 0
+        if _task_projection is None or _task_projection not in str(prompt):
             return 0
         # Observe only the exact projection that actually survived preparation.
         if strategy.encoded(projection) not in str(prompt):
@@ -350,8 +426,17 @@ def provider_failed():
 def batch_limit(requested, commands):
     if not enabled():
         return max(1, int(requested))
-    names = [str(c[0]) if isinstance(c, (list, tuple)) and c else "" for c in commands]
-    return max(1, int(requested)) if names and all(t in INDEPENDENT_READS for t in names) else 1
+    return max(1, len(commands))
+
+
+def batch_description(requested):
+    if enabled():
+        return ("Output a ((skillName args) ...) S-expression. Independent reads and host-declared "
+                "independent effects may run together without a count cap. A call that needs an earlier "
+                "result waits for your next observation. Failure stops the remaining proposal; every "
+                "unexecuted call is retained with its reason. Scripts may express conditional follow-up "
+                "work explicitly. Inspect receipts before reporting success. ")
+    return "Output a ((skillName args) ...) S-expression containing at most %s command(s). " % requested
 
 
 def broker_turn(turn):
@@ -369,6 +454,8 @@ def broker_begin(turn, commands, limit=1):
         if _sample is None or int(turn) != int(_sample["serial"]) + 1:
             return 0
         _turn = str(turn)
+        import task_context
+        task_context.proposal(ledger(), _sample["serial"], _focus, commands, "awaiting admission")
         if not commands:
             ledger().decide(_sample["serial"], {"kind": "text"}, time.time(), guard())
             return 1
@@ -377,6 +464,7 @@ def broker_begin(turn, commands, limit=1):
         for command in commands:
             if not isinstance(command, (list, tuple)) or not command:
                 _broker_feedback = {"reason": "malformed-command"}
+                task_context.proposal(ledger(), _sample["serial"], _focus, commands, "malformed-command")
                 provider_failed()
                 return 0
             name = str(command[0])
@@ -390,6 +478,7 @@ def broker_begin(turn, commands, limit=1):
                           "wrong-arity")
                 _broker_feedback = {"reason": reason, "tool": name[:80],
                                     "given_arguments": len(command) - 1}
+                task_context.proposal(ledger(), _sample["serial"], _focus, commands, reason)
                 if bounds:
                     _broker_feedback["arguments"] = list(bounds)
                 ledger().decide(_sample["serial"], {"kind": "denied", "tool": name,
@@ -406,6 +495,7 @@ def broker_begin(turn, commands, limit=1):
             else:
                 denied = None
         if denied:
+            task_context.proposal(ledger(), _sample["serial"], _focus, commands, str(denied))
             _ticket = None
             store.decide(_sample["serial"], {"kind": "denied", "tool": str(command[0]),
                 "request": _focus, "owner": _sample["owner"]}, time.time(), live_guard)
@@ -418,10 +508,12 @@ def broker_begin(turn, commands, limit=1):
         }, time.time(), live_guard)
         _position = 0
         if _ticket in ("stale", "denied", "ignored", "failure", "text", "blocked-effects"):
+            task_context.proposal(ledger(), _sample["serial"], _focus, commands, str(_ticket))
             _broker_feedback = {"reason": _ticket}
             _ticket = None
             return 0
         _broker_feedback = {"reason": "admitted", "limit": int(limit)}
+        task_context.proposal(ledger(), _sample["serial"], _focus, commands, "not executed; reconsider this proposal")
         return 1
 
 
@@ -449,6 +541,8 @@ def reserve_command(turn, command):
             prefix = admission_frontier.admitted_prefix(action["command"])
             if prefix is None or _position >= len(prefix) or prefix[_position] != command:
                 return 0
+            if admission_frontier.needs_observation(command, prefix[:_position]):
+                return 0
             if not admission_frontier.may_issue(list(db.execute("SELECT * FROM actions")),
                     command, exclude=_ticket):
                 return 0
@@ -474,6 +568,37 @@ def command_result(turn, disposition, command, result):
                 db.execute("UPDATE command_quarantine SET allowed=1 WHERE command=?", (strategy.encoded(command),))
         import process_supervision
         process_supervision.progress("command-receipt")
+    return 1
+
+
+def result_permits_suffix(command, record):
+    """Interpret the dispatcher's explicit failure/result boundary."""
+    if not isinstance(record, (list, tuple)) or not record or record[0] != "COMMAND_RETURN:":
+        return 0
+    result = record[1][1]
+    import action_graph
+    if not action_graph.result_permits_dependent_suffix(command, result):
+        return 0
+    text = str(result).strip().lower()
+    if command[0].startswith("mailbox-"):
+        try:
+            value = json.loads(str(result))
+            if isinstance(value, dict) and value.get("state") in ("refused", "disabled", "error", "cancelled"):
+                return 0
+        except (TypeError, ValueError):
+            pass
+    failures = ("read failed", "read-lines failed", "edit-file failed", "write-file failed",
+                "append-file failed", "ls-tree failed", "shell_error", "timeout_error",
+                "mailbox_send_failed", "mailbox_send_refused", "error(", "(error ")
+    if text.startswith(failures):
+        return 0
+    # An exception/no-result is authoritative even when its rendered body is unfamiliar.
+    if enabled() and _ticket:
+        with ledger().transaction() as db:
+            row = db.execute("SELECT result FROM command_attempts WHERE ticket=? AND position=?",
+                             (_ticket, _position - 1)).fetchone()
+        if row and row[0] and json.loads(row[0])["disposition"] != "returned":
+            return 0
     return 1
 
 
@@ -628,6 +753,8 @@ def focus_request(request):
     if not available:
         return "REQUEST_FOCUS_WITHHELD_UNKNOWN_OR_FINISHED"
     _focus = request
+    import task_context
+    task_context.focus(ledger(), request)
     return "REQUEST_FOCUSED " + request
 
 

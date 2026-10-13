@@ -67,6 +67,40 @@ class MailboxAgentTests(unittest.TestCase):
     def ready(self, inbox):
         self.wait(inbox); self.send(); inbox.scan(inbox.box)
 
+    def test_task_wait_recovers_between_native_commit_and_local_park(self):
+        import task_context
+        self.ledger.accept("guide","Write the guide, wait for review, revise it")
+        task_context.begin(self.ledger,"guide","operator-event")
+        inbox=self.inbox(auto_receive=["inbox"])
+        # Simulate a crash after the native commit, before local scheduling.
+        inbox.box.register("review-note","inbox","review-1","local",inbox._owner("review-note"),1,
+            inbox.wire.E("MailboxResume",1,inbox.tag,"review-note"),context=("guide","Compare the review with the source"))
+        inbox.close()
+        restarted=self.inbox(auto_receive=["inbox"])
+        restarted.scan(restarted.box)
+        self.assertEqual(self.ledger.request_record("guide")["status"],"waiting-mailbox")
+        self.assertEqual(task_context.projection(self.ledger,"guide")["waits"][0]["note"],"Compare the review with the source")
+        self.send(correlation="review-1",channel="inbox",sender="local",body="Review: inspect the premise")
+        restarted.scan(restarted.box)
+        self.assertEqual(self.ledger.request_record("guide")["status"],"active")
+        data=json.loads(self.events[-1][0])
+        self.assertEqual((data["ticket"],data["task"]),("review-note","guide"))
+        self.assertEqual(len(self.events),1)  # generic inbox did not steal it
+        self.ledger.checkpoint({"saved_at":time.time()},[self.events[-1][1]])
+        restarted.acknowledge([self.events[-1][1]])
+        restarted.scan(restarted.box)
+        self.assertFalse(restarted.task_arrivals)
+
+    def test_cancelled_task_wait_does_not_park_again_on_duplicate(self):
+        self.ledger.accept("guide","a task")
+        inbox=self.inbox()
+        with mock.patch.object(inbox,"start",return_value=1):
+            self.assertEqual(inbox.wait("review-note","review","review-1",task="guide")["state"],"waiting")
+            inbox.cancel("review-note")
+            self.assertEqual(self.ledger.request_record("guide")["status"],"active")
+            self.assertEqual(inbox.wait("review-note","review","review-1",task="guide")["state"],"cancelled")
+            self.assertEqual(self.ledger.request_record("guide")["status"],"active")
+
     def test_arrival_reaches_attention_once_and_requires_a_checkpoint_to_settle(self):
         inbox=self.inbox(); self.ready(inbox)
         self.assertEqual(len(self.events),1)

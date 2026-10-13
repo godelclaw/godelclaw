@@ -95,9 +95,30 @@ interruptions, restart and mode changes. Request preparation applies Iter's
 ordered transformations, then attaches protected work and result projections.
 The broker checks captured permissions and current input/control revisions
 before acting. A result is included before the next dependent model decision.
-Effectful batches admit one command; configured higher limits apply to known
-independent observations. A script or delegated batch still counts as one
-command. Timed command continuations return for reconsideration on waking.
+Managed batches have no action-count ceiling. The host runs an ordered prefix:
+independent observations and declared independent effects may proceed together;
+a dependent effect waits for observation, and a failed or withheld call stops
+the remaining prefix. Current contracts cover disjoint file writes, separately
+addressed sends, and registering a reply wait before sending its correlated
+request. Unclassified dependencies require a new observation. A script remains
+one host operation. Timed command continuations return for reconsideration.
+
+The same ledger now supplies `TASK_CONTEXT`: the originating request,
+interruptions, ordered call/result pairs, agent notes, unresolved proposals and
+mailbox waits. Every proposed command has an explicit disposition. New human
+input selects conversation from the relevant chat; continuation and peer turns
+emphasize task evidence. Addressing an interruption resumes its open parent.
+`task-note` retains interpretations and source IDs; `task-resolve` records a
+reasoned decision about an unexecuted call without replaying it or certifying
+success. `task-history` and `task-read` recover earlier evidence in pages.
+
+When provider metadata (or `METTACLAW_CONTEXT_WINDOW_TOKENS`) supplies the actual
+window, preparation reserves the requested output and uses UTF-8 bytes as a
+conservative token estimate. Complete pairs become explicit digest-bearing
+references as necessary; larger task frames remain retrievable. Compaction is
+only a projection: the journal survives restart unchanged. An unknown window
+is not replaced by an invented model limit. Notes and successful tool returns
+do not establish that arbitrary prose claims are true.
 
 Set `agent.observed_strategy = false` to use the legacy managed host. Standalone
 Iter/Omega retain their pinned loops. Existing provider budgets and interruptible
@@ -508,7 +529,13 @@ is unavailable. Recovery needs no subsequent skill call or model polling.
 This retry path emits diagnostic health state, never scheduler progress.
 
 For a particular reply, `(mailbox-wait "ticket" "channel" "correlation")`
-registers and returns immediately. `(mailbox-codex "ticket" "thread-id"
+registers and returns immediately. An optional fourth argument retains the
+continuation note with the task identity in that native commit. The local task
+waits until arrival or cancellation; restart repairs that scheduling projection
+from the native receive. On `inbox`, register the correlated wait first, then use
+`(mailbox-send "sibling" "request text" "correlation")`; ask the sibling to use
+the same correlation in the reply. Exact waits are resolved before generic
+inbox admission. `(mailbox-codex "ticket" "thread-id"
 "turn-id")` records its subscription intention in the same batch, then
 listens through one App Server connection for the agent's active Codex waits.
 It starts no model turn and makes no idle transcript polls. Restart reconciles

@@ -136,6 +136,7 @@ def _loaders(conversation=None):
     import project_capabilities
     import task_phase
     import telegram
+    import strategy_host
 
     history = helper.path_from_env(
         "METTACLAW_HISTORY_PATH", "./memory/history.metta")
@@ -149,10 +150,10 @@ def _loaders(conversation=None):
         (specs["active-query-declaration"], active_queries.view),
         (specs["affect-gestalt"], goals.affect_view),
         (specs["pins"], pins.view),
-        (specs["effect-receipts"], effect_receipts.view),
+        (specs["effect-receipts"], lambda: "Task receipts are in TASK_CONTEXT and PROTECTED_STRATEGY." if strategy_host.enabled() else effect_receipts.view()),
         (specs["development-state"], development_state.view),
         (specs["recent-proposals"],
-         lambda: helper.recent_actions(history, limit=turns)),
+         lambda: "Task proposals and their dispositions are in TASK_CONTEXT." if strategy_host.enabled() else helper.recent_actions(history, limit=turns)),
         (specs["relevant-files"],
          lambda: helper.relevant_files(history, limit=turns)),
         (specs["project-evidence"], project_evidence.view),
@@ -160,7 +161,9 @@ def _loaders(conversation=None):
         # The MeTTa Telegram client renders the conversation itself.
         (specs["conversation"],
          (lambda: conversation) if conversation is not None
-         else (lambda: telegram.conversation_window(max_events=events))),
+         else (lambda: telegram.conversation_window(max_events=events,
+                    chat_id=getattr(telegram, "_reply_chat_id", ""))
+               if strategy_host.conversation_mode() == "chat" else telegram.route_view())),
     )
 
 

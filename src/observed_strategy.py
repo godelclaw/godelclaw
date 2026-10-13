@@ -60,6 +60,8 @@ class Ledger:
                     PRIMARY KEY(request, input));
                 CREATE INDEX IF NOT EXISTS request_input ON request_inputs(input);
             """)
+            import task_context
+            task_context.install(db)
             # Existing input identities were created at the delivery boundary,
             # not by a task checker. Migration changes their kind, not outcome.
             db.execute("""INSERT OR IGNORE INTO request_context(request,kind)
@@ -488,7 +490,7 @@ class Ledger:
         """Close the open cycles of a goal its agent retired; never an achievement."""
         with self.transaction() as db:
             rows = [r[0] for r in db.execute(
-                "SELECT id FROM requests WHERE substr(id,1,?)=? AND status IN ('active','deferred','waiting-user')",
+                "SELECT id FROM requests WHERE substr(id,1,?)=? AND status IN ('active','deferred','waiting-user','waiting-mailbox')",
                 (len(prefix), prefix))]
             for request in rows:
                 db.execute("UPDATE requests SET status='cancelled' WHERE id=?", (request,))
@@ -502,7 +504,7 @@ class Ledger:
         if not operator_authorized:
             return False
         with self.transaction() as db:
-            changed = db.execute("UPDATE requests SET status='cancelled' WHERE id=? AND status='active'", (request,)).rowcount
+            changed = db.execute("UPDATE requests SET status='cancelled' WHERE id=? AND status IN ('active','waiting-mailbox')", (request,)).rowcount
             if changed:
                 import fair_goals
                 import time

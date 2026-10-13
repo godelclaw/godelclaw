@@ -48,9 +48,8 @@
 (= (getContextSuffix $periphery)
    (string-safe
      (py-str
-       (" OUTPUT_FORMAT: Output a ((skillName args) ...) S-expression containing at most "
-        (policy-command-batch-limit (loop-active-policy $periphery))
-        " command(s). One command may run a multi-step script, a tool batch, or a delegated coding task. When the limit is one, choose one top-level action, inspect its returned result on the next model step, then choose your next action. With a higher limit, additional top-level commands must be independent of earlier results. "
+       (" OUTPUT_FORMAT: "
+        (py-call (strategy_host.batch_description (policy-command-batch-limit (loop-active-policy $periphery))))
         (py-call (attention.description))
         " Command results are not observed by you until the next model step, so never precommit a later command whose correctness depends on an earlier result. Double-check the parentheses: it must be (cmd1 ... cmdn). Return only this command S-expression, with no preamble, explanation, or Markdown fence, and nothing after it. Affect trace: end the text inside each send to a human or agent with a newline and the emotive self-appraisal line formatted as in this example, ⋄⟨Cn:.5 C:.7 Ct:.8 I:.2 J:.6 A:.4 S:.6 Co:-.42 Sp:.3⟩, values ∈ [-1,1]. Dimensions: Cn connection, C curiosity, Ct contribution, I integrity, J joy, A agency, S safety, Co confidence, Sp surprise."
         " each arg is an explicit string hence needs quotes, and variables are forbidden!"
@@ -299,7 +298,12 @@
           ($withResults
             (coordinate-set last-results $feedback $paced))
           ($directed (loop-directives-apply $withResults))
-          ($banked (applyRestBanking $directed))
+          ($waiting
+            (if (== (py-call (strategy_host.waiting_for_mailbox)) 1)
+                (coordinate-set loops 0
+                  (coordinate-set burst-end rest $directed))
+                $directed))
+          ($banked (applyRestBanking $waiting))
           ($_ (loop-directives-clear))
           ($_ (py-call (helper.turn_commit_stage $providerSucceeded $historyReceipt (if $has-activity 1 0))))
           ;; A model/effect episode has exactly one committed successor.  The

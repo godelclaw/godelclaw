@@ -6,7 +6,10 @@
 
 (= (addition-context-sources)
    (if (tg:client-metta?)
-       (let $conversation (tg:conversation-window (tg:conversation-events))
+       (let $conversation
+            (if (== (py-call (strategy_host.conversation_mode)) "chat")
+                (tg:conversation-window-for (tg:conversation-events) (tg:get reply-chat ""))
+                (tg:route-view))
          (py-call (context_sources.bundle $conversation)))
        (py-call (context_sources.bundle))))
 
@@ -17,7 +20,7 @@
    (py-call (strategy_host.begin $turn $source $message)))
 
 (= (addition-protected-request $request)
-   (py-call (strategy_host.prepare $request)))
+   (py-call (strategy_host.prepare $request (maxOutputToken))))
 
 (= (addition-prepare-request
       $selected $legacy $system $activity $advertised)

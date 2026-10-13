@@ -62,6 +62,18 @@ class FairGoalsTest(unittest.TestCase):
         result = self.store.protected(None)["results"][0]
         self.store.observe([ticket], {ticket: [result]})
 
+    def test_waiting_cycle_is_excluded_until_a_reply_makes_it_active(self):
+        view=fair.snapshot(self.store,100)
+        request=fair.accept_selected(self.store,view)
+        with self.store.transaction() as db:
+            db.execute("UPDATE requests SET status='waiting-mailbox' WHERE id=?",(request,))
+        waiting=fair.snapshot(self.store,100)
+        self.assertNotEqual(waiting["selected"]["id"],view["selected"]["id"])
+        self.assertTrue(next(g for g in waiting["queue"] if g["id"]==view["selected"]["id"])["waiting"])
+        with self.store.transaction() as db:
+            db.execute("UPDATE requests SET status='active' WHERE id=?",(request,))
+        self.assertEqual(fair.snapshot(self.store,100)["selected"]["id"],view["selected"]["id"])
+
     def test_matches_lean_weighted_trace_without_task_completion(self):
         trace = []
         for i in range(60):
