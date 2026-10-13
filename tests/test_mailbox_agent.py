@@ -106,9 +106,10 @@ class MailboxAgentTests(unittest.TestCase):
         first.close()
         restarted=self.inbox(siblings={"peer":"unused"})
         with mock.patch.object(mailbox_agent,"runtime",return_value=restarted), \
-             mock.patch.object(mailbox_agent,"send",return_value="MAILED peer id=reply") as send:
-            self.assertEqual(mailbox_agent.reply("ticket","review result"),"MAILED peer id=reply")
-            send.assert_called_once_with("peer","review result","reply")
+             mock.patch.object(mailbox_agent,"_publish") as send:
+            self.assertTrue(mailbox_agent.reply("ticket","review result").startswith("MAILED peer message="))
+            args=send.call_args.args
+            self.assertEqual((args[1],args[2],args[4]),("peer","review result","reply"))
             self.assertTrue(mailbox_agent.reply("missing","reply").startswith("MAILBOX_REPLY_REFUSED"))
             self.assertEqual(send.call_count,1)
 

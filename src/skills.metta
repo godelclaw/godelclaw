@@ -24,10 +24,10 @@
     "- Context target: (context-policy) or (context-policy task_tokens). Older evidence remains retrievable."
     "- Task evidence: (task-history \"request-id\" \"offset\") indexes pairs; (task-read \"call-id\" \"offset\") recovers full results. (task-note \"findings, uncertainties and next steps\" \"JSON list of call IDs\") retains source references."
     "- Separate topic notes, always keeping operator messages reachable: (topics) | (topic-select \"name\") | (topic-note \"notes\")"
-    "- Wait for a configured mailbox without blocking or polling: (mailbox-wait \"stable-ticket\" \"channel\" \"correlation\"). An arrival wakes you with inert data. (mailbox-status) lists pending waits; (mailbox-read \"ticket\") reads a reply, (mailbox-read \"ticket\" offset count) pages it; (mailbox-cancel \"ticket\") cancels an unmatched wait."
+    "- Request a reply and resume automatically: (mailbox-ask \"name\" \"question\" \"when the reply arrives, do this\"). It creates matching IDs, sends, and retains your task. Read, reply or cancel using the returned message handle. No polling. The low-level mailbox-wait remains available."
     "- Subscribe to an existing Codex-room turn: (mailbox-codex \"stable-ticket\" \"thread-id\" \"turn-id\"). It returns immediately and wakes you with the terminal transcript; no model call or thread polling is started."
     "- Write to your sibling agent's mailbox, not through Telegram: (mailbox-send \"name\" \"text\"). The note carries your name and arrives as peer mail; arrivals wake them with an ordinary burst. Their notes to you arrive as [mailbox] data with \"from\"."
-    "- Reply to peer mail using (mailbox-reply \"received-ticket\" \"text\"). This preserves the sender and correlation so the peer resumes their waiting task. Use mailbox-send for a new conversation."
+    "- Reply using (mailbox-reply \"received-message\" \"text\"). The stored return address and reply identity are automatic. Use mailbox-send for a new message, mailbox-ask when you need a reply before continuing."
     ;SHELL AND FILE I/O:
     "- Shell: (shell \"command\" [timeout-seconds]); default 120s, 0 for no deadline. Partial output survives timeout."
     "- Run a long command in the background; you are woken when it ends, with its exit status and output tail: (background \"command string\")"
@@ -102,6 +102,10 @@
 (= (mailbox-send $to $text $correlation)
    (let $safe (string-replace $text "\n" "\\n")
      (py-call (mailbox_agent.send $to (py-call (helper.decode_safe_text $safe)) $correlation))))
+(= (mailbox-ask $to $text $note)
+   (py-call (mailbox_agent.ask $to (py-call (helper.decode_safe_text $text)) (py-call (helper.decode_safe_text $note)))))
+(= (mailbox-ask $to $text $note $identity)
+   (py-call (mailbox_agent.ask $to (py-call (helper.decode_safe_text $text)) (py-call (helper.decode_safe_text $note)) $identity)))
 (= (vitals) (py-call (helper.vitals)))
 
 ;; Shared execution code, separate agent-owned queues. These requests never

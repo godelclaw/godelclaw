@@ -379,7 +379,10 @@ def _close_answered_message(command, result):
             return
         inputs = [r[0] for r in db.execute("SELECT input FROM request_inputs WHERE request=?", (_focus,))]
         if name == "mailbox-reply":
-            suffix = ":" + str(command[1])
+            import mailbox_agent
+            box=mailbox_agent._runtime
+            ticket=box.ticket_for(command[1]) if box else command[1]
+            suffix = ":" + str(ticket)
             if not inputs or not all(i.endswith(suffix) for i in inputs):
                 return
         else:

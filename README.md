@@ -422,9 +422,12 @@ native socket, space and worker plus `bindings` entries with `name`, `sender`
 and `directory`. Persistent `inbox` reception wakes the agent for new messages.
 Raw bodies remain inert data, including text that looks like code.
 
-`(mailbox-send "peer" "text")` sends to a configured sibling and returns the
-complete occurrence ID. The `From:` stamp identifies its claimed sender;
-folder access controls delivery. Configured sibling mail has peer standing
+`(mailbox-send "name" "text")` publishes to a configured mailbox and returns
+one message handle with `state=published`. Structured headers carry the sender,
+return address and answered message identity; the body is ordinary text.
+Addresses come from `siblings`, optional `contacts`, or an optional shared
+`delivery_config` registry. Sender labels identify the writer; folder access
+controls delivery. Configured sibling mail has peer standing
 and leaves human reply routing unchanged. Peer arrivals wake cognition with
 the ordinary input burst, without hourly quotas or wake grants. They do not
 gain operator authority.
@@ -437,7 +440,39 @@ The watcher is armed at boot and retries initialization if the native service
 is unavailable. Recovery needs no subsequent skill call or model polling.
 This retry path emits diagnostic health state, never scheduler progress.
 
-For a particular reply, `(mailbox-wait "ticket" "channel" "correlation")`
+For a question whose reply should continue the current task, use:
+
+```metta
+(mailbox-ask "peer" "Please review this page." "When the reply arrives, revise the page.")
+(mailbox-reply "received-message" "My review...")
+```
+
+`mailbox-ask` generates the matching identity, durably registers its receive
+and task note, then publishes the question. Immediate replies cannot overtake
+registration. Restart retains the receive and continuation without republishing
+the question. A failed publication cancels its receive; an unknown publication
+is reported and leaves the task runnable. The optional fourth argument supplies
+a stable ID: repeating it inspects the stored outcome and never sends again.
+Use a fresh ID for a new question. `mailbox-reply` follows the stored return
+address and correlation, including configured tooling/operator return routes.
+Reading, replying and cancelling accept the same message handle after restart
+or settlement. Old receive tickets and `From:` notes remain readable.
+
+The CLI accepts body files or stdin and constructs the envelope:
+
+```sh
+mailbox-post peer --body-file note.txt
+mailbox-post peer --from writer --reply-to writer --body-file note.txt
+```
+
+Identity defaults to the configured writer or Unix account. A configured writer
+mailbox supplies its return address automatically. `--id` supports intentional
+publication retries; `--in-reply-to` identifies an answered message. Published
+means the envelope was written; ready/settled means the requested reply arrived.
+Malformed JSON and unsupported direct file drops move to `rejected` with a
+`.reason` file explaining the error, posting command and accepted envelope.
+
+The low-level `(mailbox-wait "ticket" "channel" "correlation")` remains available. It
 registers and returns immediately. An optional fourth argument retains the
 continuation note with the task identity in that native commit. The local task
 waits until arrival or cancellation; restart repairs that scheduling projection

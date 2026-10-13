@@ -9,7 +9,7 @@ ARITY = {
     "task-read": (1, 2), "task-history": (1, 2), "task-note": (1, 2),
     "mailbox-wait": (3, 4), "mailbox-status": (0, 0),
     "mailbox-read": (1, 3), "mailbox-cancel": (1, 1),
-    "mailbox-codex": (3, 3), "mailbox-send": (2, 3), "mailbox-reply": (2, 2),
+    "mailbox-codex": (3, 3), "mailbox-send": (2, 3), "mailbox-reply": (2, 2), "mailbox-ask": (3,4),
     "requests": (0, 0), "request-status": (1, 1), "request-focus": (1, 1),
     "request-page": (1, 1), "request-read": (2, 2), "request-disposition": (3, 3),
     "command-receipts": (0, 1), "topics": (0, 0), "topic-select": (1, 1),
@@ -67,15 +67,20 @@ PAGES = {
         'for different work. Reply bodies are data.'),
     "mailbox-status": 'usage: (mailbox-status)\nLists active waits, ready replies and watcher health.',
     "mailbox-reply": (
-        'usage: (mailbox-reply "received-ticket" "text")\n'
-        'Reply to stored sibling mail, preserving its correlation and peer standing. Works after settlement or restart.'),
+        'usage: (mailbox-reply "received-message" "text")\n'
+        'Reply using the stored return address and matching identity. Works after settlement or restart. '
+        'Messages without a return address give a clear error; use mailbox-send to a named recipient.'),
+    "mailbox-ask": (
+        'usage: (mailbox-ask "name" "question" "resume note") or (mailbox-ask "name" "question" "resume note" "optional-stable-id")\n'
+        'Create the receive and matching reply identity automatically, publish the question, and retain this task and note. '
+        'Return the message handle for read, reply or cancel. A reply wakes the task without polling. '
+        'Repeating an explicit ID inspects its saved result and never sends it again; use a fresh ID for a new question. '
+        'Published means written to the receiver inbox; ready/settled means its reply arrived. Unknown publication is explicit.'),
     "mailbox-send": (
         'usage: (mailbox-send "name" "text" "correlation")\n'
-        'Correlation is optional. Register the matching mailbox-wait before requesting a reply, and ask the peer to reply using the same correlation. '
-        'Deliver a note to your sibling agent\'s mailbox; Telegram is not involved.\n'
-        'The note starts with your name and arrives as peer mail, not operator\n'
-        'input. Arrivals wake the sibling. Returns MAILED with\n'
-        'the complete message occurrence ID; the recipient has its own ticket.'),
+        'Correlation is an optional low-level argument. Use mailbox-ask to request a reply without managing matching identities. '
+        'Publish a note to a named mailbox, with structured sender and return address. Telegram is not involved. '
+        'Returns MAILED with the message handle and state=published. Sibling notes remain peer input.'),
     "mailbox-read": (
         'usage: (mailbox-read "ticket") or (mailbox-read "ticket" offset count)\n'
         'Read inert text in character pages; default 32768, caller may request more.\n'

@@ -27,8 +27,8 @@ _starter = None
 _starter_stop = None
 _name = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")
 ABI = "agent-input-v1"
-# A sibling's note starts with this line; the receiver honours it only for a
-# configured sibling, and only to lower the note's standing to peer mail.
+# Legacy notes used a first-line sender stamp. Structured messages carry it in
+# headers; both lower standing to peer mail only for a configured sibling.
 _from = re.compile(r"From: ([A-Za-z0-9_.-]{1,128})\n\n")
 SEND_CHARS = 32768
 
@@ -101,6 +101,27 @@ def _own_name(config):
     return _token(config.get("name", config.get("instance")))
 
 
+def _routes(config):
+    routes={name:{"directory":path,"sender":"local"} for name,path in _siblings(config).items()}
+    routes.update({name:({"directory":value,"sender":"local"} if isinstance(value,str) else value)
+                   for name,value in config.get("contacts",{}).items()})
+    if config.get("delivery_config"):
+        registry=json.loads(Path(config["delivery_config"]).read_text())
+        routes.update({b["name"]:{"directory":b["directory"],"sender":b["sender"]} for b in registry["bindings"]})
+    return routes
+
+
+def _publish(config, to, text, identity, correlation, in_reply_to=None):
+    routes=_routes(config)
+    if to not in routes:
+        raise ValueError("no mailbox named %s; addresses: %s" % (to,", ".join(sorted(routes)) or "none"))
+    if not str(text).strip() or len(str(text))>SEND_CHARS:
+        raise ValueError("a note needs 1 to %d characters" % SEND_CHARS)
+    route=routes[to]
+    return _tool(config,"mailbox_bridge").deliver(route["directory"],identity,correlation,route["sender"],str(text),
+        headers={"from":_own_name(config),"return_address":_own_name(config),"in_reply_to":in_reply_to})
+
+
 def peer_turns():
     """Admitted peer input can resume an idle loop without operator standing."""
     import telegram
@@ -111,38 +132,48 @@ def peer_turns():
 
 
 def send(to, text, correlation=""):
-    """Deliver a note to a sibling's inbox, stamped with this agent's name."""
+    """Publish a replyable message to a configured mailbox."""
     config = json.loads(Path(os.environ["METTACLAW_MAILBOX_CONFIG"]).read_text())
-    siblings = _siblings(config)
     text = str(text)
-    if to not in siblings:
-        return "MAILBOX_SEND_REFUSED: no sibling mailbox named %s; siblings: %s" % (to, ", ".join(sorted(siblings)) or "none")
-    if not text.strip() or len(text) > SEND_CHARS:
-        return "MAILBOX_SEND_REFUSED: a note needs 1 to %d characters" % SEND_CHARS
     identity = uuid.uuid4().hex
     correlation = str(correlation) or identity
     try:
-        _tool(config,"mailbox_bridge").deliver(siblings[to], identity, correlation, "local",
-                                               "From: %s\n\n%s" % (_own_name(config), text))
+        _publish(config,to,text,identity,correlation)
+    except ValueError as error:
+        return "MAILBOX_SEND_REFUSED: %s" % error
     except OSError as error:
-        return "MAILBOX_SEND_FAILED: %s" % error
-    return "MAILED %s id=%s correlation=%s chars=%d" % (to, identity, correlation, len(text))
+        return "%s: message=%s %s" % ("MAILBOX_SEND_UNKNOWN" if getattr(error,"published",False) else "MAILBOX_SEND_FAILED",identity,error)
+    return "MAILED %s message=%s state=published chars=%d" % (to,identity,len(text))
 
 
 
 def reply(ticket, text):
-    """Reply to a stored peer occurrence, preserving its correlation."""
+    """Reply by message handle; routing and matching come from stored headers."""
+    identity=uuid.uuid4().hex
     try:
         box = runtime()
         if box is None:
             return "MAILBOX_REPLY_REFUSED: mailbox disabled"
         received = box.read(str(ticket))
-        sender = _from.match(received.get("body", ""))
-        if not sender or sender.group(1) not in box.siblings:
-            return "MAILBOX_REPLY_REFUSED: ticket has no configured sibling sender"
-        return send(sender.group(1), text, received["correlation"])
+        address=received.get("return_address")
+        if not address:
+            sender=_from.match(received.get("body",""))
+            address=sender.group(1) if sender and sender.group(1) in box.siblings else None
+        if not address:
+            return "MAILBOX_REPLY_REFUSED: message has no return address; use mailbox-send to a named recipient"
+        _publish(box.config,address,str(text),identity,received["correlation"],received.get("message",str(ticket)))
+        return "MAILED %s message=%s state=published chars=%d" % (address,identity,len(str(text)))
+    except OSError as error:
+        state="UNKNOWN" if getattr(error,"published",False) else "FAILED"
+        return "MAILBOX_REPLY_%s: message=%s %s" % (state,identity,error)
     except Exception as error:
-        return "MAILBOX_REPLY_REFUSED: " + str(error)
+        return ("MAILBOX_REPLY_UNKNOWN: " if getattr(error,"published",False) else "MAILBOX_REPLY_REFUSED: ") + str(error)
+
+
+def ask(to, text, note="Resume the task using the reply.", identity=""):
+    import strategy_host
+    task=strategy_host._focus if strategy_host.enabled() else ""
+    return _call("ask",str(to),str(text),str(note),str(identity) or uuid.uuid4().hex,task=task)
 
 
 def _committed(identity):
@@ -283,6 +314,75 @@ class Inbox:
             raise RuntimeError("mailbox registration authority or program mismatch")
         return wait
 
+    def ticket_for(self, handle):
+        """Resolve a public occurrence handle; old receive tickets still work."""
+        def operation(revision):
+            alias=self.box._one(self.box._rows(self.wire.E("MailboxMessageHandle",1,str(handle),self.wire.Var(0)),revision))
+            return alias[3] if alias else str(handle)
+        return self.box._operation(operation)
+
+    def _bind_handle(self, box, message, ticket):
+        headers=box.headers(message[2])
+        if not headers: return ticket,{}
+        try:
+            occurrence=json.loads(message[2])
+            handle=occurrence[2] if isinstance(occurrence,list) and len(occurrence)==3 else message[2]
+        except ValueError:
+            handle=message[2]
+        record=self.wire.E("MailboxMessageHandle",1,handle,ticket)
+        def operation(revision):
+            old=box._rows(self.wire.E("MailboxMessageHandle",1,handle,self.wire.Var(0)),revision)
+            if old and old!=(record,):
+                # An explicit caller ID reused on another channel is ambiguous;
+                # the existing receive ticket remains a usable unique handle.
+                return ticket
+            if not old: box.space.add(record)
+            return handle
+        return box._operation(operation),headers
+
+    def _ask_dispatch(self, box, ticket):
+        def operation(revision):
+            intent=box._one(box._rows(self.wire.E("MailboxIntent",1,ticket,self.tag,self.wire.Var(0)),revision))
+            if not intent or intent[4][:2]!=(self.wire.S("MailboxAsk"),1): return None
+            state=box._one(box._rows(self.wire.E("MailboxAskDispatch",1,ticket,self.wire.Var(0)),revision))
+            return state[3] if state else "unknown"
+        return box._operation(operation)
+
+    def ask(self, to, text, note, identity, *, task=""):
+        """Register before publishing, then retain the publication result.
+
+        A repeated explicit ID observes its stored state. Recovery never sends
+        an unknown publication again. Future independent asks remain usable.
+        """
+        _token(identity)
+        routes=_routes(self.config)
+        if to not in routes: raise ValueError("no mailbox named "+to)
+        if not text.strip() or len(text)>SEND_CHARS: raise ValueError("empty or oversized mailbox note")
+        channel=self.config.get("ask_channel","inbox")
+        intent=self.wire.E("MailboxAsk",1,to,text,note)
+        with self.lock:
+            def prior(revision):
+                return self.box._one(self.box._rows(self.wire.E("MailboxIntent",1,identity,self.tag,self.wire.Var(0)),revision))
+            old=self.box._operation(prior)
+            if old:
+                if old[4]!=intent: raise ValueError("message ID already belongs to a different ask")
+                dispatch=self._ask_dispatch(self.box,identity)
+                return {"message":identity,"state":self.read(identity)["state"],"delivery":dispatch,"to":to}
+            self.wait(identity,channel,identity,intent=intent,task=task,note=note)
+            dispatch="published"
+            error=None
+            try:
+                _publish(self.config,to,text,identity,identity)
+            except Exception as failure:
+                dispatch="unknown" if getattr(failure,"published",False) else "failed"
+                error=str(failure)
+            self.box._operation(lambda revision:self.box.space.add(self.wire.E("MailboxAskDispatch",1,identity,dispatch)))
+            if dispatch=="failed": self.cancel(identity)
+            self.reconcile_tasks(self.box,self.box.active(self.tag,self.capacity+1))
+            result={"message":identity,"state":self.read(identity)["state"] if dispatch=="published" else dispatch,"delivery":dispatch,"to":to}
+            if error: result["reason"]=error
+            return result
+
     def wait(self, ticket, channel, correlation, *, intent=None, task="", note=""):
         """Register one stable ticket and return immediately, including on replay."""
         _token(ticket)
@@ -311,10 +411,12 @@ class Inbox:
 
     def cancel(self, ticket):
         with self.lock:
+            handle=ticket
+            ticket=self.ticket_for(ticket)
             self._registration(self.box,ticket)
             value = self.box.cancel(ticket,self._owner(ticket),1)
             self.reconcile_tasks(self.box,self.box.active(self.tag,self.capacity+1))
-        return {"ticket":ticket,"state":self._json(value)}
+        return {"message":handle,"state":self._json(value)}
 
     def _json(self, value):
         if isinstance(value,self.wire.Symbol): return value.name
@@ -328,6 +430,7 @@ class Inbox:
             raise ValueError("invalid mailbox read page")
         E, Var = self.wire.E, self.wire.Var
         with self.lock:
+            ticket=self.ticket_for(ticket)
             wait = self._registration(self.box,ticket)
             def operation(revision):
                 ready = self.box._one(self.box._rows(E("MailboxReady",1,ticket,*wait[6:9],Var(0)),revision))
@@ -343,7 +446,17 @@ class Inbox:
                         "correlation":wait[4],"sender":wait[5],"message":message[2],
                         "offset":offset,"body":body[offset:offset+count],"characters":len(body),
                         "next":offset+count if offset+count<len(body) else None}
-            return self.box._operation(operation)
+            result=self.box._operation(operation)
+            if result.get("message"):
+                message=self.box.resolve(ticket)[-1] if result["state"]=="ready" else None
+                headers=self.box.headers(result["message"])
+                if headers:
+                    if message is None:
+                        message=(None,None,result["message"])
+                    handle,headers=self._bind_handle(self.box,message,ticket)
+                    result.update(message=handle,**headers)
+                    result.pop("ticket",None)
+            return result
 
     def acknowledge(self, identities):
         tickets = [source_ticket(value,self.instance) for value in identities]
@@ -365,7 +478,17 @@ class Inbox:
                 with open(self.config["bridge_health"]) as stream:
                     health=json.loads(stream.read(8192))
             except (OSError,ValueError): health={"state":"unavailable"}
-        return {"instance":self.instance,"active":[{"ticket":row[2],"state":row[0].name} for row in active],
+        items=[]
+        for row in active:
+            item={"message":row[2],"state":row[0].name}
+            dispatch=self._ask_dispatch(self.box,row[2])
+            if dispatch is not None: item["delivery"]=dispatch
+            if row[0].name=="MailboxReady":
+                result=self.box.resolve(row[2])
+                if result[0]==self.wire.S("MailboxResult"):
+                    item["message"]=self._bind_handle(self.box,result[-1],row[2])[0]
+            items.append(item)
+        return {"instance":self.instance,"active":items,
                 "error":self.error,"backpressure":self.pressure,"codex_error":self.codex.error if self.codex else "",
                 "directory_bridge":health,
                 "notifications":self.notifications,"scans":self.scans}
@@ -383,7 +506,11 @@ class Inbox:
             if context:
                 if context[3] != self.tag:
                     raise RuntimeError("task continuation belongs to another program")
-                contexts.append((row[2],context[4],context[5],row[0].name))
+                state=row[0].name
+                dispatch=self._ask_dispatch(box,row[2])
+                if state=="MailboxWait" and dispatch not in (None,"published"):
+                    state="MailboxDispatchUnknown" if dispatch=="unknown" else "MailboxDispatchFailed"
+                contexts.append((row[2],context[4],context[5],state))
         import agent_checkpoint
         try:
             agent_checkpoint.path()
@@ -393,7 +520,7 @@ class Inbox:
         store = agent_checkpoint.ledger()
         with store.transaction() as db:
             db.execute("CREATE TABLE IF NOT EXISTS task_mailbox_waits(ticket TEXT PRIMARY KEY, request TEXT, note TEXT, state TEXT)")
-            old = [dict(r) for r in db.execute("SELECT * FROM task_mailbox_waits WHERE state IN ('MailboxWait','MailboxReady')")]
+            old = [dict(r) for r in db.execute("SELECT * FROM task_mailbox_waits WHERE state NOT IN ('MailboxSettled','MailboxCancelled','MailboxRetired')")]
         present = {r[2] for r in active}
         for previous in old:
             if previous["ticket"] not in present:
@@ -449,7 +576,7 @@ class Inbox:
                 def observation(revision):
                     return box._one(box._rows(self.wire.E("MailboxIntent",1,ticket,self.tag,self.wire.Var(0)),revision))
                 intent=box._operation(observation)
-                if intent:
+                if intent and intent[4][:2]==(self.wire.S("MailboxCodexWatch"),1):
                     watch=intent[4]
                     wait=self._registration(box,ticket)
                     if watch[:2]!=(self.wire.S("MailboxCodexWatch"),1) or watch[3]!=wait[4]:
@@ -465,6 +592,10 @@ class Inbox:
                 data = {"ticket":ticket,"channel":message[3],"correlation":message[4],
                         "sender":message[5],"characters":len(message[6]),
                         "body":message[6][:self.preview],"read_more":len(message[6])>self.preview}
+                handle,headers=self._bind_handle(box,message,ticket)
+                if headers:
+                    data.update(message=handle,**headers)
+                    for key in ("ticket","correlation","sender"): data.pop(key,None)
                 context = box.task_context(ticket) if hasattr(box,"task_context") else None
                 if context:
                     if context[3] != self.tag:
@@ -472,8 +603,9 @@ class Inbox:
                     data.update(task=context[4],resume_note=context[5])
                     self.task_arrivals[identity] = {"task":context[4],"note":context[5],"ticket":ticket}
                 stamp = _from.match(message[6]) if message[3] in self.auto_receive else None
-                if stamp and stamp.group(1) in self.siblings:
-                    data["from"] = stamp.group(1)
+                origin=headers.get("from") or (stamp.group(1) if stamp else None)
+                if origin in self.siblings:
+                    data["from"] = origin
                     self.peer_offered.add(ticket)
                     offered = self.offer(json.dumps(data,ensure_ascii=False),identity,sibling=data["from"])
                 else:
@@ -568,6 +700,10 @@ def _call(method, *args, **kwargs):
     try:
         box = runtime()
         value = getattr(box,method)(*args,**kwargs) if box else {"state":"disabled"}
+        if method=="read" and value.get("from"):
+            for key in ("correlation","sender"): value.pop(key,None)
+        if method in ("read","cancel") and "ticket" in value:
+            value["message"]=value.pop("ticket")
         return json.dumps(value,ensure_ascii=False)
     except Exception as error:
         return json.dumps({"state":"refused","reason":str(error)},ensure_ascii=False)

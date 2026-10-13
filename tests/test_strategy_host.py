@@ -86,6 +86,17 @@ class StrategyHostTest(unittest.TestCase):
             host.begin(2,"channel-event","peer review")
         self.assertEqual(task_context.projection(store,host._focus)["root"],"goal:review:1")
 
+    def test_answered_message_resolves_public_handle_before_closing_its_input(self):
+        import mailbox_agent
+        store=host.ledger()
+        store.accept("mail","work",kind="message")
+        store.link_inputs("mail",["mailbox:agent:internal-receive"])
+        host._focus="mail"
+        box=SimpleNamespace(ticket_for=lambda handle:"internal-receive" if handle=="public-message" else handle)
+        with mock.patch.object(mailbox_agent,"_runtime",box):
+            host._close_answered_message(["mailbox-reply","public-message","answer"],"MAILED peer message=answer state=published")
+        self.assertEqual(store.request_record("mail")["status"],"addressed")
+
     def test_real_receipt_callback_and_next_prepared_request(self):
         self.capture()
         command = ["shell", "printf witness"]
