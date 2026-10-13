@@ -130,6 +130,22 @@ def send(to, text, correlation=""):
     return "MAILED %s id=%s chars=%d" % (to, identity, len(text))
 
 
+
+def reply(ticket, text):
+    """Reply to a stored peer occurrence, preserving its correlation."""
+    try:
+        box = runtime()
+        if box is None:
+            return "MAILBOX_REPLY_REFUSED: mailbox disabled"
+        received = box.read(str(ticket))
+        sender = _from.match(received.get("body", ""))
+        if not sender or sender.group(1) not in box.siblings:
+            return "MAILBOX_REPLY_REFUSED: ticket has no configured sibling sender"
+        return send(sender.group(1), text, received["correlation"])
+    except Exception as error:
+        return "MAILBOX_REPLY_REFUSED: " + str(error)
+
+
 def _committed(identity):
     import input_ack
     if os.environ.get("METTACLAW_OBSERVED_STRATEGY", "0") != "1":
@@ -142,6 +158,47 @@ def _offer(text, identity, sibling=None):
     if sibling:
         return telegram.enqueue_mailbox_event(text, identity, sibling)
     return telegram.enqueue_mailbox_event(text, identity)
+
+
+def _request_dispatched(db, request, ticket):
+    """A paired wait/send parks only after its matching send returned success.
+
+    Until then a failed or unfinished dispatch needs a model decision. This
+    projection can be rebuilt after a crash from the original proposal and
+    receipts; it never sends the request again.
+    """
+    for row in db.execute("SELECT serial,commands FROM task_proposals WHERE request=? ORDER BY serial DESC",(request,)):
+        commands=json.loads(row["commands"])
+        index=next((i for i,c in enumerate(commands) if isinstance(c,list) and len(c)>=4 and c[:2]==["mailbox-wait",ticket]),None)
+        if index is None: continue
+        positions=[i for i,c in enumerate(commands) if i>index and isinstance(c,list) and len(c)==4 and
+                   c[0]=="mailbox-send" and c[3]==commands[index][3]]
+        if not positions: return True
+        action=db.execute("SELECT ticket FROM actions WHERE serial=?",(row["serial"],)).fetchone()
+        if not action or not db.execute("SELECT 1 FROM sqlite_master WHERE name='command_attempts'").fetchone():return False
+        for position in positions:
+            receipt=db.execute("SELECT result FROM command_attempts WHERE ticket=? AND position=?",(action[0],position)).fetchone()
+            if not receipt or not receipt[0]:return False
+            result=json.loads(receipt[0])
+            if result.get("disposition")!="returned" or not str(result.get("result","")).startswith("MAILED "):return False
+        return True
+    return True
+
+
+def _update_task_wait_state(db, request):
+    states=list(db.execute("SELECT ticket,state FROM task_mailbox_waits WHERE request=?",(request,)))
+    waiting=any(s[1]=='MailboxWait' for s in states) and not any(s[1]=='MailboxReady' for s in states)
+    waiting=waiting and all(_request_dispatched(db,request,s[0]) for s in states if s[1]=='MailboxWait')
+    if waiting:
+        db.execute("UPDATE requests SET status='waiting-mailbox' WHERE id=? AND status IN ('active','processed')",(request,))
+    else:
+        db.execute("UPDATE requests SET status='active' WHERE id=? AND status='waiting-mailbox'",(request,))
+
+
+def finish_task_dispatch(store, request):
+    with store.transaction() as db:
+        if db.execute("SELECT 1 FROM sqlite_master WHERE name='task_mailbox_waits'").fetchone():
+            _update_task_wait_state(db,request)
 
 
 class Inbox:
@@ -366,6 +423,11 @@ class Inbox:
                     raise RuntimeError("task continuation belongs to another program")
                 contexts.append((row[2],context[4],context[5],row[0].name))
         import agent_checkpoint
+        try:
+            agent_checkpoint.path()
+        except RuntimeError:
+            if contexts: raise
+            return  # A taskless mailbox can also be used without an agent ledger.
         store = agent_checkpoint.ledger()
         with store.transaction() as db:
             db.execute("CREATE TABLE IF NOT EXISTS task_mailbox_waits(ticket TEXT PRIMARY KEY, request TEXT, note TEXT, state TEXT)")
@@ -380,14 +442,7 @@ class Inbox:
                 db.execute("INSERT INTO task_mailbox_waits VALUES (?,?,?,?) ON CONFLICT(ticket) DO UPDATE SET state=excluded.state",
                            (ticket,request,note,state))
             for request in {c[1] for c in contexts}:
-                states = [r[0] for r in db.execute("SELECT state FROM task_mailbox_waits WHERE request=?",(request,))]
-                # Any ready result makes the task runnable; remaining receives
-                # remain durable obligations in the frame.
-                waiting = 'MailboxWait' in states and 'MailboxReady' not in states
-                if waiting:
-                    db.execute("UPDATE requests SET status='waiting-mailbox' WHERE id=? AND status IN ('active','processed')",(request,))
-                else:
-                    db.execute("UPDATE requests SET status='active' WHERE id=? AND status='waiting-mailbox'",(request,))
+                _update_task_wait_state(db,request)
 
     def scan(self, box):
         box.space.describe()

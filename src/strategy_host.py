@@ -154,6 +154,7 @@ def begin(turn, source, message):
         store = ledger()
         import task_context
         previous = _focus or task_context.current(store)
+        resume_parent = None
         _focus = task_context.resume(store, previous)
         _context_trigger, _task_projection = str(source), None
         import loop_modes
@@ -179,7 +180,7 @@ def begin(turn, source, message):
                         db.execute("UPDATE requests SET status='active' WHERE id=? AND status='waiting-mailbox'", (arrival["task"],))
                         store.event(db,"task-resume",**arrival)
                 if len({a["task"] for a in arrivals}) == 1:
-                    previous = arrivals[0]["task"]
+                    resume_parent = arrivals[0]["task"]
         elif _focus is None:
             active = store.active()
             if active:
@@ -188,7 +189,7 @@ def begin(turn, source, message):
                 _focus = "autonomous"
                 store.accept(_focus, "Ongoing autonomous work; rest and nop do not certify task completion.")
         task_context.begin(store, _focus, source, previous,
-                           getattr(telegram, "_reply_chat_id", ""))
+                           getattr(telegram, "_reply_chat_id", ""), parent=resume_parent)
         return 1
 
 
@@ -248,7 +249,8 @@ def prepare(prompt, output_tokens=32768):
     # UTF-8 bytes are a conservative token estimate, explicitly labelled.
     # Missing provider metadata never invents a model window.
     available = None if capacity is None else capacity - len(prompt.encode()) - 64
-    view = task_context.compact(view, available)
+    view = (task_context.index_view(view,"selected model window is not known; metadata refresh pending")
+            if available is None else task_context.compact(view, available))
     _task_projection = "TASK_CONTEXT " + strategy.encoded(view)
     return prompt + "\n\n" + _task_projection
 
@@ -263,6 +265,11 @@ def context_capacity(output_tokens=32768):
         rows = synthetic_llm._cached_observation("models").get("value")
         rows = rows if isinstance(rows,list) else []
         window = next((r.get("context") for r in rows if isinstance(r,dict) and r.get("id") == model), None)
+        if window is None:
+            metadata = synthetic_llm._cached_observation("model-window").get("value") or {}
+            if isinstance(metadata,dict) and metadata.get("id") == model:
+                window = metadata.get("context")
+            synthetic_llm.refresh_provider_observations_async(("model-window",))
         if window is None:
             return None
         window = int(window)
@@ -589,7 +596,7 @@ def result_permits_suffix(command, record):
             pass
     failures = ("read failed", "read-lines failed", "edit-file failed", "write-file failed",
                 "append-file failed", "ls-tree failed", "shell_error", "timeout_error",
-                "mailbox_send_failed", "mailbox_send_refused", "error(", "(error ")
+                "mailbox_send_failed", "mailbox_send_refused", "mailbox_reply_refused", "error(", "(error ")
     if text.startswith(failures):
         return 0
     # An exception/no-result is authoritative even when its rendered body is unfamiliar.
@@ -604,7 +611,10 @@ def result_permits_suffix(command, record):
 
 def broker_end(turn, records):
     if enabled() and str(turn) == _turn and _ticket:
-        ledger().report(_ticket, str(records))
+        store=ledger()
+        store.report(_ticket, str(records))
+        import mailbox_agent
+        mailbox_agent.finish_task_dispatch(store,_focus)
     return records
 
 

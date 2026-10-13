@@ -28,6 +28,7 @@
     "- Wait for a configured mailbox without blocking or polling: (mailbox-wait \"stable-ticket\" \"channel\" \"correlation\"). An arrival wakes you with inert data. (mailbox-status) lists pending waits; (mailbox-read \"ticket\") reads a reply, (mailbox-read \"ticket\" offset count) pages it; (mailbox-cancel \"ticket\") cancels an unmatched wait."
     "- Subscribe to an existing Codex-room turn: (mailbox-codex \"stable-ticket\" \"thread-id\" \"turn-id\"). It returns immediately and wakes you with the terminal transcript; no model call or thread polling is started."
     "- Write to your sibling agent's mailbox, not through Telegram: (mailbox-send \"name\" \"text\"). The note carries your name and arrives as peer mail; it wakes them at most 6 times an hour from you, later notes stay stored until their wake allowance is available. Their notes to you arrive as [mailbox] data with \"from\"."
+    "- Reply to peer mail using (mailbox-reply \"received-ticket\" \"text\"). This preserves the sender and correlation so the peer resumes their waiting task. Use mailbox-send for a new conversation."
     ;SHELL AND FILE I/O:
     "- Execute shell command, it returns the command output to you: (shell \"command string\")"
     "- Run a long command in the background; you are woken when it ends, with its exit status and output tail: (background \"command string\")"
@@ -95,6 +96,8 @@
 (= (mailbox-read $ticket $offset $count) (py-call (mailbox_agent.read $ticket $offset $count)))
 (= (mailbox-cancel $ticket) (py-call (mailbox_agent.cancel $ticket)))
 (= (mailbox-codex $ticket $thread $turn) (py-call (mailbox_agent.watch_codex $ticket $thread $turn)))
+(= (mailbox-reply $ticket $text)
+   (py-call (mailbox_agent.reply $ticket (py-call (helper.decode_safe_text $text)))))
 (= (mailbox-send $to $text)
    (let $safe (string-replace $text "\n" "\\n")
      (py-call (mailbox_agent.send $to (py-call (helper.decode_safe_text $safe))))))

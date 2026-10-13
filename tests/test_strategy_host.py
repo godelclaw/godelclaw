@@ -43,6 +43,28 @@ class StrategyHostTest(unittest.TestCase):
         self.assertEqual(host.capture(prompt, 60), 1)
         return prompt
 
+    def test_selected_provider_window_is_used_without_inventing_a_limit(self):
+        import synthetic_llm
+        def cached(kind):
+            return {"value": {"id":"claude-test","context":1000000}} if kind == "model-window" else {"value":[]}
+        with mock.patch.object(synthetic_llm,"current_model",return_value="claude-test"), \
+             mock.patch.object(synthetic_llm,"_cached_observation",side_effect=cached), \
+             mock.patch.object(synthetic_llm,"refresh_provider_observations_async"):
+            self.assertEqual(host.context_capacity(32768),967232)
+        with mock.patch.object(synthetic_llm,"_cached_observation",return_value={}), \
+             mock.patch.object(synthetic_llm,"refresh_provider_observations_async"):
+            self.assertIsNone(host.context_capacity(32768))
+
+    def test_correlated_reply_keeps_its_explicit_goal_parent(self):
+        import mailbox_agent, task_context
+        store=host.ledger()
+        store.accept("goal:review:1","review a topic")
+        with store.transaction() as db:
+            db.execute("UPDATE requests SET status='waiting-mailbox' WHERE id='goal:review:1'")
+        with mock.patch.object(mailbox_agent,"task_arrivals",return_value=[{"task":"goal:review:1","ticket":"review"}]):
+            host.begin(2,"channel-event","peer review")
+        self.assertEqual(task_context.projection(store,host._focus)["root"],"goal:review:1")
+
     def test_real_receipt_callback_and_next_prepared_request(self):
         self.capture()
         command = ["shell", "printf witness"]

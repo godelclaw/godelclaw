@@ -20,7 +20,10 @@
    (py-call (strategy_host.begin $turn $source $message)))
 
 (= (addition-protected-request $request)
-   (py-call (strategy_host.prepare $request (maxOutputToken))))
+   (py-call (strategy_host.prepare $request)))
+
+(= (addition-protected-request $request $tokens)
+   (py-call (strategy_host.prepare $request $tokens)))
 
 (= (addition-prepare-request
       $selected $legacy $system $activity $advertised)

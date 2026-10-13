@@ -65,6 +65,16 @@ class ProviderRoutingTest(unittest.TestCase):
             out = synthetic_llm.chat(model, 6000, "medium", "hello")
         return out, seen
 
+    def test_selected_model_window_discovery_stores_only_metadata(self):
+        self.enable_flag()
+        with mock.patch.object(synthetic_llm,"current_model",return_value="claude-fixture"), \
+             mock.patch.object(synthetic_llm,"_provider_for",return_value={"protocol":"anthropic","key":"fixture","base":"https://example.invalid/v1"}), \
+             mock.patch.object(synthetic_llm,"_request_json",return_value={"max_input_tokens":1000000,"max_tokens":128000}) as fetch:
+            synthetic_llm._refresh_observation("model-window")
+        self.assertEqual(fetch.call_args.args[0].full_url,"https://example.invalid/v1/models/claude-fixture")
+        self.assertEqual(synthetic_llm._cached_observation("model-window")["value"],
+                         {"id":"claude-fixture","context":1000000,"source":"provider-model-metadata"})
+
     def test_synthetic_default_path_unchanged(self):
         out, seen = self.capture_chat("syn:large:text")
         self.assertEqual(out, "((rest))")

@@ -67,6 +67,51 @@ class MailboxAgentTests(unittest.TestCase):
     def ready(self, inbox):
         self.wait(inbox); self.send(); inbox.scan(inbox.box)
 
+    def test_failed_paired_send_leaves_the_waiting_task_runnable(self):
+        import task_context
+        from observed_strategy import encoded
+        self.ledger.accept("guide","request a review")
+        commands=[["mailbox-wait","review-note","review","review-1"],["mailbox-send","sibling","review please","review-1"]]
+        router=dict(advertised=[c[0] for c in commands],executable=[c[0] for c in commands],permitted=[c[0] for c in commands])
+        snap=self.ledger.capture("guide","context",router,0)
+        task_context.proposal(self.ledger,snap["serial"],"guide",commands,"not run")
+        action=self.ledger.decide(snap["serial"],dict(kind="command",request="guide",owner=snap["owner"],tool="mailbox-wait",command=dict(commands=commands,limit=2)),0)
+        inbox=self.inbox()
+        with mock.patch.object(inbox,"start",return_value=1):inbox.wait("review-note","review","review-1",task="guide")
+        self.assertEqual(self.ledger.request_record("guide")["status"],"active")
+        with self.ledger.transaction() as db:
+            db.execute("CREATE TABLE command_attempts(ticket TEXT,position INTEGER,command TEXT,result TEXT,PRIMARY KEY(ticket,position))")
+            db.execute("INSERT INTO command_attempts VALUES (?,?,?,?)",(action,1,encoded(commands[1]),encoded(dict(disposition="returned",result="MAILBOX_SEND_FAILED: unavailable"))))
+        mailbox_agent.finish_task_dispatch(self.ledger,"guide")
+        inbox.scan(inbox.box)
+        self.assertEqual(self.ledger.request_record("guide")["status"],"active")
+        self.assertEqual(inbox.read("review-note")["state"],"waiting")
+        # A real successful receipt now permits parking. Reopening the host
+        # reconstructs that decision rather than dispatching the send again.
+        with self.ledger.transaction() as db:
+            db.execute("UPDATE command_attempts SET result=?",(encoded(dict(disposition="returned",result="MAILED sibling id=one")),))
+        mailbox_agent.finish_task_dispatch(self.ledger,"guide")
+        self.assertEqual(self.ledger.request_record("guide")["status"],"waiting-mailbox")
+        inbox.close()
+        restarted=self.inbox()
+        restarted.scan(restarted.box)
+        self.assertEqual(self.ledger.request_record("guide")["status"],"waiting-mailbox")
+
+    def test_reply_recovers_sender_and_correlation_after_restart_and_settlement(self):
+        first=self.inbox(siblings={"peer":"unused"})
+        self.wait(first)
+        self.send(body="From: peer\n\nreview this")
+        first.scan(first.box)
+        first.box.settle("ticket",first._owner("ticket"),1)
+        first.close()
+        restarted=self.inbox(siblings={"peer":"unused"})
+        with mock.patch.object(mailbox_agent,"runtime",return_value=restarted), \
+             mock.patch.object(mailbox_agent,"send",return_value="MAILED peer id=reply") as send:
+            self.assertEqual(mailbox_agent.reply("ticket","review result"),"MAILED peer id=reply")
+            send.assert_called_once_with("peer","review result","reply")
+            self.assertTrue(mailbox_agent.reply("missing","reply").startswith("MAILBOX_REPLY_REFUSED"))
+            self.assertEqual(send.call_count,1)
+
     def test_task_wait_recovers_between_native_commit_and_local_park(self):
         import task_context
         self.ledger.accept("guide","Write the guide, wait for review, revise it")

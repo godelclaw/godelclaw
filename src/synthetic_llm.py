@@ -440,6 +440,7 @@ _OBSERVATION_SCHEMA = 1
 _OBSERVATION_TTLS = {"models": 300.0, "quota": 60.0}
 _OBSERVATION_RETRY_SECONDS = 30.0
 _observation_lock = threading.RLock()
+_OBSERVATION_TTLS["model-window"] = _OBSERVATION_TTLS["models"]
 _refreshing_observations = set()
 
 _SYNTHETIC_PINNED_MODELS = (
@@ -578,6 +579,16 @@ def _refresh_observation(kind):
         if kind == "models":
             payload = _get_json(_openai_base() + "/models")
             value = _sanitize_models(payload) if "error" not in payload else None
+        elif kind == "model-window":
+            model = current_model()
+            provider = _provider_for(model)
+            if provider["protocol"] != "anthropic" or not provider["key"]:
+                raise ValueError("selected provider has no model-window discovery")
+            request = urllib.request.Request(provider["base"] + "/models/" + urllib.parse.quote(model, safe=""),
+                headers={"x-api-key":provider["key"], "anthropic-version":"2023-06-01"})
+            payload = _request_json(request, _INTROSPECT_TIMEOUT)
+            limit = payload.get("max_input_tokens")
+            value = {"id":model,"context":limit,"source":"provider-model-metadata"} if type(limit) is int and limit > 0 else None
         elif kind == "quota":
             payload = _get_json(_api_root() + "/v2/quotas")
             value = _sanitize_quota(payload) if "error" not in payload else None

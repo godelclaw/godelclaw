@@ -218,7 +218,7 @@
           ($requestObservations (coding-request-observations $request))
           ($_ (if (== $requestObservations "") _
                   (println! $requestObservations)))
-          ($send (addition-protected-request (coding-request-prompt $request)))
+          ($send (addition-protected-request (coding-request-prompt $request) (maxOutputToken)))
           ($_ (println! (CHARS_SENT: (string_length $send) $send)))
           ($rmode (policy-reasoning (loop-active-policy $periphery)
                                     (reasoningMode)))

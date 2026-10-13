@@ -48,7 +48,7 @@ def resume(store, request):
 
 def begin(store, request, trigger, previous=None, chat="", parent=None):
     with store.transaction() as db:
-        if parent is None and previous != request and previous != "autonomous":
+        if parent is None and previous != request and previous != "autonomous" and not str(previous).startswith("goal:"):
             parent = previous if previous and store.selectable(db, previous) else None
         if parent == request:
             parent = None
@@ -239,6 +239,13 @@ def compact(view, byte_budget=None):
             return view
     # A pasted request or a large pending index may itself exceed the window.
     # Keep an explicit recoverable frame, rather than crash or silently drop it.
+    result = index_view(view,"task frame exceeds available context")
+    if len(encoded(result).encode()) > byte_budget:
+        raise ValueError("model window cannot hold the task frame; reduce other context sources")
+    return result
+
+
+def index_view(view, reason):
     result = dict(root=view["root"], focus=view["focus"], trigger=view["trigger"],
         requests=[dict(id=r["id"], status=r["status"], content=r["content"][:240],
                       truncated=len(r["content"]) > 240, retrieve=["request-read",r["id"],0])
@@ -247,8 +254,7 @@ def compact(view, byte_budget=None):
                    pending=len(view["pending"]), retrieve=["task-read","task-frame:"+view["root"],0]),
         transcript=[], archive=dict(retrieve=["task-history",view["root"],0]),
         semantics="Task frame is paged. Retrieve its constraints, corrections, notes and pending work before making dependent decisions.")
-    if len(encoded(result).encode()) > byte_budget:
-        raise ValueError("model window cannot hold the task frame; reduce other context sources")
+    result["frame"]["reason"] = str(reason)
     return result
 
 

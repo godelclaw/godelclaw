@@ -29,6 +29,9 @@ class ManagedRuntimeTest(unittest.TestCase):
                            METTACLAW_STRATEGY_PATH=str(Path(temporary) / "strategy.sqlite3"),
                            METTACLAW_EFFECT_RECEIPT_PATH=str(Path(temporary) / "effects.jsonl"),
                            OPENAI_API_KEY="unused-test-value")
+                metadata=Path(temporary)/"provider-observations.json"
+                metadata.write_text(json.dumps({"schema":1,"models":{"value":[{"id":"syn:large:text","context":524288}]}}))
+                env["METTACLAW_PROVIDER_OBSERVATION_PATH"]=str(metadata)
                 env.update(environment(engine) if callable(environment) else environment or {})
                 result = subprocess.run(["./run.sh", fixture],
                                         cwd=ROOT, env=env, capture_output=True, text=True,

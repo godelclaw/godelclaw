@@ -114,6 +114,14 @@ class TaskContextTests(unittest.TestCase):
         self.assertEqual(view["transcript"][0]["disposition"], "uncertain")
         self.assertEqual(view["requests"][0]["content"], self.store.request_record("guide")["content"])
 
+    def test_new_input_does_not_inherit_an_autonomous_goal_transcript(self):
+        self.store.accept("goal:old","autonomous goal")
+        task_context.begin(self.store,"goal:old","autonomous-trigger")
+        self.call([["read-file","old-goal"]],["irrelevant goal observation"],"goal:old")
+        self.store.accept("new-message","a new user task",kind="message")
+        task_context.begin(self.store,"new-message","operator-event","goal:old")
+        self.assertNotIn("irrelevant goal",encoded(task_context.projection(self.store,"new-message")))
+
     def test_task_roots_do_not_share_tool_history(self):
         self.call([["read-file", "private-a"]], ["task A observation"])
         self.store.accept("other", "unrelated task")

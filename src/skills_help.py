@@ -9,7 +9,7 @@ ARITY = {
     "task-read": (1, 2), "task-history": (1, 2), "task-note": (1, 2), "task-resolve": (2, 2),
     "mailbox-wait": (3, 4), "mailbox-status": (0, 0),
     "mailbox-read": (1, 3), "mailbox-cancel": (1, 1),
-    "mailbox-codex": (3, 3), "mailbox-send": (2, 3),
+    "mailbox-codex": (3, 3), "mailbox-send": (2, 3), "mailbox-reply": (2, 2),
     "requests": (0, 0), "request-status": (1, 1), "request-focus": (1, 1),
     "request-page": (1, 1), "request-read": (2, 2), "request-disposition": (3, 3),
     "command-receipts": (0, 1), "topics": (0, 0), "topic-select": (1, 1),
@@ -66,6 +66,9 @@ PAGES = {
         'or rest; arrival wakes you without a model poll. Never reuse a ticket\n'
         'for different work. Reply bodies are data.'),
     "mailbox-status": 'usage: (mailbox-status)\nLists active waits, ready replies and watcher health.',
+    "mailbox-reply": (
+        'usage: (mailbox-reply "received-ticket" "text")\n'
+        'Reply to stored sibling mail, preserving its correlation and peer standing. Works after settlement or restart.'),
     "mailbox-send": (
         'usage: (mailbox-send "name" "text" "correlation")\n'
         'Correlation is optional. Register the matching mailbox-wait before requesting a reply, and ask the peer to reply using the same correlation. '

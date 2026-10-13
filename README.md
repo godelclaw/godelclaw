@@ -117,7 +117,8 @@ window, preparation reserves the requested output and uses UTF-8 bytes as a
 conservative token estimate. Complete pairs become explicit digest-bearing
 references as necessary; larger task frames remain retrievable. Compaction is
 only a projection: the journal survives restart unchanged. An unknown window
-is not replaced by an invented model limit. Notes and successful tool returns
+uses a recoverable task index while provider metadata refreshes in the background;
+it is not replaced by an invented model limit. Notes and successful tool returns
 do not establish that arbitrary prose claims are true.
 
 Set `agent.observed_strategy = false` to use the legacy managed host. Standalone
@@ -534,7 +535,10 @@ continuation note with the task identity in that native commit. The local task
 waits until arrival or cancellation; restart repairs that scheduling projection
 from the native receive. On `inbox`, register the correlated wait first, then use
 `(mailbox-send "sibling" "request text" "correlation")`; ask the sibling to use
-the same correlation in the reply. Exact waits are resolved before generic
+`(mailbox-reply "received-ticket" "review text")` to preserve the sender and
+correlation automatically, including after restart or settlement. A paired
+wait/send parks only after the send has a success receipt; a failed or uncertain
+dispatch leaves the task runnable without retrying the effect. Exact waits are resolved before generic
 inbox admission. `(mailbox-codex "ticket" "thread-id"
 "turn-id")` records its subscription intention in the same batch, then
 listens through one App Server connection for the agent's active Codex waits.
