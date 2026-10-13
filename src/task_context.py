@@ -49,7 +49,11 @@ def resume(store, request):
 def begin(store, request, trigger, previous=None, chat="", parent=None):
     with store.transaction() as db:
         if parent is None and previous != request and previous != "autonomous" and not str(previous).startswith("goal:"):
-            parent = previous if previous and store.selectable(db, previous) else None
+            prior = db.execute("SELECT status FROM requests WHERE id=?", (previous,)).fetchone()
+            # A correction received while a task awaits a reply still belongs
+            # to that task. Waiting prevents scheduling, not context retention.
+            if prior and (store.selectable(db, previous) or prior[0] in ("waiting-mailbox", "waiting-user")):
+                parent = previous
         if parent == request:
             parent = None
         if parent and not db.execute("SELECT 1 FROM requests WHERE id=?", (parent,)).fetchone():

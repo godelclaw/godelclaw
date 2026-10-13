@@ -64,6 +64,24 @@ class TaskContextTests(unittest.TestCase):
         self.assertEqual([r["id"] for r in view["requests"]], ["guide", "question"])
         self.assertIn("retain this finding", encoded(view))
 
+    def test_correction_during_wait_survives_until_correlated_resumption(self):
+        self.call([["read-file","contract"]],["earlier finding"])
+        with self.store.transaction() as db:
+            db.execute("UPDATE requests SET status='waiting-mailbox' WHERE id='guide'")
+        self.store.accept("correction","Keep the source-inspection qualification.")
+        task_context.begin(self.store,"correction","operator-event","guide")
+        self.store.disposition("correction","addressed","retained the correction")
+        fresh=Ledger(self.path)
+        self.assertIsNone(task_context.resume(fresh,"correction"))  # don't run an open wait
+        with fresh.transaction() as db:
+            db.execute("UPDATE requests SET status='active' WHERE id='guide'")
+        self.store.accept("review","peer review")
+        task_context.begin(fresh,"review","channel-event",parent="guide")
+        view=task_context.projection(fresh,"review")
+        self.assertEqual(view["root"],"guide")
+        self.assertIn("Keep the source-inspection qualification.",encoded(view))
+        self.assertIn("earlier finding",encoded(view))
+
     def test_denied_and_unexecuted_commands_have_individual_results(self):
         self.call([["read-file", "missing"], ["send", "premature claim"]], ["read failed: missing"])
         view = task_context.projection(self.store, "guide")
