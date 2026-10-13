@@ -124,14 +124,6 @@
                     (coordinate-set loops $armed $periphery))))))
        $periphery))
 
-;; Peer input gets an ordinary burst, retaining its peer identity.
-(= (applyPeerActivity $periphery $has-activity $is-human)
-   (if (and $has-activity (not $is-human))
-       (if (== (py-call (mailbox_agent.peer_turns)) 1)
-         (coordinate-set loops (max (loop-budget $periphery) (policy-burst-budget (loop-active-policy $periphery))) $periphery)
-         $periphery)
-       $periphery))
-
 ;; Rest banks the budget instead of spending it. The skill can only post a
 ;; directive; only the loop can read how much life is actually left, so the
 ;; transfer happens here, at the end of the turn that asked to rest.
@@ -298,11 +290,7 @@
           ($withResults
             (coordinate-set last-results $feedback $paced))
           ($directed (loop-directives-apply $withResults))
-          ($waiting
-            (if (== (py-call (strategy_host.waiting_for_mailbox)) 1)
-                (coordinate-set rest-request 1 $directed)
-                $directed))
-          ($banked (applyRestBanking $waiting))
+          ($banked (applyRestBanking $directed))
           ($_ (loop-directives-clear))
           ($_ (py-call (helper.turn_commit_stage $providerSucceeded $historyReceipt (if $has-activity 1 0))))
           ;; A model/effect episode has exactly one committed successor.  The
@@ -331,11 +319,10 @@
           ($isHuman (eval (lastMessageIsHuman)))
           ($humanApplied
             (applyHumanActivity $decremented $hasActivity $isHuman))
-          ($peerApplied (applyPeerActivity $humanApplied $hasActivity $isHuman))
           ($now (get_time))
-          ($heartbeat (heartbeatDue $peerApplied $now))
+          ($heartbeat (heartbeatDue $humanApplied $now))
           ($heartbeatApplied
-            (applyHeartbeat $peerApplied $now $heartbeat))
+            (applyHeartbeat $humanApplied $now $heartbeat))
           ($autonomous
             (policy-autonomous-turn
               (loop-active-policy $heartbeatApplied)

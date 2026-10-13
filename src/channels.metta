@@ -16,7 +16,6 @@
 ;PeTTa requires for the specialization that follows to compile correctly:
 (= (initChannels)
    (progn (println! "Initializing channels")
-          (println! (py-call (mailbox_agent.start)))
           (configureChannel)
           (if (== (commchannel) telegram)
               (progn (configure TG_BOT_TOKEN "")

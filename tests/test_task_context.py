@@ -66,7 +66,7 @@ class TaskContextTests(unittest.TestCase):
     def test_correction_during_wait_survives_until_correlated_resumption(self):
         self.call([["read-file","contract"]],["earlier finding"])
         with self.store.transaction() as db:
-            db.execute("UPDATE requests SET status='waiting-mailbox' WHERE id='guide'")
+            db.execute("UPDATE requests SET status='waiting-user' WHERE id='guide'")
         self.store.accept("correction","Keep the source-inspection qualification.")
         task_context.begin(self.store,"correction","operator-event","guide")
         self.store.disposition("correction","addressed","retained the correction")

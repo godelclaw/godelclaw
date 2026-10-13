@@ -65,8 +65,7 @@ def ask(prompt):
             cwd=os.path.expanduser("~"),
         )
     except subprocess.TimeoutExpired:
-        return ("claude-code: timed out after 300s — ask a smaller question, "
-                "or leave a note in the mailbox for the interactive session")
+        return "claude-code: timed out after 300s — ask a smaller question"
     except OSError as exc:
         return "claude-code failed to launch: %s" % exc
     out = (r.stdout or "").strip()

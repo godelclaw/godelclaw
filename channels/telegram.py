@@ -2200,7 +2200,7 @@ def _runtime_id(value):
 
 
 def activity_source_ack(ids):
-    """Settle checkpointed input at its source; mailbox IDs are not Telegram IDs."""
+    """Settle checkpointed input at its source."""
     if isinstance(ids, str):
         values = [] if ids == "" else ids.split(",")
     elif isinstance(ids, (list, tuple)):
@@ -2209,15 +2209,11 @@ def activity_source_ack(ids):
         values = [ids]
     else:
         raise ValueError("invalid activity source batch")
-    import mailbox_agent
     import input_ack
-    mail, updates, runtime = [], [], []
+    updates, runtime = [], []
     # Validate the complete batch before granting any processing authority.
     for value in values:
-        if isinstance(value, str) and value.startswith("mailbox:"):
-            mailbox_agent.source_ticket(value,os.environ.get("METTACLAW_INSTANCE", ""))
-            if value not in mail: mail.append(value)
-        elif isinstance(value,str) and value.startswith("runtime:"):
+        if isinstance(value,str) and value.startswith("runtime:"):
             runtime.append(_runtime_id(value))
         else:
             updates.append(value)
@@ -2225,30 +2221,7 @@ def activity_source_ack(ids):
     if len(runtime) > 256:
         raise ValueError("runtime source batch exceeds its bound")
     if runtime and not input_ack.committed(runtime): return 0
-    if mail and not mailbox_agent.acknowledge(mail):
-        return 0
     return handover_ack(updates) if updates else 1
-
-
-def enqueue_mailbox_event(text, identity, sibling=None):
-    """Offer inert native data with a stable identity to the attention queue.
-    A sibling agent's note is peer input, not operator input, and its wakes
-    have already been admitted against the native mailbox's wake budget."""
-    import mailbox_agent
-    mailbox_agent.source_ticket(identity,os.environ.get("METTACLAW_INSTANCE", ""))
-    peer = bool(sibling)
-    wake = "sibling mail" if peer else "mailbox arrival"
-    if metta_client():
-        _metta_queue({"chat":RUNTIME_CHAT,"text":"[mailbox] "+str(text),"from_bot":peer,
-                      "tier":"light","update_id":identity,"wake":wake})
-    else:
-        global _activity_epoch
-        with _msg_lock:
-            _pending_messages.append((RUNTIME_CHAT,"[mailbox] "+str(text),peer,"light",identity))
-            _activity_epoch += 1
-    if wake:
-        _request_wake(wake)
-    return True
 
 
 def handover_ack(ids):

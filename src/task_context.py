@@ -50,7 +50,7 @@ def begin(store, request, trigger, previous=None, chat="", parent=None):
             prior = db.execute("SELECT status FROM requests WHERE id=?", (previous,)).fetchone()
             # A correction received while a task awaits a reply still belongs
             # to that task. Waiting prevents scheduling, not context retention.
-            if prior and (store.selectable(db, previous) or prior[0] in ("waiting-mailbox", "waiting-user")):
+            if prior and (store.selectable(db, previous) or prior[0] == "waiting-user"):
                 parent = previous
         if parent == request:
             parent = None
@@ -191,12 +191,9 @@ def projection(store, request, trigger="continuation-tick"):
             FROM requests r JOIN request_context c ON c.request=r.id
             WHERE r.id IN (""" + marks + ") ORDER BY r.rowid", members)]
         notes = [dict(r) for r in db.execute("SELECT * FROM task_notes WHERE request IN (" + marks + ") ORDER BY sequence", members)]
-        waits = []
-        if db.execute("SELECT 1 FROM sqlite_master WHERE name='task_mailbox_waits'").fetchone():
-            waits = [dict(r) for r in db.execute("SELECT * FROM task_mailbox_waits WHERE request IN (" + marks + ")",members)]
         pairs = _pairs(store, db, members)
     return dict(root=root, focus=request, trigger=str(trigger), requests=requests,
-                notes=notes, waits=waits, transcript=pairs, archive=None)
+                notes=notes, transcript=pairs, archive=None)
 
 
 def compact(view, byte_budget=None, *, measure=None):
@@ -216,7 +213,6 @@ def compact(view, byte_budget=None, *, measure=None):
         return dict(count=count, retrieve=["task-history", view["root"], 0]) if count else None
     # Prefer current request/ancestry, notes and live continuations. Completed
     # sibling conversations are recoverable but need not fill every next turn.
-    result["waits"] = [w for w in result["waits"] if w.get("state",w.get("status")) not in ("settled","cancelled")]
     if measure(encoded(result)) > budget // 2:
         originals = result["requests"]
         result["requests"] = [r for r in originals if r["id"] in (view["root"],view["focus"])]

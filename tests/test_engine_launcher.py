@@ -157,24 +157,19 @@ class EngineLauncherTests(unittest.TestCase):
             "export METTACLAW_TELEGRAM_CLIENT=metta\n"
             "export METTACLAW_TELEGRAM_BOT_TOKEN=configuration-token\n"
             "export TELEGRAM_BOT_TOKEN=configuration-token\n")
-        with (self.root / ".env").open("a") as stream:
-            stream.write("export METTACLAW_MAILBOX_CONFIG=/configuration/live-mailbox.json\n")
         (self.root / "utility.metta").write_text("")
         self._script(self.cetta,
             'printf "%s|%s|%s\\n" "$METTACLAW_TELEGRAM_SERVICE_SOCKET" '
             '"$METTACLAW_TELEGRAM_BOT_TOKEN" "$TELEGRAM_BOT_TOKEN"; '
-            'printf "client=%s\\n" "$METTACLAW_TELEGRAM_CLIENT"; '
-            'printf "mailbox=%s\\n" "$METTACLAW_MAILBOX_CONFIG"')
+            'printf "client=%s\\n" "$METTACLAW_TELEGRAM_CLIENT"')
         env = dict(self.env, METTACLAW_ENGINE="cetta")
         for key in ("METTACLAW_TELEGRAM_SERVICE_SOCKET", "METTACLAW_TELEGRAM_CLIENT", "METTACLAW_TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN"):
             env.pop(key, None)
-        env.pop("METTACLAW_MAILBOX_CONFIG",None)
         result = subprocess.run([str(self.root / "run.sh"), "utility.metta"], env=env,
                                 capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("\n||\n", "\n" + result.stdout)
         self.assertIn("client=python", result.stdout)
-        self.assertIn("mailbox=\n",result.stdout)
         env.update(METTACLAW_TELEGRAM_SERVICE_SOCKET="/fixture/channel.sock",
                    METTACLAW_TELEGRAM_BOT_TOKEN="fixture-token", METTACLAW_TELEGRAM_CLIENT="metta")
         result = subprocess.run([str(self.root / "run.sh"), "utility.metta"], env=env,

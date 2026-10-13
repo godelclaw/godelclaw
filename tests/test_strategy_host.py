@@ -47,7 +47,7 @@ class StrategyHostTest(unittest.TestCase):
         host._focus = "arrival"
         import task_context
         task_context.begin(store, "arrival", "operator-event", None, "room")
-        store.link_inputs("arrival", ["telegram-one", "mailbox:agent:peer-ticket"])
+        store.link_inputs("arrival", ["telegram-one", "telegram-two"])
         def status():
             with store.transaction() as db:
                 return db.execute("SELECT status FROM requests WHERE id='arrival'").fetchone()[0]
@@ -55,10 +55,8 @@ class StrategyHostTest(unittest.TestCase):
         with mock.patch.dict(sys.modules, {"telegram": channel}):
             host._close_answered_message(["send-telegram-chat", "room", "answer"], "sent message 1")
             self.assertEqual(status(), "active")
-            host._close_answered_message(["mailbox-reply", "peer-ticket", "answer"], "MAILED peer id=1")
-            self.assertEqual(status(), "active")
             with store.transaction() as db:
-                db.execute("DELETE FROM request_inputs WHERE input LIKE 'mailbox:%'")
+                db.execute("DELETE FROM request_inputs WHERE input='telegram-two'")
             host._close_answered_message(["send", "answer"], "sent message 2")
             self.assertEqual(status(), "active")
             host._close_answered_message(["send-telegram-chat", "room", "answer"], "sent message 3")
@@ -75,27 +73,6 @@ class StrategyHostTest(unittest.TestCase):
         with mock.patch.object(synthetic_llm,"_cached_observation",return_value={}), \
              mock.patch.object(synthetic_llm,"refresh_provider_observations_async"):
             self.assertIsNone(host.context_capacity(32768))
-
-    def test_correlated_reply_keeps_its_explicit_goal_parent(self):
-        import mailbox_agent, task_context
-        store=host.ledger()
-        store.accept("goal:review:1","review a topic")
-        with store.transaction() as db:
-            db.execute("UPDATE requests SET status='waiting-mailbox' WHERE id='goal:review:1'")
-        with mock.patch.object(mailbox_agent,"task_arrivals",return_value=[{"task":"goal:review:1","ticket":"review"}]):
-            host.begin(2,"channel-event","peer review")
-        self.assertEqual(task_context.projection(store,host._focus)["root"],"goal:review:1")
-
-    def test_answered_message_resolves_public_handle_before_closing_its_input(self):
-        import mailbox_agent
-        store=host.ledger()
-        store.accept("mail","work",kind="message")
-        store.link_inputs("mail",["mailbox:agent:internal-receive"])
-        host._focus="mail"
-        box=SimpleNamespace(ticket_for=lambda handle:"internal-receive" if handle=="public-message" else handle)
-        with mock.patch.object(mailbox_agent,"_runtime",box):
-            host._close_answered_message(["mailbox-reply","public-message","answer"],"MAILED peer message=answer state=published")
-        self.assertEqual(store.request_record("mail")["status"],"addressed")
 
     def test_real_receipt_callback_and_next_prepared_request(self):
         self.capture()

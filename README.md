@@ -158,7 +158,7 @@ sudo apt install build-essential git pkg-config python3-dev python3-venv \
 ```
 
 `python3 scripts/build_cetta.py` fetches the exact [CETTA_REF](CETTA_REF), builds
-the Python-enabled engine, native mailbox workers and durable Telegram service,
+the Python-enabled engine and durable Telegram service,
 and installs their libraries/tools together under `.runtime/cetta`. It also
 writes a revision and artifact manifest. `--source PATH` uses an existing
 checkout at that revision; `--prefix PATH` selects another destination.
@@ -347,141 +347,9 @@ continue while the foreground waits. See the
 [model request lifetime guide](docs/model-waits/README.md) for configuration,
 bounded late evidence, recovery and offline checks.
 
-### Native mailboxes
-
-[`mailbox_agent.py`](src/mailbox_agent.py) connects CeTTa's native named
-mailboxes to the agent's existing attention and checkpoint paths. Set
-`METTACLAW_MAILBOX_CONFIG` to an operator-owned JSON configuration:
-
-```json
-{
-  "version": 1,
-  "instance": "agent",
-  "socket": "/path/to/cetta-mailbox.sock",
-  "space": "agent-mailboxes",
-  "tools": "/path/to/installed-cetta/tools",
-  "worker": "/path/to/installed-cetta/cetta-value-worker",
-  "channels": {"inbox": "local", "codex-review": "codex"},
-  "auto_receive": ["inbox"],
-  "name": "agent",
-  "siblings": {"peer": "/path/to/peer/inbox"},
-  "max_active": 256,
-  "preview_chars": 32768,
-  "codex": {
-    "channel": "codex-review",
-    "transport_module": "/path/to/installed/codex-room",
-    "app_server_socket": "/path/to/codex/control.sock"
-  }
-}
-```
-
-The instance must match `METTACLAW_INSTANCE`, and durable agent checkpoints
-must be enabled. After initial setup, pin `storage_identity` to the native
-store UUID and space ID. Use an immutable worker and policy release: the
-mailbox records their fingerprint, the handler ABI and channel authorities.
-A changed fingerprint requires explicit migration. Folder locations can
-change independently of a logical channel. Writers to a configured folder
-hold its delivery capability; the sender label itself is not authentication.
-
-Start CeTTa's `tools/mailbox_bridge.py` separately for directory bindings.
-`tools/mailbox_post.py` accepts a body file or stdin and publishes a complete
-envelope with a fresh occurrence identity. Its configuration uses the same
-native socket, space and worker plus `bindings` entries with `name`, `sender`
-and `directory`. Persistent `inbox` reception wakes the agent for new messages.
-Raw bodies remain inert data, including text that looks like code.
-
-`(mailbox-send "name" "text")` publishes to a configured mailbox and returns
-one message handle with `state=published`. Structured headers carry the sender,
-return address and answered message identity; the body is ordinary text.
-Addresses come from `siblings`, optional `contacts`, or an optional shared
-`delivery_config` registry. Sender labels identify the writer; folder access
-controls delivery. Configured sibling mail has peer standing
-and leaves human reply routing unchanged. Peer arrivals wake cognition with
-the ordinary input burst, without hourly quotas or wake grants. They do not
-gain operator authority.
-
 Internal completion notices also carry occurrence IDs. New events with equal
 text remain distinct; replaying a checkpointed receipt does not wake cognition
 again. These IDs are settled locally rather than sent to Telegram.
-
-The watcher is armed at boot and retries initialization if the native service
-is unavailable. Recovery needs no subsequent skill call or model polling.
-This retry path emits diagnostic health state, never scheduler progress.
-
-For a question whose reply should continue the current task, use:
-
-```metta
-(mailbox-ask "peer" "Please review this page." "When the reply arrives, revise the page.")
-(mailbox-reply "received-message" "My review...")
-```
-
-`mailbox-ask` generates the matching identity, durably registers its receive
-and task note, then publishes the question. Immediate replies cannot overtake
-registration. Restart retains the receive and continuation without republishing
-the question. A failed publication cancels its receive; an unknown publication
-is reported and leaves the task runnable. The optional fourth argument supplies
-a stable ID: repeating it inspects the stored outcome and never sends again.
-Use a fresh ID for a new question. `mailbox-reply` follows the stored return
-address and correlation, including configured tooling/operator return routes.
-Reading, replying and cancelling accept the same message handle after restart
-or settlement. Old receive tickets and `From:` notes remain readable.
-
-The CLI accepts body files or stdin and constructs the envelope:
-
-```sh
-mailbox-post peer --body-file note.txt
-mailbox-post peer --from writer --reply-to writer --body-file note.txt
-```
-
-Identity defaults to the configured writer or Unix account. A configured writer
-mailbox supplies its return address automatically. `--id` supports intentional
-publication retries; `--in-reply-to` identifies an answered message. Published
-means the envelope was written; ready/settled means the requested reply arrived.
-Malformed JSON and unsupported direct file drops move to `rejected` with a
-`.reason` file explaining the error, posting command and accepted envelope.
-
-The low-level `(mailbox-wait "ticket" "channel" "correlation")` remains available. It
-registers and returns immediately. An optional fourth argument retains the
-continuation note with the task identity in that native commit. The local task
-waits until arrival or cancellation; restart repairs that scheduling projection
-from the native receive. On `inbox`, register the correlated wait first, then use
-`(mailbox-send "sibling" "request text" "correlation")`; ask the sibling to use
-`(mailbox-reply "received-ticket" "review text")` to preserve the sender and
-correlation automatically, including after restart or settlement. A paired
-wait/send parks only after the send has a success receipt; a failed or uncertain
-dispatch leaves the task runnable without retrying the effect. Exact waits are resolved before generic
-inbox admission. `(mailbox-codex "ticket" "thread-id"
-"turn-id")` records its subscription intention in the same batch, then
-listens through one App Server connection for the agent's active Codex waits.
-It starts no model turn and makes no idle transcript polls. Restart reconciles
-the terminal transcript. `(mailbox-status)` reports waits and watcher health;
-`(mailbox-read "ticket" offset count)` pages the reply; `(mailbox-cancel
-"ticket")` cancels an unmatched wait. A reply that wins the receive race stays
-ready. Tickets are never reused for different work.
-
-The configured App Server must own a followed room; another active writer
-can refuse subscription. Mailbox protocol modules are isolated from clients
-already loaded by recall or other providers, keeping their value classes intact.
-
-The native receive consumes the message and saves its continuation atomically
-within one physical space. The cognitive checkpoint is a separate commit in
-the existing agent ledger. Ready state stays retained until that checkpoint
-records `mailbox:instance:ticket`. A crash before it reoffers the input; a
-crash after it settles without another presentation. This does not establish
-exactly-once remote actions. Action receipts and budget reservation remain
-the existing command/provider layers' responsibilities. Completed bodies and
-identity receipts are retained; no unsafe automatic deletion is introduced.
-An acknowledgement failure returns pending status instead of escaping through
-the engine. The watcher later reconciles the durable checkpoint and settles
-the retained receive. Both Telegram client paths contain source failures.
-
-One native revision watcher serves the agent's waits; one optional Codex
-subscription thread serves all its Codex waits. These run outside the model
-turn. The current foreground model/tool episode still completes at its own
-attention boundary before the agent can reason about the newly queued input.
-An optional `health_path` publishes watcher diagnostics without advancing
-scheduler progress or acknowledging input.
-This integration does not qualify the experimental activity worker below.
 
 The experimental [`activity_worker.py`](src/activity_worker.py) adapter can
 serve CeTTa's independent durable activity host. Each captured model request
@@ -568,8 +436,7 @@ Python `re`; exotic pattern extensions can differ. Invalid patterns are searched
 literally in both backends. Writes replace files atomically, retain permissions,
 and return content hashes and collision-free backup paths. Exact edits require
 one occurrence, and append retains the existing bytes. `tmux-peek` includes
-scrollback. Peer mailbox
-messages use ordinary input wakes without a separate hourly quota.
+scrollback.
 
 Credential redaction, configured chat permissions, occurrence identities for
 message delivery, memory supervision, and the operator stop remain in place.
@@ -578,7 +445,7 @@ block new messages to that chat.
 
 Offline checks include real evaluator dispatch, failed reads followed by useful
 work, long-running shells, retained timeout output, timer restoration, prompt
-compaction, native provider protocols and native mailbox delivery:
+compaction and native provider protocols:
 
 ```sh
 python3 -m unittest discover -s tests -p 'test_command_dispatch.py'

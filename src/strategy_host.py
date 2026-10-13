@@ -127,15 +127,6 @@ def begin(turn, source, message):
             _message_focus = _focus
             store.accept(_focus, str(message), kind="message" if str(source) == "operator-event" else "notification")
             store.link_inputs(_focus, ids)
-            import mailbox_agent
-            arrivals = mailbox_agent.task_arrivals(ids)
-            if arrivals:
-                with store.transaction() as db:
-                    for arrival in arrivals:
-                        db.execute("UPDATE requests SET status='active' WHERE id=? AND status='waiting-mailbox'", (arrival["task"],))
-                        store.event(db,"task-resume",**arrival)
-                if len({a["task"] for a in arrivals}) == 1:
-                    resume_parent = arrivals[0]["task"]
         elif _focus is None:
             _focus = "autonomous"
             store.accept(_focus, "Ongoing autonomous work; rest and nop do not certify task completion.")
@@ -194,14 +185,6 @@ def context_capacity(output_tokens=32768):
 
 def conversation_mode():
     return "chat" if not enabled() or _context_trigger == "operator-event" else "task"
-
-
-def waiting_for_mailbox():
-    if not enabled() or not _focus:
-        return 0
-    with ledger().transaction() as db:
-        row = db.execute("SELECT status FROM requests WHERE id=?", (_focus,)).fetchone()
-    return int(bool(row and row[0] == "waiting-mailbox"))
 
 
 def task_read(identity, offset=0):
@@ -368,9 +351,9 @@ def _close_answered_message(command, result):
     if not command or not _focus:
         return
     name = command[0]
-    if name not in ("send", "send-telegram-chat", "mailbox-reply"):
+    if name not in ("send", "send-telegram-chat"):
         return
-    if not (result.startswith("sent message ") or result.startswith("MAILED ")):
+    if not result.startswith("sent message "):
         return
     store = ledger()
     with store.transaction() as db:
@@ -378,24 +361,14 @@ def _close_answered_message(command, result):
         if not row or row[0] not in ("message", "notification"):
             return
         inputs = [r[0] for r in db.execute("SELECT input FROM request_inputs WHERE request=?", (_focus,))]
-        if name == "mailbox-reply":
-            import mailbox_agent
-            box=mailbox_agent._runtime
-            ticket=box.ticket_for(command[1]) if box else command[1]
-            suffix = ":" + str(ticket)
-            if not inputs or not all(i.endswith(suffix) for i in inputs):
-                return
-        else:
-            # One reply cannot settle an arrival batch with unrelated work.
-            # The frame records one chat, not a destination for every input.
-            # Ambiguous batches retain their transcript and workflow status;
-            # this never withholds a command or requires a filing command.
-            if len(inputs) != 1 or inputs[0].startswith("mailbox:"):
-                return
-            import telegram
-            target = telegram._reply_target(command[1] if name == "send-telegram-chat" else "")
-            if not row[1] or str(target) != str(row[1]):
-                return
+        # One reply cannot settle an arrival batch with unrelated work.
+        # The frame records one chat, not a destination for every input.
+        if len(inputs) != 1:
+            return
+        import telegram
+        target = telegram._reply_target(command[1] if name == "send-telegram-chat" else "")
+        if not row[1] or str(target) != str(row[1]):
+            return
         db.execute("UPDATE requests SET status='addressed' WHERE id=? AND status IN ('active','processed')", (_focus,))
         store.event(db,"answer-delivered",request=_focus)
 
@@ -409,8 +382,6 @@ def broker_end(turn, records):
     if enabled() and str(turn) == _turn and _ticket:
         store=ledger()
         store.report(_ticket, str(records))
-        import mailbox_agent
-        mailbox_agent.finish_task_dispatch(store,_focus)
     return records
 
 
@@ -500,37 +471,17 @@ def request_read(request, offset):
     return strategy.encoded(ledger().request_record(str(request), int(offset))) if enabled() else "PROTECTED_STRATEGY_DISABLED"
 
 
-def _request_for_ticket(store, value):
-    """A mailbox ticket names the request formed from that one arrival."""
-    instance = os.environ.get("METTACLAW_INSTANCE", "")
-    identity = value if value.startswith("mailbox:") else "mailbox:%s:%s" % (instance, value)
-    matches = store.requests_with_input(identity)
-    if not matches:
-        return None, ("unknown ID %s: neither a request ID nor the mailbox ticket of a recorded "
-                      "request; (requests) lists request IDs" % value)
-    match = matches[-1]
-    if len(match["inputs"]) > 1:
-        return None, ("mailbox ticket %s arrived in request %s together with %d other input(s); a "
-                      "disposition applies to the whole request, so use that ID if you mean all of it"
-                      % (value, match["request"], len(match["inputs"]) - 1))
-    return match["request"], None
-
-
 def request_disposition(request, disposition, note):
     if not enabled():
         return "PROTECTED_STRATEGY_DISABLED"
     import helper
     store, request = ledger(), str(request)
-    target = request
     if store.request_record(request).get("status") == "unknown":
-        target, refusal = _request_for_ticket(store, request)
-        if target is None:
-            return "REQUEST_DISPOSITION_WITHHELD: " + refusal
+        return "REQUEST_DISPOSITION_WITHHELD: unknown ID %s; (requests) lists request IDs" % request
     try:
-        if store.disposition(target, str(disposition), helper.decode_safe_text(note)):
-            return "REQUEST_DISPOSITION_RECORDED" + (
-                "" if target == request else " for request %s (mailbox ticket %s)" % (target, request))
-        return "REQUEST_DISPOSITION_WITHHELD: %s (request %s)" % (store.refusal, target)
+        if store.disposition(request, str(disposition), helper.decode_safe_text(note)):
+            return "REQUEST_DISPOSITION_RECORDED"
+        return "REQUEST_DISPOSITION_WITHHELD: %s (request %s)" % (store.refusal, request)
     except (ValueError, TypeError) as error:
         return "REQUEST_DISPOSITION_WITHHELD " + str(error)
 

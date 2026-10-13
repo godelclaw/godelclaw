@@ -93,7 +93,7 @@ def context():
              '"telegram" addresses the private operator only; reading a group does not change it.',
              "Choose the destination explicitly for every group or thread reply.",
              "A sender, quoted sender and intended recipient are different people.",
-             "Sibling conversation belongs in its shared mailbox or explicit group route, not the operator's private chat.",
+             "Sibling conversation belongs in an explicit group route, not the operator's private chat.",
              "A send result means durably queued, not confirmed delivered.",
              "/mode, /model, /start and /stop are handled by the independent control responder."]
     if primary():
