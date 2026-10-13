@@ -24,6 +24,10 @@ class CommandDispatchEngineTest(unittest.TestCase):
 
     def _cetta_env(self):
         env = dict(os.environ)
+        # These direct launches bypass run.sh, which normally selects the
+        # CeTTa backends. Otherwise the test silently exercises SWI adapters.
+        env["METTACLAW_ENGINE"] = "cetta"
+        env["METTACLAW_ACTIVE_ENGINE"] = "cetta"
         # PeTTa's lib_llm builds an OpenAI client when it is imported, and a
         # client without a key raises, which ends the program. No request is
         # made here, so any key will do.
