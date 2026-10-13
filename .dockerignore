@@ -1,0 +1,24 @@
+# Ship reusable source only, excluding local identities, state and credentials.
+*
+!Dockerfile
+!CETTA_REF
+!run.sh
+!modes/
+!modes/**
+!scripts/
+!scripts/build_cetta.py
+!src/
+!src/**
+!channels/
+!channels/**
+!lib_mettaclaw.metta
+!lib_nal.metta
+!lib_nal7.metta
+!config/
+!config/default.toml
+!config/secrets.env.example
+**/__pycache__/
+**/*.pyc
+**/*.log
+**/*.sqlite*
+**/.env*

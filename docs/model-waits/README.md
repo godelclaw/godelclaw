@@ -8,14 +8,15 @@ that handle. Other clients' completions stay in the native worker.
 `llm:wait-once plan state milliseconds` support nonblocking callers. A bounded
 wait returns the original pending value when no terminal answer is available.
 `llm:run` is the foreground policy: it continues waiting for that same call.
-The independent control responder and read-only topic workers remain runnable.
-This does not add an autonomous second foreground tool loop.
+The independent control responder remains runnable. The unused background
+model execution and adoption paths have been removed; retained results can
+still be read without starting another foreground tool loop.
 
-Ordinary input queues without preempting a decision. Explicit steering and
-changes to captured authority block adoption; returned evidence stays queryable
-through `model-jobs` and `model-result`. Tools and outgoing messages still pass
-through the existing observed strategy broker. Transport progress, heartbeats
-and partial JSON never authorize an action.
+Ordinary input queues for the next decision. Complete model output is executed
+in order; changes to goals, source code or history do not cancel its calls.
+An explicit stop interrupts unexecuted work. Historical background results stay
+queryable through `model-jobs` and `model-result`; transport progress, heartbeats
+and partial JSON are not complete model output.
 
 Configure the nonsecret settings in `config/local.toml` under `[agent]`, using
 `scripts/config_ctl.py set agent.<setting> <value>`. The launcher regenerates
@@ -50,10 +51,9 @@ Compatible servers may close directly after the exact `[DONE]` sentinel;
 that terminal marker need not have a trailing SSE blank line. A preceding
 validated finish is still required, and JSON events truncated at EOF are refused.
 
-The call journal records submission authority before networking, then the
+The call journal records the request identity before networking, then the
 handle, soft-wait and byte observations, terminal evidence and precise failure
-reason. One foreground call is admitted at a time; background capacity and
-budgets retain their existing limits. Routine recycling and pausing wait for
+reason. Routine recycling and pausing wait for
 an admitted call to settle. The independent `/stop` still blocks effects at
 the broker boundary. A forcibly terminated process leaves an uncertain
 receipt with unknown remote outcome and unknown actual billing; its token

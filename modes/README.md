@@ -9,7 +9,7 @@ Python transport, preserving each core's command-text or structured-call protoco
 Start with the [project README](../README.md) for installation and the
 [service guide](../systemd/README.md) for supervised deployment. This guide
 describes the mode interfaces, pinned sources, compatibility adapters and
-verification scope on `feature/native-llm-boundary-20261004`.
+verification scope on `main`.
 
 ## Standalone terminal launches
 
@@ -110,7 +110,7 @@ supplies the current routes on every provider request. Reading a group cannot
 redirect a default send.
 
 Mode sends first record a keyed durable intent. The independent responder submits
-it to the transport, which returns delivery receipts and holds uncertain lanes.
+it to the transport, which returns delivery receipts and retains unknown outcomes without replay.
 Submission acceptance is not delivery success. The service command format includes
 the required `plain` field. Model selection is reloaded from agent-wide persisted
 state before each provider request, including in an already-running process.
@@ -233,10 +233,11 @@ operator-controlled storage outside the published source tree.
 | Iter | `patham9/iter` `f4064d97849ecaccac7939315a3f1a68de15c3ef` |
 | Omega | `singnet/Omega` `ee0618a293ec3662a32b10b09c6cbb073f59d6b2` |
 | Omega reference evaluator | PeTTa v1.0.4 `7037f4c2ad378c52fc328004fe216d5118b674f0` |
-| CeTTa qualification | `godelclaw/CeTTa` [`9a535530`](https://github.com/godelclaw/CeTTa/commit/9a5355309c57d94e99e5a279e088b69cbe4486d8), branch `qualify/upstream-core-tests-20260930`, with `src/library_proc.c` text-boundary support |
+| Current CeTTa runtime | [CETTA_REF](../CETTA_REF), published on [cetta-ours](https://github.com/godelclaw/CeTTa/tree/cetta-ours); the installer builds this engine and its services together |
+| Original CeTTa core qualification | `godelclaw/CeTTa` [`9a535530`](https://github.com/godelclaw/CeTTa/commit/9a5355309c57d94e99e5a279e088b69cbe4486d8), branch `qualify/upstream-core-tests-20260930`, with `src/library_proc.c` text-boundary support |
 | Lean models | `godelclaw/MeTTapedia` [`a4dafeb37`](https://github.com/godelclaw/MeTTapedia/commit/a4dafeb37243a9f8546fede9561321a2348077a5), `lean/pettaclaw/`, branch `pettaclaw/upstream-cores-20260930` |
 | Offline core implementation | `modes/iter/`, `modes/omega/` and `modes/conformance/` in this repository |
-| Production mode integration | Branch `integration/upstream-modes-20260930` |
+| Production mode integration | Runtime `main` |
 
 The per-mode `upstream-manifest.json` lists **every tracked upstream file**, its
 classification, whether it was vendored, and its digest or exclusion reason.

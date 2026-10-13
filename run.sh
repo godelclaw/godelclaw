@@ -155,9 +155,21 @@ esac
 export METTACLAW_ENGINE="$SELECTED_ENGINE"
 export METTACLAW_ACTIVE_ENGINE="$SELECTED_ENGINE"
 
+python_site_paths=""
 if [ -d "$PETTA_PY_ENV" ]; then
     export LD_LIBRARY_PATH="$PETTA_PY_ENV/lib:${LD_LIBRARY_PATH:-}"
-    export PYTHONHOME="$PETTA_PY_ENV"
+    if [ -f "$PETTA_PY_ENV/pyvenv.cfg" ]; then
+        # Embedded CPython needs the base stdlib and the venv's dependencies.
+        # A venv alone is not a valid PYTHONHOME.
+        mapfile -t python_layout < <(env -u PYTHONHOME -u PYTHONPATH \
+            "$PETTA_PY_ENV/bin/python3" -c \
+            'import sys,site,os; print(sys.base_prefix); print(os.pathsep.join(site.getsitepackages()))')
+        export PYTHONHOME="${python_layout[0]}"
+        python_site_paths="${python_layout[1]}"
+        export LD_LIBRARY_PATH="$PYTHONHOME/lib:$LD_LIBRARY_PATH"
+    else
+        export PYTHONHOME="$PETTA_PY_ENV"
+    fi
     export PYTHONNOUSERSITE=1
     # Keep PATH in sync with PYTHONHOME: a bare `python3` (e.g. from a shell
     # skill or subprocess) must resolve to THIS env's interpreter, or it loads
@@ -173,7 +185,7 @@ fi
 # Keep py-call module resolution local and reproducible. Explicitly include the
 # checked-out semantic-memory bridge so both engines resolve it the same way.
 # Do not inherit an external PYTHONPATH, which would mix venvs again.
-export PYTHONPATH="$ROOT/src:$ROOT/channels:$ROOT/repos/petta_lib_chromadb"
+export PYTHONPATH="$ROOT/src:$ROOT/channels:$ROOT/repos/petta_lib_chromadb${python_site_paths:+:$python_site_paths}"
 
 export SYNTHETIC_MODEL="${SYNTHETIC_MODEL:-syn:large:text}"
 export METTACLAW_CHROMA_DIR="${METTACLAW_CHROMA_DIR:-$ROOT/chroma_db}"
@@ -314,7 +326,7 @@ fi
 # at query time. This subprocess reports to the service journal, not the model
 # prompt. It attempts catch-up only at dangerous drift and reports measured
 # before/after state. It remains non-fatal so diagnostics cannot prevent boot.
-PYTHONPATH="$ROOT/src:$ROOT/repos/petta_lib_chromadb" \
+PYTHONPATH="$ROOT/src:$ROOT/repos/petta_lib_chromadb${python_site_paths:+:$python_site_paths}" \
     "$PETTA_PY_ENV/bin/python3" "$ROOT/src/memory_health.py" 2>&1 || true
 
 case "$METTACLAW_ENGINE" in

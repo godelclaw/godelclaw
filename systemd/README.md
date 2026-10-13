@@ -4,7 +4,7 @@ The templates in this directory separate the cognitive loop, Telegram transport,
 operator controls and optional execution gateway. Each has its own lifetime;
 restarting cognition need not disconnect the operator channel.
 
-These instructions describe `integration/upstream-modes-20260930`. Begin with
+These instructions describe the runtime on `main`. Begin with
 the [project setup](../README.md#get-started). The durable Telegram service also
 needs a built CeTTa service host and its configured `channel` application root;
 this repository supplies the client, command definitions and launch wrapper,
@@ -26,7 +26,7 @@ Repeat the layout with a different name for another instance.
 | Private sockets | systemd's user runtime directory, `cetta-telegram-research/client.sock` and `operator.sock` |
 
 `%h`, `%i`, `%t` and `%S` are systemd specifiers. The `pettaclaw` filenames are
-retained interface names; the project is MeTTaClaw. If your checkout lives
+retained interface names; the project is GödelClaw. If your checkout lives
 elsewhere, adapt the unit's `WorkingDirectory` and `ExecStart` together.
 
 Initialize with the same instance name that the services will use:
@@ -150,14 +150,14 @@ Follow three boundaries when checking recovery:
    configured rest or quota cooldown from repeated failed admission. A fresh
    completed provider turn is evidence beyond `active (running)`.
 3. Input: unacknowledged input survives restart and is incorporated into the
-   next prepared request. Input arriving after preparation must withhold stale
-   effects and remain pending for reconsideration. Successful history recording
+   next prepared request. Input arriving after preparation stays queued for the
+   next turn; an explicit stop interrupts unexecuted work. Successful history recording
    acknowledges only the input actually prepared for that turn.
 
 The same-process `tests/input_batch_refresh_probe.metta` checks preparation
 across a failed turn and retains later input after acknowledgement. Its queue
 and acknowledgement model is in `verification/InputBatch.lean`. The independent
-channel integration fixture exercises restart, controls and stale-input guards.
+channel integration fixture exercises restart, controls and retained input.
 Run these with disposable state and a local mock channel; they do not require
 contacting a production bot.
 

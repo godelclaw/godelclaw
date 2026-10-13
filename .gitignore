@@ -58,3 +58,7 @@ kb/
 !/modes/omega/upstream/memory/prompt.txt
 !/modes/omega/upstream/memory/prompt_ASICloud.txt
 !/modes/omega/upstream/memory/prompt_OpenRouter.txt
+
+# Local pinned-engine build and bundle.
+/.build/
+/.runtime/

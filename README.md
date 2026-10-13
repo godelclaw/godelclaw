@@ -1,8 +1,8 @@
-# MeTTaClaw
+# GödelClaw
 
 <img width="362" alt="MeTTaClaw" src="https://github.com/user-attachments/assets/197d745f-1562-4d31-88c2-b813a56ccbf1" />
 
-MeTTaClaw is an extensible agent framework written in MeTTa. It combines
+GödelClaw is an extensible agent framework written in MeTTa. It combines
 cognitive loops, tool use, communication channels and persistent memory. You
 can run your own instance, choose its identity and model, and extend its tools
 without tying the framework to a particular bot or operator.
@@ -12,9 +12,10 @@ whose compact agent core was inspired by Nanobot. It adds CeTTa execution,
 selectable Iter and Omega loops, independent channel controls, and an optional
 execution gateway.
 
-**Branch:** this guide describes `feature/native-llm-boundary-20261004`.
-[`main`](https://github.com/godelclaw/mettaclaw/tree/main) contains the earlier
-framework; use the branch in the installation command below for these modes.
+`main` is the tested, shareable runtime. The matching CeTTa source is pinned
+in [CETTA_REF](CETTA_REF) and published on
+[godelclaw/CeTTa, branch cetta-ours](https://github.com/godelclaw/CeTTa/tree/cetta-ours).
+The installer and container build read that same pin.
 
 [Get started](#get-started) · [Modes](#choose-a-cognitive-mode) ·
 [Service setup](systemd/README.md) · [Mode internals and verification](modes/README.md) ·
@@ -29,10 +30,10 @@ Use a Python environment matching the Python version linked into CeTTa
 (`BUILD=python`); virtual environments are supported.
 
 ```sh
-git clone --branch feature/native-llm-boundary-20261004 \
-  https://github.com/godelclaw/mettaclaw.git
-cd mettaclaw
-export CETTA_BIN=/path/to/python-enabled-cetta/cetta
+git clone https://github.com/godelclaw/godelclaw.git
+cd godelclaw
+python3 scripts/build_cetta.py
+export CETTA_BIN="$PWD/.runtime/cetta/cetta"
 python3 -m pip install -r modes/iter/requirements.txt
 ./run.sh --mode iter
 ```
@@ -64,6 +65,26 @@ for scope, supported providers and verification.
 
 ## Choose a cognitive mode
 
+### Container quick start
+
+The container bundles the same pinned CeTTa engine and services. Its terminal
+entrypoint runs Iter or Omega core, as described above, under an unprivileged
+account. Supply your provider configuration at runtime and retain state on a
+volume:
+
+```sh
+docker build -t godelclaw .
+docker run --rm -it --env-file provider.env -v godelclaw-state:/state godelclaw iter
+docker run --rm -it --env-file provider.env -v omega-state:/state godelclaw omega
+```
+
+For Iter, `provider.env` contains `LLM_MODEL`, `BASE_URL` and `AI_API_KEY`.
+For Omega, use its `OMEGA_*` settings and the selected provider's key, shown
+above. Each mode retains separate state. Pass `--state-dir /state/another-agent`
+after the mode name for another identity. Credentials and live state are outside
+the image. The framework's Telegram deployment uses the [service setup](systemd/README.md)
+and full runtime dependencies; the terminal container does not start it.
+
 A **mode** selects the agent's loop; a **model** selects its LLM; an **engine**
 selects the MeTTa evaluator. These are independent choices.
 
@@ -88,74 +109,6 @@ mode's files without merging its history into another mode.
 
 See the [mode guide](modes/README.md) for upstream pins, provider differences,
 compatibility aliases, conformance results and the adapter ledger.
-
-Managed `godelclaw` and `coding` also use a protected request ledger. Accepted
-inputs, action reservations and correlated results survive prompt compaction,
-interruptions, restart and mode changes. Request preparation applies Iter's
-ordered transformations, then attaches protected work and result projections.
-The broker checks captured permissions and current input/control revisions
-before acting. A result is included before the next dependent model decision.
-Managed batches have no action-count ceiling. The host runs an ordered prefix:
-independent observations and declared independent effects may proceed together;
-a dependent effect waits for observation, and a failed or withheld call stops
-the remaining prefix. Current contracts cover disjoint file writes, separately
-addressed sends, and registering a reply wait before sending its correlated
-request. Unclassified dependencies require a new observation. A script remains
-one host operation. Timed command continuations return for reconsideration.
-
-The same ledger now supplies `TASK_CONTEXT`: the originating request,
-interruptions, ordered call/result pairs, agent notes, unresolved proposals and
-mailbox waits. Every proposed command has an explicit disposition. New human
-input selects conversation from the relevant chat; continuation and peer turns
-emphasize task evidence. Addressing an interruption resumes its open parent.
-`task-note` retains interpretations and source IDs; `task-resolve` records a
-reasoned decision about an unexecuted call without replaying it or certifying
-success. `task-history` and `task-read` recover earlier evidence in pages.
-
-When provider metadata (or `METTACLAW_CONTEXT_WINDOW_TOKENS`) supplies the actual
-window, preparation reserves the requested output and uses UTF-8 bytes as a
-conservative token estimate. Complete pairs become explicit digest-bearing
-references as necessary; larger task frames remain retrievable. Compaction is
-only a projection: the journal survives restart unchanged. An unknown window
-uses a recoverable task index while provider metadata refreshes in the background;
-it is not replaced by an invented model limit. Notes and successful tool returns
-do not establish that arbitrary prose claims are true.
-
-Set `agent.observed_strategy = false` to use the legacy managed host. Standalone
-Iter/Omega retain their pinned loops. Existing provider budgets and interruptible
-cooldowns remain in force. `nop`, rest and provider prose never establish task
-completion in the protected ledger. Completion needs an observed successful
-receipt and an operator-registered task checker; exact-output checkers and
-explicit operator confirmation are available through `scripts/strategy_ctl.py`.
-Natural-language task acceptance and the truth of prose remain host obligations.
-An interrupted effect without a saved result stays uncertain and requires
-reconciliation; it is not automatically repeated.
-
-Input processing has its own lifecycle: a successful turn, durable history and
-durable handover mark a message processed without certifying its requested work.
-Agents can retain explicit tasks, wait for the user, defer, address or reopen
-work with `request-disposition`; goals retain their checked completion rules.
-The working prompt shows eight active headlines and counts. `request-page` and
-`request-read` retrieve retained records beyond that view. See the
-[request workflow and compact context guide](docs/model-waits/README.md#request-workflow-and-compact-context).
-
-The independent Telegram control responder can acknowledge operator messages
-while cognition is waiting. `agent.input_ack_seconds` sets the delay (15 seconds
-by default; zero disables it). Notices leave the input pending and use stable
-delivery identities to avoid repeated delivery after responder restarts. They
-are limited to one notice per lane per minute and require the managed strategy.
-Confirmed notices are removed after the corresponding input has a successful
-turn and durable history acknowledgement. Failed turns leave the notice in
-place. Cleanup persists the service's correlated delivery ID before
-acknowledging it; it never guesses an ID or deletes a user message.
-
-Managed input uses `agent.input_policy = "cooperative"` by default. Ordinary
-messages queue for the next foreground turn boundary and do not invalidate
-an already drafted answer. `/steer ...` queues an explicit correction and
-invalidates unexecuted decisions; `/stop` uses the independent lifecycle
-responder. Suspended work stays in the ledger. `"legacy"` restores arrival
-freshness. `/activity` remains available without waiting for a provider and
-reports both foreground work and retained background jobs.
 
 The task transcript carries the originating request, later input, ordered tool
 calls and their results. A continued task keeps its earlier evidence across
@@ -196,20 +149,31 @@ without prematurely firing a later timer.
 
 ## Get started
 
-You need Python 3.11+, [SWI-Prolog](https://www.swi-prolog.org/) and a working
-[PeTTa checkout](https://github.com/trueagi-io/PeTTa) with its Python bridge.
-Install this repository's Python dependencies in the environment that bridge
-uses. For CeTTa execution, also provide a built
-[CeTTa](https://github.com/godelclaw/CeTTa) with `--lang petta` and its matching
-`lib/` directory. The [qualified revisions](modes/README.md#pins-and-review-locations)
-record the versions used for the mode checks.
+For CeTTa, install Python 3.11+, GCC, Make, `pkg-config`, Python development
+headers, GMP, libcurl and [SWI-Prolog](https://www.swi-prolog.org/). On Ubuntu:
+
+```sh
+sudo apt install build-essential git pkg-config python3-dev python3-venv \
+  libgmp-dev libcurl4-openssl-dev swi-prolog-nox
+```
+
+`python3 scripts/build_cetta.py` fetches the exact [CETTA_REF](CETTA_REF), builds
+the Python-enabled engine, native mailbox workers and durable Telegram service,
+and installs their libraries/tools together under `.runtime/cetta`. It also
+writes a revision and artifact manifest. `--source PATH` uses an existing
+checkout at that revision; `--prefix PATH` selects another destination.
+`--ref COMMIT` is an explicit choice to build a different revision.
+
+The optional [PeTTa engine](https://github.com/trueagi-io/PeTTa) needs its own
+checkout and Python bridge. [Mode details](modes/README.md) describe scope and
+upstream pins.
 
 ### 1. Clone and initialize
 
 ```sh
-git clone --branch feature/native-llm-boundary-20261004 \
-  https://github.com/godelclaw/mettaclaw.git
-cd mettaclaw
+git clone https://github.com/godelclaw/godelclaw.git
+cd godelclaw
+python3 scripts/build_cetta.py
 ./initialize.sh
 ```
 
@@ -243,8 +207,13 @@ absent from the default configuration and credential fields are rejected;
 credentials stay in `config/secrets.env`. Direct TOML edits can be validated
 with `check` and applied to the generated file with `render`.
 
-Set `paths.petta_root`, `paths.petta_py_env` and, if used, `paths.cetta_root` to
-your installations. The default provider adapter uses an OpenAI-compatible
+For CeTTa, set `paths.cetta_root` to the generated `.runtime/cetta` bundle,
+`paths.petta_py_env` to a matching Python environment, and start with
+`METTACLAW_ENGINE=cetta`. A standard venv works: create it with the Python
+version recorded in the bundle's manifest, install dependencies there, and
+set `paths.petta_py_env` to that venv. The launcher supplies its dependencies
+alongside the base standard library for embedded Python.
+For the optional PeTTa engine, also set `paths.petta_root`. The default provider adapter uses an OpenAI-compatible
 endpoint via `agent.synthetic_base_url`, `agent.synthetic_model` and
 `SYNTHETIC_API_KEY`. The Anthropic adapter uses `ANTHROPIC_API_KEY`; its selectable
 model list can be supplied through `ANTHROPIC_MODELS`.
@@ -259,9 +228,8 @@ Configuration, credentials, conversations and runtime state are ignored by Git.
 Keep each instance's files separate. Public prompts and examples belong in the
 source tree only when they are intended for reuse.
 
-The managed default prompt combines Iter's attention to unresolved requests
-with Omega's goal and memory discipline, using the managed runtime's
-observe-before-deciding policy. It contains no operator identity, chat IDs,
+The framework default prompt combines Iter's attention to ongoing work
+with Omega's goal and memory discipline. It contains no operator identity, chat IDs,
 credentials or deployment paths. Initialization preserves an existing private
 prompt unless explicitly forced. The pinned standalone Iter/Omega prompts
 remain unchanged; their own protocols and pacing belong to those modes.
@@ -277,7 +245,7 @@ set -a
 . ./.env
 set +a
 "$PETTA_PY_ENV/bin/python3" -m pip install -r requirements.txt
-./run.sh smoketest.metta
+METTACLAW_ENGINE=cetta ./run.sh smoketest.metta
 ```
 
 The smoke check imports the library and exits without starting the cognitive
@@ -290,7 +258,7 @@ run. Embedding-backed memory needs additional configuration; see
 For the default framework loop, launch from your configured checkout:
 
 ```sh
-./run.sh
+METTACLAW_ENGINE=cetta ./run.sh
 ```
 
 For Iter/Omega, set up the durable channel and independent command responder

@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+import venv
 
 
 SOURCE_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -107,6 +108,25 @@ class EngineLauncherTests(unittest.TestCase):
 
     def result_lines(self):
         return self.result.read_text(encoding="utf-8").splitlines()
+
+    def test_real_venv_keeps_base_stdlib_and_local_dependencies(self):
+        target = self.base / "venv"
+        venv.EnvBuilder(with_pip=False).create(target)
+        site = subprocess.check_output(
+            [str(target / "bin/python3"), "-c",
+             "import site; print(site.getsitepackages()[0])"], text=True).strip()
+        pathlib.Path(site, "launcher_venv_marker.py").write_text(
+            "value = 'venv-dependency'\n")
+        self._script(self.cetta,
+            'python3 -c "import encodings,launcher_venv_marker; print(launcher_venv_marker.value)"')
+        self.select("cetta")
+        (self.root / "venv-check.metta").write_text("")
+        result = subprocess.run(
+            [str(self.root / "run.sh"), "venv-check.metta"],
+            env=dict(self.env, PETTA_PY_ENV=str(target), METTACLAW_ENGINE="cetta"), capture_output=True,
+            text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("venv-dependency", result.stdout)
 
     def test_absent_selection_uses_stable_petta_default(self):
         result = self.launch(CETTA_REQUEST_RECYCLE=1)
