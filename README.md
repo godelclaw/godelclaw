@@ -1,6 +1,6 @@
 # GödelClaw
 
-<img width="362" alt="MeTTaClaw" src="https://github.com/user-attachments/assets/197d745f-1562-4d31-88c2-b813a56ccbf1" />
+<img width="900" alt="GödelClaw — Proof-Guided Recursive Agency" src="assets/godelclaw-banner.png" />
 
 GödelClaw is an extensible agent framework written in MeTTa. It combines
 cognitive loops, tool use, communication channels and persistent memory. You
