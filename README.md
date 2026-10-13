@@ -430,9 +430,14 @@ Reasoning uses the provider default unless the agent or instance selects an
 explicit effort. The stable prompt prefix requests caching on providers that
 support it; measured usage reports actual cache hits, not an assumed guarantee.
 
-Shell defaults to 120 seconds. `(shell "command" 600)` changes the deadline for
-that call; zero means no deadline. Timeout results retain partial stdout and
-stderr. `read-lines` preserves complete lines and defaults to 2,000 lines.
+Shell uses MeTTa over CeTTa's native process library on CeTTa; SWI-PeTTa retains
+its Prolog process backend. The default is 120 seconds. `(shell "command" 600)`
+changes the deadline for that call; zero means no deadline. Native timeouts kill
+the process group and retain partial output. Standard output and error share
+one file, with complete capture by default. Background descendants do not delay
+a finished shell's return. Native progress updates keep long calls visible to
+the service watchdog without Python process polling.
+`read-lines` preserves complete lines and defaults to 2,000 lines.
 `read-file` uses CeTTa's native file library on CeTTa and a Python I/O adapter
 on SWI-PeTTa. Both use the same MeTTa presentation, preserve complete file
 contents (including long lines and NULs), replace malformed UTF-8, and distinguish

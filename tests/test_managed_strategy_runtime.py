@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ManagedRuntimeTest(unittest.TestCase):
-    def exercise(self, fixture, marker, expected_commands, expected_deferred=None, *, environment=None):
+    def exercise(self, fixture, marker, expected_commands, expected_deferred=None, *, environment=None, expected_count=18):
         engines = []
         if Path(os.environ.get("CETTA_BIN", "")).is_file():
             engines.append("cetta")
@@ -42,7 +42,7 @@ class ManagedRuntimeTest(unittest.TestCase):
                 executed = [r for r in receipts if "command" in r]
                 deferred = [r for r in receipts if "commands" in r]
                 if expected_commands is None:
-                    self.assertEqual(len(executed),18)
+                    self.assertEqual(len(executed),expected_count)
                     continue
                 self.assertEqual([r["command"] for r in executed],
                                  [str(command) for command in expected_commands])
@@ -52,6 +52,9 @@ class ManagedRuntimeTest(unittest.TestCase):
 
     def test_task_history_and_failure_boundary_on_available_engines(self):
         self.exercise("tests/task_context_probe.metta", "TASK_CONTEXT_OK", None)
+
+    def test_real_shells_and_timeout_do_not_drop_following_commands(self):
+        self.exercise("tests/sequential_tools_probe.metta", "SEQUENTIAL_TOOLS_OK", None, expected_count=10)
 
     def test_batch_envelope_and_precise_feedback_on_available_engines(self):
         self.exercise("tests/command_feedback_probe.metta", "COMMAND_FEEDBACK_OK",

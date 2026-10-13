@@ -91,9 +91,10 @@
 (= (gateway-cancel $id) (py-call (gateway_bridge.cancel $id)))
 
 !(import! &self ./src/file_io)
+!(import! &self ./src/shell_io)
 
 !(import_prolog_functions_from_file ./src/skills.pl
-                                    (shell first_char run-command-batch-once command-batch-errors))
+                                    (first_char run-command-batch-once command-batch-errors))
 
 (= (metta $str)
    (let $code (sread $str)

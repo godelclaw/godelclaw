@@ -1,0 +1,36 @@
+; Shell execution and progress observation use only native CeTTa libraries.
+!(import! &self (library shell))
+!(import! &self (library str))
+!(import! &self (library path))
+
+(= (shell-io:number $value)
+   (if (== (get-type $value) Number)
+       $value
+       (str:string->number $value)))
+(= (shell-io:join $parts) (str:join "" $parts))
+(= (shell-io:progress-path)
+   (let* (($explicit (system:getenv-or-default "METTACLAW_PROGRESS_PATH" ""))
+          ($state (system:getenv-or-default "METTACLAW_ENGINE_STATE_PATH" "")))
+     (if (== $explicit "")
+       (if (== $state "") ""
+           (path:join (path:dirname $state) "progress.json"))
+       $explicit)))
+
+(= (shell $command)
+   (shell $command (system:getenv-or-default "METTACLAW_SHELL_TIMEOUT_SECONDS" "120")))
+(= (shell $command $seconds)
+   (let* (($timeout (shell-io:number $seconds))
+          ($result (shell:run $command $timeout 0 (shell-io:progress-path))))
+     (shell-io:present $timeout $result)))
+(= (shell-io:present $seconds $result)
+   (case $result
+     (((proc:exited 0 $out $_)
+       (if (== (str:byte-length $out) 0) "SHELL_OK_NO_OUTPUT (exit 0)" $out))
+      ((proc:exited $code $out $_)
+       (shell-io:join ("SHELL_ERROR exit " (str:number->string $code) "\n" $out)))
+      ((proc:timed-out $out $_)
+       (shell-io:join ("SHELL_TIMEOUT after " (str:number->string $seconds) " seconds\n" $out)))
+      ((proc:signaled $signal $out $_)
+       (shell-io:join ("SHELL_ERROR signal " (str:number->string $signal) "\n" $out)))
+      ((proc:failed $reason) (shell-io:join ("SHELL_ERROR " $reason)))
+      ($other $other))))
