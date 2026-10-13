@@ -183,8 +183,9 @@ the unused background execution and adoption machinery has been removed.
 
 The agent chooses its next goal. `(goal-retire "name" "reason")` records retirement
 separately from achievement and preserves it across restart. A delivered answer
-settles the corresponding arrival automatically and resumes its waiting parent;
+settles an unambiguously corresponding arrival automatically and resumes its waiting parent;
 this is conversation workflow, not proof that the underlying task was achieved.
+Replies do not settle unrelated arrivals combined in the same request.
 
 `(rest 60 (shell "printf ready"))` schedules the command without a model call.
 The quoted form `(rest 60 (quote (shell "printf ready")))` remains accepted.

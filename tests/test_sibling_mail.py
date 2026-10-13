@@ -36,10 +36,18 @@ class SendTest(unittest.TestCase):
         self.assertTrue(receipt.startswith("MAILED lila id="), receipt)
         [path] = list(self.inbox.glob("*.json"))
         envelope = json.loads(path.read_text())
+        self.assertIn("correlation=" + envelope["correlation"], receipt)
+        self.assertEqual(envelope["correlation"], envelope["id"])
         # The receiving bridge requires its binding's sender; the name is in the body.
         self.assertEqual(envelope["sender"], "local")
         self.assertEqual(envelope["body"], "From: godel\n\nhello\nsister")
         self.assertEqual(mailbox_agent._from.match(envelope["body"]).group(1), "godel")
+
+    def test_receipt_names_explicit_reply_correlation(self):
+        receipt = mailbox_agent.send("lila", "review", "review-one")
+        [path] = list(self.inbox.glob("*.json"))
+        self.assertEqual(json.loads(path.read_text())["correlation"], "review-one")
+        self.assertIn("correlation=review-one", receipt)
 
     def test_only_configured_siblings_and_bounded_notes(self):
         self.assertTrue(mailbox_agent.send("stranger", "hi").startswith("MAILBOX_SEND_REFUSED"))

@@ -120,12 +120,13 @@ def send(to, text, correlation=""):
     if not text.strip() or len(text) > SEND_CHARS:
         return "MAILBOX_SEND_REFUSED: a note needs 1 to %d characters" % SEND_CHARS
     identity = uuid.uuid4().hex
+    correlation = str(correlation) or identity
     try:
-        _tool(config,"mailbox_bridge").deliver(siblings[to], identity, str(correlation) or identity, "local",
+        _tool(config,"mailbox_bridge").deliver(siblings[to], identity, correlation, "local",
                                                "From: %s\n\n%s" % (_own_name(config), text))
     except OSError as error:
         return "MAILBOX_SEND_FAILED: %s" % error
-    return "MAILED %s id=%s chars=%d" % (to, identity, len(text))
+    return "MAILED %s id=%s correlation=%s chars=%d" % (to, identity, correlation, len(text))
 
 
 

@@ -377,12 +377,21 @@ def _close_answered_message(command, result):
         row = db.execute("SELECT c.kind,f.chat FROM request_context c LEFT JOIN task_frames f ON f.request=c.request WHERE c.request=?", (_focus,)).fetchone()
         if not row or row[0] not in ("message", "notification"):
             return
-        if name == "send-telegram-chat" and str(command[1]) != str(row[1]):
-            return
+        inputs = [r[0] for r in db.execute("SELECT input FROM request_inputs WHERE request=?", (_focus,))]
         if name == "mailbox-reply":
             suffix = ":" + str(command[1])
-            inputs = [r[0] for r in db.execute("SELECT input FROM request_inputs WHERE request=?", (_focus,))]
             if not inputs or not all(i.endswith(suffix) for i in inputs):
+                return
+        else:
+            # One reply cannot settle an arrival batch with unrelated work.
+            # The frame records one chat, not a destination for every input.
+            # Ambiguous batches retain their transcript and workflow status;
+            # this never withholds a command or requires a filing command.
+            if len(inputs) != 1 or inputs[0].startswith("mailbox:"):
+                return
+            import telegram
+            target = telegram._reply_target(command[1] if name == "send-telegram-chat" else "")
+            if not row[1] or str(target) != str(row[1]):
                 return
         db.execute("UPDATE requests SET status='addressed' WHERE id=? AND status IN ('active','processed')", (_focus,))
         store.event(db,"answer-delivered",request=_focus)

@@ -41,6 +41,29 @@ class StrategyHostTest(unittest.TestCase):
         self.assertEqual(host.capture(prompt, 60), 1)
         return prompt
 
+    def test_answer_status_preserves_other_arrivals_and_chat_destinations(self):
+        store = host.ledger()
+        store.accept("arrival", "work", kind="message")
+        host._focus = "arrival"
+        import task_context
+        task_context.begin(store, "arrival", "operator-event", None, "room")
+        store.link_inputs("arrival", ["telegram-one", "mailbox:agent:peer-ticket"])
+        def status():
+            with store.transaction() as db:
+                return db.execute("SELECT status FROM requests WHERE id='arrival'").fetchone()[0]
+        channel = SimpleNamespace(_reply_target=lambda chat="": chat or "primary")
+        with mock.patch.dict(sys.modules, {"telegram": channel}):
+            host._close_answered_message(["send-telegram-chat", "room", "answer"], "sent message 1")
+            self.assertEqual(status(), "active")
+            host._close_answered_message(["mailbox-reply", "peer-ticket", "answer"], "MAILED peer id=1")
+            self.assertEqual(status(), "active")
+            with store.transaction() as db:
+                db.execute("DELETE FROM request_inputs WHERE input LIKE 'mailbox:%'")
+            host._close_answered_message(["send", "answer"], "sent message 2")
+            self.assertEqual(status(), "active")
+            host._close_answered_message(["send-telegram-chat", "room", "answer"], "sent message 3")
+            self.assertEqual(status(), "addressed")
+
     def test_selected_provider_window_is_used_without_inventing_a_limit(self):
         import synthetic_llm
         def cached(kind):
