@@ -1,7 +1,7 @@
 !(import! &self mailbox)
 !(import! &self system)
 !(import! &self str)
-!(import! &self lib_prolog)
+!(import! &self (library io))
 (= (mail:socket) (system:getenv-or-default "METTACLAW_MAIL_SOCKET" ""))
 (= (mail:space) (system:getenv-or-default "METTACLAW_MAIL_SPACE" "agent-mail"))
 (= (mail:name) (system:getenv-or-default "METTACLAW_MAIL_NAME" ""))
@@ -72,8 +72,11 @@
                 ($error (mail:pause $milliseconds))))))
           ($error (mail:pause $milliseconds)))))
      ()))
-; CeTTa's native Prolog boundary invokes the existing OS sleep primitive.
 ; A disconnected store must not turn the ordinary idle interval into a spin.
 (= (mail:pause $milliseconds)
-   (let $seconds (/ $milliseconds 1000.0)
-     (prolog:query (quote (sleep $seconds)) (quote slept))))
+   (let (io:pending $id) (io:submit (timer:after $milliseconds))
+     (mail:pause-await $id $milliseconds)))
+(= (mail:pause-await $id $milliseconds)
+   (case (io:wait $id $milliseconds)
+     (((io:idle) (mail:pause-await $id $milliseconds))
+      ($result ()))))

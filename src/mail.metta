@@ -1,8 +1,7 @@
 ; The launcher selects an engine. Mail itself is MeTTa/CeTTa only.
-!(import_prolog_function getenv)
-!(import_prolog_function string_length)
+!(import! &self ./src/engine_modes.py)
 (= (mail:cetta?)
-   (case (getenv "METTACLAW_ACTIVE_ENGINE")
+   (case (py-call (engine_modes.active_engine))
      (("cetta" True) (cetta True) ($other False))))
 !(if (mail:cetta?) (import! &self ./src/mail_cetta) (import! &self ./src/mail_unavailable))
 (= (mail-send $to $body) (mail:send $to $body))

@@ -467,6 +467,11 @@ one file, with complete capture by default. Background descendants do not delay
 a finished shell's return. Native progress updates keep long calls visible to
 the service watchdog without Python process polling.
 `read-lines` preserves complete lines and defaults to 2,000 lines.
+CeTTa dispatches each command in MeTTa, in emitted order, retaining one result
+per command and continuing after ordinary tool errors. Retrying the same turn
+returns its cached results without repeating effects. The separate SWI-PeTTa
+backend keeps its existing dispatcher. CeTTa clocks, strings and timer-based
+pauses use native libraries, including the mailbox's disconnected-store pause.
 `read-file` uses CeTTa's native file library on CeTTa and a Python I/O adapter
 on SWI-PeTTa. Both use the same MeTTa presentation, preserve complete file
 contents (including long lines and NULs), replace malformed UTF-8, and distinguish

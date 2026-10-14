@@ -7,4 +7,4 @@
 (= (mail:reset) ())
 (= (mail:idle-wait $milliseconds) ())
 (= (mail:enabled?) False)
-(= (mail:empty? $text) (== (string_length $text) 0))
+(= (mail:empty? $text) (== $text ""))

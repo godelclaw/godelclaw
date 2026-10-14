@@ -97,8 +97,6 @@
 !(import! &self ./src/shell_io)
 !(import! &self ./src/hierarchical_memory)
 
-!(import_prolog_functions_from_file ./src/skills.pl
-                                    (first_char run-command-batch-once command-batch-errors))
 
 (= (metta $str)
    (let $code (sread $str)
@@ -139,7 +137,7 @@
                                    (quote no-continuation))
                (RESTING budget-banked sleep-interval-seconds $n))))
 
-(= (rest-command $seconds (quote $continuation))
+(= (rest-command $seconds $continuation)
    ;; The opaque constructor keeps the command inert when it is read from the
    ;; generic coordinate store.  The wait adapter is the sole consumer that
    ;; unwraps it after the timer expires.
@@ -284,3 +282,4 @@
 (= (context-policy) (py-call (context_budget.policy)))
 (= (context-policy $tokens) (py-call (context_budget.policy $tokens)))
 !(import! &self ./src/context_budget.py)
+!(import! &self ./src/command_dispatch)
