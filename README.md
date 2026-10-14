@@ -141,6 +141,9 @@ replacement for semantic retrieval.
 maintain agent-authored views. Summary freshness compares source, membership
 and child-summary revisions; it does not certify prose accuracy. Old node
 versions remain accessible through `(memory-original "id" revision)`.
+`(memory-retire "id" ["reason"])` removes a node from recall and prompt context
+while retaining its original versions. Capture and restart preserve retirement;
+an explicit `memory-node` with an active kind restores it.
 `(memory-focus "id" depth)` persists a context focus and expansion default;
 an empty ID follows the current task. `(memory-window characters)` changes the
 prompt excerpt size (default 8000 characters, zero unlimited). Excerpts name
@@ -156,6 +159,27 @@ SQLite task records are preserved and remain available through the existing
 task-history/read commands; this package starts native capture rather than
 backfilling them. Metadata snapshots and literal search scan their current
 scope; large-corpus indexing is separate work.
+
+Native semantic memory exposes stable IDs, revisions, timestamps, distances and
+text through `(query "phrase" [count])`. Count defaults to `maxRecallItems`;
+zero asks for all records. `(memory-read "id")`, `(memory-edit "id" "text")`
+and `(forget "id" ["reason"])` let an agent refine its own collection.
+`memory-history` retains previous documents and intentions. Forgetting removes
+the active record and cancels queued replacements; late embedding results cannot
+recreate it. An explicit edit can restore that ID.
+
+Remember and edit save a native write intent before asking the embedding daemon.
+`MemoryQueued` means retained but not yet indexed. Native HTTP completions and
+retry timers participate in the existing idle wait, with no model polling or
+settlement commands. `(memory-pending)` inspects status; `(memory-retry)` retries
+now. `METTACLAW_MEMORY_RETRY_SECONDS` defaults to 30 and
+`METTACLAW_MEMORY_EMBED_TIMEOUT_SECONDS` to 180; both are adjustable. There is no
+retry-count limit. `(memory-health)` exercises embedding and actual retrieval.
+The configured native collection and original IDs stay in place, independent of
+migration report files. SWI-PeTTa keeps the existing embedding adapter and
+ID-based read/forget controls; native edit/history/retry storage requires CeTTa.
+Chroma rollback mirrors are marked stale after native
+changes rather than presented as current copies.
 
 The dispatcher executes emitted commands in order and records a result for each.
 A failed read, unknown tool, changed goal, new message, or bookkeeping update does

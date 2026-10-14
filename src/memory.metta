@@ -37,12 +37,20 @@
 (= (appendToHistory $addition)
    (py-call (helper.history_append (swrite $addition))))
 
-;; Guarded: a dead embed daemon returns an instructive string result
-;; ("do not infer absence") instead of a generic command error.
-(= (remember $str)
+; The native path owns memory controls and durable write retries in MeTTa.
+; The older SWI-PeTTa adapter remains available without a second new policy.
+!(if (file-io:cetta? (py-call (engine_modes.active_engine)))
+     (import! &self ./src/semantic_memory_cetta)
+     (import! &self ./src/semantic_memory_legacy))
+
+(= (legacy-remember $str)
    (let $memory (py-call (helper.decode_safe_text $str))
         (py-call (qwen_embed.remember_guarded (string-safe $memory) (get_time_as_string)))))
 
-(= (query $str)
+(= (legacy-query $str $count)
    (let $query (py-call (helper.decode_safe_text $str))
-        (py-call (qwen_embed.query_guarded (string-safe $query) (maxRecallItems)))))
+        (py-call (qwen_embed.query_guarded (string-safe $query) $count))))
+
+(= (remember $str) (semantic:remember $str))
+(= (query $str) (query $str (maxRecallItems)))
+(= (query $str $count) (semantic:query $str $count))

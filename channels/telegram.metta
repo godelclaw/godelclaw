@@ -856,6 +856,7 @@
           ($_ (idle:finish $subscriptions)))
      (if (== $result idle:waiting) (tg:rest-loop $deadline $seconds $enabled) $result)))
 (= (tg:rest-check $deadline $seconds $enabled $milliseconds)
+   (let $_ (if $enabled (semantic:maintain) True)
    (if (== (py-call (helper.recycle_requested)) 1) "recycle requested"
    (if (and $enabled (mail:pending?)) "woken by mail"
    (if (and $enabled (jobs:pending?)) "woken by job"
@@ -865,7 +866,7 @@
      (let $reason (tg:get wake-reason "")
        (if (not (== $reason "")) (format-args "woken by {}" ($reason))
          (if (>= (tg:now) $deadline) (format-args "rested {}s" ($seconds))
-           idle:waiting))))))))))
+           idle:waiting)))))))))))
 
 ;; ----------------------------------------------------------------- send
 

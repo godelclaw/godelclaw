@@ -15,7 +15,10 @@ ARITY = {
     "command-receipts": (0, 1), "topics": (0, 0), "topic-select": (1, 1),
     "topic-note": (1, 1),  "model-jobs": (0, 0),
     "model-result": (1, 1),
-    "remember": (1, 1), "query": (1, 1), "pin": (1, 1), "unpin": (1, 1), "pins": (0, 0),
+    "remember": (1, 1), "query": (1, 2), "forget": (1, 2),
+    "memory-edit": (2, 2), "memory-read": (1, 1), "memory-history": (1, 1),
+    "memory-pending": (0, 0), "memory-retry": (0, 0), "memory-retire": (1, 2),
+    "pin": (1, 1), "unpin": (1, 1), "pins": (0, 0),
     "goals": (0, 0), "goal-write": (1, 1), "goal-drop": (2, 2),
     "rest": (0, 2),
     "nop": (0, 0),
@@ -48,6 +51,17 @@ ARITY = {
 }
 
 PAGES = {
+    "remember": ('usage: (remember "text")\n'
+                 'Native mode stores the write intent first and returns MemoryQueued with its ID.\n'
+                 'The existing daemon embeds it asynchronously; retries and restart recovery are automatic.\n'
+                 'MemoryQueued means durably retained, not yet searchable. memory-read shows its current state.'),
+    "memory-edit": 'usage: (memory-edit "id" "replacement text")\nRevise semantic memory under the same ID and re-embed it. Earlier versions remain in memory-history; the write survives an embedding outage.',
+    "forget": 'usage: (forget "id" ["reason"])\nRemove semantic memory from retrieval and cancel its queued edits. Late embeddings cannot recreate it. History remains accessible; memory-edit can deliberately restore this ID.',
+    "memory-read": 'usage: (memory-read "id")\nRead the current semantic record and any queued replacement without embedding a query.',
+    "memory-history": 'usage: (memory-history "id")\nRead retained semantic revisions and write/forget intentions. This is separate from hierarchical memory-original.',
+    "memory-pending": 'usage: (memory-pending)\nInspect durable embedding writes, attempts, next retry time and last error. No settlement chore is required.',
+    "memory-retry": 'usage: (memory-retry)\nStart pending semantic writes now. Normal background retries already run during idle waits and survive restart.',
+    "memory-retire": 'usage: (memory-retire "hierarchical-id" ["reason"])\nRetire a hierarchical node from search and prompt context, preserving originals. Capture and restart do not reactivate it; memory-node with an active kind deliberately does.',
     "memory-node": ('usage: (memory-node "id" kind "title" "text" [children] [sources])\n'
                     'Native CeTTa memory: episode, task, topic or project are conventional kinds.\n'
                     'Children and sources are expression lists, e.g. ("child-id").\n'
@@ -184,10 +198,11 @@ PAGES = {
         'operator /delete fast path. Claim completion only after the returned\n'
         'delete receipt.'),
     "query": (
-        'usage: (query "short phrase")\n'
-        'Embedding search over long-term memory. EMBED_DAEMON_DOWN means the\n'
-        'memory service is unreachable — it does NOT mean nothing is stored.\n'
-        'Report it once and move on; do not retry-storm.'),
+        'usage: (query "phrase" [count])\n'
+        'Semantic results include stable IDs, revisions, timestamps, distance and text.\n'
+        'Count defaults to maxRecallItems; native mode accepts 0 for all records.\n'
+        'Unindexed reports queued writes. MemoryUnavailable means retrieval failed, not that memories are absent.'),
+    "memory-health": 'usage: (memory-health)\nRun the actual embedding and native retrieval path, returning structural health without memory text. An empty working collection is healthy.',
     "energy": (
         'usage: (energy)  |  (energy-set "default|Name|id" "full|mid|light")\n'
         'How many loops a sender\'s message arms: full=50 mid=30 light=10.\n'

@@ -306,7 +306,8 @@
 ;; The policy process computes freely.  Only this wrapper converts its result
 ;; to the kernel's success/failure vocabulary.
 (= (enabledTurnCandidate $periphery)
-   (let* (($iteration (loop-iteration $periphery))
+   (let* (($_ (semantic:maintain))
+          ($iteration (loop-iteration $periphery))
           ($selected (py-call (loop_modes.process_mode)))
           ($selectedPeriphery
             (coordinate-set active-policy $selected

@@ -4,6 +4,9 @@
     "- Send native peer mail: (mail-send \"name\" \"text\"). Incoming mail enters a turn automatically; reply with mail-send. (mail-receive) checks now. CeTTa only."
     "- Remember a particular string such as skills and memories: (remember \"string\")"
     "- Query long-term embedding memory for skills and memories with short phrases only: (query \"short phrase\")"
+    "- Refine your semantic memories by their query IDs: (memory-read \"id\"), (memory-edit \"id\" \"text\"), (forget \"id\" [\"reason\"]); earlier text stays in (memory-history \"id\")"
+    "- Native remember/edit writes are retained before embedding; (memory-pending) inspects automatic retry status and (memory-retry) retries now"
+    "- Retire a hierarchical memory from recall: (memory-retire \"id\" [\"reason\"]); memory-node with an active kind restores it"
     "- Hierarchical memory (CeTTa): (memory-open \"id\" [depth]) expands summaries to sources; (memory-find \"phrase\" [\"root\"]) also searches original episodes."
     "- Write a task/topic/project node: (memory-node \"id\" kind \"title\" \"text\" [children] [sources]); link it with (memory-link \"parent\" \"child\"); retain an interpretation with (memory-summary \"id\" \"text\")."
     "- Recover an old version: (memory-original \"id\" revision). (memory-focus \"id\" [depth]) selects prompt context; empty id follows the active task. (memory-window characters) changes its excerpt size; 0 is unlimited. Turns are captured automatically."
@@ -53,7 +56,7 @@
     "- Search the web using Tavily API: (search-tavily \"string\")"
     "- Search the web using DuckDuckGo HTML: (search-ddg \"string\")"
     ;LLM API:
-    "- Check your embedding memory's health — how far the on-disk index trails your writes: (memory-health)"
+    "- Check your actual embedding and retrieval path: (memory-health)"
     "- Attempt memory-index catch-up and report measured before/after drift: (memory-compact)"
     "- Check your LLM API budget — model in use, credits left, rate window: (llm-quota)"
     "- List the LLM models you can use: (llm-models)"
@@ -242,7 +245,7 @@
    (py-call (sibling.sibling_off (py-call (helper.decode_safe_text $reason)))))
 
 ;; LLM API introspection (synthetic.new): budget, model list, session model switch.
-(= (memory-health) (py-call (memory_health.report)))
+(= (memory-health) (semantic:health))
 (= (memory-compact) (py-call (memory_health.compact)))
 (= (llm-quota) (py-call (synthetic_llm.quota)))
 (= (llm-models) (py-call (synthetic_llm.models)))

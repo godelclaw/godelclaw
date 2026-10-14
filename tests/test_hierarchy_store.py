@@ -210,6 +210,30 @@ class HierarchyTests(unittest.TestCase):
    (HOriginal "e" 2 episode "Evidence" "corrected" () ()))
 ''', checks=2)
 
+    def test_retirement_excludes_recall_and_survives_capture_and_restart(self):
+        self.run_metta(self.seed() + '''
+!(hm:summarize (sock) (store) "p" "Project summary")
+!(hm:retire (sock) (store) "t" "obsolete interpretation")
+!(expect inactive (hm:context (sock) (store) "t") (HInactive "t" "obsolete interpretation"))
+!(expect hidden (hm:search (sock) (store) "Original objective" "") ())
+!(expect evidence (hm:history (sock) (store) "t" 1)
+   (HOriginal "t" 1 task "Task" "Original objective" ("e") ()))
+!(case (hm:context (sock) (store) "p")
+   (((HContext "p" $r $k $title (HOverview stale $text $refs) ()) (println! (OK parent-stale)))
+    ($other (println! (FAIL parent-stale $other)))))
+!(hm:record (sock) (store) "p" "t" "later" "later turn" "input" "later evidence")
+!(expect remains-inactive (hm:context (sock) (store) "t") (HInactive "t" "obsolete interpretation"))
+''', checks=5)
+        self.stop(); self.start()
+        self.run_metta('''
+!(expect restart-inactive (hm:context (sock) (store) "t") (HInactive "t" "obsolete interpretation"))
+!(expect restart-hidden (hm:search (sock) (store) "Original objective" "") ())
+!(hm:put (sock) (store) "t" task "Task" "chosen revision" ("e") ())
+!(case (hm:context (sock) (store) "t")
+   (((HContext "t" $r task $title $overview $children) (println! (OK reactivated)))
+    ($other (println! (FAIL reactivated $other)))))
+''', checks=3)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

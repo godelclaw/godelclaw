@@ -9,6 +9,8 @@
 (= (memory-node $id $kind $title $body $children $sources) "HIERARCHY_UNAVAILABLE: select CeTTa")
 (= (memory-link $parent $child) "HIERARCHY_UNAVAILABLE: select CeTTa")
 (= (memory-summary $id $text) "HIERARCHY_UNAVAILABLE: select CeTTa")
+(= (memory-retire $id) "HIERARCHY_UNAVAILABLE: select CeTTa")
+(= (memory-retire $id $reason) "HIERARCHY_UNAVAILABLE: select CeTTa")
 (= (memory-find $phrase) "HIERARCHY_UNAVAILABLE: select CeTTa")
 (= (memory-find $phrase $root) "HIERARCHY_UNAVAILABLE: select CeTTa")
 (= (memory-original $id $revision) "HIERARCHY_UNAVAILABLE: select CeTTa")

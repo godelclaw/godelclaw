@@ -133,7 +133,7 @@ def query_guarded(text, k):
             return DAEMON_DOWN_QUERY
         raise
     import lib_chromadb
-    return lib_chromadb.query(embedding, k)
+    return lib_chromadb.query_with_ids(embedding, k)
 
 
 def remember_guarded(text, timestamp):
