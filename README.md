@@ -128,6 +128,35 @@ turns and restarts. New chat input adds conversation context; continued work
 emphasizes the task history. `(task-history "task-id")`, `(task-read "record-id"
 0)` and `(request-read "request-id" 0)` recover original evidence.
 
+CeTTa also provides hierarchical memory in MeTTa over native named spaces.
+Committed turns are linked automatically to their existing task identity and
+the configured project. `(memory-open "id" 2)` expands a project or topic
+through its children to original episodes. `(memory-find "phrase" "root")`
+performs literal search across original bodies as well as summaries. Existing
+embedding recall remains available through `query`; literal search is not a
+replacement for semantic retrieval.
+
+`(memory-node "id" topic "Title" "Text" ("child-id"))`,
+`(memory-link "parent" "child")` and `(memory-summary "id" "Interpretation")`
+maintain agent-authored views. Summary freshness compares source, membership
+and child-summary revisions; it does not certify prose accuracy. Old node
+versions remain accessible through `(memory-original "id" revision)`.
+`(memory-focus "id" depth)` persists a context focus and expansion default;
+an empty ID follows the current task. `(memory-window characters)` changes the
+prompt excerpt size (default 8000 characters, zero unlimited). Excerpts name
+their recovery command. Both settings survive restart.
+
+`METTACLAW_HIERARCHY_SOCKET` defaults to the native mail socket, and
+`METTACLAW_HIERARCHY_SPACE` defaults to a separate per-instance memory space.
+`METTACLAW_MEMORY_PROJECT` defaults to `runtime`. No new daemon, automatic
+model call, command gate, or Python memory implementation is added. The initial
+qualification is for CeTTa's PeTTa language lane. SWI-PeTTa reports the native
+hierarchy unavailable; its existing memory tools are retained. Historical
+SQLite task records are preserved and remain available through the existing
+task-history/read commands; this package starts native capture rather than
+backfilling them. Metadata snapshots and literal search scan their current
+scope; large-corpus indexing is separate work.
+
 The dispatcher executes emitted commands in order and records a result for each.
 A failed read, unknown tool, changed goal, new message, or bookkeeping update does
 not discard later commands. `/stop` interrupts unexecuted work. The model chooses

@@ -17,13 +17,16 @@
    (py-call (effect_frontier.begin $turn)))
 
 (= (addition-strategy-begin $turn $source $message)
-   (py-call (strategy_host.begin $turn $source $message)))
+   (let $receipt (py-call (strategy_host.begin $turn $source $message))
+     (let $_ (hierarchy:begin $turn $source (py-call (strategy_host.view))) $receipt)))
 
 (= (addition-protected-request $request)
-   (py-call (strategy_host.prepare $request)))
+   (addition-protected-request $request 32768))
 
 (= (addition-protected-request $request $tokens)
-   (py-call (strategy_host.prepare $request $tokens)))
+   (let $context (hierarchy:context)
+     (if (== $context "") (py-call (strategy_host.prepare $request $tokens))
+       (py-call (strategy_host.prepare (hierarchy:append-context $request $context) $tokens)))))
 
 (= (addition-prepare-request
       $selected $legacy $system $activity $advertised)

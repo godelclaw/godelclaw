@@ -293,6 +293,10 @@
           ($banked (applyRestBanking $directed))
           ($_ (loop-directives-clear))
           ($_ (py-call (helper.turn_commit_stage $providerSucceeded $historyReceipt (if $has-activity 1 0))))
+          ($_ (if (and (and (== $providerSucceeded 1) (== $historyReceipt 1))
+                       (or $has-activity (or (not (== $sexpr ())) (not (== $undelivered "")))))
+                  (hierarchy:record $iteration $source $message $response (quote $commandResults))
+                  True))
           ;; A model/effect episode has exactly one committed successor.  The
           ;; final cut prevents a bridge predicate's residual choice point
           ;; from replaying the same pure candidate after effects completed.
@@ -396,6 +400,8 @@
           ($_ (py-call (strategy_host.broker_end $actual (quote $records))))
           ($results (CONTINUATION_RESULTS: $records))
           ($_ (println! $results))
+          ($_ (hierarchy:begin $turn timed-continuation (py-call (strategy_host.view))))
+          ($_ (hierarchy:record $turn timed-continuation "" (quote $continuation) (quote $records)))
           ($_ (py-call (helper.rest_finish))))
      (coordinate-set pending-continuation no-continuation
        (coordinate-set loops 2

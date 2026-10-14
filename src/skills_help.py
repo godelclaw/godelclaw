@@ -6,6 +6,9 @@ turn that asks for it, and the checker answers format questions for free
 
 # skill -> (min_args, max_args). None = variadic tail.
 ARITY = {
+    "memory-node": (4, 6), "memory-link": (2, 2), "memory-summary": (2, 2),
+    "memory-open": (1, 2), "memory-find": (1, 2), "memory-original": (2, 2),
+    "memory-focus": (1, 2), "memory-window": (1, 1),
     "task-read": (1, 2), "task-history": (1, 2), "task-note": (1, 2),
     "requests": (0, 0), "request-status": (1, 1), "request-focus": (1, 1),
     "request-page": (1, 1), "request-read": (2, 2), "request-disposition": (3, 3),
@@ -45,6 +48,21 @@ ARITY = {
 }
 
 PAGES = {
+    "memory-node": ('usage: (memory-node "id" kind "title" "text" [children] [sources])\n'
+                    'Native CeTTa memory: episode, task, topic or project are conventional kinds.\n'
+                    'Children and sources are expression lists, e.g. ("child-id").\n'
+                    'Omitted lists are empty; this replaces current membership. Earlier versions stay readable.'),
+    "memory-open": ('usage: (memory-open "id" [depth])\n'
+                    'Expand current memory and its original bodies. Depth defaults to 1 and is adjustable.\n'
+                    'Depth 0 shows this node and child IDs. Fresh/stale describes source revisions, not text accuracy.'),
+    "memory-summary": ('usage: (memory-summary "id" "text")\n'
+                       'Save your interpretation with the current source/membership revisions.\n'
+                       'Original episodes remain available. No extra model call is made.'),
+    "memory-link": 'usage: (memory-link "parent" "child")\nLink existing nodes; repeated links are harmless. Cycles and missing sources return explicit errors.',
+    "memory-find": 'usage: (memory-find "phrase" ["root"])\nLiteral search across titles, summaries and full original bodies. Empty root searches all current nodes; this is not vector search.',
+    "memory-original": 'usage: (memory-original "id" revision)\nRead the exact retained body and metadata at that version.',
+    "memory-focus": 'usage: (memory-focus "id" [depth])\nPersist prompt focus and the default expansion depth. Empty ID follows the active task; interruptions do not erase it.',
+    "memory-window": 'usage: (memory-window characters)\nSet the prompt excerpt size, default 8000 characters, 0 unlimited. This does not limit stored memory or memory-open.',
     "mail-send": ('usage: (mail-send "name" "text" ["stable-id"])\n'
                   'Native CeTTa mail, delivered automatically as peer input.\n'
                   'Reply with mail-send. Reusing an ID with the same content is a duplicate;\n'

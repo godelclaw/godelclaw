@@ -4,6 +4,9 @@
     "- Send native peer mail: (mail-send \"name\" \"text\"). Incoming mail enters a turn automatically; reply with mail-send. (mail-receive) checks now. CeTTa only."
     "- Remember a particular string such as skills and memories: (remember \"string\")"
     "- Query long-term embedding memory for skills and memories with short phrases only: (query \"short phrase\")"
+    "- Hierarchical memory (CeTTa): (memory-open \"id\" [depth]) expands summaries to sources; (memory-find \"phrase\" [\"root\"]) also searches original episodes."
+    "- Write a task/topic/project node: (memory-node \"id\" kind \"title\" \"text\" [children] [sources]); link it with (memory-link \"parent\" \"child\"); retain an interpretation with (memory-summary \"id\" \"text\")."
+    "- Recover an old version: (memory-original \"id\" revision). (memory-focus \"id\" [depth]) selects prompt context; empty id follows the active task. (memory-window characters) changes its excerpt size; 0 is unlimited. Turns are captured automatically."
     "- Pin a working-memory line — persists across restarts, shown every turn under PINNED, cap 12: (pin \"string\")"
     "- Remove pins containing a fragment: (unpin \"fragment\")"
     "- Goal stack + mood (kernel decays STI, consolidates LTI, flags stuck/cull-review at each wake): (goals)"
@@ -92,6 +95,7 @@
 
 !(import! &self ./src/file_io)
 !(import! &self ./src/shell_io)
+!(import! &self ./src/hierarchical_memory)
 
 !(import_prolog_functions_from_file ./src/skills.pl
                                     (first_char run-command-batch-once command-batch-errors))
