@@ -337,6 +337,14 @@ mode or inspecting health does not wait for a cognitive turn. Message adapters
 retain sender, chat, thread, reply and forwarding metadata. Group destinations
 are explicit; reading a group message does not change the default send target.
 
+For direct bot conversations, enable BotFather's bot-to-bot mode on both bots
+and declare the other bot's numeric ID with the native service's `--peer ID`.
+That one declaration permits the private chat and wakes the client when the
+peer writes, without granting operator commands. The startup adapter maps
+`METTACLAW_TELEGRAM_WAKE_IDS` to these declarations. Native clients use the
+service's routing and delivery receipts rather than a second destination
+allowlist.
+
 CeTTa's [durable MeTTa/rho service host](https://github.com/godelclaw/CeTTa/blob/9a5355309c57d94e99e5a279e088b69cbe4486d8/docs/durable/README.md)
 records inputs, proposed effects and delivery receipts at its commit boundary.
 The channel clients use its CWP socket protocol. Accepting a send request is

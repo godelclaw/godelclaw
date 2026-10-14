@@ -138,6 +138,7 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
     temp = pathlib.Path(temp)
     token = temp / "token"; token.write_text(TOKEN); token.chmod(0o600)
     state = temp / "service"; state.mkdir(mode=0o700)
+    bot_peer = 77
     path = temp / "telegram.sock"
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
     listener.bind(str(path)); listener.listen(16); path.chmod(0o600)
@@ -170,6 +171,7 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
         service = subprocess.Popen([SERVICE, "--run", "--root", str(CETTA_ROOT), "--state-dir", str(state),
                                     "--worker", "lila", "--chat", str(CHAT), "--chat", str(GROUP),
                                     "--operator", str(OPERATOR), "--program", "channel",
+                                    "--peer", str(bot_peer),
                                     "--commands", str(ROOT / "channels" / "telegram_commands.metta"),
                                     "--command-deadline-ms", "3000",
                                     "--credential-file", str(token), "--mock-origin", origin,
@@ -590,6 +592,29 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
             assert all(data["chat_id"] == GROUP for name, data in api.calls
                        if name == "deleteMessage" and data["message_id"] == target)
             print("group notice survives visible reply and restart; exact durable acknowledgement clears it")
+
+            # The service declares the peer once. The client's old allowlist
+            # deliberately omits it: sending and waking use the service grant.
+            # Peer input stays bot input and does not become a human command.
+            peer_out = temp / "peer-activity.txt"
+            rest = start('!(tg:start)\n!(tg:sleep-until-message 30)\n'
+                         '!(fs:write "%s" (tg:activity-batch))\n'
+                         '!(tg:last-message-is-human)\n' % peer_out, env)
+            time.sleep(1.0)
+            began = time.monotonic()
+            api.add(203, bot_peer, bot_peer, "peer bot hello", **{
+                "from": {"id": bot_peer, "is_bot": True, "username": "peer_fixture_bot"}})
+            lines, err = finish(rest, 12)
+            assert any('woken by peer message' in x for x in lines), (lines, err[-1000:])
+            assert time.monotonic() - began < 8, lines
+            assert lines[-1] == '0' and 'peer bot hello' in peer_out.read_text(), lines
+            incoming = [json.loads(x) for x in ledger.read_text().splitlines()]
+            record = next(r for r in reversed(incoming) if r.get('update_id') == 203)
+            assert record['allowed'] and record['queued'] and record['from_is_bot'], record
+            lines, err = run('!(tg:start)\n!(tg:send "peer bot reply" "%d")\n' % bot_peer, env)
+            assert lines[-1].startswith('"sent message ') and lines[-1].endswith(' to chat 77"'), (lines, err[-1000:])
+            assert (bot_peer, "peer bot reply") in api.texts()
+            print("bot peer: one service declaration routes, wakes and sends despite stale client settings")
 
             print("responder: /mode answered in %.0f ms with no loop running, as the Python handler words it; "
                   "/wake ends a rest; /delete stays with the loop client (responder RSS %d kB)" % (latency * 1000, rss))

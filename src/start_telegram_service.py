@@ -83,6 +83,8 @@ def command(repo, state, credential):
             "--command-deadline-ms", "3000"]
     for chat in sorted(chats):
         argv += ["--chat", str(chat)]
+    for peer in sorted({int(x.strip()) for x in os.environ.get("METTACLAW_TELEGRAM_WAKE_IDS", "").split(",") if x.strip()}):
+        argv += ["--peer", str(peer)]
     for operator in sorted(operators):
         argv += ["--operator", str(operator)]
     offset = os.environ.get("METTACLAW_TELEGRAM_INITIAL_OFFSET", "")

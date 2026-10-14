@@ -105,11 +105,6 @@
 (= (tg:socket) (tg:env "METTACLAW_TELEGRAM_SERVICE_SOCKET" ""))
 (= (tg:ledger) (tg:env "METTACLAW_TELEGRAM_LOG_PATH" ""))
 (= (tg:primary) (str:trim (tg:env "METTACLAW_TELEGRAM_PRIMARY_CHAT_ID" "")))
-(= (tg:allowed-chats)
-   (let $a (tg:env "METTACLAW_TELEGRAM_CHAT_ID" "")
-     (let $b (tg:env "TELEGRAM_CHAT_ID" "")
-       (let $c (tg:env "METTACLAW_TELEGRAM_ALLOWED_CHAT_IDS" "")
-         (format-args "{},{},{}" ($a $b $c))))))
 (= (tg:timeout-ms)
    (let $s (tg:env "METTACLAW_TELEGRAM_SERVICE_TIMEOUT" "30")
      (let $n (parse $s) (if (< $n 1) 1000 (* 1000 $n)))))
@@ -748,7 +743,7 @@
                        (let $note (py-call (telegram.metta_slash_command (json-stringify $update) $mkind))
                          (let $l (tg:log-update $update $mkind $message True False $note) (tg:acknowledge $task)))
                        (if (py-call (telegram.metta_has_attachment (json-stringify $message)))
-                         (let $w (tg:wake-for $sender-id $chat-id)
+                         (let $w (tg:wake-for $sender-id $chat-id $role)
                            (let $l (tg:log-update $update $mkind $message True False "attachment_dispatched")
                              (let $d (py-call (telegram.metta_attachment (json-stringify $update) $mkind $text))
                                (tg:acknowledge $task))))
@@ -758,7 +753,7 @@
                              (let $formatted (tg:format-message $update $mkind $message $text)
                                (let $bot (tg:truthy (tg:at $sender "is_bot"))
                                  (let $tier (tg:tier-for $sender-id)
-                                   (let $wake (tg:wake-reason-for $sender-id)
+                                   (let $wake (tg:wake-reason-for $sender-id $role)
                                      (let $added (tg:activity-add $task $chat-id $formatted $bot $tier (tg:str (tg:at $update "update_id")) $wake)
                                        (let $notice (if (== $wake False) (tg:maybe-rest-notice $chat-id $sender-id) ())
                                          (tg:publish-counts))))))))))))))))))))
@@ -766,6 +761,15 @@
 (= (tg:wake-reason-for $sender-id)
    (if (tg:operator? $sender-id) "operator message"
      (if (and (not (== $sender-id "")) (tg:wake-peer? $sender-id)) "peer message" False)))
+
+; The service's peer declaration is authoritative. Legacy clients can still
+; configure wake senders through the environment.
+(= (tg:wake-reason-for $sender-id $role)
+   (if (== $role "wake-peer") "peer message" (tg:wake-reason-for $sender-id)))
+
+(= (tg:wake-for $sender-id $chat-id $role)
+   (let $wake (tg:wake-reason-for $sender-id $role)
+     (if (== $wake False) (tg:maybe-rest-notice $chat-id $sender-id) (tg:wake-request $wake))))
 
 (= (tg:wake-for $sender-id $chat-id)
    (let $wake (tg:wake-reason-for $sender-id)
@@ -870,10 +874,6 @@
      (let $primary (tg:primary)
        (if (not (== $primary "")) $primary (tg:get reply-chat "")))))
 
-(= (tg:chat-allowed? $chat)
-   (let $allowed (tg:allowed-chats)
-     (or (tg:csv-empty? $allowed) (or (tg:csv-member? $chat $allowed) (== $chat (tg:primary))))))
-
 (= (tg:next-key $chat)
    (let $now (py-call (time.time_ns))
      (let $last (tg:get last-sequence 0)
@@ -946,29 +946,30 @@
        (let $rest (tg:send-commands $tail)
          (cons-atom (JsonArray ((JsonString "send") (JsonString $head) (JsonString "plain"))) $rest)))))
 
+; The service owns destination authorization; no second client allowlist.
 (= (tg:send $text $chat)
    (let $target (tg:reply-target $chat)
      (if (== $target "") "send failed: missing token or chat id"
-       (if (not (tg:chat-allowed? $target)) "send failed: target chat is not allowed"
-         (let $body (tg:unescape-newlines $text)
-           (let $pieces (tg:chunks $body)
-             (if (== $pieces ()) "send failed: empty message"
-               (let $key (tg:next-key $target)
-                 (let $deadline (+ (tg:now) (/ (tg:timeout-ms) 1000))
-                   (let $mine (add-atom &self (tg:own-key $key))
-                   (let $stored (tg:submit $key (tg:batch-body (tg:send-commands $pieces)) $deadline)
-                     (case $stored
-                       ((queued (format-args "send queued: the Telegram service is not answering; retry later ({})" ($key)))
-                        ((refused $code) (format-args "send failed: the Telegram service refused it ({})" ($code)))
-                        (stored
-                         (let $results (tg:await $key (size-atom $pieces) $deadline)
-                           (tg:send-outcome $key $target $pieces $results 0 ()))))))))))))))))
+       (let $body (tg:unescape-newlines $text)
+         (let $pieces (tg:chunks $body)
+           (if (== $pieces ()) "send failed: empty message"
+             (let $key (tg:next-key $target)
+               (let $deadline (+ (tg:now) (/ (tg:timeout-ms) 1000))
+                 (let $mine (add-atom &self (tg:own-key $key))
+                 (let $stored (tg:submit $key (tg:batch-body (tg:send-commands $pieces)) $deadline)
+                   (case $stored
+                     ((queued (format-args "send queued: the Telegram service is not answering; retry later ({})" ($key)))
+                      ((refused $code) (format-args "send failed: the Telegram service refused it ({})" ($code)))
+                      (stored
+                       (let $results (tg:await $key (size-atom $pieces) $deadline)
+                         (tg:send-outcome $key $target $pieces $results 0 ())))))))))))))))
 
 (= (tg:unescape-newlines $text) (str:join "\n" (str:split "\\n" $text)))
 
 (= (tg:send-outcome $key $target $pieces $results $pos $ids)
    (case $results
-     (((rejected $reason) (format-args "send failed: the Telegram service rejected it ({})" ($reason)))
+     (((rejected "action-not-permitted") "send failed: target chat is not allowed")
+      ((rejected $reason) (format-args "send failed: the Telegram service rejected it ({})" ($reason)))
       (()
        (let $first (car-atom $ids)
          (if (== (size-atom $ids) 1)
@@ -1010,25 +1011,25 @@
 
 (= (tg:delete $chat $message-id)
    (let $target $chat
-     (if (not (tg:chat-allowed? $target)) "delete refused: target chat is not allowed"
-       (let $key (tg:next-key $target)
-         (let $deadline (+ (tg:now) (/ (tg:timeout-ms) 1000))
-           (let $mine (add-atom &self (tg:own-key $key))
-           (let $id (tg:jnum $message-id)
-             (case (tg:submit $key (tg:batch-body ((JsonArray ((JsonString "delete") $id)))) $deadline)
-               ((queued "delete queued: the Telegram service is not answering")
-                ((refused $code) (format-args "delete failed: the Telegram service refused it ({})" ($code)))
-                (stored
-                 (case (tg:await $key 1 $deadline)
-                   (((rejected $reason) (format-args "delete failed: the Telegram service rejected it ({})" ($reason)))
-                    ((none) "delete accepted by the Telegram service; still pending")
-                    (((delivered $x))
-                     (let $l (tg:log-own-delete $target $message-id "own_delete")
-                       (format-args "deleted message {} from chat {}" ($message-id $target))))
-                    (((failed "400"))
-                     (let $l (tg:log-own-delete $target $message-id "own_delete_terminal")
-                       (format-args "cannot delete message {}: it is older than 48h, or a forward (whoever forwarded it must delete it), or not the bot's own message" ($message-id))))
-                    (($other) (format-args "delete failed: {}" ($other)))))))))))))))
+     (let $key (tg:next-key $target)
+       (let $deadline (+ (tg:now) (/ (tg:timeout-ms) 1000))
+         (let $mine (add-atom &self (tg:own-key $key))
+         (let $id (tg:jnum $message-id)
+           (case (tg:submit $key (tg:batch-body ((JsonArray ((JsonString "delete") $id)))) $deadline)
+             ((queued "delete queued: the Telegram service is not answering")
+              ((refused $code) (format-args "delete failed: the Telegram service refused it ({})" ($code)))
+              (stored
+               (case (tg:await $key 1 $deadline)
+                 (((rejected "action-not-permitted") "delete refused: target chat is not allowed")
+                  ((rejected $reason) (format-args "delete failed: the Telegram service rejected it ({})" ($reason)))
+                  ((none) "delete accepted by the Telegram service; still pending")
+                  (((delivered $x))
+                   (let $l (tg:log-own-delete $target $message-id "own_delete")
+                     (format-args "deleted message {} from chat {}" ($message-id $target))))
+                  (((failed "400"))
+                   (let $l (tg:log-own-delete $target $message-id "own_delete_terminal")
+                     (format-args "cannot delete message {}: it is older than 48h, or a forward (whoever forwarded it must delete it), or not the bot's own message" ($message-id))))
+                  (($other) (format-args "delete failed: {}" ($other))))))))))))))
 
 ; Own sends to a chat, oldest first, less those already deleted.
 (= (tg:own-sends $chat)
