@@ -44,9 +44,10 @@
 ; Conversation arrivals retain their own acknowledgement path. Native mail
 ; is its own input, so settling a conversation cannot settle unrelated mail.
 (= (receive)
-   (let $_ (mail:reset)
+   (let* (($_ (mail:reset)) ($_ (jobs:reset)))
      (let $conversation (receive-channel)
-       (if (mail:empty? $conversation) (mail:receive) $conversation))))
+       (if (mail:empty? $conversation)
+         (let $mail (mail:receive) (if (mail:empty? $mail) (jobs:receive) $mail)) $conversation))))
 
 ; Existing channel adapters never route or acknowledge native mail.
 (= (channel:sleep-until-message $seconds $enabled)
@@ -65,7 +66,7 @@
                  (channel:mail-wait $deadline $seconds $enabled)))))))))
 
 (= (lastMessageIsHuman)
-   (if (mail:active?) False
+   (if (or (mail:active?) (jobs:active?)) False
    (if (== (commchannel) telegram)
        (== (if (tg:client-metta?) (tg:last-message-is-human) (py-call (telegram.lastMessageIsHuman))) 1)
        True)))

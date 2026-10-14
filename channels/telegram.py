@@ -12,6 +12,13 @@ import requests
 
 import stimulus_frontier
 
+# Grandfathered producers only signal the native wait. Payload routing and
+# identity handling remain at their existing boundary.
+try:
+    from cetta_bridge import notice as _host_notice
+except ImportError:
+    _host_notice = None
+
 _running = False
 _thread = None
 _token = ""
@@ -711,6 +718,7 @@ def enqueue_runtime_event(text, reason="runtime event", *, identity=None):
             if any(e.get("update_id") == identity for e in _metta_events): return True
             _metta_events.append({"chat": RUNTIME_CHAT, "text": "[runtime] " + str(text), "from_bot": False,
                                  "tier": "light", "update_id": identity, "wake": str(reason)})
+        if _host_notice is not None: _host_notice()
         return True
     with _msg_lock:
         if any(e[4] == identity for e in _pending_messages): return True
@@ -2146,6 +2154,7 @@ def metta_client():
 def _metta_queue(item):
     with _metta_lock:
         _metta_events.append(item)
+    if _host_notice is not None: _host_notice()
 
 
 def metta_take_runtime_events():

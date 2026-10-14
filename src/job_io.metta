@@ -1,0 +1,6 @@
+!(import! &self ./src/engine_modes.py)
+(= (jobs:cetta? $engine)
+   (case $engine ((cetta True) ("cetta" True) ($other False))))
+!(if (jobs:cetta? (py-call (engine_modes.active_engine)))
+     (import! &self ./src/jobs_cetta)
+     (import! &self ./src/jobs_python))

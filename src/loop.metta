@@ -324,7 +324,7 @@
           ($humanApplied
             (applyHumanActivity $decremented $hasActivity $isHuman))
           ($mailApplied
-            (if (mail:active?)
+            (if (or (mail:active?) (jobs:active?))
               (coordinate-set loops
                 (max (loop-budget $humanApplied)
                      (policy-burst-budget (loop-active-policy $humanApplied))) $humanApplied)
@@ -471,7 +471,8 @@
 (= (settleActivityBatch)
    (let $channel (catch (if (tg:client-metta?) (tg:ack-activity-batch)
                            (py-call (telegram.ackActivityBatch))))
-     (if (== $channel 1) (mail:ack) 0)))
+     (if (== $channel 1)
+       (if (== (mail:ack) 1) (jobs:ack) 0) 0)))
 
 (= (processLoop $state)
    (if (== (py-call (helper.recycle_requested)) 1)

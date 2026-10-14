@@ -1,0 +1,10 @@
+; Parse transported values as data; only the selected transformation executes.
+!(import! &self (library fs))
+!(import! &self (library system))
+!(import! &self ./src/metta_coding_policy)
+!(let* (($transform (system:arg 1)) ($input (system:arg 2)) ($output (system:arg 3))
+         ($_ (import! &self $transform))
+         ($visible (parse (fs:read-text $input)))
+         ($outcomes (collapse (eval (iter-transform (quote $visible)))))
+         ($text (repr (native-iter-worker-results $outcomes))))
+   (fs:update-text $output "replace" $text "" ""))

@@ -25,6 +25,9 @@
 !(import! &self ./src/helper.py)
 !(import! &self ./src/process_supervision.py)
 !(import! &self ./channels/energy.metta)
+!(import! &self ./src/job_io)
+!(import! &self ./src/mail)
+!(import! &self ./src/idle_cetta)
 
 ;; ---------------------------------------------------------------- lists
 ;; A list built by cons-atom onto a computed tail may be an open PeTTa cell.
@@ -840,16 +843,25 @@
            (tg:wake-request (if (== $reason "") "wake request" $reason)))))))
 
 (= (tg:rest-loop $deadline $seconds $enabled)
+   ; Arm before draining any producer queue, so arrivals cannot be lost
+   ; between checking the queue and sleeping. Readiness never acknowledges it.
+   (let* (($milliseconds (idle:interval $deadline))
+          ($subscriptions (idle:arm $milliseconds $enabled))
+          ($result (tg:rest-check $deadline $seconds $enabled $milliseconds))
+          ($_ (if (== $result idle:waiting) (idle:wait $subscriptions $milliseconds $enabled) ()))
+          ($_ (idle:finish $subscriptions)))
+     (if (== $result idle:waiting) (tg:rest-loop $deadline $seconds $enabled) $result)))
+(= (tg:rest-check $deadline $seconds $enabled $milliseconds)
    (if (== (py-call (helper.recycle_requested)) 1) "recycle requested"
    (if (and $enabled (mail:pending?)) "woken by mail"
+   (if (and $enabled (jobs:pending?)) "woken by job"
    (let $polled (tg:poll)
-    (let $_ (py-call (process_supervision.progress "channel-wait" 10))
+    (let $_ (py-call (process_supervision.progress "channel-wait" (+ 5 (/ $milliseconds 1000))))
     (let $requested (tg:take-wake-request)
      (let $reason (tg:get wake-reason "")
        (if (not (== $reason "")) (format-args "woken by {}" ($reason))
          (if (>= (tg:now) $deadline) (format-args "rested {}s" ($seconds))
-           (let $slept (if (and $enabled (mail:enabled?)) (mail:idle-wait 250) (tg:sleep 0.25))
-             (tg:rest-loop $deadline $seconds $enabled)))))))))))
+           idle:waiting))))))))))
 
 ;; ----------------------------------------------------------------- send
 

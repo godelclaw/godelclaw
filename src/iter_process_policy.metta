@@ -1,10 +1,8 @@
 ;; Transformations are .metta programs.  The host captures their source and
-;; gives each one a fresh SWI-PeTTa child; success replaces the visible request
+;; gives each one a fresh evaluator child; success replaces the visible request
 ;; and every other outcome stutters locally.
 !(import! &self (library lib_import))
-!(import_prolog_function swrite)
-!(import_prolog_function string_concat)
-!(import_prolog_functions_from_file ./src/native_iter.pl (iter-native-run))
+!(import! &self ./src/iter_process_io)
 
 (= (iter-process-visible $system-message $activity-message $advertised)
    (coding-view

@@ -7,7 +7,7 @@
     "- Hierarchical memory (CeTTa): (memory-open \"id\" [depth]) expands summaries to sources; (memory-find \"phrase\" [\"root\"]) also searches original episodes."
     "- Write a task/topic/project node: (memory-node \"id\" kind \"title\" \"text\" [children] [sources]); link it with (memory-link \"parent\" \"child\"); retain an interpretation with (memory-summary \"id\" \"text\")."
     "- Recover an old version: (memory-original \"id\" revision). (memory-focus \"id\" [depth]) selects prompt context; empty id follows the active task. (memory-window characters) changes its excerpt size; 0 is unlimited. Turns are captured automatically."
-    "- Pin a working-memory line — persists across restarts, shown every turn under PINNED, cap 12: (pin \"string\")"
+    "- Pin a working-memory line — persists across restarts: (pin \"string\"). Read all pins: (pins)"
     "- Remove pins containing a fragment: (unpin \"fragment\")"
     "- Goal stack + mood (kernel decays STI, consolidates LTI, flags stuck/cull-review at each wake): (goals)"
     "- Add/update one goal (liberal format, see (help \"goal-write\")): (goal-write (goal name Area sti:0.8 lti:0.3 vibes:(a b) blocked-by:none last-verified:never note:why it matters))"
@@ -76,11 +76,6 @@
 
 ;; Background jobs return immediately, and the
 ;; runtime wakes the agent when a job ends.  Vitals are read on demand.
-(= (background $command)
-   (py-call (jobs.start (py-call (helper.decode_safe_text $command)))))
-(= (jobs) (py-call (jobs.status)))
-(= (job-output $id) (py-call (jobs.output $id)))
-(= (job-stop $id) (py-call (jobs.stop $id)))
 
 (= (vitals) (py-call (helper.vitals)))
 
@@ -233,8 +228,7 @@
 
 ;; Pins: real, persisted working memory (previously catalog-only — the call
 ;; just echoed itself into results feedback and vanished on restart).
-(= (pin $text) (py-call (pins.pin (py-call (helper.decode_safe_text $text)))))
-(= (unpin $frag) (py-call (pins.unpin (py-call (helper.decode_safe_text $frag)))))
+!(import! &self ./src/state_io)
 
 ;; Arming energy (persisted per-sender loop tiers) and sibling-claw control.
 ;; sibling-on/off always handle the watchdog pause marker too, so a stop
@@ -264,22 +258,7 @@
 
 (= (command-receipts) (py-call (strategy_host.command_receipts)))
 (= (command-receipts $cursor) (py-call (strategy_host.command_receipts $cursor)))
-(= (task-read $id) (py-call (strategy_host.task_read $id)))
-(= (task-read $id $offset) (py-call (strategy_host.task_read $id $offset)))
-(= (task-history $id) (py-call (strategy_host.task_history $id)))
-(= (task-history $id $offset) (py-call (strategy_host.task_history $id $offset)))
-(= (task-note $text) (py-call (strategy_host.task_note (py-call (helper.decode_safe_text $text)))))
-(= (task-note $text $sources)
-   (py-call (strategy_host.task_note (py-call (helper.decode_safe_text $text)) (py-call (helper.decode_safe_text $sources)))))
-(= (task-resolve $id $reason)
-   (py-call (strategy_host.task_resolve $id (py-call (helper.decode_safe_text $reason)))))
-(= (topics) (py-call (topic_jobs.topics)))
-(= (topic-select $name) (py-call (topic_jobs.select $name)))
-(= (topic-note $notes) (py-call (topic_jobs.note (py-call (helper.decode_safe_text $notes)))))
 (= (model-jobs) (py-call (topic_jobs.status)))
 (= (model-result $id) (py-call (topic_jobs.results $id)))
 
-(= (context-policy) (py-call (context_budget.policy)))
-(= (context-policy $tokens) (py-call (context_budget.policy $tokens)))
-!(import! &self ./src/context_budget.py)
 !(import! &self ./src/command_dispatch)

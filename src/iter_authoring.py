@@ -138,9 +138,14 @@ def _syntax(source: str, filename: str) -> tuple[str, str]:
             descriptor = -1
             stream.write(source)
         try:
+            if os.environ.get("METTACLAW_ACTIVE_ENGINE", os.environ.get("METTACLAW_ENGINE")) == "cetta":
+                command = [os.environ.get("CETTA_BIN", "cetta"), "--lang", "petta",
+                           str(ROOT / "scripts" / "metta_parse_only.metta"), "--", temporary]
+            else:
+                command = ["swipl", "-q", "-s", str(parser),
+                           "--", str(petta_root), temporary]
             result = subprocess.run(
-                ["swipl", "-q", "-s", str(parser),
-                 "--", str(petta_root), temporary],
+                command,
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,

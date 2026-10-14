@@ -41,6 +41,8 @@ def main():
     parser.add_argument("--repository", default=REPOSITORY)
     parser.add_argument("--jobs", type=int, default=int(os.environ.get("BUILD_JOBS", "1")))
     parser.add_argument("--python-config", default=os.environ.get("PYTHON_CONFIG"))
+    parser.add_argument("--sqlite-cflags", default=os.environ.get("SQLITE_CFLAGS"))
+    parser.add_argument("--sqlite-libs", default=os.environ.get("SQLITE_LIBS"))
     args = parser.parse_args()
     if args.python_config is None:
         try:
@@ -72,9 +74,19 @@ def main():
     if subprocess.run(["pkg-config", "--exists", "libpcre2-8"], stdout=subprocess.DEVNULL,
                       stderr=subprocess.DEVNULL).returncode:
         parser.error("native file search requires PCRE2 development headers (libpcre2-dev)")
-    flags = ["BUILD=python", "ENABLE_HTTP=1", "ENABLE_DURABLE=1",
-             "ENABLE_MANAGED_SYMBOLS=1", "ENABLE_LIB_PROLOG=1",
+    python_prefix = run([args.python_config, "--prefix"], capture=True).strip()
+    sdk = Path(python_prefix)
+    if args.sqlite_cflags is None and (sdk / "include/sqlite3.h").is_file():
+        args.sqlite_cflags = "-I" + str(sdk / "include")
+    if args.sqlite_libs is None and (sdk / "lib/libsqlite3.so").is_file():
+        args.sqlite_libs = "-L" + str(sdk / "lib") + " -lsqlite3"
+    flags = ["BUILD=python", "ENABLE_HTTP=1", "ENABLE_DURABLE=1", "SQLITE_PROVIDER=system",
+             "ENABLE_MANAGED_SYMBOLS=1", "ENABLE_LIB_PROLOG=0",
              "ENABLE_JSON_GSLT=1", "PYTHON_CONFIG=" + args.python_config]
+    if args.sqlite_cflags is not None:
+        flags.append("SQLITE_CFLAGS=" + args.sqlite_cflags)
+    if args.sqlite_libs is not None:
+        flags.append("SQLITE_LIBS=" + args.sqlite_libs)
     run(["make", "-j", str(args.jobs), *flags,
          "cetta", "space-service", "value-worker", "telegram-service"], source)
     # Ask Make for its resolved tagged paths; do not guess which older binary

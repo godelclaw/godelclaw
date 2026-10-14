@@ -128,6 +128,7 @@ class CommandDispatchEngineTest(unittest.TestCase):
         self.assertNotIn("coding-request-observations (coding-prepare-request",
                          result.stdout)
 
+    @unittest.skipIf(os.environ.get("CETTA_TEST_NO_PROLOG") == "1", "this fixture requires the optional Prolog library")
     def test_cetta_bridges_nested_python_from_imported_prolog(self):
         """Pin the former live-loop ``PettaSearchHostError`` boundary."""
 

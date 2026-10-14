@@ -162,6 +162,37 @@ def prepare(prompt, output_tokens=32768):
 
 
 
+def prepare_io(prompt):
+    """Grandfathered runtime observations; no native task/context policy here."""
+    global _runtime_projection
+    if not enabled():
+        return str(prompt)
+    if os.environ.get("METTACLAW_LLM_TRANSPORT") == "native":
+        import native_lifetime
+        native_lifetime.notify()
+        prompt = str(prompt) + "\n" + native_lifetime.evidence_context()
+    import runtime_context
+    _runtime_projection = runtime_context.render()
+    return str(prompt) + "\n" + _runtime_projection
+
+
+def context_input(key, output_tokens=32768):
+    """Read host metadata for MeTTa's native context policy."""
+    if key == "enabled":
+        return enabled_flag()
+    if key == "focus":
+        return _focus or "autonomous"
+    if key == "trigger":
+        return _context_trigger
+    if key == "capacity":
+        capacity = context_capacity(output_tokens)
+        return "" if capacity is None else str(capacity)
+    if key == "model":
+        import synthetic_llm
+        return str(synthetic_llm.current_model())
+    raise KeyError(key)
+
+
 def context_capacity(output_tokens=32768):
     import synthetic_llm
     configured = os.environ.get("METTACLAW_CONTEXT_WINDOW_TOKENS")

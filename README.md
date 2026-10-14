@@ -489,6 +489,33 @@ and return content hashes and collision-free backup paths. Exact edits require
 one occurrence, and append retains the existing bytes. `tmux-peek` includes
 scrollback.
 
+Background jobs on CeTTa use native asynchronous process handles, persistent
+output files and a shared completion wait. `(background "command" [seconds])`
+has no deadline unless selected. `(job-output "id" [bytes])` reads progress,
+and `(job-stop "id" [signal])` signals the owned process. Interrupted jobs
+retain their output and report an unknown exit; they are not automatically
+restarted. Existing numeric job identities remain readable.
+
+Telegram arrivals, native mail, job completions, timers and actual control-file
+changes wake the same native wait. Waiting does not consume another caller's
+result. Scheduled commands run when their timer expires without a model call.
+CeTTa Iter transformations run in fresh CeTTa workers, and syntax checks parse
+source without executing its bang forms. SWI-PeTTa retains its separate worker.
+
+Pins, context targets, topics, task-history selection, paging and compaction
+are MeTTa on CeTTa. Existing files and SQLite rows stay in place, preserving
+call IDs, request ancestry, corrections and original outputs. Native CeTTa
+reads SQLite through its C library; this changes policy/backend ownership,
+not the database format. Embedded Python and CeTTa must use the same shared
+SQLite library (`SQLITE_PROVIDER=system`) while grandfathered journal writers
+remain. Those writers and runtime-observation adapters are still Python.
+
+Pins have no automatic count or text limit. `context-policy` adjusts the task
+context target. Native `(task-read "id" offset [page-bytes])` defaults to 8192
+bytes and `(task-history "request" offset [count])` defaults to 20 entries;
+count zero retrieves all entries. These are presentation windows, not storage
+limits. Compacted evidence has explicit recovery links and is never deleted.
+
 Credential redaction, configured chat permissions, occurrence identities for
 message delivery, memory supervision, and the operator stop remain in place.
 An uncertain Telegram delivery never causes an automatic resend and does not

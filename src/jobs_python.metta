@@ -1,0 +1,13 @@
+; Grandfathered SWI-PeTTa backend; CeTTa does not import this file.
+(= (background $command)
+   (py-call (jobs.start (py-call (helper.decode_safe_text $command)))))
+(= (jobs) (py-call (jobs.status)))
+(= (job-output $id) (py-call (jobs.output $id)))
+(= (job-output $id $bytes) (py-call (jobs.output $id $bytes)))
+(= (job-stop $id) (py-call (jobs.stop $id)))
+(= (jobs:running-count) (py-call (jobs.running_count)))
+(= (jobs:receive) "")
+(= (jobs:pending?) False)
+(= (jobs:active?) False)
+(= (jobs:ack) 1)
+(= (jobs:reset) ())

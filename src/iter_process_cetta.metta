@@ -1,0 +1,85 @@
+; Capture the sorted transformation sources before running any of them.
+; Each runs in a fresh CeTTa evaluator; failures retain the previous view.
+!(import! &self (library fs))
+!(import! &self (library str))
+!(import! &self (library path))
+!(import! &self (library io))
+!(import! &self (library system))
+!(import! &self (library space_service))
+!(import! &self (library math))
+
+(= (iter:directory $directory)
+   (case $directory
+     ((default (system:getenv-or-default "METTACLAW_ITER_PROCESS_DIR" "memory/transformations"))
+      ($other $other))))
+(= (iter:capture $directory)
+   (if (fs:exists $directory)
+     (iter:capture-names $directory (sort-atom (fs:entries $directory))) ()))
+(= (iter:capture-names $directory $names)
+   (if (== $names ()) ()
+     (let* (($name (car-atom $names)) ($path (path:join $directory $name))
+            ($rest (iter:capture-names $directory (cdr-atom $names))))
+       (if (and (str:ends-with $name ".metta") (and (not (str:starts-with $name "_")) (fs:is-file $path)))
+         (let $source (fs:read-text $path) (cons-atom (iter:captured $name $source) $rest)) $rest))))
+(= (iter:timeout)
+   (math:ceil (* 1000 (str:string->number
+     (system:getenv-or-default "METTACLAW_ITER_PROCESS_TIMEOUT_SECONDS" "120")))))
+(= (iter:temporary $id $suffix)
+   (path:join (system:getenv-or-default "METTACLAW_ITER_TEMP_DIR" "memory/iter-runs")
+              (str:concat $id $suffix)))
+(= (iter:await $handle)
+   (case (io:wait $handle 30000)
+     (((io:idle) (iter:await $handle))
+      ((io:event $handle $result) $result)
+      ($error $error))))
+(= (iter:interpret $outcomes)
+   (case $outcomes
+     (((native-iter-worker-results ((success (coding-view $messages $advertised))))
+       (iter:outcome (success (coding-view $messages $advertised)) ""))
+      ((native-iter-worker-results (failure)) (iter:outcome failure "transformation failed"))
+      ($other (iter:outcome failure (str:concat "malformed transformation result: " (repr $other)))))))
+(= (iter:invoke $source $visible)
+   (let* (($id (space:request-id))
+          ($transform (iter:temporary $id ".metta"))
+          ($input (iter:temporary $id ".input"))
+          ($output (iter:temporary $id ".result"))
+          ($stdout (iter:temporary $id ".stdout"))
+          ($stderr (iter:temporary $id ".stderr"))
+          ($_ (fs:update-text $transform "replace" $source "" ""))
+          ($_ (fs:update-text $input "replace" (repr $visible) "" ""))
+          ($binary (system:getenv-or-default "METTACLAW_ITER_CETTA_BIN"
+                     (system:getenv-or-default "CETTA_BIN" "cetta")))
+          ($worker (system:getenv-or-default "METTACLAW_ITER_CETTA_WORKER" "src/native_iter_worker_cetta.metta"))
+          ($arguments (cons-atom $binary
+             ("--lang" "petta" "--import-mode" "ancestor-walk" $worker "--" $transform $input $output)))
+          ((io:pending $handle) (io:submit (proc:request
+             $arguments
+             (system:cwd) inherit (iter:timeout) $stdout $stderr)))
+          ($completed (iter:await $handle)))
+     (case $completed
+       (((proc:finished $_ exited 0 $_ $_)
+         (iter:interpret (parse (fs:read-text $output))))
+        ((proc:finished $_ timed-out $_ $_ $_) (iter:outcome failure "timeout"))
+        ($other (let $tail (fs:tail-text $stderr 1500)
+                  (iter:outcome failure (str:join " " ((repr $other) (repr $tail))))))))))
+(= (iter:fold $captured $visible)
+   (if (== $captured ()) (iter-native-result $visible iter-observations-empty)
+     (let* (((iter:captured $name $source) (car-atom $captured))
+            ($attempt (catch (iter:invoke $source $visible)))
+            ((iter:outcome $outcome $detail) (iter:normalize $attempt))
+            ($next (case $outcome (((success $changed) $changed) ($other $visible))))
+            ((iter-native-result $final $observations) (iter:fold (cdr-atom $captured) $next)))
+       (iter-native-result $final
+         (iter-observation-list (iter-observation $name
+           (case $outcome (((success $_) success) ($other failure))) $detail) $observations)))))
+(= (iter:normalize $attempt)
+   (case $attempt
+     (((iter:outcome $_ $_) $attempt)
+      ($other (iter:outcome failure (repr $other))))))
+(= (iter-native-run $directory $visible)
+   (let $captured (catch (iter:capture (iter:directory $directory)))
+     (case $captured
+       (((Error $_ $reason)
+         (iter-native-result $visible (iter-observation-list
+           (iter-observation adapter failure (repr $reason)) iter-observations-empty)))
+        ($sources (iter:fold $sources $visible))))))

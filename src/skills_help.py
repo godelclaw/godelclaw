@@ -9,13 +9,13 @@ ARITY = {
     "memory-node": (4, 6), "memory-link": (2, 2), "memory-summary": (2, 2),
     "memory-open": (1, 2), "memory-find": (1, 2), "memory-original": (2, 2),
     "memory-focus": (1, 2), "memory-window": (1, 1),
-    "task-read": (1, 2), "task-history": (1, 2), "task-note": (1, 2),
+    "task-read": (1, 3), "task-history": (1, 3), "task-note": (1, 2),
     "requests": (0, 0), "request-status": (1, 1), "request-focus": (1, 1),
     "request-page": (1, 1), "request-read": (2, 2), "request-disposition": (3, 3),
     "command-receipts": (0, 1), "topics": (0, 0), "topic-select": (1, 1),
     "topic-note": (1, 1),  "model-jobs": (0, 0),
     "model-result": (1, 1),
-    "remember": (1, 1), "query": (1, 1), "pin": (1, 1), "unpin": (1, 1),
+    "remember": (1, 1), "query": (1, 1), "pin": (1, 1), "unpin": (1, 1), "pins": (0, 0),
     "goals": (0, 0), "goal-write": (1, 1), "goal-drop": (2, 2),
     "rest": (0, 2),
     "nop": (0, 0),
@@ -24,8 +24,8 @@ ARITY = {
     "mode-set": (1, 1),
     "iter-transformations": (0, 0), "iter-transform-write": (2, 2),
     "iter-transform-disable": (1, 1), "iter-transform-enable": (1, 1),
-    "shell": (1, 2), "background": (1, 1), "jobs": (0, 0),
-    "job-output": (1, 1), "job-stop": (1, 1), "vitals": (0, 0),
+    "shell": (1, 2), "background": (1, 2), "jobs": (0, 1),
+    "job-output": (1, 2), "job-stop": (1, 2), "vitals": (0, 0),
 
 
     "read-file": (1, 2), "write-file": (2, 2),
@@ -70,8 +70,8 @@ PAGES = {
     "mail-receive": ('usage: (mail-receive)\n'
                      'Check native mail now. Arrivals also enter turns automatically;\n'
                      'acknowledgement follows a committed turn. CeTTa only.'),
-    "task-read": 'usage: (task-read "call-id" "offset")\nRead an exact recorded call/result pair. Offsets count characters; next=null ends it.',
-    "task-history": 'usage: (task-history "request-id" "offset")\nTask-scoped ordered call/result index, including compacted history.',
+    "task-read": 'usage: (task-read "call-id" offset [page-bytes])\nRead an exact recorded call/result pair. Offsets count characters; next=null ends it.',
+    "task-history": 'usage: (task-history "request-id" offset [count]); count=0 reads all entries\nTask-scoped ordered call/result index, including compacted history.',
     "task-note": 'usage: (task-note "findings, uncertainties, next steps" "JSON list of call IDs")\nAppend a task note with evidence references. A note is an interpretation, not certified truth.',
 
     "command-receipts": 'usage: (command-receipts) or (command-receipts "NEXT_CURSOR")\nPages of attempted commands with stable IDs and recorded dispositions/results. Follow next_cursor until null; concatenate chunk records by ID and character offset. Uncertain is not success.',
@@ -93,12 +93,15 @@ PAGES = {
               'Zero disables the deadline. A timeout returns partial output. '
               'For immediate return with completion notification use background.'),
     "background": (
-        'usage: (background "command string")\n'
-        'Runs under bash with no time limit and returns at once with a job\n'
+        'usage: (background "command string") or (background "command string" timeout_seconds)\n'
+        'CeTTa accepts a selected deadline; zero means none. Runs under bash and returns at once with a job\n'
         'id and its output file. When it ends you are woken by a [runtime]\n'
         'activity line with the exit status, duration and output tail; no\n'
-        'polling needed. (jobs) lists jobs, (job-output "id") reads more\n'
-        'output, (job-stop "id") ends one. A service restart ends jobs.'),
+        'polling needed. (jobs count) selects the list window (zero means all), '
+        '(job-output "id" bytes) selects the output tail, '
+        '(job-stop "id" signal_number) selects the signal on CeTTa. '
+        'All have defaults when the optional argument is omitted. '
+        'A service restart ends jobs; saved output remains readable.'),
     "vitals": (
         'usage: (vitals)\n'
         'Uptime, load against CPUs, memory used and available, memory\n'
@@ -124,7 +127,7 @@ PAGES = {
     "pin": (
         'usage: (pin "short state line")  |  (unpin "fragment")\n'
         'Persists to disk, survives restarts, shown every turn under PINNED.\n'
-        'Cap 12, oldest drops. Pin STATE ("BS v0.5 verified, hebbian next"),\n'
+        'CeTTa retains the full text and every pin until you remove it. (pins) reads them all.\n'
         'use (remember ...) for things future-you should be able to query.'),
     "metta": (
         'usage: (metta "expression string")\n'

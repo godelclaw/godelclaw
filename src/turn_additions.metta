@@ -25,8 +25,8 @@
 
 (= (addition-protected-request $request $tokens)
    (let $context (hierarchy:context)
-     (if (== $context "") (py-call (strategy_host.prepare $request $tokens))
-       (py-call (strategy_host.prepare (hierarchy:append-context $request $context) $tokens)))))
+     (if (== $context "") (state:prepare-context $request $tokens)
+       (state:prepare-context (hierarchy:append-context $request $context) $tokens))))
 
 (= (addition-prepare-request
       $selected $legacy $system $activity $advertised)
