@@ -1,0 +1,22 @@
+{
+  "selection": "/path/to/godelclaw/config/runtime-files.json",
+  "release_dir": "releases",
+  "instances": [
+    {
+      "name": "first",
+      "root": "/path/to/first-instance",
+      "state_dir": "/path/to/first-state",
+      "service": "first-agent.service",
+      "checks": [],
+      "expected": {}
+    },
+    {
+      "name": "second",
+      "root": "/path/to/second-instance",
+      "state_dir": "/path/to/second-state",
+      "service": "second-agent.service",
+      "checks": [],
+      "expected": {}
+    }
+  ]
+}

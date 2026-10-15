@@ -944,6 +944,7 @@ def menu_state(kind):
                  "unavailable": [n for n in engine_modes.ENGINES
                                  if not engine_modes.engine_available(n)]}
     elif kind == "models":
+        adopt_active_engine()
         import synthetic_llm
         names = synthetic_llm.model_ids()
         state = {"text": "tap to switch — " + synthetic_llm.model_catalog_status(),

@@ -65,11 +65,15 @@
    (collapse (match $bank (AttentionSetting $key $value) (AttentionSetting $key $value))))
 (= (am:links $bank)
    (collapse (match $bank (AttentionLink $from $to $weight) (AttentionLink $from $to $weight))))
+(= (am:graph-state $bank)
+   (union-atom (am:links $bank)
+     (collapse (match $bank (AttentionBootstrapped $id $revision $count $minimum $weight)
+       (AttentionBootstrapped $id $revision $count $minimum $weight)))))
 (= (am:save)
    (case (am:open)
      (((AttentionReady $bank $time)
        (case (fs:update-text (am:path) "replace"
-               (repr (AttentionSnapshot 1 $time (ecan:snapshot $bank) (am:settings $bank) (am:links $bank))) "" "")
+               (repr (AttentionSnapshot 1 $time (ecan:snapshot $bank) (am:settings $bank) (am:graph-state $bank))) "" "")
          ((("written" $path $n $digest $backup) True) ($error (AttentionUnavailable save $error)))))
       ($error $error))))
 (= (am:own-key? $key) (not (ecan:known-key? (parse $key))))
@@ -138,8 +142,12 @@
          (if (am:current? $id)
            (case (am:open)
              (((AttentionReady $bank $time)
-               (let* (($_ (am:tick)) ($value (if (== $amount 0) (ecan:current $bank $id) (ecan:use $bank $id $amount)))
+               (let* (($_ (am:tick))
                       ($_ (if (> $amount 0) (am:learn-use $bank $id) True))
+                      ($value (if (== $amount 0) (ecan:current $bank $id)
+                         (let $_ (am:pulse $bank $id $amount)
+                           (ecan:consolidate $bank $id (ecan:setting $bank sti-mti-rate)
+                                                     (ecan:setting $bank mti-lti-rate)))))
                       ($saved (am:save))) (AttentionUsed $value $saved)))
               ($error $error)))
            (AttentionError use $id "memory is absent or unavailable")) $check))))
@@ -165,11 +173,15 @@
               ($_ (collapse (match $bank (AttentionLink $id $to $w)
                               (remove-atom $bank (AttentionLink $id $to $w)))))
               ($_ (collapse (match $bank (AttentionLink $from $id $w)
-                              (remove-atom $bank (AttentionLink $from $id $w)))))) (am:save)))
+                              (remove-atom $bank (AttentionLink $from $id $w)))))
+              ($_ (collapse (match $bank (AttentionBootstrapped $id $r $n $m $w)
+                              (remove-atom $bank (AttentionBootstrapped $id $r $n $m $w)))))) (am:save)))
       ($error $error))))
 (= (am:read $id)
    (case (am:open)
-     (((AttentionReady $bank $time) (attention-use $id (am:get $bank "read-stimulus")))
+     (((AttentionReady $bank $time)
+       (let $_ (if (> (am:get $bank "read-stimulus") 0) (am:bootstrap-read $bank $id) True)
+         (attention-use $id (am:get $bank "read-stimulus"))))
       ($error $error))))
 (= (am:focus $bank $count)
    (ecan:focus $bank $count (am:get $bank "sti-weight")
@@ -272,9 +284,70 @@
 (= (am:expose $bank $rows)
    (if (== $rows ()) True
      (let ($cos (MemoryInfo $id $r $d $m)) (car-atom $rows)
-       (let $amount (am:get $bank "exposure")
-        (let $_ (if (> $amount 0) (ecan:stimulate $bank $id $amount) True)
+       (let* (($mix (am:get $bank "exposure-similarity-weight"))
+              ($amount (* (am:get $bank "exposure") (+ (- 1 $mix) (* $mix (max 0 (min 1 $cos)))))))
+        (let $_ (if (> $amount 0) (am:pulse $bank $id $amount) True)
          (am:expose $bank (cdr-atom $rows)))))))
+
+; Spread only the new pulse, synchronously. Receiving it does not generate a
+; second recall event, learn a link, or consolidate a neighbour into MTI/LTI.
+(= (am:pulse $bank $id $amount)
+   (let* (($fraction (am:get $bank "recall-spread")) ($pulse ((AttentionMass $id $amount)))
+          ($next (new-space)) ($_ (am:copy $pulse $next (- 1 $fraction)))
+          ($_ (am:transport $bank $pulse $next $fraction)))
+     (am:apply-pulse $bank (am:mass-rows $next))))
+(= (am:apply-pulse $bank $rows)
+   (if (== $rows ()) True
+     (let (AttentionMass $id $amount) (car-atom $rows)
+       (let $_ (if (> $amount 0) (ecan:stimulate $bank $id $amount) True)
+         (am:apply-pulse $bank (cdr-atom $rows))))))
+
+; An initial semantic prior uses memory-to-memory cosine, not co-occurrence.
+; Reuse the query's current candidate pool; there is no all-pairs graph build.
+; Endpoint replacement is idempotent and never overwrites an existing link.
+(= (am:bootstrap $bank $profile $rows $candidates)
+   (if (or (== $rows ()) (or (== (am:get $bank "bootstrap-neighbours") 0)
+                             (== (am:get $bank "bootstrap-weight") 0))) True
+     (let* ((($cos (MemoryInfo $id $revision $doc $meta)) (car-atom $rows))
+            ($_ (am:bootstrap-one $bank $profile $id $revision $candidates)))
+       (am:bootstrap $bank $profile (cdr-atom $rows) $candidates))))
+(= (am:bootstrap-one $bank $profile $id $revision $candidates)
+   (let* (($count (am:get $bank "bootstrap-neighbours"))
+          ($minimum (am:get $bank "bootstrap-min-similarity"))
+          ($weight (am:get $bank "bootstrap-weight"))
+          ($stamp (AttentionBootstrapped $id $revision $count $minimum $weight)))
+     (if (not (== (collapse (match $bank $stamp True)) ())) True
+       (case (collapse (memory:record $id))
+         ((( (Memory $i $rev $p $vector $doc $meta))
+           (let* (($scored (am:score-ids $profile $vector (am:without $id $candidates)))
+                  ($options (am:bootstrap-options $scored $minimum))
+                  ($chosen (list:retain-top-k-keyed $options $count))
+                  ($_ (am:initial-links $bank $id $chosen $weight)))
+             (if (== $chosen ()) True
+               (let $_ (collapse (match $bank (AttentionBootstrapped $id $r $n $m $w)
+                                 (remove-atom $bank (AttentionBootstrapped $id $r $n $m $w))))
+                 (add-atom $bank $stamp)))))
+          ($other True))))))
+(= (am:bootstrap-options $rows $minimum)
+   (if (== $rows ()) ()
+     (let* ((($cos (MemoryInfo $id $r $d $m)) (car-atom $rows))
+            ($tail (am:bootstrap-options (cdr-atom $rows) $minimum)))
+       (if (and (> $cos 0) (>= $cos $minimum)) (cons-atom ($cos $id) $tail) $tail))))
+(= (am:initial-links $bank $id $rows $weight)
+   (if (== $rows ()) True
+     (let* ((($cos $target) (car-atom $rows))
+            ($initial (* $weight $cos))
+            ($_ (if (== (collapse (match $bank (AttentionLink $id $target $old) $old)) ())
+                  (add-atom $bank (AttentionLink $id $target $initial)) True)))
+       (am:initial-links $bank $id (cdr-atom $rows) $weight))))
+(= (am:bootstrap-read $bank $id)
+   (if (or (== (am:get $bank "bootstrap-neighbours") 0) (== (am:get $bank "bootstrap-weight") 0)) True
+     (case (collapse (memory:record $id))
+       ((((Memory $i $revision $profile $vector $doc $meta))
+         (let $peers (memory:dispatch (MemoryQuery $profile $vector
+                          (+ 1 (am:get $bank "bootstrap-neighbours")) All))
+           (am:bootstrap $bank $profile ((1 (MemoryInfo $id $revision $doc $meta))) (am:hit-ids $peers))))
+        ($other True)))))
 
 ; Similarity is the unmodified native result path; hybrid/attention add a
 ; focus pool and reachable linked IDs. The cosine distance stays a distance.
@@ -323,6 +396,7 @@
           ($scored (collapse (match $ranking (AttentionResult $score $row) ($score $row))))
           ($chosen (list:retain-top-k-keyed $scored (if (== $count 0) (size-atom $scored) $count)))
           ($answer (am:unscore $chosen))
+          ($_ (am:bootstrap $bank $profile $answer $all-ids))
           ($_ (am:expose $bank $answer))
           ($saved (am:save))
           ($_ (change-state! &am-last (AttentionQuery $mode
@@ -346,6 +420,7 @@
        (((MemoryFailure $at $why) $rows)
         ($hits
           (let* (($scores (am:similar-scores $bank $hits))
+                 ($_ (am:bootstrap $bank $profile $hits (am:hit-ids $hits)))
                  ($_ (am:expose $bank $hits)) ($saved (am:save))
                  ($_ (change-state! &am-last (AttentionQuery "similarity" (Scores $scores) (Persistence $saved))))) $hits))))))
 (= (am:similar-scores $bank $rows)

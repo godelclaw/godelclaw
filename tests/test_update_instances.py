@@ -36,9 +36,33 @@ class ReleasePermissionsTest(unittest.TestCase):
             self.assertEqual(launcher.read_bytes(), override.read_bytes())
             self.assertEqual(launcher.stat().st_mode & 0o777, 0o750)
 
+    def test_sync_status_compares_only_the_common_selection(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            source = work/'source'; source.mkdir()
+            (source/'core.metta').write_text('current')
+            selection = work/'files.json'; selection.write_text('["core.metta"]')
+            instances = []
+            for name, content in (('first', 'old'), ('second', 'current')):
+                root = work/name; root.mkdir()
+                (root/'core.metta').write_text(content)
+                (root/'private.txt').write_text('private sentinel')
+                instances.append(dict(name=name, root=str(root)))
+            config = work/'instances.json'
+            config.write_text(json.dumps(dict(selection='files.json', instances=instances)))
+            script = Path(__file__).resolve().parents[1]/'scripts/sync_instances.py'
+            result = subprocess.run([sys.executable, str(script), '--source', str(source),
+                                     '--config', str(config), '--status'],
+                                    capture_output=True, text=True, check=True)
+            self.assertEqual(json.loads(result.stdout)['instances'],
+                             [dict(name='first', different=['core.metta']),
+                              dict(name='second', different=[])])
+            self.assertNotIn('private sentinel', result.stdout)
+
 
 class PairedUpdateTest(unittest.TestCase):
-    def exercise(self, failed=False, runtime_missing=False, controls=False, control_failure=False):
+    def exercise(self, failed=False, runtime_missing=False, controls=False, control_failure=False,
+                 shared_environment=False):
         with tempfile.TemporaryDirectory() as temporary:
             work = Path(temporary)
             release = work / "release"
@@ -56,6 +80,8 @@ class PairedUpdateTest(unittest.TestCase):
                 (root / "src/core.py").write_text("# old core\n")
                 (root / "src/obsolete.py").write_text("# removed feature\n")
                 (state / "identity").write_text(name)
+                (root / "memory").mkdir()
+                (root / "memory/persistent.metta").write_text('(active-model '+name+')\n')
                 instances.append({"name": name, "root": str(root), "state_dir": str(state),
                     "service": name, "checks": [["offline", name]],
                     "required_runtime": {"METTACLAW_OBSERVED_STRATEGY": "1"},
@@ -65,6 +91,12 @@ class PairedUpdateTest(unittest.TestCase):
             plan = work / "plan.json"
             plan.write_text(json.dumps({"instances": instances,
                                         "boot_timeout": -1 if runtime_missing else 60}))
+            if shared_environment:
+                old_env, new_env = work/'common.env', work/'candidate.env'
+                old_env.write_text('CETTA_BIN=old\n'); new_env.write_text('CETTA_BIN=new\n')
+                value = json.loads(plan.read_text())
+                value['shared_environment'] = dict(path=str(old_env), source=str(new_env))
+                plan.write_text(json.dumps(value))
             pids = {"alpha": "1", "beta": "1"}
             control_restarts = []
             qualified = []
@@ -112,6 +144,8 @@ class PairedUpdateTest(unittest.TestCase):
             receipt = json.loads((work / "receipt/receipt.json").read_text())
             rollback = failed or runtime_missing or control_failure
             self.assertEqual(receipt["status"], "rolled-back" if rollback else "activated")
+            if shared_environment:
+                self.assertEqual(old_env.read_text(), 'CETTA_BIN=old\n' if rollback else 'CETTA_BIN=new\n')
             if controls:
                 self.assertEqual(control_restarts, [] if failed else
                     ["alpha-control", "alpha-control"] if control_failure else
@@ -123,6 +157,8 @@ class PairedUpdateTest(unittest.TestCase):
                     self.assertEqual((root / "src/obsolete.py").read_text(), "# removed feature\n")
                 self.assertFalse((root / ".runtime-update-hold").exists())
                 self.assertEqual((Path(item["state_dir"]) / "identity").read_text(), item["name"])
+                self.assertEqual((root / "memory/persistent.metta").read_text(),
+                                 '(active-model '+item['name']+')\n')
                 self.assertEqual((root / "src/core.py").read_text(), "# old core\n" if rollback else "# new core\n")
 
     def test_both_receive_one_release_with_separate_state(self):
@@ -142,6 +178,12 @@ class PairedUpdateTest(unittest.TestCase):
 
     def test_control_failure_restores_the_old_group_and_responder(self):
         self.exercise(controls=True, control_failure=True)
+
+    def test_shared_engine_environment_activates_with_the_group(self):
+        self.exercise(shared_environment=True)
+
+    def test_shared_engine_environment_rolls_back_with_the_group(self):
+        self.exercise(shared_environment=True, runtime_missing=True)
 
 
 if __name__ == "__main__": unittest.main()

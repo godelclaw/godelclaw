@@ -290,7 +290,8 @@
          (case
            (sm:one $space $id)
            (((Memory $id $rev $profile $vector $doc $meta)
-             (let $_ (catch (am:read $id)) (MemoryCurrent $id $rev $doc $meta $pending)))
+             (let* (($_ (catch (sm:refresh $space $p $dim)))
+                    ($_ (catch (am:read $id)))) (MemoryCurrent $id $rev $doc $meta $pending)))
             ((MemoryMissing $id) (MemoryCurrent $id absent "" () $pending))
             ($error $error)))))
       ($error $error))))

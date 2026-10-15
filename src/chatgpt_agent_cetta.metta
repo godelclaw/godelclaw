@@ -118,10 +118,10 @@
             ($other (ChatGPTUnavailable model-list-invalid))))))
       ($other (ChatGPTUnavailable model-list-submit-error)))))
 
-; This route keys its prompt cache by the session_id header and ignores the
-; body's prompt_cache_key; without the header every request gets a fresh key
-; and nothing is reused. One identifier per agent, account and model lets the
-; provider reuse whatever prompt prefix is unchanged.
+; Controlled subscription-route repeats reused cache with session_id; the
+; body's cache key alone did not reliably produce repeat hits. Keep this
+; empirical routing hint local to this transport. One identifier per agent,
+; account and model remains stable as the prompt changes.
 (= (chatgpt:session-id $model)
    (let* (($seed (str:concat (chatgpt:policy-path)
                    (str:concat ":" (str:concat (chatgpt-policy "account") (str:concat ":" $model)))))

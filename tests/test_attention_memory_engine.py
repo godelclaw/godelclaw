@@ -1,5 +1,6 @@
 """Synthetic native-memory integration; never opens an agent's private store."""
 import unittest
+import re
 import test_semantic_memory_engine as fixture
 
 
@@ -94,6 +95,84 @@ class AttentionTests(unittest.TestCase):
         self.assertIn('(AttentionSetting "restart" 0.5)', output)
         self.assertIn('(ECANSetting sti-half-life 300)', output)
         self.assertIn('(STILL_WORKS (MemoryResults ((MemoryHit "a"', output)
+
+    def test_lazy_semantic_bootstrap_is_idempotent_and_preserves_explicit_links(self):
+        self.collection.add(['c'], [[.8, .6, 0.]], ['related alpha beta'], [{}])
+        output = self.run_metta('''
+!(attention-policy "exposure" 0)
+!(attention-link "a" "c" 7)
+!(semantic:query "alpha" 0 "similarity")
+!(println! (FIRST (am:links (am:bank))))
+!(semantic:query "alpha" 0 "similarity")
+!(println! (SECOND (am:links (am:bank))))
+!(println! (MARKERS (am:graph-state (am:bank))))
+''')
+        first = output.split('(FIRST ', 1)[1].split('\n', 1)[0]
+        second = output.split('(SECOND ', 1)[1].split('\n', 1)[0]
+        self.assertEqual(first, second)
+        self.assertIn('(AttentionLink "a" "c" 7)', first)
+        self.assertIn('(AttentionLink "b" "c" 0.06)', first)
+        self.assertNotIn('(AttentionLink "a" "b"', first)
+        self.assertIn('AttentionBootstrapped', output)
+        restored = self.run_metta('''
+!(println! (RESTORED (am:graph-state (am:bank))))
+!(forget "c")
+!(semantic:query "alpha" 0)
+!(println! (FORGOTTEN (am:graph-state (am:bank))))
+''')
+        self.assertIn('(AttentionLink "a" "c" 7)', restored)
+        self.assertNotIn('"c"', restored.split('(FORGOTTEN ', 1)[1].split('\n', 1)[0])
+
+    def test_recall_pulse_is_one_hop_and_preserves_bank_balance(self):
+        self.collection.add(['c'], [[0., 0., 1.]], ['two hops away'], [{}])
+        output = self.run_metta('''
+!(attention-policy "exposure" 0)
+!(attention-policy "bootstrap-neighbours" 0)
+!(attention-policy "sti-half-life" 0)
+!(attention-policy "mti-half-life" 0)
+!(attention-policy "lti-half-life" 0)
+!(attention-policy "sti-mti-rate" 0)
+!(attention-policy "mti-lti-rate" 0)
+!(attention-policy "recall-spread" 0.25)
+!(semantic:query "alpha" 0 "similarity")
+!(attention-link "a" "b" 1)
+!(attention-link "b" "c" 1)
+!(attention-use "a" 4)
+!(println! (PULSE (attention-focus 0)))
+!(println! (TOTAL (ecan:total (am:bank))))
+!(println! (FUNDS (ecan:funds (am:bank))))
+!(attention-policy "recall-spread" 0)
+!(attention-use "a" 4)
+!(println! (DISABLED (attention-focus 0)))
+''')
+        pulse = output.split('(PULSE ', 1)[1].split('\n', 1)[0]
+        values = {i:tuple(map(float, (s,m,l))) for i,s,m,l in
+                  re.findall(r'\(ECANValue "([^"]+)" ([^ ]+) ([^ ]+) ([^)]+)\)', pulse)}
+        self.assertEqual(values['a'], (3,0,0))
+        self.assertEqual(values['b'], (1,0,0))
+        self.assertNotIn('(ECANValue "c"', pulse)
+        total = re.search(r'\(TOTAL \(ECANTotal ([^ ]+) ([^ ]+) ([^)]+)\)', output)
+        funds = re.search(r'\(FUNDS \(ECANFunds ([^ ]+) ([^ ]+) ([^)]+)\)', output)
+        self.assertEqual(tuple(map(float, total.groups())), (0,0,0))
+        self.assertEqual(tuple(map(float, funds.groups())), (-4,0,0))
+        self.assertRegex(output, r'\(ECANValue "a" 7(?:\.0)? 0(?:\.0)? 0(?:\.0)?\)')
+
+    def test_explicit_read_bootstraps_without_consolidating_neighbours(self):
+        self.collection.add(['c'], [[.8, .6, 0.]], ['related alpha'], [{}])
+        output = self.run_metta('''
+!(attention-policy "sti-half-life" 0)
+!(attention-policy "mti-half-life" 0)
+!(attention-policy "lti-half-life" 0)
+!(memory-read "a")
+!(println! (GRAPH (am:links (am:bank))))
+!(println! (READ (attention-focus 0)))
+''')
+        self.assertIn('(AttentionLink "a" "c"', output)
+        values = {i:tuple(map(float, (s,m,l))) for i,s,m,l in
+                  re.findall(r'\(ECANValue "([^"]+)" ([^ ]+) ([^ ]+) ([^)]+)\)', output)}
+        for actual, expected in zip(values['a'], (.8,.04,.0008)):
+            self.assertAlmostEqual(actual, expected)
+        self.assertEqual(values['c'], (.2,0,0))
 
     def test_corrupt_snapshot_preserved_with_similarity_fallback(self):
         snapshot = self.home / 'attention.metta'

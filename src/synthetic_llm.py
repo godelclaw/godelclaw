@@ -759,6 +759,32 @@ def _pinned_synthetic_models():
     return configured or list(_SYNTHETIC_PINNED_MODELS)
 
 
+# Subscription choices observed with chatgpt-models on 2026-10-15.
+# These are pinned choices, not a claim of current account availability.
+_CHATGPT_MENU_MODELS = (
+    "chatgpt:gpt-5.6-sol", "chatgpt:gpt-6-sol",
+    "chatgpt:gpt-6.1-sol", "chatgpt:gpt-6-astra",
+)
+
+
+def _chatgpt_menu_enabled():
+    if os.environ.get("METTACLAW_ACTIVE_ENGINE") != "cetta":
+        return False
+    if os.environ.get("METTACLAW_LLM_TRANSPORT") != "native":
+        return False
+    path = os.environ.get("METTACLAW_CHATGPT_POLICY_PATH")
+    if not path:
+        engine = os.environ.get("METTACLAW_ENGINE_STATE_PATH",
+            os.path.expanduser("~/.local/state/godelclaw/engine"))
+        path = os.path.join(os.path.dirname(engine), "chatgpt.json")
+    try:
+        with open(path, encoding="utf-8") as stream:
+            policy = json.load(stream)
+        return isinstance(policy, dict) and bool(policy.get("account"))
+    except (OSError, ValueError, TypeError):
+        return False
+
+
 def model_ids():
     """Switchable ids from local durable state, never a provider round trip."""
     record = _cached_observation("models")
@@ -768,6 +794,10 @@ def model_ids():
     for model_id in _pinned_synthetic_models():
         if model_id not in ids:
             ids.append(model_id)
+    if _chatgpt_menu_enabled():
+        for model_id in _CHATGPT_MENU_MODELS:
+            if model_id not in ids:
+                ids.append(model_id)
     selected = current_model()
     if not _is_anthropic_model(selected) and selected not in ids:
         ids.append(selected)
@@ -781,6 +811,8 @@ def model_ids():
 
 def model_catalog_status():
     """Short, local-only provenance note for the Telegram model menu."""
+    if _chatgpt_menu_enabled():
+        return "Synthetic catalog + pinned ChatGPT subscription choices (availability unverified)"
     record = _cached_observation("models")
     observed = float(record.get("observed_at", 0) or 0)
     if not observed:
@@ -792,6 +824,9 @@ def model_catalog_status():
 
 
 def model_in_observed_catalog(name):
+    if str(name).startswith("chatgpt:"):
+        # Synthetic observations cannot establish subscription availability.
+        return None
     if _is_anthropic_model(name):
         return (str(name) in _anthropic_models()
                 if os.environ.get("ANTHROPIC_API_KEY", "") else False)

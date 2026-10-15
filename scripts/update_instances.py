@@ -145,6 +145,17 @@ def main():
     output = args.receipt_dir.resolve()
     output.mkdir(parents=True, exist_ok=False)
     record = {"release": manifest["release"], "status": "preflight", "instances": []}
+    shared_environment = plan.get("shared_environment")
+    environment_installed = False
+    environment_before = None
+    if shared_environment:
+        environment_target = Path(shared_environment["path"])
+        environment_source = Path(shared_environment["source"])
+        environment_before = sha(environment_target)
+        if environment_before is not None:
+            shutil.copy2(environment_target, output / "environment-before")
+        if not environment_source.is_file():
+            raise ValueError("shared runtime environment source is missing")
     entries = []
     for index, (instance, root) in enumerate(zip(instances, roots)):
         actual_settings = running_settings(instance["service"])
@@ -223,6 +234,11 @@ def main():
                 raise ValueError("shared runtime changed during qualification")
             record["instances"][roots.index(root)]["after"] = actual
         record["status"] = "qualified"; save()
+        if shared_environment:
+            if sha(environment_target) != environment_before:
+                raise ValueError("shared runtime environment changed during qualification")
+            install(environment_source, environment_target, 0o600)
+            environment_installed = True
         for name in control_services:
             activated_controls.append(name)
             service(name, "restart")
@@ -257,9 +273,18 @@ def main():
                 raise TimeoutError("paired runtime did not boot")
             time.sleep(1)
         for index, (instance, root, overlays, before, pid) in enumerate(entries):
-            marker = {"schema": 1, "release": manifest["release"], "files": files,
-                      "pid": service(instance["service"], "show")}
             path = Path(instance["state_dir"]) / "runtime-release.json"
+            try:
+                previous = json.loads(path.read_text())
+            except (OSError, ValueError):
+                previous = {}
+            marker = {**previous, "schema": 1, "release": manifest["release"],
+                      "parent_release": previous.get("release"),
+                      "files": {**previous.get("files", {}), **files},
+                      "pid": service(instance["service"], "show"), "verified_at": time.time()}
+            for key in ("source_commit", "engine_revision"):
+                if key in manifest:
+                    marker[key] = manifest[key]
             path.write_text(json.dumps(marker, sort_keys=True) + "\n")
             record["instances"][index]["pid_after"] = marker["pid"]
         record["status"] = "activated"; save()
@@ -294,6 +319,11 @@ def main():
             except TimeoutError:
                 record["status"] = "rollback-pending"; save()
                 raise RuntimeError("rollback is held pending a candidate's ordinary boundary") from error
+        if environment_installed:
+            if environment_before is None:
+                environment_target.unlink(missing_ok=True)
+            else:
+                install(output / "environment-before", environment_target)
         for index, (instance, root, overlays, before, pid) in enumerate(entries):
             if root / ".runtime-update-hold" not in held:
                 continue

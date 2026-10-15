@@ -87,6 +87,24 @@ class ProviderRoutingTest(unittest.TestCase):
         self.assertEqual(health["completed_count"], 1)
         self.assertEqual(health["pending_since"], 0)
 
+    def test_subscription_menu_choices_require_the_native_backend_and_preserve_selection(self):
+        from pathlib import Path
+        policy = Path(self.flag_dir)/'chatgpt.json'
+        policy.write_text(json.dumps(dict(account='fixture-registration')))
+        synthetic_llm._persist_model('fixture-current-model')
+        with mock.patch.dict(os.environ, {
+                'METTACLAW_ACTIVE_ENGINE': 'cetta', 'METTACLAW_LLM_TRANSPORT': 'native',
+                'METTACLAW_CHATGPT_POLICY_PATH': str(policy)}), \
+             mock.patch.object(synthetic_llm, 'refresh_provider_observations_async'):
+            ids = synthetic_llm.model_ids()
+            self.assertIn('chatgpt:gpt-6.1-sol', ids)
+            self.assertIn('chatgpt:gpt-6-astra', ids)
+            self.assertEqual(synthetic_llm.current_model(), 'fixture-current-model')
+            self.assertIsNone(synthetic_llm.model_in_observed_catalog('chatgpt:gpt-6.1-sol'))
+            self.assertIn('availability unverified', synthetic_llm.model_catalog_status())
+            with mock.patch.dict(os.environ, {'METTACLAW_ACTIVE_ENGINE': 'petta'}):
+                self.assertNotIn('chatgpt:gpt-6.1-sol', synthetic_llm.model_ids())
+
     def test_claude_model_routes_to_native_messages_api(self):
         self.enable_flag()
         os.environ["ANTHROPIC_API_KEY"] = "anth-key"

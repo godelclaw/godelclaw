@@ -209,6 +209,21 @@ permissions. Count zero retrieves all current records.
 
 Returned results receive a weak exposure stimulus. An explicit `memory-read`
 receives a stronger stimulus and consolidates STI into slower MTI/LTI traces.
+Each new pulse sends `recall-spread` (initially 0.2) one hop through normalized
+links, keeping the remainder at its source. Incoming activation does not trigger
+another pulse, reward usefulness or consolidate neighbouring memories. Query
+exposure blends a baseline with positive query similarity using
+`exposure-similarity-weight` (initially 0.5). Zero disables either signal.
+
+The graph starts lazily: recalled items acquire up to `bootstrap-neighbours`
+(initially 3) outgoing associations to semantically related current candidates.
+These use memory-to-memory cosine, `bootstrap-min-similarity` (0.25) and
+`bootstrap-weight` (0.1). Initializing an endpoint twice does not add its weight
+again, and existing explicit or learned links are preserved. Initialization
+markers survive restart. Zero neighbour count or weight disables initialization.
+There is no global all-pairs scan; these are initial retrieval associations,
+not evidence that the memories are true or that they helped the agent.
+
 `(attention-use "id" [amount])` is optional stronger feedback. Distinct explicit
 reads/uses in the same model turn teach bidirectional links once per pair; search
 result co-occurrence does not. `(attention-link "from" "to" weight)` sets a
@@ -236,6 +251,25 @@ for inspection and retrieval falls back to similarity. `attention-last` reports
 attention persistence failures. After repairing or editing the snapshot,
 `(attention-reload)` reloads it without restarting. The separate SWI-PeTTa backend keeps its existing
 similarity retrieval; ECAN is native to the CeTTa path.
+
+Multiple instances can share a reviewed runtime release while keeping their own
+models, prompts, memories, settings and `src/instance_hooks.metta`. The development
+command `python3 scripts/sync_instances.py --status` compares the common files;
+`--apply` builds and activates them at both agents' turn boundaries. Without
+either flag it prepares the release and backups without activation.
+
+The host configuration defaults to `~/.config/godelclaw/instances.json`; use
+`config/instances.example.json` as its shape. Set the instance roots, state paths,
+services, offline `checks`, and the reviewed current hashes in `expected` (JSON
+null means absent). `config/runtime-files.json` is the common file selection;
+include new runtime dependencies there when shipping a component. Credentials,
+identity files and personal state do not belong in that selection. The existing
+grouped updater backs up files, checks the staged runtime, restarts configured
+control responders, and restores the previous group if activation fails. A
+successful update advances the expected hashes for the next update. Local edits
+are reported rather than overwritten. An optional `shared_environment` with
+`path` and `source` installs one qualified engine environment for both services
+and rolls it back with the code.
 
 CeTTa also provides hierarchical memory in MeTTa over native named spaces.
 Committed turns are linked automatically to their existing task identity and
