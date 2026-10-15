@@ -21,6 +21,8 @@
 !(import! &self ./src/mode_channel.py)
 !(import! &self ./src/input_ack.py)
 !(import! &self ./channels/energy.metta)
+!(import! &self ./channels/telegram_control_input.metta)
+!(import! &self ./channels/telegram_notice_cleanup.metta)
 
 (= (tc:env $name $default) (system:getenv-or-default $name $default))
 (= (tc:socket) (tc:env "METTACLAW_TELEGRAM_SERVICE_SOCKET" ""))
@@ -244,20 +246,34 @@
 ; A delayed receipt notice leaves ordinary input pending for cognition.
 ; Submission and delivery have independent durable service identities.
 (= (tc:input-notice $task $lane $kind $role $update)
-   (let $key (tc:text (py-call (input_ack.key $task $lane $kind $role (json-stringify $update))))
+   (if (ti:operator-control? $kind $role $update) (nc:withdraw $task)
+    (let $key (tc:text (py-call (input_ack.key $task $lane $kind $role (json-stringify $update))))
      (if (== $key "") 0
        (let $text (tc:text (py-call (input_ack.text)))
          (let $body (json-stringify (JsonArray ((JsonArray ((JsonString "send") (JsonString $text) (JsonString "plain"))))))
            (case (tc:call 4 $key $body)
              (((cwp:reply 66 $name $answer) (py-call (input_ack.submitted $task)))
-              ($other 0))))))))
+              ($other 0)))))))))
+
+; Observe the same ordinary-input set that the cognition client queues.
+; Controls may remain in the service while that client is busy; they are
+; independently handled controls, not unanswered conversational input.
+(= (tc:notice-tasks $tasks)
+   (if (== $tasks ()) ()
+     (let* ((($task $body) (car-atom $tasks))
+            ($tail (tc:notice-tasks (cdr-atom $tasks)))
+            ($control (case (tc:parse $task $body)
+              (((JsonArray ((JsonString "input") (JsonString $lane) (JsonString $kind) (JsonString $role) $update))
+                (ti:operator-control? $kind $role $update)) ($other False)))))
+       (if $control $tail (cons-atom ($task $body) $tail)))))
 
 (= (tc:serve-once)
    (let $tasks (tc:tasks-after "" 256)
-     (let $retained (py-call (input_ack.begin_scan (quote $tasks)))
+     (let $ordinary (tc:notice-tasks $tasks)
+      (let $retained (py-call (input_ack.begin_scan (quote $ordinary)))
        (let $_ (tc:prune (collapse (match &self (tc:cached $task $body $value) $task)))
        (let $handled (tc:handle $tasks)
-         (let $cleaned (tc:guarded (catch (py-call (input_ack.pump))) "receipt cleanup") $handled))))))
+         (let $cleaned (tc:guarded (catch (nc:pump)) "receipt cleanup") $handled)))))))
 
 ; Arm before scanning, so an arrival during the scan remains a wake-up.
 (= (tc:serve)

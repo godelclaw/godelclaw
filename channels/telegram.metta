@@ -25,6 +25,8 @@
 !(import! &self ./src/helper.py)
 !(import! &self ./src/process_supervision.py)
 !(import! &self ./channels/energy.metta)
+!(import! &self ./channels/telegram_control_input.metta)
+!(import! &self ./channels/telegram_notice_cleanup.metta)
 !(import! &self ./src/job_io)
 !(import! &self ./src/mail)
 ; The native idle provider initializes native memory. Keep it out of the
@@ -663,6 +665,10 @@
                       (JsonPair "note" (JsonString (tg:compact $reason 300)))
                       (JsonPair "observation" (JsonString (tg:compact $body 4000)))))))))
 
+(= (tg:foreign-receipt $value)
+   (if (nc:receipt $value) True
+     (py-call (telegram.metta_foreign_receipt (json-stringify $value)))))
+
 (= (tg:handle $task $value)
    (case $value
      (((JsonArray ((JsonString "input") (JsonString $lane) (JsonString $kind) (JsonString $role) $update))
@@ -674,16 +680,16 @@
        (let $position (parse $pos)
          (let $outcome (tg:result $result)
            (let $r (if (tg:own-key? $key) (add-atom &self (tg:receipt $key $position $outcome))
-                     (py-call (telegram.metta_foreign_receipt (json-stringify $value))))
+                     (tg:foreign-receipt $value))
              (tg:acknowledge $task)))))
       ((JsonArray ((JsonString "rejected") (JsonString $key) (JsonString $reason)))
        (let $r (if (tg:own-key? $key) (add-atom &self (tg:receipt $key -1 (rejected $reason)))
-                 (py-call (telegram.metta_foreign_receipt (json-stringify $value))))
+                 (tg:foreign-receipt $value))
          (tg:acknowledge $task)))
       ((JsonArray ((JsonString "released") (JsonString $lane) (JsonString $key) (JsonNumber $pos)))
        (let $position (parse $pos)
          (let $r (if (tg:own-key? $key) (add-atom &self (tg:receipt $key $position (released)))
-                   (py-call (telegram.metta_foreign_receipt (json-stringify $value))))
+                   (tg:foreign-receipt $value))
            (tg:acknowledge $task))))
       ; Commands and taps on their menus are the responder's
       ; (channels/telegram_control.metta), except /delete, which acts through
@@ -725,13 +731,9 @@
 ; neither reaches this client. A command addressed as /command@bot does:
 ; Python's, as before.
 (= (tg:local-control? $text $sender-id)
-   (if (not (str:starts-with $text "/")) False
+   (if (not (ti:control-text? $text)) False
      (let $head (car-atom (str:split-whitespace $text))
-       (let $name (car-atom (str:split "@" $head))
-         (and (tg:member $name ("/start" "/stop" "/model" "/models" "/mode" "/modes" "/engine" "/engines"
-                                "/fuel" "/fuels" "/quota" "/wake" "/energy" "/health" "/activity"
-                                "/delete" "/claude_code_authorization"))
-              (or (tg:operator? $sender-id) (> (size-atom (str:split "@" $head)) 1)))))))
+       (or (tg:operator? $sender-id) (> (size-atom (str:split "@" $head)) 1)))))
 
 (= (tg:intake $task $lane $kind $role $update)
    (let ($mkind $message) (tg:message-of $update)

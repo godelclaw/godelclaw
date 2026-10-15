@@ -6,6 +6,7 @@ import http.server
 import os
 from pathlib import Path
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -99,11 +100,32 @@ def main():
                 "--credential-file", str(token), "--mock-origin", origin, "--listener-fd", str(listener.fileno())],
                 pass_fds=(listener.fileno(),), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             def responder():
-                return subprocess.Popen([CETTA, "--lang", "petta", "--import-mode", "ancestor-walk", str(source)],
-                    cwd=ROOT, env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                with open(folder / 'responder.log', 'a') as log:
+                    return subprocess.Popen([CETTA, "--lang", "petta", "--import-mode", "ancestor-walk", str(source)],
+                        cwd=ROOT, env=environment, stdout=log, stderr=subprocess.STDOUT)
             worker = responder()
             try:
-                api.updates.append({"update_id": 1, "message": {"message_id": 100, "date": 1790000000,
+                # The service leaves another bot's commands as input for the
+                # client to ignore. While cognition is absent, the independent
+                # responder must not promise an LLM answer or count them as
+                # unanswered conversational questions.
+                api.updates.extend([
+                    {"update_id": 1, "message": {"message_id": 98, "date": 1790000000,
+                     "chat": {"id": 42, "type": "private"}, "from": {"id": 7, "is_bot": False},
+                     "text": "/activity@OtherBot"}},
+                    {"update_id": 2, "message": {"message_id": 99, "date": 1790000000,
+                     "chat": {"id": 42, "type": "private"}, "from": {"id": 7, "is_bot": False},
+                     "caption": "/ACTIVITY@OtherBot", "document": {"file_id": "fixture"}}}])
+                channel = durable_telegram.Channel(str(path), os.devnull)
+                wait(lambda: len(channel.pending(32)) >= 2, "addressed controls did not reach the client lane")
+                time.sleep(.5)
+                assert api.sent == [], "another bot's control received a misleading queued notice"
+                status = json.loads((folder / "modes/control-status.json").read_text())
+                assert status['operator_inbox']['pending'] == 0, status
+                for task, body in channel.pending(32):
+                    if json.loads(body)[0] == 'input':
+                        channel.acknowledge(task)
+                api.updates.append({"update_id": 3, "message": {"message_id": 100, "date": 1790000000,
                     "chat": {"id": 42, "type": "private", "first_name": "fixture"},
                     "from": {"id": 7, "is_bot": False, "first_name": "fixture"}, "text": "ordinary question"}})
                 wait(lambda: len(api.sent) == 1, "owned receipt notice was not delivered")
@@ -121,11 +143,28 @@ def main():
                 time.sleep(.2)
                 assert len(api.sent) == 1
                 os.environ.update({key: value for key, value in environment.items() if key.startswith("METTACLAW_")})
-                channel = durable_telegram.Channel(str(path), os.devnull)
-                input_ack.processed_update_ids(["1"])
-                wait(lambda: input_ack.pump(channel) or bool(api.deleted), "processed owned notice was not removed")
+                input_ack.processed_update_ids(["3"])
+                # Only the native responder performs cleanup. Calling the old
+                # Python pump here would conceal a broken native implementation.
+                wait(lambda: bool(api.deleted), "processed owned notice was not removed")
                 assert api.deleted == [(42, 501)], api.deleted
                 assert len(api.sent) == 1
+                def notice_state(task=None):
+                    with sqlite3.connect(folder / 'strategy.db') as db:
+                        if task is None:
+                            return db.execute('SELECT state FROM input_notices WHERE update_id=?', ('3',)).fetchone()[0]
+                        return db.execute('SELECT state FROM input_notices WHERE task=?', (task,)).fetchone()[0]
+                wait(lambda: notice_state() == 'deleted', 'native cleanup did not retain the deletion receipt')
+                # A previously emitted control notice can be withdrawn without
+                # claiming that cognition processed the control's input.
+                with sqlite3.connect(folder / 'strategy.db') as db:
+                    db.execute("INSERT INTO input_notices(task,update_id,lane,send_key,created,message_id,state) VALUES (?,?,?,?,?,?,?)",
+                               ('old-control', 'old-control', '42.0', '42.0.333', time.time(), 502, 'withdrawing'))
+                wait(lambda: (42, 502) in api.deleted, 'mistaken control notice was not withdrawn')
+                wait(lambda: notice_state('old-control') == 'deleted', 'withdrawal receipt was not retained')
+                with sqlite3.connect(folder / 'strategy.db') as db:
+                    assert db.execute("SELECT processed FROM input_notices WHERE task='old-control'").fetchone()[0] == 0
+                    assert db.execute("SELECT 1 FROM processed_inputs WHERE id='old-control'").fetchone() is None
                 assert any(json.loads(body)[0] == "input" for _, body in channel.pending(32)), "notice cleanup consumed user input"
                 wait(lambda: inbox_count(1), "responder restart lost the still-pending input observation")
                 facts = runtime_context.read()
@@ -145,7 +184,14 @@ def main():
                 failed = runtime_context.read()
                 assert failed["localChannelReady"] is False and failed["humanInbox"] is None
                 print("PASS: exact owned notice deleted after processing; responder restart did not resend; input remains independently owned")
+                print("PASS: native withdrawal removes a mistaken notice without completing its input")
                 print("PASS: complete inbox scan reaches context, acknowledgement clears it, channel failure removes assurance")
+            except Exception:
+                print((folder / 'responder.log').read_text()[-6000:])
+                with sqlite3.connect(folder / 'strategy.db') as db:
+                    print('notice rows:', db.execute('SELECT * FROM input_notices').fetchall())
+                print('pending tasks:', channel.pending(32))
+                raise
             finally:
                 worker.kill(); worker.wait(); service.kill(); service.wait(); listener.close()
 
