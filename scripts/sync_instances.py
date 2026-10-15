@@ -38,6 +38,22 @@ def compare(source, config, names, removed):
     } for instance in config['instances']]
 
 
+def runtime_current(config):
+    for instance in config['instances']:
+        required = instance.get('required_runtime', {})
+        try:
+            actual = updater.running_settings(instance['service'], required)
+        except (RuntimeError, OSError, subprocess.CalledProcessError):
+            return False
+        if any(actual.get(key) != value for key, value in required.items()):
+            return False
+    shared = config.get('shared_environment')
+    if not shared:
+        return True
+    desired = updater.sha(Path(shared['source']))
+    return desired is not None and updater.sha(Path(shared['path'])) == desired
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path,
@@ -53,6 +69,9 @@ def main():
     hashes, status = compare(source, config, names, removed)
     if args.status:
         print(json.dumps({'instances': status}, indent=2))
+        return 0
+    if args.apply and not any(item['different'] for item in status) and runtime_current(config):
+        print(json.dumps({'status': 'current', 'instances': status}))
         return 0
     identity = hashlib.sha256(json.dumps(hashes, sort_keys=True).encode()).hexdigest()
     base = Path(config.get('release_dir', config_path.parent/'releases')).expanduser()

@@ -221,7 +221,8 @@ These use memory-to-memory cosine, `bootstrap-min-similarity` (0.25) and
 `bootstrap-weight` (0.1). Initializing an endpoint twice does not add its weight
 again, and existing explicit or learned links are preserved. Initialization
 markers survive restart. Zero neighbour count or weight disables initialization.
-There is no global all-pairs scan; these are initial retrieval associations,
+Initialization reuses the requested candidate pool rather than building a
+full-store graph upfront; these are initial retrieval associations,
 not evidence that the memories are true or that they helped the agent.
 
 `(attention-use "id" [amount])` is optional stronger feedback. Distinct explicit
@@ -257,6 +258,7 @@ models, prompts, memories, settings and `src/instance_hooks.metta`. The developm
 command `python3 scripts/sync_instances.py --status` compares the common files;
 `--apply` builds and activates them at both agents' turn boundaries. Without
 either flag it prepares the release and backups without activation.
+Applying an already current release leaves the running agents in place.
 
 The host configuration defaults to `~/.config/godelclaw/instances.json`; use
 `config/instances.example.json` as its shape. Set the instance roots, state paths,

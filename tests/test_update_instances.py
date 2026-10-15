@@ -59,6 +59,18 @@ class ReleasePermissionsTest(unittest.TestCase):
                               dict(name='second', different=[])])
             self.assertNotIn('private sentinel', result.stdout)
 
+    def test_current_code_does_not_hide_an_old_running_engine(self):
+        path = Path(__file__).resolve().parents[1]/'scripts/sync_instances.py'
+        spec = importlib.util.spec_from_file_location('sync_instances_test', path)
+        sync = importlib.util.module_from_spec(spec)
+        with mock.patch.dict(sys.modules, {'update_instances': update}):
+            spec.loader.exec_module(sync)
+        config = dict(instances=[dict(service='fixture', required_runtime=dict(CETTA_BIN='new'))])
+        with mock.patch.object(update, 'running_settings', return_value=dict(CETTA_BIN='old')):
+            self.assertFalse(sync.runtime_current(config))
+        with mock.patch.object(update, 'running_settings', return_value=dict(CETTA_BIN='new')):
+            self.assertTrue(sync.runtime_current(config))
+
 
 class PairedUpdateTest(unittest.TestCase):
     def exercise(self, failed=False, runtime_missing=False, controls=False, control_failure=False,

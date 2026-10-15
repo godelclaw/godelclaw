@@ -187,7 +187,7 @@ class AttentionTests(unittest.TestCase):
         self.assertIn('(MemoryHealth healthy native', output)
         self.assertFalse((self.home / 'attention.metta').exists())
 
-    def test_co_use_learns_once_per_turn_and_search_does_not_teach_links(self):
+    def test_co_use_learns_once_per_turn_and_unrelated_search_does_not_teach_links(self):
         output = self.run_metta('''
 !(semantic:query "alpha" 2)
 !(println! (SEARCH_ONLY (attention-policy)))
