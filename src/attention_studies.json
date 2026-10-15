@@ -1,0 +1,257 @@
+{
+  "version": 1,
+  "scope": "Native memory retrieval experiments, not a model of a brain",
+  "default": "baseline",
+  "controls": [
+    "attention-policy",
+    "attention-try",
+    "attention-compare",
+    "attention-feedback"
+  ],
+  "threads": [
+    {
+      "id": "semantic-walk",
+      "question": "Can associations recover useful memories beyond direct similarity?",
+      "candidate": "Unit-seed personalized PageRank with dangling-node retention and similarity blending",
+      "stage": "baseline-runtime",
+      "tests": [
+        "conservation",
+        "exact graph oracle",
+        "multi-hop bridge",
+        "irrelevant hub",
+        "scoped retrieval"
+      ],
+      "metrics": [
+        "recall@k",
+        "hub share",
+        "rounds",
+        "milliseconds"
+      ],
+      "sources": [
+        "https://doi.org/10.1111/j.1467-9280.2007.02027.x",
+        "https://doi.org/10.1037/a0038693"
+      ],
+      "limit": "High graph rank is useful only when the learned graph and seeds reflect the task."
+    },
+    {
+      "id": "successor-need-gain",
+      "question": "Does estimated usefulness improve on structural need alone?",
+      "candidate": "gain-need: normalized PPR need times a smoothed mean of optional explicit usefulness feedback",
+      "stage": "optional-selector",
+      "tests": [
+        "gain calibration endpoints",
+        "useful lower-similarity hit",
+        "misleading feedback",
+        "cold start"
+      ],
+      "metrics": [
+        "recall@k",
+        "feedback calibration",
+        "counterfactual utility when measured"
+      ],
+      "sources": [
+        "https://doi.org/10.1038/nn.4650",
+        "https://doi.org/10.1038/s41593-018-0232-z"
+      ],
+      "limit": "Usefulness ratings are a gain proxy, not Bellman improvement or causal utility. Need uses the available finite PPR iterate."
+    },
+    {
+      "id": "recency-frequency",
+      "question": "When does temporal recurrence help or hurt recall?",
+      "candidate": "power-law: constant-space n/(1+age/scale)^decay, bounded by x/(1+x); exact ACT-R history sum is an offline reference",
+      "stage": "optional-selector",
+      "tests": [
+        "fresh versus old uses",
+        "frequency",
+        "old necessary fact",
+        "exact-history reference",
+        "zero aging"
+      ],
+      "metrics": [
+        "recall@k on evolving and stationary tasks",
+        "score error versus exact history"
+      ],
+      "sources": [
+        "https://doi.org/10.1111/j.1467-9280.1991.tb00174.x",
+        "https://act-r.psy.cmu.edu/actr7.x/reference-manual.pdf"
+      ],
+      "limit": "The runtime proxy ages the aggregate from the last deliberate use. It is not exact ACT-R. Existing STI/MTI/LTI supply a separate multi-exponential comparator."
+    },
+    {
+      "id": "capacity-normalization",
+      "question": "Does explicit competition improve allocation beyond a normalized seed?",
+      "candidate": "Existing unit seed and caller-selected top-k; stable temperature softmax as an offline reference",
+      "stage": "baseline-and-offline-reference",
+      "tests": [
+        "unit mass",
+        "nonnegative softmax",
+        "temperature concentration",
+        "ranking unchanged under monotone normalization"
+      ],
+      "metrics": [
+        "entropy",
+        "effective support",
+        "recall@k at equal budgets"
+      ],
+      "sources": [
+        "https://doi.org/10.1016/j.neuron.2009.01.002"
+      ],
+      "limit": "Conserved query mass is an engineering invariant, not a conserved biological substance."
+    },
+    {
+      "id": "inhibition-return",
+      "question": "Can a fading repetition penalty reduce loops without suppressing needed revisits?",
+      "candidate": "inhibition: baseline score times 1-strength*2^(-age/half-life), blended with baseline",
+      "stage": "optional-selector",
+      "tests": [
+        "immediate alternative",
+        "recovery after elapsed time",
+        "zero disable",
+        "necessary repeated answer"
+      ],
+      "metrics": [
+        "repeat rate",
+        "run length",
+        "relevant-memory starvation",
+        "recall@k"
+      ],
+      "sources": [
+        "https://doi.org/10.1080/02643298508252866",
+        "https://doi.org/10.1109/34.730558"
+      ],
+      "limit": "A temporary score bias is not a fairness guarantee. Ordinary similarity and direct ID reads remain available."
+    },
+    {
+      "id": "stable-link-learning",
+      "question": "Can links learn from co-use without old hubs dominating?",
+      "candidate": "Existing once-per-turn co-use and row normalization; bounded exponential coactivation as an offline alternative",
+      "stage": "baseline-and-offline-reference",
+      "tests": [
+        "duplicate turn",
+        "bounded updates",
+        "hub stress",
+        "changing association"
+      ],
+      "metrics": [
+        "hub amplification",
+        "adaptation lag",
+        "edge calibration"
+      ],
+      "sources": [
+        "https://doi.org/10.1007/BF00275687"
+      ],
+      "limit": "The bounded update is not Oja PCA. The current runtime still adds co-use weights; normalization alone does not remove historical bias."
+    },
+    {
+      "id": "adaptive-gain",
+      "question": "Can agents choose exploration and cue-versus-prior weighting effectively?",
+      "candidate": "Existing adjustable restart, seed mix and selector mix; temperature sweep offline",
+      "stage": "manual-controls-and-offline-reference",
+      "tests": [
+        "flat versus peaked scores",
+        "context shift",
+        "reset",
+        "parameter endpoints"
+      ],
+      "metrics": [
+        "entropy",
+        "context-switch recall",
+        "repetition"
+      ],
+      "sources": [
+        "https://doi.org/10.1016/j.neuron.2005.04.026"
+      ],
+      "limit": "No automatic controller or one-to-one mapping to a neurotransmitter is claimed."
+    },
+    {
+      "id": "pattern-completion",
+      "question": "When does a small nonlinear focus help partial cues, and when does it lock in?",
+      "candidate": "Small focus boost with explicit reset; a stickiness probe, not a Hopfield model",
+      "stage": "offline-reference",
+      "tests": [
+        "partial-cue recovery",
+        "misleading cue",
+        "context switch",
+        "reset and inhibition interaction"
+      ],
+      "metrics": [
+        "completion recall",
+        "persistence",
+        "lock-in run length"
+      ],
+      "sources": [
+        "https://doi.org/10.1073/pnas.79.8.2554"
+      ],
+      "limit": "No attractor feedback is enabled in ordinary retrieval."
+    },
+    {
+      "id": "graph-diffusion",
+      "question": "Would another graph kernel be a better candidate generator?",
+      "candidate": "Finite Poisson-weighted heat-kernel series against geometric PPR on the same graph; omitted mass is reported",
+      "stage": "offline-reference",
+      "tests": [
+        "cluster bridge",
+        "irrelevant hub",
+        "equal explored-edge budget"
+      ],
+      "metrics": [
+        "recall@k",
+        "hub share",
+        "edges explored"
+      ],
+      "sources": [
+        "https://doi.org/10.1073/pnas.1801351115"
+      ],
+      "limit": "An anatomical connectome is not a semantic memory graph."
+    },
+    {
+      "id": "retrieval-diagnostics",
+      "question": "How do we detect repetition, concentration, scatter and relevant-memory starvation?",
+      "candidate": "Passive same-pool arm comparison and repeat-within-half-life observation; labelled synthetic failures",
+      "stage": "runtime-diagnostic-and-offline-tests",
+      "tests": [
+        "inspection does not train",
+        "no forced feedback",
+        "hub and repetitive-answer counterexamples"
+      ],
+      "metrics": [
+        "repeat fraction",
+        "effective support",
+        "hub share",
+        "recall@k",
+        "latency"
+      ],
+      "sources": [],
+      "limit": "These are software diagnostics, not psychiatric diagnoses. Without task labels they do not establish usefulness."
+    }
+  ],
+  "evaluation": {
+    "comparators": [
+      "similarity",
+      "ordinary hybrid ECAN",
+      "recency-frequency",
+      "gain-need",
+      "inhibition"
+    ],
+    "strata": [
+      "direct lookup",
+      "multi-hop",
+      "evolving project",
+      "old fact",
+      "distractors",
+      "repeated question",
+      "context shift",
+      "hub",
+      "partial cue"
+    ],
+    "design": "Same candidate pool and top-k first; independent arms before combinations. Synthetic labels test mechanisms, not general agent task success.",
+    "future": [
+      "factorial arm interactions",
+      "sampled causal ablations",
+      "gain calibration",
+      "compressed offline need compilation",
+      "bounded forward lookahead",
+      "reasoning-cost profiling (separate from retrieval importance)"
+    ]
+  }
+}

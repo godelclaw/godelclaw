@@ -1,0 +1,14 @@
+{
+  "description": "Synthetic mechanism probes, not an agent-success benchmark. Paired cases deliberately have the same observations and different needs.",
+  "mix": 0.5,
+  "fields": ["id", "similarity", "need", "baseline", "recency", "gain", "inhibition"],
+  "cases": [
+    {"id": "evolving-project", "relevant": "b", "candidates": [["a", 0.8, 0.8, 0.8, 0, 0.5, 1], ["b", 0.6, 0.6, 0.6, 0.9, 0.5, 1]]},
+    {"id": "old-necessary-fact", "relevant": "a", "candidates": [["a", 0.8, 0.8, 0.8, 0, 0.5, 1], ["b", 0.6, 0.6, 0.6, 0.9, 0.5, 1]]},
+    {"id": "calibrated-usefulness", "relevant": "b", "candidates": [["a", 0.8, 0.8, 0.8, 0, 0.05, 1], ["b", 0.6, 0.6, 0.6, 0, 0.95, 1]]},
+    {"id": "misleading-usefulness", "relevant": "a", "candidates": [["a", 0.8, 0.8, 0.8, 0, 0.05, 1], ["b", 0.6, 0.6, 0.6, 0, 0.95, 1]]},
+    {"id": "unproductive-repeat", "relevant": "b", "candidates": [["a", 1, 1, 1, 0, 0.5, 0.2], ["b", 0.7, 0.7, 0.7, 0, 0.5, 1]]},
+    {"id": "necessary-repeat", "relevant": "a", "candidates": [["a", 1, 1, 1, 0, 0.5, 0.2], ["b", 0.7, 0.7, 0.7, 0, 0.5, 1]]},
+    {"id": "cold-direct-lookup", "relevant": "a", "candidates": [["a", 1, 1, 1, 0, 0.5, 1], ["b", 0.5, 0.5, 0.5, 0, 0.5, 1]]}
+  ]
+}
