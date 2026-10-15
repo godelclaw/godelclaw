@@ -173,6 +173,7 @@
   "src/mcp_bridge.py",
   "src/memory.metta",
   "src/memory_health.py",
+  "src/memory_views.metta",
   "src/metta_coding_policy.metta",
   "src/mode_channel.py",
   "src/moltbook.py",
@@ -227,5 +228,7 @@
   "src/utils_cetta.metta",
   "src/utils_swi.metta",
   "src/weak_process_core.metta",
-  "src/wire.py"
+  "src/wire.py",
+  "src/workspaces_api.metta",
+  "src/workspaces_cetta.metta"
 ]

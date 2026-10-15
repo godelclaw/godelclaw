@@ -129,7 +129,7 @@
          (== (get-state &semantic-cache) (MCache $uuid $sid $rev $profile $dim))
          True
          (case
-           (sm:snapshot $space (Memory $id $r $p $v $doc $meta) (Memory $id $r $p $v $doc $meta))
+           (sm:workspace-snapshot $space)
            (((MSnapshot $source-rev $rows)
              (case
                $rows
@@ -232,9 +232,9 @@
          (sm:hits (cdr-atom $rows))))))
 
 (= (semantic:query $text $count)
-   (semantic:query $text $count (case (am:open)
+   (semantic:query $text $count (if (== (ws:mode) "default") (case (am:open)
       (((AttentionReady $bank $time)
-        (let $mode (am:get $bank "mode") (if (am:mode? $mode) $mode "similarity"))) ($other "similarity")))))
+        (let $mode (am:get $bank "mode") (if (am:mode? $mode) $mode "similarity"))) ($other "similarity"))) (ws:mode))))
 
 (= (semantic:query $text $count $mode)
    (if (am:mode? $mode) (sm:query-text $text $count $mode)
@@ -253,7 +253,8 @@
              (sm:embed "query" $text $dim)
              (((MemoryVector $vector) (sm:query-vector $vector (am:number $count) $mode)) ($error $error))))
           ($error $error))))
-     (legacy-query $text $count)))
+     (if (== (ws:filter (ws:chosen)) All) (legacy-query $text $count)
+       (WorkspaceError query "scoped retrieval requires native memory"))))
 
 (= (sm:queue $id $action $text)
    (case
@@ -264,10 +265,13 @@
           ($op (space:request-id))
           ($time (sm:time))
           ($pending (MemoryPending 1 $op $id $action $text $time 0 0 ""))
+          ($memberships (if (== $action remember) (ws:memberships $id (ws:capture)) ()))
+          ($scope-ops (collapse (add (superpose $memberships))))
           ($ops
             (sm:append-parts
               ((sm:removes $old)
-               ((add $pending) (add (MemoryChange 1 $op $id $action $time $text)))))))
+               ((add $pending) (add (MemoryChange 1 $op $id $action $time $text)))
+               $scope-ops))))
          (case
            (sm:commit $space $ops)
            (((MemoryCommitted) (let $started (semantic:maintain) (MemoryQueued $id $op)))
@@ -291,7 +295,9 @@
            (sm:one $space $id)
            (((Memory $id $rev $profile $vector $doc $meta)
              (let* (($_ (catch (sm:refresh $space $p $dim)))
-                    ($_ (catch (am:read $id)))) (MemoryCurrent $id $rev $doc $meta $pending)))
+                    ($_ (ws:prepare))
+                    ($_ (catch (am:read $id))))
+               (MemoryCurrent $id $rev $doc (sm:workspace-meta $space $id $meta) $pending)))
             ((MemoryMissing $id) (MemoryCurrent $id absent "" () $pending))
             ($error $error)))))
       ($error $error))))
@@ -602,12 +608,14 @@
               (let
                 $k
                 (if (== $count 0) (size-atom (collapse (memory:matches All))) $count)
-                (case
-                  (if (== $mode "probe") (memory:dispatch (MemoryQuery $profile $vector $k All))
+                (case (ws:prepare)
+                  ((True (case
+                  (if (== $mode "probe") (ws:query $profile $vector $k)
                     (am:select $profile $vector $count $mode))
                   (((MemoryFailure $at $why) (MemoryUnavailable retrieval $why))
                    ($rows
-                     (MemoryResults (sm:hits $rows) (Unindexed (size-atom (sm:pending $space)))))))))
+                     (MemoryResults (sm:hits $rows) (Unindexed (size-atom (sm:pending $space))))))))
+                   ($error $error)))))
             ($error $error))))
         ($error $error)))))
 

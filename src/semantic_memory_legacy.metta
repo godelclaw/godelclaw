@@ -25,6 +25,8 @@
 (= (attention-last) (attention-policy))
 
 (= (am:begin-turn) True)
+(= (ws:begin $task $source $chat) True)
+(= (ws:context) (Workspaces available-on-CeTTa))
 
 (= (attention-policy $key) (attention-policy))
 

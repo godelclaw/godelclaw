@@ -41,7 +41,7 @@ class APITests(unittest.TestCase):
         snapshot = self.home / 'attention.metta'
         before = snapshot.read_bytes()
         output = self.run_metta('''
-!(println! (COMMANDS (size-atom (api:commands))))
+!(println! (COMMANDS (size-atom (api:command-fields "attention" (api:commands)))))
 !(println! (FIELDS (size-atom (api:module-fields "attention"))))
 !(println! (HELP (api:help "attention-policy")))
 !(println! (VALID (api:check (quote (attention-link "a" "b" 0)))))
@@ -49,7 +49,7 @@ class APITests(unittest.TestCase):
 !(println! (LATER (api:check (quote (attention-last)))))
 ''')
         self.assertIn('(COMMANDS 6)', output)
-        self.assertIn('(FIELDS 23)', output)
+        self.assertIn('(FIELDS 28)', output)
         self.assertIn('(Default 300) (Unit "seconds")', output)
         self.assertIn('COMMAND_ERROR: wrong number of arguments. usage: (attention-last)', output)
         self.assertIn('(LATER "OK: (attention-last)', output)

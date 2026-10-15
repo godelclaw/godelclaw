@@ -62,6 +62,7 @@
         " ACTIVE_MODE: " (loop-active-policy $periphery)
         " SETTINGS_API: " (repr (settings:context))
         " MEMORY_ATTENTION: " (repr (am:context))
+        " MEMORY_WORKSPACE: " (repr (ws:context))
         " ACTIVE_MODEL: " (py-call (synthetic_llm.current_model))
 
         " LAST_SKILL_USE_RESULTS: "

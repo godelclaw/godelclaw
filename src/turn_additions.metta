@@ -18,7 +18,10 @@
 
 (= (addition-strategy-begin $turn $source $message)
    (let $receipt (py-call (strategy_host.begin $turn $source $message))
-     (let $_ (hierarchy:begin $turn $source (py-call (strategy_host.view))) $receipt)))
+     (let* (($_ (hierarchy:begin $turn $source (py-call (strategy_host.view))))
+            ($_ (ws:begin (get-state &hierarchy-task) $source
+                  (if (and (== $source "operator-event") (tg:client-metta?))
+                    (tg:get reply-chat "") "")))) $receipt)))
 
 (= (addition-protected-request $request)
    (addition-protected-request $request 32768))

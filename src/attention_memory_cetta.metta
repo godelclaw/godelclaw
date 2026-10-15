@@ -4,6 +4,7 @@
 !(import! &self ./src/ecan_bank.metta)
 !(import! &self ./src/ecan_decay.metta)
 !(import! &self ./src/attention_parameters.metta)
+!(import! &self ./src/workspaces_cetta.metta)
 !(import! &self (library fs))
 !(import! &self (library path))
 !(import! &self (library str))
@@ -186,6 +187,12 @@
 (= (am:focus $bank $count)
    (ecan:focus $bank $count (am:get $bank "sti-weight")
      (am:get $bank "mti-weight") (am:get $bank "lti-weight")))
+(= (am:view-focus $bank $count)
+   (if (== (get-state &ws-filter) All) (am:focus $bank $count)
+     (let* (($all (am:focus $bank 0))
+            ($rows (collapse (let $row (superpose $all)
+              (let ($score (ECANValue $id $s $m $l)) $row (if (ws:allows $id) $row (empty)))))))
+       (if (== $count 0) $rows (list:retain-top-k-keyed $rows $count)))))
 (= (attention-focus) (attention-focus 20))
 (= (attention-focus $raw)
    (let* (($count (am:number $raw)) ($check (am:integer count $count 0)))
@@ -216,9 +223,10 @@
      (let (AttentionMass $id $v) (car-atom $rows)
        (let $_ (am:add $dest $id (* $factor $v)) (am:copy (cdr-atom $rows) $dest $factor)))))
 (= (am:edges $bank $id)
+   (if (not (ws:traverse? $id)) ()
    (collapse (match $bank (AttentionLink $id $target $w)
      (case (collapse (memory:record $target))
-       ((() (empty)) ($rows ($target $w)))))))
+       ((() (empty)) ($rows (if (ws:traverse? $target) ($target $w) (empty)))))))))
 (= (am:sum-edges $edges)
    (if (== $edges ()) 0
      (let ($id $w) (car-atom $edges) (+ $w (am:sum-edges (cdr-atom $edges))))))
@@ -334,11 +342,11 @@
    (if (== $ids ()) ()
      (let* (($id (car-atom $ids)) ($row (collapse (memory:record $id)))
             ($rest (am:score-ids $profile $vector (cdr-atom $ids))))
-       (case $row
+       (if (not (ws:allows $id)) $rest (case $row
          ((($record) (case (memory:score $profile $vector $record)
                        ((($score (MemoryInfo $i $r $d $m)) (cons-atom ($score (MemoryInfo $i $r $d $m)) $rest))
                         ($error $rest))))
-          ($other $rest))))))
+          ($other $rest)))))))
 (= (am:seed $bank $rows $dest $max-importance)
    (if (== $rows ()) True
      (let* ((($cos (MemoryInfo $id $r $d $m)) (car-atom $rows))
@@ -421,8 +429,8 @@
    (if (or (== (am:get $bank "bootstrap-neighbours") 0) (== (am:get $bank "bootstrap-weight") 0)) True
      (case (collapse (memory:record $id))
        ((((Memory $i $revision $profile $vector $doc $meta))
-         (let $peers (memory:dispatch (MemoryQuery $profile $vector
-                          (+ 1 (am:get $bank "bootstrap-neighbours")) All))
+         (let $peers (ws:query $profile $vector
+                          (+ 1 (am:get $bank "bootstrap-neighbours")))
            (am:bootstrap $bank $profile ((1 (MemoryInfo $id $revision $doc $meta))) (am:hit-ids $peers))))
         ($other True)))))
 
@@ -432,8 +440,7 @@
 ; selection is certified exact (see am:certify).
 (= (am:fallback $profile $vector $count $error)
    (let $_ (change-state! &am-last (AttentionQuery fallback-similarity $error))
-     (memory:dispatch (MemoryQuery $profile $vector
-       (if (== $count 0) (size-atom (collapse (memory:matches All))) $count) All))))
+     (ws:query $profile $vector (if (== $count 0) (ws:count) $count))))
 (= (am:select $profile $vector $count $mode)
    (case (catch (am:select-ready $profile $vector $count $mode))
      (((Error $where $why) (am:fallback $profile $vector $count (AttentionUnavailable evaluation $why)))
@@ -443,9 +450,9 @@
      (((AttentionReady $bank $time)
        (if (== $mode "similarity") (am:similar-query $bank $profile $vector $count)
         (let* (($_ (am:tick))
-              ($pool (if (== $count 0) (size-atom (collapse (memory:matches All)))
+              ($pool (if (== $count 0) (ws:count)
                        (* $count (am:get $bank "candidate-multiplier"))))
-              ($similar (memory:dispatch (MemoryQuery $profile $vector $pool All))))
+              ($similar (ws:query $profile $vector $pool)))
          (case $similar
            (((MemoryFailure $at $why) $similar)
             ($rows (am:rank-query $bank $profile $vector $rows $count $mode)))))))
@@ -453,11 +460,11 @@
 
 (= (am:rank-query $bank $profile $vector $similar $count $mode)
    (let* (($ids (unique-atom (union-atom (am:hit-ids $similar)
-                    (if (== $mode "similarity") () (am:focus-ids (am:focus $bank
+                    (if (== $mode "similarity") () (am:focus-ids (am:view-focus $bank
                       (if (== $count 0) 0 (* $count (am:get $bank "candidate-multiplier")))))))))
           ($rows (am:score-ids $profile $vector $ids))
           ($seed-map (new-space))
-          ($focus-max (case (am:focus $bank 1) ((() 0) ((($v $item)) $v))))
+          ($focus-max (case (am:view-focus $bank 1) ((() 0) ((($v $item)) $v))))
           ($_ (am:seed $bank $rows $seed-map $focus-max))
           ($raw-seeds (am:mass-rows $seed-map)) ($total (am:sum-mass $raw-seeds))
           ($normal (new-space))
@@ -496,8 +503,7 @@
 ; Preserve the native similarity ordering exactly, including ties.
 (= (am:similar-query $bank $profile $vector $count)
    (let* (($_ (am:tick))
-          ($rows (memory:dispatch (MemoryQuery $profile $vector
-                     (if (== $count 0) (size-atom (collapse (memory:matches All))) $count) All))))
+          ($rows (ws:query $profile $vector (if (== $count 0) (ws:count) $count))))
      (case $rows
        (((MemoryFailure $at $why) $rows)
         ($hits

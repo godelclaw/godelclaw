@@ -294,6 +294,53 @@ an empty ID follows the current task. `(memory-window characters)` changes the
 prompt excerpt size (default 8000 characters, zero unlimited). Excerpts name
 their recovery command. Both settings survive restart.
 
+Native memory workspaces combine contexts without moving or copying original
+memories. The initial workspace, `all`, preserves broad retrieval. For example:
+
+```metta
+(workspace "research" ("group:lab" "person:alex" "task:*") () "task:proof")
+(workspace "research")
+(workspace-exclude "research" "task:administration")
+(workspace-preview)
+(workspace-query "all" "earlier finding" 20 "similarity")
+(workspace-undo)
+```
+
+The four-argument form defines a workspace; the one-argument form selects it.
+Selectors are `kind:ID`, `kind:*`, `all`, or `@another-workspace`. Includes form
+a union; exclusions take precedence within that workspace. Nested views retain
+their own exclusions. Overlap selects a memory once, before top-k ranking.
+`task:*` includes future task memberships. Arbitrary context kinds are allowed.
+An empty inclusion list selects nothing. An empty home follows the current turn;
+a concrete home adds that membership to new memories. Turn capture automatically
+records the active task and, for native Telegram operator input, the reply channel.
+People and groups can be assigned as homes or added explicitly:
+
+```metta
+(workspace-tag "memory-id" ("group:lab" "person:alex"))
+(workspace-tag "memory-id" ("group:lab") "remove")
+(workspace-include "research" "@another-workspace")
+(workspace-include "research" "@another-workspace" False)
+(setting "workspace" "selector" "hybrid")
+(setting "workspace" "cross-links" "inside")
+```
+
+`workspace-query` temporarily overrides the workspace. Ordinary `query` follows
+the persistent selection; an explicit query mode overrides its ranking preference.
+`cross-links=inside` spreads within the selected view, renormalizing each source's
+remaining outgoing links; a dangling source retains its mass. `linked` permits
+traversal through other contexts, while results still match the selected view.
+The attention bank is shared; workspace preferences do not duplicate its funds.
+Similarity fallback uses the same selection. Direct reads by ID remain available.
+These are retrieval views, not access-control boundaries or physical store merges.
+
+Definitions, selection, preferences and undo history persist in `workspaces.metta`
+beside the native attention snapshot (`METTACLAW_WORKSPACES_PATH` overrides it).
+Context memberships live beside native memory records and are committed with new
+remember intents, before embedding. Existing untagged memories remain in `all`;
+there is no inferred backfill. Inspection and previews do not stimulate attention.
+The component's declarations generate discovery, help and argument checks.
+
 `METTACLAW_HIERARCHY_SOCKET` defaults to the native mail socket, and
 `METTACLAW_HIERARCHY_SPACE` defaults to a separate per-instance memory space.
 `METTACLAW_MEMORY_PROJECT` defaults to `runtime`. No new daemon, automatic
