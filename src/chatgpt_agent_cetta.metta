@@ -5,7 +5,7 @@
 !(import! &self ./src/api_registry.metta)
 !(import! &self io)
 !(import! &self fs)
-!(import! &self (library path))
+!(import! &self path:)
 !(import! &self system)
 
 (CommandSpec 1 "chatgpt" "chatgpt-policy" 0 2 "(chatgpt-policy [\"key\" [value]])" "Inspect/change account, deadlines and response size. Subscription use requires an SIWC-enabled CeTTa in godelclaw command mode; model ids use chatgpt:slug." "chatgpt")
