@@ -12,3 +12,20 @@
 (= (memory-pending) ())
 (= (memory-retry) "MEMORY_RETRY_UNAVAILABLE: select CeTTa for durable write retries")
 (= (memory-history $id) "MEMORY_HISTORY_UNAVAILABLE: select CeTTa for retained memory changes")
+
+(= (semantic:query $text $count $mode) (legacy-query $text $count))
+(= (am:context) (AttentionMemory unavailable-on-this-engine))
+(= (attention-policy) "ECAN is available on CeTTa; legacy similarity retrieval is unchanged")
+(= (attention-policy $key $value) (attention-policy))
+(= (attention-use $id) (attention-policy))
+(= (attention-use $id $amount) (attention-policy))
+(= (attention-link $from $to $weight) (attention-policy))
+(= (attention-focus) (attention-policy))
+(= (attention-focus $count) (attention-policy))
+(= (attention-last) (attention-policy))
+
+(= (am:begin-turn) True)
+
+(= (attention-policy $key) (attention-policy))
+
+(= (attention-reload) (attention-policy))

@@ -8,6 +8,7 @@
 !(import! &self (library system))
 !(import! &self (library io))
 !(import! &self (library math))
+!(import! &self ./src/attention_memory_cetta.metta)
 !(bind! &semantic-cache (new-state Missing))
 !(bind! &semantic-http (new-space))
 
@@ -231,6 +232,15 @@
          (sm:hits (cdr-atom $rows))))))
 
 (= (semantic:query $text $count)
+   (semantic:query $text $count (case (am:open)
+      (((AttentionReady $bank $time)
+        (let $mode (am:get $bank "mode") (if (am:mode? $mode) $mode "similarity"))) ($other "similarity")))))
+
+(= (semantic:query $text $count $mode)
+   (if (am:mode? $mode) (sm:query-text $text $count $mode)
+     (AttentionError query "expected similarity, attention or hybrid")))
+
+(= (sm:query-text $text $count $mode)
    (if
      (semantic:native?)
      (let
@@ -241,7 +251,7 @@
          (((MStore $space $profile $dim)
            (case
              (sm:embed "query" $text $dim)
-             (((MemoryVector $vector) (sm:query-vector $vector $count)) ($error $error))))
+             (((MemoryVector $vector) (sm:query-vector $vector (am:number $count) $mode)) ($error $error))))
           ($error $error))))
      (legacy-query $text $count)))
 
@@ -280,7 +290,7 @@
          (case
            (sm:one $space $id)
            (((Memory $id $rev $profile $vector $doc $meta)
-             (MemoryCurrent $id $rev $doc $meta $pending))
+             (let $_ (catch (am:read $id)) (MemoryCurrent $id $rev $doc $meta $pending)))
             ((MemoryMissing $id) (MemoryCurrent $id absent "" () $pending))
             ($error $error)))))
       ($error $error))))
@@ -327,7 +337,7 @@
                  (add (MemoryChange 1 $op $id forget $time $reason)))))))
          (case
            (sm:commit $space $ops)
-           (((MemoryCommitted) (let $_ (sm:unmirrored) (MemoryForgotten $id)))
+           (((MemoryCommitted) (let* (($_ (sm:unmirrored)) ($_ (catch (am:drop $id)))) (MemoryForgotten $id)))
             ((MemoryChanged) (forget $id $reason))
             ($error $error)))))
       ($error $error))))
@@ -531,7 +541,7 @@
    (if
      (semantic:native?)
      (case
-       (semantic:query "memory retrieval health probe" 1)
+       (sm:query-text "memory retrieval health probe" 1 "probe")
        (((MemoryResults $hits (Unindexed $pending))
          (case
            (sm:open)
@@ -577,7 +587,8 @@
             (MemoryVector $good)
             (MemoryUnavailable embedding invalid-norm)))))))
 
-(= (sm:query-vector $vector $count)
+(= (sm:query-vector $vector $count) (sm:query-vector $vector $count "probe"))
+(= (sm:query-vector $vector $count $mode)
    (let
      $_
      (semantic:maintain)
@@ -591,7 +602,8 @@
                 $k
                 (if (== $count 0) (size-atom (collapse (memory:matches All))) $count)
                 (case
-                  (memory:dispatch (MemoryQuery $profile $vector $k All))
+                  (if (== $mode "probe") (memory:dispatch (MemoryQuery $profile $vector $k All))
+                    (am:select $profile $vector $count $mode))
                   (((MemoryFailure $at $why) (MemoryUnavailable retrieval $why))
                    ($rows
                      (MemoryResults (sm:hits $rows) (Unindexed (size-atom (sm:pending $space)))))))))

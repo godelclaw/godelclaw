@@ -60,6 +60,7 @@
         " LOOPS_LEFT: " (loop-budget $periphery)
         " SLEEP_INTERVAL_SECONDS: " (loop-sleep $periphery)
         " ACTIVE_MODE: " (loop-active-policy $periphery)
+        " MEMORY_ATTENTION: " (am:context)
         " ACTIVE_MODEL: " (py-call (synthetic_llm.current_model))
 
         " LAST_SKILL_USE_RESULTS: "
@@ -204,6 +205,7 @@
           ($_ (eval (attention-begin $iteration $source
                     (== (py-call (helper.text_nonempty $priorResults)) 1))))
           ($_ (addition-effect-turn-begin $iteration))
+          ($_ (am:begin-turn))
           ($_ (addition-strategy-begin $iteration $source $message))
           ($_ (println! $lastmessage))
           ($request (turnRequest $periphery $lastmessage))

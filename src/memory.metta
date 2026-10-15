@@ -54,3 +54,5 @@
 (= (remember $str) (semantic:remember $str))
 (= (query $str) (query $str (maxRecallItems)))
 (= (query $str $count) (semantic:query $str $count))
+
+(= (query $str $count $mode) (semantic:query $str $count $mode))

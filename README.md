@@ -136,6 +136,50 @@ turns and restarts. New chat input adds conversation context; continued work
 emphasizes the task history. `(task-history "task-id")`, `(task-read "record-id"
 0)` and `(request-read "request-id" 0)` recover original evidence.
 
+CeTTa semantic recall also has an agent-owned ECAN attention layer, implemented
+in MeTTa inside godelclaw. `(query "phrase" 20 "similarity")` preserves native
+similarity ordering; `"attention"` prioritizes propagated attention; `"hybrid"`
+combines normalized similarity and activation. Omitting the mode uses the
+persistent policy (initially hybrid, with 80% similarity weight).
+
+`(attention-policy)` shows the settings. For example,
+`(attention-policy "mode" "similarity")`,
+`(attention-policy "similarity-weight" 0.6)` and
+`(attention-policy "sti-half-life" 900)` change them without restarting.
+`(help "attention-policy")` describes every setting, including the three
+half-lives, consolidation, exposure, co-use learning, candidate pools and spread.
+Zero half-life disables that horizon's decay. Zero exposure or read stimulus
+disables that signal; zero co-use weight disables learning; zero spread rounds
+uses the seeds directly. These are adjustable work settings, never execution
+permissions. Count zero retrieves all current records.
+
+Returned results receive a weak exposure stimulus. An explicit `memory-read`
+receives a stronger stimulus and consolidates STI into slower MTI/LTI traces.
+`(attention-use "id" [amount])` is optional stronger feedback. Distinct explicit
+reads/uses in the same model turn teach bidirectional links once per pair; search
+result co-occurrence does not. `(attention-link "from" "to" weight)` sets a
+directed link (zero removes it). Repeating a link replaces its weight. The agent
+can inspect `(attention-focus [count])` and `(attention-last)` without adding
+stimulus; the latter explains component scores without memory text.
+
+Queries combine a similarity pool and attention focus, then spread over current
+linked records with normalized outgoing weights and restart. Dangling nodes keep
+their mass. Spread is synchronous, defaults to two rounds, and can discover IDs
+outside both initial pools. It is a finite approximation, without a floating-point
+convergence certificate or a universal claim of better recall. Importance is
+separate from confidence and evidential support; co-use is an attention signal.
+Pins, task obligations and instructions are outside this ranking.
+
+Only IDs, attention values, links, settings and a timestamp are saved atomically
+in `METTACLAW_ATTENTION_PATH` (default: `attention.metta` under the engine state
+directory, or beside the memory backend configuration for standalone use).
+Forgetting removes attention and incident links as well as the searchable memory;
+attention cannot recreate retired records. Damaged attention state is preserved
+for inspection and retrieval falls back to similarity. `attention-last` reports
+attention persistence failures. After repairing or editing the snapshot,
+`(attention-reload)` reloads it without restarting. The separate SWI-PeTTa backend keeps its existing
+similarity retrieval; ECAN is native to the CeTTa path.
+
 CeTTa also provides hierarchical memory in MeTTa over native named spaces.
 Committed turns are linked automatically to their existing task identity and
 the configured project. `(memory-open "id" 2)` expands a project or topic

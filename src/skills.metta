@@ -4,6 +4,7 @@
     "- Send native peer mail: (mail-send \"name\" \"text\"). Incoming mail enters a turn automatically; reply with mail-send. (mail-receive) checks now. CeTTa only."
     "- Remember a particular string such as skills and memories: (remember \"string\")"
     "- Query long-term embedding memory for skills and memories with short phrases only: (query \"short phrase\")"
+    "- Choose memory retrieval: (query \"phrase\" 20 \"similarity|attention|hybrid\"); (attention-policy) and (help \"attention-policy\") expose adjustable decay, mix and spread. (attention-use \"id\") marks useful recall; (attention-link \"from-id\" \"to-id\" 1) links memories. CeTTa only."
     "- Refine your semantic memories by their query IDs: (memory-read \"id\"), (memory-edit \"id\" \"text\"), (forget \"id\" [\"reason\"]); earlier text stays in (memory-history \"id\")"
     "- Native remember/edit writes are retained before embedding; (memory-pending) inspects automatic retry status and (memory-retry) retries now"
     "- Retire a hierarchical memory from recall: (memory-retire \"id\" [\"reason\"]); memory-node with an active kind restores it"

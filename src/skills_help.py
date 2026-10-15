@@ -15,7 +15,9 @@ ARITY = {
     "command-receipts": (0, 1), "topics": (0, 0), "topic-select": (1, 1),
     "topic-note": (1, 1),  "model-jobs": (0, 0),
     "model-result": (1, 1),
-    "remember": (1, 1), "query": (1, 2), "forget": (1, 2),
+    "attention-policy": (0, 2), "attention-use": (1, 2), "attention-link": (3, 3),
+    "attention-focus": (0, 1), "attention-last": (0, 0), "attention-reload": (0, 0),
+    "remember": (1, 1), "query": (1, 3), "forget": (1, 2),
     "memory-edit": (2, 2), "memory-read": (1, 1), "memory-history": (1, 1),
     "memory-pending": (0, 0), "memory-retry": (0, 0), "memory-retire": (1, 2),
     "pin": (1, 1), "unpin": (1, 1), "pins": (0, 0),
@@ -51,6 +53,24 @@ ARITY = {
 }
 
 PAGES = {
+    "attention-policy": ('usage: (attention-policy ["key" [value]])\n'
+        'CeTTa ECAN: mode similarity|attention|hybrid (default hybrid), similarity-weight 0.8; '
+        'sti/mti/lti-half-life in seconds (300/21600/2592000; 0 disables decay), '
+        'sti-mti-rate 0.05 and mti-lti-rate 0.02 in [0,1].\n'
+        'sti/mti/lti-weight default 1/0.5/0.25. exposure 0.1 is a weak returned-result signal; '
+        'read-stimulus 1 marks an explicit memory-read. Either can be 0. '
+        'co-use-weight 1 learns bidirectional links between distinct explicit reads/uses in the same turn; 0 disables learning. '
+        'Search-result co-occurrence does not teach links. '
+        'candidate-multiplier 3 selects similarity and attention pools; count 0 means all. '
+        'spread-rounds 2 is an adjustable nonnegative integer, not certified convergence; '
+        'restart 0.5 in (0,1] controls localization. No setting is an execution permission.\n'
+        'Policies, importance and links persist without memory text. Invalid settings return an error for that call. '
+        'Attention never changes belief confidence. No bookkeeping is required.'),
+    "attention-use": 'usage: (attention-use "id" [amount])\nExplicitly stimulate and consolidate an existing semantic memory. Default amount 1; 0 is valid. Optional feedback, never a required chore.',
+    "attention-link": 'usage: (attention-link "from-id" "to-id" weight)\nSet a directed link between current semantic memories. Repeating replaces the weight; 0 removes it. Weights are finite and nonnegative. No automatic claim of evidential support.',
+    "attention-focus": 'usage: (attention-focus [count])\nView weighted STI/MTI/LTI importance (default 20, 0 all); does not stimulate. Does not delete anything outside the view.',
+    "attention-reload": 'usage: (attention-reload)\nReload your attention snapshot after editing or repairing it. No deletion and no restart.',
+    "attention-last": 'usage: (attention-last)\nExplain the last query: IDs, normalized similarity, raw importance, normalized propagated activation and combined rank; no memory text. Also shows persistence failures.',
     "remember": ('usage: (remember "text")\n'
                  'Native mode stores the write intent first and returns MemoryQueued with its ID.\n'
                  'The existing daemon embeds it asynchronously; retries and restart recovery are automatic.\n'
@@ -198,7 +218,8 @@ PAGES = {
         'operator /delete fast path. Claim completion only after the returned\n'
         'delete receipt.'),
     "query": (
-        'usage: (query "phrase" [count])\n'
+        'usage: (query "phrase" [count] ["similarity|attention|hybrid"])\n'
+        'CeTTa uses the persistent attention-policy mode when omitted. Distances remain cosine distances; attention-last explains the ranking.\n'
         'Semantic results include stable IDs, revisions, timestamps, distance and text.\n'
         'Count defaults to maxRecallItems; native mode accepts 0 for all records.\n'
         'Unindexed reports queued writes. MemoryUnavailable means retrieval failed, not that memories are absent.'),
