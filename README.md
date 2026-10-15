@@ -17,6 +17,14 @@ in [CETTA_REF](CETTA_REF) and published on
 [godelclaw/CeTTa, branch cetta-ours](https://github.com/godelclaw/CeTTa/tree/cetta-ours).
 The installer and container build read that same pin.
 
+The integrated engine includes Prime's weighted evaluation, cost observations
+and parallel workers alongside the native agent I/O libraries. Agent loops
+continue to use CeTTa's PeTTa language profile. Run Prime programs explicitly
+with `--lang prime`; see the engine's
+[Prime examples](https://github.com/godelclaw/CeTTa/tree/cetta-ours/examples/prime).
+Integrating these mechanisms does not itself select an attention policy or
+change how the model orders its tools.
+
 Native mail between CeTTa agents uses `(mail-send "name" "text")`. Arrivals
 enter a turn as `[mail from NAME; id=…] TEXT`; reply with `mail-send`.
 The mailbox is MeTTa over the C named-space service, without Python mailbox
