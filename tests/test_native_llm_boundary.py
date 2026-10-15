@@ -137,6 +137,18 @@ def retained():
         self.assertEqual(body["messages"], [{"role": "system", "content": "system"},
             {"role": "user", "content": "user"}])
 
+    def test_subscription_policy_default_path_is_resolved_and_persistent(self):
+        self.env.pop("METTACLAW_CHATGPT_POLICY_PATH", None)
+        prefix = f'!(import! &self "{ROOT}/src/native_llm.metta")\n'
+        out = self.run_guest(prefix + '!(println! (chatgpt-policy "account" "fixture-registration"))\n')
+        self.assertIn('ChatGPTConfigured', out)
+        self.assertNotIn('ChatGPTPolicyError', out)
+        self.assertEqual(json.loads((self.directory / 'chatgpt.json').read_text()),
+                         {'account': 'fixture-registration'})
+        out = self.run_guest(prefix + '!(println! (SelectedAccount (chatgpt-policy "account")))\n')
+        self.assertIn('(SelectedAccount "fixture-registration")', out)
+        self.assertEqual(self.peer.requests, [])
+
     def test_command_wire_parity_in_both_dialects_for_all_protocols(self):
         prompt = "S_cache_boundary_T_cache_boundary_U_cache_boundary_user _cache_boundary_ literal"
         self.peer.delay = .01
