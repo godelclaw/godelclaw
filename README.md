@@ -591,6 +591,20 @@ remain an explicit qualification limit for large contexts and replies.
 
 ### Provider calls and tools
 
+The native Responses decoder accepts JSON replies and collected SSE bodies. It
+keeps the terminal Response object, including ordered output, opaque reasoning,
+tool-call identities and usage. Stream deltas remain provisional; a truncated,
+failed or incomplete stream returns a failure. Existing API-key requests retain
+their request format.
+
+`src/chatgpt_plan_cetta.metta` is an explicit, pure request profile for the
+[ChatGPT-plan Responses route](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations).
+It uses array input, `stream: true` and `store: false`, and omits the ordinary
+encoder's `max_output_tokens`. Other documented incompatible options return a
+named error. This profile and the stream decoder are tested with a local HTTP
+fixture. OAuth sign-in, token refresh and live subscription-provider selection
+are not implemented yet.
+
 Provider accounting records usage and results without request, token, or failure
 quotas. Actual transport failures and provider rate limits can delay retry.
 `Retry-After` takes precedence over fallback pacing. Parse errors and tool errors

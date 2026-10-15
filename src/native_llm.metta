@@ -15,7 +15,9 @@
    (let $value (py-call (native_llm_host.claim $plan)) (llm:host-flag $value)))
 !(if (llm:native?)
      (let $_ (import! &self llm:command)
-       (let $_ (import! &self llm:compat) (import! &self llm:io))) True)
+       (let $_ (import! &self llm:compat)
+         (let $_ (import! &self llm:io)
+           (import! &self ./src/responses_stream_cetta.metta)))) True)
 
 (= (llm:command $model $tokens $effort $prompt)
    (if (llm:native?)
@@ -146,6 +148,16 @@
 
 (: llm:decode-body (-> Atom Atom Atom Atom Atom %Undefined%))
 (= (llm:decode-body $plan $epoch $correlation $protocol $body)
+   (if (== $protocol "responses")
+     (case (responses:body $body)
+       (((ResponsesComplete $response)
+         (let $rendered (llm:v1:render $response)
+           (llm:v1:io-outcome $epoch $correlation $protocol (http:response 200 $rendered))))
+        ((ResponsesStreamError $why) (llm:v1:failed $epoch $correlation $why response-received))))
+     (llm:decode-legacy-body $plan $epoch $correlation $protocol $body)))
+
+(: llm:decode-legacy-body (-> Atom Atom Atom Atom Atom %Undefined%))
+(= (llm:decode-legacy-body $plan $epoch $correlation $protocol $body)
    (let* (($wrapper (py-call (native_llm_host.decoded_body $plan $body)))
           ($json (llm:v1:parse $wrapper))
           ($ok (llm:v1:get $json "ok")))
