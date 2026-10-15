@@ -124,6 +124,23 @@ class ChatGPTAgentTests(unittest.TestCase):
         self.assertIn('(RESULT ())', out)
         self.assertEqual(self.identity_provider.api_requests, []); self.assertEqual(self.peer.requests, [])
 
+    def test_cache_session_survives_restart_and_prompt_changes_but_separates_agents_and_models(self):
+        for prompt in ('first instructions_cache_boundary_one',
+                       'revised instructions_cache_boundary_two'):
+            self.guest('!(println! (llm:command "chatgpt:fixture-model" 42 "high" '
+                       +json.dumps(prompt)+'))\n')
+        requests = self.identity_provider.api_requests
+        first = requests[0][1]['session_id']
+        self.assertEqual(first, requests[1][1]['session_id'])
+        self.assertNotEqual(requests[0][2]['prompt_cache_key'], requests[1][2]['prompt_cache_key'])
+        self.env['SYNTHETIC_MODEL'] = 'chatgpt:fixture-second'
+        self.guest('!(println! (llm:command "chatgpt:fixture-second" 42 "high" "hello"))\n')
+        self.assertNotEqual(first, requests[2][1]['session_id'])
+        self.env['SYNTHETIC_MODEL'] = 'chatgpt:fixture-model'
+        self.env['METTACLAW_CHATGPT_POLICY_PATH'] = str(self.directory/'other-agent.json')
+        self.guest('!(println! (llm:command "chatgpt:fixture-model" 42 "high" "hello"))\n')
+        self.assertNotEqual(first, requests[3][1]['session_id'])
+
     def test_subscription_selection_with_native_transport_disabled_never_falls_back(self):
         self.env['METTACLAW_LLM_TRANSPORT'] = 'python'
         out = self.guest('!(println! (RESULT (llm:command "chatgpt:fixture-model" 42 "high" "hello")))\n', select=False)

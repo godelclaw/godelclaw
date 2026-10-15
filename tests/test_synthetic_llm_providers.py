@@ -466,5 +466,33 @@ class ProviderResourceLifetimeTest(unittest.TestCase):
             server.server_close()
 
 
+class CompletionUsageLogTest(unittest.TestCase):
+    def test_usage_history_appends_counts_and_preserves_unknown_without_messages(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'completion.json'
+            result = dict(choices=[dict(finish_reason='stop',
+                                      message=dict(content='private reply sentinel'))],
+                          transport='native', provider_stop='completed',
+                          usage=dict(input_tokens=12000,
+                                     input_tokens_details=dict(cached_tokens=10240),
+                                     output_tokens=40))
+            with mock.patch.dict(os.environ, {'METTACLAW_LLM_COMPLETION_PATH': str(path)}):
+                synthetic_llm._completion_metadata(result)
+                result['usage'] = {}
+                synthetic_llm._completion_metadata(result)
+            log = path.with_name('llm-usage.jsonl')
+            rows = [json.loads(line) for line in log.read_text().splitlines()]
+            self.assertEqual(len(rows), 2)
+            self.assertEqual((rows[0]['input_tokens'], rows[0]['cached_tokens'], rows[0]['output_tokens']),
+                             (12000, 10240, 40))
+            self.assertAlmostEqual(rows[0]['fraction'], 10240/12000)
+            self.assertEqual(rows[1]['status'], 'unknown')
+            self.assertNotIn('cached_tokens', rows[1])
+            self.assertNotIn('private reply sentinel', log.read_text())
+            self.assertEqual(log.stat().st_mode & 0o777, 0o600)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
