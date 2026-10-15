@@ -15,6 +15,7 @@ ARITY = {
     "command-receipts": (0, 1), "topics": (0, 0), "topic-select": (1, 1),
     "topic-note": (1, 1),  "model-jobs": (0, 0),
     "model-result": (1, 1),
+    "settings": (0, 1), "setting": (2, 3),
     "attention-policy": (0, 2), "attention-use": (1, 2), "attention-link": (3, 3),
     "attention-focus": (0, 1), "attention-last": (0, 0), "attention-reload": (0, 0),
     "remember": (1, 1), "query": (1, 3), "forget": (1, 2),
@@ -53,19 +54,9 @@ ARITY = {
 }
 
 PAGES = {
-    "attention-policy": ('usage: (attention-policy ["key" [value]])\n'
-        'CeTTa ECAN: mode similarity|attention|hybrid (default hybrid), similarity-weight 0.8; '
-        'sti/mti/lti-half-life in seconds (300/21600/2592000; 0 disables decay), '
-        'sti-mti-rate 0.05 and mti-lti-rate 0.02 in [0,1].\n'
-        'sti/mti/lti-weight default 1/0.5/0.25. exposure 0.1 is a weak returned-result signal; '
-        'read-stimulus 1 marks an explicit memory-read. Either can be 0. '
-        'co-use-weight 1 learns bidirectional links between distinct explicit reads/uses in the same turn; 0 disables learning. '
-        'Search-result co-occurrence does not teach links. '
-        'candidate-multiplier 3 selects similarity and attention pools; count 0 means all. '
-        'spread-rounds 2 is an adjustable nonnegative integer, not certified convergence; '
-        'restart 0.5 in (0,1] controls localization. No setting is an execution permission.\n'
-        'Policies, importance and links persist without memory text. Invalid settings return an error for that call. '
-        'Attention never changes belief confidence. No bookkeeping is required.'),
+    "settings": 'usage: (settings ["namespace"])\nLive native catalogue of module-registered settings, including current/default value, units, domain, description and persistence. New registrations appear immediately. An empty namespace lists all.',
+    "setting": 'usage: (setting "namespace" "key" [value])\nInspect one setting or invoke its registered writer. Numeric strings are accepted for numeric domains. The module retains ownership of validation and storage.',
+    "attention-policy": 'usage: (attention-policy ["key" [value]])\nRead/change persistent ECAN settings. (settings "attention") and this native help page are generated from the registered descriptors; they include defaults, units and explanations.',
     "attention-use": 'usage: (attention-use "id" [amount])\nExplicitly stimulate and consolidate an existing semantic memory. Default amount 1; 0 is valid. Optional feedback, never a required chore.',
     "attention-link": 'usage: (attention-link "from-id" "to-id" weight)\nSet a directed link between current semantic memories. Repeating replaces the weight; 0 removes it. Weights are finite and nonnegative. No automatic claim of evidential support.',
     "attention-focus": 'usage: (attention-focus [count])\nView weighted STI/MTI/LTI importance (default 20, 0 all); does not stimulate. Does not delete anything outside the view.',

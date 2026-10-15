@@ -1,0 +1,21 @@
+; SPDX-License-Identifier: MIT
+; The bank's defaults, units, domains and explanations have one source.
+!(import! &self ./src/settings_registry.metta)
+!(bind! &ecan-parameters (new-space))
+!(add-atom &ecan-parameters (ECANParameter sti-half-life 300 "seconds" Nonnegative "STI half-life; zero disables decay."))
+!(add-atom &ecan-parameters (ECANParameter mti-half-life 21600 "seconds" Nonnegative "MTI half-life; zero disables decay."))
+!(add-atom &ecan-parameters (ECANParameter lti-half-life 2592000 "seconds" Nonnegative "LTI half-life; zero disables decay."))
+!(add-atom &ecan-parameters (ECANParameter sti-mti-rate 0.05 "fraction per explicit use" (Interval 0 1) "Move MTI toward the newly stimulated STI; zero disables this consolidation."))
+!(add-atom &ecan-parameters (ECANParameter mti-lti-rate 0.02 "fraction per explicit use" (Interval 0 1) "Move LTI toward the updated MTI; zero disables this consolidation."))
+(= (ecan:parameters)
+   (collapse (match &ecan-parameters (ECANParameter $key $d $u $domain $desc) (ECANParameter $key $d $u $domain $desc))))
+(= (ecan:parameter $key)
+   (case (collapse (match &ecan-parameters (ECANParameter $key $d $u $domain $desc) (ECANParameter $key $d $u $domain $desc)))
+     ((() (ECANParameterMissing $key)) (($spec) $spec))))
+(= (ecan:known-key? $key)
+   (case (ecan:parameter $key) (((ECANParameterMissing $key) False) ($spec True))))
+(= (ecan:default-settings $bank $specs)
+   (if (== $specs ()) True
+     (let (ECANParameter $key $default $unit $domain $description) (car-atom $specs)
+       (let $_ (add-atom $bank (ECANSetting $key $default))
+         (ecan:default-settings $bank (cdr-atom $specs))))))

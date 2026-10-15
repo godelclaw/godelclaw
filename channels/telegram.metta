@@ -27,7 +27,11 @@
 !(import! &self ./channels/energy.metta)
 !(import! &self ./src/job_io)
 !(import! &self ./src/mail)
-!(import! &self ./src/idle_cetta)
+; The native idle provider initializes native memory. Keep it out of the
+; separately selected SWI-PeTTa backend, which uses the existing Python client.
+!(if (case (py-call (engine_modes.active_engine))
+       ((cetta True) ("cetta" True) ($other False)))
+     (import! &self ./src/idle_cetta) True)
 
 ;; ---------------------------------------------------------------- lists
 ;; A list built by cons-atom onto a computed tail may be an open PeTTa cell.

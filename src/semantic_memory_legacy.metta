@@ -29,3 +29,12 @@
 (= (attention-policy $key) (attention-policy))
 
 (= (attention-reload) (attention-policy))
+
+; Core upstream modes remain usable; full native catalogue belongs to CeTTa.
+(= (settings) "Full settings catalogue requires CeTTa")
+(= (settings $ns) (settings))
+(= (setting $ns $key) (settings))
+(= (setting $ns $key $value) (settings))
+(= (settings:context) (SettingsIndex unavailable-on-this-engine))
+
+(= (settings:protocol) (SettingsProtocol available-on-CeTTa))

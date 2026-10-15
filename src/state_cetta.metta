@@ -83,8 +83,9 @@
    (let $state (system:getenv-or-default "METTACLAW_ENGINE_STATE_PATH"
                   (system:getenv-or-default "METTACLAW_STRATEGY_PATH" "memory/observed-strategy.sqlite3"))
      (path:join (path:dirname $state) "context-policy.json")))
+(= (context:default-tokens) 32768)
 (= (context:policy)
-   (let $default (system:getenv-or-default "METTACLAW_TASK_CONTEXT_TOKENS" "32768")
+   (let $default (system:getenv-or-default "METTACLAW_TASK_CONTEXT_TOKENS" (repr (context:default-tokens)))
      (state:json-file (context:path) (JsonObject ((JsonPair "task_tokens" (JsonNumber $default)))))))
 (= (context-policy) (json-stringify (context:policy)))
 (= (context-policy $tokens)
@@ -94,3 +95,14 @@
        (case (fs:update-text (context:path) "replace" $text "" "")
          ((("written" $_ $_ $_ $_) $text)
           ($error (str:concat "context-policy: " (repr $error))))))))
+
+; This provider uses the same live registration protocol as ECAN.
+!(import! &self ./src/settings_registry.metta)
+(= (context:setting-read $key)
+   (case (json-object-get (context:policy) $key)
+     (((JsonNumber $text) (str:string->number $text)) ($other $other))))
+(= (context:setting-write $key $value) (context-policy $value))
+(= (context:settings-descriptors)
+   (let $default (context:default-tokens)
+     ((SettingSpec 1 "context" "task_tokens" $default "estimated tokens" Nonnegative "persistent" "Target size of the task-context projection. Zero requests a minimal projection; older evidence remains recoverable." context:setting-read context:setting-write))))
+(SettingsProvider "context" context:settings-descriptors)

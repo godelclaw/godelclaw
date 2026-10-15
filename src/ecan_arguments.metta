@@ -1,3 +1,4 @@
+!(import! &self ./src/ecan_parameters.metta)
 ; SPDX-License-Identifier: MIT
 ; Mathematical domains return ordinary error data, without changing a bank.
 (= (ecan:finite-number $value)
@@ -15,12 +16,10 @@
      (ECANError $operation $field "expected a finite fraction in [0, 1]" $value)))
 ; Five named settings; there are no arbitrary upper bounds on half-lives.
 (= (ecan:validate-setting $key $value)
-   (case $key
-     ((sti-half-life (ecan:nonnegative configure $key $value))
-      (mti-half-life (ecan:nonnegative configure $key $value))
-      (lti-half-life (ecan:nonnegative configure $key $value))
-      (sti-mti-rate (ecan:fraction configure $key $value))
-      (mti-lti-rate (ecan:fraction configure $key $value))
+   (case (ecan:parameter $key)
+     (((ECANParameter $key $d $u $domain $desc)
+       (if (settings:domain? $domain $value) True
+         (ECANError configure $key "value is outside the setting domain" $value)))
       ($other (ECANError configure $key "unknown setting" $value)))))
 (= (ecan:validate-policy $settings)
    (if (== $settings ()) True

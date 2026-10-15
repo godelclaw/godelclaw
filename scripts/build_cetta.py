@@ -40,6 +40,8 @@ def main():
     parser.add_argument("--ref", default=(ROOT / "CETTA_REF").read_text().strip())
     parser.add_argument("--repository", default=REPOSITORY)
     parser.add_argument("--jobs", type=int, default=int(os.environ.get("BUILD_JOBS", "1")))
+    parser.add_argument("--prolog", choices=("auto", "0", "1"), default="auto",
+                        help="optional SWI-Prolog provider (auto detects the installed SDK; 0 builds without it)")
     parser.add_argument("--python-config", default=os.environ.get("PYTHON_CONFIG"))
     parser.add_argument("--sqlite-cflags", default=os.environ.get("SQLITE_CFLAGS"))
     parser.add_argument("--sqlite-libs", default=os.environ.get("SQLITE_LIBS"))
@@ -81,7 +83,7 @@ def main():
     if args.sqlite_libs is None and (sdk / "lib/libsqlite3.so").is_file():
         args.sqlite_libs = "-L" + str(sdk / "lib") + " -lsqlite3"
     flags = ["BUILD=python", "ENABLE_HTTP=1", "ENABLE_DURABLE=1", "SQLITE_PROVIDER=system",
-             "ENABLE_MANAGED_SYMBOLS=1", "ENABLE_LIB_PROLOG=0",
+             "ENABLE_MANAGED_SYMBOLS=1", "ENABLE_LIB_PROLOG=" + args.prolog,
              "ENABLE_JSON_GSLT=1", "PYTHON_CONFIG=" + args.python_config]
     if args.sqlite_cflags is not None:
         flags.append("SQLITE_CFLAGS=" + args.sqlite_cflags)
@@ -108,6 +110,14 @@ def main():
     python_prefix = run([args.python_config, "--prefix"], capture=True).strip()
     includes = run([args.python_config, "--includes"], capture=True)
     version = re.search(r"/python(\d+\.\d+)", includes)
+    environment = {
+        "CETTA_BIN": str(prefix / "cetta"),
+        "METTACLAW_MODE_CETTA_BIN": str(prefix / "cetta"),
+        "CETTA_TELEGRAM_SERVICE_BIN": str(prefix / "cetta-telegram-service"),
+        "CETTA_TELEGRAM_SERVICE_ROOT": str(prefix),
+    }
+    (prefix / "runtime.env").write_text("".join(key + "=" + value + "\n"
+                                                for key, value in environment.items()))
     manifest = {"schema": 1, "repository": args.repository, "revision": revision,
                 "features": flags, "python_version": version.group(1) if version else None,
                 "python_prefix": python_prefix,

@@ -60,7 +60,8 @@
         " LOOPS_LEFT: " (loop-budget $periphery)
         " SLEEP_INTERVAL_SECONDS: " (loop-sleep $periphery)
         " ACTIVE_MODE: " (loop-active-policy $periphery)
-        " MEMORY_ATTENTION: " (am:context)
+        " SETTINGS_API: " (repr (settings:context))
+        " MEMORY_ATTENTION: " (repr (am:context))
         " ACTIVE_MODEL: " (py-call (synthetic_llm.current_model))
 
         " LAST_SKILL_USE_RESULTS: "

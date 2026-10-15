@@ -43,6 +43,13 @@ that mail is unavailable; there is no Python mailbox fallback.
 
 ## Run ITER or Omega at a terminal
 
+The bundled engine detects the optional SWI-Prolog provider at build time.
+`scripts/build_cetta.py --prolog 1` requires it, `--prolog auto` detects it
+(the default), and `--prolog 0` builds without it. Prolog-enabled CeTTa can call
+Prolog through `lib_prolog` while ordinary agent tools use the native path.
+Core upstream modes remain available through the separate SWI-PeTTa backend;
+full native settings and ECAN features require CeTTa.
+
 These launch paths need a Python-enabled [CeTTa](https://github.com/godelclaw/CeTTa)
 bundle and the selected mode's small dependency file. They do not require
 Telegram, a service installation, or the framework's full `requirements.txt`.
@@ -136,6 +143,47 @@ turns and restarts. New chat input adds conversation context; continued work
 emphasizes the task history. `(task-history "task-id")`, `(task-read "record-id"
 0)` and `(request-read "request-id" 0)` recover original evidence.
 
+CeTTa modules expose a live settings catalogue:
+
+```metta
+(settings)                                      ; every loaded provider
+(settings "attention")                          ; values and documentation
+(setting "attention" "seed-similarity-weight")   ; inspect one
+(setting "attention" "seed-similarity-weight" 0.7)
+(setting "context" "task_tokens" 24000)
+```
+
+Each entry includes its current value, default, unit, mathematical domain,
+persistence and description. The prompt lists registered namespaces and keys.
+`help "settings"`, `help "setting"` and `help "attention-policy"` use this
+same native catalogue. A newly loaded module registers its controls directly;
+there is no second list of setting names to update. Registration is keyed and
+idempotent; replacing a descriptor changes the catalogue revision immediately.
+Existing provider readers/writers remain responsible for effects and storage.
+
+The registration protocol is ordinary MeTTa data:
+
+```metta
+!(import! &self ./src/settings_registry.metta)
+(SettingSpec 1 "my-module" "gain" 1 "multiplier" Nonnegative "persistent"
+     "How much this module amplifies its input."
+     my-module:read-setting my-module:write-setting)
+```
+
+Static descriptors are data facts in the module. A `(SettingsProvider "namespace"
+producer)` fact can instead name a zero-argument function returning descriptors
+computed from an existing schema. `(settings:register descriptor)` replaces a
+descriptor at runtime. The catalogue revision is a metadata fingerprint.
+
+The reader accepts a key; the writer accepts a key and a value. Supported domains
+are `Nonnegative`, `(Interval low high)`, `(IntegerFrom low)`, `(Choice values)`
+and `Text`. Numeric domains require finite numbers; numeric strings are accepted
+by `setting`. The provider advertises whether values are persistent or session
+state. Importing a provider makes its descriptors and current values discoverable
+in the same process. Providers must register again when their modules load after
+restart. ECAN retains fields belonging to temporarily absent providers as inert
+snapshot data, so losing a provider does not stop ordinary recall.
+
 CeTTa semantic recall also has an agent-owned ECAN attention layer, implemented
 in MeTTa inside godelclaw. `(query "phrase" 20 "similarity")` preserves native
 similarity ordering; `"attention"` prioritizes propagated attention; `"hybrid"`
@@ -163,7 +211,10 @@ can inspect `(attention-focus [count])` and `(attention-last)` without adding
 stimulus; the latter explains component scores without memory text.
 
 Queries combine a similarity pool and attention focus, then spread over current
-linked records with normalized outgoing weights and restart. Dangling nodes keep
+linked records with normalized outgoing weights and restart. The seed similarity/importance
+blend is independently adjustable through `seed-similarity-weight` (default 0.5).
+Restart zero is a finite walk without restart; restart one retains the seeds.
+Dangling nodes keep
 their mass. Spread is synchronous, defaults to two rounds, and can discover IDs
 outside both initial pools. It is a finite approximation, without a floating-point
 convergence certificate or a universal claim of better recall. Importance is

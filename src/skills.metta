@@ -2,6 +2,7 @@
 (= (getSkills)
    (;INTERNAL:
     "- Send native peer mail: (mail-send \"name\" \"text\"). Incoming mail enters a turn automatically; reply with mail-send. (mail-receive) checks now. CeTTa only."
+    "- Discover module-registered settings (CeTTa): (settings) or (settings \"namespace\"); inspect/change one with (setting \"namespace\" \"key\" [value]). Values, defaults, units, domains and persistence come from each module. New registrations appear automatically; (help \"settings\") describes the registration protocol."
     "- Remember a particular string such as skills and memories: (remember \"string\")"
     "- Query long-term embedding memory for skills and memories with short phrases only: (query \"short phrase\")"
     "- Choose memory retrieval: (query \"phrase\" 20 \"similarity|attention|hybrid\"); (attention-policy) and (help \"attention-policy\") expose adjustable decay, mix and spread. (attention-use \"id\") marks useful recall; (attention-link \"from-id\" \"to-id\" 1) links memories. CeTTa only."
@@ -221,7 +222,11 @@
 ;; check parses with the loop's OWN reader (sread), so its verdict is the
 ;; loop's verdict — nothing is executed either way.
 (= (help) (py-call (skills_help.help "")))
-(= (help $name) (py-call (skills_help.help (py-call (helper.decode_safe_text $name)))))
+(= (help $name)
+   (if (or (== $name "attention-policy") (or (== $name "settings") (== $name "setting")))
+     (if (== $name "attention-policy") (settings "attention")
+         (SettingsHelp (settings:protocol) (settings)))
+     (py-call (skills_help.help (py-call (helper.decode_safe_text $name))))))
 (= (check $str)
    ;; repr BEFORE the bridge: a caught syntax_error compound cannot cross
    ;; janus (Domain error: py_term) — as a string it always can.

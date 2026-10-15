@@ -84,7 +84,7 @@ class AttentionTests(unittest.TestCase):
         output = self.run_metta('''
 !(println! (attention-policy "sti-halflife" 5))
 !(println! (attention-policy "sti-half-life" -5))
-!(println! (attention-policy "restart" 0))
+!(println! (attention-policy "restart" -0.1))
 !(println! (attention-policy "spread-rounds" 1.5))
 !(println! (attention-use "b" -1))
 !(println! (attention-link "a" "b" -1))

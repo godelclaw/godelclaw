@@ -102,7 +102,7 @@
 (= (context:target)
    (case (json-object-get (context:policy) "task_tokens")
      (((JsonNumber $text) (max 0 (str:string->number $text)))
-      ($other (parse (system:getenv-or-default "METTACLAW_TASK_CONTEXT_TOKENS" "32768"))))))
+      ($other (parse (system:getenv-or-default "METTACLAW_TASK_CONTEXT_TOKENS" (repr (context:default-tokens))))))))
 (= (task:archive $root $count)
    (if (== $count 0) JsonNull
      (JsonObject ((JsonPair "count" (task:number $count))
