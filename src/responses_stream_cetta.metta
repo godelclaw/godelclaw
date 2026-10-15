@@ -1,6 +1,7 @@
 ; SPDX-License-Identifier: MIT
-; Native Responses SSE: keep the terminal Response intact, including ordered
-; output, opaque reasoning, tool identities and usage. Deltas are provisional.
+; Native Responses SSE: preserve terminal metadata and completed output items.
+; Some routes omit output from the terminal summary. Deltas are provisional;
+; only output_item.done values plus response.completed can complete a turn.
 !(import! &self llm)
 !(import! &self str)
 
@@ -9,12 +10,55 @@
 (= (responses:field-value $line $prefix)
    (let $value (str:char-slice $line (str:char-length $prefix) (str:char-length $line))
      (if (str:starts-with $value " ") (str:char-slice $value 1 (str:char-length $value)) $value)))
+(= (responses:insert-item $items $index $item)
+   (if (== $items ()) ((ResponsesOutput $index $item))
+     (let (ResponsesOutput $old-index $old-item) (car-atom $items)
+       (if (== $index $old-index)
+         (if (== $item $old-item) $items (ResponsesStreamError conflicting-output-item))
+         (if (< $index $old-index) (cons-atom (ResponsesOutput $index $item) $items)
+           (let $rest (responses:insert-item (cdr-atom $items) $index $item)
+             (case $rest
+               (((ResponsesStreamError $why) $rest)
+                ($ok (cons-atom (car-atom $items) $rest))))))))))
+(= (responses:record-item $value $items)
+   (let* (($index-json (llm:v1:get $value "output_index"))
+          ($item (llm:v1:get $value "item")))
+     (case $index-json
+       (((JsonNumber $text)
+         (let $index (str:string->number $text)
+           (if (and (and (>= $index 0) (== $index (floor-math $index))) (llm:v1:object? $item))
+             (let $next (responses:insert-item $items $index $item)
+               (case $next
+                 (((ResponsesStreamError $why) $next)
+                  ($ok (ResponsesPending $next)))))
+             (ResponsesStreamError invalid-output-item))))
+        ($bad (ResponsesStreamError invalid-output-item))))))
+(= (responses:ordered-items $items $index)
+   (if (== $items ()) ()
+     (let (ResponsesOutput $current $item) (car-atom $items)
+       (if (== $current $index)
+         (let $rest (responses:ordered-items (cdr-atom $items) (+ $index 1))
+           (case $rest
+             (((ResponsesStreamError $why) $rest)
+              ($ok (cons-atom $item $rest)))))
+         (ResponsesStreamError missing-output-item)))))
+(= (responses:complete $response $items)
+   (if (== (llm:v1:get $response "status") (JsonString "completed"))
+     (let $output (llm:v1:get $response "output")
+       (if (and (not (== $items ())) (or (== $output (JsonArray ())) (== $output JsonNull)))
+         (let $ordered (responses:ordered-items $items 0)
+           (case $ordered
+             (((ResponsesStreamError $why) $ordered)
+              ($ok (let $full (llm:v1:with $response "output" (JsonArray $ordered))
+                     (ResponsesComplete $full))))))
+         (ResponsesComplete $response)))
+     (ResponsesStreamError invalid-completed-response)))
 (= (responses:terminal $event $value $state)
    (case $state
      (((ResponsesComplete $old) (ResponsesStreamError data-after-completion))
       ((ResponsesStreamError $why) $state)
-      ($pending (responses:terminal-first $event $value)))))
-(= (responses:terminal-first $event $value)
+      ((ResponsesPending $items) (responses:terminal-first $event $value $items)))))
+(= (responses:terminal-first $event $value $items)
    (let* (($kind (llm:v1:get $value "type"))
           ($name (if (== $kind JsonNull) $event
                    (case $kind (((JsonString $text) $text) ($other "")))))
@@ -22,13 +66,12 @@
      (if (and (not (== $event "")) (not (== $event $name)))
        (ResponsesStreamError conflicting-event-type)
        (case $name
-         (("response.completed"
-           (if (== (llm:v1:get $response "status") (JsonString "completed"))
-             (ResponsesComplete $response) (ResponsesStreamError invalid-completed-response)))
+         (("response.completed" (responses:complete $response $items))
+          ("response.output_item.done" (responses:record-item $value $items))
           ("response.failed" (ResponsesStreamError (provider-failed $response)))
           ("response.incomplete" (ResponsesStreamError (provider-incomplete $response)))
           ("error" (ResponsesStreamError (provider-error $value)))
-          ($progress ResponsesPending))))))
+          ($progress (ResponsesPending $items)))))))
 (= (responses:dispatch $event $data $state)
    (if (== $data ()) $state
      (let $text (str:join "\n" (responses:reverse $data ()))
@@ -65,7 +108,7 @@
                            (str:char-slice $body 1 (str:char-length $body)) $body))
           ($crlf (str:join "\n" (str:split "\r\n" $without-bom)))
           ($text (str:join "\n" (str:split "\r" $crlf))))
-     (responses:scan (str:split "\n" $text) "" () ResponsesPending)))
+     (responses:scan (str:split "\n" $text) "" () (ResponsesPending ()))))
 
 ; Non-streaming Responses remain readable for compatible API endpoints.
 (= (responses:body $body)

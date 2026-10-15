@@ -1,5 +1,6 @@
 """Native Responses stream/profile qualification. All input and keys are fixtures."""
 import http.server
+import copy
 import json
 import os
 from pathlib import Path
@@ -60,6 +61,46 @@ class StreamCodecTests(unittest.TestCase):
         body = '\ufeff:keepalive\r\nid: ignored\r\nretry: 1000\r\nevent: response.completed\r\n'
         body += ''.join('data: ' + line + '\r\n' for line in json.dumps(value, indent=2).splitlines()) + '\r\n'
         self.assertIn('(ResponsesComplete ', self.decode(body))
+
+    def test_completed_items_recover_an_empty_terminal_output_in_index_order(self):
+        final = response()
+        final['output'].append({'type': 'function_call', 'status': 'completed',
+            'call_id': 'call_fixture', 'name': 'fixture-tool', 'arguments': '{"x":1}'})
+        for omitted in ([], None):
+            with self.subTest(terminal_output=omitted):
+                terminal = {**final, 'output': omitted}
+                body = event({'type': 'response.output_text.delta', 'delta': 'do not execute this'})
+                # Interleaved providers may finish output items out of order.
+                for i in (2, 0, 1, 1):
+                    body += event({'type': 'response.output_item.done', 'output_index': i,
+                                   'item': final['output'][i]})
+                body += event({'type': 'response.completed', 'response': terminal})
+                out = self.run_metta('!(case (responses:stream ' + json.dumps(body, ensure_ascii=False) + ')'
+                    ' (((ResponsesComplete $value) (let $text (llm:v1:render $value) (println! $text)))'
+                    ' ($bad (println! $bad))))\n')
+                self.assertEqual(self.rendered(out), final)
+
+    def test_completed_items_still_need_response_completion(self):
+        body = event({'type': 'response.output_item.done', 'output_index': 0,
+                      'item': response()['output'][1]})
+        self.assertIn('missing-completion', self.decode(body))
+        failed = event({'type': 'response.failed', 'response': {'status': 'failed'}})
+        self.assertIn('provider-failed', self.decode(body + failed))
+        self.assertNotIn('ResponsesComplete', self.decode(body + failed))
+
+    def test_completed_item_indexes_and_conflicts_are_not_silently_dropped(self):
+        item = response()['output'][1]
+        for index in (-1, 0.5, '0', None):
+            with self.subTest(index=index):
+                body = event({'type': 'response.output_item.done', 'output_index': index, 'item': item})
+                self.assertIn('invalid-output-item', self.decode(body))
+        terminal = event({'type': 'response.completed', 'response': {**response(), 'output': []}})
+        first = event({'type': 'response.output_item.done', 'output_index': 0, 'item': item})
+        changed = copy.deepcopy(item); changed['content'][0]['text'] = 'conflicting'
+        conflict = event({'type': 'response.output_item.done', 'output_index': 0, 'item': changed})
+        self.assertIn('conflicting-output-item', self.decode(first + conflict + terminal))
+        gap = event({'type': 'response.output_item.done', 'output_index': 1, 'item': item})
+        self.assertIn('missing-output-item', self.decode(gap + terminal))
 
     def test_truncated_or_provisional_text_is_never_a_completed_response(self):
         delta = event({'type': 'response.output_text.delta', 'delta': '(nop)'})
@@ -145,7 +186,12 @@ class ResponsesPeer(http.server.BaseHTTPRequestHandler):
             body += event({'type': 'response.failed', 'response': {'status': 'failed',
                 'error': {'code': self.server.failure_code, 'message': 'fixture plan error'}}})
         elif not getattr(self.server, 'truncated', False):
-            body += event({'type': 'response.completed', 'response': response()})
+            final = response()
+            if getattr(self.server, 'omit_terminal_output', False):
+                for i, item in enumerate(final['output']):
+                    body += event({'type': 'response.output_item.done', 'output_index': i, 'item': item})
+                final['output'] = []
+            body += event({'type': 'response.completed', 'response': final})
         data = body.encode('utf-8')
         self.send_response(200); self.send_header('Content-Type', 'text/event-stream'); self.end_headers()
         try:
@@ -188,6 +234,17 @@ class ResponsesHTTPTests(unittest.TestCase):
         self.assertEqual(len(self.peer.requests), 1)
         with sqlite3.connect(self.directory / 'ledger.db') as db:
             self.assertEqual(db.execute('SELECT state FROM native_calls').fetchall(), [('failed',)])
+
+    def test_native_http_empty_terminal_output_keeps_completed_answer_and_usage(self):
+        self.prepare(); self.peer.omit_terminal_output = True
+        out = self.run_guest('!(import! &self ' + json.dumps(str(ROOT / 'src/native_llm.metta')) + ')\n'
+                             '!(println! (RESULT (llm:command "openai:fixture-model" 42 "high" "input")))\n')
+        self.assertIn('(RESULT (nop))', out)
+        self.assertEqual(len(self.peer.requests), 1)
+        with sqlite3.connect(self.directory / 'ledger.db') as db:
+            state, canonical = db.execute('SELECT state,result FROM native_calls').fetchone()
+        self.assertEqual(state, 'completed')
+        self.assertEqual(json.loads(canonical)['native'], response())
 
     def test_usage_error_after_deltas_returns_failure_once(self):
         self.prepare(); self.peer.failure_code = 'subscription_sharing_usage_limit_exceeded'
