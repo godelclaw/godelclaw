@@ -171,8 +171,8 @@ separate from confidence and evidential support; co-use is an attention signal.
 Pins, task obligations and instructions are outside this ranking.
 
 Only IDs, attention values, links, settings and a timestamp are saved atomically
-in `METTACLAW_ATTENTION_PATH` (default: `attention.metta` under the engine state
-directory, or beside the memory backend configuration for standalone use).
+in `METTACLAW_ATTENTION_PATH` (default: `attention.metta` beside the engine-state
+file, or beside the memory backend configuration for standalone use).
 Forgetting removes attention and incident links as well as the searchable memory;
 attention cannot recreate retired records. Damaged attention state is preserved
 for inspection and retrieval falls back to similarity. `attention-last` reports

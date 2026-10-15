@@ -216,3 +216,15 @@ class AttentionTests(unittest.TestCase):
         self.assertIn('(AttentionMemory (Mode "attention")', result.stdout)
         self.assertIn('co-use-weight', result.stdout)
         self.assertNotIn('(Error ', result.stdout)
+
+    def test_default_snapshot_is_beside_engine_state_file(self):
+        engine_state = self.home / 'engine'
+        engine_state.write_text('cetta\n')
+        self.env['METTACLAW_ENGINE_STATE_PATH'] = str(engine_state)
+        output = self.run_metta('!(println! (attention-use "a"))\n')
+        self.assertIn('(AttentionUsed', output)
+        self.assertNotIn('AttentionUnavailable', output)
+        self.assertTrue((self.home / 'attention.metta').is_file())
+        self.assertEqual(engine_state.read_text(), 'cetta\n')
+        restored = self.run_metta('!(println! (attention-focus 0))')
+        self.assertIn('(ECANValue "a"', restored)

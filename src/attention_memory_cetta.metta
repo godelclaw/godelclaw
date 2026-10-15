@@ -13,8 +13,9 @@
 
 (= (am:path)
    (system:getenv-or-default "METTACLAW_ATTENTION_PATH"
-     (path:join (system:getenv-or-default "METTACLAW_ENGINE_STATE_PATH"
-                    (path:dirname (sm:config-path))) "attention.metta")))
+     (path:join (path:dirname
+                  (system:getenv-or-default "METTACLAW_ENGINE_STATE_PATH"
+                    (path:join (path:dirname (sm:config-path)) "engine"))) "attention.metta")))
 (= (am:defaults $bank)
    (am:install $bank
      ((AttentionSetting "mode" "hybrid")
