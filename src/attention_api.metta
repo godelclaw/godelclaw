@@ -25,5 +25,5 @@
 (SettingSpec 1 "attention" "mti-weight" 0.5 "importance multiplier" Nonnegative "persistent" "MTI contribution to stored importance." attention-policy attention-policy)
 (SettingSpec 1 "attention" "lti-weight" 0.25 "importance multiplier" Nonnegative "persistent" "LTI contribution to stored importance." attention-policy attention-policy)
 (SettingSpec 1 "attention" "candidate-multiplier" 3 "times requested count" (IntegerFrom 1) "persistent" "Size of each initial similarity/importance pool. Query count zero still selects all records." attention-policy attention-policy)
-(SettingSpec 1 "attention" "spread-rounds" 2 "rounds" (IntegerFrom 0) "persistent" "Synchronous spreading rounds. Zero uses seeds; no upper policy limit or convergence claim." attention-policy attention-policy)
+(SettingSpec 1 "attention" "spread-rounds" 2 "rounds" (IntegerFrom 0) "persistent" "Most synchronous spreading rounds per query; spreading stops earlier once the selection is certified exact. Zero uses seeds." attention-policy attention-policy)
 (SettingSpec 1 "attention" "restart" 0.5 "fraction per round" (Interval 0 1) "persistent" "Mass returned to query seeds on each round. Zero is a pure finite walk; one retains the seeds." attention-policy attention-policy)

@@ -240,6 +240,84 @@
             ($_ (am:transport $bank $current $next (- 1 $restart))))
        (am:rounds $bank $seeds (am:mass-rows $next) (- $rounds 1) $restart))))
 
+(= (am:mix $bank $mode)
+   (if (== $mode "similarity") 1 (if (== $mode "attention") 0 (am:get $bank "similarity-weight"))))
+
+; Each round may stop early with an exact certificate (MeTTapedia
+; BlendedTopK.certified_blend_topk). With e = (1-restart)/restart times the
+; round's l1 change and M the largest mass, every converged blended score is
+; within (1-mix)*2e/M of the observed one. Unscored memories hold no mass and,
+; the similarity pool being an exact top-N, score at most mix times its floor.
+; The selection is certified when its lowest score beats every other scored
+; candidate and that floor by more than twice the bound.
+(= (am:spread-certified $bank $profile $vector $seeds $current $left $done $restart $mix $count $sims $floor)
+   (if (== $left 0) (AttentionSpread $current $done Uncertified)
+     (let* (($next (new-space)) ($_ (am:copy $seeds $next $restart))
+            ($_ (am:transport $bank $current $next (- 1 $restart)))
+            ($rows (am:mass-rows $next))
+            ($_ (am:remember-sims $sims (am:score-ids $profile $vector (am:unscored-ids $sims $rows))))
+            ($verdict (am:certify $rows (am:l1-change $rows $current) $restart $mix $count $sims $floor)))
+       (if (== $verdict Certified) (AttentionSpread $rows (+ $done 1) Certified)
+         (am:spread-certified $bank $profile $vector $seeds $rows (- $left 1) (+ $done 1)
+           $restart $mix $count $sims $floor)))))
+(= (am:certify $rows $change $restart $mix $count $sims $floor)
+   (let $M (am:max-mass $rows)
+     (if (or (<= $restart 0) (or (== $count 0) (<= $M 0))) Uncertified
+       (let* (($e (* (/ (- 1 $restart) $restart) $change))
+              ($slack (* 2 (* (- 1 $mix) (/ (* 2 $e) $M))))
+              ($mass (new-space)) ($_ (am:install $mass $rows))
+              ($scored (am:blend-scores (collapse (match $sims (AttentionSim $id $sim) (AttentionSim $id $sim)))
+                         $mass $mix $M))
+              ($top (list:retain-top-k-keyed $scored $count))
+              ($low (am:min-key $top 2))
+              ($high (am:max-key (am:outside $scored $top) (am:virtual $mix $floor))))
+         (if (> (- $low $high) $slack) Certified Uncertified)))))
+(= (am:blend-scores $rows $mass $mix $M)
+   (if (== $rows ()) ()
+     (let* (((AttentionSim $id $sim) (car-atom $rows))
+            ($score (+ (* $mix $sim) (* (- 1 $mix) (/ (am:mass $mass $id) $M)))))
+       (cons-atom ($score $id) (am:blend-scores (cdr-atom $rows) $mass $mix $M)))))
+(= (am:virtual $mix Exhaustive) -1)
+(= (am:virtual $mix (Floor $sim)) (* $mix $sim))
+(= (am:pool-floor $bank $similar $count)
+   (if (or (== $count 0) (< (size-atom $similar) (* $count (am:get $bank "candidate-multiplier"))))
+     Exhaustive (Floor (am:min-sim $similar 1))))
+(= (am:min-sim $rows $best)
+   (if (== $rows ()) $best
+     (let ($cos (MemoryInfo $id $r $d $m)) (car-atom $rows)
+       (am:min-sim (cdr-atom $rows) (min $best (max 0 (/ (+ 1 $cos) 2)))))))
+(= (am:remember-sims $sims $rows)
+   (if (== $rows ()) True
+     (let* ((($cos (MemoryInfo $id $r $d $m)) (car-atom $rows)) ($sim (max 0 (/ (+ 1 $cos) 2)))
+            ($_ (add-atom $sims (AttentionSim $id $sim))))
+       (am:remember-sims $sims (cdr-atom $rows)))))
+(= (am:unscored-ids $sims $rows)
+   (if (== $rows ()) ()
+     (let* (((AttentionMass $id $v) (car-atom $rows)) ($tail (am:unscored-ids $sims (cdr-atom $rows))))
+       (if (== (collapse (match $sims (AttentionSim $id $s) $s)) ()) (cons-atom $id $tail) $tail))))
+(= (am:l1-change $new $old)
+   (let* (($before (new-space)) ($_ (am:install $before $old)) ($d (am:l1-matched $new $before)))
+     (+ $d (am:sum-mass (am:mass-rows $before)))))
+(= (am:l1-matched $rows $before)
+   (if (== $rows ()) 0
+     (let* (((AttentionMass $id $v) (car-atom $rows)) ($o (am:mass $before $id))
+            ($_ (remove-atom $before (AttentionMass $id $o))))
+       (+ (abs-math (- $v $o)) (am:l1-matched (cdr-atom $rows) $before)))))
+(= (am:min-key $rows $best)
+   (if (== $rows ()) $best
+     (let ($s $id) (car-atom $rows) (am:min-key (cdr-atom $rows) (min $s $best)))))
+(= (am:max-key $rows $best)
+   (if (== $rows ()) $best
+     (let ($s $id) (car-atom $rows) (am:max-key (cdr-atom $rows) (max $s $best)))))
+(= (am:outside $rows $top)
+   (if (== $rows ()) ()
+     (let* ((($s $id) (car-atom $rows)) ($tail (am:outside (cdr-atom $rows) $top)))
+       (if (am:keyed-member-of $id $top) $tail (cons-atom ($s $id) $tail)))))
+(= (am:keyed-member-of $id $rows)
+   (if (== $rows ()) False
+     (let ($s $other) (car-atom $rows)
+       (if (== $id $other) True (am:keyed-member-of $id (cdr-atom $rows))))))
+
 (= (am:importance $bank $id)
    (let (ECANValue $i $s $m $l) (ecan:current $bank $id)
      (+ (+ (* $s (am:get $bank "sti-weight")) (* $m (am:get $bank "mti-weight")))
@@ -274,8 +352,7 @@
      (let* ((($cos (MemoryInfo $id $r $d $m)) (car-atom $rows))
             ($sim (max 0 (/ (+ 1 $cos) 2)))
             ($attn (if (> $max-attn 0) (/ (am:mass $spread $id) $max-attn) 0))
-            ($mix (if (== $mode "similarity") 1
-                       (if (== $mode "attention") 0 (am:get $bank "similarity-weight"))))
+            ($mix (am:mix $bank $mode))
             ($score (+ (* $mix $sim) (* (- 1 $mix) $attn)))
             ($importance (am:importance $bank $id))
             ($_ (add-atom $dest (AttentionRank $id $sim $importance $attn $score)))
@@ -351,7 +428,8 @@
 
 ; Similarity is the unmodified native result path; hybrid/attention add a
 ; focus pool and reachable linked IDs. The cosine distance stays a distance.
-; Rounds are an agent-owned work setting, not a claim of certified convergence.
+; Rounds are an agent-owned work budget; spreading stops earlier once the
+; selection is certified exact (see am:certify).
 (= (am:fallback $profile $vector $count $error)
    (let $_ (change-state! &am-last (AttentionQuery fallback-similarity $error))
      (memory:dispatch (MemoryQuery $profile $vector
@@ -386,10 +464,14 @@
           ($_ (if (> $total 0) (am:copy $raw-seeds $normal (/ 1 $total))
                   (am:uniform-seeds $raw-seeds $normal (size-atom $raw-seeds))))
           ($seeds (am:mass-rows $normal))
-          ($spread-rows (am:rounds $bank $seeds $seeds
-                          (if (== $mode "similarity") 0 (am:get $bank "spread-rounds")) (am:get $bank "restart")))
+          ($sims (new-space)) ($_ (am:remember-sims $sims $rows))
+          ((AttentionSpread $spread-rows $rounds $status)
+            (am:spread-certified $bank $profile $vector $seeds $seeds
+              (if (== $mode "similarity") 0 (am:get $bank "spread-rounds")) 0
+              (am:get $bank "restart") (am:mix $bank $mode) $count $sims
+              (am:pool-floor $bank $similar $count)))
           ($spread (new-space)) ($_ (am:install $spread $spread-rows))
-          ($all-ids (unique-atom (union-atom $ids (am:mass-ids $spread-rows))))
+          ($all-ids (unique-atom (union-atom $ids (collapse (match $sims (AttentionSim $id $s) $id)))))
           ($all-rows (am:score-ids $profile $vector $all-ids))
           ($ranking (new-space))
           ($_ (am:rerank $bank $all-rows $spread (am:max-mass $spread-rows) $mode $ranking))
@@ -401,7 +483,7 @@
           ($saved (am:save))
           ($_ (change-state! &am-last (AttentionQuery $mode
                 (Scores (collapse (match $ranking (AttentionRank $id $s $i $a $c) (AttentionRank $id $s $i $a $c))))
-                (Persistence $saved))))) $answer))
+                (Persistence $saved) (Spread (Rounds $rounds) $status))))) $answer))
 (= (am:unscore $rows)
    (if (== $rows ()) ()
      (let ($score $row) (car-atom $rows) (cons-atom $row (am:unscore (cdr-atom $rows))))))

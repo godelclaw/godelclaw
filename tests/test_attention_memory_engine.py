@@ -31,6 +31,24 @@ class AttentionTests(unittest.TestCase):
         self.assertIn('(RESTORED (MemoryResults ((MemoryHit "b"', restored)
         self.assertIn('(AttentionSetting "mode" "attention")', restored)
 
+    def test_spreading_stops_once_the_selection_is_certified(self):
+        output = self.run_metta('''
+!(attention-policy "exposure" 0)
+!(attention-policy "bootstrap-neighbours" 0)
+!(attention-policy "spread-rounds" 50)
+!(attention-policy "restart" 0.9)
+!(println! (FIRST (semantic:query "alpha" 1 "hybrid")))
+!(println! (EXPLAIN (attention-last)))
+!(attention-policy "restart" 0)
+!(println! (ZERO (semantic:query "alpha" 1 "hybrid")))
+!(println! (EXPLAIN_ZERO (attention-last)))
+''')
+        self.assertIn('(FIRST (MemoryResults ((MemoryHit "a"', output)
+        explain = output.split('(EXPLAIN ', 1)[1].split('\n', 1)[0]
+        self.assertIn('(Spread (Rounds 1) Certified)', explain)
+        zero = output.split('(EXPLAIN_ZERO ', 1)[1].split('\n', 1)[0]
+        self.assertIn('(Spread (Rounds 50) Uncertified)', zero)
+
     def test_weighted_spread_discovers_beyond_both_initial_pools(self):
         self.collection.add(['c', 'd'], [[0., 0., 1.], [-1., 0., 0.]],
                             ['linked bridge', 'linked destination'], [{'time': 'fixture'}, {'time': 'fixture'}])
