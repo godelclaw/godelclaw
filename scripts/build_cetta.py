@@ -42,6 +42,8 @@ def main():
     parser.add_argument("--jobs", type=int, default=int(os.environ.get("BUILD_JOBS", "1")))
     parser.add_argument("--prolog", choices=("auto", "0", "1"), default="auto",
                         help="optional SWI-Prolog provider (auto detects the installed SDK; 0 builds without it)")
+    parser.add_argument("--chatgpt", action="store_true",
+                        help="build native ChatGPT subscription sign-in (requires cJOSE >= 0.8.1, Jansson and OpenSSL)")
     parser.add_argument("--python-config", default=os.environ.get("PYTHON_CONFIG"))
     parser.add_argument("--sqlite-cflags", default=os.environ.get("SQLITE_CFLAGS"))
     parser.add_argument("--sqlite-libs", default=os.environ.get("SQLITE_LIBS"))
@@ -84,7 +86,8 @@ def main():
         args.sqlite_libs = "-L" + str(sdk / "lib") + " -lsqlite3"
     flags = ["BUILD=python", "ENABLE_HTTP=1", "ENABLE_DURABLE=1", "SQLITE_PROVIDER=system",
              "ENABLE_MANAGED_SYMBOLS=1", "ENABLE_LIB_PROLOG=" + args.prolog,
-             "ENABLE_JSON_GSLT=1", "PYTHON_CONFIG=" + args.python_config]
+             "ENABLE_JSON_GSLT=1", "ENABLE_SIWC=" + str(int(args.chatgpt)),
+             "PYTHON_CONFIG=" + args.python_config]
     if args.sqlite_cflags is not None:
         flags.append("SQLITE_CFLAGS=" + args.sqlite_cflags)
     if args.sqlite_libs is not None:
@@ -107,6 +110,8 @@ def main():
     for name in ("lib", "tools"):
         shutil.copytree(source / name, prefix / name, dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    if args.chatgpt:
+        shutil.copytree(source / "docs/siwc/licenses", prefix / "licenses/siwc", dirs_exist_ok=True)
     python_prefix = run([args.python_config, "--prefix"], capture=True).strip()
     includes = run([args.python_config, "--includes"], capture=True)
     version = re.search(r"/python(\d+\.\d+)", includes)

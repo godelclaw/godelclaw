@@ -1,8 +1,8 @@
 ; SPDX-License-Identifier: MIT
 ; Modules declare indexed metadata in the same MeTTa space as their code.
 ; No mutable catalogue initialization or separate list of allowed setting keys.
-!(import! &self (library str))
-!(import! &self (library lib_prolog))
+!(import! &self str)
+!(import! &self lib_prolog)
 
 ; Protocol 1: namespace, key, default, unit, domain, lifetime, description,
 ; and the provider's existing one-key reader / key-value writer symbols.

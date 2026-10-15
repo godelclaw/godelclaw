@@ -601,9 +601,47 @@ their request format.
 [ChatGPT-plan Responses route](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations).
 It uses array input, `stream: true` and `store: false`, and omits the ordinary
 encoder's `max_output_tokens`. Other documented incompatible options return a
-named error. This profile and the stream decoder are tested with a local HTTP
-fixture. OAuth sign-in, token refresh and live subscription-provider selection
-are not implemented yet.
+named error. Eligible ChatGPT subscriptions use the public Responses endpoint
+through native browser OAuth, independently of API-key billing. This profile
+currently supports the **godelclaw command loop**; the separate Iter/Omega
+structured-tool profiles retain their existing providers.
+
+Build CeTTa with `ENABLE_HTTP=1 ENABLE_SIWC=1` and cJOSE 0.8.1 or newer; see
+CeTTa's `docs/siwc/README.md` for dependencies and the standalone MeTTa sign-in
+command. The pinned-engine builder exposes this as
+`python3 scripts/build_cetta.py --chatgpt`. From a running native command loop:
+
+```metta
+(chatgpt-login)                         ; owned pending handle
+(chatgpt-login-status id)               ; browser link, then validated result
+(chatgpt-accounts)                      ; registration metadata, never tokens
+(chatgpt-policy "account" "r_...")     ; explicitly choose a registration
+(chatgpt-models)                        ; account-visible slugs in server order
+(llm-set-model "chatgpt:returned-slug")  ; use one of those slugs next turn
+```
+
+Choose a returned slug with the existing model setting as `chatgpt:slug`.
+The command and settings catalogues discover this component when native LLM
+support loads. `(settings "chatgpt")` exposes persistent account, sign-in,
+model-list deadline and response-size controls; zero deadline means unlimited.
+Per-inference deadlines retain the normal native LLM wait settings.
+
+The callback listens on loopback before the browser link is exposed. The
+process owning the sign-in handle must stay alive until consent completes;
+the standalone MeTTa example does this. On a remote machine, forward its
+loopback port to the browser host before opening the link. A returning login
+uses `(chatgpt-login "r_...")`; `(chatgpt-logout "r_...")` revokes and clears
+the session while retaining its registration identity.
+
+Native C owns token exchange, signed identity checks, protected atomic storage
+and serialized rotating refresh. MeTTa and the existing Python host receive only
+account metadata and an `SIWC:registration` alias. OAuth never reads another
+application's credentials. HTTP credential scope and reflection checks also
+apply to these aliases. An ambiguous refresh is reported without replaying the
+old refresh token; reauthorization recovers that registration. A quota failure
+after stream deltas remains a failed call. There is no automatic account,
+model or provider fallback. Synthetic-provider tests cover the complete flow;
+real-account qualification requires browser consent and an actual inference.
 
 Provider accounting records usage and results without request, token, or failure
 quotas. Actual transport failures and provider rate limits can delay retry.

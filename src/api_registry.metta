@@ -1,6 +1,6 @@
 ; SPDX-License-Identifier: MIT
 ; Component-owned declarations are data. Discovery does not invoke commands.
-!(import! &self (library str))
+!(import! &self str)
 !(import! &self ./src/settings_registry.metta)
 
 (= (api:commands)
