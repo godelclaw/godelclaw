@@ -54,8 +54,10 @@ def main() -> int:
         require(room_after_guest.current_command == "bash",
                 "control returns to owning shell")
 
-        right_before = world.observe(right.pane_id)
-        room_before = world.observe(room.pane_id)
+        # Guest exit can precede the shell's final prompt redraw. Observe a
+        # stable screen before testing a send against that exact screen.
+        right_before = world.wait_until_stable(right.pane_id)
+        room_before = world.wait_for_stable_text(room.pane_id, "GUEST_DONE")
         require(
             world.guarded_send(room_before, "printf 'ROOM_ONLY\\n'").status
             == "sent",
