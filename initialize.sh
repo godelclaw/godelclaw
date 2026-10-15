@@ -62,8 +62,10 @@ mkdir -p "$(dirname "$prompt_path")" "$(dirname "$history_path")" "$chroma_dir" 
 copy_if_missing() {
     local src="$1"
     local dst="$2"
-    if [ "$force" -eq 1 ] || [ ! -e "$dst" ]; then
+    if [ "$force" -eq 1 ]; then
         cp "$src" "$dst"
+    else
+        seed_if_missing "$src" "$dst"
     fi
 }
 
