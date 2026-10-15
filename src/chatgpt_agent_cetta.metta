@@ -118,6 +118,20 @@
             ($other (ChatGPTUnavailable model-list-invalid))))))
       ($other (ChatGPTUnavailable model-list-submit-error)))))
 
+; This route keys its prompt cache by the session_id header and ignores the
+; body's prompt_cache_key; without the header every request gets a fresh key
+; and nothing is reused. One identifier per agent, account and model lets the
+; provider reuse whatever prompt prefix is unchanged.
+(= (chatgpt:session-id $model)
+   (let* (($seed (str:concat (chatgpt:policy-path)
+                   (str:concat ":" (str:concat (chatgpt-policy "account") (str:concat ":" $model)))))
+          ($hex (str:sha256 $seed)))
+     (str:concat (str:byte-slice $hex 0 8)
+       (str:concat "-" (str:concat (str:byte-slice $hex 8 12)
+         (str:concat "-" (str:concat (str:byte-slice $hex 12 16)
+           (str:concat "-" (str:concat (str:byte-slice $hex 16 20)
+             (str:concat "-" (str:byte-slice $hex 20 32)))))))))))
+
 ; Only three layout markers have structural meaning. Later occurrences remain
 ; literal user text, matching the existing command-loop prompt contract.
 (= (chatgpt:split $text $remaining $stable)
@@ -150,7 +164,9 @@
           ($alias-json (llm:v1:get $account "credential_alias")) ($alias (llm:v1:text $alias-json))
           ($api-json (llm:v1:get $session "api_base")) ($api (llm:v1:text $api-json))
           ($base (str:char-slice $api 0 (- (str:char-length $api) 1)))
+          ($session-id (chatgpt:session-id $model))
           ($headers (llm:v1:render (JsonArray ((JsonArray ((JsonString "http:header") (JsonString "Content-Type") (JsonString "application/json")))
+                      (JsonArray ((JsonString "http:header") (JsonString "session_id") (JsonString $session-id)))
                       (JsonArray ((JsonString "http:credential") (JsonString $alias)))))))
           ($wait (py-call (native_llm_host.wait_settings)))
           ($soft (py-call (operator.getitem $wait "soft")))

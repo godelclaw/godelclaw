@@ -114,6 +114,9 @@ class ChatGPTAgentTests(unittest.TestCase):
         requests = self.identity_provider.api_requests
         self.assertEqual(len(requests), 2)
         self.assertEqual(requests[0][2]['prompt_cache_key'], requests[1][2]['prompt_cache_key'])
+        self.assertRegex(requests[0][1]['session_id'],
+                         r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+        self.assertEqual(requests[0][1]['session_id'], requests[1][1]['session_id'])
         self.assertEqual(requests[0][1]['Authorization'], 'Bearer fixture-access-2')
 
     def test_missing_account_never_falls_back_to_another_provider(self):

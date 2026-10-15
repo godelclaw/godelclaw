@@ -376,6 +376,19 @@ def _completion_metadata(result, prompt_layout=None):
             os.replace(temporary, path)
         except OSError:
             pass
+        # One line per call, so prefix reuse can be followed across turns.
+        try:
+            usage = value["usage"] if isinstance(value["usage"], dict) else {}
+            line = dict(observed_at=value["observed_at"], transport=value["transport"],
+                        provider_stop=value["provider_stop"],
+                        output_tokens=usage.get("output_tokens", usage.get("completion_tokens")),
+                        **value["cache"])
+            fd = os.open(os.path.join(os.path.dirname(path) or ".", "llm-usage.jsonl"),
+                         os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            with os.fdopen(fd, "a") as stream:
+                stream.write(json.dumps(line) + "\n")
+        except (OSError, TypeError, ValueError):
+            pass
 
 
 def _exchange(provider, endpoint, body, max_tokens):
