@@ -161,6 +161,12 @@ there is no second list of setting names to update. Registration is keyed and
 idempotent; replacing a descriptor changes the catalogue revision immediately.
 Existing provider readers/writers remain responsible for effects and storage.
 
+Native components can also declare their command API once. The attention
+component's `CommandSpec` facts generate its prompt entries, help and argument
+checks; newly imported declarations appear automatically. `(help "api")`
+describes this protocol. See [component APIs](src/api/README.md) for the
+declaration format and the optional `.module` metadata-layer pilot.
+
 The registration protocol is ordinary MeTTa data:
 
 ```metta

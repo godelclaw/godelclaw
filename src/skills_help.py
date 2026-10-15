@@ -16,8 +16,6 @@ ARITY = {
     "topic-note": (1, 1),  "model-jobs": (0, 0),
     "model-result": (1, 1),
     "settings": (0, 1), "setting": (2, 3),
-    "attention-policy": (0, 2), "attention-use": (1, 2), "attention-link": (3, 3),
-    "attention-focus": (0, 1), "attention-last": (0, 0), "attention-reload": (0, 0),
     "remember": (1, 1), "query": (1, 3), "forget": (1, 2),
     "memory-edit": (2, 2), "memory-read": (1, 1), "memory-history": (1, 1),
     "memory-pending": (0, 0), "memory-retry": (0, 0), "memory-retire": (1, 2),
@@ -56,12 +54,6 @@ ARITY = {
 PAGES = {
     "settings": 'usage: (settings ["namespace"])\nLive native catalogue of module-registered settings, including current/default value, units, domain, description and persistence. New registrations appear immediately. An empty namespace lists all.',
     "setting": 'usage: (setting "namespace" "key" [value])\nInspect one setting or invoke its registered writer. Numeric strings are accepted for numeric domains. The module retains ownership of validation and storage.',
-    "attention-policy": 'usage: (attention-policy ["key" [value]])\nRead/change persistent ECAN settings. (settings "attention") and this native help page are generated from the registered descriptors; they include defaults, units and explanations.',
-    "attention-use": 'usage: (attention-use "id" [amount])\nExplicitly stimulate and consolidate an existing semantic memory. Default amount 1; 0 is valid. Optional feedback, never a required chore.',
-    "attention-link": 'usage: (attention-link "from-id" "to-id" weight)\nSet a directed link between current semantic memories. Repeating replaces the weight; 0 removes it. Weights are finite and nonnegative. No automatic claim of evidential support.',
-    "attention-focus": 'usage: (attention-focus [count])\nView weighted STI/MTI/LTI importance (default 20, 0 all); does not stimulate. Does not delete anything outside the view.',
-    "attention-reload": 'usage: (attention-reload)\nReload your attention snapshot after editing or repairing it. No deletion and no restart.',
-    "attention-last": 'usage: (attention-last)\nExplain the last query: IDs, normalized similarity, raw importance, normalized propagated activation and combined rank; no memory text. Also shows persistence failures.',
     "remember": ('usage: (remember "text")\n'
                  'Native mode stores the write intent first and returns MemoryQueued with its ID.\n'
                  'The existing daemon embeds it asynchronously; retries and restart recovery are automatic.\n'

@@ -38,3 +38,10 @@
 (= (settings:context) (SettingsIndex unavailable-on-this-engine))
 
 (= (settings:protocol) (SettingsProtocol available-on-CeTTa))
+
+; Native components publish their API on CeTTa. Core legacy tools keep their
+; existing help and do not import the native component registry.
+(= (api:prompt-lines) ())
+(= (api:help-index) "")
+(= (api:help $name) (APINotRegistered $name))
+(= (api:check $command) (APINotRegistered ""))

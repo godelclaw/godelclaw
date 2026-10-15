@@ -1,11 +1,11 @@
 !(import! &self ./src/topic_jobs.py)
-(= (getSkills)
+(= (getLegacySkills)
    (;INTERNAL:
     "- Send native peer mail: (mail-send \"name\" \"text\"). Incoming mail enters a turn automatically; reply with mail-send. (mail-receive) checks now. CeTTa only."
     "- Discover module-registered settings (CeTTa): (settings) or (settings \"namespace\"); inspect/change one with (setting \"namespace\" \"key\" [value]). Values, defaults, units, domains and persistence come from each module. New registrations appear automatically; (help \"settings\") describes the registration protocol."
     "- Remember a particular string such as skills and memories: (remember \"string\")"
     "- Query long-term embedding memory for skills and memories with short phrases only: (query \"short phrase\")"
-    "- Choose memory retrieval: (query \"phrase\" 20 \"similarity|attention|hybrid\"); (attention-policy) and (help \"attention-policy\") expose adjustable decay, mix and spread. (attention-use \"id\") marks useful recall; (attention-link \"from-id\" \"to-id\" 1) links memories. CeTTa only."
+    "- Choose memory retrieval: (query \"phrase\" 20 \"similarity|attention|hybrid\"); the default selector and attention controls are in the live settings catalogue. CeTTa only."
     "- Refine your semantic memories by their query IDs: (memory-read \"id\"), (memory-edit \"id\" \"text\"), (forget \"id\" [\"reason\"]); earlier text stays in (memory-history \"id\")"
     "- Native remember/edit writes are retained before embedding; (memory-pending) inspects automatic retry status and (memory-retry) retries now"
     "- Retire a hierarchical memory from recall: (memory-retire \"id\" [\"reason\"]); memory-node with an active kind restores it"
@@ -78,6 +78,8 @@
     ;WHEN UNSURE:
     "- Man page for any skill (usage, example, common failure): (help \"skill-name\")"
     "- Dry-run a command string through the real parser, nothing executes: (check \"(shell \\\"ls /tmp\\\")\")"))
+
+(= (getSkills) (union-atom (getLegacySkills) (api:prompt-lines)))
 
 ;; Background jobs return immediately, and the
 ;; runtime wakes the agent when a job ends.  Vitals are read on demand.
@@ -221,19 +223,24 @@
 ;; Progressive disclosure: one-line catalog above, full page on demand.
 ;; check parses with the loop's OWN reader (sread), so its verdict is the
 ;; loop's verdict — nothing is executed either way.
-(= (help) (py-call (skills_help.help "")))
+(= (help) (string_concat (py-call (skills_help.help "")) (api:help-index)))
 (= (help $name)
-   (if (or (== $name "attention-policy") (or (== $name "settings") (== $name "setting")))
-     (if (== $name "attention-policy") (settings "attention")
-         (SettingsHelp (settings:protocol) (settings)))
-     (py-call (skills_help.help (py-call (helper.decode_safe_text $name))))))
+   (case (api:help $name)
+     (((APINotRegistered $key)
+       (if (or (== $name "settings") (== $name "setting"))
+         (SettingsHelp (settings:protocol) (settings))
+         (py-call (skills_help.help (py-call (helper.decode_safe_text $name))))))
+      ($page $page))))
 (= (check $str)
    ;; repr BEFORE the bridge: a caught syntax_error compound cannot cross
    ;; janus (Domain error: py_term) — as a string it always can.
    (let $decoded (py-call (helper.decode_safe_text $str))
         (let $parsed (catch (sread $decoded))
-             (let $rendered (repr $parsed)
-                  (py-call (skills_help.verdict $decoded $rendered))))))
+             (case (api:check $parsed)
+               (((APINotRegistered $name)
+                 (let $rendered (repr $parsed)
+                   (py-call (skills_help.verdict $decoded $rendered))))
+                ($verdict $verdict))))))
 
 ;; Pins: real, persisted working memory (previously catalog-only — the call
 ;; just echoed itself into results feedback and vanished on restart).
