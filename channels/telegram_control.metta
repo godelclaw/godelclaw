@@ -275,11 +275,16 @@
        (let $handled (tc:handle $tasks)
          (let $cleaned (tc:guarded (catch (nc:pump)) "receipt cleanup") $handled)))))))
 
+; One effectful cycle has one committed outcome. Alternatives inside a scan
+; must not survive into a later cycle and replay already submitted effects.
 ; Arm before scanning, so an arrival during the scan remains a wake-up.
-(= (tc:serve)
+(= (tc:cycle)
    (let $_ (py-call (input_ack.arm_changes))
    (let $answered (catch (tc:serve-once))
      (let $pumped (catch (py-call (mode_channel.pump)))
        (let $health (catch (py-call (mode_channel.heartbeat)))
          (let $slept (py-call (input_ack.wait_changes))
-           (tc:serve)))))))
+           $answered))))))
+
+(= (tc:serve)
+   (let $_ (once (tc:cycle)) (tc:serve)))

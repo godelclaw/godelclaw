@@ -77,6 +77,6 @@
    (let (io:pending $id) (io:submit (timer:after $milliseconds))
      (mail:pause-await $id $milliseconds)))
 (= (mail:pause-await $id $milliseconds)
-   (case (io:wait $id $milliseconds)
+   (case (once (io:wait $id $milliseconds))
      (((io:idle) (mail:pause-await $id $milliseconds))
       ($result ()))))

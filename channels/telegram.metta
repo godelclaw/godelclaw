@@ -853,6 +853,12 @@
            (tg:wake-request (if (== $reason "") "wake request" $reason)))))))
 
 (= (tg:rest-loop $deadline $seconds $enabled)
+   (let $result (once (tg:rest-cycle $deadline $seconds $enabled))
+     (if (== $result idle:waiting) (tg:rest-loop $deadline $seconds $enabled) $result)))
+
+; Finish every subscription before committing this cycle. Search within a
+; memory query still collects its complete answer bag in the ordinary way.
+(= (tg:rest-cycle $deadline $seconds $enabled)
    ; Arm before draining any producer queue, so arrivals cannot be lost
    ; between checking the queue and sleeping. Readiness never acknowledges it.
    (let* (($milliseconds (idle:interval $deadline))
@@ -860,7 +866,7 @@
           ($result (tg:rest-check $deadline $seconds $enabled $milliseconds))
           ($_ (if (== $result idle:waiting) (idle:wait $subscriptions $milliseconds $enabled) ()))
           ($_ (idle:finish $subscriptions)))
-     (if (== $result idle:waiting) (tg:rest-loop $deadline $seconds $enabled) $result)))
+     $result))
 (= (tg:rest-check $deadline $seconds $enabled $milliseconds)
    (let $_ (if $enabled (semantic:maintain) True)
    (if (== (py-call (helper.recycle_requested)) 1) "recycle requested"
@@ -937,14 +943,18 @@
        (if (== $head none) False (tg:all-received $tail)))))
 
 (= (tg:await $key $count $deadline)
+   (let $results (once (tg:await-cycle $key $count))
+     (case $results
+       (((rejected $reason) (rejected $reason))
+        ($list
+         (if (tg:all-received $list) $list
+           (if (>= (tg:now) $deadline) $list
+             (let $slept (tg:sleep 0.1) (tg:await $key $count $deadline)))))))))
+
+(= (tg:await-cycle $key $count)
    (let $polled (tg:poll)
      (let $results (tg:receipts $key $count)
-       (case $results
-         (((rejected $reason) (rejected $reason))
-          ($list
-           (if (tg:all-received $list) $list
-             (if (>= (tg:now) $deadline) $list
-               (let $slept (tg:sleep 0.1) (tg:await $key $count $deadline))))))))))
+       $results)))
 
 (= (tg:batch-body $commands) (json-stringify (JsonArray (tg:list $commands))))
 (= (tg:send-commands $pieces)

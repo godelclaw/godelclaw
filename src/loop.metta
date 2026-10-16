@@ -479,10 +479,10 @@
      (if (== $channel 1)
        (if (== (mail:ack) 1) (jobs:ack) 0) 0)))
 
-(= (processLoop $state)
-   (if (== (py-call (helper.recycle_requested)) 1)
-     (py-call (helper.recycle_exit))
-     (let* (($periphery (process-periphery $state))
+;; A completed effectful turn and idle wait choose one successor. Commit
+;; before tail recursion, so dormant alternatives cannot retain earlier turns.
+(= (processCycle $state)
+   (let* (($periphery (process-periphery $state))
           ($_ (py-call (helper.turn_commit_reset)))
           ($_ (py-call (process_supervision.progress "turn-start")))
           ($_ (println! (---------iteration (loop-iteration $periphery))))
@@ -503,7 +503,13 @@
          (let* (($waitOutcome (waitProcess (process-periphery $next)))
                 ($waiting (process-step $next $waitOutcome))
                 ($_ (persistProcessState $waiting)))
-           (processLoop $waiting))))))
+           $waiting))))
+
+(= (processLoop $state)
+   (if (== (py-call (helper.recycle_requested)) 1)
+     (py-call (helper.recycle_exit))
+     (let $waiting (once (processCycle $state))
+       (processLoop $waiting))))
 
 (= (mettaclaw)
    (progn
