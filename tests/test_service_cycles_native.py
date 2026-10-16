@@ -49,24 +49,29 @@ class ServiceCyclesTest(unittest.TestCase):
     def test_responder_commits_each_cycle(self):
         self.probe('channels/telegram_control.metta', 'tc:serve)', '''
 !(bind! &cycle-count (new-state 0))
+(= (fixture:choice) first)
+(= (fixture:choice) second)
 (= (tc:cycle)
    (if (>= (get-state &cycle-count) 500)
      (progn (println! CYCLES_DONE) (system:exit 0))
      (let $next (+ (get-state &cycle-count) 1)
        (let $_ (change-state! &cycle-count $next)
-         (superpose (ok (progn (println! REPLAYED_ALTERNATIVE) bad)))))))
+         (and True (case (fixture:choice)
+           ((first True) ($other (progn (println! REPLAYED_ALTERNATIVE) False)))))))))
 !(tc:serve)
 ''')
 
     def test_agent_loop_commits_successor_but_keeps_search_bag(self):
         self.probe('src/loop.metta', 'processLoop ', '''
+(= (fixture:choice) first)
+(= (fixture:choice) second)
 (= (processCycle $n)
    (if (>= $n 500)
      (progn (println! CYCLES_DONE) (system:exit 0))
      (let $found (collapse (superpose (evidence-a evidence-b evidence-a)))
-       (if (== (size-atom $found) 3)
-         (superpose ((+ $n 1) (progn (println! REPLAYED_ALTERNATIVE) -1)))
-         (system:exit 2)))))
+       (let $_ (and True (case (fixture:choice)
+                   ((first True) ($other (progn (println! REPLAYED_ALTERNATIVE) False)))))
+         (if (== (size-atom $found) 3) (+ $n 1) (system:exit 2))))))
 !(processLoop 0)
 ''')
 
