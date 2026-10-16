@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage one reviewed runtime release into a group of independent instances.
+"""Stage one reviewed runtime release into selected independent instances.
 
 The private plan supplies destinations, expected pre-update hashes, instance
 overlays, service names and offline checks. All checks precede activation.
@@ -122,8 +122,8 @@ def main():
     manifest = json.loads((release / "manifest.json").read_text())
     plan = json.loads(args.plan.read_text())
     instances = plan["instances"]
-    if len(instances) < 2:
-        raise ValueError("a grouped update needs at least two instances")
+    if not instances:
+        raise ValueError("an update needs at least one instance")
     control_services = [name for instance in instances for name in instance.get("control_services", [])]
     if (any(not isinstance(instance.get("control_services", []), list) for instance in instances)
             or any(not isinstance(name, str) or not name or name.startswith("-") for name in control_services)
@@ -197,7 +197,7 @@ def main():
     activated_controls = []
     try:
         if "run.sh" not in files:
-            raise ValueError("paired cognitive activation requires the launcher gate")
+            raise ValueError("cognitive activation requires the launcher gate")
         for instance, root, overlays, before, pid in entries:
             hold = root / ".runtime-update-hold"
             if hold.exists():
@@ -205,7 +205,7 @@ def main():
             hold.write_text(manifest["release"] + "\n"); held.append(hold)
             install(release / "files/run.sh", root / "run.sh")
         for instance, root, overlays, before, pid in entries:
-            recycle(instance, "paired runtime update")
+            recycle(instance, "runtime update")
         await_boundaries(entries, {entry[0]["service"]: entry[4] for entry in entries},
                          plan.get("boundary_timeout", 180))
         record["status"] = "held"; save()
@@ -270,7 +270,7 @@ def main():
             if booted:
                 break
             if time.monotonic() > deadline:
-                raise TimeoutError("paired runtime did not boot")
+                raise TimeoutError("selected runtime did not boot")
             time.sleep(1)
         for index, (instance, root, overlays, before, pid) in enumerate(entries):
             path = Path(instance["state_dir"]) / "runtime-release.json"
@@ -308,7 +308,7 @@ def main():
         record["error"] = str(error)
         if released:
             # A candidate may have begun an action. Do not replace its source
-            # or kill it halfway through: acquire both ordinary boundaries.
+            # or kill it halfway through: acquire the selected boundaries.
             candidate_pids = {entry[0]["service"]: service(entry[0]["service"], "show")
                               for entry in entries}
             for instance, root, overlays, before, pid in entries:

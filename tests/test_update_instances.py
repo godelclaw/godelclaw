@@ -74,7 +74,7 @@ class ReleasePermissionsTest(unittest.TestCase):
 
 class PairedUpdateTest(unittest.TestCase):
     def exercise(self, failed=False, runtime_missing=False, controls=False, control_failure=False,
-                 shared_environment=False):
+                 shared_environment=False, single=False):
         with tempfile.TemporaryDirectory() as temporary:
             work = Path(temporary)
             release = work / "release"
@@ -101,7 +101,8 @@ class PairedUpdateTest(unittest.TestCase):
                 if controls:
                     instances[-1]["control_services"] = [name + "-control"]
             plan = work / "plan.json"
-            plan.write_text(json.dumps({"instances": instances,
+            selected = instances[:1] if single else instances
+            plan.write_text(json.dumps({"instances": selected,
                                         "boot_timeout": -1 if runtime_missing else 60}))
             if shared_environment:
                 old_env, new_env = work/'common.env', work/'candidate.env'
@@ -115,7 +116,7 @@ class PairedUpdateTest(unittest.TestCase):
             def service(name, operation):
                 if name.endswith("-control"):
                     if operation == "restart":
-                        self.assertEqual(len(qualified), 2)
+                        self.assertEqual(len(qualified), len(selected))
                         control_restarts.append(name)
                         if control_failure and len(control_restarts) == 1:
                             raise RuntimeError("control startup failed")
@@ -136,11 +137,11 @@ class PairedUpdateTest(unittest.TestCase):
                 return pids[name]
             def check(command, **kwargs):
                 qualified.append(command[-1])
-                return subprocess.CompletedProcess(command, int(failed and command[-1] == "beta"), "CHECK_OK", "")
+                return subprocess.CompletedProcess(command, int(failed and command[-1] == selected[-1]["name"]), "CHECK_OK", "")
             def settings(name, extra_keys=()):
                 state = next(i["state_dir"] for i in instances if i["name"] == name)
                 return {"METTACLAW_ACTIVE_LOOP_MODE": "godelclaw",
-                        "METTACLAW_OBSERVED_STRATEGY": "0" if runtime_missing and name == "beta" else "1",
+                        "METTACLAW_OBSERVED_STRATEGY": "0" if runtime_missing and name == selected[-1]["name"] else "1",
                         "METTACLAW_ENGINE_STATE_PATH": state + "/engine",
                         "METTACLAW_RECYCLE_REQUEST_PATH": state + "/recycle.requested",
                         "METTACLAW_WAKE_REQUEST_PATH": state + "/wake.requested"}
@@ -156,22 +157,53 @@ class PairedUpdateTest(unittest.TestCase):
             receipt = json.loads((work / "receipt/receipt.json").read_text())
             rollback = failed or runtime_missing or control_failure
             self.assertEqual(receipt["status"], "rolled-back" if rollback else "activated")
+            self.assertEqual([item['name'] for item in receipt['instances']],
+                             [item['name'] for item in selected])
+            self.assertEqual(qualified, [item['name'] for item in selected])
             if shared_environment:
                 self.assertEqual(old_env.read_text(), 'CETTA_BIN=old\n' if rollback else 'CETTA_BIN=new\n')
             if controls:
                 self.assertEqual(control_restarts, [] if failed else
                     ["alpha-control", "alpha-control"] if control_failure else
-                    ["alpha-control", "beta-control"])
+                    [item['name'] + '-control' for item in selected] * (2 if runtime_missing else 1))
             for item in instances:
                 root = Path(item["root"])
-                self.assertEqual((root / "src/obsolete.py").exists(), bool(rollback))
-                if rollback:
+                unchanged = rollback or item not in selected
+                self.assertEqual((root / "src/obsolete.py").exists(), unchanged)
+                if unchanged:
                     self.assertEqual((root / "src/obsolete.py").read_text(), "# removed feature\n")
                 self.assertFalse((root / ".runtime-update-hold").exists())
                 self.assertEqual((Path(item["state_dir"]) / "identity").read_text(), item["name"])
                 self.assertEqual((root / "memory/persistent.metta").read_text(),
                                  '(active-model '+item['name']+')\n')
-                self.assertEqual((root / "src/core.py").read_text(), "# old core\n" if rollback else "# new core\n")
+                self.assertEqual((root / "src/core.py").read_text(), "# old core\n" if unchanged else "# new core\n")
+                self.assertEqual((root / "run.sh").read_text(), "# old launcher\n" if unchanged else "#!/bin/sh\n# new launcher\n")
+                if item not in selected:
+                    self.assertEqual(pids[item['name']], '1')
+                    self.assertFalse((Path(item['state_dir']) / 'recycle.requested').exists())
+                    self.assertFalse((Path(item['state_dir']) / 'runtime-release.json').exists())
+
+    def test_single_instance_updates_without_touching_its_peer(self):
+        self.exercise(single=True, controls=True)
+
+    def test_single_instance_failed_check_rolls_back_without_touching_its_peer(self):
+        self.exercise(single=True, failed=True, controls=True)
+
+    def test_single_instance_failed_boot_rolls_back_without_touching_its_peer(self):
+        self.exercise(single=True, runtime_missing=True, controls=True)
+
+    def test_empty_selection_does_not_observe_or_change_a_service(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            (work / 'manifest.json').write_text(json.dumps({'release': 'empty', 'files': {}}))
+            (work / 'plan.json').write_text(json.dumps({'instances': []}))
+            args = ['update_instances', '--plan', str(work / 'plan.json'), '--release', str(work),
+                    '--receipt-dir', str(work / 'receipt'), '--apply']
+            with mock.patch.object(sys, 'argv', args), mock.patch.object(update, 'service') as service:
+                with self.assertRaisesRegex(ValueError, 'at least one instance'):
+                    update.main()
+                service.assert_not_called()
+            self.assertFalse((work / 'receipt').exists())
 
     def test_both_receive_one_release_with_separate_state(self):
         self.exercise()
