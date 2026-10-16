@@ -11,6 +11,44 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import runtime_watch  # noqa: E402
 
 
+class MemoryObservationTest(unittest.TestCase):
+    def sample(self, at, ram, swap=0, invocation="first"):
+        return {"at": at, "invocation": invocation, "pid": 42,
+                "ram_bytes": ram * 2**20, "swap_bytes": swap * 2**20,
+                "total_bytes": (ram + swap) * 2**20}
+
+    def test_swap_does_not_hide_growth(self):
+        before = {"history": [self.sample(100, 200)]}
+        facts = runtime_watch.memory_trend(before, self.sample(280, 100, 200), 180, 16, 32)
+        self.assertTrue(facts["alarm"])
+        self.assertAlmostEqual(facts["growth_mib_per_minute"], 100 / 3)
+
+    def test_restarted_service_does_not_inherit_old_trend(self):
+        before = {"history": [self.sample(100, 30)]}
+        facts = runtime_watch.memory_trend(before, self.sample(400, 300, invocation="new"), 180, 16, 32)
+        self.assertFalse(facts["alarm"])
+        self.assertEqual(len(facts["history"]), 1)
+
+    def test_recovery_and_disabled_warning(self):
+        before = {"history": [self.sample(100, 200)]}
+        self.assertFalse(runtime_watch.memory_trend(before, self.sample(280, 100), 180, 16, 32)["alarm"])
+        self.assertFalse(runtime_watch.memory_trend(before, self.sample(280, 400), 180, 0, 32)["alarm"])
+
+    def test_memory_command_only_reads_service_properties(self):
+        with tempfile.TemporaryDirectory() as folder:
+            state = pathlib.Path(folder) / "observations.json"
+            runtime_watch._write_json(state, {"services": {"agent.service": {
+                "history": [self.sample(100, 30)]}}})
+            args = runtime_watch.memory_parser().parse_args([
+                "--units", "agent.service", "--state", str(state)])
+            props = "InvocationID=first\nMainPID=42\nActiveState=active\nMemoryCurrent=314572800\nMemorySwapCurrent=0\n"
+            with mock.patch.object(runtime_watch, "_run", return_value=mock.Mock(stdout=props)) as run:
+                self.assertEqual(runtime_watch.observe_memory(args, now=280), 0)
+            self.assertEqual(run.call_count, 1)
+            self.assertEqual(run.call_args.args[0][:4], ["systemctl", "--user", "show", "agent.service"])
+            self.assertEqual(json.loads(state.read_text())["alarms"], ["agent.service"])
+
+
 class RuntimeWatchTest(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()

@@ -65,6 +65,85 @@ def _service_active(service):
     return _run(["systemctl", "--user", "is-active", "--quiet", service]).returncode == 0
 
 
+def memory_trend(previous, sample, window, growth_mib_per_minute, minimum_growth_mib):
+    """Observe one service invocation; swapping is not memory reclamation.
+
+    This diagnostic never restarts a service or changes agent budgets. A new
+    invocation starts a new history, so a restart cannot produce a false slope.
+    """
+    identity = sample.get("invocation")
+    history = [row for row in previous.get("history", [])
+               if identity and row.get("invocation") == identity
+               and row["at"] < sample["at"]]
+    cutoff = sample["at"] - window
+    older = [row for row in history if row["at"] <= cutoff]
+    history = (older[-1:] if older else []) + [row for row in history if row["at"] > cutoff]
+    history.append(sample)
+    first = history[0]
+    elapsed = sample["at"] - first["at"]
+    growth = sample["total_bytes"] - first["total_bytes"]
+    rate = growth / (1024 * 1024) * 60 / elapsed if elapsed > 0 else 0
+    alarm = (bool(identity) and growth_mib_per_minute > 0 and elapsed >= window
+             and rate >= growth_mib_per_minute
+             and growth >= minimum_growth_mib * 1024 * 1024)
+    return {"history": history, "sample": sample,
+            "window_seconds": elapsed, "growth_mib_per_minute": rate,
+            "alarm": alarm}
+
+
+def observe_memory(args, now=None):
+    """Standalone resource observation, separate from probation management."""
+    now = time.time() if now is None else float(now)
+    previous = _read_json(args.state).get("services", {})
+    services = {}
+    for unit in args.units:
+        result = _run(["systemctl", "--user", "show", unit,
+            "--property=InvocationID", "--property=MainPID",
+            "--property=ActiveState", "--property=MemoryCurrent",
+            "--property=MemorySwapCurrent"])
+        props = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+        try:
+            ram = int(props["MemoryCurrent"])
+            swap = int(props["MemorySwapCurrent"])
+            sample = {"at": now, "invocation": props.get("InvocationID", ""),
+                      "pid": int(props.get("MainPID", 0)),
+                      "active": props.get("ActiveState"),
+                      "ram_bytes": ram, "swap_bytes": swap,
+                      "total_bytes": ram + swap}
+        except (KeyError, ValueError):
+            services[unit] = {"history": [], "alarm": False, "unavailable": True}
+            continue
+        services[unit] = memory_trend(previous.get(unit, {}), sample, args.window,
+                                     args.growth_mib_per_minute, args.minimum_growth_mib)
+    alarms = [unit for unit, facts in services.items() if facts.get("alarm")]
+    _write_json(args.state, {"observed_at": now, "services": services,
+                             "alarms": alarms})
+    for unit, facts in services.items():
+        if "sample" not in facts:
+            print("memory-observation unavailable: " + unit)
+            continue
+        sample = facts["sample"]
+        print("%s %s: total=%.1f MiB ram=%.1f MiB swap=%.1f MiB growth=%.1f MiB/min over=%.0fs" % (
+            "WARNING memory-growth" if facts["alarm"] else "memory-observation", unit,
+            sample["total_bytes"] / 2**20, sample["ram_bytes"] / 2**20,
+            sample["swap_bytes"] / 2**20, facts["growth_mib_per_minute"], facts["window_seconds"]))
+    # Warnings are observations, not a trigger for service recovery actions.
+    return 0
+
+
+def memory_parser():
+    result = argparse.ArgumentParser(description="Observe RAM plus swap without restarting agents")
+    result.add_argument("--units", nargs="+", required=True)
+    result.add_argument("--state", type=pathlib.Path, required=True)
+    result.add_argument("--window", type=float, default=180,
+                        help="observation window in seconds")
+    result.add_argument("--growth-mib-per-minute", type=float, default=16,
+                        help="warning threshold; zero disables warnings")
+    result.add_argument("--minimum-growth-mib", type=float, default=32,
+                        help="minimum absolute growth before warning")
+    return result
+
+
 def _generation_has_lifecycle_authority(root, revision):
     """Refuse rollback across the operator-authority safety boundary."""
     required = {
@@ -204,4 +283,6 @@ def parser():
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["memory"]:
+        raise SystemExit(observe_memory(memory_parser().parse_args(sys.argv[2:])))
     raise SystemExit(manage(parser().parse_args()))
