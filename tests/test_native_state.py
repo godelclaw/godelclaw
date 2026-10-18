@@ -45,6 +45,35 @@ class NativeState(unittest.TestCase):
             self.assertEqual(len(lines), 21)
             self.assertEqual(lines[0], original)
 
+    @unittest.skipIf(os.geteuid() == 0, 'root bypasses the unreadable-file fixture')
+    def test_unreadable_pins_are_not_replaced_by_pin_or_unpin(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory = Path(d)
+            path = directory / 'pins.txt'
+            original = '[01-01 00:00] retain existing evidence\n'
+            for command in ('pin', 'unpin'):
+                with self.subTest(command=command):
+                    path.write_text(original)
+                    path.chmod(0o200)
+                    try:
+                        output = self.guest(directory,
+                            '!(println! (pins))\n!(println! (' + command +
+                            ' "new note"))\n!(println! STATE_OK)')
+                    finally:
+                        path.chmod(0o600)
+                    self.assertIn('pins unavailable:', output)
+                    self.assertIn(command + ' failed:', output)
+                    self.assertEqual(path.read_text(), original)
+
+    def test_missing_pin_file_can_be_initialized(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory = Path(d)
+            output = self.guest(directory,
+                '!(println! (pins))\n!(println! (pin "first pin"))\n!(println! STATE_OK)')
+            self.assertIn('(no pins)', output)
+            self.assertIn('pinned 1', output)
+            self.assertIn('first pin', (directory / 'pins.txt').read_text())
+
     def test_context_target_changes_preserve_other_settings(self):
         with tempfile.TemporaryDirectory() as d:
             directory = Path(d)
