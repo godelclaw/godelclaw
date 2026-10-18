@@ -130,14 +130,13 @@ PAGES = {
         'Liberal: quoted string or bare atom, commas or spaces in vibes,\n'
         'vibes omitted entirely — all accepted and normalized.\n'
         'blocked-by and note: hyphenate-multi-word-values.\n'
-        'Scheduling: (goal-write (goal-policy name share:1 every:once urgency:0 checker:operator))\n'
-        'share is a nonnegative integer (0 disables autonomous service); every is once or seconds.\n'
-        'Use checker:inventory-review only for a goal whose outcome is a saved inventory review.\n'
-        'Policies preserve service history; notes and timestamps do not certify completion.'),
+        'Updates the inventory; it does not create a timer or schedule a review.\n'
+        'Use (rest seconds) to choose your next wake.\n'
+        'Notes and timestamps are self-reports, not verified completion.'),
 
     "goal-drop": (
         'usage: (goal-drop "name" "reason")\n'
-        'Retires the goal with your reason: it leaves scheduling, goes to the\n'
+        'Retires the goal with your reason: it leaves the inventory, goes to the\n'
         'compost log, and its open cycles close without counting as achieved.\n'
         'Reason "solved" claims achievement and needs a last-verified date.\n'
         'goal-write brings a retired goal back.'),
