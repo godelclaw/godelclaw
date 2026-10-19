@@ -247,6 +247,13 @@ def _budget(now):
     return "no-volume-caps", None
 
 
+def _model():
+    """The model and reasoning effort this agent's calls are made with."""
+    import synthetic_llm
+    return {"name": synthetic_llm.current_model(),
+            "reasoningEffort": os.environ.get("METTACLAW_REASONING_EFFORT", "default")}
+
+
 _process_started = None
 
 
@@ -283,7 +290,7 @@ def read(now=None):
         unavailable.append("provider-and-settlement")
     for name, reader in (("localChannelReady", lambda: _channel(now)),
                          ("humanInbox", lambda: _inbox(now)), ("commands", _commands),
-                         ("memory", _memory), ("process", lambda: _process(now))):
+                         ("memory", _memory), ("process", lambda: _process(now)), ("model", _model)):
         try:
             facts[name] = reader()
         except failures:

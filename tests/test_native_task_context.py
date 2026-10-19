@@ -119,17 +119,32 @@ class NativeTaskContext(unittest.TestCase):
         chunks = [c.strip() for c in transcript.split("\n_cache_chunk_\n")]
         self.assertEqual(len(chunks), 2)
         self.assertEqual(view["window"]["transcript_steps"], 22)
-        self.assertEqual(len(view["transcript"]), 6)
+        self.assertEqual(view["transcript"], [])
+        recent = first[first.index("TASK_RECENT newest steps"):first.rindex("TASK_CONTEXT ")]
+        self.assertEqual(recent.count("\n## step "), 6)
+        self.assertIn("\n## step 16 · [\"read-file\",\"14\"] · returned · id ", recent)
+        self.assertIn("step 14 λ step 14 λ", recent)
         self.assertNotIn("MIDDLE", first)
         self.assertIn("tokens truncated; task-read shows the whole result", first)
-        self.assertIn("_cache\\u005fboundary_", transcript)
-        self.assertIn("_cache\\u005fchunk_", transcript)
+        self.assertIn("_cache-boundary_", transcript)
+        self.assertIn("_cache-chunk_", transcript)
         for i in range(20, 31): fixture.call([["read-file", str(i)]], [("later %d " % i) * 40])
         second, later = self.full_view(fixture, 400000, fixture.path.parent / "second.txt")
         later_chunks = [c.strip() for c in second.split("_cache_boundary_")[2].split("\n_cache_chunk_\n")]
         self.assertEqual(later_chunks[:2], chunks)
         self.assertEqual(len(later_chunks), 4)
         self.assertEqual(later["window"]["first_step_here"], 32)
+
+    def test_whole_window_points_to_an_identical_earlier_result(self):
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        same = "the same long file body " * 100
+        fixture.call([["read-file", "a"]], [same])
+        fixture.call([["read-file", "b"]], ["different"])
+        fixture.call([["read-file", "a"]], [same])
+        text, _ = self.full_view(fixture, 400000, fixture.path.parent / "dedupe.txt")
+        recent = text[text.index("TASK_RECENT newest steps"):text.rindex("TASK_CONTEXT ")]
+        self.assertEqual(recent.count(same), 1)
+        self.assertIn("(same result as step 0)", recent)
 
     def test_whole_window_compacts_past_ninety_percent_to_the_newest_fifth(self):
         fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)

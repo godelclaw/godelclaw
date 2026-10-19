@@ -52,3 +52,6 @@
 (= (newline)
    (progn (translatePredicate (atom_codes $NL (10)))
           $NL))
+
+; The whole-window task view is CeTTa-only; this engine renders the budgeted one.
+(= (context:mode) budget)
