@@ -29,7 +29,7 @@
     "- Directly install or replace a mutable MeTTa transformation for the next model turn; failures stutter locally: (iter-transform-write \"10_name.metta\" \"(= (iter-transform $visible) (success $visible))\")"
     "- Reversibly disable or enable one Iter transformation using the leading-underscore convention: (iter-transform-disable \"10_name.metta\") | (iter-transform-enable \"10_name.metta\")"
     "- Inspect authoritative command receipts: (command-receipts), then (command-receipts \"NEXT_CURSOR\") for more"
-    "- Context target: (context-policy) or (context-policy task_tokens). Older evidence remains retrievable."
+    "- Task view: the whole model window by default. (context-policy) shows it, (context-policy task_tokens) opts into a token budget, (context-policy \"full\") returns to the whole window. Older evidence remains retrievable."
     "- Task evidence: (task-history \"request-id\" \"offset\") indexes pairs; (task-read \"call-id\" \"offset\") recovers full results. (task-note \"findings, uncertainties and next steps\" \"JSON list of call IDs\") retains source references."
     "- Separate topic notes, always keeping operator messages reachable: (topics) | (topic-select \"name\") | (topic-note \"notes\")"
     ;SHELL AND FILE I/O:

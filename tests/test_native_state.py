@@ -79,10 +79,13 @@ class NativeState(unittest.TestCase):
             directory = Path(d)
             path = directory / 'context-policy.json'
             path.write_text(json.dumps(dict(task_tokens=32768, retained_field='λ')))
+            # Zero, like "full", returns to the whole model window; a count opts into a budget.
             self.guest(directory, '!(println! (context-policy 0))\n!(println! STATE_OK)')
-            self.assertEqual(json.loads(path.read_text()), dict(task_tokens=0, retained_field='λ'))
+            self.assertEqual(json.loads(path.read_text()), dict(mode='full', retained_field='λ'))
             self.guest(directory, '!(println! (context-policy 120000))\n!(println! STATE_OK)')
-            self.assertEqual(json.loads(path.read_text()), dict(task_tokens=120000, retained_field='λ'))
+            self.assertEqual(json.loads(path.read_text()), dict(mode='budget', task_tokens=120000, retained_field='λ'))
+            self.guest(directory, '!(println! (context-policy "full"))\n!(println! STATE_OK)')
+            self.assertEqual(json.loads(path.read_text()), dict(mode='full', retained_field='λ'))
 
     def test_invalid_existing_settings_are_preserved(self):
         with tempfile.TemporaryDirectory() as d:

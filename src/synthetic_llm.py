@@ -234,7 +234,8 @@ _LAYOUT_BOUNDARIES = 3
 
 def _without_cache_boundaries(text):
     """The layout's boundaries are not content: no provider sees them."""
-    return str(text).replace(_CACHE_BOUNDARY, "", _LAYOUT_BOUNDARIES)
+    text = str(text).replace(_CACHE_BOUNDARY, "", _LAYOUT_BOUNDARIES)
+    return text.replace("\n_cache_chunk_\n", "\n\n")
 
 
 def _anthropic_request(provider, effective_model, max_tokens, prompt, effort="medium"):

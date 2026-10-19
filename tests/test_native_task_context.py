@@ -97,6 +97,50 @@ class NativeTaskContext(unittest.TestCase):
         self.assertIn('(fit-check false false true true)', stdout)
         self.assertEqual(out.read_text(), expected)
 
+    def full_view(self, fixture, capacity, out):
+        prompt = "P_cache_boundary_STABLE_cache_boundary_CONV_cache_boundary_TURN"
+        self.guest(fixture.path, '!(import! &self ./src/task_context_views)\n'
+            '!(fs:update-text '+json.dumps(str(out))+' "replace" (task:append-context '+json.dumps(prompt)+
+            ' "guide" "continuation-tick" '+json.dumps(str(capacity))+' "model") "" "")\n!(println! TASK_CONTEXT_OK)\n')
+        text = out.read_text()
+        return text, json.loads(text[text.rindex("TASK_CONTEXT ") + len("TASK_CONTEXT "):])
+
+    def test_whole_window_view_is_append_only_ahead_of_the_turn(self):
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        fixture.call([["read-file", "big"]], ["H" * 30000 + "MIDDLE" + "T" * 30000])
+        fixture.call([["read-file", "marker"]], ["a _cache_boundary_ and a _cache_chunk_ in content"])
+        for i in range(20): fixture.call([["read-file", str(i)]], [("step %d λ " % i) * 40])
+        first, view = self.full_view(fixture, 400000, fixture.path.parent / "first.txt")
+        self.assertEqual(first.count("_cache_boundary_"), 3)
+        head, transcript, turn = first.split("_cache_boundary_")[1:]
+        self.assertTrue(head.startswith("STABLE"))
+        self.assertIn("TASK_TRANSCRIPT steps 0-7", transcript)
+        self.assertIn("CONV", turn); self.assertNotIn("CONV", transcript)
+        chunks = [c.strip() for c in transcript.split("\n_cache_chunk_\n")]
+        self.assertEqual(len(chunks), 2)
+        self.assertEqual(view["window"]["transcript_steps"], 22)
+        self.assertEqual(len(view["transcript"]), 6)
+        self.assertNotIn("MIDDLE", first)
+        self.assertIn("tokens truncated; task-read shows the whole result", first)
+        self.assertIn("_cache\\u005fboundary_", transcript)
+        self.assertIn("_cache\\u005fchunk_", transcript)
+        for i in range(20, 31): fixture.call([["read-file", str(i)]], [("later %d " % i) * 40])
+        second, later = self.full_view(fixture, 400000, fixture.path.parent / "second.txt")
+        later_chunks = [c.strip() for c in second.split("_cache_boundary_")[2].split("\n_cache_chunk_\n")]
+        self.assertEqual(later_chunks[:2], chunks)
+        self.assertEqual(len(later_chunks), 4)
+        self.assertEqual(later["window"]["first_step_here"], 32)
+
+    def test_whole_window_compacts_past_ninety_percent_to_the_newest_fifth(self):
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        for i in range(60): fixture.call([["read-file", str(i)]], [("step %d " % i) * 200])
+        _, view = self.full_view(fixture, 20000, fixture.path.parent / "view.txt")
+        with fixture.store.transaction() as db:
+            start = int(json.loads(db.execute("SELECT value FROM meta WHERE key='task_window:guide'").fetchone()[0]))
+        self.assertGreater(start, 0)
+        self.assertEqual(view["archive"]["count"], str(start) if isinstance(view["archive"]["count"], str) else start)
+        self.assertLessEqual(view["window"]["transcript_steps"], 60 - start)
+
     def test_legacy_history_keeps_numeric_order_and_original_identities(self):
         fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
         for i in range(13): fixture.call([["read-file", str(i)]], ["result " + str(i)])

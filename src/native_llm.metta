@@ -7,6 +7,9 @@
 (: llm:command-kind? (-> Atom Bool))
 (= (llm:command-kind? $value)
    (case $value ((command True) ("command" True) ($other False))))
+(: llm:messages-encoding? (-> Atom Bool))
+(= (llm:messages-encoding? $value)
+   (case $value ((messages True) ("messages" True) ($other False))))
 ; Janus and CeTTa both expose one-level standard-library callables. Avoid a
 ; dotted builtin method name, which Janus treats as a missing Python builtin.
 (= (llm:subscription-model? $selected)
@@ -61,7 +64,8 @@
             ($headers-outcome (llm:v1:headers-json $headers-json))
             ($request (py-call (native_llm_host.field $plan "request")))
             ($kind (py-call (native_llm_host.field $plan "kind")))
-            ($encoded (if (llm:command-kind? $kind)
+            ($encoding (py-call (native_llm_host.field $plan "encoding")))
+            ($encoded (if (and (llm:command-kind? $kind) (not (llm:messages-encoding? $encoding)))
                          (llm:v1:encode-command $protocol $request)
                          (llm:v1:encode $protocol $request)))
             ($timeout (py-call (native_llm_host.field $plan "timeout")))

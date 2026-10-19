@@ -183,8 +183,119 @@
        (task:fit $frame $root (length $pairs) $chosen $budget $ratio))))
 (= (task:append-context $prompt $focus $trigger $capacity $model)
    (let* (($base (str:join "\n" ($prompt (topics:context))))
-          ($ratio (context:ratio $model)) ($target (context:target))
+          ($ratio (context:ratio $model)))
+     (if (== (context:mode) budget)
+       (task:budget-context $base $focus $trigger $capacity $ratio)
+       (task:full-context $base $focus $trigger $capacity $ratio))))
+(= (task:budget-context $base $focus $trigger $capacity $ratio)
+   (let* (($target (context:target))
           ($available (if (== $capacity "") $target
                         (min $target (max 0 (- (- (str:string->number $capacity) (math:ceil (/ (str:byte-length $base) $ratio))) 128)))))
           ($view (task:compact (task:projection $focus $trigger) $available $ratio)))
-     (str:join "\n\n" ($base (str:concat "TASK_CONTEXT " (state:encoded $view))))))
+     (str:join "\n\n" ((task:place-transcript $base ()) (str:concat "TASK_CONTEXT " (state:encoded $view))))))
+
+; The whole-window view follows Codex. The transcript is append-only from a
+; saved start and is compacted when it passes 90% of the available window;
+; until a summary step exists, compaction keeps the newest 20%. Each result is
+; cut in the middle at about 10k tokens, as Codex cuts tool output. Complete
+; chunks of steps never change, so they sit ahead of per-turn state where a
+; provider can cache them; the newest steps stay in TASK_CONTEXT.
+(= (task:chunk-size) 8)
+(= (task:result-chars) 40000)
+(= (task:fallback-window) 200000)
+(= (task:window-key $root) (str:concat "task_window:" $root))
+(= (task:saved-start $root)
+   (case (state:meta (task:window-key $root))
+     (((JsonNumber $text) (str:string->number $text)) ($other 0))))
+(= (task:save-start $root $start)
+   (let* (($key (task:window-key $root)) ($value (repr $start)))
+     (state:query "INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value" ($key $value))))
+(= (task:short-text $text)
+   (let $length (str:char-length $text)
+     (if (<= $length (task:result-chars)) $text
+       (let* (($half (math:floor (/ (task:result-chars) 2))) ($cut (- $length (* 2 $half))))
+         (str:join "" ((str:char-slice $text 0 $half)
+                       (str:join "" ("\n…" (repr (math:ceil (/ $cut 4))) " tokens truncated; task-read shows the whole result…\n"))
+                       (str:char-slice $text (- $length $half) $length)))))))
+(= (task:shown $pair)
+   (case (state:json-field $pair "result")
+     (((JsonString $text)
+        (let $short (task:short-text $text)
+          (if (== $short $text) $pair (state:json-set $pair "result" (JsonString $short)))))
+      ($other $pair))))
+(= (task:shown-all $pairs)
+   (if (== $pairs ()) () (cons-atom (task:shown (car-atom $pairs)) (task:shown-all (cdr-atom $pairs)))))
+(= (task:pair-tokens $pair $ratio) (math:ceil (/ (+ 64 (task:text-bytes $pair)) $ratio)))
+(= (task:sum-tokens $pairs $ratio $total)
+   (if (== $pairs ()) $total
+     (task:sum-tokens (cdr-atom $pairs) $ratio (+ $total (task:pair-tokens (car-atom $pairs) $ratio)))))
+(= (task:keep-count $reverse $space $ratio $count)
+   (if (== $reverse ()) $count
+     (let $size (task:pair-tokens (car-atom $reverse) $ratio)
+       (if (> $size $space) $count (task:keep-count (cdr-atom $reverse) (- $space $size) $ratio (+ $count 1))))))
+; Returns (Window $start $shown): $shown are the window's steps, results cut.
+(= (task:window $root $pairs $available $ratio)
+   (let* (($total (length $pairs)) ($saved (min (task:saved-start $root) $total))
+          ($shown (task:shown-all (task:drop $pairs $saved))))
+     (if (<= (task:sum-tokens $shown $ratio 0) (math:floor (* 0.9 $available))) (Window $saved $shown)
+       (let* (($keep (max 1 (task:keep-count (task:reverse $shown ()) (math:floor (* 0.2 $available)) $ratio 0)))
+              ($start (- $total (min $keep $total)))
+              ($_ (task:save-start $root $start)))
+         (Window $start (task:drop $shown (- $start $saved)))))))
+(= (task:chunk-view $pairs) $pairs)
+(= (task:escape $text $needle $replacement)
+   (case (str:find $text $needle)
+     (((TextNotFound $_) $text)
+      ($at (str:join "" ((str:byte-slice $text 0 $at) $replacement
+             (task:escape (str:byte-slice $text (+ $at (str:byte-length $needle)) (str:byte-length $text)) $needle $replacement)))))))
+; Layout markers inside step content would split the prompt; a JSON escape of
+; the underscore keeps the decoded text identical.
+(= (task:chunk-text $chunk $index)
+   (let $json (state:encoded (JsonArray (task:chunk-view $chunk)))
+     (str:join "" ("TASK_TRANSCRIPT steps " (repr $index) "-" (repr (+ $index (- (length $chunk) 1))) " (oldest first; newer steps follow, then TASK_CONTEXT): "
+                   (task:escape (task:escape $json "_cache_boundary_" "_cache\\u005fboundary_") "_cache_chunk_" "_cache\\u005fchunk_")))))
+(= (task:chunks $pairs $index $out)
+   (if (< (length $pairs) (task:chunk-size)) (task:reverse $out ())
+     (task:chunks (task:drop $pairs (task:chunk-size)) (+ $index (task:chunk-size))
+                  (cons-atom (task:chunk-text (task:take $pairs (task:chunk-size)) $index) $out))))
+; The transcript slot follows the second boundary and is the last cached
+; block: the conversation, which changes with every message, moves behind it
+; into per-turn text, so a new message does not invalidate cached steps. The
+; layout keeps three boundaries; chunk markers let a provider cache each
+; complete chunk as its own block.
+(= (task:place-transcript $base $chunks)
+   (case (str:find $base "_cache_boundary_")
+     (((TextNotFound $_) $base)
+      ($first
+        (let* (($head (str:byte-slice $base 0 (+ $first 16)))
+               ($rest (str:byte-slice $base (+ $first 16) (str:byte-length $base))))
+          (case (str:find $rest "_cache_boundary_")
+            (((TextNotFound $_) $base)
+             ($second
+               (let* (($upto (str:byte-slice $rest 0 (+ $second 16)))
+                      ($after (str:byte-slice $rest (+ $second 16) (str:byte-length $rest)))
+                      ($slot (if (== $chunks ()) "" (str:join "\n_cache_chunk_\n" $chunks))))
+                 (case (str:find $after "_cache_boundary_")
+                   (((TextNotFound $_) $base)
+                    ($third
+                      (let* (($conversation (str:byte-slice $after 0 $third))
+                             ($turn (str:byte-slice $after (+ $third 16) (str:byte-length $after))))
+                        (str:join "" ($head $upto "\n\n" $slot "\n\n_cache_boundary_" $conversation $turn)))))))))))))))
+(= (task:full-context $base $focus $trigger $capacity $ratio)
+   (let* (($window (if (== $capacity "") (task:fallback-window) (str:string->number $capacity)))
+          ($available (max 0 (- (- $window (math:ceil (/ (str:byte-length $base) $ratio))) 128)))
+          ($view (task:projection $focus $trigger)) ($root (task:string $view "root"))
+          ($pairs (task:items $view "transcript"))
+          ((Window $start $shown) (task:window $root $pairs $available $ratio))
+          ($complete (* (task:chunk-size) (math:floor (/ (length $shown) (task:chunk-size)))))
+          ($chunks (task:chunks (task:take $shown $complete) $start ()))
+          ($placed (task:place-transcript $base $chunks))
+          ($recent (if (== $placed $base) $shown (task:drop $shown $complete)))
+          ($first (if (== $placed $base) $start (+ $start $complete)))
+          ($meta (state:json-set (state:json-set $view "transcript" (JsonArray (task:chunk-view $recent))) "archive" (task:archive $root $start)))
+          ($window-info (JsonObject ((JsonPair "mode" (JsonString "full"))
+                          (JsonPair "transcript_steps" (task:number (length $shown)))
+                          (JsonPair "first_step_here" (task:number $first))
+                          (JsonPair "available_tokens" (task:number $available)))))
+          ($context (state:json-set $meta "window" $window-info)))
+     (str:join "\n\n" ($placed (str:concat "TASK_CONTEXT " (state:encoded $context))))))

@@ -383,7 +383,7 @@ ARITY.update({name:(min(counts),max(counts)) for name,counts in _equations.items
               if name in ARITY or name in PAGES or name in ("memory-health", "memory-compact", "context-policy")})
 ARITY.pop('rest-command', None)
 ARITY['shell'] = (1,2)  # native CeTTa or SWI-PeTTa process backend
-PAGES['context-policy'] = 'usage: (context-policy) or (context-policy task_tokens)\nInspect or change the task context target; actual model capacity also applies. Older evidence remains in task-history/task-read.'
+PAGES['context-policy'] = 'usage: (context-policy), (context-policy task_tokens) or (context-policy "full")\nThe task view uses the whole model window by default, like Codex: steps accumulate and the oldest are archived at 90% of the window. A number opts into a token budget; "full" or 0 returns to the whole window. Older evidence remains in task-history/task-read.'
 PAGES['task-resolve'] = 'No resolution bookkeeping is required. Calls remain in task-history.'
 
 for _retired in ("background-model", "model-adopt", "model-retire", "goal-review-save", "task-resolve"):

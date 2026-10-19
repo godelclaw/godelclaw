@@ -132,6 +132,18 @@
            (str:concat "-" (str:concat (str:byte-slice $hex 16 20)
              (str:concat "-" (str:byte-slice $hex 20 32)))))))))))
 
+; Transcript chunk markers only matter to providers with block caching; this
+; provider caches by prefix, so the chunks are joined as plain text. The cache
+; key follows the first, unchanging stable part.
+(= (chatgpt:unchunk $text)
+   (case (str:find $text "\n_cache_chunk_\n")
+     (((TextNotFound $_) $text)
+      ($at (str:join "" ((str:byte-slice $text 0 $at) "\n\n"
+             (chatgpt:unchunk (str:byte-slice $text (+ $at 15) (str:byte-length $text)))))))))
+(= (chatgpt:unchunk-all $parts)
+   (if (== $parts ()) ()
+     (let (JsonString $text) (car-atom $parts)
+       (cons-atom (JsonString (chatgpt:unchunk $text)) (chatgpt:unchunk-all (cdr-atom $parts))))))
 ; Only three layout markers have structural meaning. Later occurrences remain
 ; literal user text, matching the existing command-loop prompt contract.
 (= (chatgpt:split $text $remaining $stable)
@@ -151,13 +163,14 @@
 (= (chatgpt:command-plan $selected $tokens $effort $prompt $session)
    (let* (($model (str:byte-slice $selected 8 (str:byte-length $selected)))
           ($effort-text (str:concat "" $effort))
-          ((ChatGPTPrompt $stable $user) (chatgpt:split $prompt 3 ()))
+          ((ChatGPTPrompt $parts $user) (chatgpt:split $prompt 3 ()))
+          ($stable (chatgpt:unchunk-all $parts))
           ($base-request (JsonObject ((JsonPair "model" (JsonString $model))
              (JsonPair "max_tokens" (JsonNumber (repr $tokens)))
              (JsonPair "stable" (JsonArray $stable)) (JsonPair "user" (JsonString $user)))))
           ($reasoned-request (if (or (== $effort-text "default") (or (== $effort-text "") (== $effort-text "None"))) $base-request
              (llm:v1:with $base-request "reasoning" (JsonObject ((JsonPair "effort" (JsonString $effort-text)))))))
-          ($cache (str:sha256 (repr ($model $stable))))
+          ($cache (str:sha256 (repr ($model (if (== $stable ()) () (car-atom $stable))))))
           ($request (llm:v1:with $reasoned-request "cache_key" (JsonString $cache)))
           ($wire-request (llm:v1:render $request))
           ($account (llm:v1:get $session "value"))

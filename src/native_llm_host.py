@@ -105,7 +105,7 @@ def _plan(kind, model, tokens, builder):
         import strategy_host
         captured_guard = strategy_host.guard() if strategy_host.enabled() else None
         cognitive_health.turn_started(provider["name"])
-        return SimpleNamespace(kind=kind, ready="true", correlation=ticket, protocol=provider["protocol"],
+        return SimpleNamespace(kind=kind, encoding="default", ready="true", correlation=ticket, protocol=provider["protocol"],
             activity=os.environ.get("METTACLAW_ACTIVITY_CALL_SCOPE", ""),
             lane=os.environ.get("METTACLAW_ACTIVITY_CALL_LANE", ""),
             epoch=_session_epoch, provider=provider["name"], base=provider["base"], headers=json.dumps(headers),
@@ -117,7 +117,7 @@ def _plan(kind, model, tokens, builder):
     except Exception as error:
         if ticket:
             llm_policy.fail(ticket, sent=False)
-        return SimpleNamespace(kind=kind, ready="false", error=error,
+        return SimpleNamespace(kind=kind, encoding="default", ready="false", error=error,
                                provider=provider["name"] if provider else "unknown",
                                correlation="unsubmitted", sent=False)
 
@@ -125,14 +125,26 @@ def _plan(kind, model, tokens, builder):
 def command_plan(model, tokens, effort, prompt):
     def conversation(protocol, selected):
         stable, user = provider_protocol.split_prompt(prompt)
-        result = dict(model=selected, max_tokens=int(tokens), stable=stable, user=user)
+        if protocol == "anthropic":
+            # Every stable block is its own system message and the encoder
+            # caches only the last one; earlier cached prefixes are found at
+            # block boundaries, so a growing transcript is never rewritten.
+            messages = [{"role": "system", "content": block}
+                        for part in stable for block in provider_protocol.chunk_blocks(part)]
+            messages.append({"role": "user", "content": user})
+            result = dict(model=selected, max_tokens=int(tokens), messages=messages, cache_system=True)
+        else:
+            stable = provider_protocol.joined(stable)
+            result = dict(model=selected, max_tokens=int(tokens), stable=stable, user=user)
+            # Cache identity is an upstream caller policy, not provider encoding.
+            if stable:
+                result["cache_key"] = provider_protocol.cache_key("openai", selected, stable[0])
         if str(effort) not in ("default", "", "None"):
             result["reasoning"] = {"effort": str(effort)}
-        # Cache identity is an upstream caller policy, not provider encoding.
-        if stable:
-            result["cache_key"] = provider_protocol.cache_key("openai", selected, "".join(stable))
         return result
     plan = _plan("command", model, tokens, conversation)
+    if getattr(plan, "protocol", "") == "anthropic":
+        plan.encoding = "messages"
     plan.prompt_layout = provider_protocol.prompt_observation(prompt)
     plan.prompt_text = str(prompt)
     return plan

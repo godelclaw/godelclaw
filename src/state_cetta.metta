@@ -92,17 +92,38 @@
                   (system:getenv-or-default "METTACLAW_STRATEGY_PATH" "memory/observed-strategy.sqlite3"))
      (path:join (path:dirname $state) "context-policy.json")))
 (= (context:default-tokens) 32768)
+; The task view defaults to the model's whole window, as Codex keeps its whole
+; history until 90% of the window. A token budget is an explicit opt-in mode;
+; a policy file holding only task_tokens is such an opt-in.
 (= (context:policy)
-   (let $default (system:getenv-or-default "METTACLAW_TASK_CONTEXT_TOKENS" (repr (context:default-tokens)))
-     (state:json-file (context:path) (JsonObject ((JsonPair "task_tokens" (JsonNumber $default)))))))
+   (let $budget (system:getenv-or-default "METTACLAW_TASK_CONTEXT_TOKENS" "")
+     (state:json-file (context:path)
+       (if (== $budget "") (JsonObject ((JsonPair "mode" (JsonString "full"))))
+         (JsonObject ((JsonPair "mode" (JsonString "budget")) (JsonPair "task_tokens" (JsonNumber $budget))))))))
+(= (context:mode)
+   (let $policy (context:policy)
+     (case (state:json-field $policy "mode")
+       (((JsonString "full") full)
+        ((JsonString "budget") budget)
+        ($other (case (state:json-field $policy "task_tokens") (((JsonNumber $_) budget) ($none full))))))))
+; Changes edit the existing policy, keeping fields this module does not own;
+; an unreadable policy file is left as it is.
+(= (context:write $next)
+   (let $text (json-stringify $next)
+     (case (fs:update-text (context:path) "replace" $text "" "")
+       ((("written" $_ $_ $_ $_) $text)
+        ($error (str:concat "context-policy: " (repr $error)))))))
+(= (context:full)
+   (let (JsonObject $pairs) (context:policy)
+     (context:write (state:json-set (JsonObject (state:json-without $pairs "task_tokens")) "mode" (JsonString "full")))))
+(= (context:budget $tokens)
+   (let $policy (state:json-set (context:policy) "mode" (JsonString "budget"))
+     (context:write (state:json-set $policy "task_tokens" (JsonNumber (repr $tokens))))))
 (= (context-policy) (json-stringify (context:policy)))
 (= (context-policy $tokens)
-   (if (< $tokens 0) "context-policy: token count must be nonnegative"
-     (let* (($next (state:json-set (context:policy) "task_tokens" (JsonNumber (repr $tokens))))
-            ($text (json-stringify $next)))
-       (case (fs:update-text (context:path) "replace" $text "" "")
-         ((("written" $_ $_ $_ $_) $text)
-          ($error (str:concat "context-policy: " (repr $error))))))))
+   (if (== $tokens "full") (context:full)
+     (if (< $tokens 0) "context-policy: token count must be nonnegative"
+       (if (== $tokens 0) (context:full) (context:budget $tokens)))))
 
 ; This provider uses the same live registration protocol as ECAN.
 !(import! &self ./src/settings_registry.metta)
@@ -112,5 +133,5 @@
 (= (context:setting-write $key $value) (context-policy $value))
 (= (context:settings-descriptors)
    (let $default (context:default-tokens)
-     ((SettingSpec 1 "context" "task_tokens" $default "estimated tokens" Nonnegative "persistent" "Target size of the task-context projection. Zero requests a minimal projection; older evidence remains recoverable." context:setting-read context:setting-write))))
+     ((SettingSpec 1 "context" "task_tokens" $default "estimated tokens" Nonnegative "persistent" "Opt-in token budget for the task view. Unset or zero means the model's whole window; older evidence remains recoverable." context:setting-read context:setting-write))))
 (SettingsProvider "context" context:settings-descriptors)

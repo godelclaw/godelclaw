@@ -44,10 +44,19 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(path, "/messages")
         self.assertEqual(body["output_config"], {"effort": "low"})
         self.assertEqual([b["text"] for b in body["system"]], ["S", "T", "U"])
-        self.assertEqual(body["messages"], [{"role": "user", "content": "user _cache_boundary_ literal"}])
+        self.assertEqual(body["messages"], [{"role": "user", "content": [{"type": "text", "text": "user _cache_boundary_ literal"}]}])
         _, chat = protocol.command_body("chat-completions", "m", 10, "medium", prompt)
         self.assertEqual(chat["messages"][0], {"role": "system", "content": "STU"})
-        self.assertEqual(chat["messages"][1]["content"], body["messages"][0]["content"])
+        self.assertEqual(chat["messages"][1]["content"], "user _cache_boundary_ literal")
+
+    def test_transcript_chunks_join_for_prefix_caching_providers(self):
+        prompt = "S_cache_boundary_T_cache_boundary_A\n_cache_chunk_\nB_cache_boundary_user"
+        _, body = protocol.command_body("responses", "gpt-5.5", 20, "high", prompt)
+        self.assertEqual(body["instructions"], "STA\n\nB")
+        _, other = protocol.command_body("responses", "gpt-5.5", 20, "high",
+                                         "S_cache_boundary_T_cache_boundary_A\n_cache_chunk_\nB\n_cache_chunk_\nC_cache_boundary_user")
+        # The cache key follows the first stable part, which a growing transcript leaves unchanged.
+        self.assertEqual(body["prompt_cache_key"], other["prompt_cache_key"])
 
     def test_omega_system_user_delimiter(self):
         _, body = protocol.command_body("responses", "gpt-5.5", 20, "high", " system :-:-:-: new input ")

@@ -8,7 +8,22 @@ import hashlib
 import json
 
 CACHE_MARKER = "_cache_boundary_"
+# Inside a stable part, this separates complete task-transcript chunks. They
+# never change once complete, so each can be its own cacheable block.
+CHUNK_MARKER = "_cache_chunk_"
 OMEGA_DELIMITER = ":-:-:-:"
+
+
+def chunk_blocks(part):
+    part = str(part)
+    if CHUNK_MARKER not in part:
+        return [part] if part.strip() else []
+    return [block.strip("\n") for block in part.split(CHUNK_MARKER) if block.strip()]
+
+
+def joined(stable):
+    """Stable parts for providers that cache by prefix: chunks are plain text."""
+    return ["\n\n".join(chunk_blocks(part)) for part in stable]
 
 
 def split_prompt(prompt):
@@ -99,22 +114,27 @@ def synthetic_body(body):
 
 def command_body(protocol, model, tokens, effort, prompt):
     stable, user = split_prompt(prompt)
-    system = "".join(stable)
     if protocol == "anthropic":
         body = {"model": model, "max_tokens": int(tokens),
-                "messages": [{"role": "user", "content": user}]}
-        if stable:
-            body["system"] = [{"type": "text", "text": part,
-                               "cache_control": {"type": "ephemeral"}} for part in stable]
+                "messages": [{"role": "user", "content": [{"type": "text", "text": user}]}]}
+        blocks = [{"type": "text", "text": text} for part in stable for text in chunk_blocks(part)]
+        if blocks:
+            # One breakpoint, on the last stable block. Anthropic finds the
+            # previous turn's cached prefix at an earlier block boundary, so a
+            # growing transcript adds its new chunks without rewriting the rest.
+            blocks[-1]["cache_control"] = {"type": "ephemeral"}
+            body["system"] = blocks
         body.update(anthropic_reasoning(str(effort)))
         return "/messages", body
+    stable = joined(stable)
+    system = "".join(stable)
     if protocol == "responses":
         body = {"model": model, "input": user, "max_output_tokens": int(tokens),
                 "store": False}
         if str(effort) not in ("default", "", "None"):
             body["reasoning"] = {"effort": str(effort)}
         if stable:
-            body.update(instructions=system, prompt_cache_key=cache_key("openai", model, system))
+            body.update(instructions=system, prompt_cache_key=cache_key("openai", model, stable[0]))
         return "/responses", body
     if protocol != "chat-completions":
         raise ValueError("unsupported provider protocol")
