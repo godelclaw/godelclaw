@@ -44,5 +44,17 @@
             (instruction-scope-layer nearest $nearest-rules) $other-outer))
          ($_ (instruction-scope-assert-equal
                (instruction-resolve may-edit $other-chain)
-               (resolved-instruction nearest may-edit forbidden))))
+               (resolved-instruction nearest may-edit forbidden)))
+         ;; A stored value may itself resemble the coordinate absence marker.
+         ($marker-chain
+          (instruction-scope-chain
+            (instruction-scope-layer nearest
+              (coordinate marker (missing-coordinate marker) coordinates-empty))
+            (instruction-scope-chain
+              (instruction-scope-layer root
+                (coordinate marker inherited coordinates-empty))
+              instruction-scope-chain-empty)))
+         ($_ (instruction-scope-assert-equal
+               (instruction-resolve marker $marker-chain)
+               (resolved-instruction nearest marker (missing-coordinate marker)))))
      (println! INSTRUCTION_SCOPE_OK))

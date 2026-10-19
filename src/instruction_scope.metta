@@ -10,10 +10,15 @@
 (= (instruction-resolve
       $key
       (instruction-scope-chain
-        (instruction-scope-layer $directory $rules) $outer))
-   (let $found (coordinate-get $key $rules)
-     (case $found
-       (((missing-coordinate $missing)
-         (instruction-resolve $key $outer))
-        ($value
-         (resolved-instruction $directory $key $value))))))
+        (instruction-scope-layer $directory coordinates-empty) $outer))
+   (instruction-resolve $key $outer))
+
+(= (instruction-resolve
+      $key
+      (instruction-scope-chain
+        (instruction-scope-layer $directory (coordinate $name $value $rest)) $outer))
+   (if (== $key $name)
+       (resolved-instruction $directory $key $value)
+       (instruction-resolve $key
+         (instruction-scope-chain
+           (instruction-scope-layer $directory $rest) $outer))))
