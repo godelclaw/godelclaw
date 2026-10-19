@@ -12,6 +12,7 @@ import math
 import os
 from pathlib import Path
 import sqlite3
+import subprocess
 import time
 
 MAX_CHARS = 2400
@@ -246,6 +247,29 @@ def _budget(now):
     return "no-volume-caps", None
 
 
+_process_started = None
+
+
+def _process(now):
+    """This process's age and the service's restart count, so a restart is visible."""
+    global _process_started
+    if _process_started is None:
+        ticks = int(Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()[19])
+        boot = next(float(line.split()[1]) for line in Path("/proc/stat").read_text().splitlines()
+                    if line.startswith("btime "))
+        _process_started = boot + ticks / os.sysconf("SC_CLK_TCK")
+    facts = {"startedAt": int(_process_started), "uptimeSeconds": max(0, int(now - _process_started))}
+    group = next((line[3:] for line in Path("/proc/self/cgroup").read_text().splitlines()
+                  if line.startswith("0::")), "")
+    unit = group.rstrip("/").rsplit("/", 1)[-1]
+    if unit.endswith(".service"):
+        shown = subprocess.run(["systemctl", "--user", "show", unit, "--property=NRestarts", "--value"],
+                               capture_output=True, text=True, timeout=2)
+        if shown.returncode == 0 and shown.stdout.strip().isdigit():
+            facts["serviceRestarts"] = int(shown.stdout.strip())
+    return facts
+
+
 def read(now=None):
     now = time.time() if now is None else float(now)
     facts = {"schema": 1, "sampledAt": int(now), "call": {"phase": "unknown"},
@@ -259,7 +283,7 @@ def read(now=None):
         unavailable.append("provider-and-settlement")
     for name, reader in (("localChannelReady", lambda: _channel(now)),
                          ("humanInbox", lambda: _inbox(now)), ("commands", _commands),
-                         ("memory", _memory)):
+                         ("memory", _memory), ("process", lambda: _process(now))):
         try:
             facts[name] = reader()
         except failures:

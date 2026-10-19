@@ -45,6 +45,14 @@
 (= (getContextPrefix)
    (string-safe (py-str ("PROMPT: " (getPrompt)))))
 
+; In the whole-window task view the last results are already the newest steps
+; of TASK_CONTEXT, so repeating them here would only double their cost.
+(= (loop:last-results-view $results)
+   (if (== (context:mode) full)
+     (if (<= (str:char-length $results) 2000) $results
+       (str:join "" ((str:char-slice $results 0 2000) " … [continued in the newest steps of TASK_CONTEXT]")))
+     (last_chars $results (maxFeedback))))
+
 (= (getContextSuffix $periphery)
    (string-safe
      (py-str
@@ -66,7 +74,7 @@
         " ACTIVE_MODEL: " (py-call (synthetic_llm.current_model))
 
         " LAST_SKILL_USE_RESULTS: "
-        (last_chars (loop-last-results $periphery) (maxFeedback))
+        (loop:last-results-view (loop-last-results $periphery))
         " WAKE: " (py-call (helper.wake_view (loop-iteration $periphery)))
         " TIME: " (get_time_as_string)))))
 
