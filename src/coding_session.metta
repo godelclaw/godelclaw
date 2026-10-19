@@ -113,6 +113,30 @@
           ($args (coding:arguments (coding:text (coding:field $function "arguments"))))
           ($output (coding:tool $dir $workdir $name $args)))
      (coding:record $dir (coding:tool-message $id $output))))
+; What a reply without text did, for the progress line, as Codex shows the
+; commands it runs: the command, the patched files or the plan update.
+(= (coding:call-line $call)
+   (let* (($function (coding:field $call "function"))
+          ($name (coding:text (coding:field $function "name")))
+          ($args (coding:arguments (coding:text (coding:field $function "arguments")))))
+     (case $name
+       (("exec_command" (str:concat "$ " (coding:text (coding:field $args "cmd"))))
+        ("apply_patch" (str:concat "apply_patch" (coding:patch-files (str:split "\n" (coding:text (coding:field $args "patch"))) "")))
+        ($other $name)))))
+(= (coding:patch-files $lines $out)
+   (if (== $lines ()) $out
+     (let* (($line (car-atom $lines))
+            ($file (if (str:starts-with $line "*** ") (str:concat " " (str:char-slice $line 4 (str:char-length $line))) "")))
+       (coding:patch-files (cdr-atom $lines) (if (or (== $file "") (or (str:starts-with $line "*** Begin") (str:starts-with $line "*** End")))
+                                                $out (str:concat $out $file))))))
+(= (coding:call-lines $calls $out)
+   (if (== $calls ()) (coding:reverse $out ())
+     (let $line (coding:call-line (car-atom $calls)) (coding:call-lines (cdr-atom $calls) (cons-atom $line $out)))))
+(= (coding:progress $text $calls)
+   (if (not (== (str:trim $text) "")) $text
+     (let $lines (coding:call-lines $calls ())
+       (let $joined (str:join " · " $lines)
+         (if (<= (str:char-length $joined) 300) $joined (str:concat (str:char-slice $joined 0 300) " …"))))))
 (= (coding:run-calls $dir $workdir $calls $out)
    (if (== $calls ()) (coding:reverse $out ())
      (coding:run-calls $dir $workdir (cdr-atom $calls)
@@ -200,7 +224,7 @@
             (let* (($message (coding:record $dir (coding:field $ok "message")))
                    ($calls (coding:items (coding:field $message "tool_calls")))
                    ($text (coding:text (coding:field $message "content")))
-                   ($_ (coding:state $dir "running" (+ $steps 1) $text $next)))
+                   ($_ (coding:state $dir "running" (+ $steps 1) (coding:progress $text $calls) $next)))
               (if (== $calls ()) (coding:finish $dir "done" $text (+ $steps 1) $next)
                 (let $results (coding:run-calls $dir $workdir $calls ())
                   (coding:loop $dir $workdir $effort $window $tools

@@ -223,6 +223,25 @@ class CodingSessionTests(unittest.TestCase):
         self.assertEqual(second["messages"][2]["content"][0]["type"], "tool_result")
         self.assertEqual((session / "report.txt").read_text(), "It printed hi.")
 
+    def test_progress_names_the_commands_of_a_silent_reply(self):
+        calls = [call("c1", "exec_command", {"cmd": "rg -n record_command src"}),
+                 call("c2", "apply_patch", {"patch": "*** Begin Patch\n*** Update File: a.py\n-x\n+y\n*** Add File: b.py\n+z\n*** End Patch"}),
+                 call("c3", "update_plan", {"plan": []})]
+        probe = ROOT / ("progress_probe_%d.metta" % os.getpid())
+        probe.write_text('!(import! &self (library lib_import))\n!(import! &self ./src/coding_session.metta)\n'
+                         '!(let $calls (coding:items (json-parse ' + json.dumps(json.dumps(calls)) + ')) '
+                         '(println! (coding:progress "" $calls)))\n'
+                         '!(println! (coding:progress "Reading the receipts." ()))\n')
+        try:
+            result = subprocess.run([os.environ["CETTA_BIN"], "--lang", "petta", "--import-mode", "ancestor-walk", str(probe)],
+                                    cwd=ROOT, env=self.env, capture_output=True, text=True, timeout=60)
+        finally:
+            probe.unlink()
+        lines = result.stdout.splitlines()
+        self.assertIn('"$ rg -n record_command src · apply_patch Update File: a.py Add File: b.py · update_plan"',
+                      lines, result.stdout + result.stderr)
+        self.assertIn('"Reading the receipts."', lines)
+
     def test_resume_continues_the_recorded_conversation(self):
         workspace = self.directory / "workspace"
         workspace.mkdir()
