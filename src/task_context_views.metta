@@ -4,7 +4,7 @@
 !(import! &self (library math))
 
 (= (task:items $record $key)
-   (let (JsonArray $items) (json-object-get $record $key) $items))
+   (let (JsonArray $items) (state:json-field $record $key) $items))
 (= (task:number $value) (JsonNumber (repr $value)))
 (= (task:drop $items $count)
    (if (or (<= $count 0) (== $items ())) $items (task:drop (cdr-atom $items) (- $count 1))))
@@ -151,8 +151,27 @@
           ($preview (task:excerpt $text $allowance $ratio))
           ($with-preview (state:json-set $entry "result_preview" (JsonString $preview))))
      (state:json-set $with-preview "compacted" (JsonBool true))))
+; The encoding is never shorter than its strings' raw bytes, so a view whose
+; strings alone exceed the budget skips the full encoding: a long task's whole
+; history otherwise goes through json-stringify on every turn.
+(= (task:text-bytes $value)
+   (case $value
+     (((JsonString $text) (str:byte-length $text))
+      ((JsonObject $pairs) (task:pair-text-bytes $pairs 0))
+      ((JsonArray $items) (task:item-text-bytes $items 0))
+      ($other 0))))
+(= (task:pair-text-bytes $pairs $total)
+   (if (== $pairs ()) $total
+     (let (JsonPair $key $child) (car-atom $pairs)
+       (task:pair-text-bytes (cdr-atom $pairs) (+ $total (task:text-bytes $child))))))
+(= (task:item-text-bytes $items $total)
+   (if (== $items ()) $total
+     (task:item-text-bytes (cdr-atom $items) (+ $total (task:text-bytes (car-atom $items))))))
+(= (task:fits $view $budget $ratio)
+   (if (> (math:ceil (/ (task:text-bytes $view) $ratio)) $budget) False
+     (<= (context:measure $view $ratio) $budget)))
 (= (task:compact $view $budget $ratio)
-   (if (<= (context:measure $view $ratio) $budget) $view
+   (if (task:fits $view $budget $ratio) $view
      (let* (($root (task:string $view "root")) ($pairs (task:items $view "transcript"))
             ($base (state:json-set (state:json-set $view "transcript" (JsonArray ())) "archive" (task:archive $root (length $pairs))))
             ($frame (task:frame $base $root $budget $ratio))

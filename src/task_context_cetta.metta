@@ -23,7 +23,7 @@
 (= (task:member $record $key $default)
    (case (json-object-get $record $key) ((JsonNull $default) ($value $value))))
 (= (task:string $record $key)
-   (state:text (json-object-get $record $key)))
+   (state:text (state:json-field $record $key)))
 (= (task:result $record)
    (let $decoded (catch (json-parse $record))
      (case $decoded

@@ -42,11 +42,19 @@
    (if (== $pairs ()) ()
      (let (JsonPair $key $_) (car-atom $pairs)
        (cons-atom $key (state:json-keys (cdr-atom $pairs))))))
-(= (state:canonical-members $value $keys)
+; Members are read from the pairs themselves: json-object-get converts the
+; whole object on each call, which made encoding quadratic in its size.
+(= (state:json-member $pairs $key)
+   (if (== $pairs ()) JsonNull
+     (let (JsonPair $name $child) (car-atom $pairs)
+       (if (== $name $key) $child (state:json-member (cdr-atom $pairs) $key)))))
+(= (state:json-field $value $key)
+   (case $value (((JsonObject $pairs) (state:json-member $pairs $key)) ($other JsonNull))))
+(= (state:canonical-members $pairs $keys)
    (if (== $keys ()) ()
-     (let* (($key (car-atom $keys)) ($child (json-object-get $value $key))
+     (let* (($key (car-atom $keys)) ($child (state:json-member $pairs $key))
             ($next (state:canonical $child)))
-       (cons-atom (JsonPair $key $next) (state:canonical-members $value (cdr-atom $keys))))))
+       (cons-atom (JsonPair $key $next) (state:canonical-members $pairs (cdr-atom $keys))))))
 (= (state:canonical-array $items)
    (if (== $items ()) ()
      (cons-atom (state:canonical (car-atom $items)) (state:canonical-array (cdr-atom $items)))))
@@ -54,7 +62,7 @@
    (case $value
      (((JsonObject $pairs)
        (let* (($keys (sort-strings (state:json-keys $pairs)))
-              ($members (state:canonical-members $value $keys))) (JsonObject $members)))
+              ($members (state:canonical-members $pairs $keys))) (JsonObject $members)))
       ((JsonArray $items) (let $next (state:canonical-array $items) (JsonArray $next)))
       ($other $other))))
 (= (state:encoded $value) (json-stringify (state:canonical $value)))

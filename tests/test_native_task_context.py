@@ -82,6 +82,21 @@ class NativeTaskContext(unittest.TestCase):
         self.assertEqual(json.loads(out.read_text()), original['transcript'][0])
         self.assertEqual(json.loads(out.read_text())['result'], text)
 
+    def test_long_history_fit_check_and_encoding_match_the_full_measure(self):
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        for i in range(40): fixture.call([["read-file", str(i)]], [("λ result %d " % i) * 3000])
+        expected = reference.encoded(reference.task_context.projection(fixture.store, 'guide'))
+        out = fixture.path.parent / 'long.json'
+        stdout = self.guest(fixture.path, '!(import! &self ./src/task_context_views)\n'
+            '!(let* (($view (task:projection "guide" "continuation-tick"))\n'
+            '        ($small (task:fits $view 4000 1)) ($small-full (<= (context:measure $view 1) 4000))\n'
+            '        ($large (task:fits $view 100000000 1)) ($large-full (<= (context:measure $view 1) 100000000)))\n'
+            '   (println! (fit-check $small $small-full $large $large-full)))\n'
+            '!(fs:update-text '+json.dumps(str(out))+' "replace" (state:encoded (task:projection "guide" "continuation-tick")) "" "")\n'
+            '!(println! TASK_CONTEXT_OK)\n')
+        self.assertIn('(fit-check false false true true)', stdout)
+        self.assertEqual(out.read_text(), expected)
+
     def test_legacy_history_keeps_numeric_order_and_original_identities(self):
         fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
         for i in range(13): fixture.call([["read-file", str(i)]], ["result " + str(i)])
