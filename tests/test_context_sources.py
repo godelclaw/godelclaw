@@ -98,28 +98,32 @@ class ContextSourcesTest(unittest.TestCase):
         self.assertNotIn("promotion", observed["iter_transformations"])
 
     def test_broker_receipt_crosses_the_real_context_bundle(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = pathlib.Path(directory) / "receipts.jsonl"
-            with mock.patch.dict(os.environ, {
-                "METTACLAW_EFFECT_RECEIPT_PATH": str(path),
-                "METTACLAW_HISTORY_PATH": str(
-                    pathlib.Path(directory) / "history.metta"),
-                "METTACLAW_TELEGRAM_LOG_PATH": str(
-                    pathlib.Path(directory) / "updates.jsonl"),
-            }):
-                effect_receipts.record_command(
-                    8, "returned", ["send-file", "report.md"],
-                    "partial(failed)",
-                )
-                rendered = context_sources.bundle()
-        stable, conversation, per_turn = rendered.split(
-            "\n\n" + context_sources.CACHE_BOUNDARY + "\n\n")
-        self.assertIn("SOURCE[project-capabilities]", stable)
-        self.assertIn("SOURCE[conversation]", conversation)
-        self.assertIn("SOURCE[effect-receipts] status=known", per_turn)
-        self.assertIn("partial(failed)", per_turn)
-        self.assertIn("SOURCE[recent-proposals]", per_turn)
-        self.assertNotIn("CONTEXT_CERTIFICATE", per_turn)
+        # The strategy flag decides where receipts appear, so each case sets
+        # it rather than inheriting the caller's environment.
+        for strategy, shown in (("0", "partial(failed)"), ("1", "Task receipts are in TASK_CONTEXT.")):
+            with self.subTest(strategy=strategy), tempfile.TemporaryDirectory() as directory:
+                path = pathlib.Path(directory) / "receipts.jsonl"
+                with mock.patch.dict(os.environ, {
+                    "METTACLAW_OBSERVED_STRATEGY": strategy,
+                    "METTACLAW_EFFECT_RECEIPT_PATH": str(path),
+                    "METTACLAW_HISTORY_PATH": str(
+                        pathlib.Path(directory) / "history.metta"),
+                    "METTACLAW_TELEGRAM_LOG_PATH": str(
+                        pathlib.Path(directory) / "updates.jsonl"),
+                }):
+                    effect_receipts.record_command(
+                        8, "returned", ["send-file", "report.md"],
+                        "partial(failed)",
+                    )
+                    rendered = context_sources.bundle()
+                stable, conversation, per_turn = rendered.split(
+                    "\n\n" + context_sources.CACHE_BOUNDARY + "\n\n")
+                self.assertIn("SOURCE[project-capabilities]", stable)
+                self.assertIn("SOURCE[conversation]", conversation)
+                self.assertIn("SOURCE[effect-receipts] status=known", per_turn)
+                self.assertIn(shown, per_turn)
+                self.assertIn("SOURCE[recent-proposals]", per_turn)
+                self.assertNotIn("CONTEXT_CERTIFICATE", per_turn)
 
     def test_layout_orders_sources_least_changeable_first(self):
         observations = [
