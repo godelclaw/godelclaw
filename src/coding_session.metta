@@ -136,7 +136,7 @@
 (= (coding:ask $dir $request $attempt)
    (case (catch (coding:ask-once $dir $request))
      (((Error $where $why)
-        (if (>= $attempt 4) (CallFailed (repr $why))
+        (if (>= $attempt 4) (CallFailed (str:join " " ((repr $where) (repr $why))))
           (let* (($wait (* 2 (+ $attempt 1))) ($_ (py-call (time.sleep $wait)))) (coding:ask $dir $request (+ $attempt 1)))))
       ($reply (case (coding:field $reply "message")
                 ((JsonNull (if (>= $attempt 4) (CallFailed "no message in the reply")

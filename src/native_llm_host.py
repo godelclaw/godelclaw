@@ -155,13 +155,22 @@ def structured_json_plan(text):
     return structured_plan(json.loads(str(text)))
 
 
+def _box(value):
+    """The box iter mode unwraps; outside iter mode, such as in a coding
+    session, iter_host is not importable and a plain holder does the same."""
+    try:
+        from iter_host import Box
+    except ImportError:
+        return SimpleNamespace(value=value)
+    return Box(value)
+
+
 def structured_json_result(box, path):
     """Write a structured call's message, finish reason and usage as JSON to a file.
 
     A file, because text returned through py-call becomes an interned symbol
     in the PeTTa lane, and model replies are large and never repeat."""
-    from iter_host import unbox
-    value = unbox(box)
+    value = getattr(box, "value", box)
     text = json.dumps({"message": value.get("message"), "finish": value.get("finish"),
                        "usage": value.get("usage") or {}}, ensure_ascii=False)
     temporary = str(path) + ".tmp"
@@ -330,10 +339,9 @@ def finish(plan, epoch, correlation, encoded, canonical):
     if plan.provider == "anthropic":
         synthetic_llm._tally_anthropic(result["usage"])
     if plan.kind == "structured":
-        from iter_host import Box
         cognitive_health.turn_completed(len(str(encoded).encode()))
-        return Box({"message": result["choices"][0]["message"],
-                    "finish": reason, "llm_result": boundary, "usage": result.get("usage", {})})
+        return _box({"message": result["choices"][0]["message"],
+                     "finish": reason, "llm_result": boundary, "usage": result.get("usage", {})})
     content = result["choices"][0]["message"].get("content")
     if reason == "length":
         import helper
