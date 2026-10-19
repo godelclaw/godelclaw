@@ -16,6 +16,7 @@ ANSI_CONTROL = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 class RuntimeProbeTest(unittest.TestCase):
     PROBES = (
+        ("tests/instruction_scope_probe.metta", "INSTRUCTION_SCOPE_OK"),
         ("tests/weak_process_core_probe.metta", "WEAK_PROCESS_CORE_OK"),
         ("tests/weak_process_episode_probe.metta", "WEAK_PROCESS_EPISODE_OK"),
         ("tests/shared_policy_turn_probe.metta", "SHARED_POLICY_TURN_OK"),

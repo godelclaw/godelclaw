@@ -906,6 +906,15 @@ details these boundaries.
 
 ## Verification and development
 
+The pure instruction-scope library resolves settings by key over a validated
+ancestor chain supplied nearest-first. A nearer definition overrides that key;
+other keys remain inherited, and results identify their defining directory.
+`src/instruction_scope.metta` implements the policy, with an executable probe in
+`tests/instruction_scope_probe.metta`. The corresponding Lean module is
+`Mettapedia.CogArch.Agent.InstructionScope`: it proves precedence, inheritance,
+extension stability and defining-scope provenance. Filesystem discovery and
+revision-consistent capture remain separate from this policy.
+
 Small checks that use fixtures instead of a live provider:
 
 ```sh

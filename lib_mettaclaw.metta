@@ -23,6 +23,7 @@
 !(import! &self ./src/channels)
 !(import! &self ./src/weak_process_core)
 !(import! &self ./src/open_assemblage)
+!(import! &self ./src/instruction_scope)
 !(import! &self ./src/loop_policy)
 !(import! &self ./src/iter_process_policy)
 !(import! &self ./src/metta_coding_policy)
