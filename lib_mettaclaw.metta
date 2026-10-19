@@ -16,6 +16,7 @@
 !(import! &self ./channels/mattermost.py)
 !(import! &self ./channels/telegram.py)
 !(import! &self ./src/mail)
+!(if (mail:cetta?) (import! &self ./src/coding_work) True)
 !(import! &self ./channels/telegram.metta)
 !(import! &self ./channels/websearch.py)
 !(import! &self ./src/utils)

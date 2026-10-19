@@ -150,6 +150,27 @@ def command_plan(model, tokens, effort, prompt):
     return plan
 
 
+def structured_json_plan(text):
+    """A structured request given as JSON text, as the coding loop builds it."""
+    return structured_plan(json.loads(str(text)))
+
+
+def structured_json_result(box, path):
+    """Write a structured call's message, finish reason and usage as JSON to a file.
+
+    A file, because text returned through py-call becomes an interned symbol
+    in the PeTTa lane, and model replies are large and never repeat."""
+    from iter_host import unbox
+    value = unbox(box)
+    text = json.dumps({"message": value.get("message"), "finish": value.get("finish"),
+                       "usage": value.get("usage") or {}}, ensure_ascii=False)
+    temporary = str(path) + ".tmp"
+    with open(temporary, "w", encoding="utf-8") as stream:
+        stream.write(text)
+    os.replace(temporary, str(path))
+    return 1
+
+
 def structured_plan(request):
     value = getattr(request, "value", request)
     def conversation(protocol, selected):
@@ -308,7 +329,7 @@ def finish(plan, epoch, correlation, encoded, canonical):
         from iter_host import Box
         cognitive_health.turn_completed(len(str(encoded).encode()))
         return Box({"message": result["choices"][0]["message"],
-                    "finish": reason, "llm_result": boundary})
+                    "finish": reason, "llm_result": boundary, "usage": result.get("usage", {})})
     content = result["choices"][0]["message"].get("content")
     if reason == "length":
         import helper

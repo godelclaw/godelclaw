@@ -1,0 +1,26 @@
+[
+  {"type": "function", "function": {
+    "name": "exec_command",
+    "description": "Run a shell command with bash -lc in the workspace, or in workdir when given. Standard output and error are merged. Output past about 10k tokens is cut in the middle, keeping its beginning and end.",
+    "parameters": {"type": "object", "properties": {
+      "cmd": {"type": "string", "description": "The command line."},
+      "workdir": {"type": "string", "description": "Directory to run in; the workspace by default."},
+      "timeout_ms": {"type": "integer", "description": "Deadline in milliseconds; 600000 by default."}},
+      "required": ["cmd"]}}},
+  {"type": "function", "function": {
+    "name": "apply_patch",
+    "description": "Edit files with a patch: *** Begin Patch, then *** Add File: path (lines starting with +), *** Delete File: path, or *** Update File: path (optionally *** Move to: path) followed by hunks of context lines (starting with a space), removed lines (-) and added lines (+), each hunk optionally headed by @@ and a nearby line, then *** End Patch. Paths are relative to the workspace. The patch applies whole or not at all.",
+    "parameters": {"type": "object", "properties": {
+      "patch": {"type": "string", "description": "The patch text."}},
+      "required": ["patch"]}}},
+  {"type": "function", "function": {
+    "name": "update_plan",
+    "description": "Record the plan: short steps, each pending, in_progress or completed, with exactly one in_progress while work remains.",
+    "parameters": {"type": "object", "properties": {
+      "explanation": {"type": "string"},
+      "plan": {"type": "array", "items": {"type": "object", "properties": {
+        "step": {"type": "string"},
+        "status": {"type": "string", "enum": ["pending", "in_progress", "completed"]}},
+        "required": ["step", "status"]}}},
+      "required": ["plan"]}}}
+]

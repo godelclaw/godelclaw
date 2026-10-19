@@ -1,6 +1,7 @@
 !(import! &self ./src/topic_jobs.py)
 (= (getLegacySkills)
    (;INTERNAL:
+    "- Coding mode for real work: (work \"task\") or (work \"task\" \"workdir\") starts a session that keeps working (plan, commands, patches, tests) until done and mails you its report; meanwhile you stay free. (work-status) lists sessions, (work-status \"id\") shows plan and report, (work-steer \"id\" \"text\") adds guidance, (work-stop \"id\") stops it. CeTTa only."
     "- Send native peer mail: (mail-send \"name\" \"text\"). Incoming mail enters a turn automatically. When it asks about work you can inspect, inspect it first (the commit, files, logs or a run) across as many steps as it takes, then reply with mail-send from what you found; the sender sees nothing until you reply. Mail from another account shows its sender as \"account/agent\"; mail-send to that name replies into its inbox. (mail-receive) checks now. CeTTa only."
     "- Discover module-registered settings (CeTTa): (settings) or (settings \"namespace\"); inspect/change one with (setting \"namespace\" \"key\" [value]). Values, defaults, units, domains and persistence come from each module. New registrations appear automatically; (help \"settings\") describes the registration protocol."
     "- Remember a particular string such as skills and memories: (remember \"string\")"
