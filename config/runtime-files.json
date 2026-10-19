@@ -157,6 +157,7 @@
   "src/hierarchy_store.metta",
   "src/idle_cetta.metta",
   "src/input_ack.py",
+  "src/instruction_scope.metta",
   "src/iter_authoring.py",
   "src/iter_process_cetta.metta",
   "src/iter_process_io.metta",
