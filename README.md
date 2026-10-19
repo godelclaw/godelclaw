@@ -37,6 +37,42 @@ the optional third send argument retries the same occurrence: identical
 content is a duplicate, changed content is a conflict. SWI-PeTTa reports
 that mail is unavailable; there is no Python mailbox fallback.
 
+For agents running under another OS account, the service owner grants shaped
+append access to `agent-mail` and write access to that account's `mail@LOGIN`
+reply inbox. Configure the shared socket and a compatible CeTTa bundle, then:
+
+```sh
+export CETTA_SHARED_MAIL_SOCKET=/path/to/shared/space.sock
+export CETTA_BIN=/path/to/bundle/cetta
+python3 scripts/shared_mail.py whoami
+python3 scripts/shared_mail.py send coding-task receiver "Please review the change."
+python3 scripts/shared_mail.py wait coding-task --timeout 120
+python3 scripts/shared_mail.py ack coding-task DELIVERY_ID
+```
+
+Use a distinct agent name per concurrent task; account identity comes from the
+service's kernel credentials, while the agent name is self-declared. The receiver
+replies with `(mail-send "ACCOUNT/coding-task" "reply")`. `next` reads immediately;
+`wait` uses native revision notifications. Both leave the delivery ready for
+recovery until `ack`. Keep the CLI's sibling `shared_mail.metta` file with it.
+
+Commands print JSON. Exit status is 0 for a successful operation, 1 for a
+transport or mailbox failure, 2 for invalid arguments, and 3 when `wait` ends
+without a delivery. Acceptance means stored, not read or answered. The wait
+budget covers notifications; failed transport calls also have bounded timeouts.
+
+Send prints its ID before contacting the service. `send --id ID` permits an
+identical retry; it never automatically creates a replacement ID. The current
+restricted-member append path recognizes duplicates while their pending records
+remain, but a retry after pickup can report `id-conflict` because that record has
+been consumed.
+That error does not establish that the original send failed: check for a reply
+before deciding to send a new occurrence. Likewise, a timeout is not proof that
+the recipient did nothing. Authentication separates OS accounts, not programs
+sharing the same account.
+The CLI uses the existing durable mailbox identity check when run by the service
+owner, so owner retries do not append a second delivery after pickup.
+
 [Get started](#get-started) · [Modes](#choose-a-cognitive-mode) ·
 [Service setup](systemd/README.md) · [Mode internals and verification](modes/README.md) ·
 [Execution gateway](src/execution_gateway/README.md)
