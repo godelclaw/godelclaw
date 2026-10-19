@@ -1,0 +1,5 @@
+!(import! &self ./src/tmux_bridge.py)
+(= (tmux-windows) (py-call (tmux_bridge.windows)))
+(= (tmux-peek $window $lines) (py-call (tmux_bridge.peek $window $lines)))
+(= (tmux-send $window $text)
+   (py-call (tmux_bridge.send $window (py-call (helper.decode_safe_text $text)))))

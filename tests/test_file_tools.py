@@ -78,6 +78,29 @@ class FileToolsTest(unittest.TestCase):
         self.assertFalse((self.state / "agent" / "selfmod-proposals").exists())
         self.assertEqual([p.name for p in self.work.iterdir()], ["x.txt"])
 
+    def test_replace_creates_parents_and_preserves_mode_without_backups(self):
+        target = self.work / "memory" / "energy.json"
+        first = file_tools.update_result(target, "replace", '{"default":"full"}')
+        self.assertEqual(first[0], "written")
+        self.assertEqual(first[4], "")
+        target.chmod(0o640)
+        second = file_tools.update_result(target, "replace", '{"default":"mid","name":"λ"}')
+        self.assertEqual(second[0], "written")
+        self.assertEqual(target.read_text(), '{"default":"mid","name":"λ"}')
+        self.assertEqual(target.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(self.backups(), [])
+        self.assertEqual(list(target.parent.iterdir()), [target])
+
+    def test_failed_replace_keeps_the_previous_file_and_cleans_up(self):
+        target = self.work / "energy.json"
+        target.write_text("previous")
+        with mock.patch.object(file_tools.os, "replace", side_effect=OSError("rename refused")):
+            result = file_tools.update_result(target, "replace", "next")
+        self.assertEqual(result, ["error", "rename refused"])
+        self.assertEqual(target.read_text(), "previous")
+        self.assertEqual(list(self.work.iterdir()), [target])
+        self.assertEqual(self.backups(), [])
+
 
 if __name__ == "__main__":
     unittest.main()

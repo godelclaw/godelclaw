@@ -215,10 +215,7 @@
 ;; agent workspace, so tmux-send needs no separate authorization layer.
 (= (claude-code $prompt)
    (py-call (claude_bridge.ask (py-call (helper.decode_safe_text $prompt)))))
-(= (tmux-windows) (py-call (tmux_bridge.windows)))
-(= (tmux-peek $win $n) (py-call (tmux_bridge.peek $win $n)))
-(= (tmux-send $win $text)
-   (py-call (tmux_bridge.send $win (py-call (helper.decode_safe_text $text)))))
+!(import! &self ./src/tmux_io)
 
 ;; Progressive disclosure: one-line catalog above, full page on demand.
 ;; check parses with the loop's OWN reader (sread), so its verdict is the

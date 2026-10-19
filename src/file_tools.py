@@ -1,8 +1,7 @@
 """Direct file writes for the agent's write-file, edit-file and append-file.
 
-The agent may change its own files. Each write replaces the file atomically
-and keeps the previous version in a backup directory, so any change can be
-inspected and undone. Nothing waits for approval.
+Agent edits keep the previous version in a backup directory. State replacement
+uses the same atomic writer without accumulating backups.
 """
 
 from __future__ import annotations
@@ -68,8 +67,8 @@ def _replace(target: Path, data: bytes) -> None:
         pass
 
 
-def _write_result(target: Path, data: bytes):
-    previous = target.read_bytes() if target.is_file() else None
+def _write_result(target: Path, data: bytes, keep_previous=True):
+    previous = target.read_bytes() if keep_previous and target.is_file() else None
     backup = _backup(target, previous) if previous is not None else None
     _replace(target, data)
     return ["written", str(target), len(data), _digest(data)[:16], str(backup) if backup else ""]
@@ -78,8 +77,10 @@ def _write_result(target: Path, data: bytes):
 def update_result(path, operation, first, second="", backup_directory=None):
     target = _resolve(path)
     try:
-        if operation == "write":
+        if operation in ("write", "replace"):
             data = str(first).encode("utf-8")
+            if operation == "replace":
+                target.parent.mkdir(parents=True, exist_ok=True)
         elif operation == "append":
             data = target.read_bytes() + (str(first) + "\n").encode("utf-8")
         elif operation == "edit":
@@ -92,7 +93,7 @@ def update_result(path, operation, first, second="", backup_directory=None):
             data = text.replace(str(first), str(second), 1).encode("utf-8")
         else:
             return ["error", "unknown file operation"]
-        return _write_result(target, data)
+        return _write_result(target, data, keep_previous=operation != "replace")
     except (OSError, UnicodeError) as error:
         return ["error", str(error)]
 

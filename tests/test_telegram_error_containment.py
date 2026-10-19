@@ -169,7 +169,9 @@ class Containment(unittest.TestCase):
         self.assertIsNone(responder.poll())
 
     def test_energy_never_raises(self):
-        env = dict(self.env, METTACLAW_ENERGY_PATH=str(self.dir / "missing" / "energy.json"),
+        blocked = self.dir / "blocked-parent"
+        blocked.write_text("a file cannot contain a state file")
+        env = dict(self.env, METTACLAW_ENERGY_PATH=str(blocked / "energy.json"),
                    METTACLAW_LOOPS_FULL="many")
         p = self.run_program('!(import! &self ./channels/energy.metta)\n'
                              '!(energy:set "default" "mid")\n'
@@ -180,7 +182,7 @@ class Containment(unittest.TestCase):
         self.assertIn('"energy-set failed: could not persist"', lines)
         self.assertIn("50", lines)
         self.assertIn("still-running", lines)
-        # The temporary file is written, and the rename onto a directory raises.
+        # A directory cannot be atomically replaced with a state file either.
         occupied = self.dir / "occupied"
         occupied.mkdir()
         env = dict(self.env, METTACLAW_ENERGY_PATH=str(occupied))

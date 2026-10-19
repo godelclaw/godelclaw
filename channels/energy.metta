@@ -6,9 +6,11 @@
 ; environment, else 50, 30 and 10. Any other key in the file is kept.
 
 !(import! &self str)
+!(import! &self ./channels/string_compat.metta)
 !(import! &self json)
 !(import! &self fs)
 !(import! &self system)
+!(import! &self ./src/file_io)
 
 (= (energy:env $name $default) (system:getenv-or-default $name $default))
 (= (energy:path) (energy:env "METTACLAW_ENERGY_PATH" "memory/energy.json"))
@@ -69,8 +71,8 @@
    (collapse (let $part (energy:items (energy:csv (energy:env "METTACLAW_TELEGRAM_SENDER_NAMES" "")))
                (case (str:find $part ":")
                  (((TextNotFound $needle) (empty))
-                  ($at (let $id (str:trim (str:byte-slice $part 0 $at))
-                         (let $name (str:trim (str:byte-slice $part (+ $at 1) (str:byte-length $part)))
+                  ($at (let $id (str:trim (str-compat:byte-slice $part 0 $at))
+                         (let $name (str:trim (str-compat:byte-slice $part (+ $at 1) (str-compat:byte-length $part)))
                            (if (or (== $id "") (== $name "")) (empty) ($id $name))))))))))
 
 (= (energy:env-name $id)
@@ -97,17 +99,11 @@
           ($other (energy:seed))))
        (energy:seed))))
 
-; Written whole to a temporary file and renamed over the old one, so a
-; reader never sees half of it.
+; Atomic state replacement uses unique temporary files and creates parents.
 (= (energy:save $data)
-   (let $path (energy:path)
-     (let $tmp (format-args "{}.tmp" ($path))
-       (case (fs:write $tmp (json-stringify $data))
-         (((Error $call $why) False)
-          ($written
-           (case (catch (py-call (os.replace $tmp $path)))
-             (((Error $call $why) False)
-              ($renamed True)))))))))
+   (case (file-io:update (energy:path) "replace" (json-stringify $data) "")
+     ((("written" $_ $_ $_ $_) True)
+      ($error False))))
 
 ;; ----------------------------------------------------------- reading it
 
@@ -166,8 +162,8 @@
      (let ($digit $rest) (energy:uncons $digits)
        (energy:strip (str:join "" (str:split $digit $text)) $rest))))
 (= (energy:id? $text)
-   (let $body (if (str:starts-with $text "-") (str:byte-slice $text 1 (str:byte-length $text)) $text)
-     (and (> (str:byte-length $body) 0)
+   (let $body (if (str:starts-with $text "-") (str-compat:byte-slice $text 1 (str-compat:byte-length $text)) $text)
+     (and (> (str-compat:byte-length $body) 0)
           (== (energy:strip $body ("0" "1" "2" "3" "4" "5" "6" "7" "8" "9")) ""))))
 
 ; A sender named WHO, case aside: from the file's names, else the
@@ -250,6 +246,6 @@
                                       (let $name (energy:label $data $id)
                                         (JsonArray (collapse (let $tier (energy:items (energy:tiers))
                                                                (let $cbd (format-args "energy:{}:{}" ($id $tier))
-                                                                 (if (> (str:byte-length $cbd) 64) (empty)
+                                                                 (if (> (str-compat:byte-length $cbd) 64) (empty)
                                                                    (energy:button (format-args "{}{}: {}" ((if (== $tier $current) "● " "") $name $tier)) $cbd))))))))))
                (JsonArray (collapse (superpose ($everyone (energy:items $rows))))))))))))

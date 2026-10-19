@@ -3,10 +3,12 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
 from test_file_read_engine import ROOT, metta
+sys.path.insert(0, str(ROOT / "src"))
 import fsops
 
 
@@ -77,6 +79,11 @@ class FileToolsEngineTests(unittest.TestCase):
             lines.append(f'!(let $result {expression} (py-call (file_tools_probe.failed $result "edit failed:" {metta(str(bad_input))} "626164ff")))')
             new = work / "new"
             lines.append(f"!(let $result {call('write-file', str(new), 'new')} (py-call (file_tools_probe.written $result {metta(str(new))} \"6e6577\" \"none\" 384)))")
+            target = work / "nested" / "state.json"
+            for content in ('{"default":"full"}', '{"default":"mid","name":"λ 🌸"}'):
+                expression = '(file-io:write-present "replace" ' + call(
+                    "file-io:update", str(target), "replace", content, "") + ')'
+                written(expression, content.encode(), None, 0o600)
             code = "!(import! &self (library lib_import))\n!(import! &self ./tests/file_tools_probe.py)\n!(import! &self ./src/file_io)\n"
             if engine == "cetta": code += "!(py-call (file_tools_probe.forbid_python))\n"
             code += "\n".join(lines) + "\n!(println! FILE_TOOLS_CONTRACT_OK)\n"

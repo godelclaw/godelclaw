@@ -838,7 +838,12 @@ binary files, and reports read errors. PCRE2 is a separate regex dialect from
 Python `re`; exotic pattern extensions can differ. Invalid patterns are searched
 literally in both backends. Writes replace files atomically, retain permissions,
 and return content hashes and collision-free backup paths. Exact edits require
-one occurrence, and append retains the existing bytes. `tmux-peek` includes
+one occurrence, and append retains the existing bytes. Energy settings reuse
+atomic state replacement, preserving unknown JSON fields and existing file
+permissions; concurrent saves are last-writer-wins. `tmux-windows`, `tmux-peek`
+and `tmux-send` use MeTTa over CeTTa's native process and timer libraries, with
+the Python adapter retained for SWI-PeTTa. Paste and Enter remain separate
+events, and process arguments are passed literally without a shell. `tmux-peek` includes
 scrollback.
 
 Background jobs on CeTTa use native asynchronous process handles, persistent

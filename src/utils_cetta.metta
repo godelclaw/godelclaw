@@ -2,6 +2,7 @@
 !(import! &self (library system))
 !(import! &self (library io))
 !(import! &self (library math))
+!(import! &self ./src/text_cetta)
 
 (= (get_time) (system:wall-time))
 (= (get_time_as_string) (system:format-time "%Y-%m-%d %H:%M:%S" (get_time) "local"))
@@ -11,7 +12,7 @@
 (= (swrite $value) (repr $value))
 (= (newline) "\n")
 (= (exists-file $file) (file-io:exists $file))
-(= (string-replace $text $old $new) (str:join $new (str:split $old $text)))
+(= (string-replace $text $old $new) (claw-text:replace $text $old $new))
 (= (string-safe $text)
    (string-replace (string-replace (string-replace $text "\"\"" "_quote_") "\n" "_newline_") "'" "_apostrophe_"))
 (= (last_chars $text $count)
