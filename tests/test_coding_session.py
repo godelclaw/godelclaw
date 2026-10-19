@@ -193,6 +193,9 @@ class CodingSessionTests(unittest.TestCase):
             self.assertEqual((agent, to), (session.name, "requester-fixture"))
             self.assertIn("done after 2 steps", text)
             self.assertIn("out.txt written.", text)
+            # Its model calls are recorded as its own, never as the agent's turns.
+            self.assertTrue((session / "completion.json").is_file())
+            self.assertFalse((self.directory / "health.json").exists())
         finally:
             probe.unlink()
 

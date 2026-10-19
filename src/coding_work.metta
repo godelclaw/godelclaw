@@ -39,9 +39,17 @@
                                    (JsonPair "requester" (JsonString $requester)) (JsonPair "effort" (JsonString "high")))))
           ($_ (fs:update-text (path:join $dir "task.json") "replace" (json-stringify $task-json) "" ""))
           ($binary (system:getenv-or-default "CETTA_BIN" "cetta"))
-          ($launch (str:join "" ("systemd-run --user --scope --quiet --collect --unit=" (work:unit $id) " -- " $binary
-                                 " --lang petta --import-mode ancestor-walk coding_main.metta -- " $dir
-                                 " > " $dir "/run.log 2>&1 &")))
+          ;; The session shares the account's ledger and usage tally, as
+          ;; Codex sub-agents share rate limits, but keeps its own health,
+          ;; last-completion and restart files: its calls are not the agent's turns.
+          ($own (str:join "" ("env METTACLAW_COGNITIVE_HEALTH_PATH='" $dir "/health.json'"
+                              " METTACLAW_LLM_COMPLETION_PATH='" $dir "/completion.json'"
+                              " METTACLAW_RECYCLE_REQUEST_PATH='" $dir "/recycle.requested'"
+                              " METTACLAW_WAKE_REQUEST_PATH='" $dir "/wake.requested'"
+                              " METTACLAW_OBSERVED_STRATEGY=0 ")))
+          ($launch (str:join "" ("systemd-run --user --scope --quiet --collect --unit=" (work:unit $id) " -- " $own
+                                 "'" $binary "' --lang petta --import-mode ancestor-walk coding_main.metta -- '" $dir
+                                 "' > '" $dir "/run.log' 2>&1 &")))
           ($_ (work:shell $launch)))
      (str:join "" ("WORK_STARTED " $id ". It runs on its own and mails you its report when done; "
                    "(work-status \"" $id "\") shows its progress, (work-steer \"" $id "\" \"text\") guides it, "
