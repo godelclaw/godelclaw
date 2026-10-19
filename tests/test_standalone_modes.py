@@ -46,7 +46,7 @@ class StandaloneModesTests(unittest.TestCase):
             root = Path(directory)
             agent = root / "agent"
             (agent / "memory").mkdir(parents=True)
-            (agent / "memory/prompt.txt").write_text("must not appear by default")
+            (agent / "memory/soul.md").write_text("must not appear by default")
             runtime = root / "runtime"
             launcher.prepare_iter(runtime, agent, standalone=True)
             self.assertEqual((runtime / "prompt.txt").read_bytes(),
@@ -156,7 +156,7 @@ class StandaloneModesTests(unittest.TestCase):
                         self.assertEqual(request["max_tokens"], 6000)
                         self.assertTrue((runtime / "repos/Omega/memory/history.metta").exists())
                     # Lightweight startup never seeds the framework identity.
-                    self.assertFalse((root / "memory/prompt.txt").exists())
+                    self.assertFalse((root / "memory/soul.md").exists())
                 finally:
                     process.terminate()
                     try:

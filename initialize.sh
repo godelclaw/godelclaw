@@ -53,7 +53,7 @@ case "$channel_kind" in telegram|irc|mattermost) ;; *) channel_kind=telegram ;; 
     > "$channel_tmp"
 mv -f "$channel_tmp" "$root/config/channel.metta"
 
-prompt_path="${METTACLAW_PROMPT_PATH:-$root/memory/prompt.txt}"
+prompt_path="${METTACLAW_PROMPT_PATH:-$root/memory/soul.md}"
 history_path="${METTACLAW_HISTORY_PATH:-$root/memory/history.metta}"
 chroma_dir="${METTACLAW_CHROMA_DIR:-$root/chroma_db}"
 memory_log_dir="${METTACLAW_MEMORY_LOG_DIR:-$root/memory/remembered}"
@@ -69,7 +69,7 @@ copy_if_missing() {
     fi
 }
 
-copy_if_missing "$root/identity/default-prompt.txt" "$prompt_path"
+copy_if_missing "$root/identity/default-soul.md" "$prompt_path"
 
 write_manifest_if_missing() {
     local dst="$root/memory/MANIFEST.toml"

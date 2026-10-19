@@ -518,7 +518,7 @@ not start an agent or register a Telegram bot.
 |---|---|
 | `config/local.toml` | Evaluator paths, Python environment, provider endpoint/model, channel and storage locations. Seeded from [the defaults](config/default.toml). |
 | `config/secrets.env` | Provider credentials, bot token, operator IDs and allowed chats. See [the field examples](config/secrets.env.example). |
-| `memory/prompt.txt` | Your agent's identity, goals and operating instructions. Initialization seeds the reusable [default prompt](identity/default-prompt.txt); customize your private copy. |
+| `memory/soul.md` | Your agent's soul: its identity, goals and operating instructions. Initialization seeds the reusable [default soul](identity/default-soul.md); customize your private copy. Coding sessions use their own prompt, `identity/coding-instructions.txt`. |
 | `.env` | Generated settings; startup regenerates this file from `config/local.toml`. |
 
 Use the configuration command to inspect, validate or change a nonsecret

@@ -10,7 +10,7 @@
           (configure maxRecentTurns 8)))
 
 (= (getPrompt)
-   (read-file (py-call (helper.path_from_env "METTACLAW_PROMPT_PATH" "./memory/prompt.txt"))))
+   (read-file (py-call (helper.path_from_env "METTACLAW_PROMPT_PATH" "./memory/soul.md"))))
 
 ;; The running proposal window: what the model requested over the last few
 ;; substantive turns. Broker receipts, not this transcript, say what ran.

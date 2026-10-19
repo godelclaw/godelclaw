@@ -71,7 +71,7 @@ Do not explain. Return only the command list.
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--identity-prompt", type=Path, default=ROOT / "memory" / "prompt.txt"
+        "--identity-prompt", type=Path, default=ROOT / "memory" / "soul.md"
     )
     parser.add_argument(
         "--model", default=os.environ.get(

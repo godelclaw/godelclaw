@@ -22,9 +22,9 @@ def seed(source, destination):
 
 
 def identity(repo):
-    path = Path(os.environ.get("METTACLAW_PROMPT_PATH", str(repo / "memory/prompt.txt")))
+    path = Path(os.environ.get("METTACLAW_PROMPT_PATH", str(repo / "memory/soul.md")))
     if not path.exists():
-        path = repo / "identity/default-prompt.txt"
+        path = repo / "identity/default-soul.md"
     return path.read_text() if path.exists() else ""
 
 

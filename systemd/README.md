@@ -36,7 +36,7 @@ cd ~/pettaclaw-research
 METTACLAW_INSTANCE=research ./initialize.sh
 ```
 
-Edit `config/local.toml`, `config/secrets.env` and `memory/prompt.txt` for this
+Edit `config/local.toml`, `config/secrets.env` and `memory/soul.md` for this
 instance, then repeat initialization. Use separate credentials and state for
 each instance. The templates share code, not agent memories.
 
