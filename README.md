@@ -39,39 +39,78 @@ that mail is unavailable; there is no Python mailbox fallback.
 
 For agents running under another OS account, the service owner grants shaped
 append access to `agent-mail` and write access to that account's `mail@LOGIN`
-reply inbox. Configure the shared socket and a compatible CeTTa bundle, then:
+reply inbox. Install the CLI and the optional Claude Code skill from this
+checkout (Python 3.11 or newer):
 
 ```sh
-export CETTA_SHARED_MAIL_SOCKET=/path/to/shared/space.sock
-export CETTA_BIN=/path/to/bundle/cetta
-python3 scripts/shared_mail.py whoami
-python3 scripts/shared_mail.py send coding-task receiver "Please review the change."
-python3 scripts/shared_mail.py wait coding-task --timeout 120
-python3 scripts/shared_mail.py ack coding-task DELIVERY_ID
+python3 scripts/install_claw_mail.py
+mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/godelclaw"
+cp config/mail.example.toml "${XDG_CONFIG_HOME:-$HOME/.config}/godelclaw/mail.toml"
 ```
 
-Use a distinct agent name per concurrent task; account identity comes from the
-service's kernel credentials, while the agent name is self-declared. The receiver
-replies with `(mail-send "ACCOUNT/coding-task" "reply")`. `next` reads immediately;
-`wait` uses native revision notifications. Both leave the delivery ready for
-recovery until `ack`. Keep the CLI's sibling `shared_mail.metta` file with it.
+Use `--no-skill` on the installer to install only the CLI.
 
-Commands print JSON. Exit status is 0 for a successful operation, 1 for a
-transport or mailbox failure, 2 for invalid arguments, and 3 when `wait` ends
-without a delivery. Acceptance means stored, not read or answered. The wait
-budget covers notifications; failed transport calls also have bounded timeouts.
+Edit that private file for your socket and engine. It accepts `socket`, `cetta`,
+`space` and optional `agent` strings. Relative paths resolve beside the config;
+`~` and environment variables expand locally, and a bare engine name uses PATH.
+`--config` or `CLAW_MAIL_CONFIG` selects another file. Socket/engine arguments
+and `CETTA_SHARED_MAIL_SOCKET`/`CETTA_BIN` override the configured values. Add
+`~/.local/bin` to PATH if needed. Installation links to this checkout, so future
+updates there update the CLI and skill together. Keep it at a stable location.
 
-Send prints its ID before contacting the service. `send --id ID` permits an
-identical retry; it never automatically creates a replacement ID. The current
-restricted-member append path recognizes duplicates while their pending records
-remain, but a retry after pickup can report `id-conflict` because that record has
-been consumed.
-That error does not establish that the original send failed: check for a reply
-before deciding to send a new occurrence. Likewise, a timeout is not proof that
-the recipient did nothing. Authentication separates OS accounts, not programs
-sharing the same account.
-The CLI uses the existing durable mailbox identity check when run by the service
-owner, so owner retries do not append a second delivery after pickup.
+```sh
+export CLAW_MAIL_AGENT=review-42
+claw-mail whoami
+claw-mail send receiver "Please review the change."
+claw-mail inbox
+claw-mail wait --forever
+claw-mail ack DELIVERY_ID
+```
+
+Use a distinct sender name per concurrent task. An explicit positional name
+still works and overrides the default: `claw-mail send other-task receiver
+"text"`, `claw-mail wait other-task`, `claw-mail ack other-task DELIVERY_ID`.
+Environment variables must be inherited by each tool shell, or passed with each
+command. The receiver replies with `(mail-send "ACCOUNT/review-42" "reply")`.
+The account is authenticated by the kernel; the task name is self-declared.
+
+`inbox` previews ready and pending mail without taking or acknowledging it.
+`--limit` caps previews; `inbox --count` prints only the total. Counts and bodies
+come from one checked revision; concurrent changes cause a read retry.
+`next` takes the next delivery immediately. `wait` uses native notifications;
+`--timeout 120` bounds waiting, while `--forever` or `--timeout 0` waits until a
+delivery or persistent failure. Brief transport outages are retried with capped
+backoff; `--retry-limit` controls consecutive failures. Neither command
+acknowledges mail. Handle the message before calling `ack` with its delivery ID.
+
+A delivery prints a short terminal-safe summary followed by its JSON result;
+`--json` selects JSON only. Exit status is 0 for a successful operation, 1 for a
+transport or mailbox failure, 2 for invalid arguments, and 3 for an empty bounded
+wait. The wait budget covers notifications; transport calls have separate
+bounded timeouts. Acceptance means stored, not read or answered. Send prints its
+ID before contacting the service; use `send --id ID` with identical content to
+retry the same occurrence. With the pinned service, duplicate detection also
+survives pickup consuming the pending record. Changed content remains a conflict.
+
+The [claw-mail skill](.claude/skills/claw-mail/SKILL.md) teaches Claude Code to
+start `claw-mail wait --forever` using its Bash tool's `run_in_background: true`.
+The harness can notify the session when it finishes; a detached shell alone
+cannot wake a model. Waiting does not request a language model, while handling
+arrivals uses normal turns. A shell cron check also costs no model turn unless
+it invokes the model. Background waiting avoids repeated empty checks.
+
+The optional [SessionStart hook example](config/claw-mail-hooks.example.json)
+runs `claw-mail inbox --notice`: silent when empty, one line when mail is waiting.
+Set a default agent name before enabling it, and merge the example's `hooks`
+entry into your own Claude settings without replacing unrelated entries. The
+installer does not enable hooks. See the official [skill installation](https://code.claude.com/docs/en/skills)
+and [hook settings](https://code.claude.com/docs/en/hooks) for harness behavior.
+
+The same client works directly or in a container. A container can mount the
+socket's directory at a chosen location and configure that visible socket path;
+no matching host pathname is required. Peer permissions follow the host UID
+mapping, so a separate container does not automatically create a separate mail
+identity. Instance paths and credentials belong in private configuration.
 
 [Get started](#get-started) · [Modes](#choose-a-cognitive-mode) ·
 [Service setup](systemd/README.md) · [Mode internals and verification](modes/README.md) ·

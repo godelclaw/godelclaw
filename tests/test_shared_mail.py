@@ -59,7 +59,7 @@ class SharedMailTests(unittest.TestCase):
     def raw(self, code):
         q = lambda x: json.dumps(str(x), ensure_ascii=False)
         path = self.work / 'fixture.metta'
-        path.write_text('!(import! &self mailbox)\n' + code.replace('SOCKET', q(self.socket))
+        path.write_text('!(import! &self mailbox)\n!(import! &self str)\n' + code.replace('SOCKET', q(self.socket))
                         .replace('INBOX', q('mail@' + LOGIN)).replace('UID', str(os.getuid())))
         result = subprocess.run([str(BINARY), '--lang', 'petta', '--quiet', str(path)],
                                 capture_output=True, text=True, timeout=10)
@@ -67,7 +67,7 @@ class SharedMailTests(unittest.TestCase):
         return result.stdout
 
     def command(self, *arguments):
-        return [sys.executable, str(CLI), '--cetta', str(BINARY), '--socket', str(self.socket), *arguments]
+        return [sys.executable, str(CLI), '--config', str(self.work / 'no-config.toml'), '--json', '--cetta', str(BINARY), '--socket', str(self.socket), *arguments]
 
     def run_cli(self, *arguments, env=None, expected=0):
         result = subprocess.run(self.command(*arguments), capture_output=True, text=True, env=env, timeout=10)
@@ -76,7 +76,7 @@ class SharedMailTests(unittest.TestCase):
 
     def reply(self, message='reply', ident='reply-1', agent='reviewer'):
         self.raw('!(mailbox:send SOCKET INBOX ' + json.dumps(ident) + ' ' + json.dumps(agent) +
-                 ' "fixture-agent" ' + json.dumps(message, ensure_ascii=False) + ')\n')
+                 ' "fixture-agent" (str:from-codepoints (' + ' '.join(str(ord(c)) for c in message) + ')))\n')
 
     def test_identity_and_inbox_ignore_environment_login(self):
         env = dict(os.environ, LOGNAME='someone-else', USER='someone-else', USERNAME='someone-else')
@@ -162,6 +162,148 @@ class SharedMailTests(unittest.TestCase):
         self.stop()
         result = self.run_cli('next', 'reviewer', expected=1)
         self.assertEqual(result['status'], 'error')
+
+
+    def test_default_agent_and_explicit_override(self):
+        env = dict(os.environ, CLAW_MAIL_AGENT='default-reviewer')
+        self.assertEqual(self.run_cli('send', 'fixture-agent', 'hello', env=env)['status'], 'accepted')
+        self.reply(agent='default-reviewer')
+        self.assertEqual(self.run_cli('next', env=env)['status'], 'delivery')
+        self.assertEqual(self.run_cli('inbox', 'someone-else', env=env)['count'], 0)
+        self.assertEqual(self.run_cli('ack', 'reply-1', env=env)['status'], 'settled')
+        self.assertEqual(self.run_cli('inbox', env=env)['count'], 0)
+
+    def test_inbox_preview_count_and_notice_do_not_take_or_ack(self):
+        self.reply('first', 'r1')
+        self.reply('second', 'r2')
+        preview = self.run_cli('inbox', 'reviewer', '--limit', '1')
+        self.assertEqual(preview['count'], 2)
+        self.assertTrue(preview['truncated'])
+        self.assertEqual(preview['items'][0]['state'], 'pending')
+        self.assertEqual(self.run_cli('inbox', 'reviewer', '--limit', '1'), preview)
+        count = subprocess.run(self.command('inbox', 'reviewer', '--count'), capture_output=True, text=True, timeout=5)
+        self.assertEqual((count.returncode, count.stdout), (0, '2\n'))
+        notice = subprocess.run(self.command('inbox', 'reviewer', '--notice'), capture_output=True, text=True, timeout=5)
+        self.assertEqual(notice.returncode, 0, notice.stderr)
+        self.assertIn('2 unacknowledged', notice.stdout)
+        first = self.run_cli('next', 'reviewer')
+        preview = self.run_cli('inbox', 'reviewer')
+        self.assertEqual(preview['count'], 2)
+        self.assertEqual([item['state'] for item in preview['items']], ['ready', 'pending'])
+        self.assertEqual(self.run_cli('next', 'reviewer'), first)
+        self.run_cli('ack', 'reviewer', first['id'])
+        second = self.run_cli('next', 'reviewer')
+        self.run_cli('ack', 'reviewer', second['id'])
+        notice = subprocess.run(self.command('inbox', 'reviewer', '--notice'), capture_output=True, text=True, timeout=5)
+        self.assertEqual((notice.returncode, notice.stdout), (0, ''))
+
+    def test_forever_wait_recovers_from_a_service_restart(self):
+        waiting = subprocess.Popen(self.command('wait', 'reviewer', '--forever'),
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            time.sleep(.12)
+            self.stop()
+            time.sleep(.12)
+            self.start(member=True)
+            self.reply('after restart')
+            out, err = waiting.communicate(timeout=8)
+            self.assertEqual(waiting.returncode, 0, out + err)
+            self.assertEqual(json.loads(out)['text'], 'after restart')
+            self.assertEqual(self.run_cli('inbox', 'reviewer')['count'], 1)
+        finally:
+            if waiting.poll() is None:
+                waiting.terminate()
+                waiting.communicate(timeout=5)
+
+    def test_zero_timeout_waits_until_mail(self):
+        waiting = subprocess.Popen(self.command('wait', 'reviewer', '--timeout', '0'),
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            time.sleep(.1)
+            self.assertIsNone(waiting.poll())
+            self.reply()
+            out, err = waiting.communicate(timeout=5)
+            self.assertEqual(waiting.returncode, 0, out + err)
+            self.assertEqual(json.loads(out)['status'], 'delivery')
+        finally:
+            if waiting.poll() is None:
+                waiting.terminate()
+                waiting.communicate(timeout=5)
+
+    def test_persistent_wait_failure_is_bounded(self):
+        self.stop()
+        result = self.run_cli('wait', 'reviewer', '--forever', '--retry-limit', '0', expected=1)
+        self.assertTrue(result['retryable'])
+
+    def test_summary_matches_json_and_cannot_inject_terminal_controls(self):
+        text = 'hello\x1b[31m λ\nsecond line'
+        self.reply(text)
+        command = [part for part in self.command('next', 'reviewer') if part != '--json']
+        result = subprocess.run(command, capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.splitlines()
+        value = json.loads(lines[-1])
+        self.assertIn('id=' + value['id'], lines[0])
+        self.assertIn('from=' + value['from'], lines[0])
+        self.assertIn('hello', lines[0])
+        self.assertNotIn('\x1b', lines[0])
+        self.assertNotIn('second line', lines[0])
+        self.assertEqual(value['text'], text)
+
+    def test_sent_text_roundtrips_control_characters_and_unicode(self):
+        text = 'λ "quoted"\\text\n\t\b\f\x1b[31m'
+        self.run_cli('--space', 'mail@' + LOGIN, 'send', 'reviewer', 'reviewer', text)
+        self.assertEqual(self.run_cli('next', 'reviewer')['text'], text)
+
+    def test_member_retry_after_pickup_is_duplicate(self):
+        args = ('send', 'reviewer', 'fixture-agent', 'hello', '--id', 'member-one')
+        self.assertEqual(self.run_cli(*args)['status'], 'accepted')
+        self.stop()
+        self.start()
+        self.assertIn('mailbox:delivery', self.raw('!(mailbox:next SOCKET "agent-mail" "fixture-agent")'))
+        self.stop()
+        self.start(member=True)
+        self.assertEqual(self.run_cli(*args)['status'], 'duplicate')
+        refused = self.run_cli('send', 'reviewer', 'fixture-agent', 'changed', '--id', 'member-one', expected=1)
+        self.assertIn('id-conflict', refused['reason'])
+
+    def test_config_relative_paths_work_from_another_directory_and_a_symlink(self):
+        config = self.work / 'mail.toml'
+        engine = self.work / 'engine'
+        engine.symlink_to(BINARY)
+        config.write_text('socket = "service.sock"\ncetta = "./engine"\nagent = "reviewer"\n')
+        command = self.work / 'claw-mail'
+        command.symlink_to(CLI)
+        env = dict(os.environ)
+        for key in ('CETTA_BIN', 'CETTA_SHARED_MAIL_SOCKET', 'CLAW_MAIL_AGENT'):
+            env.pop(key, None)
+        result = subprocess.run([sys.executable, str(command), '--config', str(config), 'inbox', '--count'],
+                                cwd=ROOT, env=env, capture_output=True, text=True, timeout=5)
+        self.assertEqual((result.returncode, result.stdout), (0, '0\n'), result.stderr)
+
+    def test_installation_creates_links_and_private_account_config(self):
+        destination = self.work / 'installed'
+        config = destination / 'mail.toml'
+        command = [sys.executable, str(ROOT / 'scripts/install_claw_mail.py'),
+                   '--bin-dir', str(destination / 'bin'), '--skill-dir', str(destination / 'skills'),
+                   '--config', str(config), '--socket', str(self.socket), '--cetta', str(BINARY),
+                   '--agent', 'reviewer']
+        installed = subprocess.run(command, capture_output=True, text=True, timeout=5)
+        self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
+        self.assertEqual(config.stat().st_mode & 0o777, 0o600)
+        self.assertEqual((destination / 'bin/claw-mail').resolve(), CLI)
+        self.assertTrue((destination / 'skills/claw-mail/SKILL.md').is_file())
+        env = dict(os.environ)
+        for key in ('CETTA_BIN', 'CETTA_SHARED_MAIL_SOCKET', 'CLAW_MAIL_AGENT'):
+            env.pop(key, None)
+        result = subprocess.run([sys.executable, str(destination / 'bin/claw-mail'),
+                                 '--config', str(config), 'inbox', '--count'],
+                                cwd=destination, env=env, capture_output=True, text=True, timeout=5)
+        self.assertEqual((result.returncode, result.stdout), (0, '0\n'), result.stderr)
+        before = config.read_bytes()
+        again = subprocess.run(command, capture_output=True, text=True, timeout=5)
+        self.assertEqual(again.returncode, 2)
+        self.assertEqual(config.read_bytes(), before)
 
     def test_invalid_route_name_and_wait_budget_are_rejected(self):
         for args in [('send', 'account/agent', 'receiver', 'text'),

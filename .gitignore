@@ -62,3 +62,6 @@ kb/
 # Local pinned-engine build and bundle.
 /.build/
 /.runtime/
+
+# Portable collaboration skill; account configuration stays outside Git.
+!/.claude/skills/claw-mail/SKILL.md

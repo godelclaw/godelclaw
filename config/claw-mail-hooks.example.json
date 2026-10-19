@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "claw-mail inbox --notice",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

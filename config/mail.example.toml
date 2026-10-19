@@ -1,0 +1,8 @@
+# Copy into $XDG_CONFIG_HOME/godelclaw/mail.toml (normally ~/.config/godelclaw).
+# Configure the socket made available by your mailbox service owner.
+# Environment variables and ~ expand locally; relative paths use this file's directory.
+socket = "${XDG_RUNTIME_DIR}/claw-mail/space.sock"
+cetta = "cetta"
+space = "agent-mail"
+# Set CLAW_MAIL_AGENT per task/session, or set one default here:
+# agent = "reviewer"
