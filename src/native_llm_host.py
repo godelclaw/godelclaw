@@ -176,6 +176,10 @@ def structured_plan(request):
     def conversation(protocol, selected):
         result = copy.deepcopy(value)
         result["model"] = selected
+        if protocol != "anthropic":
+            # Other providers reuse a repeated prefix without breakpoints.
+            result.pop("cache_messages", None)
+            result.pop("cache_ttl", None)
         extra = result.pop("extra_body", {})
         if not isinstance(extra, dict):
             raise ValueError("extra_body must be an object")

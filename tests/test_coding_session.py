@@ -195,6 +195,30 @@ class CodingSessionTests(unittest.TestCase):
         finally:
             probe.unlink()
 
+    def test_anthropic_sessions_cache_the_growing_conversation(self):
+        workspace = self.directory / "workspace"
+        workspace.mkdir()
+        self.env.update(SYNTHETIC_MODEL="claude-opus-5-5", ANTHROPIC_API_KEY="fixture-secret",
+                        ANTHROPIC_BASE_URL=f"http://127.0.0.1:{self.server.server_port}/v1")
+
+        def message(content, stop):
+            return {"id": "m", "type": "message", "role": "assistant", "model": "claude-opus-5-5",
+                    "content": content, "stop_reason": stop, "usage": {"input_tokens": 10, "output_tokens": 2}}
+        self.server.replies = [
+            message([{"type": "text", "text": "Running echo."},
+                     {"type": "tool_use", "id": "t1", "name": "exec_command", "input": {"cmd": "echo hi"}}], "tool_use"),
+            message([{"type": "text", "text": "It printed hi."}], "end_turn")]
+        session = self.session("Say what echo hi prints.", workspace)
+        self.run_session(session)
+
+        def marked(body):
+            return [i for i, m in enumerate(body["messages"]) if any("cache_control" in b for b in m["content"])]
+        first, second = self.server.requests
+        self.assertEqual(first["system"][-1]["cache_control"], {"type": "ephemeral"})
+        self.assertEqual((marked(first), marked(second)), ([0], [0, 2]))
+        self.assertEqual(second["messages"][2]["content"][0]["type"], "tool_result")
+        self.assertEqual((session / "report.txt").read_text(), "It printed hi.")
+
     def test_resume_continues_the_recorded_conversation(self):
         workspace = self.directory / "workspace"
         workspace.mkdir()

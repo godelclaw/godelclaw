@@ -121,7 +121,7 @@
 (= (coding:tools) (json-parse (fs:read-text "identity/coding-tools.json")))
 (= (coding:request $messages $effort $tools)
    (let* (($pairs ((JsonPair "model" (JsonString "session")) (JsonPair "max_tokens" (JsonNumber "32768"))
-                   (JsonPair "messages" (JsonArray $messages))))
+                   (JsonPair "messages" (JsonArray $messages)) (JsonPair "cache_messages" (JsonBool True))))
           ($reasoned (if (== $effort "default") $pairs
                        (cons-atom (JsonPair "reasoning" (JsonObject ((JsonPair "effort" (JsonString $effort))))) $pairs))))
      (JsonObject (if (== $tools ()) $reasoned (cons-atom (JsonPair "tools" $tools) $reasoned)))))
