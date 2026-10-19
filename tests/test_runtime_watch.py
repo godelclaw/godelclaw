@@ -48,6 +48,31 @@ class MemoryObservationTest(unittest.TestCase):
             self.assertEqual(run.call_args.args[0][:4], ["systemctl", "--user", "show", "agent.service"])
             self.assertEqual(json.loads(state.read_text())["alarms"], ["agent.service"])
 
+    def test_active_process_cannot_hide_a_missing_installed_unit(self):
+        with tempfile.TemporaryDirectory() as folder:
+            state = pathlib.Path(folder) / "observations.json"
+            args = runtime_watch.memory_parser().parse_args([
+                "--units", "gateway.service", "--state", str(state)])
+            props = ("InvocationID=first\nMainPID=42\nActiveState=active\n"
+                     "LoadState=not-found\nMemoryCurrent=31457280\nMemorySwapCurrent=0\n")
+            with mock.patch.object(runtime_watch, "_run", return_value=mock.Mock(stdout=props)) as run:
+                self.assertEqual(runtime_watch.observe_memory(args, now=280), 0)
+            value = json.loads(state.read_text())
+            self.assertEqual(value["restart_unavailable"], ["gateway.service"])
+            self.assertEqual(value["alarms"], [])
+            self.assertEqual(run.call_count, 1)
+            self.assertEqual(run.call_args.args[0][:3], ["systemctl", "--user", "show"])
+
+    def test_missing_unit_warning_does_not_require_memory_accounting(self):
+        with tempfile.TemporaryDirectory() as folder:
+            state = pathlib.Path(folder) / "observations.json"
+            args = runtime_watch.memory_parser().parse_args([
+                "--units", "gateway.service", "--state", str(state)])
+            props = "MainPID=42\nActiveState=active\nLoadState=not-found\n"
+            with mock.patch.object(runtime_watch, "_run", return_value=mock.Mock(stdout=props)):
+                runtime_watch.observe_memory(args, now=280)
+            self.assertEqual(json.loads(state.read_text())["restart_unavailable"], ["gateway.service"])
+
 
 class RuntimeWatchTest(unittest.TestCase):
     def setUp(self):

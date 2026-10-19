@@ -173,6 +173,27 @@ The [execution gateway](../src/execution_gateway/README.md) has its own
 then configure the instance's gateway socket and agent ID. It is optional for
 the supplied loops.
 
+Keep the installed unit and its Python module paths independent of a development
+checkout. Once `gateway-research.json` and `gateway-research.env` exist, preview
+the binding to the deployed root:
+
+```sh
+python3 scripts/install_execution_gateway.py --instance research \
+  --runtime-root "$HOME/pettaclaw-research"
+```
+
+Repeat with `--apply --backup-dir PATH` to install it, using a new backup
+directory. The installer copies the unit, repairs instance links, and updates
+the gateway and supplied read-adapter module paths. Custom tools and queue state
+stay intact. It preserves whether the service was enabled and does not restart
+it. Run `systemctl --user daemon-reload`, then enable/start the instance as
+needed. Before restarting an existing instance, let pending jobs finish.
+
+A running PID does not establish restart readiness. Check `LoadState=loaded`
+with `systemctl --user show pettaclaw-gateway@research.service`, and exercise a
+configured read tool after a controlled restart. A successful `tools` response
+alone does not exercise the separate tool subprocess's imports.
+
 The non-template units and deployment watcher files predate this reusable
 layout. They encode a particular installation and are not defaults to copy
 unchanged. Likewise, `src/sibling.py` currently contains a fixed two-peer map;

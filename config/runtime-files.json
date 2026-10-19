@@ -1,4 +1,5 @@
 [
+  "scripts/runtime_watch.py",
   "CETTA_REF",
   "cetta_bootstrap.metta",
   "channels/irc.py",

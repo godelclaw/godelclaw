@@ -99,26 +99,37 @@ def observe_memory(args, now=None):
     for unit in args.units:
         result = _run(["systemctl", "--user", "show", unit,
             "--property=InvocationID", "--property=MainPID",
+            "--property=LoadState",
             "--property=ActiveState", "--property=MemoryCurrent",
             "--property=MemorySwapCurrent"])
         props = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+        load_state = props.get("LoadState", "unknown")
+        restart_unavailable = (props.get("ActiveState") == "active"
+                               and load_state not in ("loaded", "unknown"))
         try:
             ram = int(props["MemoryCurrent"])
             swap = int(props["MemorySwapCurrent"])
             sample = {"at": now, "invocation": props.get("InvocationID", ""),
                       "pid": int(props.get("MainPID", 0)),
                       "active": props.get("ActiveState"),
+                      "load_state": props.get("LoadState", "unknown"),
                       "ram_bytes": ram, "swap_bytes": swap,
                       "total_bytes": ram + swap}
         except (KeyError, ValueError):
-            services[unit] = {"history": [], "alarm": False, "unavailable": True}
+            services[unit] = {"history": [], "alarm": False, "unavailable": True,
+                              "load_state": load_state, "restart_unavailable": restart_unavailable}
             continue
         services[unit] = memory_trend(previous.get(unit, {}), sample, args.window,
                                      args.growth_mib_per_minute, args.minimum_growth_mib)
+        services[unit].update(load_state=load_state, restart_unavailable=restart_unavailable)
     alarms = [unit for unit, facts in services.items() if facts.get("alarm")]
     _write_json(args.state, {"observed_at": now, "services": services,
-                             "alarms": alarms})
+                             "alarms": alarms,
+                             "restart_unavailable": [unit for unit, facts in services.items()
+                                                     if facts.get("restart_unavailable")]})
     for unit, facts in services.items():
+        if facts.get("restart_unavailable"):
+            print("WARNING restart-unavailable: " + unit + " load=" + facts["load_state"])
         if "sample" not in facts:
             print("memory-observation unavailable: " + unit)
             continue
