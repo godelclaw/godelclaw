@@ -15,3 +15,6 @@
       ($other (format-args "{}" ($value))))))
 (= (dispatch:record $turn $status $command $result)
    (catch (py-call (effect_receipts.record_command $turn $status $command $result))))
+; Fixes the public-sharing epoch before the batch runs; never raises.
+(= (dispatch:capture $turn)
+   (catch (py-call (effect_receipts.capture_public_epoch $turn))))
