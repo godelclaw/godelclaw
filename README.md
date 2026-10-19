@@ -539,8 +539,9 @@ absent from the default configuration and credential fields are rejected;
 credentials stay in `config/secrets.env`. Direct TOML edits can be validated
 with `check` and applied to the generated file with `render`.
 
-For CeTTa, set `paths.cetta_root` to the generated `.runtime/cetta` bundle,
-`paths.petta_py_env` to a matching Python environment, and start with
+For CeTTa, `paths.cetta_root` defaults to the generated `.runtime/cetta` bundle.
+Create a matching `.venv` or set `paths.petta_py_env` to your Python environment,
+and start with
 `METTACLAW_ENGINE=cetta`. A standard venv works: create it with the Python
 version recorded in the bundle's manifest, install dependencies there, and
 set `paths.petta_py_env` to that venv. The launcher supplies its dependencies

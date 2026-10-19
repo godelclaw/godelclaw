@@ -26,8 +26,9 @@ class ConfigPrivacyTest(unittest.TestCase):
         self.assertIn(
             "METTACLAW_TELEGRAM_LOG_PATH='/tmp/pettaclaw-state/test-claw/telegram/updates.jsonl'",
             result.stdout)
-        self.assertIn("CETTA_ROOT='", result.stdout)
-        self.assertIn("/repos/CeTTa-runtime'", result.stdout)
+        self.assertIn(f"CETTA_ROOT='{ROOT}/.runtime/cetta'", result.stdout)
+        self.assertIn(f"PETTA_ROOT='{ROOT}/.runtime/PeTTa'", result.stdout)
+        self.assertIn(f"PETTA_PY_ENV='{ROOT}/.venv'", result.stdout)
         self.assertIn("METTACLAW_RECENT_ACTION_TURNS='12'", result.stdout)
         self.assertIn("METTACLAW_CONVERSATION_EVENTS='64'", result.stdout)
         self.assertIn("SYNTHETIC_TIMEOUT='120'", result.stdout)

@@ -2,12 +2,12 @@
 
 [paths]
 # These are expanded by initialize.sh when it generates .env.
-petta_root = "$HOME/repos/PeTTa"
-# CeTTa checkout used by `/engine cetta`; it must provide `--lang petta`.
-cetta_root = "$HOME/repos/CeTTa-runtime"
+petta_root = "$ROOT/.runtime/PeTTa"
+# Matches scripts/build_cetta.py's bundle; it must provide `--lang petta`.
+cetta_root = "$ROOT/.runtime/cetta"
 # Python env PeTTa/swipl links against; install requirements.txt into it.
-# Point this at YOUR env -- the name below is only a placeholder.
-petta_py_env = "$HOME/miniforge3/envs/petta"
+# Create a matching venv here or select your existing environment locally.
+petta_py_env = "$ROOT/.venv"
 
 # Optional session-memory helper source. Its Python dependencies must be
 # installed in petta_py_env; do not inject another venv into PYTHONPATH.
