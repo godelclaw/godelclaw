@@ -1,7 +1,7 @@
 !(import! &self ./src/topic_jobs.py)
 (= (getLegacySkills)
    (;INTERNAL:
-    "- Send native peer mail: (mail-send \"name\" \"text\"). Incoming mail enters a turn automatically; reply with mail-send. (mail-receive) checks now. CeTTa only."
+    "- Send native peer mail: (mail-send \"name\" \"text\"). Incoming mail enters a turn automatically; reply with mail-send. Mail from another account shows its sender as \"account/agent\"; mail-send to that name replies into its inbox. (mail-receive) checks now. CeTTa only."
     "- Discover module-registered settings (CeTTa): (settings) or (settings \"namespace\"); inspect/change one with (setting \"namespace\" \"key\" [value]). Values, defaults, units, domains and persistence come from each module. New registrations appear automatically; (help \"settings\") describes the registration protocol."
     "- Remember a particular string such as skills and memories: (remember \"string\")"
     "- Query long-term embedding memory for skills and memories with short phrases only: (query \"short phrase\")"

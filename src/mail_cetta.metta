@@ -15,13 +15,33 @@
    (if (== $ids ()) ()
      (let $id (car-atom $ids)
        (let $gone (remove-atom &self (mail:prepared $id)) (mail:forget (cdr-atom $ids))))))
+(= (mail:text $value)
+   (case (get-metatype $value)
+     ((Symbol (str:symbol->string $value))
+      (Grounded (if (== (get-type $value) String) $value (repr $value)))
+      ($other (repr $value)))))
+; Mail from another account carries the account the service authenticated:
+; (from (account UID LOGIN) AGENT) reads as LOGIN/AGENT, the name to reply to.
+(= (mail:who $sender)
+   (case $sender
+     (((from (account $uid $login) $agent) (str:join "" ((mail:text $login) "/" (mail:text $agent))))
+      ((from (account $uid) $agent) (str:join "" ((mail:text $uid) "/" (mail:text $agent))))
+      ($other (mail:text $other)))))
+; LOGIN/AGENT is delivered into that account's own inbox space, mail@LOGIN;
+; any other name is a peer on this account's space.
+(= (mail:route $to)
+   (case (str:split "/" $to)
+     ((($account $agent) (mail:route-to (str:join "" ("mail@" $account)) $agent))
+      ($other (mail:route-to (mail:space) $to)))))
 (= (mail:send $to $body)
    (let $id (space:request-id) (mail:send-id $to $body $id)))
 (= (mail:send-id $to $body $id)
    (if (mail:enabled?)
-     (case (mailbox:send (mail:socket) (mail:space) $id $to (mail:name) $body)
-       (((mailbox:sent $sent $status) (str:join "" ("MAILED " $to " id=" $sent)))
-        ($error (let $text (repr $error) (str:join "" ("MAIL_ERROR " $text))))))
+     (case (mail:route $to)
+       (((mail:route-to $space $recipient)
+         (case (mailbox:send (mail:socket) $space $id $recipient (mail:name) $body)
+           (((mailbox:sent $sent $status) (str:join "" ("MAILED " $to " id=" $sent)))
+            ($error (let $text (repr $error) (str:join "" ("MAIL_ERROR " $text)))))))))
      "MAIL_UNAVAILABLE: configure a native socket and agent name"))
 ; Ready records survive failed turns and restarts. The loop acknowledges
 ; automatically after committing the turn; agents have no filing chore.
@@ -32,7 +52,7 @@
         ((mailbox:delivery $id $sender $body)
          (let $presented (collapse (match &self (mail:prepared $id) $id))
            (let $saved (if (== $presented ()) (add-atom &self (mail:prepared $id)) ())
-             (str:join "" ("[mail from " $sender "; id=" $id "] " $body)))))
+             (str:join "" ("[mail from " (mail:who $sender) "; id=" $id "] " $body)))))
         ($error (let $text (repr $error) (str:join "" ("MAIL_ERROR " $text))))))
      ""))
 (= (mail:ack) (mail:ack-ids (collapse (match &self (mail:prepared $id) $id))))
