@@ -26,10 +26,11 @@ def prompt(text):
     if not enabled():
         return str(text)
     # Replace the legacy format instruction rather than leave two competing
-    # output contracts. The rest of the command syntax remains unchanged.
+    # output contracts. Only the known first instruction is replaced; later
+    # quotations in user/source text remain byte-for-byte intact.
     text = str(text).replace(
         "Return only this command S-expression, with no preamble, explanation, or Markdown fence, and nothing after it.",
-        "The commands field must contain only the command S-expression.")
+        "The commands field must contain only the command S-expression.", 1)
     return text + PROMPT
 
 
@@ -123,16 +124,25 @@ def begin(plan):
     return 1
 
 
-def finish(plan, content, reason):
+class OutputError(ValueError):
+    """A provider result did not satisfy the opted-in command contract."""
+
+
+def finish(plan, content, reason, message=None):
     if not enabled() or getattr(plan, 'kind', '') != 'command':
         return content
+    # Terminal validation applies equally to envelopes and legacy batches.
+    # Rejected output is a failed turn, not a successful empty command batch.
+    if reason != 'stop':
+        raise OutputError('unfinished command output')
+    if message and (message.get('refusal') or message.get('tool_calls')):
+        raise OutputError('refused or structured command output')
     commentary, commands = split(content or '')
-    if commentary is not None:
-        if reason != 'stop':
-            return '()'
-        publication = getattr(plan, 'commentary', None)
-        if publication:
-            publication.publish(commentary)
-        # Never repair or execute a partial JSON command envelope.
+    if commentary is None:
+        if not isinstance(content, str) or not content.lstrip().startswith('('):
+            raise OutputError('invalid command envelope')
         return commands
+    publication = getattr(plan, 'commentary', None)
+    if publication:
+        publication.publish(commentary)
     return commands

@@ -441,7 +441,7 @@ def chat(model, max_tokens, effort, prompt):
         result = _exchange(provider, endpoint, body, max_tokens)
         content = result["choices"][0]["message"].get("content")
         finish = result["choices"][0].get("finish_reason")
-        content = model_commentary.finish(commentary_plan, content, finish)
+        content = model_commentary.finish(commentary_plan, content, finish, result["choices"][0]["message"])
         if finish == "length":
             import helper
             content = helper.complete_command_prefix(content or "")

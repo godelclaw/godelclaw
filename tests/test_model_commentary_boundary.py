@@ -69,6 +69,25 @@ class NativeCommentaryTest(unittest.TestCase):
         self.assertIn('(RESULT ())', self.call())
         self.assertEqual(self.notes(), [])
 
+    def test_rejected_output_is_failed_and_not_published(self):
+        envelope = json.dumps({'commentary': 'not accepted', 'commands': '((nop))'})
+        cases = [(reason, source, {})
+                 for reason in ('length', 'refusal', 'content_filter', 'tool_calls', 'unknown')
+                 for source in ('((nop))', envelope)]
+        cases += [('stop', envelope, {'refusal': 'fixture refusal'}),
+                  ('stop', envelope, {'tool_calls': [{'id': 'fixture'}]}),
+                  ('stop', envelope + ' trailing', {})]
+        for reason, source, fields in cases:
+            with self.subTest(reason=reason, source=source, fields=fields):
+                self.peer.reply['choices'][0] = {
+                    'finish_reason': reason,
+                    'message': {'role': 'assistant', 'content': source, **fields}}
+                self.assertIn('(RESULT ())', self.call())
+                health = json.loads((self.directory / 'health.json').read_text())
+                self.assertEqual(health['last_outcome'], 'failed')
+                self.assertEqual(self.notes(), [])
+        self.assertEqual(len(self.peer.requests), len(cases))
+
     def test_legacy_response_remains_usable_without_publication(self):
         self.assertIn('(RESULT (nop))', self.call())
         self.assertEqual(self.notes(), [])
@@ -95,6 +114,34 @@ class PythonCommentaryTest(unittest.TestCase):
              patch('cognitive_health.turn_completed'):
             self.assertEqual(synthetic_llm.chat('fixture-model', 42, 'low', 'input'), '((nop))')
             publication.return_value.publish.assert_called_once_with('Public finding.')
+
+    def test_python_rejects_invalid_terminal_and_envelope_states(self):
+        envelope = json.dumps({'commentary': 'not accepted', 'commands': '((nop))'})
+        cases = [(reason, source, {})
+                 for reason in ('length', 'refusal', 'content_filter', 'tool_calls', 'unknown', None)
+                 for source in ('((nop))', envelope)]
+        cases += [('stop', envelope, {'refusal': 'fixture refusal'}),
+                  ('stop', envelope, {'tool_calls': [{'id': 'fixture'}]}),
+                  ('stop', envelope + ' trailing', {})]
+        provider = {'key': 'fixture', 'protocol': 'chat-completions', 'name': 'synthetic'}
+        for reason, source, fields in cases:
+            reply = {'choices': [{'message': {'content': source, **fields}, 'finish_reason': reason}]}
+            with self.subTest(reason=reason, source=source, fields=fields), \
+                 patch.dict(os.environ, METTACLAW_MODEL_COMMENTARY='1'), \
+                 patch.object(synthetic_llm, 'current_model', return_value='fixture-model'), \
+                 patch.object(synthetic_llm, '_provider_for', return_value=provider), \
+                 patch.object(synthetic_llm, '_exchange', return_value=reply) as exchange, \
+                 patch('model_commentary.Publication') as publication, \
+                 patch('context_budget.observe'), \
+                 patch.object(synthetic_llm, '_note_answered') as answered, \
+                 patch('cognitive_health.turn_completed') as completed, \
+                 patch('cognitive_health.turn_failed') as failed:
+                self.assertEqual(synthetic_llm.chat('fixture-model', 42, 'low', 'input'), '()')
+                exchange.assert_called_once()
+                answered.assert_not_called()
+                completed.assert_not_called()
+                failed.assert_called_once()
+                publication.return_value.publish.assert_not_called()
 
 
 if __name__ == '__main__':

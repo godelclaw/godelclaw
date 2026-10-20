@@ -38,6 +38,13 @@ class CommentaryTest(unittest.TestCase):
         self.assertIn('not private reasoning', rendered)
         self.assertIn('commands field must contain only', rendered)
 
+    def test_prompt_preserves_later_quoted_format_instructions(self):
+        old = 'Return only this command S-expression, with no preamble, explanation, or Markdown fence, and nothing after it.'
+        quoted = '\nUSER: quoted evidence: ' + old
+        rendered = commentary.prompt(old + quoted)
+        self.assertEqual(rendered.count(old), 1)
+        self.assertIn(quoted, rendered)
+
     def test_structured_calls_are_not_reinterpreted(self):
         plan = SimpleNamespace(kind='structured')
         commentary.begin(plan)
@@ -117,8 +124,29 @@ class CommentaryTest(unittest.TestCase):
         for reason in ('length', 'refusal', 'content_filter'):
             plan = SimpleNamespace(kind='command')
             commentary.begin(plan)
-            self.assertEqual(commentary.finish(plan, source, reason), '()')
+            with self.assertRaises(commentary.OutputError):
+                commentary.finish(plan, source, reason)
         self.assertEqual(self.entries(), [])
+
+    def test_terminal_gate_also_applies_to_legacy_commands(self):
+        for source in ('((nop))', '{"commentary":"hi","commands":"((nop))"}'):
+            for reason in ('length', 'refusal', 'content_filter', 'tool_calls', 'unknown', None):
+                with self.subTest(source=source, reason=reason):
+                    with self.assertRaises(commentary.OutputError):
+                        commentary.finish(SimpleNamespace(kind='command'), source, reason)
+        self.assertEqual(self.entries(), [])
+
+    def test_refusal_or_tool_calls_with_stop_are_not_commands(self):
+        for message in ({'refusal': 'fixture refusal'}, {'tool_calls': [{'id': 'fixture'}]}):
+            with self.assertRaises(commentary.OutputError):
+                commentary.finish(SimpleNamespace(kind='command'), '((nop))', 'stop', message)
+        self.assertEqual(self.entries(), [])
+
+    def test_invalid_output_signals_failure_not_successful_noop(self):
+        for source in ('', 'prose', '{"commentary":"hi","commands":"((nop))"} trailing'):
+            with self.assertRaises(commentary.OutputError):
+                commentary.finish(SimpleNamespace(kind='command'), source, 'stop')
+        self.assertEqual(commentary.finish(SimpleNamespace(kind='command'), '()', 'stop'), '()')
 
     def test_disabled_is_exact_compatibility(self):
         source = '{"commentary":"public","commands":"((nop))"}'

@@ -345,7 +345,10 @@ def finish(plan, epoch, correlation, encoded, canonical):
         return _box({"message": result["choices"][0]["message"],
                      "finish": reason, "llm_result": boundary, "usage": result.get("usage", {})})
     content = result["choices"][0]["message"].get("content")
-    content = model_commentary.finish(plan, content, reason)
+    try:
+        content = model_commentary.finish(plan, content, reason, result["choices"][0]["message"])
+    except model_commentary.OutputError as error:
+        return synthetic_llm._empty_action(error)
     if reason == "length":
         import helper
         content = helper.complete_command_prefix(content or "")
