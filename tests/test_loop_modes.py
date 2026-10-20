@@ -64,21 +64,11 @@ class LoopModeTests(unittest.TestCase):
         self.assertEqual(loop_modes.current_mode(), "coding")
         self.assertEqual(json.loads(self.path.read_text())["mode"], "coding")
 
-    def test_qualified_iter_is_selectable(self):
-        self.assertNotIn("iter", loop_modes.ALIASES)
-        self.assertIn("persists", loop_modes.set_mode("iter"))
-        self.assertEqual(loop_modes.current_mode(), "iter")
-
-    def test_incomplete_omega_is_visible_but_not_selectable(self):
-        loop_modes.set_mode("godelclaw")
-        self.assertIn("unavailable", loop_modes.set_mode("omega"))
-        self.assertEqual(loop_modes.current_mode(), "godelclaw")
-        self.assertIn("○ omega", loop_modes.modes_view())
-        self.assertIn("native-memory", loop_modes.modes_view())
-
-    def test_saved_incomplete_mode_falls_back_to_godelclaw(self):
-        self.path.write_text(json.dumps({"mode": "omega"}) + "\n")
-        self.assertEqual(loop_modes.current_mode(), "godelclaw")
+    def test_qualified_upstream_modes_are_selectable(self):
+        for mode in ("iter", "omega"):
+            self.assertNotIn(mode, loop_modes.ALIASES)
+            self.assertIn("persists", loop_modes.set_mode(mode))
+            self.assertEqual(loop_modes.current_mode(), mode)
 
     def test_autonomy_follows_the_mode_through_its_aliases(self):
         for name in ("godelclaw", "coding", "iter", "iter-coding", "agent"):

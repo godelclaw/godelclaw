@@ -229,8 +229,11 @@ def recover_outbox():
 
 def boot():
     if mode() == "omega":
+        # Older Omega pins registered textual commands here. Current Omega
+        # advertises structured tools, so there may be no parser registry.
         import omega_helper
-        omega_helper.TWO_ARG_COMMANDS.add("send-channel")
+        if hasattr(omega_helper, "TWO_ARG_COMMANDS"):
+            omega_helper.TWO_ARG_COMMANDS.add("send-channel")
     # Provider failure backoff is operational pacing. Keep mode/stop controls
     # responsive while retaining the existing adapter's backoff durations.
     if not standalone():
@@ -309,6 +312,41 @@ def install_iter():
     return True
 
 
+class OmegaProvider:
+    """Current Omega provider interface over the shared canonical call codec."""
+
+    def __init__(self, omega):
+        self.omega = omega
+
+    def start(self):
+        return None
+
+    def stop(self):
+        return None
+
+    def chat(self, request):
+        import tool_protocol
+        value = tool_protocol.request_from_omega(request)
+        if not standalone() and value["messages"]:
+            route = route_context().strip()
+            if route:
+                first = value["messages"][0]
+                if first.get("role") == "system":
+                    first["content"] = route + "\n\n" + first.get("content", "")
+        payload = provider_request(value)
+        return tool_protocol.response_to_omega(payload, self.omega)
+
+
+def install_omega():
+    import providers as omega_providers
+    if standalone():
+        load_omega_provider_plugins()
+    else:
+        omega_providers.registerLLMProvider("Configured", OmegaProvider(omega_providers))
+    boot()
+    return True
+
+
 def config(key, default):
     if standalone():
         import config as omega_config
@@ -342,20 +380,25 @@ def init_config():
 def start_provider(provider):
     if standalone():
         import providers as omega_providers
-        # Import by path: putting this directory on PYTHONPATH would make
-        # Omega's openai.py plugin shadow the SDK with the same name.
-        spec = importlib.util.spec_from_file_location("lib_llm_ext",
-            root() / "repos/Omega/providers/lib_llm_ext.py")
-        library = importlib.util.module_from_spec(spec)
-        sys.modules["lib_llm_ext"] = library
-        spec.loader.exec_module(library)
-        for name in ("openaiapi", "openai"):
-            spec = importlib.util.spec_from_file_location("omega_provider_" + name,
-                root() / "repos/Omega/providers" / (name + ".py"))
-            plugin = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(plugin)
-            plugin.loadOmegaPlugin()
+        load_omega_provider_plugins()
         omega_providers.llmProviderStart(str(provider))
+    return True
+
+
+def load_omega_provider_plugins():
+    """Register the standalone provider slice without SDK-name shadowing."""
+    spec = importlib.util.spec_from_file_location(
+        "lib_llm_ext", root() / "repos/Omega/providers/lib_llm_ext.py")
+    library = importlib.util.module_from_spec(spec)
+    sys.modules["lib_llm_ext"] = library
+    spec.loader.exec_module(library)
+    for name in ("openaiapi", "openai"):
+        spec = importlib.util.spec_from_file_location(
+            "omega_provider_" + name,
+            root() / "repos/Omega/providers" / (name + ".py"))
+        plugin = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(plugin)
+        plugin.loadOmegaPlugin()
     return True
 
 

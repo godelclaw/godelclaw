@@ -31,7 +31,11 @@ class Peer(http.server.BaseHTTPRequestHandler):
                     "name": "send", "arguments": json.dumps({"channel": "terminal", "content": "terminal-fixture-reply"})}},
                 {"id": "fixture-nop", "type": "function", "function": {"name": "nop", "arguments": "{}"}}]}
         else:
-            message = {"role": "assistant", "content": "send terminal-fixture-reply\nnop"}
+            message = {"role": "assistant", "tool_calls": [
+                {"id": "fixture-send", "type": "function", "function": {
+                    "name": "send", "arguments": json.dumps({"content": "terminal-fixture-reply"})}},
+                {"id": "fixture-nop", "type": "function", "function": {
+                    "name": "nop", "arguments": "{}"}}]}
         body = json.dumps({"choices": [{"message": message, "finish_reason": "stop"}]}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -153,6 +157,7 @@ class StandaloneModesTests(unittest.TestCase):
                         self.assertEqual(request["max_tokens"], 2524)
                         self.assertTrue((runtime / "experience.json").exists())
                     else:
+                        self.assertEqual(request["tool_choice"], "required")
                         self.assertEqual(request["max_tokens"], 6000)
                         self.assertTrue((runtime / "repos/Omega/memory/history.metta").exists())
                     # Lightweight startup never seeds the framework identity.

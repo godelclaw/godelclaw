@@ -89,8 +89,8 @@ def omega_state(row, history):
 
 def omega_replay(rows, scenario):
     cfg = scenario.get("config", {})
-    config = f"(OmegaArchitecture.Config.mk {cfg.get('maxNewInputLoops', 50)} {cfg.get('maxWakeLoops', 1)} {cfg.get('wakeupInterval', 600)} {cfg.get('maxOutputToken', 6000)} {lit(cfg.get('reasoningMode', 'medium'))} {lit(cfg.get('spamShield', False))})"
-    prior = {"loops": 0, "previous": "", "last_results": "", "wake": None}
+    config = f"(OmegaArchitecture.Config.mk {cfg.get('maxNewInputLoops', 50)} {cfg.get('maxWakeLoops', 1)} {cfg.get('wakeupInterval', 600)} {cfg.get('maxOutputToken', 6000)} {lit(cfg.get('reasoningMode', 'medium'))})"
+    prior = {"loops": 0, "previous": "", "last_results": [], "wake": None}
     history = [scenario["history"]] if scenario.get("history") else []
     persisted = scenario.get("history", "")
     checks = []
@@ -104,40 +104,49 @@ def omega_replay(rows, scenario):
         failure = next((r for r in segment if r["kind"] == "provider_error"), None)
         boundary = next((r for r in segment if r["kind"] == "boundary"), None)
         state = omega_state(prior, history)
-        context = request["prompt"].split(":-:-:-:")[0] if request else ""
-        args = f"{config} {heartbeat['iteration']} {state} {lit(event)} {lit(context)} {heartbeat['now']}"
+        wire = request["request"] if request else {}
+        messages = wire.get("messages", [])
+        context = messages[0].get("content", "") if messages else ""
+        message = messages[-1].get("content", "") if messages else ""
+        tools = request.get("tools", []) if request else []
+        args = (f"{config} {heartbeat['iteration']} {state} {lit(event)} "
+                f"{lit(context)} {lit(message)} {lit(tools)} {heartbeat['now']}")
         if failure:
-            expression = f"(OmegaArchitecture.cycle {args} (.providerFailure {lit(failure['error'])}) \"\")"
-            checks += [f"example : {expression}.halted = true := by decide",
-                       f"example : OmegaArchitecture.dispatches {expression}.actions = [] := by decide"]
-            continue
+            commands = []
         assert boundary is not None
         entry = boundary["history"][len(persisted):]
         assert boundary["history"].startswith(persisted)
         commands = []
-        if request:
-            response_log = next(r["message"] for r in segment if r["kind"] == "log" and r["message"].startswith("(RESPONSE:") and not r["message"].startswith("(RESPONSE: (RESULTS:"))
+        if request and not failure:
+            response_log = next(r["message"] for r in segment
+                if r["kind"] == "log" and r["message"].startswith("(RESPONSE:")
+                and "LLMResponse[" not in r["message"]
+                and not r["message"].startswith("(RESPONSE: (RESULTS:"))
             parsed = sexpr(response_log)[1]
             if parsed and parsed[0] == "Error":
-                response = f"(.parseFailure \"\" {lit(boundary['last_results'])})"
+                response = f"(.responseError {lit(str(parsed))} {lit(boundary['last_results'])})"
             else:
-                commands = [json.dumps(command, ensure_ascii=False) for command in parsed]
-                response = f"(.parsed {lit(commands)} \"\" {lit(boundary['last_results'])})"
+                commands = [[str(item[0]), str(item[1][0])] for item in parsed]
+                calls = "[" + ", ".join(
+                    f"(OmegaArchitecture.Call.mk {lit(ident)} {lit(name)})"
+                    for ident, name in commands) + "]"
+                response = f"(.calls {calls} \"\" {lit(boundary['last_results'])})"
         else:
-            response = '(.parsed [] "" "")'  # idle: deliberately unused by cycle
+            response = (f"(.providerFailure {lit(failure['error'])} {lit(boundary['last_results'])})"
+                        if failure else f"(.calls [] \"\" {lit(boundary['last_results'])})")
         expression = f"(OmegaArchitecture.cycle {args} {response} {lit(entry)})"
         if entry:
             history = history + [entry]
         expected = omega_state(boundary, history)
         checks += [f"example : {expression}.state = {expected} := by decide",
-                   f"example : OmegaArchitecture.dispatches {expression}.actions = {lit(commands)} := by decide"]
+                   f"example : (OmegaArchitecture.dispatches {expression}.actions).map OmegaArchitecture.Call.id = {lit([item[0] for item in commands])} := by decide"]
         if request:
-            stimulus = request["prompt"].split(":-:-:-:")[1]
             novel = event != "" and event != ("" if heartbeat["iteration"] == 1 else prior["previous"])
-            expected_stimulus = str(["HUMAN-MSG:", boundary["previous"]]) if novel else " DO NOT RE-SEND OR SPAM!" if cfg.get("spamShield", False) else ""
-            assert stimulus == expected_stimulus, (stimulus, expected_stimulus)
-            assert request["max_tokens"] == cfg.get("maxOutputToken", 6000)
-            assert request["reasoning"] == cfg.get("reasoningMode", "medium")
+            expected_stimulus = (boundary["previous"] if novel else
+                "[NO NEW USER INPUT. CONTINUE AUTONOMOUS WORK. DO NOT REPEAT THE PREVIOUS RESPONSE. ONLY USE send FOR GENUINELY NEW INFORMATION OR WHEN USER INPUT IS NEEDED.]")
+            assert message == expected_stimulus, (message, expected_stimulus)
+            assert wire["max_tokens"] == cfg.get("maxOutputToken", 6000)
+            assert wire["reasoning_effort"] == cfg.get("reasoningMode", "medium")
         prior, persisted = boundary, boundary["history"]
     return checks
 

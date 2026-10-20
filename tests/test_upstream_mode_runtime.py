@@ -230,7 +230,11 @@ class ModeRuntimeTests(unittest.TestCase):
                 native = next(r for r in Provider.requests if r.get('tools'))
                 self.assertEqual(native['tool_choice'], 'required')
                 self.assertTrue(any('Fixture' in m['content'] for m in native['messages']))
-                self.assertTrue(any(not r.get('tools') for r in Provider.requests))
+                self.assertTrue(all(r.get('tools') for r in Provider.requests))
+                omega = next(r for r in Provider.requests
+                             if any(t['function']['name'] == 'metta'
+                                    for t in r.get('tools', [])))
+                self.assertEqual(omega['tool_choice'], 'required')
             finally:
                 channel.close()
                 provider.shutdown()

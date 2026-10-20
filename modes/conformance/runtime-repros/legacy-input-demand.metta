@@ -37,7 +37,7 @@
 (= (compat-arguments)
    (progn (change-state! &compat-argument-count 1) (computed-argument)))
 !(add-skill (compat-name) "Legacy input demand" (compat-arguments))
-!(test (expression-count-item
-         (getSkills) "- Legacy input demand: compat-skill compat-arguments")
-       1)
+!(test (repr (collapse
+         (match &self (dynamic-skill compat-skill $info) $info)))
+       "((compat-skill \"Legacy input demand\" (compat-arguments)))")
 !(test (get-state &compat-argument-count) 0)

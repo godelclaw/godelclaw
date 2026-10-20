@@ -95,10 +95,16 @@ def _omega_call(call):
                       argument_object(call.arguments))
 
 
+def result_from_omega(message):
+    return ToolResultV1(str(message.callid), "returned", str(message.content or ""))
+
+
 def message_from_omega(message):
     result = {"role": str(message.role), "content": message.content}
     if hasattr(message, "callid"):
-        result["tool_call_id"] = str(message.callid)
+        returned = result_from_omega(message)
+        result["tool_call_id"] = returned.call_id
+        result["content"] = returned.content
     if hasattr(message, "calls"):
         result["tool_calls"] = [provider_call(_omega_call(call))
                                 for call in message.calls]

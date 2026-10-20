@@ -38,6 +38,11 @@ class ModeLauncherTests(unittest.TestCase):
             self.assertIn("semantic:query", memory)
             self.assertIn("NAL and PLN", ledger["reasoning"])
             self.assertIn("native semantic memory", ledger["memory"])
+            self.assertEqual(ledger["tool_protocol"]["carriers"],
+                             ["ToolSpecV1", "ToolCallV1", "ToolResultV1"])
+            self.assertEqual(len(ledger["tool_protocol"]["sha256"]), 64)
+            self.assertEqual(ledger["upstream"],
+                             "94d7b9a2e1ef6b5873aee764ca1ef16de8dcd943")
 
     @unittest.skipUnless(os.environ.get("MODE_TEST_CETTA_BIN"),
                          "set MODE_TEST_CETTA_BIN")

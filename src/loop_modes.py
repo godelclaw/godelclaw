@@ -23,10 +23,9 @@ MODES = {
         "selectable": True,
     },
     "omega": {
-        "description": "Omega neural-symbolic loop integration",
+        "description": "qualified current Omega native-tool loop with NAL/PLN",
         "autonomous": True,
-        "selectable": False,
-        "unavailable": "current upstream native-tool core and native-memory integration are not yet qualified together",
+        "selectable": True,
     },
 }
 

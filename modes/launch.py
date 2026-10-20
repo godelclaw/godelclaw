@@ -1,6 +1,7 @@
 """Launch pinned cognitive loops at a terminal or in a supervised service."""
 import argparse
 import fcntl
+import hashlib
 import importlib.util
 import json
 import os
@@ -57,8 +58,8 @@ def adapter_ledger(mode, durable_channel):
         "case": "current engine semantics; no duplicate-evaluation compatibility shim",
         "host_values": "explicit Boolean atoms and file predicates; deterministic text concatenation",
         "helper_module": "runtime alias omega_helper avoids host helper name collisions",
-        "loop": "pinned Omega loop with explicit host adapters; production selection withheld pending current-core qualification",
-        "provider": "existing configured command-text adapter",
+        "loop": "current pinned Omega native-tool loop with explicit host adapters",
+        "provider": "ToolCalls.module canonical calls over the existing configured transport",
         "memory": "agent native semantic memory on CeTTa; mode-private text fallback on standalone/PeTTa",
         "reasoning": "upstream NAL and PLN libraries loaded",
         "startup": "plugin, optional security-policy and upstream Chroma startup add-ons disabled; OS permissions retained",
@@ -160,17 +161,31 @@ def prepare_omega(runtime, repo, standalone=False, prompt_path=None):
                '(= (remember $text) (if (py-call (runtime_host.native_memory_flag)) (semantic:remember $text) (py-call (runtime_host.remember $text))))',
                '(= (query $text) (if (py-call (runtime_host.native_memory_flag)) (semantic:query $text 20) (py-call (runtime_host.query $text))))']
     (runtime / "memory.metta").write_text("\n".join(memory) + "\n")
+    removed_skills = ("getSkillRules", "read-file", "write-file", "append-file",
+                      "delete-file", "get-io-policy", "write-file-b64", "nop")
     skills = [form for form in forms((checkout / "src/skills.metta").read_text())
-              if not any(form.startswith("(= (" + name + " ") or form.startswith("(= (" + name + ")")
-                         for name in ("getStaticSkills", "read-file", "write-file", "append-file", "delete-file", "get-io-policy", "write-file-b64"))]
-    communication = ('"- Send to the terminal: send string" ' if standalone else
-        '"- Send to the private operator: send string" "- Send to an explicit channel from CHANNEL ROUTES: send-channel channel string" ')
-    skills += ['(= (getStaticSkills) (' + communication + '"- Execute shell: shell string" "- Read a file: read-file filename" "- Write a file: write-file filename string" "- Append a file: append-file filename string" "- Remember text: remember string" "- Search remembered text: query string" "- Recall history around a timestamp: episodes time_string" "- Pin text: pin string" "- Execute MeTTa: metta string" "- Finish this action without sending: nop" "- Version: version"))',
+              if not form.startswith("!(add-skill ") and
+              not any(form.startswith("(= (" + name + " ") or form.startswith("(= (" + name + ")")
+                      for name in removed_skills)]
+    skills += ['(= (getSkillRules) ("NAL and PLN are available through metta." "Use only the tools advertised in this request."))',
                '(= (read-file $p) (py-call (runtime_host.read_file $p)))',
                '(= (write-file $p $text) (py-call (runtime_host.write_file $p $text)))',
                '(= (append-file $p $text) (py-call (runtime_host.write_file $p $text True)))',
                '(= (send-channel $destination $message) (py-call (runtime_host.send $message $destination)))',
-               '(= (nop) NOP)']
+               '(= (nop) NOP)',
+               '!(add-skill remember "Remember text in long-term memory." (content))',
+               '!(add-skill query "Query long-term memory with a short phrase." (content))',
+               '!(add-skill episodes "Search history around a timestamp." (timestamp))',
+               '!(add-skill pin "Keep one short-lived working-memory item in the Omega episode." (message))',
+               '!(add-skill shell "Execute a shell command." (cmd))',
+               '!(add-skill read-file "Read a file." (filename))',
+               '!(add-skill write-file "Replace a file with content." (filename content))',
+               '!(add-skill append-file "Append content to a file." (filename content))',
+               '!(add-skill send "Send a message on the current channel." (content))',
+               '!(add-skill send-channel "Send to an explicit known channel." (channel content))',
+               '!(add-skill version "Return the Omega version." ())',
+               '!(add-skill nop "Finish this action without another effect." ())',
+               '!(add-skill metta "Evaluate one MeTTa expression." (sexpression))']
     (runtime / "skills.metta").write_text("\n".join(skills) + "\n")
     (runtime / "rag.py").write_text('def init_knowledge(provider): return "Host memory adapter active"\n')
     (runtime / "channels.py").write_text('import runtime_host\ndef commChannelStart(channel): return True\ndef commChannelReceive(): return runtime_host.receive()\ndef commChannelSend(message): return runtime_host.send(message)\n')
@@ -188,20 +203,29 @@ def prepare_omega(runtime, repo, standalone=False, prompt_path=None):
 !(import! &self (library Omega ./src/omega_helper.py))
 !(import! &self (library Omega lib_nal))
 !(import! &self (library Omega lib_pln))
-!(py-call (omega_helper.add_llm_command "nop"))
-!(py-call (omega_helper.add_llm_command "send-channel"))
+!(import! &self (library Omega ./src/utils.py))
+!(import! &self (library Omega ./src/providers.py))
 !(import! &self "{runtime}/host.metta")
 !(import! &self "{runtime}/utils.metta")
 !(import! &self "{runtime}/skills.metta")
 !(import! &self (library Omega ./src/channels.metta))
 !(import! &self "{runtime}/memory.metta")
+!(import! &self (library Omega ./src/providers.metta))
 !(import! &self (library Omega ./src/loop.metta))
-!(py-call (runtime_host.boot))
+!(py-call (runtime_host.install_omega))
 !(omega)
 ''')
-    (runtime / "adapter-ledger.json").write_text(json.dumps(
-        standalone_ledger("omega", prompt_path) if standalone else
-        adapter_ledger("omega", bool(os.environ.get("METTACLAW_TELEGRAM_SERVICE_SOCKET"))), indent=2))
+    ledger = (standalone_ledger("omega", prompt_path) if standalone else
+              adapter_ledger("omega", bool(os.environ.get("METTACLAW_TELEGRAM_SERVICE_SOCKET"))))
+    protocol = HERE / "protocol/ToolCalls.module"
+    ledger["tool_protocol"] = {
+        "schema": "modes/protocol/ToolCalls.module",
+        "sha256": hashlib.sha256(protocol.read_bytes()).hexdigest(),
+        "carriers": ["ToolSpecV1", "ToolCallV1", "ToolResultV1"],
+    }
+    ledger["upstream"] = json.loads(
+        (HERE / "omega/upstream-manifest.json").read_text())["commit"]
+    (runtime / "adapter-ledger.json").write_text(json.dumps(ledger, indent=2))
     return entry, [str(runtime), str(checkout), str(checkout / "src"), str(HERE)]
 
 
@@ -220,13 +244,6 @@ OMEGA_HOST = r'''
 (= (applySecurityPolicy) ())
 (= (initPlugins) ())
 (= (log $level $module $message) ())
-(= (llmProviderStart $provider) (py-call (runtime_host.start_provider $provider)))
-(= (llmProviderChat $prompt $max $reasoning)
-   (if (py-call (runtime_host.standalone_flag))
-     (py-call (runtime_host.provider $prompt $max $reasoning))
-     (let* (($context (py-call (runtime_host.provider_prompt $prompt)))
-          ($model (py-call (runtime_host.provider_model))))
-       (llm:command $model $max $reasoning $context))))
 (= (get_time) (py-call (time.time)))
 (= (get_time_as_string) (py-call (time.strftime "%Y-%m-%d %H:%M:%S")))
 (= (joinPath $parts) (py-call (runtime_host.join_path $parts)))

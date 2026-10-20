@@ -61,6 +61,44 @@ def provider(prompt, max_tokens, reasoning):
     return reply
 
 
+def install_provider():
+    """Register the current Omega tool-call provider against fixture replies."""
+    import providers
+    import tool_protocol
+
+    class FixtureProvider:
+        def start(self):
+            return None
+
+        def stop(self):
+            return None
+
+        def chat(self, request):
+            global _response_index
+            canonical = tool_protocol.request_from_omega(request)
+            record("request", request=canonical,
+                   tools=[item["function"]["name"] for item in canonical["tools"]],
+                   max_tokens=canonical["max_tokens"],
+                   reasoning=canonical["reasoning_effort"])
+            replies = SCRIPT["replies"]
+            if _response_index >= len(replies):
+                raise RuntimeError("fixture response script exhausted")
+            reply = replies[_response_index]
+            _response_index += 1
+            if isinstance(reply, dict) and "raise" in reply:
+                record("provider_error", error=reply["raise"])
+                raise RuntimeError(reply["raise"])
+            calls = [tool_protocol.provider_call(tool_protocol.ToolCallV1(
+                str(item.get("id", "")), str(item.get("name", "")),
+                item.get("arguments", {}))) for item in reply.get("calls", [])]
+            payload = {"choices": [{"message": {
+                "role": "assistant", "tool_calls": calls}}]}
+            return tool_protocol.response_to_omega(payload, providers)
+
+    providers.registerLLMProvider("Fixture", FixtureProvider())
+    return True
+
+
 def heartbeat(iteration, loops, previous, results):
     global _iteration
     _iteration = iteration
@@ -121,3 +159,7 @@ def string_replace(text, separators, replacement):
 
 def noop(*args):
     return True
+
+
+def snapshot_messages(messages):
+    return [repr(message) for message in messages]

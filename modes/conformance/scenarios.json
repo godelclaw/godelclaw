@@ -53,19 +53,19 @@
   "omega": [
     {
       "id": "human-roundtrip",
-      "contract": "Prompt-string provider call, parsed command dispatch and history"
+      "contract": "Structured provider call, native tool dispatch and history"
     },
     {
-      "id": "plain-and-mixed-text",
-      "contract": "Pinned helper command parsing and feedback for commentary"
+      "id": "empty-and-multiple-calls",
+      "contract": "An empty native call list becomes explicit feedback; a later ordered batch executes"
     },
     {
       "id": "invalid-and-unknown",
-      "contract": "Unknown command becomes explicit Error and HandleError records feedback"
+      "contract": "Unknown native tool and malformed MeTTa call become explicit per-call feedback"
     },
     {
       "id": "provider-failure",
-      "contract": "Uncaught provider error terminates the loop rather than introducing a new retry policy"
+      "contract": "Current upstream provider containment turns a provider exception into empty-call feedback"
     },
     {
       "id": "duplicate-input",
@@ -81,7 +81,7 @@
     },
     {
       "id": "ordered-batch",
-      "contract": "Observe actual collapse/superpose command-result ordering"
+      "contract": "Native call IDs and ordered results stay paired, including MeTTa evaluation as an ordinary tool"
     },
     {
       "id": "history-feedback",
@@ -101,9 +101,9 @@
     }
   ],
   "omega_inapplicable": {
-    "native-tool-call-ids": "src/providers.py: LLMProvider.chat returns str; src/loop.metta parses that text via helper.balance_parentheses.",
+    "command-text-parser": "Current src/providers.py carries native tool IDs and structured arguments; command-text parsing is no longer a provider boundary.",
     "iter-compaction-buckets": "src/memory.metta:getHistory reads maxHistory characters; no 20-message bucket algorithm.",
-    "finish-reason-retry": "Provider boundary returns only a string; no finish_reason field at this boundary."
+    "finish-reason-retry": "Current Omega response objects carry calls and errors but no finish_reason field."
   },
   "normalization": [
     "Fixture-root absolute paths, mapped to $ROOT",

@@ -54,7 +54,8 @@ def run(args, mode, name, scenario, evaluator, mutant=None):
            "LC_ALL": "C.UTF-8", "LANG": "C.UTF-8",
            "PYTHONNOUSERSITE": "1",
            "LD_LIBRARY_PATH": str(args.python.resolve().parent.parent / "lib"),
-           "PYTHONPATH": str(MODES / "iter") if mode == "iter" else str(root),
+           "PYTHONPATH": str(MODES / "iter") if mode == "iter" else
+                         os.pathsep.join((str(root), str(MODES))),
            f"{mode.upper()}_FIXTURE_ROOT": str(root),
            "ITER_PYTHON": str(args.python), "LLM_MODEL": "fixture-model",
            "BASE_URL": "http://offline.invalid", "AI_API_KEY": "offline"}
@@ -79,6 +80,11 @@ def run(args, mode, name, scenario, evaluator, mutant=None):
         raise AssertionError(f"{mode}/{name}/{evaluator}: {completed} boundaries, expected {expected}; {root}")
     if not any(row["kind"] == "request" for row in rows):
         raise AssertionError(f"{mode}/{name}/{evaluator}: no provider request")
+    rendered = repr(rows)
+    for marker in scenario.get("trace_contains", []):
+        if marker not in rendered:
+            raise AssertionError(
+                f"{mode}/{name}/{evaluator}: missing trace witness {marker!r}")
     return normalized(rows, root), root
 
 

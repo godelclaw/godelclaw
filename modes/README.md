@@ -1,13 +1,11 @@
 # Iter and Omega modes
 
-Iter is a selectable, differentially qualified cognitive loop in MeTTaClaw.
-Omega remains visible but unavailable in the production selector until its
-new native-tool core is qualified; its pinned core can still be run explicitly
-for development. Each configured instance keeps its own identity, credentials,
+Iter and Omega are selectable, differentially qualified cognitive loops in
+MeTTaClaw. Each configured instance keeps its own identity, credentials,
 process and mode state. A single instance can switch qualified loops without
 sharing its state with another instance.
 Provider access supports CeTTa's buffered `llm:v1:` library or the
-Python transport, preserving each core's command-text or structured-call protocol.
+Python transport, preserving each core's structured-call protocol.
 
 Start with the [project README](../README.md) for installation and the
 [service guide](../systemd/README.md) for supervised deployment. This guide
@@ -73,7 +71,7 @@ python3 -m unittest discover -s tests -p test_standalone_modes.py
 |---|---|
 | `/modes` | List cognitive loops and the active selection. |
 | `/mode iter` | Request the Iter loop. |
-| `/mode omega` | Report why Omega is unavailable until current-core qualification passes. |
+| `/mode omega` | Request the current qualified Omega loop. |
 | `/mode godelclaw` | Return to the framework loop. |
 | `/models`, `/model` | Inspect or change the LLM independently of the loop. |
 | `/engines`, `/engine` | Inspect or change the MeTTa evaluator. |
@@ -108,8 +106,8 @@ credential, allowed chats, operator IDs, inbox, outbox and model/mode selections
 The adapters preserve Telegram origin, sender, bot, chat, thread, reply and
 forwarding metadata. `telegram` addresses the configured private operator.
 Group/thread destinations are explicit named channels learned from service-accepted
-input. Iter uses upstream `send(channel, content)`; Omega adds
-`send-channel channel message` and its two-argument parser registration. The host
+input. Iter uses upstream `send(channel, content)`; Omega advertises `send` and
+`send-channel` as ordinary structured tools. The host
 supplies the current routes on every provider request. Reading a group cannot
 redirect a default send.
 
@@ -126,9 +124,10 @@ The real-service test `tests/test_telegram_metta_client.py` also checks controls
 no cognition running and a mode send whose delivery takes six seconds. Use its
 documented `CETTA_CHANNEL_ROOT`, `CETTA_SERVICE_BIN` and `CETTA_BIN` variables.
 
-**Recorded qualification (2026-09-30):** both standalone cores ran; the fixed
+**Recorded qualification (2026-10-20):** both standalone cores ran; the fixed
 twelve-scenario matrix per mode, six semantic mutants, relevant upstream tests,
-Lean models and 380 observed trace checks passed. Omega uses an
+the `ToolCalls.module` schema, Lean models and generated observed-trace checks
+passed. Omega uses an
 explicit loader adapter for its pinned PeTTa v1.0.4 utility semantics. Vendored
 files and existing upstream test files remain unchanged. The production loader
 uses current evaluator semantics instead of the old utility reevaluation shim.
@@ -137,9 +136,8 @@ uses current evaluator semantics instead of the old utility reevaluation shim.
 
 The existing `/modes` menu exposes `godelclaw`, `coding`, `iter` and `omega`.
 `/mode iter` selects the qualified Iter port; `iter` is no longer an alias.
-Omega is marked with an open-circle unavailable state and `/mode omega` refuses
-the switch until its current native-tool core passes qualification. Mode changes
-persist and request a supervised recycle.
+`/mode omega` selects the current pinned native-tool loop. Mode changes persist
+and request a supervised recycle.
 The UI distinguishes the requested selection from the currently running loop.
 `/mode godelclaw` returns to the framework loop.
 
@@ -185,9 +183,12 @@ IDs, argument objects, grouped tool results and token-limit stop reasons at
 this boundary. The native generic codec preserves forced tool choice; the
 imported-mode adapter explicitly selects `auto-for-thinking` when translating
 Iter's `enable_thinking` to Anthropic adaptive thinking. Iter's existing loop
-retains its retry rule for responses with no tools. Omega keeps its command-text
-layout, including provider cache boundaries. Model selection and credential
-configuration remain host adapters. The [project README](../README.md#services-and-execution)
+retains its retry rule for responses with no tools. Omega uses the same canonical
+`ToolSpecV1`/`ToolCallV1`/`ToolResultV1` theory at the provider boundary, while
+retaining its own loop, message history and dispatch policy. `metta` is one
+ordinary tool whose `sexpression` argument is evaluated by Omega's existing
+MeTTa implementation. Model selection and credential configuration remain host
+adapters. The [project README](../README.md#services-and-execution)
 describes the native and Python paths, their compatibility projections and limits.
 
 Each configured agent uses a separate durable CWP Telegram service, with its own
@@ -237,8 +238,8 @@ operator-controlled storage outside the published source tree.
 | Component | Exact source |
 |---|---|
 | Iter | `patham9/iter` `f4064d97849ecaccac7939315a3f1a68de15c3ef` |
-| Omega qualified baseline | `singnet/Omega` `ccb26015d7f07391bf58695e2abf541964e1e7ca` (escape-token injection fix included) |
-| Omega current-core target (observed 2026-10-20) | `singnet/Omega` `94d7b9a2e1ef6b5873aee764ca1ef16de8dcd943`; native tool-call rewrite, deliberately unavailable until requalified |
+| Omega | `singnet/Omega` `94d7b9a2e1ef6b5873aee764ca1ef16de8dcd943` |
+| Canonical call schema | `modes/protocol/ToolCalls.module`; exact digest recorded in each runtime adapter ledger |
 | Omega reference evaluator | PeTTa v1.0.4 `7037f4c2ad378c52fc328004fe216d5118b674f0` |
 | Current CeTTa runtime | [CETTA_REF](../CETTA_REF), published on [cetta-ours](https://github.com/godelclaw/CeTTa/tree/cetta-ours); the installer builds this engine and its services together |
 | Original CeTTa core qualification | `godelclaw/CeTTa` [`9a535530`](https://github.com/godelclaw/CeTTa/commit/9a5355309c57d94e99e5a279e088b69cbe4486d8), branch `qualify/upstream-core-tests-20260930`, with `src/library_proc.c` text-boundary support |
@@ -282,7 +283,7 @@ Mutants: Iter last-call-only `nop`, a 49-turn budget, and a nine-call cap;
 Omega duplicate input rearming, inclusive wake comparison, and no decrement.
 Each runs only the scenario that distinguishes it from the reference.
 
-Omega's 23 existing parsing tests run unchanged with their fixture supplied
+Omega's 6 current helper tests run unchanged with their fixture supplied
 directly; no pytest install is required. Existing `src_skills.metta` and
 `src_utils.metta` pass, with their complete output matching the pinned reference.
 The native runtime copy uses the recorded legacy-semantics adapter below.
@@ -330,12 +331,13 @@ and dispatch uses the loaded implementation snapshot, independently of schemas
 modified by transformations. Budget exhaustion continues the current task;
 `nop` anywhere in the batch starts a new burst after polling.
 
-Omega sends one assembled prompt string with token and reasoning limits and
-receives command text. Its pinned helper parses that text; there are no native
-tool-call IDs or finish reasons at this interface. Provider errors escape the
-loop. Context is assembled before receiving input; the signed loop counter
-decrements even while idle; wake comparison is strict. These protocols must
-remain distinct in the future native client.
+Omega sends structured messages, schemas, token and reasoning limits and
+receives ID-bearing calls. The canonical module theory keeps provider JSON,
+Omega's Python objects and MeTTa dispatch as explicit projections rather than
+one format silently becoming the others. Provider exceptions are contained as
+an empty response by current upstream. Context is assembled before receiving
+input; the signed loop counter decrements even while idle; wake comparison is
+strict.
 
 ## Divergence and add-on ledger
 
@@ -347,17 +349,17 @@ remain distinct in the future native client.
 | Iter worker launch | Existing `lib/proc` with the same five-second deadline, inherited environment and process group. A thin Python launcher redirects all streams to DEVNULL before exec, matching upstream worker streams. Embedded Python's `sys.executable` is replaced with the explicit host interpreter. |
 | `lib/proc` text | Local minimal patch accepts Python/Prolog text atoms in PeTTa mode; HE retains grounded-string validation. `proc_text_boundary.metta` and original golden fixture pass. |
 | Iter provider/channel/time | Scripted SDK-shaped replies, fake receive events and a fixed clock. The reference loop is observed at its existing loop boundary; test termination occurs after the requested iteration count. |
-| Omega main launcher | Deliberately not loaded: its missing `src/context.metta` import and network/embedding/NAL/PLN add-ons are outside isolated core qualification. No replacement upstream module is fabricated. |
+| Omega main launcher | The tiny upstream `run.metta`/`lib_omega.metta` aggregate is not used because it imports an absent `src/context.metta`; the unchanged current loop and its required modules are loaded explicitly. |
 | Omega optional startup | Embedding initialization, security-policy application and plugin initialization are fixture no-ops. Real services/providers/plugins are not qualified here; each excluded source file is in the manifest. |
-| Omega channels/provider | Fake channel plus scripted string provider at the original interface. Unknown commands, errors, send suppression and history remain upstream control. TCP mock implementations are retained as source but not started. |
+| Omega channels/provider | Fake qualification channels and canonical ID-bearing calls use the original current interfaces. Unknown tools, per-call errors, send suppression and history remain upstream control. TCP mocks are retained as source but not started. |
 | Omega clock | Generated utility module substitutes only clock/sleep operations with controlled host bindings. Integer fixture timestamps model source comparisons; real-time/IO behavior remains a host assumption. |
 | Omega v1.0.4 input annotations | Two declarations in generated runtime copies translate old held `Expression` inputs to current `Atom`, and old evaluated/unguarded `Atom` inputs to `%Undefined%`. Result types remain `Bool`. Source authority: PeTTa `7037f4c`, `src/translator.pl:349-369`. The reference keeps its original declarations. |
 | Omega v1.0.4 Empty case | Only `empty-to-bool` receives a generated compatibility body: enumerate matching answers, then reevaluate its predicate under negation, stopping at the first answer. This preserves the old evaluator's observable second evaluation, including a predicate that becomes empty. Source authority: PeTTa `7037f4c`, `src/translator.pl:163-172`; `runtime-repros/legacy-input-demand.metta` checks effects and answer order against that oracle. Every translated form is recorded in `legacy-semantics-adapter.json`; no global evaluator policy changes. |
 | Omega `joinPath` | Thin direct binding to unchanged `helper.joinPath`, replacing the source cross-`progn` variable binding at this host filesystem boundary. Both evaluators use this binding in core fixtures. |
 | Omega prompt/history reads | CeTTa-only filesystem bindings preserve provider prompt fallback and byte-tail history reads. The reference executes the original memory functions. This avoids the native computed-library-path incompatibility. |
 | Omega `string-replace` | CeTTa-only codec binding reproduces `split_string` separator-set semantics plus joining, including empty input. The oracle executes the original Prolog calls; `runtime-repros/empty-string-replace.metta` isolates the native failure. |
-| Omega configuration bool | The declared `spamShield` field converts its text spelling at the host configuration boundary; it does not change loop policy. |
-| Omega restart/checkpoint | History persists; control resets. Test termination is a fixture-only exit at the upstream sleep boundary; provider failure exits before that boundary. |
+| Omega call codecs | `ToolCalls.module` names the three canonical carriers. `tool_protocol.py` projects Omega objects and provider JSON; the adapter ledger records the schema digest. |
+| Omega restart/checkpoint | History persists; control resets. Test termination is a fixture-only exit at the upstream sleep boundary; provider failures follow current upstream containment. |
 | Unadapted legacy probes | `runtime-repros/typed-predicate-test.metta` and `empty-string-replace.metta` retain the native incompatibility reproductions. The loader adapters preserve the required pinned behavior; this work does not claim that CeTTa generally implements the old dialect without them. |
 | Other upstream material | Complete file-by-file manifest marks deployment, provider/channel, plugin, theory and ancillary material outside this isolated core. No agent add-ons are merged into either pinned source. |
 
@@ -371,14 +373,13 @@ snapshot dispatch, checkpoint assignments and final pacing branches.
 
 `OmegaArchitecture.lean` models signed counters, input novelty, strict wake,
 provider/dispatch order and history control. Selected properties prove duplicate
-input does not rearm, deadline equality does not wake, and provider failure
-halts before dispatch/history. Source: `src/loop.metta` initialization and
-iteration body; `src/memory.metta` history conditions. The observed dispatch
-action means selection of a parsed command; it does not assert that an Error
-command executes a tool. Context, parsing, results and formatted history entries
-are explicit opaque host observations.
+input does not rearm, deadline equality does not wake, provider failure is
+contained without inventing a call, and dispatch preserves provider call IDs and
+order. Source: `src/loop.metta`, `src/providers.py` and `src/memory.metta`.
+Tool bodies, results and formatted history entries remain explicit opaque host
+observations.
 
-The generated replay checks 380 observed control/action projections from both
+The generated replay checks observed control/action projections from both
 evaluators, including restarts. New proofs contain no `sorry` or new declared
 axioms; standard Lean logical dependencies are printed by the model files.
 This proves properties of the executable models and tests correspondence at

@@ -2,11 +2,16 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import types
 import unittest
 
 from modes import tool_protocol as protocol
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+import provider_protocol  # noqa: E402
 
 
 class Parameter:
@@ -64,6 +69,8 @@ class ToolProtocolTests(unittest.TestCase):
         self.assertEqual(call.atom(),
             ("ToolCallV1", "c1", "metta", '{"sexpression":"(+ 1 2)"}'))
         self.assertEqual(protocol.call_from_provider(protocol.provider_call(call)), call)
+        result = protocol.ToolResultV1("c1", "returned", "3")
+        self.assertEqual(result.atom(), ("ToolResultV1", "c1", "returned", "3"))
 
     def test_omega_request_preserves_specs_calls_and_results(self):
         request = types.SimpleNamespace(
@@ -85,6 +92,25 @@ class ToolProtocolTests(unittest.TestCase):
         self.assertEqual((response.calls[0].id, response.calls[0].name,
                           response.calls[0].arguments),
                          ("c9", "metta", {"sexpression": "(foo)"}))
+
+    def test_canonical_omega_history_projects_to_anthropic_ids(self):
+        request = types.SimpleNamespace(
+            tools=[Tool()], max_tokens=6000, reasoning_mode="high",
+            messages=[Message("system", "prompt"),
+                      ToolMessage([OmegaCall()]), ToolResponse("c1", "3")])
+        body = provider_protocol.anthropic_body(
+            protocol.request_from_omega(request), "claude-fixture")
+        assistant = next(item for item in body["messages"]
+                         if item["role"] == "assistant")
+        returned = next(item for item in body["messages"]
+                        if item["role"] == "user")
+        use = next(block for block in assistant["content"]
+                   if block["type"] == "tool_use")
+        result = next(block for block in returned["content"]
+                      if block["type"] == "tool_result")
+        self.assertEqual(use["id"], "c1")
+        self.assertEqual(result["tool_use_id"], "c1")
+        self.assertEqual(body["tools"][0]["name"], "metta")
 
     def test_non_object_arguments_are_an_explicit_call_error(self):
         payload = {"choices": [{"message": {"tool_calls": [{

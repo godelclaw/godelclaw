@@ -39,6 +39,12 @@ def main():
         assert len(summary["mutants"]) == 6 and all(row[2] for row in summary["mutants"])
     run("upstream-tests", [sys.executable, str(HERE / "upstream_tests.py"), *common,
                             "--output", str(args.output / "upstream-tests")])
+    protocol_env = os.environ.copy()
+    protocol_env["CETTA_MODULE_BIN"] = str(args.cetta)
+    run("tool-protocol-module", [str(args.python), "-m", "unittest", "discover",
+                                  "-s", str(HERE.parents[1] / "tests"),
+                                  "-p", "test_tool_protocol.py"], env=protocol_env,
+        cwd=HERE.parents[1])
     lean_root = args.formal_root / "lean/pettaclaw"
     build = lean_root / ".build/upstream-cores"
     build.mkdir(parents=True, exist_ok=True)

@@ -1,6 +1,6 @@
 {
   "repository": "https://github.com/singnet/Omega",
-  "commit": "ccb26015d7f07391bf58695e2abf541964e1e7ca",
+  "commit": "94d7b9a2e1ef6b5873aee764ca1ef16de8dcd943",
   "files": [
     {
       "path": ".dockerignore",
@@ -327,6 +327,12 @@
       "reason": "Outside isolated core qualification; retained by the pinned upstream reference."
     },
     {
+      "path": "Autotests/mock/test_policy_resolve_mock.py",
+      "classification": "conformance",
+      "vendored": false,
+      "reason": "Outside isolated core qualification; retained by the pinned upstream reference."
+    },
+    {
       "path": "Autotests/mock/test_prompt_missing_files_mock.py",
       "classification": "conformance",
       "vendored": false,
@@ -394,6 +400,12 @@
     },
     {
       "path": "Autotests/mock/test_skill_query_mock.py",
+      "classification": "conformance",
+      "vendored": false,
+      "reason": "Outside isolated core qualification; retained by the pinned upstream reference."
+    },
+    {
+      "path": "Autotests/mock/test_tool_result_for_every_call_mock.py",
       "classification": "conformance",
       "vendored": false,
       "reason": "Outside isolated core qualification; retained by the pinned upstream reference."
@@ -1029,6 +1041,12 @@
       "reason": "Outside isolated core qualification; retained by the pinned upstream reference."
     },
     {
+      "path": "Autotests/unit/test_config.py",
+      "classification": "conformance",
+      "vendored": false,
+      "reason": "Outside isolated core qualification; retained by the pinned upstream reference."
+    },
+    {
       "path": "Autotests/unit/test_fileio_verified_deletes.py",
       "classification": "conformance",
       "vendored": false,
@@ -1044,7 +1062,7 @@
       "path": "Autotests/unit/test_helper_parsing.py",
       "classification": "conformance",
       "vendored": true,
-      "sha256": "bb962ed3d778ac02ed4743156b79d1d00e25c7426f71d0174d29454d449f41f0"
+      "sha256": "8effb46b04f29ee41aec788333202c1df2e1d514a83ca1836f409d9144b2a796"
     },
     {
       "path": "Autotests/unit/test_llm_budget.py",
@@ -1158,7 +1176,7 @@
       "path": "config/config.yaml",
       "classification": "standalone-configuration",
       "vendored": true,
-      "sha256": "fa54b62b8683ef5583fa461a700207788758543bfdc74f5650fa8803cb3922f3"
+      "sha256": "3448d2e749f19928f37e51cc25965e48395998c81bdd4e59e0f5932362bf61c0"
     },
     {
       "path": "config/logging.conf",
@@ -1216,6 +1234,12 @@
     },
     {
       "path": "docs/reference-failure-modes.md",
+      "classification": "deployment-or-optional-addon",
+      "vendored": false,
+      "reason": "Outside isolated core qualification; retained by the pinned upstream reference."
+    },
+    {
+      "path": "docs/reference-gpu.md",
       "classification": "deployment-or-optional-addon",
       "vendored": false,
       "reason": "Outside isolated core qualification; retained by the pinned upstream reference."
@@ -1374,7 +1398,7 @@
       "path": "lib_omega.metta",
       "classification": "core",
       "vendored": true,
-      "sha256": "eecf316366d8a435931d49ab781025e3350be13aa03f45eb48fe060ba8e00eac"
+      "sha256": "e7bf92182f973fb05cbc498e8f87f201763dd1587d96c40138ef17eb86ca113b"
     },
     {
       "path": "lib_pln.metta",
@@ -1485,6 +1509,12 @@
       "reason": "Outside isolated core qualification; retained by the pinned upstream reference."
     },
     {
+      "path": "profile/policy-gpu.yaml",
+      "classification": "deployment-or-optional-addon",
+      "vendored": false,
+      "reason": "Outside isolated core qualification; retained by the pinned upstream reference."
+    },
+    {
       "path": "profile/policy.metta",
       "classification": "deployment-or-optional-addon",
       "vendored": false,
@@ -1518,25 +1548,25 @@
       "path": "providers/lib_llm_ext.py",
       "classification": "provider/channel-addon",
       "vendored": true,
-      "sha256": "c9f8873631b25bd1539de195404cbfac873ed3c0240f2776b9755456d85814c4"
+      "sha256": "db29c53f66220eb11e7f342d3cac992e1d703ca7a251636345eb10984bc7c548"
     },
     {
       "path": "providers/mockprovider.py",
       "classification": "provider/channel-addon",
       "vendored": true,
-      "sha256": "53dbcde77aafa156f2cfda057a7bd16eb089be7bf8c1138ed67dbd93ec502f6d"
+      "sha256": "3c41ce9740d7451ed3fbce24fccc5ca1422cb7eadfefab804457acb23e0fbe72"
     },
     {
       "path": "providers/openai.py",
       "classification": "standalone-provider",
       "vendored": true,
-      "sha256": "7a0cfdc8d9229e57adb3baac274fa18cf12c1abf8a57c43ae4b1606b0fc83201"
+      "sha256": "6d5e61ac148f71d80ccf5d06b37c33f9bffa025bd7956cd1d61e4fe53616f5bc"
     },
     {
       "path": "providers/openaiapi.py",
       "classification": "standalone-provider",
       "vendored": true,
-      "sha256": "26dc8fcc5465486bd81d242580280be9630ec725b5c8bf82b59fa9eef6689fc2"
+      "sha256": "bcb9ad183225da6187dc0bc0ded8f0f7d911e72c57ab83aed2002f6607554513"
     },
     {
       "path": "providers/openrouter.py",
@@ -1614,7 +1644,7 @@
       "path": "src/config.py",
       "classification": "core-host",
       "vendored": true,
-      "sha256": "c057f6962b713ee554495597eff117f70e6a6f353a26f21c84178d701f14ca14"
+      "sha256": "de1a46cbfb59c66bb2e6e8b25ca2643d1ea7d78f8f64c07897c5a48c72001d1e"
     },
     {
       "path": "src/embedding_models.py",
@@ -1632,7 +1662,7 @@
       "path": "src/helper.py",
       "classification": "core-host",
       "vendored": true,
-      "sha256": "3701a324d8321fa352b68d26bd83e6258784084d5c60398903e83670c5ad4acb"
+      "sha256": "f4de5d8dc305f76a431c6e053de1b07cae169570afef67ba4443c690bb6ab1d8"
     },
     {
       "path": "src/log.metta",
@@ -1650,13 +1680,13 @@
       "path": "src/loop.metta",
       "classification": "core",
       "vendored": true,
-      "sha256": "21f7db7ef994b566451468a7e6341b475ab73f3237fb9e65706407cafc4ad2b7"
+      "sha256": "4245a23036c434bde33946169fbe71bff0b9cef955476f104f0399c3ce6655d6"
     },
     {
       "path": "src/memory.metta",
       "classification": "core",
       "vendored": true,
-      "sha256": "b446f967cf0263f37250cfa5d1752a642c290a40933ab68be8379607f975ef14"
+      "sha256": "ebb6cbf1b555381924d2d717e0897a39ab3ad8a5585a2a495014f80b6973e9da"
     },
     {
       "path": "src/memory_export.py",
@@ -1668,7 +1698,7 @@
       "path": "src/plugin.metta",
       "classification": "core",
       "vendored": true,
-      "sha256": "7ddb9d48bc8c7f051fa49100a67da39c0c49c0622fea1faa434cab20e21cdb4f"
+      "sha256": "543c58d49e50e3f565650728f702c155066d474cca409f8a37d7c87992384d78"
     },
     {
       "path": "src/plugin.py",
@@ -1680,25 +1710,25 @@
       "path": "src/providers.metta",
       "classification": "core",
       "vendored": true,
-      "sha256": "872f84f39504d69db0b25b9ce3457984d7bdffdf7b9665d6656362150c622ee2"
+      "sha256": "b8df2938b155a9c8ba0c5a66785a3eb1e430bb7d91afee6a1b52c6b79a095e3e"
     },
     {
       "path": "src/providers.py",
       "classification": "core-host",
       "vendored": true,
-      "sha256": "aee57c01815be06f0e41b568c8f01f61abc6832e701cab8125fe22281cf62c15"
+      "sha256": "ad3dd0945dd76fc930187ed76f2edad5f98a7c982318035cedd9ce16d437a943"
     },
     {
       "path": "src/rag.py",
       "classification": "addon",
       "vendored": true,
-      "sha256": "00239852021a1600e1df31f42961eb727392c7c8c4d509d37666c933cde83e28"
+      "sha256": "98637173f146d8e7e18980bf60d7bd773221d42717610a30c02aaa2ca57c6305"
     },
     {
       "path": "src/skills.metta",
       "classification": "core",
       "vendored": true,
-      "sha256": "b948b307866616b95950b3bc0cbeb27936d5f6da226dfe935377e47306ea36e1"
+      "sha256": "16992039dc280f26f5e6348f214fd3fe80c884c10fb4d5d7686ad2c7fcdb0055"
     },
     {
       "path": "src/skills.pl",
@@ -1710,7 +1740,13 @@
       "path": "src/utils.metta",
       "classification": "core",
       "vendored": true,
-      "sha256": "9cfa04d6e87228cf533fc677d69099671ba7cf2e2c62b6b4185449b05380f31f"
+      "sha256": "af1dcfc057eff7a1f43d93f77d93667a19a0319486a043e05d59df9485413226"
+    },
+    {
+      "path": "src/utils.py",
+      "classification": "core-host",
+      "vendored": true,
+      "sha256": "32eb58e9f34fb19b06a5f4ae0940aa0efbdfd550b5cc4d8345e01d8598a3e1d4"
     },
     {
       "path": "src/websearch.py",
@@ -1782,7 +1818,7 @@
       "path": "tests/src_config.metta",
       "classification": "conformance",
       "vendored": true,
-      "sha256": "35d3fa4042c393461310871dc1117c3874cb76102af43c4162dd0f845db57d7b"
+      "sha256": "aa1e0cdd75cf77ac13fadacfb0dd6a761f563a821d6ca1224a9bad8871259090"
     },
     {
       "path": "tests/src_plugin.metta",
@@ -1794,13 +1830,13 @@
       "path": "tests/src_skills.metta",
       "classification": "conformance",
       "vendored": true,
-      "sha256": "257ab651efdf5aaea0a4c2428e10f662281d26876a72e315fd47a09ac0b91215"
+      "sha256": "6ac8b7c404d5dbc51a48baee313c5d47f16d9c26b7a9cc49dca3112bdec164fd"
     },
     {
       "path": "tests/src_utils.metta",
       "classification": "conformance",
       "vendored": true,
-      "sha256": "e04ba4c441d3a01ca956020dae12e0780051e75e607db3cef1f4359315d1c508"
+      "sha256": "f4a947ac109797ec06bf2fd423f77bcc8e860bda323c4a4cc51fb1bef8389aa7"
     },
     {
       "path": "tests/test.sh",
@@ -1842,10 +1878,22 @@
       "path": "tests/test_omegaclaw_launcher.py",
       "classification": "conformance",
       "vendored": true,
-      "sha256": "d89e555f762dbba3c921829ce55dea1cdf7d44835a298a01fe94e3ef5f68318b"
+      "sha256": "78c584d4c442ec0d73416a66aebad74ffe1013f8ebd20035d751fbc135c5275a"
+    },
+    {
+      "path": "tests/test_policy_gpu_sync.py",
+      "classification": "conformance",
+      "vendored": false,
+      "reason": "Outside isolated core qualification; retained by the pinned upstream reference."
     },
     {
       "path": "tests/test_proxy_auth_secret.py",
+      "classification": "conformance",
+      "vendored": false,
+      "reason": "Outside isolated core qualification; retained by the pinned upstream reference."
+    },
+    {
+      "path": "tests/test_rag_embeddings.py",
       "classification": "conformance",
       "vendored": false,
       "reason": "Outside isolated core qualification; retained by the pinned upstream reference."
@@ -1855,6 +1903,12 @@
       "classification": "conformance",
       "vendored": true,
       "sha256": "13470d3c4df1d6aad06e49d18127279110a66ab8e3b476cfd32f251539e6d141"
+    },
+    {
+      "path": "tests/test_src_providers.py",
+      "classification": "conformance",
+      "vendored": false,
+      "reason": "Outside isolated core qualification; retained by the pinned upstream reference."
     },
     {
       "path": "tests/test_telegram_multichat.py",

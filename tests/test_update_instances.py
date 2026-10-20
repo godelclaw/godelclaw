@@ -20,6 +20,7 @@ class ReleasePermissionsTest(unittest.TestCase):
         for required in (
             "modes/launch.py", "modes/runtime_host.py",
             "modes/iter/iter_host.py", "modes/conformance/verify.py",
+            "modes/tool_protocol.py", "modes/protocol/ToolCalls.module",
         ):
             self.assertIn(required, selected)
         for mode in ("iter", "omega"):
