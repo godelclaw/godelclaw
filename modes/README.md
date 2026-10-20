@@ -245,7 +245,7 @@ operator-controlled storage outside the published source tree.
 | Omega reference evaluator | PeTTa v1.0.4 `7037f4c2ad378c52fc328004fe216d5118b674f0` |
 | Current CeTTa runtime | [CETTA_REF](../CETTA_REF), published on [cetta-ours](https://github.com/godelclaw/CeTTa/tree/cetta-ours); the installer builds this engine and its services together |
 | Original CeTTa core qualification | `godelclaw/CeTTa` [`9a535530`](https://github.com/godelclaw/CeTTa/commit/9a5355309c57d94e99e5a279e088b69cbe4486d8), branch `qualify/upstream-core-tests-20260930`, with `src/library_proc.c` text-boundary support |
-| Lean models | `godelclaw/MeTTapedia` [`a4dafeb37`](https://github.com/godelclaw/MeTTapedia/commit/a4dafeb37243a9f8546fede9561321a2348077a5), `lean/pettaclaw/`, branch `pettaclaw/upstream-cores-20260930` |
+| Lean models | `godelclaw/MeTTapedia` [`214423a38f`](https://github.com/godelclaw/MeTTapedia/commit/214423a38f062b746907e2652883f0887a2bc39e), `lean/pettaclaw/` on `main`; upstream `main` is merged there while `goertzel/proofs` remains separate |
 | Offline core implementation | `modes/iter/`, `modes/omega/` and `modes/conformance/` in this repository |
 | Production mode integration | Runtime `main` |
 

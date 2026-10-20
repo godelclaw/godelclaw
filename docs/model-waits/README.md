@@ -80,9 +80,10 @@ python -m unittest discover -s tests -p 'test_native_lifetime.py'
 CETTA_BIN=/path/to/http-python-cetta python -m unittest discover -s tests -p 'test_native_llm*.py'
 ```
 
-The repair contracts have a separate kernel conformance gate. Obtain the
-MeTTapedia `feature/agent-lifetime-workflow-20261010` branch, install its Lean
-toolchain, and use a CeTTa build with Python and HTTP support:
+The repair contracts have a separate kernel conformance gate. Use
+`godelclaw/MeTTapedia` `main`, whose agent models live in `lean/pettaclaw`,
+install the repository's Lean toolchain, and use a CeTTa build with Python and
+HTTP support:
 
 ```sh
 python scripts/check_repair_contracts.py \

@@ -31,7 +31,7 @@ def _lean_dir():
     configured = os.environ.get("METTACLAW_LEAN_MODEL_DIR")
     if configured:
         return pathlib.Path(configured)
-    return pathlib.Path.home() / "repos" / "MeTTapedia" / "lean" / "pettaclaw"
+    return ROOT.parent / "MeTTapedia" / "lean" / "pettaclaw"
 
 
 LEAN = _lean_dir()
