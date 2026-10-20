@@ -130,7 +130,13 @@ class RuntimeProbeTest(unittest.TestCase):
                     env = dict(os.environ)
                     env.update({
                         "METTACLAW_SKIP_INITIALIZE": "1",
+                        "METTACLAW_SKIP_CONFIG": "1",
                         "METTACLAW_ENGINE": engine,
+                        "PETTA_ROOT": os.fspath(pathlib.Path.home() /
+                                                "repos" / "PeTTa"),
+                        "PETTA_PY_ENV": os.fspath(pathlib.Path.home() /
+                                                  "miniforge3" / "envs" /
+                                                  "petta"),
                         "METTACLAW_ENGINE_STATE_PATH": os.path.join(
                             probe_state, "engine"),
                         "METTACLAW_LOOP_MODE_PATH": os.path.join(
@@ -191,7 +197,12 @@ class RuntimeProbeTest(unittest.TestCase):
             env.update({
                 "CETTA_BIN": os.fspath(cetta),
                 "METTACLAW_SKIP_INITIALIZE": "1",
+                "METTACLAW_SKIP_CONFIG": "1",
                 "METTACLAW_ENGINE": "cetta",
+                "PETTA_ROOT": os.fspath(pathlib.Path.home() /
+                                        "repos" / "PeTTa"),
+                "PETTA_PY_ENV": os.fspath(pathlib.Path.home() /
+                                          "miniforge3" / "envs" / "petta"),
                 "METTACLAW_ENGINE_STATE_PATH": os.path.join(
                     directory, "engine"),
                 "METTACLAW_CHROMA_DIR": os.path.join(directory, "chroma"),

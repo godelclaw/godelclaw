@@ -17,4 +17,8 @@
    (case $parsed
      (((Error $a $b) ())
       ((no_commands_parsed) ())
+      ;; sread returns one top-level empty expression for the wire text `()`.
+      ;; That is an empty command batch, not a batch containing one empty
+      ;; command.
+      ((()) ())
       ($valid $valid))))

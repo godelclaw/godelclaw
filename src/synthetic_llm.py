@@ -105,7 +105,10 @@ def _empty_action(reason):
     _consecutive_empty = _consecutive_empty + 1 if transient else 0
     base = _float_env("SYNTHETIC_EMPTY_BACKOFF", 15.0, 0.0)
     cap = _float_env("SYNTHETIC_EMPTY_BACKOFF_CAP", 300.0, 0.0)
-    wait = min(cap, base * (2 ** min(_consecutive_empty - 1, 20))) if transient and base else 0.0
+    # A local or otherwise non-retriable failure still needs pacing.  Zero
+    # delay turns one deterministic fault into an unbounded model/ledger loop.
+    wait = (min(cap, base * (2 ** min(_consecutive_empty - 1, 20)))
+            if transient and base else base)
     retry = getattr(reason, "retry_after", None)
     retry = retry if retry is not None else retry_after_seconds(getattr(reason, "headers", None))
     if retry is not None:

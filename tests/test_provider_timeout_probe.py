@@ -45,6 +45,10 @@ class ProviderTimeoutProbeTest(unittest.TestCase):
         env = dict(os.environ)
         env.update({
             "METTACLAW_SKIP_INITIALIZE": "1",
+            "METTACLAW_SKIP_CONFIG": "1",
+            "PETTA_ROOT": os.fspath(pathlib.Path.home() / "repos" / "PeTTa"),
+            "PETTA_PY_ENV": os.fspath(pathlib.Path.home() / "miniforge3" /
+                                      "envs" / "petta"),
             "SYNTHETIC_BASE_URL": (
                 f"http://127.0.0.1:{server.server_address[1]}/openai/v1"),
             "SYNTHETIC_API_KEY": "local-test-key",

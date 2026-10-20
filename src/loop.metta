@@ -267,10 +267,12 @@
           ;; The explicit quote keeps grounded commands inert until the
           ;; deterministic dispatcher receives them.
           ($commandResults
-            (addition-effect-broker
-              $iteration
-              (policy-command-batch-limit (loop-active-policy $periphery))
-              (quote $sexpr)))
+            (if (== $providerSucceeded 1)
+                (addition-effect-broker
+                  $iteration
+                  (policy-command-batch-limit (loop-active-policy $periphery))
+                  (quote $sexpr))
+                ()))
           ($_ (change-state! &error
                 (append (get-state &error)
                         (addition-command-errors $iteration))))

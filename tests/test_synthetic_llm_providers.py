@@ -245,6 +245,17 @@ class ProviderRoutingTest(unittest.TestCase):
         health = synthetic_llm.cognitive_health.snapshot()
         self.assertEqual(health["last_failure_type"], "httperror")
 
+    def test_local_provider_failure_has_a_nonzero_default_pace(self):
+        synthetic_llm._consecutive_empty = 0
+        with mock.patch.dict(os.environ, {
+                "SYNTHETIC_EMPTY_BACKOFF": "7",
+                "SYNTHETIC_EMPTY_BACKOFF_CAP": "30"}), \
+             mock.patch.object(synthetic_llm.cognitive_health,
+                               "turn_failed") as failed:
+            self.assertEqual(synthetic_llm._empty_action(
+                RuntimeError("local adapter fault")), "()")
+        self.assertEqual(failed.call_args.kwargs["retry_after"], 7)
+
     def test_set_model_claude_requires_key(self):
         self.enable_flag()
         msg = synthetic_llm.set_model("claude-fable-5")

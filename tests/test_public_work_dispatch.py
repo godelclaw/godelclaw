@@ -95,10 +95,18 @@ class Fixture:
                 "%s!(println! (run-command-batch-once %d 5 (quote ((shell %s)))))\n"
                 % (self.probe_prefix, TURN, json.dumps(shell)), encoding="utf-8")
             (d / "stimulus-frontier").write_text("1 %d 0 0\n" % TURN, "ascii")
+            lifecycle = d / "lifecycle.json"
+            lifecycle.write_text('{"schema":1,"state":"running"}\n',
+                                 encoding="utf-8")
             env = harness()._cetta_env()
             env.update({
                 "METTACLAW_SKIP_INITIALIZE": "1",
+                "METTACLAW_SKIP_CONFIG": "1",
                 "METTACLAW_OBSERVED_STRATEGY": "0",
+                "METTACLAW_LIFECYCLE_PATH": str(lifecycle),
+                "PETTA_ROOT": str(pathlib.Path.home() / "repos" / "PeTTa"),
+                "PETTA_PY_ENV": str(pathlib.Path.home() / "miniforge3" /
+                                     "envs" / "petta"),
                 "METTACLAW_ENGINE_STATE_PATH": str(d / "engine-selection"),
                 "METTACLAW_EFFECT_RECEIPT_PATH": str(d / "receipts.jsonl"),
                 "METTACLAW_STIMULUS_FRONTIER_PATH": str(d / "stimulus-frontier"),

@@ -70,21 +70,24 @@ if [ "${METTACLAW_SKIP_INITIALIZE:-0}" != "1" ] && [ -x "$ROOT/initialize.sh" ];
 fi
 
 # Configuration rendering is lightweight and independent of initialization.
-# A skipped initializer must not leave a stale generated environment at boot.
-if [ -f "$ROOT/config/local.toml" ] && [ -f "$ROOT/scripts/config_ctl.py" ]; then
-    env -u PYTHONHOME -u PYTHONPATH "${PYTHON:-python3}" "$ROOT/scripts/config_ctl.py" render >/dev/null
-fi
+# Isolated tests can explicitly keep their supplied environment and avoid
+# reading a developer checkout's private instance config or secrets.
+if [ "${METTACLAW_SKIP_CONFIG:-0}" != "1" ]; then
+    if [ -f "$ROOT/config/local.toml" ] && [ -f "$ROOT/scripts/config_ctl.py" ]; then
+        env -u PYTHONHOME -u PYTHONPATH "${PYTHON:-python3}" "$ROOT/scripts/config_ctl.py" render >/dev/null
+    fi
 
-if [ -f "$ROOT/.env" ]; then
-    set -a
-    . "$ROOT/.env"
-    set +a
-fi
+    if [ -f "$ROOT/.env" ]; then
+        set -a
+        . "$ROOT/.env"
+        set +a
+    fi
 
-if [ -f "$ROOT/config/secrets.env" ]; then
-    set -a
-    . "$ROOT/config/secrets.env"
-    set +a
+    if [ -f "$ROOT/config/secrets.env" ]; then
+        set -a
+        . "$ROOT/config/secrets.env"
+        set +a
+    fi
 fi
 
 TEST_STATE_DIR=""

@@ -7,12 +7,29 @@ import shlex
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 class CommandDispatchEngineTest(unittest.TestCase):
+    def setUp(self):
+        state = tempfile.TemporaryDirectory()
+        self.addCleanup(state.cleanup)
+        lifecycle = pathlib.Path(state.name) / "lifecycle.json"
+        lifecycle.write_text('{"schema":1,"state":"running"}\n',
+                             encoding="utf-8")
+        environment = mock.patch.dict(os.environ, {
+            "METTACLAW_LIFECYCLE_PATH": os.fspath(lifecycle),
+            "METTACLAW_SKIP_CONFIG": "1",
+            "PETTA_ROOT": os.fspath(pathlib.Path.home() / "repos" / "PeTTa"),
+            "PETTA_PY_ENV": os.fspath(pathlib.Path.home() / "miniforge3" /
+                                      "envs" / "petta"),
+        })
+        environment.start()
+        self.addCleanup(environment.stop)
+
     def _petta_root(self):
         return pathlib.Path(os.environ.get(
             "PETTA_ROOT", pathlib.Path.home() / "repos" / "PeTTa"))
@@ -93,6 +110,8 @@ class CommandDispatchEngineTest(unittest.TestCase):
                 "($commands (model-response-commands "
                 "(model-response-read "
                 "(model-response-envelope protocol-failure)))) "
+                "($emptyCommands (model-response-commands "
+                "(model-response-read \"()\"))) "
                 "($before (coordinate loops 12 "
                 "(coordinate sleep-interval 1 coordinates-empty))) "
                 "($failed (applyProtocolPacing 1 60 $before no-commands)) "
@@ -101,6 +120,7 @@ class CommandDispatchEngineTest(unittest.TestCase):
                 "($_ (assertLive (== $prompt legacy) False)) "
                 "($_ (assertLive $observations \"\")) "
                 "($_ (assertLive $commands ())) "
+                "($_ (assertLive $emptyCommands ())) "
                 "($_ (assertLive (loop-budget $failed) 12)) "
                 "($_ (assertLive (loop-sleep $failed) 60)) "
                 "($_ (assertLive (loop-budget $answered) 12)) "

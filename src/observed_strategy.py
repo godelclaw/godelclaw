@@ -348,6 +348,11 @@ class Ledger:
                        boundary_digest=digest(boundary), router=router)
             return snap
 
+    def decision_pending(self, serial):
+        """Whether this exact captured turn may still be decided."""
+        with self.transaction() as db:
+            return self.get(db, "pending") == serial
+
     def decide(self, serial, response, now, guard="", retry_after=1):
         with self.transaction() as db:
             if self.get(db, "pending") != serial:

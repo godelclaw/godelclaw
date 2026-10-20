@@ -302,18 +302,27 @@ def broker_begin(turn, commands, limit=1):
         if _sample is None or int(turn) != int(_sample["serial"]) + 1:
             _broker_feedback = {"reason": "no-current-capture"}
             return 0
+        store = ledger()
+        if not store.decision_pending(_sample["serial"]):
+            _ticket = None
+            _broker_feedback = {"reason": "capture-already-settled"}
+            return 0
         _turn = str(turn)
         import task_context
-        task_context.proposal(ledger(), _sample["serial"], _focus, commands, "not run: batch interrupted")
+        task_context.proposal(store, _sample["serial"], _focus, commands, "not run: batch interrupted")
         _position = 0
         if not commands:
-            ledger().decide(_sample["serial"], {"kind": "text"}, time.time())
+            store.decide(_sample["serial"], {"kind": "text"}, time.time())
             _ticket = None
             return 1
-        _ticket = ledger().decide(_sample["serial"], {
+        _ticket = store.decide(_sample["serial"], {
             "kind": "command", "tool": "batch", "request": _focus,
             "owner": _sample["owner"], "command": {"commands": commands, "limit": len(commands)},
         }, time.time())
+        if _ticket == "ignored":
+            _ticket = None
+            _broker_feedback = {"reason": "capture-already-settled"}
+            return 0
         _broker_feedback = {"reason": "recorded"}
         return 1
 

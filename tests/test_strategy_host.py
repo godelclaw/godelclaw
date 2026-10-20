@@ -221,6 +221,19 @@ class StrategyHostTest(unittest.TestCase):
         host.begin(3, "continuation-tick", "")
         self.assertIn("durable witness", host.prepare("retry after failure"))
 
+    def test_failed_provider_cannot_admit_an_empty_or_stale_batch(self):
+        self.capture()
+        host.provider_failed()
+        self.assertEqual(host.broker_begin(1, [[]]), 0)
+        self.assertEqual(json.loads(host.broker_feedback())["reason"],
+                         "capture-already-settled")
+        store = host.ledger()
+        with store.transaction() as db:
+            self.assertEqual(db.execute(
+                "SELECT count(*) FROM task_proposals").fetchone()[0], 0)
+            self.assertEqual(db.execute(
+                "SELECT count(*) FROM actions").fetchone()[0], 0)
+
     def test_host_fault_reenters_same_iteration_with_fresh_broker_identity(self):
         self.capture()
         first_turn = host.broker_turn(1)
