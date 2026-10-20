@@ -8,6 +8,9 @@ eval([throws], _) :- throw(test_error).
 eval([stop], ok) :- assertz(stopped).
 'py-call'(['skills_help.command_error', _], "").
 'py-call'(['strategy_host.stopped'], 1) :- stopped.
+% src/skills.pl:43-44 reserves each command when METTACLAW_OBSERVED_STRATEGY=1;
+% stub it (no trace event) so results are identical for unset, 0 and 1.
+'py-call'(['strategy_host.reserve_command', _, _], 1).
 'py-call'(['helper.normalize_string', V], V).
 'py-call'(['effect_receipts.record_command', T, D, C, R], 1) :-
     assertz(trace_event(record)), assertz(effect_receipt(T,D,C,R)).
