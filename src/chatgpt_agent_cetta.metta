@@ -197,7 +197,8 @@
      ; Numeric false flags preserve Python truth values across the historical
      ; PeTTa foreign bridge, whose ungrounded False spelling is a Python string.
      (chatgpt:attributes $plan
-       (("kind" "command") ("ready" "true") ("claimed" 0) ("sent" 0) ("stream" 0)
+       (("kind" "command") ("encoding" "default")
+        ("ready" "true") ("claimed" 0) ("sent" 0) ("stream" 0)
         ("request_profile" "chatgpt-plan") ("epoch" $ticket) ("correlation" $ticket)
         ("provider" "openai") ("protocol" "responses") ("base" $base) ("headers" $headers)
         ("request" $wire-request) ("timeout" $hard) ("soft" $soft) ("connect" $connect)
