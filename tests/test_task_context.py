@@ -53,7 +53,8 @@ class TaskContextTests(unittest.TestCase):
     def test_answering_an_interruption_resumes_the_original_task_after_restart(self):
         self.call([["read-file", "contract.lean"]], ["retain this finding"])
         self.store.accept("question", "Quick question about the current task", kind="message")
-        task_context.begin(self.store, "question", "operator-event", "guide", "research")
+        task_context.begin(self.store, "question", "operator-event", "guide",
+                           "research", parent="guide")
         self.call([["help", "read-file"]], ["help text"], "question")
         self.store.processed("question")
         self.assertTrue(self.store.disposition("question", "addressed", "answered"))
@@ -62,6 +63,17 @@ class TaskContextTests(unittest.TestCase):
         view = task_context.projection(fresh, "guide")
         self.assertEqual([r["id"] for r in view["requests"]], ["guide", "question"])
         self.assertIn("retain this finding", encoded(view))
+
+    def test_new_operator_message_does_not_inherit_an_unrelated_active_root(self):
+        self.call([["read-file", "old"]], ["old task evidence"])
+        self.store.accept("new", "A separate question", kind="message")
+        task_context.begin(self.store, "new", "operator-event", "guide",
+                           "research")
+        view = task_context.projection(self.store, "new")
+        self.assertEqual(view["root"], "new")
+        self.assertEqual([request["id"] for request in view["requests"]],
+                         ["new"])
+        self.assertNotIn("old task evidence", encoded(view))
 
     def test_correction_during_wait_survives_until_correlated_resumption(self):
         self.call([["read-file","contract"]],["earlier finding"])

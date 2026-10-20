@@ -49,8 +49,10 @@ def begin(store, request, trigger, previous=None, chat="", parent=None):
         if parent is None and previous != request and previous != "autonomous" and not str(previous).startswith("goal:"):
             prior = db.execute("SELECT status FROM requests WHERE id=?", (previous,)).fetchone()
             # A correction received while a task awaits a reply still belongs
-            # to that task. Waiting prevents scheduling, not context retention.
-            if prior and (store.selectable(db, previous) or prior[0] == "waiting-user"):
+            # to that task. An ordinary new message is a new frame; otherwise
+            # one forgotten active request turns the whole future into a
+            # single unbounded task family.
+            if prior and prior[0] == "waiting-user":
                 parent = previous
         if parent == request:
             parent = None
