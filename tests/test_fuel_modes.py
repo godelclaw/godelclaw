@@ -49,6 +49,14 @@ class FuelModesTest(unittest.TestCase):
         self.assertEqual(held, 10 * FULL)
         self.assertEqual(fuel_modes.ceiling(FULL), 0)
 
+    def test_unlimited_is_ended_by_policy_not_turn_count(self):
+        self.select("unlimited")
+        held = fuel_modes.refuel(0, FULL)
+        for _ in range(10_000):
+            held = fuel_modes.spend(held)
+        self.assertEqual(held, FULL)
+        self.assertEqual(fuel_modes.ceiling(FULL), 0)
+
     def test_carry_accumulates_up_to_its_ceiling(self):
         self.select("carry")
         held = 0
@@ -92,6 +100,12 @@ class FuelModesTest(unittest.TestCase):
                 self.assertGreaterEqual(
                     fuel_modes.refuel(held, FULL), FULL,
                     "%s must never grant less than the offered burst" % name)
+
+    def test_bounded_disciplines_spend_one_turn(self):
+        for name in ("saturate", "accumulate", "carry", "decay"):
+            self.select(name)
+            self.assertEqual(fuel_modes.spend(7), 6)
+            self.assertEqual(fuel_modes.spend(0), 0)
 
     def test_selection_persists_and_rejects_nonsense(self):
         self.select("carry")

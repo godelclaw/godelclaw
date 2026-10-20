@@ -118,7 +118,7 @@ class ConstantCorrespondenceTest(unittest.TestCase):
         model = LEAN / "FuelPolicy.lean"
         if not model.is_file():
             self.skipTest("FuelPolicy.lean is not checked out")
-        cases = set(re.findall(r"^\s*\|\s*(saturate|accumulate|carry|decay)$",
+        cases = set(re.findall(r"^\s*\|\s*(saturate|accumulate|carry|decay|unlimited)$",
                                model.read_text(encoding="utf-8"), re.M))
         self.assertEqual(cases, set(fuel_modes.FUELS))
 

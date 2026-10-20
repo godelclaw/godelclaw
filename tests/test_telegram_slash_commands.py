@@ -126,7 +126,7 @@ class SlashCommandTest(unittest.TestCase):
         kb = payload["reply_markup"]["inline_keyboard"]
         self.assertEqual([r[0]["callback_data"] for r in kb],
                          ["fuel:saturate", "fuel:accumulate",
-                          "fuel:carry", "fuel:decay"])
+                          "fuel:carry", "fuel:decay", "fuel:unlimited"])
 
     def test_fuel_callback_is_operator_only(self):
         cq = {"id": "91", "data": "fuel:accumulate", "from": {"id": 222000222},

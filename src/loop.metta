@@ -330,7 +330,8 @@
             (if (== $iteration 1)
                 $selectedPeriphery
                 (coordinate-set loops
-                  (max 0 (- (loop-budget $selectedPeriphery) 1))
+                  (py-call (fuel_modes.spend
+                             (loop-budget $selectedPeriphery)))
                   $selectedPeriphery)))
           ($message (eval (receive)))
           ($hasActivity

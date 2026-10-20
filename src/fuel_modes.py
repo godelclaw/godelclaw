@@ -13,6 +13,7 @@ budget currently held and the grant the policy offers:
   accumulate  loops + grant                  — unbounded; restraint compounds
   carry       min(CARRY * grant, loops+grant) — accumulate under a ceiling
   decay       loops * 3 // 4 + grant         — recency-weighted, same ceiling
+  unlimited   budget is not spent            — `nop`, rest or stop ends work
 
 `carry` and `decay` share the ceiling CARRY * grant and differ only in how
 they approach it: carry accumulates at full rate and stops dead, decay
@@ -50,6 +51,9 @@ FUELS = {
     "decay": {
         "description": "three quarters of what is held carries over, then the "
                        "grant; same ceiling as carry, approached gradually",
+    },
+    "unlimited": {
+        "description": "turns do not spend the burst; nop, rest or operator stop ends it",
     },
 }
 
@@ -114,6 +118,8 @@ def refuel(loops, grant):
     except (TypeError, ValueError):
         offered = 0
     name = current_fuel()
+    if name == "unlimited":
+        return max(held, offered)
     if name == "accumulate":
         return held + offered
     if name == "carry":
@@ -130,11 +136,20 @@ def ceiling(grant):
     except (TypeError, ValueError):
         offered = 0
     name = current_fuel()
-    if name == "accumulate":
+    if name in ("accumulate", "unlimited"):
         return 0
     if name in ("carry", "decay"):
         return CARRY * offered
     return offered
+
+
+def spend(loops):
+    """Spend one model turn, except in the explicit agent-ended discipline."""
+    try:
+        held = max(0, int(loops))
+    except (TypeError, ValueError):
+        held = 0
+    return held if current_fuel() == "unlimited" else max(0, held - 1)
 
 
 def fuel_view():
