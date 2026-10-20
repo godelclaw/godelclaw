@@ -63,6 +63,10 @@ copy_if_missing() {
     local src="$1"
     local dst="$2"
     if [ "$force" -eq 1 ]; then
+        # --force restores a template; an edited copy is kept beside it first.
+        if [ -e "$dst" ] && ! cmp -s "$src" "$dst"; then
+            cp -p "$dst" "$dst.before-force-$(date +%Y%m%d-%H%M%S)"
+        fi
         cp "$src" "$dst"
     else
         seed_if_missing "$src" "$dst"

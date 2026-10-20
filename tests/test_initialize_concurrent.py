@@ -52,6 +52,13 @@ class ConcurrentInitialize(unittest.TestCase):
             leftovers = [p.name for p in list(root.glob(".env.tmp*")) +
                          list((root / "config").glob("channel.metta.tmp*"))]
             self.assertEqual(leftovers, [])
+            # --force restores the template but keeps the edited soul beside it.
+            forced = subprocess.run(["bash", str(root / "initialize.sh"), "--force"], env=env,
+                                    capture_output=True, text=True, timeout=120)
+            self.assertEqual(forced.returncode, 0, forced.stderr)
+            self.assertEqual((root / "memory" / "soul.md").read_text(), "prompt\n")
+            kept = list((root / "memory").glob("soul.md.before-force-*"))
+            self.assertEqual([k.read_text() for k in kept], ["custom prompt\n"])
 
 
 if __name__ == "__main__":

@@ -30,6 +30,18 @@ def expand(value, root):
         os.environ.update(old)
 
 
+def merged(defaults, local):
+    """local.toml holds only what an instance changes. Every other value comes
+    from default.toml, so a default changed in git reaches every instance."""
+    result = dict(defaults)
+    for key, value in local.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = {**result[key], **value}
+        else:
+            result[key] = value
+    return result
+
+
 def shell_quote(value):
     return "'" + str(value).replace("'", "'\"'\"'") + "'"
 
@@ -55,6 +67,10 @@ def main():
     config_path, root = sys.argv[1], os.path.abspath(sys.argv[2])
     with open(config_path, "rb") as f:
         config = tomllib.load(f)
+    defaults_path = os.path.join(root, "config", "default.toml")
+    if os.path.isfile(defaults_path) and os.path.abspath(config_path) != os.path.abspath(defaults_path):
+        with open(defaults_path, "rb") as f:
+            config = merged(tomllib.load(f), config)
 
     paths = config.get("paths", {})
     agent = config.get("agent", {})
@@ -81,6 +97,11 @@ def main():
     if type(native_stream) is not bool:
         print("agent.llm_stream must be boolean", file=sys.stderr)
         return 2
+    for name in ("recycle_bytes",):
+        value = agent.get(name)
+        if value is not None and (type(value) is not int or value < 0):
+            print("agent.%s must be a nonnegative integer" % name, file=sys.stderr)
+            return 2
     ack_delay = agent.get("input_ack_seconds", 15)
     if (isinstance(ack_delay, bool) or not isinstance(ack_delay, (int, float))
             or not math.isfinite(ack_delay) or ack_delay < 0):
@@ -121,6 +142,19 @@ def main():
     emit("METTACLAW_OBSERVED_STRATEGY", agent.get("observed_strategy"))
     emit("METTACLAW_SHELL_TIMEOUT_SECONDS", agent.get("shell_timeout_seconds", 120))
     emit("METTACLAW_REASONING_EFFORT", agent.get("reasoning_effort", "default"))
+    emit("METTACLAW_LLM_TRANSPORT", agent.get("llm_transport"))
+    emit("METTACLAW_LLM_POLICY", agent.get("llm_policy"))
+    # Unset, the agent restarts at two thirds of its memory limit; 0 never.
+    emit("METTACLAW_RECYCLE_BYTES", agent.get("recycle_bytes"))
+
+    mail = config.get("mail", {})
+    emit("METTACLAW_MAIL_NAME", mail.get("name"))
+    emit("METTACLAW_MAIL_SOCKET", expand(mail.get("socket"), root))
+    emit("METTACLAW_MAIL_SPACE", mail.get("space"))
+    gateway = config.get("gateway", {})
+    emit("METTACLAW_GATEWAY_AGENT", gateway.get("agent"))
+    emit("METTACLAW_GATEWAY_SOCKET", expand(gateway.get("socket"), root))
+    emit("METTACLAW_GATEWAY_BOOT_PROBE", gateway.get("boot_probe"))
 
     emit("METTACLAW_CHANNEL", channel.get("kind"))
 
@@ -132,6 +166,7 @@ def main():
     # "metta": channels/telegram.metta is the client of that service; absent
     # or "python": channels/telegram.py is.
     emit("METTACLAW_TELEGRAM_CLIENT", telegram.get("client"))
+    emit("METTACLAW_TELEGRAM_POLL_LIMIT", telegram.get("poll_limit"))
     # Telegram identities and authorization sets intentionally do not pass
     # through generated .env. Keep them in mode-600 config/secrets.env, which
     # run.sh sources after .env and which is excluded from Git.

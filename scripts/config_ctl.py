@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -71,11 +72,53 @@ def render(root, text):
         os.unlink(temporary)
 
 
+def exports(environment):
+    """The KEY -> value pairs of a rendered .env."""
+    pairs = {}
+    for line in environment.splitlines():
+        if line.startswith("export "):
+            for word in shlex.split(line[len("export "):]):
+                key, _, value = word.partition("=")
+                pairs[key] = value
+    return pairs
+
+
+def warn_conflicts(environment):
+    """Say when the caller's environment (a systemd drop-in, a shell) sets a
+    key the configuration also sets: the configuration silently wins."""
+    for key, value in exports(environment).items():
+        inherited = os.environ.get(key)
+        if inherited is not None and inherited != value:
+            secret = any(word in key.upper() for word in ("KEY", "TOKEN", "SECRET", "PASSWORD"))
+            shown = (lambda text: "(hidden)") if secret else repr
+            print("config: %s=%s from the caller's environment is replaced by %s from config/local.toml "
+                  "or config/default.toml; set it there instead" % (key, shown(inherited), shown(value)),
+                  file=sys.stderr)
+
+
+def show(root, current):
+    """Every configured value with the file it comes from."""
+    defaults = tomllib.loads((root / "config/default.toml").read_text())
+    rows = []
+    for section in sorted(set(defaults) | set(current)):
+        given, base = current.get(section, {}), defaults.get(section, {})
+        if not isinstance(given, dict) or not isinstance(base, dict):
+            continue
+        for key in sorted(set(base) | set(given)):
+            origin = "local.toml" if key in given else "default.toml"
+            if key in given and key not in base:
+                origin = "local.toml (no default)"
+            if any(word in key.lower() for word in ("secret", "password", "api_key")):
+                continue
+            rows.append({"setting": section + "." + key, "value": given.get(key, base.get(key)), "origin": origin})
+    return rows
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("operation", choices=("get", "set", "check", "render"))
+    parser.add_argument("operation", choices=("get", "set", "check", "render", "show"))
     parser.add_argument("setting", nargs="?")
     parser.add_argument("value", nargs="?")
     args = parser.parse_args()
@@ -87,10 +130,16 @@ def main():
         path = root / "config/local.toml"
         text = path.read_text()
         current = tomllib.loads(text)
+        if args.operation == "show":
+            for row in show(root, current):
+                print(json.dumps(row, ensure_ascii=False))
+            return 0
         if args.operation in ("check", "render"):
             environment = render(root, text)
-            if args.operation == "render" and not args.dry_run:
-                atomic_write(root / ".env", environment)
+            if args.operation == "render":
+                warn_conflicts(environment)
+                if not args.dry_run:
+                    atomic_write(root / ".env", environment)
             print(json.dumps({"valid": True}))
             return 0
         if not args.setting or not re.fullmatch(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+", args.setting):

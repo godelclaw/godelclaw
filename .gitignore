@@ -35,7 +35,7 @@ repos/
 # The repo carries code; documentation is README.md only.
 *.md
 !README.md
-!/identity/default-soul.md
+!/identity/*.md
 selfmodel/
 to-*.md
 *.sed

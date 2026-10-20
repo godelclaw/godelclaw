@@ -198,7 +198,7 @@
           ($_ (coding:record-all $dir $messages ())))
      $messages))
 (= (coding:compact $dir $messages $effort)
-   (let* (($ask (coding:append-list $messages ((coding:message "user" (fs:read-text "identity/coding-compact.txt")))))
+   (let* (($ask (coding:append-list $messages ((coding:message "user" (fs:read-text "identity/coding-compact.md")))))
           ($reply (coding:ask $dir (coding:request $ask $effort ()) 0)))
      (case $reply
        (((CallFailed $why) $messages)
@@ -231,7 +231,7 @@
                     (coding:append-list $current (cons-atom $message $results)) (+ $steps 1) $next))))))))))
 
 (= (coding:begin $dir $task $workdir)
-   (let* (($instructions (fs:read-text "identity/coding-instructions.txt"))
+   (let* (($instructions (fs:read-text "identity/coding-instructions.md"))
           ($system (coding:message "system" (str:join "" ($instructions "\nWorkspace: " $workdir)))))
      (coding:record-all $dir ($system (coding:message "user" $task)) ())))
 (= (coding:start $dir)

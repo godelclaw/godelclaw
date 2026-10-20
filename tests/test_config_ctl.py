@@ -27,9 +27,33 @@ class ConfigEditingTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def run_cli(self, *args):
+    def run_cli(self, *args, env=None):
         return subprocess.run([sys.executable, str(self.root / "scripts/config_ctl.py"), *args],
-                              capture_output=True, text=True)
+                              capture_output=True, text=True, env=env)
+
+    def test_defaults_reach_an_instance_unless_it_overrides_them(self):
+        defaults = self.root / "config/default.toml"
+        defaults.write_text(defaults.read_text().replace("shell_timeout_seconds = 120", "shell_timeout_seconds = 77"))
+        self.assertEqual(self.run_cli("render").returncode, 0)
+        self.assertIn("METTACLAW_SHELL_TIMEOUT_SECONDS='77'", (self.root / ".env").read_text())
+        self.assertEqual(self.run_cli("set", "agent.shell_timeout_seconds", "99").returncode, 0)
+        self.assertIn("METTACLAW_SHELL_TIMEOUT_SECONDS='99'", (self.root / ".env").read_text())
+
+    def test_show_names_the_file_each_value_comes_from(self):
+        rows = {row["setting"]: row for row in map(json.loads, self.run_cli("show").stdout.splitlines())}
+        self.assertEqual((rows["agent.synthetic_model"]["value"], rows["agent.synthetic_model"]["origin"]),
+                         ("fixture-model", "local.toml"))
+        self.assertEqual((rows["agent.shell_timeout_seconds"]["value"], rows["agent.shell_timeout_seconds"]["origin"]),
+                         (120, "default.toml"))
+
+    def test_render_says_when_the_callers_environment_is_replaced(self):
+        import os
+        replaced = self.run_cli("render", env={**os.environ, "METTACLAW_REASONING_EFFORT": "high"})
+        self.assertEqual(replaced.returncode, 0, replaced.stderr)
+        self.assertIn("METTACLAW_REASONING_EFFORT='high' from the caller's environment is replaced by 'default'",
+                      replaced.stderr)
+        agreeing = self.run_cli("render", env={**os.environ, "METTACLAW_REASONING_EFFORT": "default"})
+        self.assertNotIn("METTACLAW_REASONING_EFFORT", agreeing.stderr)
 
     def test_setting_is_validated_then_survives_render_with_other_values_preserved(self):
         result = self.run_cli("set", "agent.llm_timeout_seconds", "300")
