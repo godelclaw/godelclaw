@@ -37,6 +37,8 @@ class RuntimeHealthTest(unittest.TestCase):
             report = runtime_health.activity_report(now=1000)
         self.assertIn("activity: retrying", report)
         self.assertIn("wake=human-or-100s", report)
+        self.assertIn("last-success=never", report)
+        self.assertIn("failure-streak=0", report)
         self.assertNotIn("activity: working", report)
 
     def test_external_control_and_upstream_checkpoint_replace_legacy_client_health(self):

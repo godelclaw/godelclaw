@@ -79,15 +79,18 @@ def expect_turn(mode="unknown", budget=None, now=None):
     try:
         with _lock:
             value = _read()
-            if not float(value.get("obligation_since", 0) or 0):
+            is_new = not float(value.get("obligation_since", 0) or 0)
+            if is_new:
                 legacy = float(value.get("pending_since", 0) or 0)
                 value["obligation_since"] = legacy or now
             value.update({
                 "schema": 2,
                 "last_expected_at": now,
-                "expected_count": int(value.get("expected_count", 0)) + 1,
                 "mode": _label(mode),
             })
+            if is_new:
+                value["expected_count"] = int(
+                    value.get("expected_count", 0)) + 1
             if budget is not None:
                 value["budget_at_start"] = budget
             _write(value)
@@ -163,16 +166,20 @@ def turn_completed(response_bytes=0, now=None):
     try:
         with _lock:
             value = _read()
+            admitted = bool(float(value.get("in_flight_since", 0) or 0))
             value.update({
                 "schema": 2,
                 "pending_since": 0,
                 "in_flight_since": 0,
                 "last_completed_at": now,
                 "retry_at": 0,
-                "completed_count": int(value.get("completed_count", 0)) + 1,
                 "last_response_bytes": size,
                 "last_outcome": "completed",
+                "failure_streak": 0,
             })
+            field = ("completed_count" if admitted
+                     else "completion_without_admission_count")
+            value[field] = int(value.get(field, 0)) + 1
             _write(value)
         return 1
     except Exception:
@@ -188,6 +195,9 @@ def turn_failed(kind="provider-error", now=None, retry_after=0):
     try:
         with _lock:
             value = _read()
+            admitted = bool(float(value.get("in_flight_since", 0) or 0))
+            failure = _label(kind, "provider-error")
+            previous = value.get("last_failure_type")
             obligation = float(value.get("obligation_since", 0) or 0)
             if not obligation:
                 obligation = float(value.get("pending_since", 0) or 0) or now
@@ -198,10 +208,13 @@ def turn_failed(kind="provider-error", now=None, retry_after=0):
                 "obligation_since": obligation,
                 "last_failed_at": now,
                 "retry_at": now + max(0, float(retry_after)),
-                "failed_count": int(value.get("failed_count", 0)) + 1,
-                "last_failure_type": _label(kind, "provider-error"),
+                "last_failure_type": failure,
+                "failure_streak": (int(value.get("failure_streak", 0)) + 1
+                                   if previous == failure else 1),
                 "last_outcome": "failed",
             })
+            field = "failed_count" if admitted else "local_failure_count"
+            value[field] = int(value.get(field, 0)) + 1
             _write(value)
         return 1
     except Exception:
@@ -222,6 +235,39 @@ def retry_wait_seconds(now=None):
         return 0
 
 
+def wait_for_retry(seconds=None):
+    """Honor provider backoff without letting retained input cancel it.
+
+    Telegram control remains in its independent process.  The cognitive loop
+    checks the operator latch and recycle request once per second, but ordinary
+    queued input cannot turn its own failed attempt into a busy retry loop.
+    """
+    try:
+        delay = (retry_wait_seconds() if seconds is None
+                 else max(0.0, float(seconds)))
+    except (TypeError, ValueError, OverflowError):
+        delay = 0.0
+    deadline = time.monotonic() + delay
+    next_progress = 0.0
+    while True:
+        import lifecycle
+        if not lifecycle.cognition_enabled():
+            return "operator stopped during provider retry"
+        import helper
+        if helper.recycle_requested():
+            return "recycle requested"
+        now = time.monotonic()
+        remaining = deadline - now
+        if remaining <= 0:
+            return "rested %ds provider retry" % math.ceil(delay)
+        if now >= next_progress:
+            import process_supervision
+            window = min(10.0, remaining)
+            process_supervision.progress("provider-backoff", window)
+            next_progress = now + max(1.0, window)
+        time.sleep(min(1.0, remaining))
+
+
 def turn_succeeded():
     """Numeric refinement witness for the serial PeTTa bridge.
 
@@ -239,12 +285,15 @@ def turn_settled(now=None):
     try:
         with _lock:
             value = _read()
+            outstanding = bool(float(value.get("obligation_since", 0) or 0))
             value.update({
                 "schema": 2,
                 "obligation_since": 0,
                 "last_settled_at": now,
-                "settled_count": int(value.get("settled_count", 0)) + 1,
             })
+            if outstanding:
+                value["settled_count"] = int(
+                    value.get("settled_count", 0)) + 1
             _write(value)
         return 1
     except Exception:

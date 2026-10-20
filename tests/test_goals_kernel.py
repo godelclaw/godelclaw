@@ -128,6 +128,31 @@ class GoalKernelTests(unittest.TestCase):
         self.assertAlmostEqual(sti, 0.9 * 0.95, places=3)
         self.assertAlmostEqual(lti, 0.5 + 0.05 * (0.855 - 0.5), places=3)
 
+    def test_same_human_wake_decays_and_consolidates_once(self):
+        path = self.stack([FREE])
+        first = goals.human_wake("batch-17", path)
+        after_first = goals.goals_view(path)
+        repeated = goals.human_wake("batch-17", path)
+        self.assertEqual(first["fresh"], 1)
+        self.assertEqual(first["maintenance_applied"], 1)
+        self.assertEqual(repeated["fresh"], 0)
+        self.assertEqual(repeated["maintenance_applied"], 0)
+        self.assertEqual(goals.goals_view(path), after_first)
+        different = goals.human_wake("batch-18", path)
+        self.assertEqual(different["fresh"], 1)
+        self.assertEqual(different["maintenance_applied"], 1)
+        self.assertNotEqual(goals.goals_view(path), after_first)
+
+    def test_goal_bookkeeping_failure_cannot_block_fresh_input(self):
+        path = self.stack([FREE, "(goal broken)"])
+        goals._runtime_human_wake = None
+        first = goals.human_wake("malformed-batch", path)
+        repeated = goals.human_wake("malformed-batch", path)
+        self.assertEqual(first["fresh"], 1)
+        self.assertEqual(first["maintenance_applied"], 0)
+        self.assertIn("goal-kernel error", first["message"])
+        self.assertEqual(repeated["fresh"], 0)
+
     def test_unknown_lines_preserved_and_writes_validated(self):
         path = self.stack([";; precious comment", FREE])
         goals.kernel_pass(path)

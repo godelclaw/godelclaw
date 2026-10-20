@@ -42,6 +42,52 @@ class NativeLifetimeTest(unittest.TestCase):
         with llm_policy.transaction() as db:
             self.assertEqual(db.execute("SELECT status FROM requests WHERE id=?", (plan.correlation,)).fetchone()[0], "unknown")
 
+    def test_failed_submitted_request_cannot_keep_live_process_lease(self):
+        plan = self.plan()
+        self.assertTrue(native_lifetime.claim(plan))
+        native_lifetime.submitted(plan, 7)
+        self.assertTrue(llm_policy.fail(plan.correlation, sent=True))
+        with native_lifetime.transaction() as db:
+            db.execute("UPDATE native_calls SET updated=0 WHERE id=?",
+                       (plan.correlation,))
+        native_lifetime.recover()
+        row = native_lifetime.status()[0]
+        self.assertEqual(row["state"], "uncertain")
+        self.assertEqual(row["reason"],
+                         "terminal-request-remote-outcome-unknown")
+        with llm_policy.transaction() as db:
+            request = db.execute(
+                "SELECT status,finish FROM requests WHERE id=?",
+                (plan.correlation,),
+            ).fetchone()
+        self.assertEqual(request, ("unknown", "transport-unknown"))
+        self.assertTrue(native_lifetime.claim(self.plan()))
+
+    def test_failed_unsubmitted_request_releases_claim_as_failed(self):
+        plan = self.plan()
+        self.assertTrue(native_lifetime.claim(plan))
+        self.assertTrue(llm_policy.fail(plan.correlation, sent=False))
+        with native_lifetime.transaction() as db:
+            db.execute("UPDATE native_calls SET updated=0 WHERE id=?",
+                       (plan.correlation,))
+        native_lifetime.recover()
+        row = native_lifetime.status()[0]
+        self.assertEqual(row["state"], "failed")
+        self.assertEqual(row["reason"], "request-failed-before-submission")
+
+    def test_completed_request_releases_active_lease_after_grace(self):
+        plan = self.plan()
+        self.assertTrue(native_lifetime.claim(plan))
+        native_lifetime.submitted(plan, 9)
+        result = {"choices": [{"finish_reason": "stop"}],
+                  "usage": {"output_tokens": 1}}
+        self.assertTrue(llm_policy.complete(plan.correlation, result))
+        with native_lifetime.transaction() as db:
+            db.execute("UPDATE native_calls SET updated=0 WHERE id=?",
+                       (plan.correlation,))
+        native_lifetime.recover()
+        self.assertEqual(native_lifetime.status()[0]["state"], "completed")
+
     def test_scoped_calls_reserve_interactive_capacity(self):
         first = self.plan(); first.activity = "long-work"; first.lane = "background"
         second = self.plan(); second.activity = "more-work"; second.lane = "background"

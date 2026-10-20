@@ -1,4 +1,5 @@
 import os
+import hashlib
 import json
 import math
 import subprocess
@@ -1013,6 +1014,21 @@ def preparedActivityCount():
         return int(metta_value("prepared_count", 0) or 0)
     with _msg_lock:
         return len(_prepared_messages)
+
+
+def current_batch_identity():
+    """Bounded stable identity for the input presented to this model turn.
+
+    Native MeTTa publishes the same epoch and update IDs into this projection;
+    the legacy Python client owns them directly. Re-presenting retained input
+    therefore has the same identity, while any newly included occurrence
+    changes it.
+    """
+    with _msg_lock:
+        epoch = int(_context_activity_epoch)
+        identities = sorted(str(value) for value in _current_batch_update_ids)
+    payload = (str(epoch) + "\0" + "\0".join(identities)).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def lastMessageIsHuman():

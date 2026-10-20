@@ -192,8 +192,7 @@
           ($lane (system:getenv-or-default "METTACLAW_ACTIVITY_CALL_LANE" ""))
           ; Subscription quotas are independent of API-key billing/cooldowns.
           ($ticket (py-call (llm_policy.admit "chatgpt" $tokens)))
-          ($plan (py-call (types.SimpleNamespace)))
-          ($_ (py-call (cognitive_health.turn_started "openai"))))
+          ($plan (py-call (types.SimpleNamespace))))
      ; Numeric false flags preserve Python truth values across the historical
      ; PeTTa foreign bridge, whose ungrounded False spelling is a Python string.
      (chatgpt:attributes $plan

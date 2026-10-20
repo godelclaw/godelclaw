@@ -390,7 +390,8 @@ def main():
     host_hashes = {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in sources}
     base = ["nice", "-n", "19", "lean", "+" + args.toolchain.removeprefix("leanprover/lean4:"), "-j", "1", "-DwarningAsError=true"]
     env = dict(os.environ, LEAN_PATH=str(output), LEAN_NUM_THREADS="1")
-    models = ("AsyncWait", "RequestLifecycle", "RepairArchitecture", "NoticeProtocol")
+    models = ("AsyncWait", "RequestLifecycle", "RepairArchitecture",
+              "NoticeProtocol", "FuelPolicy", "RetryWake")
     hashes = {}
     for name in models:
         source = output / (name + ".lean"); source.write_bytes((args.models / source.name).read_bytes())
@@ -414,7 +415,9 @@ def main():
             metta_guard(args.cetta.resolve(), output, checks)
             routed_notices(folder, checks)
         cache(checks)
-    header = "import NoticeProtocol\nopen RepairArchitecture\nset_option maxRecDepth 8192\nset_option maxHeartbeats 2000000\n"
+    header = ("import NoticeProtocol\nimport RetryWake\n"
+              "open RepairArchitecture\nset_option maxRecDepth 8192\n"
+              "set_option maxHeartbeats 2000000\n")
     for start in range(0, len(checks.items), 128):
         part = output / f"Conformance{start // 128}.lean"
         part.write_text(header + "\n".join(f"theorem observed_{i} : {expression} = {expected} := by decide\n#print axioms observed_{i}"
@@ -447,6 +450,10 @@ def main():
         "failed-handover-processes": (f"(acknowledgeNotice {notice} [1] false).processed", "true"),
         "goal-workflow-bypass": ("(dispose ({id := 1, content := 2, kind := .goal} : Request) .addressed).2", "true"),
         "terminal-result-overwrite": ("(settle ({id := 1, epoch := 1, phase := .completed, reservation := 37} : NativeCall) 1 1 .late (some 2)).2", "true"),
+        "terminal-request-keeps-active-call":
+            ("RetryWake.CallState.active (RetryWake.reconcile .failed .submitted)", "true"),
+        "same-input-preempts-own-retry":
+            ("RetryWake.frontierMayAttempt ({now := 0, retryAt := 15, presented := 1, live := 1} : RetryWake.RetryFrontier)", "true"),
         "unbounded-backlog-view": (f"(activeView (List.replicate 32 {request})).length", "32"),
         "changing-context-in-prefix": ("cachedPrefix [67,65,66] [68]", "[65,66]"),
         "visible-reply-processes-input": (f"(NoticeProtocol.visibleReply (⟨⟨-42,0⟩, {notice}⟩ : NoticeProtocol.OwnedNotice)).notice.processed", "true"),

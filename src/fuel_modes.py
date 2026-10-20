@@ -157,6 +157,17 @@ def fuel_view():
     return "active fuel: %s — %s" % (name, FUELS[name]["description"])
 
 
+def context_view(loops):
+    """Render the policy honestly in the model context."""
+    if current_fuel() == "unlimited":
+        return "FUEL: unlimited"
+    try:
+        remaining = max(0, int(loops))
+    except (TypeError, ValueError):
+        remaining = 0
+    return "LOOPS_LEFT: %d" % remaining
+
+
 def fuels_view():
     current = current_fuel()
     return "\n".join(

@@ -104,7 +104,6 @@ def _plan(kind, model, tokens, builder):
             raise ValueError("model response bound must be between 1 KiB and 16 MiB")
         import strategy_host
         captured_guard = strategy_host.guard() if strategy_host.enabled() else None
-        cognitive_health.turn_started(provider["name"])
         return SimpleNamespace(kind=kind, encoding="default", ready="true", correlation=ticket, protocol=provider["protocol"],
             activity=os.environ.get("METTACLAW_ACTIVITY_CALL_SCOPE", ""),
             lane=os.environ.get("METTACLAW_ACTIVITY_CALL_LANE", ""),
@@ -252,6 +251,7 @@ def submitted(plan, transport_id):
     import process_supervision
     process_supervision.provider_wait(plan.timeout / 1000)
     native_lifetime.submitted(plan, transport_id)
+    cognitive_health.turn_started(plan.provider)
     return True
 
 

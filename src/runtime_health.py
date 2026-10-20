@@ -310,7 +310,8 @@ def activity_report(now=None):
         "engine={engine} | model={model} | wake={wake} | "
         "rest={rest} | continuation={continuation} | "
         "checkpoint-age={checkpoint} | "
-        "turn={turn} | input={input_state} | obligation={obligation} | "
+        "turn={turn} | last-success={success} | input={input_state} | "
+        "obligation={obligation} | failure-streak={failure_streak} | "
         "last-outcome={outcome} | progress={progress} | background={background}"
     ).format(
         state=state, steps=steps, steps_source=steps_source,
@@ -322,8 +323,10 @@ def activity_report(now=None):
         rest=rest,
         continuation=("pending" if continuation else "none"),
         checkpoint=age(checkpoint_age), turn=turn,
+        success=("never" if turn_age is None else "%ss-ago" % turn_age),
         input_state=input_state,
         obligation=obligation,
+        failure_streak=int(cognition.get("failure_streak", 0) or 0),
         outcome=cognition.get("last_outcome", "none"),
         progress=progress["state"],
         background=topic_jobs.activity(),

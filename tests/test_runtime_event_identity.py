@@ -1,5 +1,6 @@
 """Runtime occurrences survive replay without identifying events by their text."""
 import json
+import hashlib
 import os
 from pathlib import Path
 import sys
@@ -65,6 +66,16 @@ class RuntimeIdentityTest(unittest.TestCase):
         with mock.patch.object(telegram, "handover_ack", return_value=1) as handover:
             self.assertEqual(telegram.activity_source_ack([identity, "123"]), 1)
         handover.assert_called_once_with(["123"])
+
+    def test_presented_batch_has_stable_bounded_identity(self):
+        telegram._context_activity_epoch = 7
+        telegram._current_batch_update_ids = {"102", "101"}
+        first = telegram.current_batch_identity()
+        telegram._current_batch_update_ids = {"101", "102"}
+        self.assertEqual(telegram.current_batch_identity(), first)
+        self.assertEqual(len(first), hashlib.sha256().digest_size * 2)
+        telegram._current_batch_update_ids.add("103")
+        self.assertNotEqual(telegram.current_batch_identity(), first)
 
 
 if __name__ == "__main__": unittest.main()

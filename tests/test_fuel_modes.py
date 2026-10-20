@@ -56,6 +56,7 @@ class FuelModesTest(unittest.TestCase):
             held = fuel_modes.spend(held)
         self.assertEqual(held, FULL)
         self.assertEqual(fuel_modes.ceiling(FULL), 0)
+        self.assertEqual(fuel_modes.context_view(held), "FUEL: unlimited")
 
     def test_carry_accumulates_up_to_its_ceiling(self):
         self.select("carry")
@@ -106,6 +107,7 @@ class FuelModesTest(unittest.TestCase):
             self.select(name)
             self.assertEqual(fuel_modes.spend(7), 6)
             self.assertEqual(fuel_modes.spend(0), 0)
+            self.assertEqual(fuel_modes.context_view(7), "LOOPS_LEFT: 7")
 
     def test_selection_persists_and_rejects_nonsense(self):
         self.select("carry")

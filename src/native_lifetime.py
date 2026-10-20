@@ -16,6 +16,7 @@ EVIDENCE_LIMIT = 32
 EVIDENCE_SECONDS = 7 * 86400
 RECEIPT_LIMIT = 256
 RECEIPT_SECONDS = 30 * 86400
+TERMINAL_RECONCILE_GRACE_SECONDS = 2
 
 
 def _prune(db):
@@ -63,12 +64,47 @@ def transaction():
 
 def recover():
     with transaction() as db:
-        for row in db.execute("SELECT id,pid,process_start,state FROM native_calls WHERE state IN ('claimed','submitted')").fetchall():
-            if row[2] is not None and process_start(row[1]) == row[2]:
+        now = time.time()
+        rows = db.execute(
+            "SELECT native_calls.id,native_calls.pid,native_calls.process_start,"
+            "native_calls.state,native_calls.updated,requests.status "
+            "FROM native_calls LEFT JOIN requests ON requests.id=native_calls.id "
+            "WHERE native_calls.state IN ('claimed','submitted')"
+        ).fetchall()
+        for identity, pid, started, state, updated, request_state in rows:
+            # The request ledger and the transport ledger share one identity.
+            # A terminal request cannot continue to own admission authority.
+            # Give the ordinary completion path a tiny grace interval between
+            # its two durable writes; old contradictions are reconciled even
+            # when their owning process is still alive.
+            if request_state in ("completed", "failed", "unknown") and (
+                    now - float(updated) >= TERMINAL_RECONCILE_GRACE_SECONDS):
+                if request_state == "completed":
+                    outcome = "completed"
+                    reason = "request-completed-before-lifetime-settlement"
+                elif request_state == "failed" and state == "claimed":
+                    outcome = "failed"
+                    reason = "request-failed-before-submission"
+                else:
+                    outcome = "uncertain"
+                    reason = "terminal-request-remote-outcome-unknown"
+                db.execute(
+                    "UPDATE native_calls SET state=?,reason=?,updated=? "
+                    "WHERE id=? AND state IN ('claimed','submitted')",
+                    (outcome, reason, now, identity),
+                )
+                if outcome == "uncertain":
+                    db.execute(
+                        "UPDATE requests SET status='unknown',output=NULL,"
+                        "finish='transport-unknown' WHERE id=?",
+                        (identity,),
+                    )
+                continue
+            if started is not None and process_start(pid) == started:
                 continue
             db.execute("UPDATE native_calls SET state='uncertain',reason='process-interrupted-remote-outcome-unknown',updated=? WHERE id=?",
-                       (time.time(), row[0]))
-            db.execute("UPDATE requests SET status='unknown',output=NULL,finish='interrupted-unknown' WHERE id=? AND status='pending'", (row[0],))
+                       (now, identity))
+            db.execute("UPDATE requests SET status='unknown',output=NULL,finish='interrupted-unknown' WHERE id=? AND status='pending'", (identity,))
 
 
 def claim(plan):

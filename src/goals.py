@@ -16,12 +16,14 @@ dropped goals are appended to memory/goals_compost.log (nothing is ever lost).
 """
 
 import json
+import hashlib
 import os
 import re
 import threading
 import time
 
 _LOCK = threading.Lock()
+_runtime_human_wake = None
 
 DECAY = 0.95            # STI backstop decay per wake
 ALPHA = 0.05            # LTI consolidation rate
@@ -200,7 +202,8 @@ def _mood_samples(log_path, offset):
     return samples, offset
 
 
-def kernel_pass(goals_path=None, log_path=None):
+def kernel_pass(goals_path=None, log_path=None, wake_token=None,
+                _with_status=False):
     """One autonomic wake: decay, consolidate, flag, normalize, mood-EMA."""
     with _LOCK:
         try:
@@ -213,6 +216,15 @@ def kernel_pass(goals_path=None, log_path=None):
                 budget = DEFAULT_BUDGET
 
             state = _load_kernel_state(_kernel_path(path))
+            previous_wake_digest = state.get("last_human_wake")
+            wake_digest = None
+            if wake_token is not None and str(wake_token):
+                wake_digest = hashlib.sha256(
+                    str(wake_token).encode("utf-8")
+                ).hexdigest()
+                if state.get("last_human_wake") == wake_digest:
+                    result = "goal-kernel: human wake already applied"
+                    return (False, result) if _with_status else result
             streaks = state.get("streaks", {})
 
             for g in goals:
@@ -261,16 +273,45 @@ def kernel_pass(goals_path=None, log_path=None):
                                      mood if have_mood else None))
             state = {"streaks": streaks, "log_offset": offset,
                      "mood": mood if have_mood else {}}
+            if wake_digest is not None:
+                state["last_human_wake"] = wake_digest
+            elif previous_wake_digest:
+                state["last_human_wake"] = previous_wake_digest
             with open(_kernel_path(path) + ".tmp", "w", encoding="utf-8") as fh:
                 json.dump(state, fh)
             os.replace(_kernel_path(path) + ".tmp", _kernel_path(path))
 
             flagged = ["%s:%s" % (n, f) for n, f in sorted(flags)]
-            return ("goal-kernel: %d goals, sti %s/%s%s"
-                    % (len(goals), _r(sum(g["sti"] for g in goals)), _r(budget),
-                       (", flags " + " ".join(flagged)) if flagged else ""))
+            result = ("goal-kernel: %d goals, sti %s/%s%s"
+                      % (len(goals), _r(sum(g["sti"] for g in goals)), _r(budget),
+                         (", flags " + " ".join(flagged)) if flagged else ""))
+            return (True, result) if _with_status else result
         except Exception as exc:
-            return "goal-kernel error: %s" % exc
+            result = "goal-kernel error: %s" % exc
+            return (False, result) if _with_status else result
+
+
+def human_wake(wake_token, goals_path=None, log_path=None):
+    """Recognize one presented batch and attempt its maintenance once.
+
+    Goal bookkeeping is not cognition authority. If its durable write fails,
+    the in-process identity still prevents a retry storm while the fresh input
+    remains allowed to arm cognition.
+    """
+    global _runtime_human_wake
+    token = str(wake_token or "")
+    runtime_digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    applied, message = kernel_pass(
+        goals_path, log_path, wake_token=token, _with_status=True
+    )
+    with _LOCK:
+        if message.startswith("goal-kernel error:"):
+            fresh = _runtime_human_wake != runtime_digest
+        else:
+            fresh = applied
+        _runtime_human_wake = runtime_digest
+    return {"fresh": int(fresh), "maintenance_applied": int(applied),
+            "message": message}
 
 
 def goals_view(goals_path=None):
