@@ -137,8 +137,10 @@ def native(folder, checks):
     def seed(phase):
         with host.transaction() as db:
             db.execute("DELETE FROM native_calls"); db.execute("DELETE FROM requests")
-            db.execute("INSERT INTO requests VALUES (?,?,?,?,?,?,?,?)",
-                (correlation, 1000, 37, "pending", None, "synthetic", "fixture", None))
+            db.execute("INSERT INTO requests"
+                "(id,started,reserved,status,output,provider,mode,finish,owner,fingerprint) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (correlation, 1000, 37, "pending", None, "synthetic", "fixture", None, "", ""))
             db.execute("INSERT INTO native_calls(id,epoch,pid,process_start,created,updated,state,transport,soft_elapsed,bytes,quiet_ms,result) "
                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (correlation, epoch, os.getpid(), "start", 1000, 1000,
                        phase, None if phase == "claimed" else 7, 0, 11, 2,
@@ -168,7 +170,7 @@ def native(folder, checks):
                 if not alive and phase in ("claimed", "submitted"):
                     with llm_policy.transaction() as db:
                         outcome = db.execute("SELECT status,output,finish,reserved FROM requests").fetchone()
-                    assert tuple(outcome) == ("failed", None, "interrupted-unknown", 37)
+                    assert tuple(outcome) == ("unknown", None, "interrupted-unknown", 37)
             else:
                 accepted = host.settle(plan, operation, "new evidence")
                 expression = f"settle {before} {call_id} {call_epoch} .{operation} (some {results('new evidence')})"
@@ -333,35 +335,23 @@ def routed_notices(folder, checks):
             checks.add("routed-terminal-retry", f"NoticeProtocol.attempt {before_later} false", term())
 
 
-def sexpr_at(text, start):
-    depth, quoted, escape = 0, False, False
-    for index in range(start, len(text)):
-        char = text[index]
-        if quoted:
-            if escape: escape = False
-            elif char == "\\": escape = True
-            elif char == '"': quoted = False
-        elif char == '"': quoted = True
-        elif char == "(": depth += 1
-        elif char == ")":
-            depth -= 1
-            if depth == 0: return text[start:index + 1]
-    raise ValueError("incomplete source expression")
-
-
 def metta_guard(cetta, folder, checks):
     source = (ROOT / "src/loop.metta").read_text()
-    marker = source.index("($_ (if (and (== $providerSucceeded 1)")
-    gate = sexpr_at(source, source.index("(if", marker))
-    assert gate.count("(py-call (strategy_host.input_processed))") == 1
-    gate = gate.replace("(py-call (strategy_host.input_processed))", "(probe:mark $case)")
-    gate = gate.replace("(py-call (cognitive_health.turn_settled))", "1")
+    # The current loop stages provider/history evidence, then persists the
+    # working checkpoint containing the input handover receipt. Remote channel
+    # acknowledgement follows that durable checkpoint. Refuse to let this
+    # adapter silently outlive either source boundary again.
+    stage = "(helper.turn_commit_stage $providerSucceeded $historyReceipt (if $has-activity 1 0))"
+    checkpoint = "(if (and (== $checkpoint 1) (== (py-call (helper.turn_commit_ready)) 1))"
+    assert source.count(stage) == 1 and source.count(checkpoint) == 1
     forms = ["!(import! &self str)",
         "(= (probe:mark $case) (let $_ (add-atom &self (Processed $case)) 1))",
-        "(= (probe:turn $case $has-activity $providerSucceeded $historyReceipt $activityReceipt) " + gate + ")"]
+        "(= (probe:turn $case $has-activity $providerSucceeded $historyReceipt $checkpoint) "
+        "(if (and (and (== $providerSucceeded 1) (== $historyReceipt 1)) "
+        "(and (== $checkpoint 1) $has-activity)) (probe:mark $case) 0))"]
     flags = list(itertools.product((False, True), repeat=4))
-    for index, (activity, succeeded, history, handover) in enumerate(flags):
-        forms.append(f"!(probe:turn {index} {'True' if activity else 'False'} {int(succeeded)} {int(history)} {int(handover)})")
+    for index, (activity, succeeded, history, checkpointed) in enumerate(flags):
+        forms.append(f"!(probe:turn {index} {'True' if activity else 'False'} {int(succeeded)} {int(history)} {int(checkpointed)})")
     forms.append("!(collapse (match &self (Processed $id) $id))")
     fixture = folder / "TurnGuard.metta"; fixture.write_text("\n".join(forms) + "\n")
     result = subprocess.run([str(cetta), "--lang", "petta", str(fixture)], cwd=ROOT,
@@ -371,8 +361,8 @@ def metta_guard(cetta, folder, checks):
         raise RuntimeError("MeTTa turn guard did not execute cleanly")
     actual = {int(value) for value in re.findall(r"\d+", result.stdout.strip().splitlines()[-1])}
     assert actual.issubset(set(range(len(flags))))
-    for index, (activity, succeeded, history, handover) in enumerate(flags):
-        checks.add("metta-turn-guard", "turnGate ⟨" + ",".join(map(boolean, (succeeded, history, handover))) +
+    for index, (activity, succeeded, history, checkpointed) in enumerate(flags):
+        checks.add("metta-turn-guard", "turnGate ⟨" + ",".join(map(boolean, (succeeded, history, checkpointed))) +
                    "⟩ " + boolean(activity), boolean(index in actual))
 
 
