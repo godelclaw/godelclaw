@@ -2,6 +2,7 @@
 ; database rows remain unchanged and addressable after every excerpt.
 !(import! &self ./src/task_context_cetta)
 !(import! &self (library math))
+!(import! &self ./src/task_idle_views)
 
 (= (task:items $record $key)
    (let (JsonArray $items) (state:json-field $record $key) $items))
@@ -191,7 +192,13 @@
    (let* (($target (context:target))
           ($available (if (== $capacity "") $target
                         (min $target (max 0 (- (- (str:string->number $capacity) (math:ceil (/ (str:byte-length $base) $ratio))) 128)))))
-          ($view (task:compact (task:projection $focus $trigger) $available $ratio)))
+          ($selected (task:compact (task:projection $focus $trigger) $available $ratio))
+          ($candidate (state:json-set $selected "transcript"
+                        (JsonArray (task:idle-pairs
+                          (task:items $selected "transcript")))))
+          ($view (if (<= (str:byte-length (state:encoded $candidate))
+                         (str:byte-length (state:encoded $selected)))
+                    $candidate $selected)))
      (str:join "\n\n" ((task:place-transcript $base ()) (str:concat "TASK_CONTEXT " (state:encoded $view))))))
 
 ; The whole-window view follows Codex. The transcript is append-only from a
@@ -242,7 +249,7 @@
               ($start (- $total (min $keep $total)))
               ($_ (task:save-start $root $start)))
          (Window $start (task:drop $shown (- $start $saved)))))))
-(= (task:chunk-view $pairs) $pairs)
+(= (task:chunk-view $pairs) (task:idle-pairs $pairs))
 (= (task:escape $text $needle $replacement)
    (case (str:find $text $needle)
      (((TextNotFound $_) $text)

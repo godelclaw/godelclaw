@@ -225,6 +225,7 @@
   "src/synthetic_llm.py",
   "src/task_context.py",
   "src/task_context_cetta.metta",
+  "src/task_idle_views.metta",
   "src/task_context_views.metta",
   "src/task_phase.py",
   "src/tmux_bridge.py",

@@ -97,6 +97,37 @@ class NativeTaskContext(unittest.TestCase):
         self.assertIn('(fit-check false false true true)', stdout)
         self.assertEqual(out.read_text(), expected)
 
+    def test_idle_view_collapses_only_identical_confirmed_rest_receipts(self):
+        fixture = reference.TaskContextTests(); fixture.setUp()
+        self.addCleanup(fixture.tmp.cleanup)
+        result = "(RESTING budget-banked sleep-interval-seconds 60)"
+        pairs = [
+            dict(id="a", request="guide", command=["rest", 60],
+                 disposition="returned", result=result),
+            dict(id="b", request="guide", command=["rest", 60],
+                 disposition="returned", result=result),
+            dict(id="c", request="other", command=["rest", 60],
+                 disposition="returned", result=result),
+            dict(id="d", request="other", command=["rest", 60],
+                 disposition="not_run", result="not run"),
+        ]
+        output = fixture.path.parent / "idle-view.json"
+        atoms = " ".join("(json-parse %s)" % json.dumps(
+            json.dumps(pair, separators=(",", ":"))) for pair in pairs)
+        self.guest(fixture.path,
+            "!(import! &self ./src/task_context_views)\n" +
+            "!(fs:update-text " + json.dumps(str(output)) +
+            " \"replace\" (state:encoded (JsonArray (task:idle-pairs (" +
+            atoms + ")))) \"\" \"\")\n" +
+            "!(println! TASK_CONTEXT_OK)\n")
+        rendered = json.loads(output.read_text())
+        self.assertEqual(len(rendered), 3)
+        self.assertEqual(rendered[0]["count"], 2)
+        self.assertEqual(rendered[0]["id"], "a")
+        self.assertEqual(rendered[0]["ids"], ["a", "b"])
+        self.assertEqual(rendered[1]["request"], "other")
+        self.assertEqual(rendered[2]["disposition"], "not_run")
+
     def full_view(self, fixture, capacity, out):
         prompt = "P_cache_boundary_STABLE_cache_boundary_CONV_cache_boundary_TURN"
         self.guest(fixture.path, '!(import! &self ./src/task_context_views)\n'
