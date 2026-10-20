@@ -36,7 +36,7 @@
 
 (= (dispatch:forget $cache) (case $cache ((((dispatch:cached $turn $commands $records $errors)) (remove-atom &self (dispatch:cache $turn $commands $records $errors))) ($other ()))))
 
-(= (dispatch:new $turn $commands $cache) (let (dispatch:ran (quote $records) (quote $errors)) (dispatch:list $turn $commands) (progn (dispatch:forget $cache) (add-atom &self (dispatch:cache $turn (quote $commands) (quote $records) (quote $errors))) $records)))
+(= (dispatch:new $turn $commands $cache) (let (dispatch:ran (quote $records) (quote $errors)) (let $_ (eval (dispatch:capture $turn)) (dispatch:list $turn $commands)) (progn (dispatch:forget $cache) (add-atom &self (dispatch:cache $turn (quote $commands) (quote $records) (quote $errors))) $records)))
 
 (= (run-command-batch-once $turn $unused $commands) (let $cache (collapse (match &self (dispatch:cache $t $cs $rs $es) (dispatch:cached $t $cs $rs $es))) (case $cache ((((dispatch:cached $turn (quote $previous) (quote $records) $_)) (if (== $previous $commands) $records ((COMMAND_BATCH_REJECTED: turn_arguments_changed)))) ($other (dispatch:new $turn $commands $cache))))))
 

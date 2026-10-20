@@ -13,8 +13,18 @@ first_char(Str, C) :- sub_string(Str, 0, 1, _, C).
     -> Records = ExistingRecords
     ; nb_current(mettaclaw_command_batch, command_batch(Turn, _, _, _))
     -> Records = [['COMMAND_BATCH_REJECTED:', turn_arguments_changed]]
-    ; run_command_list_once(Turn, Commands, Records, Errors),
+    ; capture_public_epoch(Turn),
+      run_command_list_once(Turn, Commands, Records, Errors),
       nb_setval(mettaclaw_command_batch, command_batch(Turn, Commands, Records, Errors))
+    ).
+
+%% Fix the public-sharing epoch once per turn, before any command of the batch
+%% runs.  Best effort: a failure or exception is swallowed, so it can neither
+%% delay nor fail a command; record_command stays the only publisher.
+capture_public_epoch(Turn) :-
+    ( catch('py-call'(['effect_receipts.capture_public_epoch', Turn], _), _, fail)
+    -> true
+    ;  true
     ).
 
 'command-batch-errors'(Turn, Errors) :-

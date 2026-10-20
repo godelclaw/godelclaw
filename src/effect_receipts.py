@@ -8,10 +8,15 @@ the accompanying result remains the evidence for that stronger claim.
 
 from __future__ import annotations
 
+from collections import OrderedDict
+import datetime
 import fcntl
+import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
+import threading
 import time
 
 
@@ -51,20 +56,188 @@ def _append(entry: dict) -> int:
     return 1
 
 
+# ---------------------------------------------------------------------------
+# Public-work projection.  Metadata only: tool name, disposition, a receipt id
+# and a timestamp.  Arguments, results, message bodies and transcripts never
+# enter the event.  ``returned`` is a dispatcher fact, not task success.
+# ---------------------------------------------------------------------------
+
+PUBLIC_TOOLS = frozenset((
+    "shell", "query", "read-file", "read-lines", "write-file", "edit-file",
+    "grep-files", "ls-tree", "background", "jobs", "job-output", "search",
+    "metta", "rest", "pin", "remember", "send", "send-file", "help",
+    "tmux-peek",
+))
+PUBLIC_DISPOSITIONS = frozenset((
+    "returned", "failed", "no_result", "exception", "uncertain",
+    "withheld", "deferred",
+))
+_DEDUPE_LIMIT = 1024
+_CAPTURE_LIMIT = 64
+
+_publish_lock = threading.Lock()
+_published = OrderedDict()   # receipt ids already displayed (bounded)
+_in_flight = set()
+_captured = OrderedDict()    # turn -> sharing epoch captured before the work
+_reporting = threading.local()
+
+
+def _tool_name(command):
+    if isinstance(command, str):
+        try:
+            command = json.loads(command)
+        except ValueError:
+            return None
+    if isinstance(command, (list, tuple)) and command \
+            and isinstance(command[0], str):
+        return command[0]
+    return None
+
+
+def _receipt_id(turn, disposition, command, result) -> str:
+    """Stable across replays: derived from the receipt, not the clock.
+
+    Only a truncated digest leaves this function.  Two byte-identical
+    commands with identical results in one turn share an id (and so one
+    event); a digest also lets someone who already guesses the exact
+    command and result confirm it.
+    """
+    raw = json.dumps([int(turn), str(disposition), command, str(result)],
+                     ensure_ascii=False, sort_keys=True, default=str)
+    return "rcpt:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def public_event(turn, disposition, command, result, at):
+    """Pure allowlisted projection of one command receipt, or None.
+
+    ``at`` is supplied by the caller so the function reads no clock, file or
+    environment.  Unknown tools or dispositions are dropped, not guessed.
+    """
+    tool = _tool_name(command)
+    disposition = str(disposition)
+    if tool not in PUBLIC_TOOLS or disposition not in PUBLIC_DISPOSITIONS:
+        return None
+    return {
+        "tool": tool,
+        "disposition": disposition,
+        "receipt_id": _receipt_id(turn, disposition, command, result),
+        "at": datetime.datetime.fromtimestamp(
+            at, datetime.timezone.utc).isoformat(timespec="seconds"),
+    }
+
+
+def public_text(event) -> str:
+    note = "; dispatcher return, not a success verdict" \
+        if event["disposition"] == "returned" else ""
+    return "Activity | %s: %s (%s%s)" % (
+        event["tool"], event["disposition"], event["receipt_id"], note)
+
+
+class WorklogSink:
+    """Existing godel-worklog state: sharing switch, epoch and note log."""
+
+    def __init__(self, root, library):
+        spec = importlib.util.spec_from_file_location(
+            "godel_worklog_state", Path(library) / "worklog.py")
+        self._module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self._module)
+        self._root = Path(root)
+
+    def status(self):
+        state = self._module.transact(self._root, "status")
+        return bool(state["enabled"]), int(state["epoch"])
+
+    def add(self, text, epoch):
+        """Enabled and epoch are checked under the worklog's own lock."""
+        return bool(self._module.transact(
+            self._root, "add", text, epoch).get("accepted", True))
+
+
+def _sink():
+    root = os.environ.get("METTACLAW_PUBLIC_WORK_DIR", "").strip()
+    if not root:
+        return None
+    library = os.environ.get(
+        "METTACLAW_PUBLIC_WORK_LIB",
+        str(Path.home() / ".local/lib/godel-worklog-observer"))
+    return WorklogSink(root, library)
+
+
+def capture_public_epoch(turn):
+    """Call before the work.  Remembers the sharing epoch for this turn.
+
+    Off, no sink, or any failure remembers nothing, so the later event is
+    dropped.  Never raises.
+    """
+    try:
+        sink = _sink()
+        enabled, epoch = sink.status() if sink else (False, None)
+    except Exception:
+        enabled, epoch = False, None
+    with _publish_lock:
+        _captured.pop(int(turn), None)
+        if enabled:
+            _captured[int(turn)] = epoch
+            while len(_captured) > _CAPTURE_LIMIT:
+                _captured.popitem(last=False)
+    return int(enabled)
+
+
+def _publish_public_event(turn, disposition, command, result, at) -> int:
+    """Best-effort display; never raises and never reports itself."""
+    if getattr(_reporting, "active", False):
+        return 0
+    _reporting.active = True
+    receipt_id = None
+    try:
+        event = public_event(turn, disposition, command, result, at)
+        if event is None:
+            return 0
+        receipt_id = event["receipt_id"]
+        with _publish_lock:
+            epoch = _captured.pop(int(turn), None)
+            if epoch is None or receipt_id in _published \
+                    or receipt_id in _in_flight:
+                return 0
+            _in_flight.add(receipt_id)
+        accepted = False
+        try:
+            sink = _sink()
+            accepted = bool(sink and sink.add(public_text(event), epoch))
+        finally:
+            with _publish_lock:
+                _in_flight.discard(receipt_id)
+                if accepted:
+                    _published[receipt_id] = True
+                    while len(_published) > _DEDUPE_LIMIT:
+                        _published.popitem(last=False)
+        return int(accepted)
+    except Exception:
+        return 0
+    finally:
+        _reporting.active = False
+
+
 def record_command(turn, disposition, command, result) -> int:
     """Record one command after the dispatcher has classified its return."""
     if os.environ.get("METTACLAW_OBSERVED_STRATEGY", "0") == "1":
         import strategy_host
         strategy_host.command_result(turn, disposition, command, result)
+    now = time.time()
     entry = {
         "schema": 1,
-        "recorded_at": time.time(),
+        "recorded_at": now,
         "turn": int(turn),
         "disposition": _text(disposition, 80),
         "command": _text(command),
         "result": _text(result),
     }
-    return _append(entry)
+    committed = _append(entry)
+    if committed:
+        # After the durable append, outside every transaction: a sink
+        # failure cannot fail or undo the receipt.
+        _publish_public_event(turn, disposition, command, result, now)
+    return committed
 
 
 def record_suffix(turn, disposition, commands, reason) -> int:
