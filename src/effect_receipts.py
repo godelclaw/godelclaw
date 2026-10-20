@@ -142,11 +142,15 @@ def public_text(event) -> str:
 class WorklogSink:
     """Existing godel-worklog state: sharing switch, epoch and note log."""
 
-    def __init__(self, root, library):
-        spec = importlib.util.spec_from_file_location(
-            "godel_worklog_state", Path(library) / "worklog.py")
-        self._module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(self._module)
+    def __init__(self, root, library=None):
+        if library:
+            spec = importlib.util.spec_from_file_location(
+                "godel_worklog_state", Path(library) / "worklog.py")
+            self._module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(self._module)
+        else:
+            import public_worklog
+            self._module = public_worklog
         self._root = Path(root)
 
     def status(self):
@@ -163,10 +167,8 @@ def _sink():
     root = os.environ.get("METTACLAW_PUBLIC_WORK_DIR", "").strip()
     if not root:
         return None
-    library = os.environ.get(
-        "METTACLAW_PUBLIC_WORK_LIB",
-        str(Path.home() / ".local/lib/godel-worklog-observer"))
-    return WorklogSink(root, library)
+    library = os.environ.get("METTACLAW_PUBLIC_WORK_LIB", "").strip()
+    return WorklogSink(root, library or None)
 
 
 def capture_public_epoch(turn):

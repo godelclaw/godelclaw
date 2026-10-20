@@ -266,16 +266,14 @@ class ProjectorWiringCases(Base, unittest.TestCase):
             self.assertEqual(self.work(), 1)
 
 
-@unittest.skipUnless((LIBRARY / "worklog.py").exists(),
-                     "godel-worklog-observer not installed")
-class RealWorklogCases(Base, unittest.TestCase):
-    """The same rules through the real worklog sharing state."""
+class BuiltinWorklogCases(Base, unittest.TestCase):
+    """The same rules through the release-owned worklog sharing state."""
 
     def make_sink(self):
         self.root = pathlib.Path(self.temporary.name) / "worklog"
         environment = mock.patch.dict(os.environ, {
             "METTACLAW_PUBLIC_WORK_DIR": str(self.root),
-            "METTACLAW_PUBLIC_WORK_LIB": str(LIBRARY),
+            "METTACLAW_PUBLIC_WORK_LIB": "",
         })
         environment.start()
         self.addCleanup(environment.stop)
@@ -327,6 +325,13 @@ class RealWorklogCases(Base, unittest.TestCase):
                              {"METTACLAW_PUBLIC_WORK_LIB": "/nonexistent"}):
             self.assertEqual(self.work(), 1)
         self.assertEqual(len(self.receipts()), 1)
+
+    def test_note_structure_survives_but_control_characters_do_not(self):
+        self.switch("on")
+        enabled, epoch = self.sink.status()
+        self.assertTrue(enabled)
+        self.assertTrue(self.sink.add("Title\n- item\x1b\u202e", epoch))
+        self.assertEqual(self.notes(), ["Title\n- item  "])
 
 
 if __name__ == "__main__":

@@ -24,6 +24,8 @@ history_path = "$ROOT/memory/history.metta"
 memory_log_dir = "$ROOT/memory/remembered"
 attachments_dir = "$ROOT/memory/attachments"
 repos_dir = "$ROOT/repos"
+# Optional deliberately public note stream. Empty keeps publication disabled.
+public_work_dir = ""
 
 # Local Qwen3-Embedding-8B path. Fill this before using remember/query.
 embed_model = ""

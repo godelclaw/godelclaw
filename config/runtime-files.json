@@ -220,6 +220,7 @@
   "src/process_supervision.py",
   "src/project_capabilities.py",
   "src/project_evidence.py",
+  "src/public_worklog.py",
   "src/provider_protocol.py",
   "src/provider_stream.py",
   "src/qwen_embed.py",
