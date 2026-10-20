@@ -5,11 +5,13 @@ private transcripts, command arguments or results. Presentation is a separate
 consumer of ``notes.jsonl``.
 """
 
+import argparse
 import datetime
 import fcntl
 import json
 import os
 from pathlib import Path
+import time
 import unicodedata
 
 
@@ -72,3 +74,32 @@ def transact(root, action, text="", expected_epoch=None):
             os.fsync(stream.fileno())
         os.replace(temporary, state_path)
         return result
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dir", type=Path,
+                        default=Path.home() / ".local/state/godel-worklog")
+    parser.add_argument("action", choices=("on", "off", "add", "status", "show", "watch"))
+    parser.add_argument("text", nargs="?", default="")
+    args = parser.parse_args(argv)
+    if args.action not in ("show", "watch"):
+        print(json.dumps(transact(args.dir, args.action, args.text), ensure_ascii=False))
+        return 0
+    seen = 0
+    try:
+        while True:
+            state, entries = transact(args.dir, "read")
+            for entry in entries:
+                if entry["seq"] > seen:
+                    print(entry["time"] + "  " + clean(entry["text"]), flush=True)
+                    seen = entry["seq"]
+            if args.action == "show":
+                return 0
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
