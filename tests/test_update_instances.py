@@ -14,6 +14,23 @@ spec.loader.exec_module(update)
 
 
 class ReleasePermissionsTest(unittest.TestCase):
+    def test_public_release_contains_the_mode_runtime_and_every_vendored_file(self):
+        root = Path(__file__).resolve().parents[1]
+        selected = set(json.loads((root / "config/runtime-files.json").read_text()))
+        for required in (
+            "modes/launch.py", "modes/runtime_host.py",
+            "modes/iter/iter_host.py", "modes/conformance/verify.py",
+        ):
+            self.assertIn(required, selected)
+        for mode in ("iter", "omega"):
+            manifest = json.loads(
+                (root / f"modes/{mode}/upstream-manifest.json").read_text())
+            vendored = {
+                f"modes/{mode}/upstream/{item['path']}"
+                for item in manifest["files"] if item.get("vendored")
+            }
+            self.assertLessEqual(vendored, selected)
+
     def test_content_override_preserves_launcher_permissions(self):
         with tempfile.TemporaryDirectory() as temporary:
             work = Path(temporary)
