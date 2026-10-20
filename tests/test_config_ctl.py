@@ -36,6 +36,7 @@ class ConfigEditingTests(unittest.TestCase):
         defaults.write_text(defaults.read_text().replace("shell_timeout_seconds = 120", "shell_timeout_seconds = 77"))
         self.assertEqual(self.run_cli("render").returncode, 0)
         self.assertIn("METTACLAW_SHELL_TIMEOUT_SECONDS='77'", (self.root / ".env").read_text())
+        self.assertIn("METTACLAW_LIFECYCLE_PATH=", (self.root / ".env").read_text())
         self.assertEqual(self.run_cli("set", "agent.shell_timeout_seconds", "99").returncode, 0)
         self.assertIn("METTACLAW_SHELL_TIMEOUT_SECONDS='99'", (self.root / ".env").read_text())
 

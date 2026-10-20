@@ -123,6 +123,7 @@ def main():
     emit("METTACLAW_CHROMA_DIR", expand(paths.get("chroma_dir"), root))
     emit("METTACLAW_TELEGRAM_OFFSET_PATH", expand(paths.get("telegram_offset_path"), root))
     emit("METTACLAW_TELEGRAM_LOG_PATH", expand(paths.get("telegram_log_path"), root))
+    emit("METTACLAW_LIFECYCLE_PATH", expand(paths.get("lifecycle_path"), root))
     emit("METTACLAW_PROMPT_PATH", expand(paths.get("prompt_path"), root))
     emit("METTACLAW_HISTORY_PATH", expand(paths.get("history_path"), root))
     emit("METTACLAW_MEMORY_LOG_DIR", expand(paths.get("memory_log_dir"), root))
