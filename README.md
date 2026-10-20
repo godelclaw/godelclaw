@@ -1068,6 +1068,27 @@ release no commands. Legacy parenthesized command batches remain accepted
 only after normal completion. Neither a displayed note nor a returned command
 batch is evidence that any tool or task succeeded.
 
+### Small checked architecture model
+
+`verification/CommentaryBoundary.metta` uses the native HOL Light kernel to
+check command selection and commentary noninterference for a small, typed,
+Church-encoded envelope model. The reported sequents have no hypotheses or
+axiom dependencies. This is **not** a refinement proof of the JSON parser,
+HTTP transport, dispatcher, or running agent, nor a confidentiality theorem.
+
+With a Python/HTTP-enabled CeTTa and its matching Python environment, run:
+
+```sh
+PYTHONPATH=src:tests python scripts/check_commentary_boundary.py --cetta "$CETTA_BIN"
+```
+
+The checker authenticates the exact two conclusions, hypotheses and axiom
+lists, rejects forged-result controls, records model/implementation hashes,
+and runs 108 finite implementation correspondence cases. These tests connect
+the model to selected parser outcomes; they do not prove universal runtime
+correspondence. `tests/test_commentary_boundary_hol.py` covers authentication
+and the native model check.
+
 ## Credits and license
 
 This fork builds on [patham9/mettaclaw](https://github.com/patham9/mettaclaw).
