@@ -297,6 +297,38 @@ def decoded_body(plan, body):
         return json.dumps({"ok": False})
 
 
+def commentary_readable(plan):
+    observer = getattr(plan, "commentary_stream", None)
+    return "true" if observer and not observer.disabled and not observer.prefix.done else "false"
+
+
+def commentary_offset(plan):
+    return plan.commentary_stream.offset
+
+
+def commentary_chunk(plan, offset, text, phase):
+    observer = getattr(plan, "commentary_stream", None)
+    if observer is None or observer.disabled:
+        return 1
+    try:
+        offset, text = int(offset), str(text)
+        if (str(phase) not in ("waiting", "complete") or
+                offset != observer.offset + len(text.encode("utf-8"))):
+            raise ValueError("invalid observer cursor")
+        observer.offset = offset
+        observer.feed(text)
+    except (ValueError, TypeError, UnicodeError):
+        observer.disabled = True
+    return 1
+
+
+def commentary_unavailable(plan):
+    observer = getattr(plan, "commentary_stream", None)
+    if observer:
+        observer.disabled = True
+    return 1
+
+
 def waiting(plan, count=0, quiet=0):
     """An admitted call settles before routine recycling or a pause boundary.
 

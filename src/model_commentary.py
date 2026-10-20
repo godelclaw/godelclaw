@@ -121,6 +121,11 @@ class Publication:
 def begin(plan):
     if enabled() and getattr(plan, 'kind', '') == 'command':
         plan.commentary = Publication()
+        protocol = getattr(plan, 'protocol', '')
+        if plan.commentary.sink and (protocol == 'responses' or
+                (protocol == 'chat-completions' and getattr(plan, 'stream', False))):
+            from commentary_stream import Stream
+            plan.commentary_stream = Stream(plan.commentary, protocol, plan.cap)
     return 1
 
 

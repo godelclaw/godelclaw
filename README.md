@@ -1053,12 +1053,20 @@ and tool results are not used as commentary sources. Authored commentary is
 not a success receipt or an automatic confidentiality guarantee: the model
 must write it for the audience that can see the viewer.
 
-This implementation publishes commentary after provider completion. A tested
-prefix parser is available for subsequent incremental transport integration,
-but is not connected to the native HTTP wait path. It therefore does not yet
-provide token-by-token or early-response display. Malformed JSON envelopes
-and incomplete envelope completions release no commands; legacy
-parenthesized command batches remain accepted.
+On a native CeTTa build providing `io:http-read`, streaming Chat Completions
+(`METTACLAW_LLM_STREAM=1`) and Responses calls can publish the first complete
+`commentary` string before provider completion. The observer reads bounded,
+non-consuming text snapshots from the existing owned HTTP request; it never
+submits a second request or releases commands. Publication waits for the JSON
+string and its following field separator, not individual tokens. Other
+transports and older CeTTa builds retain completion-time publication.
+
+Early commentary is provisional and can remain visible if the provider later
+fails or truncates the response. Final command validation is independent:
+malformed envelopes, unfinished completions, refusals and tool-call output
+release no commands. Legacy parenthesized command batches remain accepted
+only after normal completion. Neither a displayed note nor a returned command
+batch is evidence that any tool or task succeeded.
 
 ## Credits and license
 
