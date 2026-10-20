@@ -327,11 +327,31 @@ fi
 PYTHONPATH="$ROOT/src:$ROOT/repos/petta_lib_chromadb${python_site_paths:+:$python_site_paths}" \
     "$PETTA_PY_ENV/bin/python3" "$ROOT/src/memory_health.py" 2>&1 || true
 
+# A probe runs as a child so that the EXIT trap can remove its state. A
+# shell waiting on a child runs its traps only after the child exits, so a
+# TERM from a timeout or Ctrl-C would stop neither of them, and the engine
+# would keep running orphaned. Forward the signal to the probe and to its
+# children (the SWI process under PeTTa's run.sh), then return its status.
+run_probe() {
+    "$@" <&0 &
+    probe_pid=$!
+    trap 'pkill -TERM -P "$probe_pid" 2>/dev/null; kill -TERM "$probe_pid" 2>/dev/null' TERM INT HUP
+    local status=0
+    wait "$probe_pid" || status=$?
+    while kill -0 "$probe_pid" 2>/dev/null; do
+        status=0
+        wait "$probe_pid" || status=$?
+    done
+    trap - TERM INT HUP
+    return "$status"
+}
+
 case "$METTACLAW_ENGINE" in
     petta)
         if [ "$NONLIVE_TARGET" = 1 ]; then
-            "$PETTA_ROOT/run.sh" "$TARGET" default
-            exit $?
+            status=0
+            run_probe "$PETTA_ROOT/run.sh" "$TARGET" default || status=$?
+            exit "$status"
         fi
         exec "$PETTA_ROOT/run.sh" "$TARGET" default
         ;;
@@ -341,8 +361,9 @@ case "$METTACLAW_ENGINE" in
             fallback_to_petta 2 "CeTTa executable unavailable"
         fi
         if [ "$TARGET" != "$ROOT/run.metta" ]; then
-            "$CETTA_BIN" --lang petta --import-mode ancestor-walk "$TARGET" default
-            exit $?
+            status=0
+            run_probe "$CETTA_BIN" --lang petta --import-mode ancestor-walk "$TARGET" default || status=$?
+            exit "$status"
         fi
         # systemd stops the launcher and its CeTTa child as one control group.
         # CeTTa may turn that TERM into a clean exit; without this independent

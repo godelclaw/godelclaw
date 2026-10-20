@@ -151,6 +151,33 @@ class EngineLauncherTests(unittest.TestCase):
         self.assertNotIn(str(self.root / "src" / ""), line)
         self.assertNotIn(str(self.root / "lib_nal.metta"), line)
 
+    def test_terminating_a_probe_stops_its_engine_and_the_engine_children(self):
+        (self.root / "utility.metta").write_text("")
+        for engine, script in (("petta", self.petta / "run.sh"), ("cetta", self.cetta)):
+            with self.subTest(engine=engine):
+                child_file = self.base / (engine + "-child")
+                # Like PeTTa's run.sh, which waits on its SWI process.
+                self._script(script, 'sleep 300 & echo $! >"$PROBE_CHILD"; wait')
+                env = dict(self.env, METTACLAW_ENGINE=engine, PROBE_CHILD=str(child_file))
+                launcher = subprocess.Popen([str(self.root / "run.sh"), "utility.metta"], env=env,
+                                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                try:
+                    deadline = time.monotonic() + 10
+                    while not child_file.is_file() or not child_file.read_text().strip():
+                        self.assertLess(time.monotonic(), deadline, "the probe never started")
+                        time.sleep(0.05)
+                    child = int(child_file.read_text())
+                    launcher.send_signal(signal.SIGTERM)
+                    launcher.wait(timeout=10)
+                    deadline = time.monotonic() + 5
+                    while pathlib.Path("/proc/%d" % child).exists() and "\nState:\tZ" not in \
+                            pathlib.Path("/proc/%d/status" % child).read_text():
+                        self.assertLess(time.monotonic(), deadline, "the engine's child outlived the launcher")
+                        time.sleep(0.05)
+                finally:
+                    if launcher.poll() is None:
+                        launcher.kill()
+
     def test_probe_does_not_inherit_configuration_channel_authority(self):
         (self.root / ".env").write_text(
             "export METTACLAW_TELEGRAM_SERVICE_SOCKET=/configuration/live.sock\n"
