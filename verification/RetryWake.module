@@ -1,0 +1,33 @@
+Module GodelClawRetryWake {
+  Theory RetryWake() {
+    Empty Exports { RequestState; CallState; }
+    Terms {
+      RequestPending . RequestState ::= "request-pending";
+      RequestCompleted . RequestState ::= "request-completed";
+      RequestFailed . RequestState ::= "request-failed";
+      RequestUnknown . RequestState ::= "request-unknown";
+      CallAbsent . CallState ::= "call-absent";
+      CallClaimed . CallState ::= "call-claimed";
+      CallSubmitted . CallState ::= "call-submitted";
+      CallCompleted . CallState ::= "call-completed";
+      CallFailed . CallState ::= "call-failed";
+      CallUncertain . CallState ::= "call-uncertain";
+      Reconcile . CallState ::= "reconcile" "(" RequestState "," CallState ")";
+    }
+    Rewrites {
+      FailedClaimed:
+        (Reconcile (RequestFailed) (CallClaimed)) ~> (CallFailed);
+      FailedSubmitted:
+        (Reconcile (RequestFailed) (CallSubmitted)) ~> (CallUncertain);
+      CompletedClaimed:
+        (Reconcile (RequestCompleted) (CallClaimed)) ~> (CallCompleted);
+      CompletedSubmitted:
+        (Reconcile (RequestCompleted) (CallSubmitted)) ~> (CallCompleted);
+      UnknownClaimed:
+        (Reconcile (RequestUnknown) (CallClaimed)) ~> (CallUncertain);
+      UnknownSubmitted:
+        (Reconcile (RequestUnknown) (CallSubmitted)) ~> (CallUncertain);
+    }
+  }
+  theory RetryWake()
+}
