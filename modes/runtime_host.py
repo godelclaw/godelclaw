@@ -42,6 +42,12 @@ def standalone_flag():
     return "true" if standalone() else "false"
 
 
+def native_memory_flag():
+    """MeTTa Boolean spelling for the qualified CeTTa semantic-memory path."""
+    enabled = not standalone() and os.environ.get("METTACLAW_ACTIVE_ENGINE") == "cetta"
+    return "true" if enabled else "false"
+
+
 def terminal():
     spec = importlib.util.spec_from_file_location("mode_terminal", root() / "terminal.py")
     module = importlib.util.module_from_spec(spec)

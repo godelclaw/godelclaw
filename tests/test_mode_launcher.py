@@ -22,6 +22,45 @@ spec.loader.exec_module(launcher)
 
 
 class ModeLauncherTests(unittest.TestCase):
+    def test_omega_runtime_loads_reasoning_and_selects_native_memory_explicitly(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = Path(directory) / "runtime"
+            entry, _paths = launcher.prepare_omega(
+                runtime, ROOT, standalone=False)
+            source = entry.read_text(encoding="utf-8")
+            memory = (runtime / "memory.metta").read_text(encoding="utf-8")
+            ledger = json.loads((runtime / "adapter-ledger.json").read_text())
+            self.assertIn("(library Omega lib_nal)", source)
+            self.assertIn("(library Omega lib_pln)", source)
+            self.assertIn("semantic_memory_cetta.metta", source)
+            self.assertIn("runtime_host.native_memory_flag", source)
+            self.assertIn("semantic:remember", memory)
+            self.assertIn("semantic:query", memory)
+            self.assertIn("NAL and PLN", ledger["reasoning"])
+            self.assertIn("native semantic memory", ledger["memory"])
+
+    @unittest.skipUnless(os.environ.get("MODE_TEST_CETTA_BIN"),
+                         "set MODE_TEST_CETTA_BIN")
+    def test_omega_nal_and_pln_execute_on_cetta(self):
+        with tempfile.TemporaryDirectory() as directory:
+            probe = Path(directory) / "reasoning.metta"
+            vendor = ROOT / "modes/omega/upstream"
+            probe.write_text(
+                '!(import! &self ' + json.dumps(str(vendor / "lib_nal.metta")) + ')\n' +
+                '!(import! &self ' + json.dumps(str(vendor / "lib_pln.metta")) + ')\n' +
+                '!(println! (NAL (collapse (|- ((--> a b) (stv 1.0 0.9)) '
+                '((--> b c) (stv 1.0 0.9))))))\n' +
+                '!(println! (PLN (collapse (|~ ((Inheritance a b) (stv 1.0 0.9)) '
+                '((Implication (Inheritance a b) (Inheritance a c)) (stv 1.0 0.9))))))\n')
+            result = subprocess.run(
+                [os.environ["MODE_TEST_CETTA_BIN"], "--lang", "petta", str(probe)],
+                env={**os.environ, "PYTHONHOME": sys.prefix,
+                     "LD_LIBRARY_PATH": str(Path(sys.prefix) / "lib")},
+                text=True, capture_output=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("(--> a c)", result.stdout)
+            self.assertIn("(Inheritance a c)", result.stdout)
+
     def test_omega_host_bindings_have_finite_answers_on_both_engines(self):
         engines = []
         if os.environ.get("MODE_TEST_CETTA_BIN"):
@@ -137,7 +176,7 @@ class ModeLauncherTests(unittest.TestCase):
             with mock.patch.dict(os.environ, env):
                 mode.write_text(json.dumps({"mode": "godelclaw"}))
                 self.assertFalse(engine_modes.recycle_requested())
-                mode.write_text(json.dumps({"mode": "omega"}))
+                mode.write_text(json.dumps({"mode": "iter"}))
                 self.assertEqual(loop_modes.process_mode(), "godelclaw")
                 self.assertEqual(helper.recycle_requested(), 1)
                 mode.write_text(json.dumps({"mode": "godelclaw"}))

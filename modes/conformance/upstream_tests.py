@@ -18,16 +18,37 @@ def parsing_tests():
     # This particular upstream test file uses only @pytest.fixture, with plain
     # assertion functions accepting one helper. Execute those unchanged bodies
     # directly; installing/upgrading pytest is unnecessary for this core check.
+    class Mark:
+        @staticmethod
+        def parametrize(names, values):
+            names = [name.strip() for name in names.split(",")]
+            def decorate(function):
+                function.__upstream_parameters__ = (names, list(values))
+                return function
+            return decorate
+
     existing = sys.modules.get("pytest")
-    sys.modules["pytest"] = SimpleNamespace(fixture=lambda function: function)
+    sys.modules["pytest"] = SimpleNamespace(
+        fixture=lambda function: function, mark=Mark())
     try:
         tests = module("omega_upstream_parsing_tests", root / "Autotests/unit/test_helper_parsing.py")
         count = 0
         for name, function in inspect.getmembers(tests, inspect.isfunction):
             if name.startswith("test_"):
-                assert list(inspect.signature(function).parameters) == ["helper"]
-                function(tests.helper())
-                count += 1
+                parameters = list(inspect.signature(function).parameters)
+                assert parameters and parameters[0] == "helper"
+                cases = getattr(function, "__upstream_parameters__", None)
+                if cases is None:
+                    assert parameters == ["helper"]
+                    function(tests.helper())
+                    count += 1
+                    continue
+                names, values = cases
+                assert parameters == ["helper", *names]
+                for value in values:
+                    arguments = value if isinstance(value, tuple) else (value,)
+                    function(tests.helper(), *arguments)
+                    count += 1
         return count
     finally:
         if existing is None:

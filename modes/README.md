@@ -1,8 +1,11 @@
 # Iter and Omega modes
 
-Iter and Omega are selectable cognitive loops in MeTTaClaw. Each configured
-instance keeps its own identity, credentials, process and mode state. A single
-instance can switch loops without sharing its state with another instance.
+Iter is a selectable, differentially qualified cognitive loop in MeTTaClaw.
+Omega remains visible but unavailable in the production selector until its
+new native-tool core is qualified; its pinned core can still be run explicitly
+for development. Each configured instance keeps its own identity, credentials,
+process and mode state. A single instance can switch qualified loops without
+sharing its state with another instance.
 Provider access supports CeTTa's buffered `llm:v1:` library or the
 Python transport, preserving each core's command-text or structured-call protocol.
 
@@ -38,9 +41,10 @@ even when invoked from a configured service's environment. ITER keeps the
 upstream SDK request and tool-return protocol. Its terminal channel forwards
 worker output at the foreground checkpoint because upstream workers suppress
 stdout. Omega keeps its pinned core loop and provider modules; its transport
-is terminal-only and memory uses the existing history/text adapter. Embedding,
-NAL/PLN and arbitrary plugin startup are not part of this profile. The runtime's
-`adapter-ledger.json` records these differences.
+is terminal-only and memory uses the existing history/text adapter. Its actual
+NAL and PLN libraries are loaded. Upstream Chroma and arbitrary plugin startup
+are not part of this profile. The runtime's `adapter-ledger.json` records these
+differences.
 
 State is outside the checkout and survives restart. Use `--state-dir PATH`
 for a separate instance, and `--prompt FILE` to append your own instructions
@@ -69,7 +73,7 @@ python3 -m unittest discover -s tests -p test_standalone_modes.py
 |---|---|
 | `/modes` | List cognitive loops and the active selection. |
 | `/mode iter` | Request the Iter loop. |
-| `/mode omega` | Request the Omega loop. |
+| `/mode omega` | Report why Omega is unavailable until current-core qualification passes. |
 | `/mode godelclaw` | Return to the framework loop. |
 | `/models`, `/model` | Inspect or change the LLM independently of the loop. |
 | `/engines`, `/engine` | Inspect or change the MeTTa evaluator. |
@@ -77,8 +81,8 @@ python3 -m unittest discover -s tests -p test_standalone_modes.py
 Mode changes persist and take effect through a supervised cognition restart.
 The operator UI distinguishes a requested mode from a running one. Older saved
 names `agent`, `default`, `generic` and `claw23` map to `godelclaw`;
-`iter-coding` maps to `coding`. The current `iter` selection runs the actual
-upstream core port.
+`iter-coding` maps to `coding`. The current `iter` selection runs the qualified
+behavior-preserving MeTTa port of the pinned upstream core.
 
 The running process keeps its original mode until it checkpoints and exits;
 a newer selection never becomes a policy inside the old loop. Startup consumes
@@ -132,8 +136,10 @@ uses current evaluator semantics instead of the old utility reevaluation shim.
 ## Production modes
 
 The existing `/modes` menu exposes `godelclaw`, `coding`, `iter` and `omega`.
-`/mode iter` and `/mode omega` select the actual standalone loops; `iter` is
-no longer an alias. Mode changes persist and request a supervised recycle.
+`/mode iter` selects the qualified Iter port; `iter` is no longer an alias.
+Omega is marked with an open-circle unavailable state and `/mode omega` refuses
+the switch until its current native-tool core passes qualification. Mode changes
+persist and request a supervised recycle.
 The UI distinguishes the requested selection from the currently running loop.
 `/mode godelclaw` returns to the framework loop.
 
@@ -191,11 +197,11 @@ transport nor controller is a child of the cognitive process.
 
 Inputs are acknowledged after history checkpoints. Mode switches before a
 checkpoint leave the input with its existing channel owner. Iter experience,
-Omega history, remembered text and transformations are mode-private. Omega's
-embedding/NAL/PLN/plugin add-ons are not loaded; its advertised skills list only
-the connected tools. Its `remember`/`query` adapter currently stores and searches
-mode-private text rather than embeddings. All these differences are explicit
-in the generated `adapter-ledger.json`.
+Omega history and transformations are mode-private. Omega loads the pinned
+upstream NAL and PLN libraries. On supervised CeTTa it uses the agent's native
+semantic-memory service; standalone and SWI-PeTTa launches retain mode-private
+text recall. Optional plugins and upstream Chroma startup remain excluded. All
+these differences are explicit in the generated `adapter-ledger.json`.
 
 Production process verification, using scripted HTTP/CWP peers:
 
@@ -231,7 +237,8 @@ operator-controlled storage outside the published source tree.
 | Component | Exact source |
 |---|---|
 | Iter | `patham9/iter` `f4064d97849ecaccac7939315a3f1a68de15c3ef` |
-| Omega | `singnet/Omega` `ee0618a293ec3662a32b10b09c6cbb073f59d6b2` |
+| Omega qualified baseline | `singnet/Omega` `ccb26015d7f07391bf58695e2abf541964e1e7ca` (escape-token injection fix included) |
+| Omega current-core target (observed 2026-10-20) | `singnet/Omega` `94d7b9a2e1ef6b5873aee764ca1ef16de8dcd943`; native tool-call rewrite, deliberately unavailable until requalified |
 | Omega reference evaluator | PeTTa v1.0.4 `7037f4c2ad378c52fc328004fe216d5118b674f0` |
 | Current CeTTa runtime | [CETTA_REF](../CETTA_REF), published on [cetta-ours](https://github.com/godelclaw/CeTTa/tree/cetta-ours); the installer builds this engine and its services together |
 | Original CeTTa core qualification | `godelclaw/CeTTa` [`9a535530`](https://github.com/godelclaw/CeTTa/commit/9a5355309c57d94e99e5a279e088b69cbe4486d8), branch `qualify/upstream-core-tests-20260930`, with `src/library_proc.c` text-boundary support |
@@ -252,6 +259,7 @@ and Lean branches above. Set the paths for your own checkouts and interpreter:
 ```sh
 python3 modes/conformance/qualify.py \
   --cetta "$CETTA_BIN" \
+  --cetta-source "$CETTA_SOURCE" \
   --petta "$PETTA_REFERENCE_ROOT" \
   --python "$PETTA_PYTHON" \
   --formal-root "$FORMAL_ROOT" \

@@ -1,6 +1,6 @@
 {
   "repository": "https://github.com/singnet/Omega",
-  "commit": "ee0618a293ec3662a32b10b09c6cbb073f59d6b2",
+  "commit": "ccb26015d7f07391bf58695e2abf541964e1e7ca",
   "files": [
     {
       "path": ".dockerignore",
@@ -1044,10 +1044,22 @@
       "path": "Autotests/unit/test_helper_parsing.py",
       "classification": "conformance",
       "vendored": true,
-      "sha256": "c817a4feba3945863b60f168611fce877624b40d0f9ff402d5ec0d671f826762"
+      "sha256": "bb962ed3d778ac02ed4743156b79d1d00e25c7426f71d0174d29454d449f41f0"
     },
     {
       "path": "Autotests/unit/test_llm_budget.py",
+      "classification": "conformance",
+      "vendored": false,
+      "reason": "Outside isolated core qualification; retained by the pinned upstream reference."
+    },
+    {
+      "path": "Autotests/unit/test_llm_timeout_message.py",
+      "classification": "conformance",
+      "vendored": false,
+      "reason": "Outside isolated core qualification; retained by the pinned upstream reference."
+    },
+    {
+      "path": "Autotests/unit/test_nginx_llm_timeouts.py",
       "classification": "conformance",
       "vendored": false,
       "reason": "Outside isolated core qualification; retained by the pinned upstream reference."
@@ -1506,7 +1518,7 @@
       "path": "providers/lib_llm_ext.py",
       "classification": "provider/channel-addon",
       "vendored": true,
-      "sha256": "0a0b990b57b8642d35a8b3993c7ce14e232587815d94e69b8a7e88dc01418bf9"
+      "sha256": "c9f8873631b25bd1539de195404cbfac873ed3c0240f2776b9755456d85814c4"
     },
     {
       "path": "providers/mockprovider.py",
@@ -1518,7 +1530,7 @@
       "path": "providers/openai.py",
       "classification": "standalone-provider",
       "vendored": true,
-      "sha256": "3a819a6140564e11fd9f290e18a7ae1f3bf22825d68c6451a3ff66fbf59a6520"
+      "sha256": "7a0cfdc8d9229e57adb3baac274fa18cf12c1abf8a57c43ae4b1606b0fc83201"
     },
     {
       "path": "providers/openaiapi.py",
@@ -1620,7 +1632,7 @@
       "path": "src/helper.py",
       "classification": "core-host",
       "vendored": true,
-      "sha256": "1d419e6c3956eb7b9cced587ba82eafb9bab45fe1bc235f1430cc562eeabc52a"
+      "sha256": "3701a324d8321fa352b68d26bd83e6258784084d5c60398903e83670c5ad4acb"
     },
     {
       "path": "src/log.metta",
@@ -1818,13 +1830,25 @@
       "path": "tests/test_memory_export.py",
       "classification": "conformance",
       "vendored": true,
-      "sha256": "44b9f8afdb4116a3e3d636eb3266bbae2b53b2e6c26fb949761d38b88cdc647d"
+      "sha256": "75a928e6337094cfdfdce1545b8258cf737205aa64a2b196292cc6fa6eded53c"
+    },
+    {
+      "path": "tests/test_omega_launcher_migration.py",
+      "classification": "conformance",
+      "vendored": false,
+      "reason": "Outside isolated core qualification; retained by the pinned upstream reference."
     },
     {
       "path": "tests/test_omegaclaw_launcher.py",
       "classification": "conformance",
       "vendored": true,
-      "sha256": "e8bac2df63de9e4bfa288eaf79ccd3256d3160199ed556fdb02215d8b401fa2e"
+      "sha256": "d89e555f762dbba3c921829ce55dea1cdf7d44835a298a01fe94e3ef5f68318b"
+    },
+    {
+      "path": "tests/test_proxy_auth_secret.py",
+      "classification": "conformance",
+      "vendored": false,
+      "reason": "Outside isolated core qualification; retained by the pinned upstream reference."
     },
     {
       "path": "tests/test_src_channels.py",

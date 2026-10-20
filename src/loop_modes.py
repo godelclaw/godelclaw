@@ -10,18 +10,23 @@ MODES = {
     "godelclaw": {
         "description": "event-armed life, renewed by Iter's transformations after each idle boundary",
         "autonomous": True,
+        "selectable": True,
     },
     "coding": {
         "description": "godelclaw with high reasoning effort",
         "autonomous": True,
+        "selectable": True,
     },
     "iter": {
-        "description": "upstream Iter cognitive loop with native tool calls",
+        "description": "qualified MeTTa port of the pinned Iter loop with native tool calls",
         "autonomous": True,
+        "selectable": True,
     },
     "omega": {
-        "description": "upstream Omega cognitive loop with command-text dispatch",
+        "description": "Omega neural-symbolic loop integration",
         "autonomous": True,
+        "selectable": False,
+        "unavailable": "current upstream native-tool core and native-memory integration are not yet qualified together",
     },
 }
 
@@ -54,6 +59,11 @@ def autonomous(name):
     return bool(MODES.get(canonical(name), {}).get("autonomous", False))
 
 
+def selectable(name):
+    """Whether the advertised mode has passed its production qualification."""
+    return bool(MODES.get(canonical(name), {}).get("selectable", False))
+
+
 def _load():
     try:
         with open(_path(), "r", encoding="utf-8") as stream:
@@ -63,7 +73,7 @@ def _load():
     except (OSError, TypeError, ValueError):
         data = {}
     mode = _canonical(data.get("mode", "godelclaw"))
-    if mode not in MODES:
+    if mode not in MODES or not selectable(mode):
         mode = "godelclaw"
     return {"mode": mode}
 
@@ -97,7 +107,7 @@ def process_mode():
     loop can adopt mid-turn. The launcher captures this value once per boot.
     """
     active = canonical(os.environ.get("METTACLAW_ACTIVE_LOOP_MODE", ""))
-    return active if active in MODES else current_mode()
+    return active if active in MODES and selectable(active) else current_mode()
 
 
 def _active_path():
@@ -141,10 +151,14 @@ def mode_view():
 
 def modes_view():
     current = active_mode()
-    return "\n".join(
-        ("● " if name == current else "  ") + name + " — " + spec["description"]
-        for name, spec in MODES.items()
-    )
+    lines = []
+    for name, spec in MODES.items():
+        marker = "● " if name == current else ("  " if spec["selectable"] else "○ ")
+        suffix = spec["description"]
+        if not spec["selectable"]:
+            suffix += " — unavailable: " + spec["unavailable"]
+        lines.append(marker + name + " — " + suffix)
+    return "\n".join(lines)
 
 
 def set_mode(name):
@@ -153,6 +167,8 @@ def set_mode(name):
     if name not in MODES:
         choices = list(MODES) + list(ALIASES)
         return "mode-set failed: choose one of %s" % ", ".join(choices)
+    if not selectable(name):
+        return "mode-set failed: '%s' is unavailable: %s" % (name, MODES[name]["unavailable"])
     with _lock:
         data = _load()
         previous = data["mode"]

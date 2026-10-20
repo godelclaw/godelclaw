@@ -57,10 +57,11 @@ def adapter_ledger(mode, durable_channel):
         "case": "current engine semantics; no duplicate-evaluation compatibility shim",
         "host_values": "explicit Boolean atoms and file predicates; deterministic text concatenation",
         "helper_module": "runtime alias omega_helper avoids host helper name collisions",
-        "loop": "pinned Omega loop unchanged",
+        "loop": "pinned Omega loop with explicit host adapters; production selection withheld pending current-core qualification",
         "provider": "existing configured command-text adapter",
-        "memory": "mode-private history and text recall; embedding add-on disabled",
-        "startup": "embedding, NAL/PLN, plugin and optional security-policy startup add-ons disabled; OS permissions retained",
+        "memory": "agent native semantic memory on CeTTa; mode-private text fallback on standalone/PeTTa",
+        "reasoning": "upstream NAL and PLN libraries loaded",
+        "startup": "plugin, optional security-policy and upstream Chroma startup add-ons disabled; OS permissions retained",
         "tools": "advertise only connected tools; nop added"}
 
 
@@ -156,8 +157,8 @@ def prepare_omega(runtime, repo, standalone=False, prompt_path=None):
     memory += ['(= (getPrompt $p) (py-call (runtime_host.get_prompt $p)))',
                '(= (getHistory) (py-call (runtime_host.get_history (maxHistory))))',
                '(= (appendToHistory $addition) (py-call (runtime_host.append_history (swrite $addition))))',
-               '(= (remember $text) (py-call (runtime_host.remember $text)))',
-               '(= (query $text) (py-call (runtime_host.query $text)))']
+               '(= (remember $text) (if (py-call (runtime_host.native_memory_flag)) (semantic:remember $text) (py-call (runtime_host.remember $text))))',
+               '(= (query $text) (if (py-call (runtime_host.native_memory_flag)) (semantic:query $text 20) (py-call (runtime_host.query $text))))']
     (runtime / "memory.metta").write_text("\n".join(memory) + "\n")
     skills = [form for form in forms((checkout / "src/skills.metta").read_text())
               if not any(form.startswith("(= (" + name + " ") or form.startswith("(= (" + name + ")")
@@ -171,7 +172,7 @@ def prepare_omega(runtime, repo, standalone=False, prompt_path=None):
                '(= (send-channel $destination $message) (py-call (runtime_host.send $message $destination)))',
                '(= (nop) NOP)']
     (runtime / "skills.metta").write_text("\n".join(skills) + "\n")
-    (runtime / "rag.py").write_text('def init_knowledge(provider): return "Embedding add-on disabled"\n')
+    (runtime / "rag.py").write_text('def init_knowledge(provider): return "Host memory adapter active"\n')
     (runtime / "channels.py").write_text('import runtime_host\ndef commChannelStart(channel): return True\ndef commChannelReceive(): return runtime_host.receive()\ndef commChannelSend(message): return runtime_host.send(message)\n')
     (runtime / "host.metta").write_text(OMEGA_HOST)
     entry = runtime / "run.metta"
@@ -179,9 +180,14 @@ def prepare_omega(runtime, repo, standalone=False, prompt_path=None):
 !(git-import! "https://github.com/singnet/Omega.git" "" "{runtime}/repos")
 !(import! &self "{HERE}/runtime_host.py")
 !(import! &self "{HERE.parent}/src/native_llm.metta")
+!(if (py-call (runtime_host.native_memory_flag))
+     (import! &self {json.dumps(str(repo / "src/semantic_memory_cetta.metta"))})
+     True)
 !(import! &self "{runtime}/rag.py")
 !(import! &self "{runtime}/channels.py")
 !(import! &self (library Omega ./src/omega_helper.py))
+!(import! &self (library Omega lib_nal))
+!(import! &self (library Omega lib_pln))
 !(py-call (omega_helper.add_llm_command "nop"))
 !(py-call (omega_helper.add_llm_command "send-channel"))
 !(import! &self "{runtime}/host.metta")
@@ -255,11 +261,12 @@ def standalone_ledger(mode, prompt_path):
         "provider": "pinned upstream SDK and environment variables",
         "lifecycle": "foreground process; Ctrl-C stops the launch",
         "loop": "pinned Iter control port" if mode == "iter" else "pinned Omega core loop",
-        "memory": "upstream experience/files" if mode == "iter" else "history and text recall; no embeddings"}
+        "memory": "upstream experience/files" if mode == "iter" else "mode-private text recall"}
     if mode == "iter":
         ledger["terminal_output"] = "isolated worker sends forwarded at the foreground checkpoint"
     if mode == "omega":
-        ledger["startup"] = "core only; embedding, NAL/PLN and optional plugins are not loaded"
+        ledger["reasoning"] = "upstream NAL and PLN libraries loaded"
+        ledger["startup"] = "core only; upstream Chroma and optional plugins are not loaded"
         ledger["helper_module"] = "runtime alias omega_helper avoids host helper name collisions"
     return ledger
 
@@ -397,7 +404,7 @@ def main():
         str(args.repo / "channels"), str(args.repo / "repos/petta_lib_chromadb")])
     print(f"Starting {args.mode} ({'standalone terminal' if standalone else 'supervised'}); state: {runtime}", flush=True)
     if standalone and args.mode == "omega":
-        print("Omega core: history/text recall; embeddings and optional plugins are not loaded.", flush=True)
+        print("Omega core: NAL/PLN plus mode-private history/text recall; optional plugins are not loaded.", flush=True)
     return run_child(command, runtime, environment)
 
 

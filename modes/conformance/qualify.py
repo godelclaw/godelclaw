@@ -16,6 +16,8 @@ def main():
     parser = argparse.ArgumentParser()
     for field in ("cetta", "petta", "python", "formal-root", "output"):
         parser.add_argument("--" + field, type=Path, required=True)
+    parser.add_argument("--cetta-source", type=Path,
+                        help="CeTTa source tree when --cetta names an installed bundle")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     oracle = subprocess.check_output(["git", "-C", str(args.petta), "rev-parse", "HEAD"], text=True).strip()
@@ -50,7 +52,17 @@ def main():
         if run("generate-replay", [sys.executable, str(HERE / "replay.py"), "--traces", str(matrix), "--output", str(replay)]):
             run("lean-replay", ["lean", str(replay)], env=env, cwd=args.formal_root)
     # Small focused runtime check for the lib/proc text boundary used by Iter.
-    proc = args.cetta.parent / "tests/petta/proc_text_boundary.metta"
+    source = args.cetta_source or args.cetta.parent
+    proc = source / "tests/petta/proc_text_boundary.metta"
+    if not proc.is_file():
+        raise SystemExit("proc boundary fixture missing; pass --cetta-source with the matching CeTTa checkout")
+    build_manifest = args.cetta.parent / "build-manifest.json"
+    if build_manifest.is_file() and (source / ".git").exists():
+        built_revision = json.loads(build_manifest.read_text()).get("revision")
+        source_revision = subprocess.check_output(
+            ["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip()
+        if built_revision and source_revision != built_revision:
+            raise SystemExit("--cetta-source revision does not match the installed CeTTa bundle")
     runtime_env = os.environ.copy()
     runtime_env.update(PYTHONHOME=str(args.python.parent.parent), LD_LIBRARY_PATH=str(args.python.parent.parent / "lib"))
     run("proc-text-boundary", [str(args.cetta), "--lang", "petta", str(proc)], env=runtime_env)
