@@ -127,10 +127,16 @@ def public_event(turn, disposition, command, result, at):
 
 
 def public_text(event) -> str:
-    note = "; dispatcher return, not a success verdict" \
-        if event["disposition"] == "returned" else ""
-    return "Activity | %s: %s (%s%s)" % (
-        event["tool"], event["disposition"], event["receipt_id"], note)
+    lines = [
+        "Activity · %s" % event["tool"],
+        "- Receipt: %s · %s" % (
+            event["disposition"], event["receipt_id"]),
+    ]
+    if event["disposition"] == "returned":
+        lines.append("- Dispatcher return only; not a success verdict.")
+    elif event["disposition"] in ("withheld", "deferred"):
+        lines.append("- The command did not run.")
+    return "\n".join(lines)
 
 
 class WorklogSink:

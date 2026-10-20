@@ -143,7 +143,8 @@ class Fixture:
         out, trace, notes, receipts = self.run_batch()
         self.assertEqual(trace, ["status", "command", "add"])
         self.assertEqual(len(notes), 1)
-        self.assertTrue(notes[0].startswith("Activity | shell: returned"))
+        self.assertTrue(notes[0].startswith("Activity · shell\n"))
+        self.assertIn("Receipt: returned", notes[0])
         self.check_receipt(receipts)
 
     def test_sharing_off_at_capture_publishes_nothing(self):

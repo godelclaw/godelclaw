@@ -144,7 +144,8 @@ class ProjectorWiringCases(Base, unittest.TestCase):
     def test_one_command_one_event_and_receipt_still_written(self):
         self.assertEqual(self.work(), 1)
         self.assertEqual(len(self.sink.notes), 1)
-        self.assertIn("shell: returned", self.sink.notes[0])
+        self.assertIn("Activity · shell", self.sink.notes[0])
+        self.assertIn("Receipt: returned", self.sink.notes[0])
         self.assertEqual(len(self.receipts()), 1)
 
     def test_allowlist_no_argument_or_result_bytes_in_output(self):
@@ -250,7 +251,9 @@ class ProjectorWiringCases(Base, unittest.TestCase):
     def test_stopped_command_is_withheld_never_returned(self):
         self.work(5, "withheld", ["shell", "rm x"], "operator stopped cognition")
         self.assertEqual(len(self.sink.notes), 1)
-        self.assertIn("shell: withheld", self.sink.notes[0])
+        self.assertIn("Activity · shell", self.sink.notes[0])
+        self.assertIn("Receipt: withheld", self.sink.notes[0])
+        self.assertIn("did not run", self.sink.notes[0])
         self.assertNotIn("returned", self.sink.notes[0])
 
     def test_unknown_tool_is_not_published_but_is_recorded(self):
@@ -298,7 +301,8 @@ class RealWorklogCases(Base, unittest.TestCase):
         self.work()
         notes = self.notes()
         self.assertEqual(len(notes), 1)
-        self.assertTrue(notes[0].startswith("Activity | shell: returned"))
+        self.assertTrue(notes[0].startswith("Activity · shell\n"))
+        self.assertIn("Receipt: returned", notes[0])
         self.assertNotIn(SECRET_ARGUMENT, notes[0])
         self.assertNotIn(SECRET_RESULT, notes[0])
 
