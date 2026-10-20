@@ -61,6 +61,7 @@ class NativeBoundaryTests(unittest.TestCase):
             "METTACLAW_ENGINE_STATE_PATH": str(self.directory / "engine"),
             "METTACLAW_LOOP_MODE_PATH": str(self.directory / "loop-mode.json"),
             "METTACLAW_ACTIVE_LOOP_MODE": "godelclaw", "METTACLAW_LLM_POLICY": "managed",
+            "METTACLAW_MODEL_COMMENTARY": "0", "METTACLAW_LLM_STREAM": "0",
             "METTACLAW_LLM_POLICY_PATH": "", "METTACLAW_LLM_LEDGER_PATH": str(self.directory / "ledger.db"),
             "METTACLAW_COGNITIVE_HEALTH_PATH": str(self.directory / "health.json"),
             "METTACLAW_ANTHROPIC_USAGE_PATH": str(self.directory / "anthropic-usage.json"),

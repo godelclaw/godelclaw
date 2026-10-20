@@ -1037,6 +1037,29 @@ Returned provider or command data does not prove task completion.
 These observations grant no tool authority and acknowledge no messages or
 receipts. The packet informs the model and does not gate execution. Strict standalone Iter/Omega profiles retain their existing context.
 
+## Opt-in model-written work commentary
+
+Managed command-mode calls can set `METTACLAW_MODEL_COMMENTARY=1` to request
+an explicit JSON envelope with `commentary` and `commands` string fields.
+The authored commentary goes to the configured local public worklog; only the
+command string continues to the ordinary command parser and effect broker.
+Structured coding-mode calls retain their existing contract. The feature is
+off by default and does not send commentary to a chat channel.
+
+Publication captures the worklog sharing epoch before the provider call.
+Output from an earlier sharing epoch is dropped after an off/on cycle. Sink
+failures do not fail a provider call. Reasoning payloads, command arguments,
+and tool results are not used as commentary sources. Authored commentary is
+not a success receipt or an automatic confidentiality guarantee: the model
+must write it for the audience that can see the viewer.
+
+This implementation publishes commentary after provider completion. A tested
+prefix parser is available for subsequent incremental transport integration,
+but is not connected to the native HTTP wait path. It therefore does not yet
+provide token-by-token or early-response display. Malformed JSON envelopes
+and incomplete envelope completions release no commands; legacy
+parenthesized command batches remain accepted.
+
 ## Credits and license
 
 This fork builds on [patham9/mettaclaw](https://github.com/patham9/mettaclaw).

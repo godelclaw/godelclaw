@@ -210,6 +210,7 @@
   "src/memory_views.metta",
   "src/metta_coding_policy.metta",
   "src/mode_channel.py",
+  "src/model_commentary.py",
   "src/moltbook.py",
   "src/native_iter.pl",
   "src/native_iter_worker.metta",

@@ -22,6 +22,7 @@ import provider_protocol
 import synthetic_llm
 import native_lifetime
 import provider_stream
+import model_commentary
 
 _session_epoch = uuid.uuid4().hex
 _claim_lock = threading.Lock()
@@ -241,6 +242,7 @@ def claim(plan):
             llm_policy.fail(plan.correlation, sent=False)
             return "false"
         plan.claimed = True
+        model_commentary.begin(plan)
         return "true"
 
 
@@ -343,6 +345,7 @@ def finish(plan, epoch, correlation, encoded, canonical):
         return _box({"message": result["choices"][0]["message"],
                      "finish": reason, "llm_result": boundary, "usage": result.get("usage", {})})
     content = result["choices"][0]["message"].get("content")
+    content = model_commentary.finish(plan, content, reason)
     if reason == "length":
         import helper
         content = helper.complete_command_prefix(content or "")
