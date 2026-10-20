@@ -217,6 +217,7 @@
   "src/native_iter_worker_cetta.metta",
   "src/native_llm.metta",
   "src/native_llm_host.py",
+  "src/native_lifetime.py",
   "src/observed_strategy.py",
   "src/open_assemblage.metta",
   "src/pins.py",

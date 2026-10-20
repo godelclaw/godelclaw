@@ -21,6 +21,10 @@ class ReleasePermissionsTest(unittest.TestCase):
             "modes/launch.py", "modes/runtime_host.py",
             "modes/iter/iter_host.py", "modes/conformance/verify.py",
             "modes/tool_protocol.py", "modes/protocol/ToolCalls.module",
+            "src/native_llm.metta", "src/native_llm_host.py",
+            "src/native_lifetime.py", "src/llm_policy.py",
+            "src/cognitive_health.py", "src/provider_protocol.py",
+            "src/provider_stream.py",
         ):
             self.assertIn(required, selected)
         for mode in ("iter", "omega"):
