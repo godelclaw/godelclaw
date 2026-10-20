@@ -17,6 +17,8 @@ import time
 
 _MAX_PINS = 12
 _MAX_LEN = 300
+_CONTEXT_PINS = 12
+_CONTEXT_LINE = 400
 _LOCK = threading.RLock()
 
 
@@ -92,3 +94,19 @@ def view():
     import helper
     text = " | ".join(lines)
     return helper.change_mark("pins", text) + " " + text
+
+
+def context_view():
+    """Bounded newest-first working view; the ``pins`` tool retains full access."""
+    with _LOCK:
+        lines = _read()
+    if not lines:
+        return "(no pins)"
+    visible = [line if len(line) <= _CONTEXT_LINE
+               else line[:_CONTEXT_LINE - 1] + "…"
+               for line in lines[-_CONTEXT_PINS:]]
+    header = "PINNED newest %d of %d; (pins) reads the full retained list" % (
+        len(visible), len(lines))
+    text = header + "\n" + " | ".join(visible)
+    import helper
+    return helper.change_mark("pins-context", text) + " " + text

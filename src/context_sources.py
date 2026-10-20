@@ -149,7 +149,7 @@ def _loaders(conversation=None):
         (specs["task-phase"], task_phase.view),
         (specs["active-query-declaration"], active_queries.view),
         (specs["affect-gestalt"], goals.affect_view),
-        (specs["pins"], pins.view),
+        (specs["pins"], pins.context_view),
         (specs["effect-receipts"], lambda: "Task receipts are in TASK_CONTEXT." if strategy_host.enabled() else effect_receipts.view()),
         (specs["development-state"], development_state.view),
         (specs["recent-proposals"],
