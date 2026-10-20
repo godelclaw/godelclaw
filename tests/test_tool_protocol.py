@@ -66,11 +66,27 @@ OMEGA = types.SimpleNamespace(LLMResponse=Response, LLMToolCall=Call)
 class ToolProtocolTests(unittest.TestCase):
     def test_metta_is_an_ordinary_canonical_tool_call(self):
         call = protocol.ToolCallV1("c1", "metta", {"sexpression": "(+ 1 2)"})
-        self.assertEqual(call.atom(),
-            ("ToolCallV1", "c1", "metta", '{"sexpression":"(+ 1 2)"}'))
+        self.assertEqual(call, ("ToolCallV1", ("JsonObject", (
+            ("JsonPair", "id", ("JsonString", "c1")),
+            ("JsonPair", "name", ("JsonString", "metta")),
+            ("JsonPair", "arguments", ("JsonObject", (
+                ("JsonPair", "sexpression", ("JsonString", "(+ 1 2)")),))),
+        ))))
         self.assertEqual(protocol.call_from_provider(protocol.provider_call(call)), call)
         result = protocol.ToolResultV1("c1", "returned", "3")
-        self.assertEqual(result.atom(), ("ToolResultV1", "c1", "returned", "3"))
+        self.assertEqual(protocol.json_value(result[1]), {
+            "id": "c1", "status": "returned", "content": "3"})
+
+    def test_json_value_projection_is_an_isomorphism(self):
+        value = {"object": {"z": None, "a": True}, "array": [1, 2.5, "x"]}
+        self.assertEqual(protocol.json_value(protocol.json_atom(value)), value)
+
+    def test_duplicate_metta_json_fields_are_rejected(self):
+        duplicate = ("JsonObject", (
+            ("JsonPair", "id", ("JsonString", "a")),
+            ("JsonPair", "id", ("JsonString", "b"))))
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            protocol.json_value(duplicate)
 
     def test_omega_request_preserves_specs_calls_and_results(self):
         request = types.SimpleNamespace(
@@ -133,7 +149,7 @@ class ToolProtocolTests(unittest.TestCase):
         ($document (module:read-file $reader "godelclaw:tool-calls" ''' +
                 json.dumps(str(protocol.SCHEMA)) + '''))
         ($_ (langdef:close-parser $reader))
-        ($presentation (module:assemble $document "Schema" LNil LNil OriginViewV1 "tool-calls:v1"))
+        ($presentation (module:assemble $document "Canonical" LNil LNil OriginViewV1 "tool-calls:v1"))
         ($core (module:core $presentation "ToolCalls")))
    (println! (TOOL_SCHEMA $core)))
 ''')
@@ -145,6 +161,7 @@ class ToolProtocolTests(unittest.TestCase):
         self.assertIn("ToolSpecV1", result.stdout)
         self.assertIn("ToolCallV1", result.stdout)
         self.assertIn("ToolResultV1", result.stdout)
+        self.assertIn("JsonValue", result.stdout)
 
 
 if __name__ == "__main__": unittest.main()

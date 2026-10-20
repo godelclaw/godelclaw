@@ -184,8 +184,10 @@ this boundary. The native generic codec preserves forced tool choice; the
 imported-mode adapter explicitly selects `auto-for-thinking` when translating
 Iter's `enable_thinking` to Anthropic adaptive thinking. Iter's existing loop
 retains its retry rule for responses with no tools. Omega uses the same canonical
-`ToolSpecV1`/`ToolCallV1`/`ToolResultV1` theory at the provider boundary, while
-retaining its own loop, message history and dispatch policy. `metta` is one
+`ToolSpecV1`/`ToolCallV1`/`ToolResultV1` theory at the provider boundary. Each
+carrier is a MeTTa constructor around named `JsonObject`/`JsonPair` fields;
+provider JSON is only a wire projection. Omega retains its own loop, message
+history and dispatch policy. `metta` is one
 ordinary tool whose `sexpression` argument is evaluated by Omega's existing
 MeTTa implementation. Model selection and credential configuration remain host
 adapters. The [project README](../README.md#services-and-execution)
@@ -358,7 +360,7 @@ strict.
 | Omega `joinPath` | Thin direct binding to unchanged `helper.joinPath`, replacing the source cross-`progn` variable binding at this host filesystem boundary. Both evaluators use this binding in core fixtures. |
 | Omega prompt/history reads | CeTTa-only filesystem bindings preserve provider prompt fallback and byte-tail history reads. The reference executes the original memory functions. This avoids the native computed-library-path incompatibility. |
 | Omega `string-replace` | CeTTa-only codec binding reproduces `split_string` separator-set semantics plus joining, including empty input. The oracle executes the original Prolog calls; `runtime-repros/empty-string-replace.metta` isolates the native failure. |
-| Omega call codecs | `ToolCalls.module` names the three canonical carriers. `tool_protocol.py` projects Omega objects and provider JSON; the adapter ledger records the schema digest. |
+| Omega call codecs | `ToolCalls.module` names three MeTTa record carriers over a supplied JSON-value theory. `tool_protocol.py` maps provider JSON to `JsonObject`/`JsonPair` atoms and Omega objects; the adapter ledger records the schema digest and representation. |
 | Omega restart/checkpoint | History persists; control resets. Test termination is a fixture-only exit at the upstream sleep boundary; provider failures follow current upstream containment. |
 | Unadapted legacy probes | `runtime-repros/typed-predicate-test.metta` and `empty-string-replace.metta` retain the native incompatibility reproductions. The loader adapters preserve the required pinned behavior; this work does not claim that CeTTa generally implements the old dialect without them. |
 | Other upstream material | Complete file-by-file manifest marks deployment, provider/channel, plugin, theory and ancillary material outside this isolated core. No agent add-ons are merged into either pinned source. |

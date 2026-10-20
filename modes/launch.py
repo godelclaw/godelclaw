@@ -222,6 +222,7 @@ def prepare_omega(runtime, repo, standalone=False, prompt_path=None):
         "schema": "modes/protocol/ToolCalls.module",
         "sha256": hashlib.sha256(protocol.read_bytes()).hexdigest(),
         "carriers": ["ToolSpecV1", "ToolCallV1", "ToolResultV1"],
+        "representation": "MeTTa constructors over named JsonObject/JsonPair fields",
     }
     ledger["upstream"] = json.loads(
         (HERE / "omega/upstream-manifest.json").read_text())["commit"]

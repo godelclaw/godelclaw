@@ -40,6 +40,8 @@ class ModeLauncherTests(unittest.TestCase):
             self.assertIn("native semantic memory", ledger["memory"])
             self.assertEqual(ledger["tool_protocol"]["carriers"],
                              ["ToolSpecV1", "ToolCallV1", "ToolResultV1"])
+            self.assertEqual(ledger["tool_protocol"]["representation"],
+                             "MeTTa constructors over named JsonObject/JsonPair fields")
             self.assertEqual(len(ledger["tool_protocol"]["sha256"]), 64)
             self.assertEqual(ledger["upstream"],
                              "94d7b9a2e1ef6b5873aee764ca1ef16de8dcd943")
