@@ -1,4 +1,5 @@
 ; The hierarchy has no new Python or SWI implementation.
+(= (hierarchy:task) "autonomous")
 (= (hierarchy:begin $turn $source $projection) True)
 (= (hierarchy:record $turn $source $message $response $results) True)
 (= (hierarchy:context) "")

@@ -2,6 +2,7 @@
 !(import! &self system)
 !(import! &self json)
 !(bind! &hierarchy-task (new-state "autonomous"))
+(= (hierarchy:task) (get-state &hierarchy-task))
 !(bind! &hierarchy-boot (new-state (space:request-id)))
 
 (= (hierarchy:socket)
