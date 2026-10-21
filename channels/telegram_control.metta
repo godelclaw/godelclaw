@@ -18,6 +18,7 @@
 !(import! &self cwp)
 !(import! &self system)
 !(import! &self ./src/helper.py)
+!(import! &self ./src/fuel_io)
 !(import! &self ./src/mode_channel.py)
 !(import! &self ./src/input_ack.py)
 !(import! &self ./channels/energy.metta)
@@ -150,7 +151,7 @@
                (case $kind
                  (("mode" (let $reply (tc:text (py-call (loop_modes.set_mode $arg)))
                             (let $woken (tc:wake "mode switch") (tc:settings-menu "modes" "mode" $reply))))
-                  ("fuel" (let $reply (tc:text (py-call (fuel_modes.set_fuel $arg)))
+                  ("fuel" (let $reply (tc:text (fuel:set $arg))
                             (tc:settings-menu "fuels" "fuel" $reply)))
                   ("engine" (let $reply (tc:switch-engine $arg) (tc:settings-menu "engines" "engine" $reply)))
                   ("model" (let $reply (tc:text (py-call (synthetic_llm.set_model $arg)))
@@ -194,8 +195,8 @@
       ("/energy" (tc:energy-menu ""))
       ("/fuel"
        (if (== $args "")
-         (tc:with-hint (tc:text (py-call (fuel_modes.fuel_view))) "/fuel <name> to switch, /fuels to list")
-         (tc:text (py-call (fuel_modes.set_fuel $args)))))
+         (tc:with-hint (tc:text (fuel:view)) "/fuel <name> to switch, /fuels to list")
+         (tc:text (fuel:set $args))))
       ("/mode"
        (if (== $args "")
          (tc:with-hint (tc:text (py-call (loop_modes.mode_view))) "/mode <name> to switch, /modes to list")

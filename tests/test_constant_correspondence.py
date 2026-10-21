@@ -64,6 +64,7 @@ CONSTANTS = {
     ],
     "carry ceiling": [
         (ROOT / "src" / "fuel_modes.py", r"^CARRY = (\d+)"),
+        (ROOT / "src" / "fuel_cetta.metta", r"^\(= \(fuel:carry\) (\d+)\)"),
         (LEAN / "FuelPolicy.lean", r"def carryMultiple : Nat := (\d+)"),
     ],
 }
@@ -113,6 +114,11 @@ class ConstantCorrespondenceTest(unittest.TestCase):
                          (ROOT / "src" / "fuel_modes.py").read_text(encoding="utf-8"))
         self.assertIsNotNone(code, "decay rule not found in the runtime")
         self.assertEqual(lean.groups(), code.groups())
+        native = re.search(r"\(let \$scaled \(\* \$held (\d+)\) \(math:trunc \(/ \(- \$scaled \(% \$scaled (\d+)\)\) (\d+)\)\)\)",
+                           (ROOT / "src" / "fuel_cetta.metta").read_text(encoding="utf-8"))
+        self.assertIsNotNone(native, "decay rule not found in the native lane")
+        self.assertEqual((native.group(1), native.group(3)), lean.groups())
+        self.assertEqual(native.group(2), native.group(3))
 
     def test_every_runtime_discipline_is_modelled(self):
         model = LEAN / "FuelPolicy.lean"
@@ -121,6 +127,9 @@ class ConstantCorrespondenceTest(unittest.TestCase):
         cases = set(re.findall(r"^\s*\|\s*(saturate|accumulate|carry|decay|unlimited)$",
                                model.read_text(encoding="utf-8"), re.M))
         self.assertEqual(cases, set(fuel_modes.FUELS))
+        native = re.search(r"^\(= \(fuel:names\) \(([^)]*)\)\)",
+                           (ROOT / "src" / "fuel_cetta.metta").read_text(encoding="utf-8"), re.M)
+        self.assertEqual(re.findall(r'"([a-z]+)"', native.group(1)), list(fuel_modes.FUELS))
 
     def test_the_models_carry_no_sorry(self):
         for model in sorted(LEAN.glob("*.lean")) if LEAN.is_dir() else []:
