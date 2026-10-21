@@ -162,18 +162,14 @@ def prepare(prompt, output_tokens=32768):
 
 
 
-def prepare_io(prompt):
-    """Grandfathered runtime observations; no native task/context policy here."""
-    global _runtime_projection
-    if not enabled():
-        return str(prompt)
-    if os.environ.get("METTACLAW_LLM_TRANSPORT") == "native":
-        import native_lifetime
-        native_lifetime.notify()
-        prompt = str(prompt) + "\n" + native_lifetime.evidence_context()
-    import runtime_context
-    _runtime_projection = runtime_context.render()
-    return str(prompt) + "\n" + _runtime_projection
+def lifetime_context():
+    """Native call-lifetime evidence for MeTTa's own context assembly, which
+    appends the runtime facts itself; empty unless the transport is native."""
+    if not enabled() or os.environ.get("METTACLAW_LLM_TRANSPORT") != "native":
+        return ""
+    import native_lifetime
+    native_lifetime.notify()
+    return "\n" + native_lifetime.evidence_context()
 
 
 def context_input(key, output_tokens=32768):
