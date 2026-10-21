@@ -950,6 +950,40 @@ The audit checks tracked runtime paths and locally configured private values.
 It complements review of the actual diff; it does not infer whether a deployment
 story is appropriate public documentation.
 
+## Executable retry/wake model
+
+`verification/RetryWake.module` owns the 24 reconciliation transitions and
+10 state classifiers. The native module reader supplies the typed rules and
+origins; `scripts/generate_retry_wake.py` derives the disjoint MeTTa equations,
+the small Python model, and their manifest. The MeTTa entry
+`(gc:decide failed submitted)` returns
+`(GcModelDecisionV2 failed submitted uncertain)`; unknown states are explicitly
+inapplicable. Load this pure view with
+`(import! &self "./verification/RetryWakeModel.metta")`.
+
+```sh
+python3 scripts/generate_retry_wake.py --cetta "$CETTA_BIN" --output .runtime/retry-wake --check
+python3 scripts/check_retry_wake.py --cetta "$CETTA_BIN" --output .runtime/retry-wake \
+  --models "$METTAPEDIA_ROOT/lean/pettaclaw" --toolchain v4.33.1
+```
+
+The second command checks the actual encoded transition function in HOL,
+checks Megalodon conversion where supported, compares all module rows with
+the Lean model, and exercises recovery on disposable host ledgers. It also
+requires exact conclusions and empty proof contexts, tests changed answers,
+and reuses a case to catch leaked theorem names. This is finite model and
+implementation correspondence, not whole-host verification.
+
+HOL supports this model in HE, PeTTa and Prime. Megalodon supports HE and PeTTa;
+the current Prime namespace reader changes its dotted wire constructor names,
+which the probe reports as unsupported. MM0 has no audited encoding of this
+transition theory yet. Neither backend is counted as checked when unavailable.
+The earlier reflexivity-only demonstration has been replaced.
+
+For an existing provider ledger, `scripts/inspect_retry_wake.py --ledger PATH`
+opens it read-only and reports active-call contradictions and model outcomes.
+It does not reconcile rows, submit calls, or change the live loop policy.
+
 ## Illustrations
 
 The upstream examples show memory recall, tool use and learning in a grid-world

@@ -1,6 +1,6 @@
 Module GodelClawRetryWake {
   Theory RetryWake() {
-    Empty Exports { RequestState; CallState; }
+    Empty Exports { RequestState; CallState; Flag; }
     Terms {
       RequestPending . RequestState ::= "request-pending";
       RequestCompleted . RequestState ::= "request-completed";
@@ -12,21 +12,81 @@ Module GodelClawRetryWake {
       CallCompleted . CallState ::= "call-completed";
       CallFailed . CallState ::= "call-failed";
       CallUncertain . CallState ::= "call-uncertain";
+      FlagFalse . Flag ::= "flag-false";
+      FlagTrue . Flag ::= "flag-true";
+      IsActive . Flag ::= "is-active" "(" CallState ")";
+      IsTerminal . Flag ::= "is-terminal" "(" RequestState ")";
       Reconcile . CallState ::= "reconcile" "(" RequestState "," CallState ")";
     }
     Rewrites {
-      FailedClaimed:
-        (Reconcile (RequestFailed) (CallClaimed)) ~> (CallFailed);
-      FailedSubmitted:
-        (Reconcile (RequestFailed) (CallSubmitted)) ~> (CallUncertain);
+      PendingAbsent:
+        (Reconcile (RequestPending) (CallAbsent)) ~> (CallAbsent);
+      PendingClaimed:
+        (Reconcile (RequestPending) (CallClaimed)) ~> (CallClaimed);
+      PendingSubmitted:
+        (Reconcile (RequestPending) (CallSubmitted)) ~> (CallSubmitted);
+      PendingCompleted:
+        (Reconcile (RequestPending) (CallCompleted)) ~> (CallCompleted);
+      PendingFailed:
+        (Reconcile (RequestPending) (CallFailed)) ~> (CallFailed);
+      PendingUncertain:
+        (Reconcile (RequestPending) (CallUncertain)) ~> (CallUncertain);
+      CompletedAbsent:
+        (Reconcile (RequestCompleted) (CallAbsent)) ~> (CallAbsent);
       CompletedClaimed:
         (Reconcile (RequestCompleted) (CallClaimed)) ~> (CallCompleted);
       CompletedSubmitted:
         (Reconcile (RequestCompleted) (CallSubmitted)) ~> (CallCompleted);
+      CompletedCompleted:
+        (Reconcile (RequestCompleted) (CallCompleted)) ~> (CallCompleted);
+      CompletedFailed:
+        (Reconcile (RequestCompleted) (CallFailed)) ~> (CallFailed);
+      CompletedUncertain:
+        (Reconcile (RequestCompleted) (CallUncertain)) ~> (CallUncertain);
+      FailedAbsent:
+        (Reconcile (RequestFailed) (CallAbsent)) ~> (CallAbsent);
+      FailedClaimed:
+        (Reconcile (RequestFailed) (CallClaimed)) ~> (CallFailed);
+      FailedSubmitted:
+        (Reconcile (RequestFailed) (CallSubmitted)) ~> (CallUncertain);
+      FailedCompleted:
+        (Reconcile (RequestFailed) (CallCompleted)) ~> (CallCompleted);
+      FailedFailed:
+        (Reconcile (RequestFailed) (CallFailed)) ~> (CallFailed);
+      FailedUncertain:
+        (Reconcile (RequestFailed) (CallUncertain)) ~> (CallUncertain);
+      UnknownAbsent:
+        (Reconcile (RequestUnknown) (CallAbsent)) ~> (CallAbsent);
       UnknownClaimed:
         (Reconcile (RequestUnknown) (CallClaimed)) ~> (CallUncertain);
       UnknownSubmitted:
         (Reconcile (RequestUnknown) (CallSubmitted)) ~> (CallUncertain);
+      UnknownCompleted:
+        (Reconcile (RequestUnknown) (CallCompleted)) ~> (CallCompleted);
+      UnknownFailed:
+        (Reconcile (RequestUnknown) (CallFailed)) ~> (CallFailed);
+      UnknownUncertain:
+        (Reconcile (RequestUnknown) (CallUncertain)) ~> (CallUncertain);
+      ActiveAbsent:
+        (IsActive (CallAbsent)) ~> (FlagFalse);
+      ActiveClaimed:
+        (IsActive (CallClaimed)) ~> (FlagTrue);
+      ActiveSubmitted:
+        (IsActive (CallSubmitted)) ~> (FlagTrue);
+      ActiveCompleted:
+        (IsActive (CallCompleted)) ~> (FlagFalse);
+      ActiveFailed:
+        (IsActive (CallFailed)) ~> (FlagFalse);
+      ActiveUncertain:
+        (IsActive (CallUncertain)) ~> (FlagFalse);
+      TerminalPending:
+        (IsTerminal (RequestPending)) ~> (FlagFalse);
+      TerminalCompleted:
+        (IsTerminal (RequestCompleted)) ~> (FlagTrue);
+      TerminalFailed:
+        (IsTerminal (RequestFailed)) ~> (FlagTrue);
+      TerminalUnknown:
+        (IsTerminal (RequestUnknown)) ~> (FlagTrue);
     }
   }
   theory RetryWake()

@@ -1,0 +1,177 @@
+{
+  "active": {
+    "CallAbsent": false,
+    "CallClaimed": true,
+    "CallCompleted": false,
+    "CallFailed": false,
+    "CallSubmitted": true,
+    "CallUncertain": false
+  },
+  "calls": [
+    "CallAbsent",
+    "CallClaimed",
+    "CallSubmitted",
+    "CallCompleted",
+    "CallFailed",
+    "CallUncertain"
+  ],
+  "module_sha256": "486ffdd2f00d41837259928ab4b4173443e210cb42f22fea6af676227236724c",
+  "requests": [
+    "RequestPending",
+    "RequestCompleted",
+    "RequestFailed",
+    "RequestUnknown"
+  ],
+  "terminal": {
+    "RequestCompleted": true,
+    "RequestFailed": true,
+    "RequestPending": false,
+    "RequestUnknown": true
+  },
+  "transitions": [
+    [
+      "RequestPending",
+      "CallAbsent",
+      "CallAbsent",
+      "PendingAbsent"
+    ],
+    [
+      "RequestPending",
+      "CallClaimed",
+      "CallClaimed",
+      "PendingClaimed"
+    ],
+    [
+      "RequestPending",
+      "CallSubmitted",
+      "CallSubmitted",
+      "PendingSubmitted"
+    ],
+    [
+      "RequestPending",
+      "CallCompleted",
+      "CallCompleted",
+      "PendingCompleted"
+    ],
+    [
+      "RequestPending",
+      "CallFailed",
+      "CallFailed",
+      "PendingFailed"
+    ],
+    [
+      "RequestPending",
+      "CallUncertain",
+      "CallUncertain",
+      "PendingUncertain"
+    ],
+    [
+      "RequestCompleted",
+      "CallAbsent",
+      "CallAbsent",
+      "CompletedAbsent"
+    ],
+    [
+      "RequestCompleted",
+      "CallClaimed",
+      "CallCompleted",
+      "CompletedClaimed"
+    ],
+    [
+      "RequestCompleted",
+      "CallSubmitted",
+      "CallCompleted",
+      "CompletedSubmitted"
+    ],
+    [
+      "RequestCompleted",
+      "CallCompleted",
+      "CallCompleted",
+      "CompletedCompleted"
+    ],
+    [
+      "RequestCompleted",
+      "CallFailed",
+      "CallFailed",
+      "CompletedFailed"
+    ],
+    [
+      "RequestCompleted",
+      "CallUncertain",
+      "CallUncertain",
+      "CompletedUncertain"
+    ],
+    [
+      "RequestFailed",
+      "CallAbsent",
+      "CallAbsent",
+      "FailedAbsent"
+    ],
+    [
+      "RequestFailed",
+      "CallClaimed",
+      "CallFailed",
+      "FailedClaimed"
+    ],
+    [
+      "RequestFailed",
+      "CallSubmitted",
+      "CallUncertain",
+      "FailedSubmitted"
+    ],
+    [
+      "RequestFailed",
+      "CallCompleted",
+      "CallCompleted",
+      "FailedCompleted"
+    ],
+    [
+      "RequestFailed",
+      "CallFailed",
+      "CallFailed",
+      "FailedFailed"
+    ],
+    [
+      "RequestFailed",
+      "CallUncertain",
+      "CallUncertain",
+      "FailedUncertain"
+    ],
+    [
+      "RequestUnknown",
+      "CallAbsent",
+      "CallAbsent",
+      "UnknownAbsent"
+    ],
+    [
+      "RequestUnknown",
+      "CallClaimed",
+      "CallUncertain",
+      "UnknownClaimed"
+    ],
+    [
+      "RequestUnknown",
+      "CallSubmitted",
+      "CallUncertain",
+      "UnknownSubmitted"
+    ],
+    [
+      "RequestUnknown",
+      "CallCompleted",
+      "CallCompleted",
+      "UnknownCompleted"
+    ],
+    [
+      "RequestUnknown",
+      "CallFailed",
+      "CallFailed",
+      "UnknownFailed"
+    ],
+    [
+      "RequestUnknown",
+      "CallUncertain",
+      "CallUncertain",
+      "UnknownUncertain"
+    ]
+  ]
+}

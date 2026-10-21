@@ -1,7 +1,7 @@
 ; Execute the neutral coGSLT module through the same PeTTa dialect used by the
 ; live agent.  The result retains the exact rewrite rule that justified it.
-!(import! &self (library lib_import))
 !(import! &self (library lib_module))
+!(import! &self "./verification/RetryWakeModel.metta")
 
 !(let* (($reader (langdef:load-baked-parser "module-core-reader"))
         ($module (module:read-file $reader "retry-wake"
@@ -16,6 +16,6 @@
                    (LangDef:RelationRows)
                    (Reconcile (RequestFailed) (CallSubmitted))))
         ($closed (langdef:close-language $authority)))
-   (println! (GodelClawModuleApplicationV1
-     "88c6713192cb30ed95013746cb627693da467b659d7fd1e9d1599c2df942d638"
+   (println! (GodelClawModuleApplicationV2
+     (gc:module-digest)
      $result)))
