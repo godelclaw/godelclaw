@@ -41,6 +41,32 @@ class NativeTaskContext(unittest.TestCase):
         self.assertTrue(output.is_file())
         self.assertEqual(output.read_text(), expected)
 
+    def test_foreign_string_focus_renders_full_context_with_its_identity(self):
+        fixture = reference.TaskContextTests(); fixture.setUp()
+        self.addCleanup(fixture.tmp.cleanup)
+        fixture.call([["read-file", "source"]], ["inspected evidence λ"])
+        expected = fixture.path.parent / "text-focus.txt"
+        actual = fixture.path.parent / "foreign-focus.txt"
+        # py-call returns this text through the PeTTa symbol carrier. Exercise
+        # the full prompt, where it becomes the payload of JsonString.
+        self.guest(fixture.path, '!(import! &self ./src/task_context_views)\n' +
+            '(= (fixture:context $focus) (task:full-context '
+            '"soul_cache_boundary_tools_cache_boundary_history_cache_boundary_now" '
+            '$focus "tool-completion" "32768" 4))\n' +
+            '!(fs:update-text ' + json.dumps(str(expected)) +
+            ' "replace" (fixture:context "guide") "" "")\n' +
+            '!(let $focus (py-call (builtins.str "guide")) (fs:update-text ' +
+            json.dumps(str(actual)) + ' "replace" (fixture:context $focus) "" ""))\n' +
+            '!(println! TASK_CONTEXT_OK)\n')
+        self.assertTrue(actual.is_file())
+        actual_prefix, actual_json = actual.read_text().rsplit("TASK_CONTEXT ", 1)
+        expected_prefix, expected_json = expected.read_text().rsplit("TASK_CONTEXT ", 1)
+        self.assertEqual(actual_prefix, expected_prefix)
+        actual_view, expected_view = json.loads(actual_json), json.loads(expected_json)
+        for key in ("focus", "root", "window", "archive"):
+            self.assertEqual(actual_view[key], expected_view[key])
+        self.assertEqual(actual_view["focus"], "guide")
+
     def test_unicode_topic_names_and_notes_use_existing_schema(self):
         fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
         self.guest(fixture.path, '''!(println! (topic-select "Café / PLN λ"))
