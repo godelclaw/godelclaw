@@ -399,36 +399,46 @@
          (if (== $found Broken) Broken
            (let $later (rt:column-threshold $db $collection (cdr-atom $columns) $names)
              (if (== $later None) $found $later)))))))
-(= (rt:column-names $rows) (if (== $rows ()) () (let (($cid $name $type $notnull $default $pk) (car-atom $rows)) (cons-atom $name (rt:column-names (cdr-atom $rows))))))
+(= (rt:column-names $rows)
+   (if (== $rows ()) ()
+     (let ($cid $name $type $notnull $default $pk) (car-atom $rows)
+       (let $rest (rt:column-names (cdr-atom $rows)) (cons-atom $name $rest)))))
+; Staged in small definitions: one deeply nested case does not reduce here.
 (= (rt:chroma)
-   (let $db (path:join (rt:chroma-dir) "chroma.sqlite3")
+   (let* (($db (path:join (rt:chroma-dir) "chroma.sqlite3"))
+          ($name (system:getenv-or-default "METTACLAW_CHROMA_COLLECTION" "memories")))
      (if (not (fs:is-file $db)) None
-       (case (rt:rows $db "SELECT id FROM collections WHERE name=?" ((system:getenv-or-default "METTACLAW_CHROMA_COLLECTION" "memories")))
-         (((Val (($collection)))
-           (case (rt:rows $db "SELECT id,scope FROM segments WHERE collection=?" ($collection))
-             (((Val $segments)
-               (let* (($meta (rt:segment $segments "METADATA")) ($vector (rt:segment $segments "VECTOR")))
-                 (if (or (== $meta None) (== $vector None)) None
-                   (let* (((Val $m) $meta) ((Val $v) $vector))
-                     (case (rt:rows $db "SELECT segment_id,seq_id FROM max_seq_id WHERE segment_id IN (?,?)" ($m $v))
-                       (((Val $sequences)
-                         (let* (($before (rt:sequence $sequences $m)) ($after (rt:sequence $sequences $v)))
-                           (if (or (== $before None) (== $after None)) None
-                             (let* (((Val $b) $before) ((Val $a) $after))
-                               (if (> $a $b) None
-                                 (let* (($docs (case (rt:rows $db "SELECT COUNT(*) FROM embeddings WHERE segment_id=?" ($m))
-                                                 (((Val (($count))) (rt:sql-nat $count)) ($fallback1 None))))
-                                        ($names (case (rt:rows $db "PRAGMA table_info(collections)" ())
-                                                  (((Val $rows) (rt:column-names $rows)) ($fallback2 ()))))
-                                        ($threshold (rt:column-threshold $db $collection ("config_json_str" "schema_str") $names)))
-                                   (if (or (== $threshold None) (== $threshold Broken)) None
-                                     (let (Val $t) $threshold
-                                       (Val (JsonObject ((JsonPair "documents" (rt:opt-json $docs))
-                                                         (JsonPair "persistedSequenceGap" (rt:int-json (- $b $a)))
-                                                         (JsonPair "threshold" (rt:int-json $t))))))))))))))
-                        ($fallback3 None))))))
-              ($fallback4 None))))
-          ($fallback5 None))))))
+       (case (rt:rows $db "SELECT id FROM collections WHERE name=?" ($name))
+         (((Val (($collection))) (rt:chroma-segments $db $collection))
+          ($missing None))))))
+(= (rt:chroma-segments $db $collection)
+   (case (rt:rows $db "SELECT id,scope FROM segments WHERE collection=?" ($collection))
+     (((Val $segments) (rt:chroma-watermarks $db $collection (rt:segment $segments "METADATA") (rt:segment $segments "VECTOR")))
+      ($failed None))))
+(= (rt:chroma-watermarks $db $collection $meta $vector)
+   (if (or (== $meta None) (== $vector None)) None
+     (let* (((Val $m) $meta) ((Val $v) $vector))
+       (case (rt:rows $db "SELECT segment_id,seq_id FROM max_seq_id WHERE segment_id IN (?,?)" ($m $v))
+         (((Val $sequences) (rt:chroma-facts $db $collection $m (rt:sequence $sequences $m) (rt:sequence $sequences $v)))
+          ($failed None))))))
+; The vector index may trail the metadata, never lead it.
+(= (rt:chroma-facts $db $collection $meta $before $after)
+   (if (or (== $before None) (== $after None)) None
+     (let* (((Val $b) $before) ((Val $a) $after))
+       (if (> $a $b) None
+         (rt:chroma-result (rt:chroma-documents $db $meta) (- $b $a)
+           (rt:column-threshold $db $collection ("config_json_str" "schema_str") (rt:chroma-columns $db)))))))
+(= (rt:chroma-documents $db $meta)
+   (case (rt:rows $db "SELECT COUNT(*) FROM embeddings WHERE segment_id=?" ($meta))
+     (((Val (($count))) (rt:sql-nat $count)) ($failed None))))
+(= (rt:chroma-columns $db)
+   (case (rt:rows $db "PRAGMA table_info(collections)" ()) (((Val $rows) (rt:column-names $rows)) ($failed ()))))
+(= (rt:chroma-result $documents $gap $threshold)
+   (if (or (== $threshold None) (== $threshold Broken)) None
+     (let (Val $t) $threshold
+       (Val (JsonObject ((JsonPair "documents" (rt:opt-json $documents))
+                         (JsonPair "persistedSequenceGap" (rt:int-json $gap))
+                         (JsonPair "threshold" (rt:int-json $t))))))))
 
 ; ---- process and model -----------------------------------------------------
 (= (rt:btime $lines)
