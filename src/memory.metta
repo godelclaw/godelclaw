@@ -44,11 +44,11 @@
      (import! &self ./src/semantic_memory_legacy))
 
 (= (legacy-remember $str)
-   (let $memory (py-call (helper.decode_safe_text $str))
+   (let $memory (utils:decode-safe $str)
         (py-call (qwen_embed.remember_guarded (string-safe $memory) (get_time_as_string)))))
 
 (= (legacy-query $str $count)
-   (let $query (py-call (helper.decode_safe_text $str))
+   (let $query (utils:decode-safe $str)
         (py-call (qwen_embed.query_guarded (string-safe $query) $count))))
 
 (= (remember $str) (semantic:remember $str))

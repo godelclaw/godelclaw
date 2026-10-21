@@ -74,7 +74,7 @@
 ;Send a message to all communication channels:
 (= (send $msg)
    (let $safemsg (string-replace $msg  "\n" "\\n")
-        (let $outmsg (py-call (helper.decode_safe_text $safemsg))
+        (let $outmsg (utils:decode-safe $safemsg)
              (if (== (commchannel) irc)
                  (let $temp (cut) (py-call (irc.send_message $outmsg)))
 	                 (if (== (commchannel) telegram)
@@ -84,7 +84,7 @@
 
 (= (send-telegram-chat $chat_id $msg)
    (let $safemsg (string-replace $msg  "\n" "\\n")
-        (let $outmsg (py-call (helper.decode_safe_text $safemsg))
+        (let $outmsg (utils:decode-safe $safemsg)
              (let $temp (cut) (if (tg:client-metta?) (tg:send-effect $outmsg (format-args "{}" ($chat_id)))
                                   (py-call (telegram.send_effect_message_to_chat $chat_id $outmsg)))))))
 
@@ -105,15 +105,15 @@
 
 ;Search the internet for some information:
 (= (search $msg)
-   (let $query (py-call (helper.decode_safe_text $msg))
+   (let $query (utils:decode-safe $msg)
         (py-call (websearch.search $query))))
 
 (= (search-tavily $msg)
-   (let $query (py-call (helper.decode_safe_text $msg))
+   (let $query (utils:decode-safe $msg)
         (py-call (websearch.search_tavily $query))))
 
 (= (search-ddg $msg)
-   (let $query (py-call (helper.decode_safe_text $msg))
+   (let $query (utils:decode-safe $msg)
         (py-call (websearch.search_ddg $query))))
 
 ;; On-demand short-term recall for any chat the bot is in: last $k messages

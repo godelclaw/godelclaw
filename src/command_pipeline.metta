@@ -11,7 +11,7 @@
        (repr (no_commands_parsed))))
 
 (= (model-response-read $response)
-   (catch (sread (py-call (helper.decode_safe_text $response)))))
+   (catch (sread (utils:decode-safe $response))))
 
 (= (model-response-commands $parsed)
    (case $parsed

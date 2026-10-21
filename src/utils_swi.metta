@@ -18,6 +18,8 @@
 (= (string-replace $str $a $b)
    (atomic_list_concat (split_string $str $a "") $b))
 
+(= (utils:decode-safe $value) (py-call (helper.decode_safe_text $value)))
+
 (= (string-safe $str)
    (string-replace (string-replace (string-replace $str "\"\"" "_quote_") "\n" "_newline_") "'" "_apostrophe_"))
 

@@ -92,7 +92,7 @@
 (= (gateway-tools) (py-call (gateway_bridge.tools)))
 (= (gateway-start $id $tool $json)
    (py-call (gateway_bridge.start $id $tool
-             (py-call (helper.decode_safe_text $json)))))
+             (utils:decode-safe $json))))
 (= (gateway-status $id) (py-call (gateway_bridge.status $id)))
 (= (gateway-cancel $id) (py-call (gateway_bridge.cancel $id)))
 
@@ -164,10 +164,10 @@
                (loop-directive-set pending-continuation
                                    (quote no-continuation))
                (py-call (helper.intent_save
-                          (py-call (helper.decode_safe_text $why))))
+                          (utils:decode-safe $why)))
                (RESTING budget-banked
                         sleep-interval-seconds $n
-                        intent (py-call (helper.decode_safe_text $why))))))
+                        intent (utils:decode-safe $why)))))
 
 ;; A burst ends at its step bound or via nop. Ending a burst is a pacing
 ;; decision; protected work remains active until its task checker accepts.
@@ -193,10 +193,10 @@
 ;; exists, otherwise delivered as a file (Telegram cannot preview SVG).
 (= (send-file $path) (py-call (telegram.send_file $path "")))
 (= (send-file $path $caption)
-   (py-call (telegram.send_file $path (py-call (helper.decode_safe_text $caption)))))
+   (py-call (telegram.send_file $path (utils:decode-safe $caption))))
 (= (send-image $path) (py-call (telegram.send_image $path "")))
 (= (send-image $path $caption)
-   (py-call (telegram.send_image $path (py-call (helper.decode_safe_text $caption)))))
+   (py-call (telegram.send_image $path (utils:decode-safe $caption))))
 
 ;; Filesystem awareness: line-numbered reads, exact-string edits with
 ;; uniqueness enforced, bounded tree/search. Result strings are the
@@ -206,16 +206,16 @@
 ;; these skills are the semantic interface (appraisal, birth, death-review).
 (= (goals) (py-call (goals.goals_view)))
 (= (goal-write $atom)
-   (py-call (goals.goal_write (py-call (helper.decode_safe_text $atom)))))
+   (py-call (goals.goal_write (utils:decode-safe $atom))))
 (= (goal-drop $name $reason) (py-call (goals.goal_drop $name $reason)))
 (= (goal-review-save $digest $entries)
-   (py-call (strategy_host.goal_review_save $digest (py-call (helper.decode_safe_text $entries)))))
+   (py-call (strategy_host.goal_review_save $digest (utils:decode-safe $entries))))
 
 ;; Claude Code bridge + tmux interface. Headless claude-code remains gated by
 ;; the operator toggle. Every window on this Unix user's tmux server is shared
 ;; agent workspace, so tmux-send needs no separate authorization layer.
 (= (claude-code $prompt)
-   (py-call (claude_bridge.ask (py-call (helper.decode_safe_text $prompt)))))
+   (py-call (claude_bridge.ask (utils:decode-safe $prompt))))
 !(import! &self ./src/tmux_io)
 
 ;; Progressive disclosure: one-line catalog above, full page on demand.
@@ -227,12 +227,12 @@
      (((APINotRegistered $key)
        (if (or (== $name "settings") (== $name "setting"))
          (SettingsHelp (settings:protocol) (settings))
-         (py-call (skills_help.help (py-call (helper.decode_safe_text $name))))))
+         (py-call (skills_help.help (utils:decode-safe $name)))))
       ($page $page))))
 (= (check $str)
    ;; repr BEFORE the bridge: a caught syntax_error compound cannot cross
    ;; janus (Domain error: py_term) — as a string it always can.
-   (let $decoded (py-call (helper.decode_safe_text $str))
+   (let $decoded (utils:decode-safe $str)
         (let $parsed (catch (sread $decoded))
              (case (api:check $parsed)
                (((APINotRegistered $name)
@@ -253,7 +253,7 @@
 (= (sibling-status) (py-call (sibling.sibling_status)))
 (= (sibling-on) (py-call (sibling.sibling_on)))
 (= (sibling-off $reason)
-   (py-call (sibling.sibling_off (py-call (helper.decode_safe_text $reason)))))
+   (py-call (sibling.sibling_off (utils:decode-safe $reason))))
 
 ;; LLM API introspection (synthetic.new): budget, model list, session model switch.
 (= (memory-health) (semantic:health))
@@ -267,7 +267,7 @@
 (= (mcp-tools $server) (py-call (mcp_bridge.tools $server)))
 (= (mcp-tool-info $server $tool) (py-call (mcp_bridge.tool_info $server $tool)))
 (= (mcp-call $server $tool $json)
-   (let $args (py-call (helper.decode_safe_text $json))
+   (let $args (utils:decode-safe $json)
         (py-call (mcp_bridge.call_tool $server $tool $args))))
 
 (= (command-receipts) (py-call (strategy_host.command_receipts)))

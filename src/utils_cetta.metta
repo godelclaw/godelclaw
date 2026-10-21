@@ -13,6 +13,7 @@
 (= (newline) "\n")
 (= (exists-file $file) (file-io:exists $file))
 (= (string-replace $text $old $new) (claw-text:replace $text $old $new))
+(= (utils:decode-safe $value) (claw-text:decode-safe $value))
 (= (string-safe $text)
    (string-replace (string-replace (string-replace $text "\"\"" "_quote_") "\n" "_newline_") "'" "_apostrophe_"))
 (= (last_chars $text $count)

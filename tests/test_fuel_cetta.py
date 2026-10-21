@@ -46,6 +46,7 @@ class NativeFuelTests(unittest.TestCase):
     def native(self, expressions):
         """Evaluate fuel expressions in one CeTTa process; return their values."""
         out = Path(self.tmp.name) / "results.json"
+        out.unlink(missing_ok=True)
         lines = ["!(import! &self (library lib_import))", "!(import! &self (library fs))",
                  "!(import! &self (library json))", "!(import! &self ./src/fuel_cetta.metta)",
                  "(= (fuel-test:encode $value) (if (== (get-type $value) Number) "
@@ -62,8 +63,13 @@ class NativeFuelTests(unittest.TestCase):
                                     text=True, timeout=300)
         finally:
             program.unlink()
-        self.assertTrue(out.is_file(), result.stdout[-2000:] + result.stderr[-2000:])
-        return [json.loads(json.dumps(v)) for v in json.loads(out.read_text())]
+        detail = result.stdout[-2000:] + result.stderr[-2000:]
+        self.assertEqual(result.returncode, 0, detail)
+        self.assertTrue(out.is_file(), "probe did not produce fresh results: " + detail)
+        values = json.loads(out.read_text())
+        self.assertIsInstance(values, list)
+        self.assertEqual(len(values), len(expressions), "wrong number of probe results")
+        return values
 
     def write_state(self, text):
         if text is None:
@@ -115,6 +121,11 @@ class NativeFuelTests(unittest.TestCase):
         os.environ["METTACLAW_FUEL_MODE_PATH"] = str(self.state)
         self.assertEqual(self.native(['(fuel:set "carry")'])[0], self.python.set_fuel("carry"))
         self.assertEqual(self.python.set_fuel("carry"), "fuel-set failed: could not persist")
+
+    def test_a_silent_reduction_cannot_reuse_previous_results(self):
+        self.native(["(fuel:current)"])
+        with self.assertRaisesRegex(AssertionError, "did not produce fresh results"):
+            self.native(["(superpose ())"])
 
 
 if __name__ == "__main__":
