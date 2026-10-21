@@ -89,36 +89,82 @@ class RetryWakeKernelsTest(unittest.TestCase):
         self.assertTrue(set(result['invariant_axioms']).issubset({'propext'}))
 
 
+@unittest.skipUnless(os.environ.get('CETTA_BIN'), 'configure CETTA_BIN')
 class ReadOnlyInspectionTest(unittest.TestCase):
+    """The MeTTa inspector reads through sqlite:observe and changes nothing."""
+    def ledger(self, directory, rows):
+        import sqlite3
+        path=Path(directory)/'ledger.sqlite3'
+        with closing(sqlite3.connect(path)) as db:
+            db.executescript('CREATE TABLE requests(id TEXT,status TEXT);'
+                'CREATE TABLE native_calls(id TEXT,state TEXT,updated REAL,created REAL);')
+            for identity,status,call,created in rows:
+                if status is not None:
+                    db.execute('INSERT INTO requests VALUES (?,?)',(identity,status))
+                db.execute('INSERT INTO native_calls VALUES (?,?,0,?)',(identity,call,created))
+            db.commit()
+        return path
+
+    def inspect(self, path, *moments):
+        import subprocess
+        out=Path(path).parent/'inspection.json'
+        program=ROOT/('.inspect_probe_%d.metta'%os.getpid())
+        program.write_text('!(import! &self (library lib_import))\n!(import! &self (library fs))\n'
+            '!(import! &self (library json))\n!(import! &self ./verification/RetryWakeInspect.metta)\n'
+            '!(fs:update-text %s "replace" (json-stringify (JsonArray (%s))) "" "")\n'
+            % (json.dumps(str(out)), ' '.join('(case (gc:inspect %s %s) (((GcInspection $j%d) $j%d) ((GcInspectionError $e%d) (JsonString $e%d))))'
+                                                  % (json.dumps(str(path)), m, i, i, i, i) for i, m in enumerate(moments))))
+        try:
+            result=subprocess.run([os.environ['CETTA_BIN'],'--lang','petta','--import-mode','ancestor-walk',str(program)],
+                                  cwd=ROOT,capture_output=True,text=True,timeout=60)
+        finally:
+            program.unlink()
+        self.assertTrue(out.is_file(),result.stdout[-2000:]+result.stderr[-2000:])
+        return json.loads(out.read_text())
+
     def test_missing_ledger_is_not_created(self):
-        from inspect_retry_wake import inspect
+        import subprocess
         base=ROOT/'.runtime/contract-tests';base.mkdir(parents=True,exist_ok=True)
         with tempfile.TemporaryDirectory(dir=base) as directory:
             path=Path(directory)/'absent.sqlite3'
-            import sqlite3
-            with self.assertRaises(sqlite3.OperationalError): inspect(path)
+            result=subprocess.run([os.environ['CETTA_BIN'],'--lang','petta','--import-mode','ancestor-walk',
+                                   'scripts/inspect_retry_wake.metta',str(path)],cwd=ROOT,capture_output=True,text=True,timeout=60)
+            self.assertEqual(result.returncode,1,result.stdout+result.stderr)
+            self.assertIn('inspect:',result.stdout)
             self.assertFalse(path.exists())
 
     def test_observation_does_not_reconcile_or_change_database(self):
-        from inspect_retry_wake import inspect
-        import sqlite3
         base=ROOT/'.runtime/contract-tests';base.mkdir(parents=True,exist_ok=True)
         with tempfile.TemporaryDirectory(dir=base) as directory:
-            path=Path(directory)/'ledger.sqlite3'
-            with closing(sqlite3.connect(path)) as db:
-                db.executescript('CREATE TABLE requests(id TEXT,status TEXT);'
-                    'CREATE TABLE native_calls(id TEXT,state TEXT,updated REAL,created REAL);'
-                    "INSERT INTO requests VALUES ('x','failed');"
-                    "INSERT INTO native_calls VALUES ('x','submitted',0,0);")
-                db.commit()
+            path=self.ledger(directory,[('x','failed','submitted',0)])
             before=path.read_bytes()
-            settling=inspect(path,now=1)['observations'][0]
-            self.assertTrue(settling['settlement_window'])
-            self.assertFalse(settling['contradiction'])
-            row=inspect(path,now=10)['observations'][0]
-            self.assertEqual(row['model_result'],'uncertain')
-            self.assertTrue(row['contradiction'])
+            settling,later=self.inspect(path,1,10)
+            self.assertEqual(settling['scope'],'read-only terminal-request diagnostics; no action authority')
+            row=settling['observations'][0]
+            self.assertTrue(row['settlement_window'])
+            self.assertFalse(row['contradiction'])
+            row=later['observations'][0]
+            self.assertEqual((row['model_result'],row['contradiction'],row['age_seconds']),('uncertain',True,10.0))
             self.assertEqual(path.read_bytes(),before)
+            self.assertFalse(Path(str(path)+'-journal').exists())
+
+    def test_unrecorded_and_pending_requests_are_reported_as_found(self):
+        base=ROOT/'.runtime/contract-tests';base.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=base) as directory:
+            path=self.ledger(directory,[('a',None,'claimed',1),('b','pending','claimed',2),('c','unknown','claimed',3),
+                                        ('d','completed','completed',4)])
+            rows=self.inspect(path,100)[0]['observations']
+            self.assertEqual([r['id'] for r in rows],['a','b','c'])
+            self.assertEqual((rows[0]['request'],rows[0]['model_result'],rows[0]['modelled'],rows[0]['terminal_request']),
+                             (None,None,False,False))
+            self.assertEqual((rows[1]['model_result'],rows[1]['terminal_request'],rows[1]['contradiction']),('claimed',False,False))
+            self.assertEqual((rows[2]['model_result'],rows[2]['terminal_request'],rows[2]['contradiction']),('uncertain',True,True))
+
+    def test_the_grace_window_is_the_runtime_s(self):
+        import re
+        native=re.search(r'^TERMINAL_RECONCILE_GRACE_SECONDS = (\d+)$',(ROOT/'src/native_lifetime.py').read_text(),re.M)
+        metta=re.search(r'^\(= \(gc:grace-seconds\) (\d+)\)$',(ROOT/'verification/RetryWakeInspect.metta').read_text(),re.M)
+        self.assertEqual(native.group(1),metta.group(1))
 
 
 if __name__=='__main__': unittest.main(verbosity=2)

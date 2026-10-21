@@ -980,9 +980,12 @@ which the probe reports as unsupported. MM0 has no audited encoding of this
 transition theory yet. Neither backend is counted as checked when unavailable.
 The earlier reflexivity-only demonstration has been replaced.
 
-For an existing provider ledger, `scripts/inspect_retry_wake.py --ledger PATH`
-opens it read-only and reports active-call contradictions and model outcomes.
-It does not reconcile rows, submit calls, or change the live loop policy.
+For an existing provider ledger, run
+`cetta --lang petta --import-mode ancestor-walk scripts/inspect_retry_wake.metta PATH`
+from the repository root (the ledger defaults to `METTACLAW_LLM_LEDGER_PATH`).
+It reads through `sqlite:observe`, so it cannot create, lock or change the
+ledger, and reports active-call contradictions and model outcomes. It does not
+reconcile rows, submit calls, or change the live loop policy.
 
 ## Illustrations
 
