@@ -37,6 +37,23 @@ class ConfigPrivacyTest(unittest.TestCase):
         self.assertNotIn(str(ROOT / "telegram_offset.txt"), result.stdout)
         self.assertNotIn(str(ROOT / "telegram_updates.jsonl"), result.stdout)
 
+    def test_work_display_controls_are_explicit_booleans(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "local.toml"
+            for setting in ("model_commentary", "public_tool_receipts"):
+                key = "METTACLAW_" + setting.upper()
+                for value in ("true", "false", '"yes"', "1"):
+                    path.write_text('[agent]\n' + setting + ' = ' + value + '\n')
+                    result = subprocess.run(
+                        ["python3", str(ROOT / "scripts" / "config_to_env.py"), str(path), str(ROOT)],
+                        capture_output=True, text=True)
+                    if value in ("true", "false"):
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertIn(key + "='" + ("1" if value == "true" else "0") + "'", result.stdout)
+                    else:
+                        self.assertEqual(result.returncode, 2)
+                        self.assertEqual(result.stdout, "")
+
     def test_identity_bearing_telegram_values_are_not_generated(self):
         config = textwrap.dedent("""
             [paths]

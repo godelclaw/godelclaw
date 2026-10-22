@@ -107,6 +107,10 @@ def main():
             or not math.isfinite(ack_delay) or ack_delay < 0):
         print("agent.input_ack_seconds must be a finite nonnegative number", file=sys.stderr)
         return 2
+    for name in ("model_commentary", "public_tool_receipts"):
+        if type(agent.get(name, False)) is not bool:
+            print("agent.%s must be boolean" % name, file=sys.stderr)
+            return 2
     telegram = config.get("telegram", {})
     input_policy = agent.get("input_policy", "cooperative")
     search = config.get("search", {})
@@ -139,6 +143,8 @@ def main():
     for name, value in native_waits.items():
         emit("METTACLAW_LLM_" + name.upper() + "_SECONDS", value)
     emit("METTACLAW_LLM_STREAM", 1 if native_stream else 0)
+    emit("METTACLAW_MODEL_COMMENTARY", agent.get("model_commentary", False))
+    emit("METTACLAW_PUBLIC_TOOL_RECEIPTS", agent.get("public_tool_receipts", False))
     emit("METTACLAW_INPUT_ACK_SECONDS", ack_delay)
     emit("METTACLAW_INPUT_POLICY", input_policy)
     emit("METTACLAW_OBSERVED_STRATEGY", agent.get("observed_strategy"))

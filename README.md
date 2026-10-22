@@ -1098,3 +1098,8 @@ and the progression of the work.
 
 Iter and Omega retain their upstream licenses and exact source manifests under
 [`modes/`](modes/README.md). See [LICENSE](LICENSE) for this repository's license.
+
+Public tool-receipt notices are diagnostic-only and disabled by default. Set
+`METTACLAW_PUBLIC_TOOL_RECEIPTS=1` explicitly to publish them; the private command
+records remain available without publishing notices or computing public receipt IDs.
+Authored model commentary uses the separate `METTACLAW_MODEL_COMMENTARY=1` path.

@@ -24,6 +24,13 @@ class EffectReceiptTest(unittest.TestCase):
         self.environment.start()
         self.addCleanup(self.environment.stop)
 
+    def test_default_diagnostics_do_not_touch_the_public_feed(self):
+        with mock.patch.dict(os.environ, {"METTACLAW_PUBLIC_TOOL_RECEIPTS": "0"}), \
+                mock.patch.object(effect_receipts, "_sink", side_effect=AssertionError("public sink touched")):
+            self.assertEqual(effect_receipts.capture_public_epoch(12), 0)
+            self.assertEqual(effect_receipts.record_command(12, "returned", ["shell", "private"], "observed"), 1)
+        self.assertEqual(len(self.path.read_text().splitlines()), 1)
+
     def test_returned_is_not_rendered_as_success(self):
         effect_receipts.record_command(
             4, "returned", ["send-file", "report.md"],
