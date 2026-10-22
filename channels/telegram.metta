@@ -191,11 +191,26 @@
 
 ;; --------------------------------------------------------------- clocks
 
-(= (tg:now-iso) (py-call (time.strftime "%Y-%m-%dT%H:%M:%S%z")))
-(= (tg:now) (py-call (time.time)))
+; Clocks and keys are native on CeTTa; SWI-PeTTa keeps src/helper.py's.
+!(tg:set clock-engine
+   (case (py-call (engine_modes.active_engine))
+     ((cetta native) ("cetta" native) ($other python))))
+!(if (== (tg:get clock-engine python) native)
+     (import! &self ./channels/telegram_clock.metta) True)
+(= (tg:native-clock?) (== (tg:get clock-engine python) native))
+(= (tg:now-iso)
+   (if (tg:native-clock?) (tg-clock:now-iso) (py-call (time.strftime "%Y-%m-%dT%H:%M:%S%z"))))
+(= (tg:now) (if (tg:native-clock?) (tg-clock:now) (py-call (time.time))))
 (= (tg:clock $epoch)
-   (if (== $epoch "") "" (py-call (helper.local_clock $epoch))))
-(= (tg:sleep $seconds) (py-call (time.sleep $seconds)))
+   (if (== $epoch "") ""
+     (if (tg:native-clock?) (tg-clock:local-clock $epoch) (py-call (helper.local_clock $epoch)))))
+(= (tg:sleep $seconds)
+   (if (tg:native-clock?) (tg-clock:sleep $seconds) (py-call (time.sleep $seconds))))
+(= (tg:pad20 $number)
+   (if (tg:native-clock?) (tg-clock:pad20 $number) (py-call (helper.pad20 $number))))
+(= (tg:rest-notice-text $left)
+   (if (tg:native-clock?) (tg-clock:rest-notice-text $left (tg-clock:now))
+     (py-call (helper.rest_notice_text $left))))
 
 ;; ------------------------------------------------------------ formatting
 
@@ -815,7 +830,7 @@
    (if (and (tg:resting?) (and (tg:operator? $sender-id) (== (tg:get rest-notice 0) 0)))
      (let $set (tg:set rest-notice 1)
        (let $left (- (tg:get sleep-until 0) (tg:now))
-         (let $text (py-call (helper.rest_notice_text $left))
+         (let $text (tg:rest-notice-text $left)
            (tg:send $text $chat-id))))
      ()))
 
@@ -892,7 +907,7 @@
      (let $last (tg:get last-sequence 0)
        (let $sequence (if (> $now $last) $now (+ $last 1))
          (let $set (tg:set last-sequence $sequence)
-           (let $padded (py-call (helper.pad20 $sequence))
+           (let $padded (tg:pad20 $sequence)
              (format-args "{}.0.{}" ($chat $padded))))))))
 
 ; Telegram-sized pieces of at most 4096 scalars, preferring line boundaries;

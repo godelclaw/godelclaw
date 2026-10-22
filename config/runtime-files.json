@@ -9,6 +9,7 @@
   "channels/mattermost.py",
   "channels/telegram.metta",
   "channels/telegram.py",
+  "channels/telegram_clock.metta",
   "channels/telegram_commands.metta",
   "channels/telegram_control.metta",
   "channels/telegram_control_input.metta",

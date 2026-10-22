@@ -898,10 +898,13 @@ def pad20(number):
     return "%020d" % int(number)
 
 
-def rest_notice_text(left):
-    """The one notice an operator gets when writing to a resting agent."""
+def rest_notice_text(left, now=None):
+    """The one notice an operator gets when writing to a resting agent,
+    as of NOW (the current time when omitted)."""
     left = max(0, int(float(left)))
-    wake_at = time.strftime("%H:%M", time.localtime(time.time() + left))
+    if now is None:
+        now = time.time()
+    wake_at = time.strftime("%H:%M", time.localtime(now + left))
     mins, secs = left // 60, left % 60
     span = ("%dm%02ds" % (mins, secs)) if mins else ("%ds" % secs)
     return ("\U0001F4A4 resting — wakes in %s (at %s). Your message is queued "
