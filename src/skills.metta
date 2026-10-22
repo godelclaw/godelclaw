@@ -272,7 +272,7 @@
 
 (= (command-receipts) (py-call (strategy_host.command_receipts)))
 (= (command-receipts $cursor) (py-call (strategy_host.command_receipts $cursor)))
-(= (model-jobs) (py-call (topic_jobs.status)))
-(= (model-result $id) (py-call (topic_jobs.results $id)))
+(= (model-jobs) (py-call (native_lifetime.jobs)))
+(= (model-result $id) (py-call (native_lifetime.model_result $id)))
 
 !(import! &self ./src/command_dispatch)

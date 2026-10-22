@@ -36,6 +36,12 @@ class ContextCompactionTests(unittest.TestCase):
         self.original_completion = self.completion.read_bytes()
 
     def populate(self, count=60, request="guide"):
+        # This is a running continuity installation. Legacy first-start
+        # migration is tested separately with no saved checkpoint.
+        with self.fixture.store.transaction() as db:
+            root = "conversation:" + self.fixture.store.get(db, "owner")
+            db.execute("INSERT OR IGNORE INTO meta VALUES(?,?)", ("task_window:" + root,
+                json.dumps({"version": 1, "start": 0, "summary": ""})))
         for n in range(count):
             self.fixture.call([["read-file", str(n)]], [("FINDING_%d λ " % n) * 200], request)
 
@@ -84,11 +90,12 @@ class ContextCompactionTests(unittest.TestCase):
         self.assertIn(original["transcript"][0]["id"], self.peer.requests[0][2]["messages"][-1]["content"])
         self.assertIn(first["last_source"], {p["id"] for p in original["transcript"]})
         self.assertTrue(first["call_id"])
-        self.assertGreater(len(self.peer.requests), 1)
+        self.assertEqual(len(self.peer.requests), 1)
+        self.assertIn("UNFOLDED_HISTORY", rendered)
         for _, _, request in self.peer.requests:
             prompt = "\n".join(m["content"] for m in request["messages"])
             self.assertLessEqual(len(prompt.encode()) / 2.5, 0.9 * 20000)
-        self.assertIn("HANDOFF_ONE", self.peer.requests[-1][2]["messages"][-1]["content"])
+        self.assertNotIn("HANDOFF_ONE", self.peer.requests[0][2]["messages"][-1]["content"])
         with sqlite3.connect(self.directory / "ledger.db") as db:
             self.assertTrue(all(r[0] == "completed" for r in db.execute("SELECT state FROM native_calls")))
         self.assert_parent_unchanged()
@@ -103,7 +110,7 @@ class ContextCompactionTests(unittest.TestCase):
         self.assertNotIn("WITHHELD:", rendered)
         self.assertIn("HANDOFF_TWO", rendered)
         self.assertIn("HANDOFF_ONE", self.peer.requests[before][2]["messages"][-1]["content"])
-        self.assertIn("OTHER_TASK_CONSTRAINT", "\n".join(r[2]["messages"][-1]["content"] for r in self.peer.requests[before:]))
+        self.assertIn("OTHER_TASK_CONSTRAINT", rendered)
         self.assertGreater(self.checkpoint()["start"], first["start"])
         self.assertEqual(reference.task_context.history(self.fixture.store, "guide")["total"], 60)
         identity = original["transcript"][1]["id"]
@@ -114,11 +121,15 @@ class ContextCompactionTests(unittest.TestCase):
         self.populate(25)
         for finish, text in (("length", "partial handoff"), ("stop", "  ")):
             with self.subTest(finish=finish):
+                with self.fixture.store.transaction() as db:
+                    db.execute("DELETE FROM meta WHERE key LIKE 'context_failure:%'")
                 self.peer.reply["choices"][0].update(finish_reason=finish,
                     message={"role": "assistant", "content": text})
                 result = self.render(finish, capacity=10000)
-                self.assertIn("WITHHELD: context-compaction-", result)
-                self.assertIsNone(self.checkpoint())
+                self.assertNotIn("WITHHELD:", result)
+                self.assertIn("UNFOLDED_HISTORY", result)
+                self.assertEqual(self.checkpoint()["start"], 0)
+                self.assertEqual(self.checkpoint()["summary"], "")
                 self.assertEqual(reference.task_context.history(self.fixture.store, "guide")["total"], 25)
                 self.assert_parent_unchanged()
 
@@ -126,8 +137,35 @@ class ContextCompactionTests(unittest.TestCase):
         self.populate(25)
         self.peer.status = 503
         result = self.render(capacity=10000)
-        self.assertIn("WITHHELD: context-compaction-call-failed", result)
-        self.assertIsNone(self.checkpoint())
+        self.assertNotIn("WITHHELD:", result)
+        self.assertIn("UNFOLDED_HISTORY", result)
+        self.assertEqual(self.checkpoint()["start"], 0)
+        self.assert_parent_unchanged()
+
+    def test_received_transient_failure_waits_then_recovers(self):
+        import time
+        self.populate(25)
+        self.peer.status, self.peer.retry_after = 503, 120
+        began = time.time()
+        first = self.render(capacity=10000)
+        self.assertIn("UNFOLDED_HISTORY", first)
+        self.assertEqual(len(self.peer.requests), 1)
+        with self.fixture.store.transaction() as db:
+            key, raw = db.execute("SELECT key,value FROM meta WHERE key LIKE 'context_failure:%'").fetchone()
+            failure = json.loads(raw)
+            self.assertGreaterEqual(failure["retry_at"], began + 120)
+        second = self.render("still-waiting", capacity=10000)
+        self.assertIn("UNFOLDED_HISTORY", second)
+        self.assertEqual(len(self.peer.requests), 1)
+        with self.fixture.store.transaction() as db:
+            failure["retry_at"] = time.time() - 1
+            db.execute("UPDATE meta SET value=? WHERE key=?", (json.dumps(failure), key))
+        self.peer.status = 200
+        self.peer.reply["choices"][0]["message"]["content"] = "RECOVERED_HANDOFF with original findings."
+        third = self.render("recovered", capacity=10000)
+        self.assertIn("RECOVERED_HANDOFF", third)
+        self.assertEqual(len(self.peer.requests), 2)
+        self.assertGreater(self.checkpoint()["start"], 0)
         self.assert_parent_unchanged()
 
     def test_internal_handoff_is_not_a_public_commentary_turn(self):
@@ -184,30 +222,41 @@ class ContextCompactionTests(unittest.TestCase):
         for pair in pairs:
             self.assertIn(pair["id"], prompt)
 
-    def test_live_driver_retains_input_and_paces_a_failed_handoff_before_capture(self):
+    def test_failed_maintenance_does_not_acknowledge_or_repeat_paid_work(self):
         self.populate(25)
-        with self.fixture.store.transaction() as db:
-            before = self.fixture.store.get(db, "next_sample")
         self.peer.reply["choices"][0]["finish_reason"] = "length"
-        self.env.update(METTACLAW_OBSERVED_STRATEGY="1", METTACLAW_CONTEXT_WINDOW_TOKENS="10000",
-                        SYNTHETIC_EMPTY_BACKOFF="15", METTACLAW_HISTORY_PATH=str(self.directory / "history"),
-                        METTACLAW_TELEGRAM_LOG_PATH=str(self.directory / "updates.jsonl"))
-        self.env["PYTHONPATH"] += os.pathsep + str(boundary.ROOT / "channels")
-        result = self.run_guest('!(import! &self ' + json.dumps(str(boundary.ROOT / 'cetta_bootstrap.metta')) + ')\n'
-            '!(py-call (strategy_host.focus_request "guide"))\n'
-            '!(let $prepared (addition-protected-request "current input" 256) '
-            '(println! (RESULT (addition-model-call "fixture-model" 256 "default" $prepared 15))))\n'
-            '!(println! (SUCCESS (py-call (cognitive_health.turn_succeeded))))\n'
-            '!(println! (RETRY (py-call (cognitive_health.retry_wait_seconds))))\n')
-        self.assertIn("(RESULT ())", result)
-        self.assertIn("(SUCCESS 0)", result)
-        self.assertEqual(len(self.peer.requests), 1)
-        self.assertIsNone(self.checkpoint())
-        health = json.loads(self.health.read_text())
-        self.assertGreater(health["retry_at"], 0)
         with self.fixture.store.transaction() as db:
-            self.assertEqual(self.fixture.store.get(db, "next_sample"), before)
-            self.assertEqual(db.execute("SELECT processed FROM request_context WHERE request='guide'").fetchone()[0], 0)
+            processed = db.execute("SELECT processed FROM request_context WHERE request='guide'").fetchone()[0]
+        first = self.render(capacity=10000)
+        self.assertIn("UNFOLDED_HISTORY", first)
+        self.assertNotIn("WITHHELD", first)
+        self.assertEqual(len(self.peer.requests), 1)
+        second = self.render("retry", capacity=10000)
+        self.assertIn("UNFOLDED_HISTORY", second)
+        self.assertEqual(len(self.peer.requests), 1)
+        self.assertEqual(self.checkpoint()["start"], 0)
+        with self.fixture.store.transaction() as db:
+            self.assertEqual(db.execute("SELECT processed FROM request_context WHERE request='guide'").fetchone()[0], processed)
+        # An older fact is not invented by the degraded window: its exact
+        # source is still addressable before a task may depend on it.
+        original = reference.task_context.conversation_projection(self.fixture.store, "guide")["transcript"][1]
+        self.assertIn("FINDING_0", json.loads(reference.task_context.read(self.fixture.store, original["id"])["text"])["result"])
+        self.assert_parent_unchanged()
+
+    def test_legacy_backlog_starts_without_provider_work(self):
+        # Bulk source fixture: 10,000 distinct retained occurrences, without
+        # making 10,000 fsyncs or executing any of the proposed commands.
+        with self.fixture.store.transaction() as db:
+            db.execute("INSERT INTO task_proposals VALUES(0,'guide',?,'not run; reconsider')",
+                       (json.dumps([["read-file", "legacy-" + str(i)] for i in range(10000)]),))
+            db.execute("DELETE FROM meta WHERE key LIKE 'task_window:%'")
+        result = self.render(capacity=10000)
+        self.assertNotIn("WITHHELD", result)
+        self.assertIn("UNSUMMARIZED_ARCHIVE", result)
+        self.assertEqual(len(self.peer.requests), 0)
+        self.assertLessEqual(len(result.encode()) / 2.5, 10000)
+        self.assertEqual(reference.task_context.history(self.fixture.store, "guide")["total"], 10000)
+        self.assert_parent_unchanged()
 
     def test_commentary_contract_is_applied_before_protected_history_and_admission(self):
         import public_worklog
@@ -255,7 +304,7 @@ class ContextCompactionTests(unittest.TestCase):
                 "last_source": original["transcript"][2]["id"], "source_digest": "paid-digest"}
         old_raw = json.dumps(paid)
         with self.fixture.store.transaction() as db:
-            db.execute("INSERT INTO meta VALUES(?,?)", ("task_window:" + root, old_raw))
+            db.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", ("task_window:" + root, old_raw))
         output = self.seed_recent()
         self.assertIn("ContextPublished", output)
         checkpoint = self.checkpoint()

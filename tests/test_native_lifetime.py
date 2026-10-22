@@ -195,6 +195,43 @@ class NativeLifetimeTest(unittest.TestCase):
         self.assertIn(pending.correlation, enqueue.call_args[0][0])
         self.assertIn("uncertain", enqueue.call_args[0][0])
 
+    def test_compaction_purpose_is_durable_but_not_agent_evidence(self):
+        plan = self.plan(); plan.purpose = "compaction"
+        self.assertTrue(native_lifetime.claim(plan))
+        native_lifetime.submitted(plan, 3)
+        with mock.patch.object(native_lifetime, "process_start", return_value=None):
+            native_lifetime.recover()
+        self.assertEqual(native_lifetime.status(), [])
+        self.assertEqual(native_lifetime.evidence_context(), "")
+        receipt = __import__("json").loads(native_lifetime.result(plan.correlation))
+        self.assertEqual((receipt["state"], receipt["purpose"], receipt["result"]),
+                         ("abandoned", "compaction", None))
+        with native_lifetime.transaction() as db:
+            self.assertEqual(db.execute("SELECT status FROM requests WHERE id=?", (plan.correlation,)).fetchone()[0], "unknown")
+            self.assertEqual(db.execute("SELECT count(*) FROM requests WHERE id=?", (plan.correlation,)).fetchone()[0], 1)
+        enqueue = mock.Mock()
+        with mock.patch.dict(sys.modules, {"telegram": SimpleNamespace(enqueue_runtime_event=enqueue)}):
+            native_lifetime.notify()
+        enqueue.assert_not_called()
+
+    def test_internal_calls_do_not_hide_old_turn_evidence_at_limit(self):
+        turn = self.plan(); self.assertTrue(native_lifetime.claim(turn))
+        native_lifetime.settle(turn, "uncertain", reason="fixture")
+        for _ in range(15):
+            internal = self.plan(); internal.purpose = "coding"
+            self.assertTrue(native_lifetime.claim(internal))
+            native_lifetime.settle(internal, "completed", "internal private output")
+        self.assertEqual([r["id"] for r in native_lifetime.status()], [turn.correlation])
+        self.assertIn(turn.correlation, native_lifetime.evidence_context())
+        self.assertNotIn("internal private output", native_lifetime.result(internal.correlation))
+
+    def test_internal_active_calls_still_own_admission(self):
+        internal = self.plan(); internal.purpose = "compaction"
+        self.assertTrue(native_lifetime.claim(internal))
+        self.assertFalse(native_lifetime.claim(self.plan()))
+        self.assertTrue(native_lifetime.settle(internal, "completed", "handoff"))
+        self.assertTrue(native_lifetime.claim(self.plan()))
+
 
 if __name__ == "__main__":
     unittest.main()

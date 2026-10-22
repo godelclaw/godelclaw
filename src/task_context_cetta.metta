@@ -104,17 +104,17 @@
 ; Both orderings come from the original event journal. A serial fallback keeps
 ; older, unframed call records readable without inventing new occurrences.
 (= (task:conversation-sql $result $input-limit $tail)
+   (str:join "" ((task:conversation-base-sql $result $input-limit)
+     "SELECT serial,request,position,command,result,ticket,disposition FROM ordered ORDER BY ordering,category,ordinal" $tail)))
+(= (task:conversation-base-sql $result $input-limit)
    (let* (($calls (task:scoped-pairs-sql "SELECT id FROM requests" $result ""))
-          ($content (if (< $input-limit 0) "NULL" (task:input-text-sql $input-limit)))
+          ($content (if (== $input-limit -2) "min(length(CAST(r.content AS BLOB)),160000)"
+                        (if (< $input-limit 0) "NULL" (task:input-text-sql $input-limit))))
           ($record (str:join "" ("json_object('disposition','input','result'," $content ")"))))
      (str:join "" ("WITH calls(serial,request,position,command,result,ticket,disposition) AS (" $calls "), "
-       "chronology AS (SELECT sequence,json_extract(event,'$.kind') AS kind,json_extract(event,'$.serial') AS serial,json_extract(event,'$.request') AS request FROM events), "
-       "captures AS (SELECT serial,min(sequence) AS sequence FROM chronology WHERE kind='capture' GROUP BY serial), "
-       "deliveries AS (SELECT request,min(sequence) AS sequence FROM chronology WHERE kind='deliver' GROUP BY request), "
-       "ordered AS (SELECT -1 AS serial,r.id AS request,-1 AS position,'null' AS command," $record " AS result,'input' AS ticket,'input' AS disposition,COALESCE(d.sequence,0) AS ordering,0 AS category,r.rowid AS ordinal "
-       "FROM requests r LEFT JOIN deliveries d ON d.request=r.id UNION ALL "
-       "SELECT c.*,COALESCE(a.sequence,(SELECT COALESCE(max(sequence),0) FROM events)+c.serial+1),1,c.position FROM calls c LEFT JOIN captures a ON a.serial=c.serial) "
-       "SELECT serial,request,position,command,result,ticket,disposition FROM ordered ORDER BY ordering,category,ordinal" $tail))))
+       "ordered AS (SELECT -1 AS serial,r.id AS request,-1 AS position,'null' AS command," $record " AS result,'input' AS ticket,'input' AS disposition,COALESCE((SELECT min(e.sequence) FROM events e WHERE json_extract(e.event,'$.kind')='deliver' AND json_extract(e.event,'$.request')=+r.id),0) AS ordering,0 AS category,r.rowid AS ordinal "
+       "FROM requests r UNION ALL "
+       "SELECT c.*,COALESCE((SELECT min(e.sequence) FROM events e WHERE json_extract(e.event,'$.kind')='capture' AND json_extract(e.event,'$.serial')=+c.serial),(SELECT COALESCE(max(sequence),0) FROM events)+c.serial+1),1,c.position FROM calls c) "))))
 (= (task:input-text-sql $limit)
    (if (<= $limit 0) "r.content"
      (let $half (repr (math:floor (/ $limit 2)))
@@ -122,8 +122,12 @@
          " THEN substr(r.content,1," $half ")||char(10)||'[input excerpt; request-read retains the complete source]'||char(10)||substr(r.content,-" $half ") ELSE r.content END")))))
 (= (task:conversation-projection $request $trigger $offset $limit)
    (let* (($root (task:conversation-root)) ($task-root (task:root $request))
-          ($requests (sqlite:statement "SELECT r.id,r.content,r.status,c.kind,c.note FROM requests r JOIN request_context c ON c.request=r.id WHERE r.id IN (SELECT id FROM requests) ORDER BY r.rowid" ()))
-          ($notes (sqlite:statement "SELECT * FROM task_notes WHERE request IN (SELECT id FROM requests) ORDER BY sequence" ()))
+          ($requests (if (<= $limit 0)
+             (sqlite:statement "SELECT r.id,r.content,r.status,c.kind,c.note FROM requests r JOIN request_context c ON c.request=r.id ORDER BY r.rowid" ())
+             (sqlite:statement "SELECT r.id,r.status,c.kind,c.note,substr(r.content,1,160) AS excerpt FROM requests r JOIN request_context c ON c.request=r.id WHERE (r.status IN ('active','waiting-user','deferred') OR (r.status='processed' AND c.kind IN ('message','notification'))) OR r.id=? ORDER BY r.rowid" ($request))))
+          ($notes (if (<= $limit 0)
+             (sqlite:statement "SELECT * FROM task_notes ORDER BY sequence" ())
+             (sqlite:statement "SELECT n.* FROM task_notes n JOIN requests r ON r.id=n.request JOIN request_context c ON c.request=r.id WHERE (r.status IN ('active','waiting-user','deferred') OR (r.status='processed' AND c.kind IN ('message','notification'))) OR r.id=? ORDER BY n.sequence" ($request))))
           ($source (task:conversation-sql (task:limited-result-sql $limit) $limit " LIMIT -1 OFFSET ?"))
           ($pairs (sqlite:statement $source ($offset)))
           ((sqlite:committed ($requested $noted $paired)) (state:transaction deferred ($requests $notes $pairs)))
@@ -135,3 +139,21 @@
        (JsonPair "requests" (JsonArray (task:objects $requested)))
        (JsonPair "notes" (JsonArray (task:objects $noted)))
        (JsonPair "transcript" (JsonArray $transcript)) (JsonPair "archive" JsonNull)))))
+
+; One-time first-start selection uses integer sizes inside SQLite. Only the
+; selected window's text crosses into MeTTa; old bodies remain on disk.
+(= (task:initial-start $capacity $ratio)
+   (let* (($base (task:conversation-base-sql "json_object('bytes',min(length(CAST(t.result AS BLOB)),160000))" -2))
+          ($sql (str:join "" ($base
+            ", sized AS (SELECT row_number() OVER (ORDER BY ordering,category,ordinal)-1 AS n,"
+            "COALESCE(CASE WHEN serial=-1 THEN json_extract(result,'$.result') ELSE json_extract(result,'$.bytes') END,0)+length(CAST(command AS BLOB))+length(request)+160 AS bytes FROM ordered), "
+            "ranked AS (SELECT n,SUM(bytes) OVER (ORDER BY n DESC) AS tail_bytes FROM sized) "
+            "SELECT CASE WHEN COALESCE((SELECT SUM(bytes) FROM sized),0)<=? THEN 0 "
+            "ELSE COALESCE((SELECT min(n) FROM ranked WHERE tail_bytes<=?),(SELECT max(n) FROM sized),0) END")))
+          ($rows (state:rows (state:query $sql ((* 0.9 (* $capacity $ratio)) (* 0.2 (* $capacity $ratio)))))))
+     (car-atom (car-atom $rows))))
+(= (task:initial-view $focus $trigger $capacity $ratio)
+   (let $rows (state:rows (state:query "SELECT 1 FROM meta WHERE key=?" ((task:window-key (task:conversation-root)))))
+     (if (== $rows ())
+       (task:conversation-projection $focus $trigger (task:initial-start $capacity $ratio) (task:result-chars))
+       (task:conversation-view $focus $trigger))))

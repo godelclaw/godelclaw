@@ -176,6 +176,11 @@ def for_compaction(plan):
     return plan
 
 
+def for_coding(plan):
+    plan.purpose = "coding"
+    return plan
+
+
 def _compaction(plan):
     return getattr(plan, "purpose", None) == "compaction"
 
@@ -204,6 +209,17 @@ def structured_json_result(box, path):
     temporary = str(path) + ".tmp"
     with open(temporary, "w", encoding="utf-8") as stream:
         stream.write(text)
+    os.replace(temporary, str(path))
+    return 1
+
+
+def compaction_failure_result(plan, path):
+    """Preserve maintenance error metadata without passing Error as a value."""
+    failure = getattr(plan, "compaction_failure", dict(
+        retryable=False, retry_after=-1, reason="local-provider-failure"))
+    temporary = str(path) + ".tmp"
+    with open(temporary, "w", encoding="utf-8") as stream:
+        json.dump({"compaction_failure": failure}, stream)
     os.replace(temporary, str(path))
     return 1
 
@@ -477,6 +493,13 @@ def failed(plan, correlation, kind, status=0):
     if getattr(plan, "retry_after", None) is not None:
         error.retry_after = plan.retry_after
     if _compaction(plan):
+        # A received transient HTTP error is retryable. An uncertain remote
+        # outcome stays accounted and is not automatically submitted again.
+        status_code = int(status)
+        plan.compaction_failure = dict(
+            retryable=(status_code == 429 or status_code >= 500 or
+                       isinstance(error, llm_policy.AdmissionDenied) and error.retry_after > 0),
+            retry_after=getattr(error, "retry_after", -1), reason="provider-failure")
         raise RuntimeError("context compaction provider failed: " + type(error).__name__) from None
     if plan.kind == "command":
         return synthetic_llm._empty_action(error)

@@ -183,6 +183,40 @@ class NativeTaskContext(unittest.TestCase):
         self.assertEqual(reference.task_context.history(fixture.store, "guide")["total"], 9)
         self.assertEqual(reference.task_context.history(fixture.store, "group-post")["total"], 1)
 
+    def test_working_metadata_does_not_grow_with_closed_requests(self):
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        for name, status in (("wait", "waiting-user"), ("later", "deferred"), ("handed-over", "processed")):
+            fixture.store.accept(name, "OPEN_" + name, kind="message")
+            with fixture.store.transaction() as db:
+                db.execute("UPDATE requests SET status=? WHERE id=?", (status, name))
+        def working(name, offset):
+            out = fixture.path.parent / (name + ".json")
+            self.guest(fixture.path, '!(fs:update-text ' + json.dumps(str(out)) +
+                ' "replace" (state:encoded (task:conversation-projection "guide" "tick" ' + str(offset) + ' 40000)) "" "")\n!(println! TASK_CONTEXT_OK)\n')
+            return json.loads(out.read_text())
+        before = working("before", 4)
+        with fixture.store.transaction() as db:
+            db.executemany("INSERT INTO requests(id,content,status,checker) VALUES(?,?,'addressed','operator')",
+                           [("closed-" + str(i), "CLOSED_BODY" * 100) for i in range(2000)])
+            db.executemany("INSERT INTO request_context(request,kind) VALUES(?,'message')",
+                           [("closed-" + str(i),) for i in range(2000)])
+        after = working("after", 2004)
+        self.assertEqual(before["requests"], after["requests"])
+        self.assertEqual({r["id"] for r in after["requests"]}, {"guide", "wait", "later", "handed-over"})
+        self.assertNotIn("CLOSED_BODY", json.dumps(after["requests"]))
+        self.assertTrue(all("content" not in r and "retrieve" not in r for r in after["requests"]))
+
+    def test_ordering_lookup_uses_both_partial_indexes(self):
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        fixture.call([["read-file", "a"]], ["finding"])
+        out = fixture.path.parent / "ordering.sql"
+        self.guest(fixture.path, '!(fs:update-text ' + json.dumps(str(out)) +
+                   ' "replace" (task:conversation-sql (task:limited-result-sql 40000) 40000 "") "" "")\n!(println! TASK_CONTEXT_OK)\n')
+        with fixture.store.transaction() as db:
+            plan = "\n".join(str(tuple(row)) for row in db.execute("EXPLAIN QUERY PLAN " + out.read_text()))
+        self.assertIn("USING INDEX events_capture", plan)
+        self.assertIn("USING INDEX events_deliver", plan)
+
     def test_native_conversation_projection_matches_python_and_preserves_occurrences(self):
         fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
         fixture.call([["read-file", "a"]], ["same observation"])

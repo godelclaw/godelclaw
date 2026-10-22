@@ -879,15 +879,24 @@ focus changes; task ancestry still controls task-specific retrieval. Complete
 transcript chunks remain stable for provider caching. At the model-window
 threshold, a tool-free model call folds older records into a handoff. The
 summary and its source frontier are published together in one SQLite
-transaction. An empty, incomplete or failed handoff leaves the old frontier
-intact and retains input for the ordinary retry path. Original records remain
-available through `task-history`, `task-read` and `request-read`.
+transaction. Preparation makes at most one summary call. A failed handoff
+leaves the frontier unchanged and shows an explicit **unfolded history** range
+alongside the recent records that fit. Retrieve omitted evidence before relying
+on it; a status reply from this incomplete view cannot automatically close the
+current request. True metadata/newest-record overflow still withholds the turn.
+Original records remain available through `task-history`, `task-read` and
+`request-read`. Deterministic rejection of an unchanged batch waits for a change;
+received transient provider failures retain backoff, jitter and Retry-After.
 
-An existing installation can explicitly seed its continuous window from recent
-records that fit the selected model. The checkpoint retains any prior handoff
-and marks the omitted archive range as **not summarized**. That notice stays
-visible through later compaction; archive records and their identities remain
-retrievable. Normal window compaction never invokes this migration implicitly.
+On first start, an existing installation with no continuity checkpoint begins
+with recent records and an explicit **not summarized** archive gap, without a
+provider call. Previously published handoffs remain intact. An ordinary summary
+failure never invokes this migration or advances its frontier. Working metadata
+keeps unresolved requests (including messages whose delivery is processed but
+whose work is not addressed) and the focus, with short excerpts. Closed input
+bodies remain in the archive. Compaction and coding call receipts have durable
+purpose labels; they count toward accounting without becoming unfinished user
+turns. The native view is built once and ordering lookups use indexed keys.
 
 `work` starts an independent coding session with an append-only transcript,
 plan and steering inbox. `work-status`, `work-steer`, `work-stop` and

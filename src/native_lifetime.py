@@ -54,7 +54,9 @@ def transaction():
         for name in ("activity", "lane"):
             if name not in columns:
                 db.execute(f"ALTER TABLE native_calls ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
-        if "notified" not in {row[1] for row in db.execute("PRAGMA table_info(native_calls)")}:
+        if "purpose" not in columns:
+            db.execute("ALTER TABLE native_calls ADD COLUMN purpose TEXT NOT NULL DEFAULT 'turn'")
+        if "notified" not in columns:
             db.execute("ALTER TABLE native_calls ADD COLUMN notified INTEGER NOT NULL DEFAULT 0")
             # Processes before this column announced the outcomes they saw.
             db.execute("UPDATE native_calls SET notified=1 WHERE state NOT IN ('claimed','submitted')")
@@ -67,11 +69,11 @@ def recover():
         now = time.time()
         rows = db.execute(
             "SELECT native_calls.id,native_calls.pid,native_calls.process_start,"
-            "native_calls.state,native_calls.updated,requests.status "
+            "native_calls.state,native_calls.updated,requests.status,native_calls.purpose "
             "FROM native_calls LEFT JOIN requests ON requests.id=native_calls.id "
             "WHERE native_calls.state IN ('claimed','submitted')"
         ).fetchall()
-        for identity, pid, started, state, updated, request_state in rows:
+        for identity, pid, started, state, updated, request_state, purpose in rows:
             # The request ledger and the transport ledger share one identity.
             # A terminal request cannot continue to own admission authority.
             # Give the ordinary completion path a tiny grace interval between
@@ -88,6 +90,8 @@ def recover():
                 else:
                     outcome = "uncertain"
                     reason = "terminal-request-remote-outcome-unknown"
+                if purpose == "compaction":
+                    outcome, reason = "abandoned", "compaction-publication-not-completed"
                 db.execute(
                     "UPDATE native_calls SET state=?,reason=?,updated=? "
                     "WHERE id=? AND state IN ('claimed','submitted')",
@@ -102,8 +106,9 @@ def recover():
                 continue
             if started is not None and process_start(pid) == started:
                 continue
-            db.execute("UPDATE native_calls SET state='uncertain',reason='process-interrupted-remote-outcome-unknown',updated=? WHERE id=?",
-                       (now, identity))
+            outcome = "abandoned" if purpose == "compaction" else "uncertain"
+            db.execute("UPDATE native_calls SET state=?,reason='process-interrupted-remote-outcome-unknown',updated=? WHERE id=?",
+                       (outcome, now, identity))
             db.execute("UPDATE requests SET status='unknown',output=NULL,finish='interrupted-unknown' WHERE id=? AND status='pending'", (identity,))
 
 
@@ -127,9 +132,12 @@ def claim(plan):
                 return False
             if lane == "background" and sum(row[1] == "background" for row in active) >= capacity - reserve:
                 return False
+        purpose = getattr(plan, "purpose", "turn")
+        if purpose not in ("turn", "compaction", "coding"):
+            raise ValueError("invalid native call purpose")
         now = time.time()
-        db.execute("INSERT INTO native_calls(id,epoch,pid,process_start,created,updated,state,guard,activity,lane) VALUES (?,?,?,?,?,?,'claimed',?,?,?)",
-                   (plan.correlation, plan.epoch, os.getpid(), process_start(os.getpid()), now, now, getattr(plan, "guard", None), activity, lane))
+        db.execute("INSERT INTO native_calls(id,epoch,pid,process_start,created,updated,state,guard,activity,lane,purpose) VALUES (?,?,?,?,?,?,'claimed',?,?,?,?)",
+                   (plan.correlation, plan.epoch, os.getpid(), process_start(os.getpid()), now, now, getattr(plan, "guard", None), activity, lane, purpose))
     return True
 
 
@@ -155,10 +163,13 @@ def settle(plan, state, result=None, reason=None):
     submitted = getattr(plan, "submitted_at", None)
     soft = int(submitted is not None and
                (time.monotonic() - submitted) * 1000 >= getattr(plan, "soft", float("inf")))
+    accounting_uncertain = state == "uncertain"
+    if getattr(plan, "purpose", "turn") == "compaction" and state in ("uncertain", "late"):
+        state, result = "abandoned", None
     with transaction() as db:
         changed = db.execute("UPDATE native_calls SET state=?,result=?,reason=?,updated=?,soft_elapsed=MAX(soft_elapsed,?) WHERE id=? AND epoch=? AND state IN ('claimed','submitted')",
                              (state, result, reason, time.time(), soft, plan.correlation, plan.epoch)).rowcount == 1
-        if changed and state == "uncertain":
+        if changed and accounting_uncertain:
             db.execute("UPDATE requests SET status='unknown',output=NULL,finish='transport-unknown' WHERE id=?",
                        (plan.correlation,))
         return changed
@@ -167,18 +178,18 @@ def settle(plan, state, result=None, reason=None):
 def status():
     recover()
     with transaction() as db:
-        rows = db.execute("SELECT id,state,created,updated,soft_elapsed,bytes,quiet_ms,reason FROM native_calls ORDER BY created DESC LIMIT 12").fetchall()
+        rows = db.execute("SELECT id,state,created,updated,soft_elapsed,bytes,quiet_ms,reason FROM native_calls WHERE purpose='turn' ORDER BY created DESC LIMIT 12").fetchall()
     keys = ("id", "state", "created", "updated", "soft_elapsed", "bytes", "quiet_ms", "reason")
     return [dict(zip(keys, row)) for row in rows]
 
 
 def result(identity):
     with transaction() as db:
-        row = db.execute("SELECT state,result,reason FROM native_calls WHERE id=?", (str(identity),)).fetchone()
+        row = db.execute("SELECT state,result,reason,purpose FROM native_calls WHERE id=?", (str(identity),)).fetchone()
     if row is None:
         return None
-    full = row[1]
-    value = dict(id=str(identity), state=row[0], result=full,
+    full = row[1] if row[3] == "turn" else None
+    value = dict(id=str(identity), state=row[0], purpose=row[3], result=full,
         evidence_retained=full is not None, reason=row[2], action_authority=False,
         result_digest=hashlib.sha256((full or "").encode()).hexdigest(),
         result_chars=len(full or ""), truncated=False)
@@ -202,7 +213,7 @@ def notify():
     recover()
     with transaction() as db:
         rows = db.execute("SELECT id,state FROM native_calls WHERE state IN ('late','uncertain') "
-                          "AND notified=0 ORDER BY created").fetchall()
+                          "AND notified=0 AND purpose='turn' ORDER BY created").fetchall()
     for identity, state in rows:
         try:
             import telegram
@@ -212,3 +223,17 @@ def notify():
             continue  # the durable context listing remains available
         with transaction() as db:
             db.execute("UPDATE native_calls SET notified=1 WHERE id=?", (identity,))
+
+
+def jobs():
+    """Retained native turn receipts and the historical background-job API."""
+    import topic_jobs
+    return json.dumps({"native_calls": status(), "archived_jobs": json.loads(topic_jobs.status())})
+
+
+def model_result(identity):
+    receipt = result(identity)
+    if receipt is not None:
+        return receipt
+    import topic_jobs
+    return topic_jobs.results(identity)

@@ -34,8 +34,8 @@
           ($next (if (== $gap JsonNull) $checkpoint (state:json-set $checkpoint "archive_gap" $gap))))
      (context:write-checkpoint $root $old $next)))
 
-; Explicit, one-time operator migration of an old ledger. Normal preparation
-; never calls this: skipping unsummarized history requires this separate act.
+; First-start migration records a declared archive gap without a provider
+; call. It is separate from failed maintenance: failure never seeds a gap.
 ; $capacity already excludes the selected model's output and assembled base.
 (= (context:seed-recent $view $capacity $ratio)
    (let* (($root (task:string $view "root"))
@@ -87,12 +87,15 @@
 ; Find the largest contiguous batch fitting this model's actual input window.
 ; Repeated bootstrap batches carry the previous summary in source order.
 (= (context:batch-size $summary $pairs $notes $capacity $ratio $low $high)
-   (if (>= $low $high) $low
-     (let* (($middle (math:ceil (/ (+ $low $high) 2)))
-            ($prompt (context:summary-prompt $summary (task:take $pairs $middle) $notes))
-            ($fits (<= (math:ceil (/ (str:byte-length $prompt) $ratio)) (math:floor (* 0.9 $capacity)))))
-       (if $fits (context:batch-size $summary $pairs $notes $capacity $ratio $middle $high)
-         (context:batch-size $summary $pairs $notes $capacity $ratio $low (- $middle 1))))))
+   (let* (($fixed (context:summary-prompt $summary () $notes))
+          ($space (- (math:floor (* 0.9 $capacity))
+                     (math:ceil (/ (str:byte-length $fixed) $ratio)))))
+     (context:prefix-count $pairs $space $ratio 0 $high)))
+(= (context:prefix-count $pairs $space $ratio $count $maximum)
+   (if (or (== $pairs ()) (>= $count $maximum)) $count
+     (let $size (task:pair-tokens (car-atom $pairs) $ratio)
+       (if (> $size $space) $count
+         (context:prefix-count (cdr-atom $pairs) (- $space $size) $ratio (+ $count 1) $maximum)))))
 
 (= (context:plan $model $tokens $effort $prompt)
    (if (str:starts-with $model "chatgpt:")
@@ -107,11 +110,21 @@
        (((ContextPreparationFailed $_) $planned)
         ($ready
           (let* (($plan (py-call (native_llm_host.for_compaction $ready)))
-                 ($box (llm:run $plan))
-                 ($path (str:concat (state:checkpoint) ".compaction-reply.json"))
-                 ($_ (py-call (native_llm_host.structured_json_result $box $path)))
-                 ($reply (json-parse (fs:read-text $path))))
-            (context:validate-summary $reply)))))))
+                 ($path (str:concat (state:checkpoint) ".compaction-reply.json")))
+            (case (catch (llm:run $plan))
+              (((Error $kind $detail) (context:failed-reply $plan $path))
+               ((Error $detail) (context:failed-reply $plan $path))
+               ($box
+                 (let $_ (py-call (native_llm_host.structured_json_result $box $path))
+                   (context:validate-summary (json-parse (fs:read-text $path)))))))))))))
+(= (context:failed-reply $plan $path)
+   (let* (($_ (py-call (native_llm_host.compaction_failure_result $plan $path)))
+          ($reply (json-parse (fs:read-text $path)))
+          ($failure (state:json-field $reply "compaction_failure")))
+     (if (== (state:json-field $failure "retryable") (JsonBool True))
+       (ContextTransientFailure (task:string $failure "reason")
+         (str:string->number (task:string $failure "retry_after")))
+       (ContextPreparationFailed "context-compaction-provider-failed"))))
 (= (context:validate-summary $reply)
    (let* (($message (state:json-field $reply "message"))
           ($text (state:json-field $message "content"))
@@ -149,7 +162,7 @@
      (if (<= $count 0) (ContextPreparationFailed "context-compaction-record-exceeds-window")
        (let* (($batch (task:take $outgoing $count))
               ($prompt (context:summary-prompt $prior $batch $notes))
-              ($reply (context:ask $model $tokens $effort $prompt)))
+              ($reply (context:summary-once $root $raw $model $tokens $effort $prompt $capacity)))
          (case $reply
            (((ContextPreparationFailed $_) $reply)
             ((ContextSummary $summary $call)
@@ -162,36 +175,138 @@
                   ((ContextPublished
                     (let* (($tail (state:json-set $view "transcript" (JsonArray (task:drop $pairs $count))))
                            ($next (state:json-set $tail "offset" (task:number (+ $offset $count)))))
-                      (context:drive $next $capacity $model $tokens $effort $ratio)))
+                      (ContextReady $next)))
                    ($error $error))))))))))))
 
-(= (context:drive $view $capacity $model $tokens $effort $ratio)
+(= (context:failure-key $root) (str:concat "context_failure:" $root))
+; A deterministic rejection of an unchanged batch is not another model turn.
+; The source digest includes the previous handoff, model and capacity.
+(= (context:summary-once $root $raw $model $tokens $effort $prompt $capacity)
+   (let* (($key (context:failure-key $root))
+          ($code (str:sha256 (fs:read-text "src/context_compaction.metta")))
+          ($digest (str:sha256 (str:join "\n" ($code $model $effort (repr $tokens) (repr $capacity) (state:encoded (state:value $raw)) $prompt))))
+          ($prior (state:meta $key))
+          ($same (== (state:json-field $prior "digest") (JsonString $digest)))
+          ($retry (if $same (task:checkpoint-number $prior "retry_at") -1)))
+     (if (and $same (or (<= $retry 0) (< (system:wall-time) $retry)))
+       (ContextPreparationFailed "context-unchanged-summary-rejection")
+       (let $reply (catch (context:ask $model $tokens $effort $prompt))
+         (case $reply
+           (((ContextSummary $_ $_) $reply)
+            ((ContextTransientFailure $why $hint)
+              (let* (($streak (if $same (+ 1 (max 0 (task:checkpoint-number $prior "streak"))) 1))
+                     ($base (str:string->number (system:getenv-or-default "SYNTHETIC_EMPTY_BACKOFF" "15")))
+                     ($cap (str:string->number (system:getenv-or-default "SYNTHETIC_EMPTY_BACKOFF_CAP" "300")))
+                     ($limit (min $cap (* $base (math:pow 2 (min 20 (- $streak 1))))))
+                     ($delay (max (max 0 $hint) (random-float 0 (max 0 $limit))))
+                     ($_ (context:record-failure $key $digest $why $streak (+ (system:wall-time) $delay))))
+                (ContextPreparationFailed "context-compaction-transient-backoff")))
+            ($other
+              (let* (($reason (case $other (((ContextPreparationFailed $why) $why)
+                                             ($error "context-compaction-call-failed"))))
+                     ($_ (context:record-failure $key $digest $reason 0 0)))
+                (ContextPreparationFailed $reason)))))))))
+(= (context:record-failure $key $digest $reason $streak $retry)
+   (let $failure (JsonObject ((JsonPair "digest" (JsonString $digest))
+                             (JsonPair "reason" (JsonString $reason))
+                             (JsonPair "streak" (task:number $streak))
+                             (JsonPair "retry_at" (task:number $retry))))
+     (state:query "INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value" ($key (state:encoded $failure)))))
+
+; The checkpoint denotes only a validated handoff. An omitted working range
+; lives in the prompt, never in that checkpoint: it remains eligible for a
+; later fold, and originals retain their immutable retrieval addresses.
+(= (context:bounded $view $capacity $ratio $reason)
    (let* (($root (task:string $view "root"))
           ($offset (str:string->number (state:text (state:json-field $view "offset"))))
+          ($pairs (task:items $view "transcript"))
+          ($gap (JsonObject ((JsonPair "from" (task:number $offset))
+                            (JsonPair "until" (task:number (+ $offset (length $pairs))))
+                            (JsonPair "reason" (JsonString $reason)))))
+          ($marked (state:json-set $view "pending_history" $gap))
+          ($frame (task:working-frame $marked $capacity $ratio))
+          ($handoff (task:joined-handoff $root $marked))
+          ($available (- (- $capacity (context:measure $frame $ratio))
+                         (math:ceil (/ (str:byte-length $handoff) $ratio))))
+          ((Window $start $shown) (task:window-from $root $pairs $offset (max 0 $available) $ratio)))
+     (if (or (<= $available 0) (> (task:sum-tokens $shown $ratio 0) $available))
+       (ContextPreparationFailed "context-newest-record-or-metadata-exceeds-window")
+       (if (<= $start $offset) (ContextReady $view)
+         (let* (($pending (state:json-set $gap "until" (task:number $start)))
+                ($tail (state:json-set $marked "transcript" (JsonArray $shown)))
+                ($shifted (state:json-set $tail "offset" (task:number $start))))
+           (ContextReady (state:json-set $shifted "pending_history" $pending)))))))
+(= (context:after-fold $view $capacity $ratio $result)
+   (case $result
+     (((ContextReady $next) (context:bounded $next $capacity $ratio "fold-backlog"))
+      ((ContextPreparationFailed $why) (context:bounded $view $capacity $ratio $why))
+      ($error (ContextPreparationFailed "context-compaction-internal-error")))))
+(= (context:initial-view $view $capacity $ratio)
+   (let* (($root (task:string $view "root"))
+          ($migration (context:seed-recent $view $capacity $ratio)))
+     (case $migration
+       ((ContextPublished
+          (let* (($start (task:saved-start $root))
+                 ($offset (str:string->number (state:text (state:json-field $view "offset"))))
+                 ($tail (state:json-set $view "transcript" (JsonArray (task:drop (task:items $view "transcript") (- $start $offset))))))
+            (ContextReady (state:json-set $tail "offset" (task:number $start)))))
+        (ContextReady (ContextReady $view))
+        ($error $error)))))
+(= (context:drive $view $capacity $model $tokens $effort $ratio)
+   (let* (($root (task:string $view "root"))
+          ((Checkpoint $raw $offset $_) (context:checkpoint $root))
           ($summary (task:handoff-text $root))
           ($frame (task:working-frame $view $capacity $ratio))
           ($available (max 0 (- (- $capacity (context:measure $frame $ratio))
                                   (math:ceil (/ (str:byte-length $summary) $ratio)))))
           ((Window $start $_) (task:window-from $root (task:items $view "transcript") $offset $available $ratio)))
-     (if (> $start $offset) (context:consume $view $start $capacity $model $tokens $effort $ratio)
-       (if (<= $available 0) (ContextPreparationFailed "context-metadata-exceeds-window")
-         (if (> (task:sum-tokens (task:items $view "transcript") $ratio 0) $available)
-           (ContextPreparationFailed "context-record-exceeds-window") ContextReady)))))
+     (if (and (== $raw sqlite:null) (> (task:checkpoint-number $view "offset") 0))
+       (context:accept-first-window $view $capacity $ratio)
+     (if (> $start $offset)
+       (if (== $raw sqlite:null) (context:initial-view $view $capacity $ratio)
+         (context:after-fold $view $capacity $ratio
+           (context:consume $view $start $capacity $model $tokens $effort $ratio)))
+       (if (or (<= $available 0) (> (task:sum-tokens (task:items $view "transcript") $ratio 0) $available))
+         (ContextPreparationFailed "context-record-or-metadata-exceeds-window")
+         (let $_ (if (== $raw sqlite:null)
+                   (context:write-checkpoint $root $raw
+                     (JsonObject ((JsonPair "version" (JsonNumber "1")) (JsonPair "start" (JsonNumber "0")) (JsonPair "summary" (JsonString "")))))
+                   ContextPublished)
+           (ContextReady $view)))))))
 
 (= (context:prepare $base $focus $trigger $capacity $model $tokens $effort)
    (let $assembled (str:join "\n" ($base (topics:context)))
-   (if (== (context:mode) budget) (task:render-context $assembled $focus $trigger $capacity $model)
+   (if (== (context:mode) budget)
+     (context:prepared-text (task:render-context $assembled $focus $trigger $capacity $model) 1)
      (let* (($ratio (context:ratio $model))
             ($window (if (== $capacity "") (task:fallback-window) (str:string->number $capacity)))
             ($available (max 0 (- (- $window (math:ceil (/ (str:byte-length $assembled) $ratio))) 128)))
-            ($view (task:conversation-view $focus $trigger))
+            ($view (task:initial-view $focus $trigger $available $ratio))
             ($ready (catch (context:drive $view $available $model $tokens $effort $ratio))))
        (case $ready
-         ((ContextReady
-            (let $rendered (task:render-context $assembled $focus $trigger $capacity $model)
+         (((ContextReady $ready-view)
+            (let $rendered (task:full-context-view $assembled $ready-view $capacity $ratio)
               (case $rendered
                 (((ContextPreparationFailed $_) $rendered)
-                 ($text (if (<= (math:ceil (/ (str:byte-length $text) $ratio)) $window) $text
+                 ($text (if (<= (math:ceil (/ (str:byte-length $text) $ratio)) $window)
+                          (context:prepared-text $text (if (== (state:json-field $ready-view "pending_history") JsonNull) 0 1))
                           (ContextPreparationFailed "context-render-exceeds-window")))))))
           ((ContextPreparationFailed $_) $ready)
           ($error (ContextPreparationFailed "context-compaction-call-failed"))))))))
+
+; Coverage travels separately from untrusted source text, bound to the exact
+; rendered prompt. It never acknowledges an input or closes work by itself.
+(= (context:prepared-text $text $incomplete)
+   (let $_ (py-call (strategy_host.context_prepared (str:sha256 $text) $incomplete)) $text))
+
+(= (context:accept-first-window $view $capacity $ratio)
+   (case (context:bounded $view $capacity $ratio "first-start")
+     (((ContextReady $fit)
+        (let* (($root (task:string $fit "root"))
+               ($start (task:checkpoint-number $fit "offset"))
+               ($next (context:migration-checkpoint (JsonObject ()) 0 $start ""))
+               ($written (context:write-checkpoint $root sqlite:null $next)))
+          (case $written
+            ((ContextPublished (ContextReady (state:json-set $fit "pending_history" JsonNull)))
+             ($error $error)))))
+      ($error $error))))

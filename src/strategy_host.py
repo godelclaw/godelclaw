@@ -28,6 +28,7 @@ _runtime_projection = None
 _broker_feedback = {"reason": "no-current-capture"}
 _context_trigger = "continuation-tick"
 _task_projection = None
+_context_preparation = None
 
 def enabled():
     return os.environ.get("METTACLAW_OBSERVED_STRATEGY", "0") == "1"
@@ -89,12 +90,13 @@ def guard(include_topic=True):
 
 
 def begin(turn, source, message):
-    global _turn, _sample, _ticket, _position, _focus, _input_turn, _message_focus, _runtime_projection, _context_trigger, _task_projection
+    global _turn, _sample, _ticket, _position, _focus, _input_turn, _message_focus, _runtime_projection, _context_trigger, _task_projection, _context_preparation
     if not enabled():
         return 1
     with _lock:
         _turn, _sample, _ticket, _position = str(turn), None, None, 0
         _runtime_projection = None
+        _context_preparation = None
         _message_focus = None
         # A multi-action foreground request keeps its observation/reconsider
         # steps. Autonomous scheduling resumes at the loop's existing wake
@@ -158,7 +160,10 @@ def prepare(prompt, output_tokens=32768):
     available = context_budget.available(prompt, capacity)
     view = task_context.compact(view, available, measure=context_budget.tokens)
     _task_projection = "TASK_CONTEXT " + strategy.encoded(view)
-    return prompt + "\n\n" + _task_projection
+    rendered = prompt + "\n\n" + _task_projection
+    import hashlib
+    context_prepared(hashlib.sha256(rendered.encode()).hexdigest(), int(bool(view.get("archive"))))
+    return rendered
 
 
 
@@ -242,14 +247,33 @@ def description():
             "No disposition or resolution bookkeeping is required. context-policy adjusts the task context target. ")
 
 
+def context_prepared(prompt_digest, incomplete):
+    """A renderer-owned coverage receipt, never inferred from prompt prose."""
+    global _context_preparation
+    digest = str(prompt_digest)
+    value = int(incomplete)
+    if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest) or value not in (0, 1):
+        raise ValueError("invalid prepared context receipt")
+    with _lock:
+        _context_preparation = (digest, bool(value))
+    return 1
+
+
 def capture(prompt, wake_seconds):
-    global _sample
+    global _sample, _context_preparation
     if not enabled():
         return 1
     with _lock:
         import lifecycle
+        import hashlib
         ledger().control(paused=not lifecycle.cognition_enabled())
         _sample = ledger().capture(_focus, str(prompt), {}, time.time())
+        if _sample is not None:
+            observed = hashlib.sha256(str(prompt).encode()).hexdigest()
+            receipt = _context_preparation
+            _sample["context_incomplete"] = (
+                receipt[1] if receipt is not None and receipt[0] == observed else True)
+        _context_preparation = None
         return int(_sample is not None)
 
 
@@ -396,6 +420,8 @@ def _close_answered_message(command, result):
     """
     if not command or not _focus:
         return
+    if _sample and _sample.get("context_incomplete"):
+        return  # A delivered status/uncertainty message is not work closure.
     name = command[0]
     if name not in ("send", "send-telegram-chat"):
         return

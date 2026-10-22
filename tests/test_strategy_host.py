@@ -62,6 +62,34 @@ class StrategyHostTest(unittest.TestCase):
             host._close_answered_message(["send-telegram-chat", "room", "answer"], "sent message 3")
             self.assertEqual(status(), "addressed")
 
+    def test_degraded_history_reply_cannot_automatically_close_work(self):
+        store = host.ledger()
+        store.accept("arrival", "work", kind="message")
+        host._focus = "arrival"
+        import task_context
+        task_context.begin(store, "arrival", "operator-event", None, "room")
+        store.link_inputs("arrival", ["telegram-one"])
+        packet = dict(pending_history=dict(**{"from": 0, "until": 4}), focus="arrival")
+        text = "TASK_CONTEXT " + json.dumps(packet)
+        host.context_prepared(__import__("hashlib").sha256(text.encode()).hexdigest(), 1)
+        host.capture(text, 0)
+        channel = SimpleNamespace(_reply_target=lambda chat="": chat or "primary")
+        with mock.patch.dict(sys.modules, {"telegram": channel}):
+            host._close_answered_message(["send-telegram-chat", "room", "history unavailable"], "sent message 1")
+            self.assertEqual(store.request_record("arrival")["status"], "active")
+            # Quoted framing-like text cannot forge a complete coverage bit.
+            packet["notes"] = ["Prior diagnostic mentioned TASK_CONTEXT metadata."]
+            text = "TASK_CONTEXT " + json.dumps(packet)
+            host.context_prepared(__import__("hashlib").sha256(text.encode()).hexdigest(), 1)
+            host.capture(text, 0)
+            host._close_answered_message(["send-telegram-chat", "room", "uncertain"], "sent message 2")
+            self.assertEqual(store.request_record("arrival")["status"], "active")
+            text = "TASK_CONTEXT " + json.dumps(dict(focus="arrival"))
+            host.context_prepared(__import__("hashlib").sha256(text.encode()).hexdigest(), 0)
+            host.capture(text, 0)
+            host._close_answered_message(["send-telegram-chat", "room", "answer"], "sent message 2")
+            self.assertEqual(store.request_record("arrival")["status"], "addressed")
+
     def test_selected_provider_window_is_used_without_inventing_a_limit(self):
         import synthetic_llm
         def cached(kind):

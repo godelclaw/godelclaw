@@ -22,6 +22,12 @@ def install(db):
             text TEXT NOT NULL, sources TEXT NOT NULL);
         CREATE INDEX IF NOT EXISTS task_parent ON task_frames(parent);
         CREATE INDEX IF NOT EXISTS task_proposal_request ON task_proposals(request);
+        CREATE INDEX IF NOT EXISTS events_capture
+            ON events(json_extract(event,'$.serial'),sequence)
+            WHERE json_extract(event,'$.kind')='capture';
+        CREATE INDEX IF NOT EXISTS events_deliver
+            ON events(json_extract(event,'$.request'),sequence)
+            WHERE json_extract(event,'$.kind')='deliver';
         INSERT OR IGNORE INTO meta VALUES ('context_focus','null');
     """)
 
