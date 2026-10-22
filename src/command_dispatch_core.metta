@@ -3,7 +3,7 @@
 
 (= (dispatch:receipt $turn $status $command $result) (eval (dispatch:record $turn $status (quote $command) $result)))
 
-(= (dispatch:result $turn $command $value) (let* (($empty (== $value $command)) ($status (if $empty no_result (case $value (((Error $_ $_) exception) ($other returned))))) ($result (if $empty (Error command_failed "Unknown tool or no result; use (help) for available tools" $command) $value)) ($text (eval (dispatch:normalize (quote $result)))) ($errors (if (== $status returned) () ((command_raised_exception $command $text)))) ($_ (dispatch:receipt $turn $status $command $text))) (dispatch:one (quote (COMMAND_RETURN: ($command $text))) (quote $errors))))
+(= (dispatch:result $turn $command $value) (let* (($empty (== $value $command)) ($status (if $empty no_result (case $value (((Error $_ $_) exception) ($other returned))))) ($result (if $empty (Error command_failed "Unknown tool or no result; use (help) for available tools" $command) $value)) ($text (eval (dispatch:normalize (quote $result)))) ($errors (if (== $status returned) () (if (== $status no_result) ((command_returned_no_result $command "command returned no result")) ((command_raised_exception $command $text))))) ($_ (dispatch:receipt $turn $status $command $text))) (dispatch:one (quote (COMMAND_RETURN: ($command $text))) (quote $errors))))
 
 (= (dispatch:ordinary-invoke $command)
    (let $error (eval (dispatch:argument-error (quote $command)))

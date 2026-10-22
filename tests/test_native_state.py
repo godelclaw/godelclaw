@@ -16,7 +16,12 @@ class NativeState(unittest.TestCase):
         env.update(METTACLAW_PINS_PATH=str(directory / 'pins.txt'),
                    METTACLAW_ENGINE_STATE_PATH=str(directory / 'engine'))
         with tempfile.NamedTemporaryFile('w', dir=ROOT, suffix='.metta') as source:
-            source.write('!(import! &self (library lib_import))\n!(import! &self ./src/state_cetta)\n'+code)
+            source.write(
+                '!(import! &self (library lib_import))\n'
+                '!(import! &self ./src/state_cetta)\n'
+                '(= (pin $text) (pins:cetta-pin $text))\n'
+                '(= (unpin $text) (pins:cetta-unpin $text))\n'
+                '(= (pins) (pins:cetta-view))\n' + code)
             source.flush()
             result = subprocess.run([str(binary), '--lang', 'petta', '--import-mode',
                                      'ancestor-walk', source.name], cwd=ROOT, env=env,

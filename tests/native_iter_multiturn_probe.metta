@@ -31,5 +31,6 @@
           (process-step $after-third
             (turnProcess (process-periphery $after-third))))
          ($_ (assertEqual (process-root $after-fourth) weak-process-core-v1))
-         ($_ (assertEqual (py-call (native_iter_scenario.verdict)) 1)))
+         ($_ (assertEqual (py-call (native_iter_scenario.verdict)) 1))
+         ($_ (cut)))
      (println! NATIVE_ITER_MULTITURN_OK))

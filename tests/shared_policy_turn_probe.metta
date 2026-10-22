@@ -14,6 +14,7 @@
          ($before (initLoop))
          ($after (process-step $before
                    (turnProcess (process-periphery $before))))
+         ($_ (cut))
          ($_ (println! (POLICY_PROBE godelclaw
                        (process-root $after)
                        (loop-active-policy (process-periphery $after)))))
@@ -26,6 +27,7 @@
          ($before (initLoop))
          ($after (process-step $before
                    (turnProcess (process-periphery $before))))
+         ($_ (cut))
          ($_ (println! (POLICY_PROBE coding
                        (process-root $after)
                        (loop-active-policy (process-periphery $after)))))
@@ -39,6 +41,7 @@
          ($before (initLoop))
          ($after (process-step $before
                    (turnProcess (process-periphery $before))))
+         ($_ (cut))
          ($_ (println! (POLICY_PROBE iter
                        (process-root $after)
                        (loop-active-policy (process-periphery $after)))))

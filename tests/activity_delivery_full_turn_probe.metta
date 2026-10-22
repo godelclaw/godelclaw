@@ -18,12 +18,14 @@
          ($afterFailure
           (process-step $initial
             (turnProcess (process-periphery $initial))))
+         ($_ (cut))
          ($_ (assertEqual (py-call (helper.delivery_pending_count)) 1))
          ($_ (assertEqual
                (py-call (helper.delivery_history_has "stable turn input")) 0))
          ($afterSuccess
           (process-step $afterFailure
             (turnProcess (process-periphery $afterFailure))))
+         ($_ (cut))
          ;; processLoop commits its checkpoint before acknowledging the batch.
          ($_ (assertEqual (persistProcessState $afterSuccess) 1))
          ($_ (assertEqual (py-call (helper.turn_commit_ready)) 1))

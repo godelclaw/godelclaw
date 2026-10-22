@@ -32,7 +32,7 @@
 (= (pins:append $lines $line)
    (if (== $lines ()) ($line)
      (cons-atom (car-atom $lines) (pins:append (cdr-atom $lines) $line))))
-(= (pin $text)
+(= (pins:cetta-pin $text)
    (let $line (str:trim (str:join " " (str:split "\n" $text)))
      (if (== $line "") "pin failed: empty text"
        (case (pins:read)
@@ -51,7 +51,7 @@
        (((TextNotFound $_)
          (cons-atom (car-atom $lines) (pins:without (cdr-atom $lines) $fragment)))
         ($found (pins:without (cdr-atom $lines) $fragment))))))
-(= (unpin $fragment)
+(= (pins:cetta-unpin $fragment)
    (let $text (str:trim $fragment)
      (if (== $text "") "unpin failed: give a fragment of the pin to remove"
        (case (pins:read)
@@ -63,11 +63,10 @@
                 ((("written" $_ $_ $_ $_)
                   (str:join "" ("unpinned " (repr $removed) ", " (repr (length $kept)) " remain")))
                  ($error (str:concat "unpin failed: " (repr $error))))))))))))
-(= (pins:view)
+(= (pins:cetta-view)
    (case (pins:read)
      (((PinsReadFailure $why) (str:concat "pins unavailable: " (repr $why)))
       ($lines (if (== $lines ()) "(no pins)" (str:join " | " $lines))))))
-(= (pins) (pins:view))
 
 (= (state:json-file $path $default)
    (if (not (fs:exists $path)) $default

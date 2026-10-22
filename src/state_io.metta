@@ -6,6 +6,19 @@
      (import! &self ./src/state_python))
 !(if (state:cetta? (py-call (engine_modes.active_engine))) (import! &self ./src/runtime_cetta) True)
 
+; SWI-PeTTa eagerly visits imports in both branches above.  Keep the backend
+; names distinct and expose one runtime-selected public interface.
+(= (pin $text)
+   (if (state:cetta? (py-call (engine_modes.active_engine)))
+     (pins:cetta-pin $text) (pins:python-pin $text)))
+(= (unpin $text)
+   (if (state:cetta? (py-call (engine_modes.active_engine)))
+     (pins:cetta-unpin $text) (pins:python-unpin $text)))
+(= (pins:view)
+   (if (state:cetta? (py-call (engine_modes.active_engine)))
+     (pins:cetta-view) (pins:python-view)))
+(= (pins) (pins:view))
+
 (= (state:prepare-context $prompt $tokens)
    (if (state:cetta? (py-call (engine_modes.active_engine)))
      (if (== (py-call (strategy_host.context_input "enabled")) 1)

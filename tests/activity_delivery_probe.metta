@@ -10,7 +10,9 @@
 ;; re-entry must see one stable prepared batch; only the explicit settlement
 ;; receipt removes it.
 !(let* (($first (eval (receive)))
+         ($_ (cut))
          ($second (eval (receive)))
+         ($_ (cut))
          ($_ (println! (ACTIVITY_DELIVERY_FIRST $first)))
          ($_ (println! (ACTIVITY_DELIVERY_SECOND $second)))
          ($_ (assertEqual $first $second))
@@ -19,6 +21,7 @@
          ($_ (println! (ACTIVITY_DELIVERY_ACK $ack)))
          ($_ (assertEqual $ack 1))
          ($afterAck (eval (receive)))
+         ($_ (cut))
          ($_ (println! (ACTIVITY_DELIVERY_AFTER_ACK $afterAck)))
          ($_ (assertEqual (py-call (helper.text_nonempty $afterAck)) 0)))
      (println! ACTIVITY_DELIVERY_OK))

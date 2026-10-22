@@ -70,9 +70,9 @@ def _chat(*args) -> str:
     cognitive_health.turn_started("probe")
     _prompts.append(str(args[-1]))
     responses = (
-        "((help send))",
-        "((help pin))",
-        "((help mode))",
+        '((help "send"))',
+        '((help "pin"))',
+        '((help "mode"))',
         "((nop))",
     )
     response = responses[min(len(_prompts) - 1, len(responses) - 1)]
@@ -93,6 +93,20 @@ def verdict() -> int:
         return 0
     first, second, third, fourth = _prompts
     all_prompts = "\n".join(_prompts)
+
+    def has_help(prompt: str, command: str) -> bool:
+        # CeTTa renders the command's usage text.  PeTTa preserves the
+        # structured help result.  Both prove that the previous turn's
+        # command result crossed the process boundary.
+        return (f"usage: ({command}" in prompt or
+                ("api:help" in prompt and command in prompt))
+
+    def observed_failure(prompt: str, filename: str) -> bool:
+        # CeTTa preserves JSON-style quotes around the filename; PeTTa's
+        # projection prints the same atom without them.
+        return (f"{filename} failure" in prompt or
+                f'"{filename}" failure' in prompt)
+
     checks = {
         "persona": all(
             "GODEL_NATIVE_ITER_PERSONA" in prompt for prompt in _prompts),
@@ -101,14 +115,14 @@ def verdict() -> int:
         "first-is-snapshot": "iter-stage-second" not in first,
         "second-visible": "user: iter-stage-second" in second,
         "second-replaces-first": "iter-stage-first" not in second,
-        "failure-observed": "10_failure.metta failure" in second,
-        "first-feedback": "usage: (send" in second,
+        "failure-observed": observed_failure(second, "10_failure.metta"),
+        "first-feedback": has_help(second, "send"),
         "timeout-stutters-first": "iter-stage-first" not in third,
         "timeout-stutters-second": "iter-stage-second" not in third,
         "timeout-precedes-fourth": "iter-stage-fourth" not in third,
-        "timeout-observed": "10_timeout.metta failure" in third,
+        "timeout-observed": observed_failure(third, "10_timeout.metta"),
         "timeout-detail": "timeout" in third,
-        "second-feedback": "usage: (pin" in third,
+        "second-feedback": has_help(third, "pin"),
         "fourth-visible": "user: iter-stage-fourth" in fourth,
         "fourth-replaces-first": "iter-stage-first" not in fourth,
         "fourth-replaces-second": "iter-stage-second" not in fourth,

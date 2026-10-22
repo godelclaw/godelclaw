@@ -1,8 +1,7 @@
 ; Grandfathered SWI-PeTTa state backend. Native CeTTa uses state_cetta.
-(= (pin $text) (py-call (pins.pin (py-call (helper.decode_safe_text $text)))))
-(= (unpin $text) (py-call (pins.unpin (py-call (helper.decode_safe_text $text)))))
-(= (pins:view) (py-call (pins.view)))
-(= (pins) (pins:view))
+(= (pins:python-pin $text) (py-call (pins.pin (py-call (helper.decode_safe_text $text)))))
+(= (pins:python-unpin $text) (py-call (pins.unpin (py-call (helper.decode_safe_text $text)))))
+(= (pins:python-view) (py-call (pins.view)))
 !(import! &self ./src/context_budget.py)
 (= (context-policy) (py-call (context_budget.policy)))
 (= (context-policy $tokens) (py-call (context_budget.policy $tokens)))

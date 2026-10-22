@@ -13,6 +13,7 @@
          ($initial (initLoop))
          ($after (process-step $initial
                    (turnProcess (process-periphery $initial))))
+         ($_ (cut))
          ($feedback (loop-last-results (process-periphery $after)))
          ($_ (assertEqual
                (py-call (helper.text_nonempty $feedback)) 1)))
