@@ -269,11 +269,17 @@ class NativeTaskContext(unittest.TestCase):
         env.update(METTACLAW_OBSERVED_STRATEGY="1", METTACLAW_STRATEGY_PATH=str(fixture.path),
                    METTACLAW_ENGINE_STATE_PATH=str(fixture.path.parent / "engine"),
                    METTACLAW_CONTEXT_WINDOW_TOKENS="100000", METTACLAW_HISTORY_PATH=str(fixture.path.parent / "history"),
+                   METTACLAW_MODEL_COMMENTARY="1",
                    METTACLAW_TELEGRAM_LOG_PATH=str(fixture.path.parent / "updates.jsonl"))
         module = fixture.path.parent / 'projection_probe.py'
-        module.write_text('import task_context\ndef disable():\n'
+        module.write_text('import task_context, model_commentary\ndef disable():\n'
                           '    def fail(*args, **kwargs): raise AssertionError("Python projection used")\n'
-                          '    task_context.projection = fail\n    task_context.compact = fail\n    return 1\n')
+                          '    task_context.projection = fail\n    task_context.compact = fail\n'
+                          '    original = model_commentary.prompt\n'
+                          '    def format_base(text):\n'
+                          '        assert "ORIGINAL_FINDING_RETAINED" not in text, "protected history crossed the Python formatter"\n'
+                          '        return original(text)\n'
+                          '    model_commentary.prompt = format_base\n    return 1\n')
         with tempfile.NamedTemporaryFile('w', dir=ROOT, suffix='.metta') as source:
             source.write('!(import! &self '+json.dumps(str(module))+')\n'
                          '!(py-call (projection_probe.disable))\n'
@@ -287,6 +293,8 @@ class NativeTaskContext(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('ORIGINAL_FINDING_RETAINED', result.stdout)
         self.assertIn('TASK_CONTEXT', result.stdout)
+        self.assertIn('return one JSON object', result.stdout)
         self.assertNotIn('Python projection used', result.stdout + result.stderr)
+        self.assertNotIn('protected history crossed', result.stdout + result.stderr)
 
 if __name__ == '__main__': unittest.main()

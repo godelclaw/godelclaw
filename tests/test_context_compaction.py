@@ -134,6 +134,46 @@ class ContextCompactionTests(unittest.TestCase):
         self.assertEqual(public_worklog.transact(worklog, "read")[1], [])
         self.assert_parent_unchanged()
 
+    def test_topic_notes_are_budgeted_once_before_compaction(self):
+        self.populate(12)
+        topic_note = "TOPIC_NOTE_START:" + "t" * 25000 + ":TOPIC_NOTE_END"
+        with self.fixture.store.transaction() as db:
+            db.execute("CREATE TABLE IF NOT EXISTS topic_contexts(name TEXT PRIMARY KEY,revision INTEGER,notes TEXT)")
+            db.execute("INSERT INTO topic_contexts VALUES('topic',1,?)", (topic_note,))
+            db.execute("INSERT OR REPLACE INTO meta VALUES('active_topic',?)", (json.dumps("topic"),))
+        self.peer.reply["choices"][0]["message"]["content"] = "HANDOFF_WITH_TOPIC: preserve findings."
+        result = self.render(capacity=20000)
+        self.assertNotIn("WITHHELD:", result)
+        self.assertTrue("HANDOFF_WITH_TOPIC" in result, result[:300])
+        self.assertEqual(result.count("TOPIC_NOTE_START:"), 1)
+        self.assertGreater(len(self.peer.requests), 0)
+        self.assertLessEqual(len(result.encode()) / 2.5, 20000)
+        self.assert_parent_unchanged()
+
+    def test_escape_heavy_input_never_produces_an_oversized_success(self):
+        self.fixture.store.accept("escaped", "\\" * 35000)
+        reference.task_context.begin(self.fixture.store, "escaped", "operator-event")
+        result = self.render(capacity=20000, focus="escaped")
+        if not result.startswith("WITHHELD:"):
+            self.assertLessEqual(len(result.encode()) / 2.5, 20000)
+            self.assertIn("task-input:escaped", result)
+
+    def test_handoff_source_reuses_identical_results_without_losing_occurrences(self):
+        body = "IDENTICAL_SOURCE_BODY " * 100
+        self.fixture.call([["read-file", "a"]], [body])
+        self.fixture.call([["read-file", "a"]], [body])
+        pairs = reference.task_context.conversation_projection(self.fixture.store, "guide")["transcript"]
+        out = self.directory / "handoff-source.txt"
+        self.run_guest('!(import! &self ' + json.dumps(str(boundary.ROOT / 'src/context_compaction.metta')) + ')\n'
+            '!(let* (($view (task:conversation-view "guide" "continuation-tick")) '
+            '($prompt (context:summary-prompt "" (task:items $view "transcript") ()))) '
+            '(fs:update-text ' + json.dumps(str(out)) + ' "replace" $prompt "" ""))\n')
+        prompt = out.read_text()
+        self.assertEqual(prompt.count(body), 1)
+        self.assertIn("same result as step 1", prompt)
+        for pair in pairs:
+            self.assertIn(pair["id"], prompt)
+
     def test_live_driver_retains_input_and_paces_a_failed_handoff_before_capture(self):
         self.populate(25)
         with self.fixture.store.transaction() as db:
@@ -158,6 +198,32 @@ class ContextCompactionTests(unittest.TestCase):
         with self.fixture.store.transaction() as db:
             self.assertEqual(self.fixture.store.get(db, "next_sample"), before)
             self.assertEqual(db.execute("SELECT processed FROM request_context WHERE request='guide'").fetchone()[0], 0)
+
+    def test_commentary_contract_is_applied_before_protected_history_and_admission(self):
+        import public_worklog
+        worklog = self.directory / "public"
+        public_worklog.transact(worklog, "on")
+        self.fixture.call([["read-file", "source"]], ["PROTECTED_NATIVE_HISTORY"])
+        self.peer.reply["choices"][0]["message"]["content"] = json.dumps({
+            "commentary": "Checked the retained evidence.", "commands": "((nop))"})
+        self.env.update(METTACLAW_OBSERVED_STRATEGY="1", METTACLAW_CONTEXT_WINDOW_TOKENS="100000",
+                        METTACLAW_MODEL_COMMENTARY="1", METTACLAW_PUBLIC_WORK_DIR=str(worklog),
+                        METTACLAW_PUBLIC_WORK_LIB="", METTACLAW_HISTORY_PATH=str(self.directory / "history"),
+                        METTACLAW_TELEGRAM_LOG_PATH=str(self.directory / "updates.jsonl"))
+        self.env["PYTHONPATH"] += os.pathsep + str(boundary.ROOT / "channels")
+        output = self.run_guest('!(import! &self ' + json.dumps(str(boundary.ROOT / 'cetta_bootstrap.metta')) + ')\n'
+            '!(py-call (strategy_host.focus_request "guide"))\n'
+            '!(let $prepared (addition-protected-request "Output a ((skillName args) ...) S-expression." 256) '
+            '(println! (RESULT (addition-model-call "fixture-model" 256 "default" $prepared 1))))\n'
+            '!(println! (SUCCESS (py-call (cognitive_health.turn_succeeded))))\n')
+        self.assertIn("(RESULT ((nop)))", output)
+        self.assertIn("(SUCCESS 1)", output)
+        self.assertEqual(len(self.peer.requests), 1)
+        wire = json.dumps(self.peer.requests[0][2])
+        self.assertIn("PROTECTED_NATIVE_HISTORY", wire)
+        self.assertIn("return one JSON object", wire)
+        self.assertEqual([n["text"] for n in public_worklog.transact(worklog, "read")[1]],
+                         ["Checked the retained evidence."])
 
     def test_stale_publication_cannot_separate_summary_and_cursor(self):
         root = reference.task_context.conversation_projection(self.fixture.store, "guide")["root"]

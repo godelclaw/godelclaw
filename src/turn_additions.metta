@@ -28,9 +28,10 @@
    (addition-protected-request $request 32768))
 
 (= (addition-protected-request $request $tokens)
-   (let $context (hierarchy:context)
-     (if (== $context "") (state:prepare-context $request $tokens)
-       (state:prepare-context (hierarchy:append-context $request $context) $tokens))))
+   (let* (($formatted (py-call (model_commentary.prompt $request)))
+          ($context (hierarchy:context)))
+     (if (== $context "") (state:prepare-context $formatted $tokens)
+       (state:prepare-context (hierarchy:append-context $formatted $context) $tokens))))
 
 (= (addition-prepare-request
       $selected $legacy $system $activity $advertised)
@@ -41,10 +42,9 @@
    (case $request
      (((ContextPreparationFailed $reason) (py-call (strategy_host.preparation_failed $reason)))
       ($ready
-        (let $wire-request (py-call (model_commentary.prompt $ready))
-          (if (== (py-call (strategy_host.capture $wire-request $wake)) 1)
-              (llm:command $model $tokens $reasoning $wire-request)
-              (progn (py-call (cognitive_health.turn_failed "strategy-not-ready")) "()")))))))
+        (if (== (py-call (strategy_host.capture $ready $wake)) 1)
+            (llm:command $model $tokens $reasoning $ready)
+            (progn (py-call (cognitive_health.turn_failed "strategy-not-ready")) "()"))))))
 
 (= (addition-request-observation $request)
    (case $request
