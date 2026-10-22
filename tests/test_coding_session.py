@@ -265,7 +265,7 @@ class CodingSessionTests(unittest.TestCase):
         self.assertEqual(len(list(session.glob("messages.jsonl.*.archived"))), 1)
         self.assertEqual(json.loads((session / "state.json").read_text())["status"], "done")
 
-    def test_second_compaction_and_resume_keep_handoffs_and_steering(self):
+    def test_repeated_compaction_replaces_handoff_and_keeps_requester_inputs(self):
         workspace = self.directory / "workspace"; workspace.mkdir()
         self.env["METTACLAW_CONTEXT_WINDOW_TOKENS"] = "40000"
         session = self.session("Continue the same investigation.", workspace)
@@ -281,27 +281,70 @@ class CodingSessionTests(unittest.TestCase):
             reply("FIRST_HANDOFF: inspected the first range; preserve uncertainty."),
             reply("More evidence.", [call("c2", "exec_command", {"cmd": "seq 30001 60000"})]),
             reply("SECOND_HANDOFF: inspected the next range; no extra verification."),
+            reply("Final evidence.", [call("c3", "exec_command", {"cmd": "seq 60001 90000"})]),
+            reply("THIRD_HANDOFF: inspected all three ranges; verification remains limited."),
             reply("Finished with the stated limits.")]
         self.run_session(session)
-        self.assertEqual(len(self.server.requests), 5)
+        self.assertEqual(len(self.server.requests), 7)
         second_compaction = self.server.requests[3]
         self.assertNotIn("tools", second_compaction)
         self.assertIn("FIRST_HANDOFF", json.dumps(second_compaction["messages"]))
-        after = self.server.requests[4]["messages"]
-        for marker in ("FIRST_GUIDANCE", "SECOND_GUIDANCE", "FIRST_HANDOFF", "SECOND_HANDOFF"):
-            self.assertEqual(sum(marker in str(m.get("content")) for m in after), 1)
+        third_compaction = self.server.requests[5]
+        self.assertNotIn("tools", third_compaction)
+        self.assertIn("SECOND_HANDOFF", json.dumps(third_compaction["messages"]))
+        self.assertNotIn("FIRST_HANDOFF", json.dumps(third_compaction["messages"]))
+        for index, current, replaced in ((2, "FIRST_HANDOFF", ()),
+                                         (4, "SECOND_HANDOFF", ("FIRST_HANDOFF",)),
+                                         (6, "THIRD_HANDOFF", ("FIRST_HANDOFF", "SECOND_HANDOFF"))):
+            after = self.server.requests[index]["messages"]
+            self.assertEqual(after[1]["content"], "Continue the same investigation.")
+            self.assertEqual(sum(current in str(m.get("content")) for m in after), 1)
+            for marker in replaced:
+                self.assertNotIn(marker, json.dumps(after))
+            self.assertEqual(sum("FIRST_GUIDANCE" in str(m.get("content")) for m in after), 1)
+            if index >= 4:
+                self.assertEqual(sum("SECOND_GUIDANCE" in str(m.get("content")) for m in after), 1)
+        for request in self.server.requests:
+            self.assertFalse(any("_coding_input" in m or "_coding_handoff" in m for m in request["messages"]))
         archives = list(session.glob("messages.jsonl.*.archived"))
-        self.assertEqual(len(archives), 2)
+        self.assertEqual(len(archives), 3)
         self.assertTrue(any("FIRST_HANDOFF" in archive.read_text() for archive in archives))
+        self.assertTrue(any("SECOND_HANDOFF" in archive.read_text() for archive in archives))
+        self.assertEqual(sorted(sum("_coding_handoff" in json.loads(line) for line in archive.read_text().splitlines())
+                                for archive in archives), [0, 1, 1])
         recorded = [json.loads(line) for line in (session / "messages.jsonl").read_text().splitlines()]
+        handoffs = [m for m in recorded if "_coding_handoff" in m]
+        self.assertEqual(len(handoffs), 1)
+        self.assertIn("THIRD_HANDOFF", handoffs[0]["content"])
+        self.assertRegex(handoffs[0]["_coding_handoff"], r"^[0-9a-f]{16}$")
         self.assertEqual([m["_coding_input"] for m in recorded if "_coding_input" in m], [0, 1])
         self.assertEqual(json.loads((session / "state.json").read_text())["inbox"], 2)
 
-        self.server.replies = [reply("Continued from the preserved handoffs.")]
+        self.server.replies = [reply("Continued from the latest handoff.")]
         self.run_session(session)
-        self.assertEqual(self.server.requests[5]["messages"],
-                         [{k: v for k, v in m.items() if k != "_coding_input"} for m in recorded])
-        self.assertEqual(len(list(session.glob("messages.jsonl.*.archived"))), 2)
+        self.assertEqual(self.server.requests[7]["messages"],
+                         [{k: v for k, v in m.items() if k not in ("_coding_input", "_coding_handoff")} for m in recorded])
+        self.assertEqual(len(list(session.glob("messages.jsonl.*.archived"))), 3)
+
+    def test_compaction_preserves_unmarked_handoff_text_from_requesters_and_legacy_sessions(self):
+        workspace = self.directory / "workspace"; workspace.mkdir()
+        self.env["METTACLAW_CONTEXT_WINDOW_TOKENS"] = "40000"
+        prefix = "Another model began this task and left this handoff summary; continue from it and do not restart from scratch.\n\n"
+        task = prefix + "REQUESTER_TASK: this text is my original instruction."
+        legacy = prefix + "LEGACY_HANDOFF: this old record has no local marker."
+        session = self.session(task, workspace)
+        messages = [{"role": "system", "content": "fixture instructions"},
+                    {"role": "user", "content": task}, {"role": "user", "content": legacy},
+                    {"role": "assistant", "content": "Existing evidence " + "x" * 40000}]
+        (session / "messages.jsonl").write_text("".join(json.dumps(m) + "\n" for m in messages))
+        self.server.replies = [reply("CURRENT_HANDOFF: existing evidence summarized."), reply("Continued.")]
+        self.run_session(session)
+        after = self.server.requests[1]["messages"]
+        self.assertEqual([m["content"] for m in after[1:3]], [task, legacy])
+        self.assertIn("CURRENT_HANDOFF", after[-1]["content"])
+        self.assertFalse(any("_coding_handoff" in m for request in self.server.requests for m in request["messages"]))
+        recorded = [json.loads(line) for line in (session / "messages.jsonl").read_text().splitlines()]
+        self.assertEqual(sum("_coding_handoff" in m for m in recorded), 1)
 
     def test_invalid_compaction_keeps_history_and_cursor_and_never_runs_tools(self):
         workspace = self.directory / "workspace"; workspace.mkdir()

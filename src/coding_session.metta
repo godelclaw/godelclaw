@@ -151,13 +151,14 @@
           ($reasoned (if (== $effort "default") $pairs
                        (cons-atom (JsonPair "reasoning" (JsonObject ((JsonPair "effort" (JsonString $effort))))) $pairs))))
      (JsonObject (if (== $tools ()) $reasoned (cons-atom (JsonPair "tools" $tools) $reasoned)))))
-; Input occurrence metadata belongs to the local transcript, never the wire.
+; Input and handoff occurrence metadata belongs to the local transcript, never the wire.
 ; Provider reasoning/signature fields and all other message fields survive.
 (= (coding:wire-fields $fields)
    (if (== $fields ()) ()
      (let (JsonPair $key $value) (car-atom $fields)
        (let $rest (coding:wire-fields (cdr-atom $fields))
-         (if (== $key "_coding_input") $rest (cons-atom (car-atom $fields) $rest))))))
+         (if (or (== $key "_coding_input") (== $key "_coding_handoff")) $rest
+           (cons-atom (car-atom $fields) $rest))))))
 (= (coding:wire-messages $messages)
    (if (== $messages ()) ()
      (let (JsonObject $fields) (car-atom $messages)
@@ -238,12 +239,15 @@
      (coding:append-list $messages $results)))
 
 ; The compacted history keeps the instructions, the task and the requester's
-; later messages, then the handoff summary; the full history is archived.
+; later messages, then the latest handoff summary; the full history is archived.
+; Only marked generated handoffs are replaced. Unmarked legacy messages stay.
 (= (coding:requester-messages $messages $out)
    (if (== $messages ()) (coding:reverse $out ())
      (let $message (car-atom $messages)
        (coding:requester-messages (cdr-atom $messages)
-         (if (== (coding:text (coding:field $message "role")) "user") (cons-atom $message $out) $out)))))
+         (if (and (== (coding:text (coding:field $message "role")) "user")
+                  (== (coding:field $message "_coding_handoff") JsonNull))
+           (cons-atom $message $out) $out)))))
 (= (coding:message-lines $messages)
    (if (== $messages ()) ()
      (cons-atom (str:concat (json-stringify (car-atom $messages)) "\n")
@@ -274,9 +278,11 @@
        (CompactionFailed "The handoff must be a complete, tool-free assistant summary.")
        (if (== (str:trim $summary) "") (CompactionFailed "The handoff summary was empty.")
          (let* (($head (cons-atom (car-atom $messages) (coding:requester-messages (cdr-atom $messages) ())))
-                ($handoff (coding:message "user" (str:concat
+                ((JsonObject $fields) (coding:message "user" (str:concat
                   "Another model began this task and left this handoff summary; continue from it and do not restart from scratch.\n\n"
-                  $summary))))
+                  $summary)))
+                ($handoff (JsonObject (cons-atom
+                  (JsonPair "_coding_handoff" (JsonString (py-call (secrets.token_hex 8)))) $fields))))
            (coding:rewrite $dir (coding:append-list $head ($handoff))))))))
 (= (coding:compact $dir $messages $effort)
    (let* (($ask (coding:append-list $messages ((coding:message "user" (fs:read-text "identity/coding-compact.md")))))

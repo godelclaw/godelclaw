@@ -32,6 +32,20 @@ class NativeLifetimeTest(unittest.TestCase):
         self.assertTrue(native_lifetime.settle(plan, "completed", "evidence"))
         self.assertTrue(native_lifetime.claim(other))
 
+    def test_settlement_records_elapsed_soft_wait_even_between_polls(self):
+        for elapsed, already_observed, expected in ((.02, 0, 0), (.2, 0, 1), (.02, 1, 1)):
+            with self.subTest(elapsed=elapsed, already_observed=already_observed):
+                plan = self.plan()
+                plan.submitted_at, plan.soft = 100.0, 50
+                self.assertTrue(native_lifetime.claim(plan))
+                native_lifetime.submitted(plan, 3)
+                if already_observed:
+                    native_lifetime.progress(plan, 0, 0, 1)
+                with mock.patch.object(native_lifetime.time, "monotonic", return_value=100.0 + elapsed):
+                    self.assertTrue(native_lifetime.settle(plan, "completed", "reply"))
+                with native_lifetime.transaction() as db:
+                    self.assertEqual(db.execute("SELECT soft_elapsed FROM native_calls WHERE id=?", (plan.correlation,)).fetchone()[0], expected)
+
     def test_killed_sent_call_records_uncertainty_and_keeps_reservation(self):
         plan = self.plan(); native_lifetime.claim(plan); native_lifetime.submitted(plan, 3)
         with mock.patch.object(native_lifetime, "process_start", return_value=None):

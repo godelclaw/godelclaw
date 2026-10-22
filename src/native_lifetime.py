@@ -150,9 +150,14 @@ def settle(plan, state, result=None, reason=None):
         raise ValueError("invalid native call outcome")
     if result is not None and len(result.encode()) > plan.cap * 4:
         raise ValueError("native evidence exceeds its bound")
+    # A response can finish between polls. Its elapsed soft wait is still a
+    # fact about the call, even when no intermediate progress poll saw it.
+    submitted = getattr(plan, "submitted_at", None)
+    soft = int(submitted is not None and
+               (time.monotonic() - submitted) * 1000 >= getattr(plan, "soft", float("inf")))
     with transaction() as db:
-        changed = db.execute("UPDATE native_calls SET state=?,result=?,reason=?,updated=? WHERE id=? AND epoch=? AND state IN ('claimed','submitted')",
-                             (state, result, reason, time.time(), plan.correlation, plan.epoch)).rowcount == 1
+        changed = db.execute("UPDATE native_calls SET state=?,result=?,reason=?,updated=?,soft_elapsed=MAX(soft_elapsed,?) WHERE id=? AND epoch=? AND state IN ('claimed','submitted')",
+                             (state, result, reason, time.time(), soft, plan.correlation, plan.epoch)).rowcount == 1
         if changed and state == "uncertain":
             db.execute("UPDATE requests SET status='unknown',output=NULL,finish='transport-unknown' WHERE id=?",
                        (plan.correlation,))
