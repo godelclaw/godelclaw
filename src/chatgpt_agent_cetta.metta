@@ -95,6 +95,10 @@
          (let* (($slug (llm:v1:get $item "slug")) ($label (llm:v1:get $item "display_name")))
            (cons-atom (ChatGPTModel $slug $label) $tail)) $tail))))
 (= (chatgpt-models)
+   (case (chatgpt:model-list)
+     (((ChatGPTModelList $items) (ChatGPTModels (chatgpt:visible-models $items)))
+      ($unavailable $unavailable))))
+(= (chatgpt:model-list)
    (let $session-value (chatgpt:session)
     (case $session-value
      (((ChatGPTUnavailable $why) (ChatGPTUnavailable $why))
@@ -113,10 +117,27 @@
      (((io:pending $id)
        (let* (($reply (chatgpt:wait-http $id)) ($models (llm:v1:get $reply "models")))
          (case $models
-           (((JsonArray $items)
-             (let $visible (chatgpt:visible-models $items) (ChatGPTModels $visible)))
+           (((JsonArray $items) (ChatGPTModelList $items))
             ($other (ChatGPTUnavailable model-list-invalid))))))
       ($other (ChatGPTUnavailable model-list-submit-error)))))
+
+; The list reports each model's default window and the largest it accepts.
+; Requests may fill the largest, as Codex does when configured to.
+(= (chatgpt:window $slug $items)
+   (if (== $items ()) 0
+     (let $item (car-atom $items)
+       (if (== (llm:v1:get $item "slug") (JsonString $slug))
+         (case (llm:v1:get $item "max_context_window")
+           (((JsonNumber $largest) (parse $largest))
+            ($absent (case (llm:v1:get $item "context_window")
+                       (((JsonNumber $default) (parse $default)) ($none 0))))))
+         (chatgpt:window $slug (cdr-atom $items))))))
+(= (chatgpt:observe-window $model)
+   (case (chatgpt:model-list)
+     (((ChatGPTModelList $items)
+       (let $slug (str:byte-slice $model 8 (str:byte-length $model))
+         (py-call (synthetic_llm.observe_model_window $model (chatgpt:window $slug $items) "chatgpt-models"))))
+      ((ChatGPTUnavailable $why) (py-call (synthetic_llm.observe_model_window $model 0 (repr $why)))))))
 
 ; Controlled subscription-route repeats reused cache with session_id; the
 ; body's cache key alone did not reliably produce repeat hits. Keep this

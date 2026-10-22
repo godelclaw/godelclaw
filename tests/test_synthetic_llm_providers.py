@@ -75,6 +75,32 @@ class ProviderRoutingTest(unittest.TestCase):
         self.assertEqual(synthetic_llm._cached_observation("model-window")["value"],
                          {"id":"claude-fixture","context":1000000,"source":"provider-model-metadata"})
 
+    def test_chatgpt_windows_are_read_natively_once_per_interval(self):
+        # The native runtime reads the ChatGPT model list; the host only asks
+        # for it when due and never starts a refresh of its own for it.
+        model = "chatgpt:fixture"
+        with mock.patch.object(synthetic_llm, "current_model", return_value=model), \
+             mock.patch.object(synthetic_llm.threading, "Thread") as thread:
+            self.assertEqual(synthetic_llm.refresh_provider_observations_async(("model-window",)), ())
+            thread.assert_not_called()
+            self.assertEqual(synthetic_llm.model_window_due(), model)
+            self.assertEqual(synthetic_llm.observe_model_window(model, 872000, "chatgpt-models"), 1)
+            self.assertEqual(synthetic_llm._cached_observation("model-window")["value"],
+                             {"id": model, "context": 872000, "source": "chatgpt-models"})
+            self.assertEqual(synthetic_llm.model_window_due(), "")
+            later = time.time() + synthetic_llm._OBSERVATION_TTLS["model-window"] + 1
+            with mock.patch.object(synthetic_llm.time, "time", return_value=later):
+                self.assertEqual(synthetic_llm.model_window_due(), model)
+        # A failed read keeps the last window and waits a full interval for this model.
+        other = "chatgpt:other"
+        with mock.patch.object(synthetic_llm, "current_model", return_value=other):
+            self.assertEqual(synthetic_llm.model_window_due(), other)
+            self.assertEqual(synthetic_llm.observe_model_window(other, 0, "(model-list-invalid)"), 0)
+            self.assertEqual(synthetic_llm.model_window_due(), "")
+            self.assertEqual(synthetic_llm._cached_observation("model-window")["value"]["id"], model)
+        with mock.patch.object(synthetic_llm, "current_model", return_value="claude-fixture"):
+            self.assertEqual(synthetic_llm.model_window_due(), "")
+
     def test_synthetic_default_path_unchanged(self):
         out, seen = self.capture_chat("syn:large:text")
         self.assertEqual(out, "((rest))")

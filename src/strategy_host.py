@@ -195,24 +195,24 @@ def context_input(key, output_tokens=32768):
 
 
 def context_capacity(output_tokens=32768):
+    """Input tokens a request may fill: the model's window less its output.
+
+    Providers report the window; a configured one never exceeds it."""
     import synthetic_llm
+    model = synthetic_llm.current_model()
+    rows = synthetic_llm._cached_observation("models").get("value")
+    rows = rows if isinstance(rows,list) else []
+    reported = next((r.get("context") for r in rows if isinstance(r,dict) and r.get("id") == model), None)
+    if reported is None:
+        metadata = synthetic_llm._cached_observation("model-window").get("value") or {}
+        if isinstance(metadata,dict) and metadata.get("id") == model:
+            reported = metadata.get("context")
+        synthetic_llm.refresh_provider_observations_async(("model-window",))
     configured = os.environ.get("METTACLAW_CONTEXT_WINDOW_TOKENS")
-    if configured:
-        window = int(configured)
-    else:
-        model = synthetic_llm.current_model()
-        rows = synthetic_llm._cached_observation("models").get("value")
-        rows = rows if isinstance(rows,list) else []
-        window = next((r.get("context") for r in rows if isinstance(r,dict) and r.get("id") == model), None)
-        if window is None:
-            metadata = synthetic_llm._cached_observation("model-window").get("value") or {}
-            if isinstance(metadata,dict) and metadata.get("id") == model:
-                window = metadata.get("context")
-            synthetic_llm.refresh_provider_observations_async(("model-window",))
-        if window is None:
-            return None
-        window = int(window)
-    return max(0, window - int(output_tokens))
+    windows = [int(value) for value in (configured, reported) if value]
+    if not windows:
+        return None
+    return max(0, min(windows) - int(output_tokens))
 
 
 def conversation_mode():

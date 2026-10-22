@@ -47,6 +47,44 @@ def reply(content, calls=()):
             "usage": {"prompt_tokens": 10, "completion_tokens": 2}}
 
 
+class CodingContextTests(unittest.TestCase):
+    def setUp(self):
+        sys.path.insert(0, str(ROOT / "src"))
+        import coding_io
+        self.io = coding_io
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.directory = Path(self.temporary.name)
+
+    def observe(self, usage, size):
+        (self.directory / "reply.json").write_text(json.dumps({"usage": usage}))
+        return self.io.context_observe(self.directory, size)
+
+    def test_without_a_count_four_bytes_make_a_token(self):
+        self.assertEqual(self.io.context_tokens(self.directory, 4000), 1000)
+        self.assertEqual(self.observe({"completion_tokens": 3}, 4000), 0)
+        self.assertEqual(self.io.context_tokens(self.directory, 4000), 1000)
+
+    def test_the_provider_rate_applies_when_it_counted_more(self):
+        # Anthropic: the cached and newly written prefix count toward the input.
+        self.assertEqual(self.observe({"input_tokens": 2, "cache_read_input_tokens": 1000,
+                                       "cache_creation_input_tokens": 998}, 6000), 1)
+        self.assertEqual(self.io.context_tokens(self.directory, 9000), 3000)
+        # Responses: input_tokens is the whole input, cached part included.
+        self.assertEqual(self.observe({"input_tokens": 1500,
+                                       "input_tokens_details": {"cached_tokens": 1400}}, 6000), 1)
+        self.assertEqual(self.io.context_tokens(self.directory, 12000), 3000)
+        # A provider counting fewer never lowers the four-byte estimate.
+        self.assertEqual(self.observe({"prompt_tokens": 10}, 6000), 1)
+        self.assertEqual(self.io.context_tokens(self.directory, 12000), 3000)
+
+    def test_unreadable_replies_change_nothing(self):
+        self.assertEqual(self.io.context_observe(self.directory, 100), 0)
+        (self.directory / "reply.json").write_text("not json")
+        self.assertEqual(self.io.context_observe(self.directory, 100), 0)
+        self.assertFalse((self.directory / "context.json").exists())
+
+
 @unittest.skipUnless(os.environ.get("CETTA_BIN"), "set CETTA_BIN to an HTTP-enabled Python build")
 class CodingSessionTests(unittest.TestCase):
     def setUp(self):
@@ -310,6 +348,60 @@ class CodingSessionTests(unittest.TestCase):
         self.assertEqual([m["role"] for m in after], ["system", "user", "user"])
         self.assertIn("SUMMARY: listed 1..30000", after[-1]["content"])
         self.assertEqual(len(list(session.glob("messages.jsonl.*.archived"))), 1)
+        self.assertEqual(json.loads((session / "state.json").read_text())["status"], "done")
+
+    def test_compaction_follows_the_tokens_the_provider_counted(self):
+        # Four bytes per token undercounts real requests; the provider's count decides.
+        workspace = self.directory / "workspace"
+        workspace.mkdir()
+        self.env["METTACLAW_CONTEXT_WINDOW_TOKENS"] = "100000"
+        session = self.session("Survey the numbers.", workspace)
+        counted = reply("Listing.", [call("c1", "exec_command", {"cmd": "seq 1 10"})])
+        counted["usage"] = {"prompt_tokens": 70000, "prompt_tokens_details": {"cached_tokens": 0},
+                            "completion_tokens": 2}
+        self.server.replies = [counted, reply("SUMMARY: listed 1..10."), reply("Finished after the summary.")]
+        self.run_session(session)
+        self.assertNotIn("tools", self.server.requests[1])
+        self.assertIn("handoff summary", self.server.requests[1]["messages"][-1]["content"])
+        self.assertEqual(json.loads((session / "state.json").read_text())["status"], "done")
+
+    def test_the_chatgpt_model_list_gives_the_largest_window(self):
+        items = json.dumps({"models": [{"slug": "small", "context_window": 272000},
+                                       {"slug": "large", "context_window": 500000, "max_context_window": 872000},
+                                       {"slug": "unreported"}]})
+        result = self.run_probe(
+            '!(let $list (llm:v1:parse ' + json.dumps(items) + ') (let (JsonArray $items) (llm:v1:get $list "models") '
+            '(println! (Windows (chatgpt:window "large" $items) (chatgpt:window "small" $items) '
+            '(chatgpt:window "unreported" $items) (chatgpt:window "absent" $items)))))\n', module="native_llm.metta")
+        self.assertIn("(Windows 872000 272000 0 0)", result.stdout)
+
+    def test_each_step_asks_the_native_runtime_for_a_chatgpt_window(self):
+        # No account is selected here: the read fails, is recorded, and waits.
+        self.env["SYNTHETIC_MODEL"] = "chatgpt:fixture"
+        del self.env["METTACLAW_CONTEXT_WINDOW_TOKENS"]
+        result = self.run_probe('!(import! &self ' + json.dumps(str(ROOT / "src" / "coding_session.metta")) + ')\n'
+                                '!(println! (Window (coding:window)))\n', module="native_llm.metta")
+        self.assertIn("(Window 200000)", result.stdout)
+        observed = json.loads((self.directory / "providers.json").read_text())["model-window"]
+        self.assertEqual(observed["attempted_model"], "chatgpt:fixture")
+        self.assertNotIn("value", observed)
+
+    def test_a_window_reported_after_the_first_step_is_used(self):
+        # A session's provider facts start empty and arrive after its first call.
+        workspace = self.directory / "workspace"
+        workspace.mkdir()
+        del self.env["METTACLAW_CONTEXT_WINDOW_TOKENS"]
+        session = self.session("Survey the numbers.", workspace)
+        def report_window(_):
+            if len(self.server.requests) == 1:
+                (self.directory / "providers.json").write_text(json.dumps({"schema": 1, "models": {
+                    "observed_at": time.time(), "attempted_at": time.time(),
+                    "value": [{"id": "fixture-model", "context": 40000}]}}))
+        self.server.before_reply = report_window
+        self.server.replies = [reply("Listing.", [call("c1", "exec_command", {"cmd": "seq 1 30000"})]),
+                               reply("SUMMARY: listed 1..30000."), reply("Finished after the summary.")]
+        self.run_session(session)
+        self.assertNotIn("tools", self.server.requests[1])
         self.assertEqual(json.loads((session / "state.json").read_text())["status"], "done")
 
     def test_repeated_compaction_replaces_handoff_and_keeps_requester_inputs(self):

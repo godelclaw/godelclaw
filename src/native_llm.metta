@@ -30,6 +30,14 @@
              (let $_ (import! &self ./src/chatgpt_agent_cetta.metta)
                (import! &self ./src/stream_runtime.metta)))))) True)
 
+; Providers report each model's window. The host reads Synthetic's catalog and
+; Anthropic's model metadata; the ChatGPT list needs this runtime's sign-in.
+(= (llm:observe-window)
+   (if (llm:native?)
+     (let $model (py-call (synthetic_llm.model_window_due))
+       (if (== $model "") True (chatgpt:observe-window $model)))
+     True))
+
 (= (llm:command $model $tokens $effort $prompt)
    (if (llm:native?)
      (let $selected (py-call (synthetic_llm.current_model $model))

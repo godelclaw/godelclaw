@@ -26,6 +26,7 @@
               ($base (str:join "" ($prompt $evidence "\n" (runtime:projection))))
               ($focus (py-call (strategy_host.context_input "focus")))
               ($trigger (py-call (strategy_host.context_input "trigger")))
+              ($_ (llm:observe-window))
               ($capacity-value (py-call (strategy_host.context_input "capacity" $tokens)))
               ($capacity (format-args "{}" ($capacity-value)))
               ($model (py-call (strategy_host.context_input "model")))

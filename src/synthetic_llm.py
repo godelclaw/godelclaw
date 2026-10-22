@@ -645,6 +645,45 @@ def _refresh_observation(kind):
             _refreshing_observations.discard(kind)
 
 
+def model_window_due():
+    """The selected model, when the native runtime should read its window.
+
+    The ChatGPT model list reports each model's window, but only the native
+    runtime holds that sign-in; the host reads every other provider's window.
+    The read sits on the caller's path, so a failure waits a full interval."""
+    model = str(current_model())
+    if not model.startswith("chatgpt:"):
+        return ""
+    with _observation_lock:
+        record = _read_observations().get("model-window")
+    record = record if isinstance(record, dict) else {}
+    value = record.get("value") if isinstance(record.get("value"), dict) else {}
+    if value.get("id") == model and not _observation_stale("model-window", record):
+        return ""
+    if (record.get("attempted_model") == model and time.time()
+            - float(record.get("attempted_at", 0) or 0) < _OBSERVATION_TTLS["model-window"]):
+        return ""
+    return model
+
+
+def observe_model_window(model, context, source):
+    """Record the window the native runtime read for a model; 0 when none."""
+    context = int(context) if type(context) in (int, float) else 0
+    if context > 0:
+        _store_observation("model-window", {"id": str(model), "context": context,
+                                            "source": str(source)})
+        return 1
+    with _observation_lock:
+        observations = _read_observations()
+        record = observations.get("model-window")
+        record = record if isinstance(record, dict) else {}
+        record.update(attempted_at=time.time(), attempted_model=str(model),
+                      last_error=("no window: " + str(source))[:160])
+        observations["model-window"] = record
+        _write_observations(observations)
+    return 0
+
+
 def refresh_provider_observations_async(kinds=("models", "quota"), force=False):
     """Refresh provider facts without putting the provider on a caller's path.
 
@@ -655,6 +694,8 @@ def refresh_provider_observations_async(kinds=("models", "quota"), force=False):
     for kind in kinds:
         if kind not in _OBSERVATION_TTLS:
             continue
+        if kind == "model-window" and str(current_model()).startswith("chatgpt:"):
+            continue  # read by the native runtime: see model_window_due
         with _observation_lock:
             record = _read_observations().get(kind)
             record = record if isinstance(record, dict) else {}

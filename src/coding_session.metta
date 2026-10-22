@@ -165,7 +165,8 @@
           ($pending (llm:begin $plan))
           ($box (coding:wait-provider $plan $pending))
           ($reply (coding:file $dir "reply.json"))
-          ($_ (py-call (native_llm_host.structured_json_result $box $reply))))
+          ($_ (py-call (native_llm_host.structured_json_result $box $reply)))
+          ($_ (py-call (coding_io.context_observe $dir (str:byte-length $text)))))
      (json-parse (fs:read-text $reply))))
 
 ; This session schedules its own process owner while waiting on the same
@@ -207,10 +208,12 @@
                (and (== $finish "tool_calls") (not (== $calls ())))) $reply
          (CallFailed (str:concat "Incomplete or invalid provider finish: " $finish))))))
 
-; Tokens are estimated at four bytes each, as Codex estimates new items.
-(= (coding:estimate $messages) (/ (str:byte-length (json-stringify (JsonArray $messages))) 4))
+; Tokens are estimated at four bytes each, as Codex estimates new items, or at
+; the higher rate the provider counted for this session's last request.
+(= (coding:estimate $dir $request) (py-call (coding_io.context_tokens $dir (str:byte-length (json-stringify $request)))))
+; Read at every step: the provider reports the model's window after the first.
 (= (coding:window)
-   (let $capacity (py-call (strategy_host.context_capacity 32768))
+   (let* (($_ (llm:observe-window)) ($capacity (py-call (strategy_host.context_capacity 32768))))
      (if (== (get-metatype $capacity) Grounded) $capacity 200000)))
 (= (coding:steering $lines $index $out)
    (if (== $lines ()) (coding:reverse $out ())
@@ -351,15 +354,16 @@
      (CodingFinished $status)))
 (= (coding:fail $dir $workdir $reason $steps $inbox)
    (coding:finish $dir "failed" (coding:failure-handover $dir $workdir $reason) $steps $inbox))
-(= (coding:loop $dir $workdir $effort $window $tools $messages $steps $inbox)
+(= (coding:loop $dir $workdir $effort $tools $messages $steps $inbox)
    (if (fs:is-file (coding:file $dir "stop")) (coding:finish $dir "stopped" "Stopped by the requester." $steps $inbox)
      (let* (((Folded $steered $next) (coding:fold-inbox $dir $messages $inbox))
-            ($prepared (if (> (coding:estimate $steered) (* 0.9 $window)) (coding:compact $dir $steered $effort) (Compacted $steered))))
+            ($size (coding:estimate $dir (coding:request $steered $effort $tools)))
+            ($prepared (if (> $size (* 0.9 (coding:window))) (coding:compact $dir $steered $effort) (Compacted $steered))))
        (case $prepared
          (((CompactionFailed $why)
             (coding:fail $dir $workdir (str:concat "The session could not compact its history: " $why) $steps $inbox))
-          ((Compacted $current) (coding:turn $dir $workdir $effort $window $tools $current $steps $next)))))))
-(= (coding:turn $dir $workdir $effort $window $tools $current $steps $next)
+          ((Compacted $current) (coding:turn $dir $workdir $effort $tools $current $steps $next)))))))
+(= (coding:turn $dir $workdir $effort $tools $current $steps $next)
    (case (coding:ask $dir (coding:request $current $effort $tools) 0)
          (((CallFailed $why) (coding:fail $dir $workdir (str:concat "The model call failed: " $why) $steps $next))
           ($ok
@@ -368,18 +372,18 @@
                    ($text (coding:text (coding:field $message "content")))
                    ($_ (coding:state $dir "running" (+ $steps 1) (coding:progress $text $calls) $next)))
               (if (== $calls ())
-                (coding:after-final $dir $workdir $effort $window $tools
+                (coding:after-final $dir $workdir $effort $tools
                   (coding:append-list $current ($message)) (+ $steps 1) $next $text)
                 (let $results (coding:run-calls $dir $workdir $calls ())
-                  (coding:loop $dir $workdir $effort $window $tools
+                  (coding:loop $dir $workdir $effort $tools
                     (coding:append-list $current (cons-atom $message $results)) (+ $steps 1) $next))))))))
 
 ; Guidance can arrive while the model is answering. A no-tool reply ends only
 ; the input frontier it saw; newer guidance continues this same transcript.
-(= (coding:after-final $dir $workdir $effort $window $tools $messages $steps $inbox $text)
+(= (coding:after-final $dir $workdir $effort $tools $messages $steps $inbox $text)
    (if (fs:is-file (coding:file $dir "stop")) (coding:finish $dir "stopped" "Stopped by the requester." $steps $inbox)
      (let (Folded $current $next) (coding:fold-inbox $dir $messages $inbox)
-       (if (> $next $inbox) (coding:loop $dir $workdir $effort $window $tools $current $steps $next)
+       (if (> $next $inbox) (coding:loop $dir $workdir $effort $tools $current $steps $next)
          (coding:finish $dir "done" $text $steps $next)))))
 
 (= (coding:begin $dir $task $workdir)
@@ -400,7 +404,7 @@
           ($steps (coding:number (coding:field $state "steps") 0))
           ($inbox (coding:number (coding:field $state "inbox") 0))
           ($_ (coding:state $dir "running" $steps "started" $inbox)))
-     (coding:loop $dir $workdir $effort (coding:window) (coding:tools) $messages $steps $inbox)))
+     (coding:loop $dir $workdir $effort (coding:tools) $messages $steps $inbox)))
 
 (= (coding:last $items) (if (== (cdr-atom $items) ()) (car-atom $items) (coding:last (cdr-atom $items))))
 (= (coding:notify $dir $status)

@@ -102,6 +102,20 @@ class StrategyHostTest(unittest.TestCase):
              mock.patch.object(synthetic_llm,"refresh_provider_observations_async"):
             self.assertIsNone(host.context_capacity(32768))
 
+    def test_a_configured_window_never_exceeds_the_reported_one(self):
+        import synthetic_llm
+        def cached(kind):
+            return {"value": {"id":"claude-test","context":1000000}} if kind == "model-window" else {"value":[]}
+        def capacity(observations, window):
+            with mock.patch.dict(os.environ, {"METTACLAW_CONTEXT_WINDOW_TOKENS": window}), \
+                 mock.patch.object(synthetic_llm,"current_model",return_value="claude-test"), \
+                 mock.patch.object(synthetic_llm,"_cached_observation",side_effect=observations), \
+                 mock.patch.object(synthetic_llm,"refresh_provider_observations_async"):
+                return host.context_capacity(32768)
+        self.assertEqual(capacity(lambda kind: {}, "872000"), 839232)
+        self.assertEqual(capacity(cached, "2000000"), 967232)
+        self.assertEqual(capacity(cached, "872000"), 839232)
+
     def test_real_receipt_callback_and_next_prepared_request(self):
         self.capture()
         command = ["shell", "printf witness"]

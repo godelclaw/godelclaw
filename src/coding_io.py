@@ -1,6 +1,7 @@
 """Append-only session files for coding mode: one line per record, no backups."""
 import json
 import hashlib
+import math
 import os
 from pathlib import Path
 import re
@@ -119,3 +120,41 @@ def append_line(path, text):
     with open(str(path), "a", encoding="utf-8") as stream:
         stream.write(str(text) + "\n")
     return 1
+
+
+def _reported_input(usage):
+    import provider_protocol
+    observed = provider_protocol.cache_observation(usage)
+    if observed.get("status") == "reported":
+        return observed["input_tokens"]
+    total = usage.get("prompt_tokens", usage.get("input_tokens")) if isinstance(usage, dict) else None
+    return total if type(total) is int and total > 0 else None
+
+
+def context_observe(directory, request_bytes):
+    """Remember what the provider counted for the request just answered."""
+    directory = Path(str(directory))
+    try:
+        usage = json.loads((directory / "reply.json").read_text()).get("usage")
+    except (OSError, ValueError, AttributeError):
+        return 0
+    tokens = _reported_input(usage)
+    if tokens is None or int(request_bytes) <= 0:
+        return 0
+    temporary = directory / "context.tmp"
+    temporary.write_text(json.dumps(dict(bytes=int(request_bytes), tokens=tokens)))
+    os.replace(temporary, directory / "context.json")
+    return 1
+
+
+def context_tokens(directory, request_bytes):
+    """Input tokens for a request of this many bytes: four bytes each, as
+    Codex estimates new items, or the provider's own rate for this session's
+    last request when it counted more."""
+    size = int(request_bytes)
+    try:
+        record = json.loads((Path(str(directory)) / "context.json").read_text())
+        rate = int(record["tokens"]) / int(record["bytes"])
+    except (OSError, ValueError, KeyError, TypeError, ZeroDivisionError):
+        rate = 0
+    return max(size // 4, math.ceil(size * rate))
