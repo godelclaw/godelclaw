@@ -883,6 +883,12 @@ transaction. An empty, incomplete or failed handoff leaves the old frontier
 intact and retains input for the ordinary retry path. Original records remain
 available through `task-history`, `task-read` and `request-read`.
 
+An existing installation can explicitly seed its continuous window from recent
+records that fit the selected model. The checkpoint retains any prior handoff
+and marks the omitted archive range as **not summarized**. That notice stays
+visible through later compaction; archive records and their identities remain
+retrievable. Normal window compaction never invokes this migration implicitly.
+
 `work` starts an independent coding session with an append-only transcript,
 plan and steering inbox. `work-status`, `work-steer`, `work-stop` and
 `work-resume` connect it to the agent loop. Sessions run until a complete

@@ -3,6 +3,7 @@
 The provider is a local scripted fixture. No credentials or external models.
 """
 import json
+import math
 import os
 from pathlib import Path
 import sqlite3
@@ -10,6 +11,8 @@ import unittest
 
 import test_native_llm_boundary as boundary
 import test_task_context as reference
+
+BASE_PROMPT = "soul_cache_boundary_tools_cache_boundary_conversation_cache_boundary_now"
 
 
 @unittest.skipUnless(os.environ.get("CETTA_BIN"), "set CETTA_BIN to an HTTP-enabled Python build")
@@ -41,7 +44,7 @@ class ContextCompactionTests(unittest.TestCase):
         q = json.dumps
         result = self.run_guest('!(import! &self "' + str(boundary.ROOT / 'src/context_compaction.metta') + '")\n'
             '!(let $result (context:prepare '
-            '"soul_cache_boundary_tools_cache_boundary_conversation_cache_boundary_now" '
+            + q(BASE_PROMPT) + ' '
             + q(focus) + ' "continuation-tick" ' + q(str(capacity)) + ' "fixture-model" 256 "default") '
             '(case $result (((ContextPreparationFailed $why) '
             '(fs:update-text ' + q(str(out)) + ' "replace" (str:concat "WITHHELD: " $why) "" "")) '
@@ -50,6 +53,13 @@ class ContextCompactionTests(unittest.TestCase):
         self.assertIn("COMPACTION_OK", result)
         self.assertTrue(out.is_file(), result + self.last_stderr)
         return out.read_text()
+
+    def seed_recent(self, capacity=20000, focus="guide"):
+        # Match preparation's base and render reserve; no topic notes here.
+        available = capacity - math.ceil(len((BASE_PROMPT + "\n").encode()) / 2.5) - 128
+        return self.run_guest('!(import! &self ' + json.dumps(str(boundary.ROOT / 'src/context_compaction.metta')) + ')\n'
+            '!(let $view (task:conversation-view ' + json.dumps(focus) + ' "continuation-tick") '
+            '(println! (SEED (context:seed-recent $view ' + str(available) + ' 2.5))))\n')
 
     def checkpoint(self):
         with self.fixture.store.transaction() as db:
@@ -235,6 +245,102 @@ class ContextCompactionTests(unittest.TestCase):
         checkpoint = self.checkpoint()
         self.assertEqual((checkpoint["start"], checkpoint["summary"], checkpoint["call_id"]), (10, "GOOD", "c1"))
         self.assertEqual(len(self.peer.requests), 0)
+
+    def test_explicit_recent_migration_keeps_paid_prefix_and_rejects_stale_publish(self):
+        self.populate()
+        original = reference.task_context.conversation_projection(self.fixture.store, "guide")
+        root = original["root"]
+        paid = {"version": 1, "start": 3, "summary": "PAID_PREFIX: retain earlier findings.",
+                "call_id": "paid-call", "first_source": original["transcript"][0]["id"],
+                "last_source": original["transcript"][2]["id"], "source_digest": "paid-digest"}
+        old_raw = json.dumps(paid)
+        with self.fixture.store.transaction() as db:
+            db.execute("INSERT INTO meta VALUES(?,?)", ("task_window:" + root, old_raw))
+        output = self.seed_recent()
+        self.assertIn("ContextPublished", output)
+        checkpoint = self.checkpoint()
+        self.assertGreater(checkpoint["start"], paid["start"])
+        self.assertEqual(checkpoint["archive_gap"], {
+            "from": paid["start"], "until": checkpoint["start"], "status": "not-summarized"})
+        for key in ("summary", "call_id", "first_source", "last_source", "source_digest"):
+            self.assertEqual(checkpoint[key], paid[key])
+        stale = self.run_guest('!(import! &self ' + json.dumps(str(boundary.ROOT / 'src/context_compaction.metta')) + ')\n'
+            '!(println! (context:publish ' + json.dumps(root) + ' ' + json.dumps(old_raw)
+            + ' 4 "OBSOLETE" "stale-call" "x" "y" "z"))\n')
+        self.assertIn("context-checkpoint-changed", stale)
+        self.assertEqual(self.checkpoint(), checkpoint)
+        self.assertIn("context-migration-already-seeded", self.seed_recent())
+        self.assertEqual(self.checkpoint(), checkpoint)
+        rendered = self.render()
+        self.assertNotIn("WITHHELD:", rendered)
+        self.assertIn("PAID_PREFIX", rendered)
+        self.assertIn("UNSUMMARIZED_ARCHIVE (operator migration; not a model-authored summary)", rendered)
+        self.assertIn('"task-history","' + root + '",3', rendered)
+        self.assertLessEqual(len(rendered.encode()) / 2.5, 20000)
+        self.assertEqual(len(self.peer.requests), 0)
+        self.assertEqual(reference.task_context.history(self.fixture.store, "guide")["total"], 60)
+        self.assert_parent_unchanged()
+
+    def test_empty_seed_has_no_model_authored_handoff_and_gap_survives_later_summary(self):
+        self.populate()
+        self.assertIn("ContextPublished", self.seed_recent())
+        seeded = self.checkpoint()
+        self.assertEqual(seeded["summary"], "")
+        gap = seeded["archive_gap"]
+        self.assertEqual(gap["from"], 0)
+        self.assertEqual(gap["until"], seeded["start"])
+        rendered = self.render()
+        self.assertNotIn("WITHHELD:", rendered)
+        self.assertIn("UNSUMMARIZED_ARCHIVE", rendered)
+        self.assertNotIn("CONTEXT_HANDOFF (model-authored;", rendered)
+        self.assertLessEqual(len(rendered.encode()) / 2.5, 20000)
+        self.assertEqual(len(self.peer.requests), 0)
+
+        self.populate(40)
+        self.peer.reply["choices"][0]["message"]["content"] = "RECENT_HANDOFF: summarizes only the subsequent source records."
+        rendered = self.render("after-migration")
+        self.assertNotIn("WITHHELD:", rendered)
+        self.assertIn("RECENT_HANDOFF", rendered)
+        self.assertIn("UNSUMMARIZED_ARCHIVE", rendered)
+        checkpoint = self.checkpoint()
+        self.assertEqual(checkpoint["archive_gap"], gap)
+        self.assertGreater(checkpoint["start"], gap["until"])
+        self.assertGreater(len(self.peer.requests), 0)
+        for _, _, request in self.peer.requests:
+            prior = "\n".join(message["content"] for message in request["messages"])
+            self.assertIn("UNSUMMARIZED_ARCHIVE", prior)
+            self.assertIn("were not summarized", prior)
+        self.assertTrue(checkpoint["call_id"])
+        self.assertEqual(reference.task_context.history(self.fixture.store, "guide")["total"], 100)
+        self.assert_parent_unchanged()
+
+    def test_invalid_gap_cannot_hide_history_behind_an_empty_summary(self):
+        self.fixture.call([["read-file", "first"]], ["UNSUMMARIZED_SOURCE_MUST_REMAIN_VISIBLE"])
+        root = reference.task_context.conversation_projection(self.fixture.store, "guide")["root"]
+        for gap in (None, {"from": 0, "until": 1, "status": "summarized"},
+                    {"from": 1, "until": 1, "status": "not-summarized"},
+                    {"from": 0, "until": 43, "status": "not-summarized"},
+                    {"from": 1, "until": 42, "status": "not-summarized"},
+                    {"from": 0, "until": 41, "status": "not-summarized"}):
+            with self.subTest(gap=gap):
+                checkpoint = {"start": 42, "summary": "", "archive_gap": gap}
+                with self.fixture.store.transaction() as db:
+                    db.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", ("task_window:" + root, json.dumps(checkpoint)))
+                rendered = self.render(capacity=100000)
+                self.assertNotIn("WITHHELD:", rendered)
+                self.assertIn("UNSUMMARIZED_SOURCE_MUST_REMAIN_VISIBLE", rendered)
+                self.assertNotIn("UNSUMMARIZED_ARCHIVE", rendered)
+        self.assertEqual(len(self.peer.requests), 0)
+        self.assert_parent_unchanged()
+
+    def test_recent_migration_rejects_a_newest_record_that_cannot_fit(self):
+        self.fixture.store.accept("large", "λ" * 35000)
+        reference.task_context.begin(self.fixture.store, "large", "operator-event")
+        output = self.seed_recent(focus="large")
+        self.assertIn("context-migration-window-exceeds-capacity", output)
+        self.assertIsNone(self.checkpoint())
+        self.assertEqual(len(self.peer.requests), 0)
+        self.assert_parent_unchanged()
 
     def test_old_numeric_trim_cursor_does_not_hide_unsummarized_evidence(self):
         self.fixture.call([["read-file", "first"]], ["ORIGINAL_UNSUMMARIZED_FINDING"])
