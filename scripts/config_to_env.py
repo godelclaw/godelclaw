@@ -134,6 +134,7 @@ def main():
     emit("METTACLAW_TELEGRAM_ATTACHMENTS_DIR", expand(paths.get("attachments_dir"), root))
     emit("METTACLAW_REPOS_DIR", expand(paths.get("repos_dir"), root))
     emit("METTACLAW_PUBLIC_WORK_DIR", expand(paths.get("public_work_dir"), root))
+    emit("METTACLAW_STREAM_DIR", expand(paths.get("stream_dir"), root))
     emit("METTACLAW_EMBED_MODEL", expand(paths.get("embed_model"), root))
 
     emit("METTACLAW_OWNER", expand(agent.get("owner"), root))

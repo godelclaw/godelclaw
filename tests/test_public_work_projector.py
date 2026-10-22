@@ -187,8 +187,9 @@ class ProjectorWiringCases(Base, unittest.TestCase):
         self.assertEqual(self.sink.notes, [])
 
     def test_duplicate_replay_gives_one_event(self):
-        self.work()
-        self.work()
+        effect_receipts.capture_public_epoch(3)
+        effect_receipts.record_command(3, "returned", COMMAND, SECRET_RESULT, occurrence="ticket:3:0")
+        effect_receipts.record_command(3, "returned", COMMAND, SECRET_RESULT, occurrence="ticket:3:0")
         self.assertEqual(len(self.sink.notes), 1)
         self.assertEqual(len(self.receipts()), 2)   # ledger stays append-only
 
@@ -294,12 +295,13 @@ class BuiltinWorklogCases(Base, unittest.TestCase):
         self.assertEqual(self.work(), 1)
         self.assertEqual(self.notes(), [])
 
-    def test_on_publishes_one_metadata_note_and_dedupes(self):
+    def test_distinct_recorded_occurrences_publish_distinct_metadata_notes(self):
         self.switch("on")
         self.work()
         self.work()
         notes = self.notes()
-        self.assertEqual(len(notes), 1)
+        self.assertEqual(len(notes), 2)
+        self.assertNotEqual(notes[0], notes[1])
         self.assertTrue(notes[0].startswith("Activity · shell\n"))
         self.assertIn("Receipt: returned", notes[0])
         self.assertNotIn(SECRET_ARGUMENT, notes[0])

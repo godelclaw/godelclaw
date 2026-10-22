@@ -120,8 +120,15 @@ class Fixture:
             if raising_capture:
                 shadow = d / "shadow"
                 shadow.mkdir()
-                (shadow / "effect_receipts.py").write_text(RAISING_CAPTURE)
-                env["PYTHONPATH"] = str(shadow) + os.pathsep + env["PYTHONPATH"]
+                fixture = shadow / "capture_fixture.py"
+                fixture.write_text('import effect_receipts\n'
+                    'def broken(turn):\n    raise RuntimeError("capture exploded")\n'
+                    'def install():\n    effect_receipts.capture_public_epoch = broken\n    return 1\n')
+                # Patch the loaded module explicitly. Importing additional native
+                # helpers may change Python search order; that is not the failure
+                # boundary this test intends to exercise.
+                probe.write_text('!(import! &self '+json.dumps(str(fixture))+')\n'
+                    '!(py-call (capture_fixture.install))\n'+probe.read_text())
             result = self.launch(probe, env)
             self.assertEqual(result.returncode, 0, result.stderr[-2000:])
             self.assertEqual(

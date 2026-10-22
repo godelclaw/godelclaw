@@ -5,8 +5,19 @@
     "parameters": {"type": "object", "properties": {
       "cmd": {"type": "string", "description": "The command line."},
       "workdir": {"type": "string", "description": "Directory to run in; the workspace by default."},
-      "timeout_ms": {"type": "integer", "description": "Deadline in milliseconds; 600000 by default."}},
+      "timeout_ms": {"type": "integer", "minimum": 0, "description": "Deadline in milliseconds; 600000 by default."},
+      "yield_time_ms": {"type": "integer", "minimum": 0, "description": "Return an execution_id after this initial wait if still running. Omit to wait for completion. Output continues to stream locally."}},
       "required": ["cmd"]}}},
+  {"type": "function", "function": {
+    "name": "exec_poll", "description": "Observe an existing execution without restarting it. Finished results and full output artifacts remain available.",
+    "parameters": {"type": "object", "properties": {
+      "execution_id": {"type": "string"},
+      "yield_time_ms": {"type": "integer", "minimum": 0, "description": "Wait duration; 1000 ms by default."}},
+      "required": ["execution_id"]}}},
+  {"type": "function", "function": {
+    "name": "exec_cancel", "description": "Send SIGTERM to an execution owned by this session and inspect its outcome. This never starts another process.",
+    "parameters": {"type": "object", "properties": {"execution_id": {"type": "string"}},
+      "required": ["execution_id"]}}},
   {"type": "function", "function": {
     "name": "apply_patch",
     "description": "Edit files with a patch: *** Begin Patch, then *** Add File: path (lines starting with +), *** Delete File: path, or *** Update File: path (optionally *** Move to: path) followed by hunks of context lines (starting with a space), removed lines (-) and added lines (+), each hunk optionally headed by @@ and a nearby line, then *** End Patch. Paths are relative to the workspace. The patch applies whole or not at all.",

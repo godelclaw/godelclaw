@@ -26,6 +26,9 @@ attachments_dir = "$ROOT/memory/attachments"
 repos_dir = "$ROOT/repos"
 # Optional deliberately public note stream. Empty keeps publication disabled.
 public_work_dir = ""
+# Local operator summaries, commentary and execution output. Empty disables it.
+# This does not publish to Telegram or the deliberately public notes feed.
+stream_dir = ""
 
 # Local Qwen3-Embedding-8B path. Fill this before using remember/query.
 embed_model = ""
@@ -43,7 +46,8 @@ llm_hard_seconds = 1800
 llm_connect_seconds = 30
 llm_first_byte_seconds = 900
 llm_idle_seconds = 180
-# Chat Completions SSE only. Other protocols retain buffered decoding.
+# Compatible Chat Completions SSE. A configured operator stream also enables
+# Responses and Anthropic observation through the same terminal validation.
 llm_stream = true
 # Delay for an independent receipt notice while managed input stays queued;
 # zero disables notices. Standalone upstream profiles do not send them.

@@ -6,6 +6,7 @@
 # site-packages on PYTHONPATH; `session_memory_tools` is source code only.
 requests==2.34.2
 websocket-client==1.9.0
+rich==15.0.0
 chromadb==1.5.9
 mcp==1.26.0
 

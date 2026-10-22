@@ -27,7 +27,8 @@
        (let $_ (import! &self llm:compat)
          (let $_ (import! &self llm:io)
            (let $_ (import! &self ./src/responses_stream_cetta.metta)
-             (import! &self ./src/chatgpt_agent_cetta.metta))))) True)
+             (let $_ (import! &self ./src/chatgpt_agent_cetta.metta)
+               (import! &self ./src/stream_runtime.metta)))))) True)
 
 (= (llm:command $model $tokens $effort $prompt)
    (if (llm:native?)
@@ -146,6 +147,8 @@
         (if (llm:host-flag $owned)
         (let* (($status (llm:status-http $id))
               ($_ (llm:progress $plan $status))
+              ($_ (stream:progress $plan $id))
+              ($_ (stream:poll-processes))
               ($_ (llm:commentary-progress $plan $id))
               ($event (llm:wait-http $id $milliseconds)))
          (llm:observe-plan $plan $state $epoch $correlation $protocol $id $event))
@@ -206,6 +209,12 @@
 
 (: llm:deliver (-> Atom Atom %Undefined%))
 (= (llm:deliver $plan $state)
+   (let* (($display-id (py-call (native_llm_host.field $plan "correlation")))
+          ($_ (stream:close $display-id)))
+     (llm:deliver-final $plan $state)))
+
+(: llm:deliver-final (-> Atom Atom %Undefined%))
+(= (llm:deliver-final $plan $state)
    (case $state
      (((llm:v1:completed $epoch $correlation $result)
         (let $projected (llm:v1:project-chat-value $result 0)

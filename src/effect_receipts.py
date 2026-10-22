@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import threading
 import time
+import uuid
 
 
 _FIELD_LIMIT = 6000
@@ -107,7 +108,7 @@ def _receipt_id(turn, disposition, command, result) -> str:
     return "rcpt:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
-def public_event(turn, disposition, command, result, at):
+def public_event(turn, disposition, command, result, at, occurrence=None):
     """Pure allowlisted projection of one command receipt, or None.
 
     ``at`` is supplied by the caller so the function reads no clock, file or
@@ -120,7 +121,8 @@ def public_event(turn, disposition, command, result, at):
     return {
         "tool": tool,
         "disposition": disposition,
-        "receipt_id": _receipt_id(turn, disposition, command, result),
+        "receipt_id": ("rcpt:" + hashlib.sha256(str(occurrence).encode()).hexdigest()[:16]
+                       if occurrence is not None else _receipt_id(turn, disposition, command, result)),
         "at": datetime.datetime.fromtimestamp(
             at, datetime.timezone.utc).isoformat(timespec="seconds"),
     }
@@ -193,7 +195,7 @@ def capture_public_epoch(turn):
     return int(enabled)
 
 
-def _publish_public_event(turn, disposition, command, result, at) -> int:
+def _publish_public_event(turn, disposition, command, result, at, occurrence=None) -> int:
     """Best-effort display; never raises and never reports itself."""
     if os.environ.get("METTACLAW_PUBLIC_TOOL_RECEIPTS", "0") != "1":
         return 0
@@ -202,12 +204,12 @@ def _publish_public_event(turn, disposition, command, result, at) -> int:
     _reporting.active = True
     receipt_id = None
     try:
-        event = public_event(turn, disposition, command, result, at)
+        event = public_event(turn, disposition, command, result, at, occurrence)
         if event is None:
             return 0
         receipt_id = event["receipt_id"]
         with _publish_lock:
-            epoch = _captured.pop(int(turn), None)
+            epoch = _captured.get(int(turn))
             if epoch is None or receipt_id in _published \
                     or receipt_id in _in_flight:
                 return 0
@@ -230,16 +232,19 @@ def _publish_public_event(turn, disposition, command, result, at) -> int:
         _reporting.active = False
 
 
-def record_command(turn, disposition, command, result) -> int:
+def record_command(turn, disposition, command, result, occurrence=None) -> int:
     """Record one command after the dispatcher has classified its return."""
     if os.environ.get("METTACLAW_OBSERVED_STRATEGY", "0") == "1":
         import strategy_host
         strategy_host.command_result(turn, disposition, command, result)
+        occurrence = occurrence or strategy_host.command_identity(turn)
+    occurrence = occurrence or uuid.uuid4().hex
     now = time.time()
     entry = {
         "schema": 1,
         "recorded_at": now,
         "turn": int(turn),
+        "occurrence": occurrence,
         "disposition": _text(disposition, 80),
         "command": _text(command),
         "result": _text(result),
@@ -248,7 +253,12 @@ def record_command(turn, disposition, command, result) -> int:
     if committed:
         # After the durable append, outside every transaction: a sink
         # failure cannot fail or undo the receipt.
-        _publish_public_event(turn, disposition, command, result, now)
+        _publish_public_event(turn, disposition, command, result, now, occurrence)
+        try:
+            import stream_sink
+            stream_sink.receipt(occurrence, command, result, disposition)
+        except Exception:
+            pass
     return committed
 
 

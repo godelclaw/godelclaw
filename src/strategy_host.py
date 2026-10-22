@@ -394,7 +394,20 @@ def reserve_command(turn, command):
             db.execute("CREATE TABLE IF NOT EXISTS command_attempts (ticket TEXT, position INTEGER, command TEXT, result TEXT, PRIMARY KEY(ticket,position))")
             db.execute("INSERT INTO command_attempts VALUES (?,?,?,NULL)", (_ticket, _position, strategy.encoded(command)))
         _position += 1
+        try:
+            import stream_sink
+            stream_sink.event("tool.dispatching", command_identity(turn), str(command), "dispatching")
+        except Exception:
+            pass
         return 1
+
+
+def command_identity(turn):
+    """The broker's occurrence, independent of equal command text."""
+    with _lock:
+        if enabled() and str(turn) == _turn and _ticket:
+            return str(_ticket) + ":" + str(_position - 1)
+    return None
 
 
 def command_result(turn, disposition, command, result):

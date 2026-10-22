@@ -71,13 +71,18 @@ class NativeCommentaryStreamingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         with tempfile.NamedTemporaryFile('w', suffix='.metta') as probe:
-            probe.write('!(import! &self io)\n!(println! (READER (get-type io:http-read)))\n')
+            # The generated PeTTa facade intentionally erases type declarations.
+            # Inspect the executable definition, not get-type's annotation.
+            probe.write('!(import! &self io)\n!(println! (READER (collapse '
+                '(match &self (= (io:http-read $id $offset $size) $body) True))))\n')
             probe.flush()
             result = subprocess.run([os.environ['CETTA_BIN'], '--lang', 'petta', '--quiet', probe.name],
                                     cwd=boundary.ROOT, text=True, capture_output=True, timeout=10)
         if result.returncode or '(READER ' not in result.stdout:
             raise RuntimeError('could not inspect native incremental HTTP support')
-        cls.prefix_reader = '(READER %Undefined%)' not in result.stdout
+        cls.prefix_reader = '(reader (true))' in result.stdout.lower()
+        if not cls.prefix_reader:
+            raise RuntimeError('candidate engine must supply io:http-read for the streaming gate')
 
     def setUp(self):
         boundary.NativeBoundaryTests.setUp(self)

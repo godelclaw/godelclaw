@@ -282,5 +282,17 @@
   "src/fuel_cetta.metta",
   "src/fuel_io.metta",
   "src/fuel_python.metta",
-  "src/runtime_cetta.metta"
+  "src/runtime_cetta.metta",
+  "config/runtime-files.json",
+  "src/coding_process.metta",
+  "src/stream_events.metta",
+  "src/stream_sse.metta",
+  "src/stream_runtime.metta",
+  "src/stream_sink.py",
+  "src/stream_lifecycle.py",
+  "src/stream_lifecycle.metta",
+  "modes/protocol/StreamEvents.module",
+  "scripts/worklog_view.py",
+  "scripts/worklog_control.py",
+  "ui/worklog/viewer.py"
 ]

@@ -6,6 +6,93 @@ body only. Deltas are provisional until both finish and [DONE] are present.
 import json
 
 
+def anthropic(body, limit=1048576):
+    """Assemble Messages SSE without granting partial blocks any authority."""
+    message = None
+    blocks, partial, closed = {}, {}, set()
+    stopped = False
+    stop_reason = None
+    for number, (event, data) in enumerate(events(body, limit)):
+        if number >= 65536 or stopped:
+            raise ValueError("data after completion or too many events")
+        value = json.loads(data)
+        if not isinstance(value, dict):
+            raise ValueError("invalid Messages event")
+        kind = value.get("type")
+        if event and event != kind:
+            raise ValueError("conflicting Messages event type")
+        if kind == "error":
+            raise ValueError("provider stream error")
+        if kind == "ping":
+            continue
+        if kind == "message_start":
+            if message is not None:
+                raise ValueError("duplicate message start")
+            message = value.get("message")
+            if (not isinstance(message, dict) or not message.get("id")
+                    or message.get("role") != "assistant" or message.get("content")):
+                raise ValueError("invalid message start")
+            message = dict(message)
+        elif kind == "content_block_start":
+            index = value.get("index")
+            block = value.get("content_block")
+            if (message is None or type(index) is not int or index < 0
+                    or index in blocks or not isinstance(block, dict)):
+                raise ValueError("invalid block start")
+            blocks[index] = dict(block)
+            partial[index] = {}
+        elif kind == "content_block_delta":
+            index, delta = value.get("index"), value.get("delta")
+            if type(index) is not int or index not in blocks or index in closed or not isinstance(delta, dict):
+                raise ValueError("delta outside block")
+            block = blocks[index]
+            fields = {
+                "text_delta": ("text", "text", "text"),
+                "thinking_delta": ("thinking", "thinking", "thinking"),
+                "signature_delta": ("thinking", "signature", "signature"),
+                "input_json_delta": ("tool_use", "input", "partial_json"),
+            }
+            spec = fields.get(delta.get("type"))
+            if spec is None:
+                continue
+            expected, target, source = spec
+            if block.get("type") != expected or not isinstance(delta.get(source), str):
+                raise ValueError("block/delta kind mismatch")
+            partial[index].setdefault(target, []).append(delta[source])
+        elif kind == "content_block_stop":
+            index = value.get("index")
+            if type(index) is not int or index not in blocks or index in closed:
+                raise ValueError("invalid block stop")
+            for field, pieces in partial[index].items():
+                joined = "".join(pieces)
+                if field == "input":
+                    parsed = json.loads(joined)
+                    if not isinstance(parsed, dict):
+                        raise ValueError("tool input must be an object")
+                    blocks[index][field] = parsed
+                else:
+                    blocks[index][field] = blocks[index].get(field, "") + joined
+            closed.add(index)
+        elif kind == "message_delta":
+            if message is None or not isinstance(value.get("delta"), dict):
+                raise ValueError("invalid message delta")
+            message.update(value["delta"])
+            stop_reason = value["delta"].get("stop_reason", stop_reason)
+            usage = value.get("usage", {})
+            if not isinstance(usage, dict):
+                raise ValueError("invalid usage")
+            message["usage"] = {**message.get("usage", {}), **usage}
+        elif kind == "message_stop":
+            if (message is None or closed != set(blocks) or stop_reason is None
+                    or sorted(blocks) != list(range(len(blocks)))):
+                raise ValueError("unfinished message")
+            stopped = True
+    if not stopped:
+        raise ValueError("truncated Messages stream")
+    message["content"] = [blocks[index] for index in sorted(blocks)]
+    return json.dumps(message, ensure_ascii=False)
+
+
 def events(body, limit=1048576):
     if not isinstance(body, str) or len(body.encode("utf-8")) > limit:
         raise ValueError("stream body exceeds its bound")

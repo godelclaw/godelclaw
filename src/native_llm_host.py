@@ -24,6 +24,7 @@ import synthetic_llm
 import native_lifetime
 import provider_stream
 import model_commentary
+import stream_sink
 
 _session_epoch = uuid.uuid4().hex
 _claim_lock = threading.Lock()
@@ -306,6 +307,7 @@ def claim(plan):
             llm_policy.fail(plan.correlation, sent=False)
             return "false"
         plan.claimed = True
+        stream_sink.begin(plan)
         model_commentary.begin(plan)
         return "true"
 
@@ -349,14 +351,30 @@ def wire_body(plan, body):
     value = json.loads(str(body))
     if plan.provider == "synthetic":
         value = provider_protocol.synthetic_body(value)
-    if plan.stream:
+    if stream_sink.configured():
+        value["stream"] = True
+        if plan.protocol == "responses":
+            value.setdefault("reasoning", {})["summary"] = "auto"
+        elif plan.protocol == "anthropic":
+            value.setdefault("thinking", {"type": "adaptive"})["display"] = "summarized"
+        plan.stream = True
+        plan.display_model = str(value.get("model", ""))
+        stream_sink.emit(dict(kind="attempt.open", attempt=plan.correlation,
+            item=plan.correlation, model=plan.display_model, provider=plan.provider,
+            status="awaiting", epoch=getattr(plan, "display_epoch", "initial")))
+    if plan.stream and plan.protocol == "chat-completions":
         value.update(stream=True, stream_options={"include_usage": True})
     return json.dumps(value, ensure_ascii=False)
 
 
 def decoded_body(plan, body):
     try:
-        value = provider_stream.chat(str(body), plan.cap) if plan.stream else str(body)
+        text = str(body)
+        streamed = plan.stream and not text.lstrip().startswith("{")
+        if streamed and plan.protocol == "anthropic":
+            value = provider_stream.anthropic(text, plan.cap)
+        else:
+            value = provider_stream.chat(text, plan.cap) if streamed else text
         return json.dumps({"ok": True, "body": value})
     except (ValueError, TypeError, KeyError, RecursionError):
         return json.dumps({"ok": False})
@@ -440,10 +458,12 @@ def finish(plan, epoch, correlation, encoded, canonical):
     if plan.provider == "anthropic":
         synthetic_llm._tally_anthropic(result["usage"])
     if _compaction(plan):
+        stream_sink.final(plan, reason=reason)
         return _box({"message": result["choices"][0]["message"], "finish": reason,
                      "llm_result": boundary, "usage": result.get("usage", {}),
                      "call_id": plan.correlation})
     if plan.kind == "structured":
+        stream_sink.final(plan, result["choices"][0]["message"], reason)
         cognitive_health.turn_completed(len(str(encoded).encode()))
         return _box({"message": result["choices"][0]["message"],
                      "finish": reason, "llm_result": boundary, "usage": result.get("usage", {})})
@@ -451,6 +471,7 @@ def finish(plan, epoch, correlation, encoded, canonical):
     try:
         content = model_commentary.finish(plan, content, reason, result["choices"][0]["message"])
     except model_commentary.OutputError as error:
+        stream_sink.final(plan, result["choices"][0]["message"], "rejected")
         code = {"unfinished command output": "incomplete-output",
                 "invalid native tool output": "invalid-native-tool",
                 "refused or structured command output": "refused-or-structured-output"}.get(str(error), "invalid-envelope")
@@ -466,6 +487,7 @@ def finish(plan, epoch, correlation, encoded, canonical):
     if not isinstance(content, str) or not content.strip():
         return synthetic_llm._empty_action(synthetic_llm.EmptyResponse())
     synthetic_llm._note_answered()
+    stream_sink.final(plan, result["choices"][0]["message"], reason)
     cognitive_health.turn_completed(len(content.encode()))
     return content
 
@@ -510,6 +532,7 @@ def response_retry_after(plan, seconds):
     return 1
 
 def failed(plan, correlation, kind, status=0):
+    stream_sink.final(plan, reason=str(kind))
     _record_failure(plan, kind, status)
     if getattr(plan, "ready", "false") == "true":
         llm_policy.fail(plan.correlation, status=int(status) or None, sent=plan.sent,

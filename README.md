@@ -1104,7 +1104,7 @@ can publish its first complete `commentary` string before provider completion
 for streaming Chat Completions (`METTACLAW_LLM_STREAM=1`) and Responses calls.
 The observer reads bounded, non-consuming text snapshots from the existing
 owned HTTP request; it never submits a second request or releases commands.
-Provider-native tool commentary and other transports publish at completion.
+This compatibility observer is separate from the operator stream below.
 
 Early commentary is provisional and can remain visible if the provider later
 fails or truncates the response. Final command validation is independent:
@@ -1112,6 +1112,46 @@ malformed envelopes, unfinished completions, refusals and tool-call output
 release no commands. Legacy parenthesized command batches remain accepted
 only after normal completion. Neither a displayed note nor a returned command
 batch is evidence that any tool or task succeeded.
+
+### Live operator display
+
+Set `paths.stream_dir` in private `config/local.toml` to enable the local
+operator stream. Use `python scripts/worklog_view.py --dir DIRECTORY`; select
+an agent and its coding children with `--session NAME`. `--once --full` reads
+retained text and `--json` exposes the typed observation records. No operator
+stream content is automatically sent to Telegram or the public notes feed.
+
+Responses requests include `reasoning.summary=auto`. Anthropic uses readable
+summarized thinking while preserving signatures in provider replay. Compatible
+Chat Completions exposes authored text and tool proposals; arbitrary reasoning
+fields are not treated as documented summaries. Deltas remain provisional until
+the existing terminal validator accepts the reply. The display cannot execute
+commands or acknowledge input. A malformed or failed stream can leave a visibly
+interrupted prefix, but grants no tool authority.
+
+Coding commands use the existing asynchronous native process owner. Output is
+decoded incrementally and retained in session execution artifacts. `exec_command`
+accepts `yield_time_ms`; `exec_poll` and `exec_cancel` use the returned execution
+identity and never restart it. A restarted worker reports unowned work as
+uncertain. Sessions pin source imports, instructions and the engine on launch;
+steering and transcript recovery continue through the ordinary session files.
+Interactive stdin/PTY operations are not supplied by this file-backed route.
+
+`scripts/worklog_control.py on|off --dir DIRECTORY` changes the local display
+epoch. Queued observations from an earlier epoch are discarded. The writer has
+a bounded asynchronous queue and reserved terminal slots; display overload is
+reported as a gap, with final transcript/output artifacts retained. Viewport
+and display-cache limits do not limit task context. A closed viewer needs no
+model turn and does not stop inference or commands.
+
+`modes/protocol/StreamEvents.module` defines the finite display lifecycle.
+`scripts/generate_stream_events.py` elaborates it with CeTTa and emits the
+MeTTa/Python tables and `verification/StreamingIO.lean`. Lean checks absorption,
+start witnesses, monotone cursors and replay idempotence; executable tests compare
+all table rows with the actual viewer reducer and native table. This is not a
+proof of the operating system, provider, complete parser or dispatcher.
+`tests/test_streaming_*.py` exercises delayed providers/processes, UTF-8 splits,
+terminal reconciliation, ownership loss, epochs and queue pressure.
 
 ### Small checked architecture model
 

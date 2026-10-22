@@ -48,13 +48,18 @@
    (let* (($dir (work:dir $id))
           ($tmp (path:join $dir "tmp"))
           ($_ (proc:run ("mkdir" "-p" "--" $tmp) (system:cwd) inherit 10000 0 "merged"))
-          ($binary (system:getenv-or-default "CETTA_BIN" "cetta"))
+          ($runtime (py-call (coding_io.freeze_runtime (system:cwd) $dir)))
+          ($binary (py-call (coding_io.runtime_binary $dir)))
+          ($pythonpath (py-call (coding_io.runtime_pythonpath $runtime (system:cwd))))
           ($ledger (py-call (builtins.str (py-call (llm_policy.ledger_path)))))
           ;; The session shares the account's ledger and usage tally, as
           ;; Codex sub-agents share rate limits, but keeps its own health,
           ;; last-completion and restart files: its calls are not the agent's turns.
           ($own (str:join " " ("env" (work:quote (str:concat "METTACLAW_LLM_LEDGER_PATH=" $ledger))
+                                    (work:quote (str:concat "PYTHONPATH=" $pythonpath))
                                     (work:quote (str:concat "METTACLAW_ACTIVITY_CALL_SCOPE=" $id))
+                                    (work:quote (str:concat "METTACLAW_STREAM_PARENT="
+                                      (system:getenv-or-default "METTACLAW_INSTANCE" "agent")))
                                     "METTACLAW_ACTIVITY_CALL_LANE=background"
                                     (work:quote (str:concat "METTACLAW_COGNITIVE_HEALTH_PATH=" (path:join $dir "health.json")))
                                     (work:quote (str:concat "METTACLAW_LLM_COMPLETION_PATH=" (path:join $dir "completion.json")))
@@ -64,7 +69,7 @@
                                     (work:quote (str:concat "TMPDIR=" $tmp))
                                     "METTACLAW_CODING_SESSION=1"
                                     "METTACLAW_OBSERVED_STRATEGY=0")))
-          ($launch (str:join "" ("systemd-run --user --scope --quiet --collect --unit=" (work:quote (work:unit $id)) " -- " $own " "
+          ($launch (str:join "" ("cd " (work:quote $runtime) " && systemd-run --user --scope --quiet --collect --unit=" (work:quote (work:unit $id)) " -- " $own " "
                                  (work:quote $binary) " --lang petta --import-mode ancestor-walk coding_main.metta -- " (work:quote $dir)
                                  " > " (work:quote (path:join $dir "run.log")) " 2>&1 &")))
           ($_ (work:shell $launch)))

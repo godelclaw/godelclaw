@@ -1,0 +1,47 @@
+-- SPDX-License-Identifier: MIT
+Module StreamEvents {
+  Theory Lifecycle() {
+    Empty Exports { DisplayState; DisplayEvent; }
+    Terms {
+      Forming . DisplayState ::= "forming";
+      Streaming . DisplayState ::= "streaming";
+      Running . DisplayState ::= "running";
+      Finished . DisplayState ::= "finished";
+      ProviderText . DisplayEvent ::= "ProviderText";
+      ProviderTool . DisplayEvent ::= "ProviderTool";
+      ExecutorStart . DisplayEvent ::= "ExecutorStart";
+      ExecutorFinish . DisplayEvent ::= "ExecutorFinish";
+      TerminalFinish . DisplayEvent ::= "TerminalFinish";
+      Interrupt . DisplayEvent ::= "Interrupt";
+      Step . DisplayState ::= "display-step" "(" DisplayState "," DisplayEvent ")";
+    }
+    Rewrites {
+      FormingProviderText: (Step (Forming) (ProviderText)) ~> (Streaming);
+      FormingProviderTool: (Step (Forming) (ProviderTool)) ~> (Forming);
+      FormingExecutorStart: (Step (Forming) (ExecutorStart)) ~> (Running);
+      FormingExecutorFinish: (Step (Forming) (ExecutorFinish)) ~> (Finished);
+      FormingTerminalFinish: (Step (Forming) (TerminalFinish)) ~> (Finished);
+      FormingInterrupt: (Step (Forming) (Interrupt)) ~> (Finished);
+      StreamingProviderText: (Step (Streaming) (ProviderText)) ~> (Streaming);
+      StreamingProviderTool: (Step (Streaming) (ProviderTool)) ~> (Streaming);
+      StreamingExecutorStart: (Step (Streaming) (ExecutorStart)) ~> (Running);
+      StreamingExecutorFinish: (Step (Streaming) (ExecutorFinish)) ~> (Finished);
+      StreamingTerminalFinish: (Step (Streaming) (TerminalFinish)) ~> (Finished);
+      StreamingInterrupt: (Step (Streaming) (Interrupt)) ~> (Finished);
+      RunningProviderText: (Step (Running) (ProviderText)) ~> (Running);
+      RunningProviderTool: (Step (Running) (ProviderTool)) ~> (Running);
+      RunningExecutorStart: (Step (Running) (ExecutorStart)) ~> (Running);
+      RunningExecutorFinish: (Step (Running) (ExecutorFinish)) ~> (Finished);
+      RunningTerminalFinish: (Step (Running) (TerminalFinish)) ~> (Finished);
+      RunningInterrupt: (Step (Running) (Interrupt)) ~> (Finished);
+      FinishedProviderText: (Step (Finished) (ProviderText)) ~> (Finished);
+      FinishedProviderTool: (Step (Finished) (ProviderTool)) ~> (Finished);
+      FinishedExecutorStart: (Step (Finished) (ExecutorStart)) ~> (Finished);
+      FinishedExecutorFinish: (Step (Finished) (ExecutorFinish)) ~> (Finished);
+      FinishedTerminalFinish: (Step (Finished) (TerminalFinish)) ~> (Finished);
+      FinishedInterrupt: (Step (Finished) (Interrupt)) ~> (Finished);
+    }
+  }
+  Theory Canonical() { Lifecycle() }
+  theory Canonical()
+}
