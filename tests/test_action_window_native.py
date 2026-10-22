@@ -576,5 +576,26 @@ class NativeActionWindowTest(unittest.TestCase):
                     self.assertEqual(output.read_text(encoding="utf-8"), expected)
 
 
+    def test_a_failed_native_view_costs_only_its_own_sources(self):
+        import action_window_probe
+        import context_sources
+
+        self.boundary_journals()
+        with self.oracle_environment({}), contextlib.redirect_stdout(io.StringIO()):
+            expected = context_sources.layout(
+                context_sources.Projector().project(action_window_probe.action_loaders()))
+        for broken in ("(case 1 ((2 never)))", '(Error action-window:context-views "simulated")',
+                       '(py-call (builtins.int "not a number"))'):
+            with self.subTest(broken=broken):
+                output = self.directory / "bundle"
+                output.unlink(missing_ok=True)
+                self.run_guest(CALLER_HEADER + [
+                    "!(import! &self ./src/turn_additions)",
+                    "(= (action-window:context-views) %s)" % broken,
+                    "(= (tg:client-metta?) False)",
+                    "!(py-call (action_window_probe.record_bundle %s))" % q(output),
+                    "!(addition-context-sources)"], cwd=self.directory)
+                self.assertEqual(output.read_text(encoding="utf-8"), expected)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

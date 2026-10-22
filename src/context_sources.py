@@ -124,6 +124,19 @@ class Projector:
 _PROJECTOR = Projector()
 
 
+def _supplied(views):
+    """(source_id, text) pairs a caller computed itself. Anything malformed
+    is ignored, so those sources load here as they otherwise would."""
+    supplied = {}
+    try:
+        for source_id, text in views or ():
+            if isinstance(source_id, str) and isinstance(text, str):
+                supplied[source_id] = text
+    except (TypeError, ValueError):
+        return {}
+    return supplied
+
+
 def _loaders(conversation=None, views=None):
     import active_queries
     import commitment_projection
@@ -145,7 +158,7 @@ def _loaders(conversation=None, views=None):
     specs = {spec.source_id: spec for spec in SOURCE_SPECS}
     # Source texts the caller computed with these same arguments and
     # conditions: on CeTTa, the two action views are computed natively.
-    views = dict(views or ())
+    views = _supplied(views)
     return (
         (specs["work-state"], goals.work_state_view),
         (specs["commitment-state"], commitment_projection.view),

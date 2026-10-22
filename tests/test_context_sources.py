@@ -125,6 +125,21 @@ class ContextSourcesTest(unittest.TestCase):
                 self.assertIn("SOURCE[recent-proposals]", per_turn)
                 self.assertNotIn("CONTEXT_CERTIFICATE", per_turn)
 
+    def test_malformed_supplied_views_leave_sources_to_their_loaders(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {
+                "METTACLAW_OBSERVED_STRATEGY": "0",
+                "METTACLAW_HISTORY_PATH": str(pathlib.Path(directory) / "history.metta"),
+                "METTACLAW_TELEGRAM_LOG_PATH": str(pathlib.Path(directory) / "updates.jsonl")}):
+            supplied = context_sources.bundle(views=[["recent-proposals", "NATIVE WINDOW"]])
+            self.assertIn("NATIVE WINDOW", supplied)
+            for views in (["Error", "action-window:context-views", "simulated"], "garbage", 7,
+                          [["recent-proposals", None]], [["recent-proposals"]]):
+                with self.subTest(views=views):
+                    rendered = context_sources.bundle(views=views)
+                    self.assertIn("SOURCE[work-state]", rendered)
+                    self.assertIn("(no prior actions recorded)", rendered)
+                    self.assertNotIn("NATIVE WINDOW", rendered)
+
     def test_layout_orders_sources_least_changeable_first(self):
         observations = [
             context_sources.Observation(source_id, "known", "x", "r")

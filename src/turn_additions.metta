@@ -7,8 +7,14 @@
 
 ;; action-window:context-views comes from memory.metta's engine switch: the
 ;; proposal window and touched files computed natively on CeTTa, () on SWI.
+;; Views that fail or yield nothing are left to the bundle's own loaders, so
+;; they cost those two sources at most, never the bundle.
+(= (addition-action-views)
+   (let $computed (collapse (catch (action-window:context-views)))
+     (if (== $computed ()) ()
+       (case (car-atom $computed) (((Error $call $why) ()) ($views $views))))))
 (= (addition-context-sources)
-   (let $views (action-window:context-views)
+   (let $views (addition-action-views)
      (if (tg:client-metta?)
          (let $conversation
               (if (== (py-call (strategy_host.conversation_mode)) "chat")
