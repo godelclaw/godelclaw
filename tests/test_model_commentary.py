@@ -34,9 +34,9 @@ class CommentaryTest(unittest.TestCase):
         old = 'Return only this command S-expression, with no preamble, explanation, or Markdown fence, and nothing after it.'
         rendered = commentary.prompt('context ' + old)
         self.assertNotIn(old, rendered)
-        self.assertIn('return one JSON object', rendered)
-        self.assertIn('not private reasoning', rendered)
-        self.assertIn('commands field must contain only', rendered)
+        self.assertIn('use the advertised `metta` tool exactly once', rendered)
+        self.assertIn('never private reasoning', rendered)
+        self.assertIn('advertised metta tool for the command S-expression', rendered)
 
     def test_prompt_preserves_later_quoted_format_instructions(self):
         old = 'Return only this command S-expression, with no preamble, explanation, or Markdown fence, and nothing after it.'
@@ -53,10 +53,49 @@ class CommentaryTest(unittest.TestCase):
         source = 'PROMPT OUTPUT_FORMAT: ' + current + provider_protocol.CACHE_MARKER + quoted
         rendered = commentary.prompt(source)
         stable, user = provider_protocol.split_prompt(rendered)
-        self.assertIn('Output one JSON object', stable[0])
+        self.assertIn('advertised metta tool exactly once', stable[0])
         self.assertNotIn('Output a ((skillName args) ...) S-expression.', stable[0])
         self.assertIn('never private reasoning', stable[0])
         self.assertIn(quoted, user)
+
+    def test_native_metta_tool_separates_commentary_and_commands(self):
+        plan = SimpleNamespace(kind='command')
+        commentary.begin(plan)
+        message = {'tool_calls': [{
+            'id': 'call-1', 'type': 'function',
+            'function': {'name': 'metta',
+                         'arguments': json.dumps({'program': '((nop))'})}}]}
+        self.assertEqual(commentary.finish(
+            plan, 'Inspecting the next invariant.', 'tool_calls', message), '((nop))')
+        self.assertEqual([x['text'] for x in self.entries()],
+                         ['Inspecting the next invariant.'])
+
+    def test_native_tool_requires_one_exact_metta_program(self):
+        calls = [
+            [],
+            [{'id': 'x', 'type': 'function',
+              'function': {'name': 'other', 'arguments': '{"program":"((nop))"}'}}],
+            [{'id': 'x', 'type': 'function',
+              'function': {'name': 'metta', 'arguments': '{}'}}],
+            [{'id': 'x', 'type': 'function',
+              'function': {'name': 'metta', 'arguments':
+                           '{"program":"((nop))","program":"((shell wrong))"}'}}],
+            [{'id': 'x', 'type': 'function',
+              'function': {'name': 'metta', 'arguments': '{"program":3}'}}],
+            [{'id': 'x', 'type': 'function',
+              'function': {'name': 'metta', 'arguments': '{"program":"((nop))"}'}},
+             {'id': 'y', 'type': 'function',
+              'function': {'name': 'metta', 'arguments': '{"program":"((nop))"}'}}],
+        ]
+        for value in calls:
+            with self.subTest(value=value), self.assertRaises(commentary.OutputError):
+                commentary.finish(SimpleNamespace(kind='command'), 'public',
+                                  'tool_calls', {'tool_calls': value})
+        with self.assertRaises(commentary.OutputError):
+            commentary.finish(SimpleNamespace(kind='command'), 'public', 'stop', {
+                'tool_calls': [{'id': 'x', 'type': 'function', 'function': {
+                    'name': 'metta', 'arguments': '{"program":"((nop))"}'}}]})
+        self.assertEqual(self.entries(), [])
 
     def test_structured_calls_are_not_reinterpreted(self):
         plan = SimpleNamespace(kind='structured')

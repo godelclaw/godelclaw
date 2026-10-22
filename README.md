@@ -1074,17 +1074,21 @@ receipts. The packet informs the model and does not gate execution. Strict stand
 
 ## Opt-in model-written work commentary
 
-Managed command-mode calls can set `METTACLAW_MODEL_COMMENTARY=1` to request
-an explicit JSON envelope with `commentary` and `commands` string fields.
-A single whole JSON code fence is accepted as framing; terminal validation
-and the complete envelope schema still apply before commands are released.
+Managed command-mode calls can set `METTACLAW_MODEL_COMMENTARY=1` to advertise
+one provider-native `metta` tool. Its typed `program` string is the only native
+command authority; ordinary assistant text is optional work commentary. The
+older explicit JSON envelope with `commentary` and `commands` string fields
+remains a compatibility path when a provider does not offer tools. A single
+whole JSON code fence is accepted as compatibility framing. Terminal validation
+and the complete native-tool or envelope schema apply before commands are released.
 Rejected replies retain their public answer as evidence. The next preparation
 reports the format error and its receipt ID; `(model-result "id" offset)` pages
 through the public text without provider reasoning. A rejected reply executes
 no commands and leaves its input unsettled. A later accepted reply clears the
 format reminder.
 The authored commentary goes to the configured local public worklog; only the
-command string continues to the ordinary command parser and effect broker.
+native tool's `program` (or compatibility `commands`) string continues to the
+ordinary command parser and effect broker.
 Structured coding-mode calls retain their existing contract. The feature is
 off by default and does not send commentary to a chat channel.
 
@@ -1095,13 +1099,12 @@ and tool results are not used as commentary sources. Authored commentary is
 not a success receipt or an automatic confidentiality guarantee: the model
 must write it for the audience that can see the viewer.
 
-On a native CeTTa build providing `io:http-read`, streaming Chat Completions
-(`METTACLAW_LLM_STREAM=1`) and Responses calls can publish the first complete
-`commentary` string before provider completion. The observer reads bounded,
-non-consuming text snapshots from the existing owned HTTP request; it never
-submits a second request or releases commands. Publication waits for the JSON
-string and its following field separator, not individual tokens. Other
-transports and older CeTTa builds retain completion-time publication.
+On a native CeTTa build providing `io:http-read`, the compatibility JSON path
+can publish its first complete `commentary` string before provider completion
+for streaming Chat Completions (`METTACLAW_LLM_STREAM=1`) and Responses calls.
+The observer reads bounded, non-consuming text snapshots from the existing
+owned HTTP request; it never submits a second request or releases commands.
+Provider-native tool commentary and other transports publish at completion.
 
 Early commentary is provisional and can remain visible if the provider later
 fails or truncates the response. Final command validation is independent:
@@ -1126,7 +1129,7 @@ PYTHONPATH=src:tests python scripts/check_commentary_boundary.py --cetta "$CETTA
 
 The checker authenticates the exact two conclusions, hypotheses and axiom
 lists, rejects forged-result controls, records model/implementation hashes,
-and runs 108 finite implementation correspondence cases. These tests connect
+and runs 180 finite implementation correspondence cases. These tests connect
 the model to selected parser outcomes; they do not prove universal runtime
 correspondence. `tests/test_commentary_boundary_hol.py` covers authentication
 and the native model check.

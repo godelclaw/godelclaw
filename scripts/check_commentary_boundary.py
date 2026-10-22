@@ -96,6 +96,26 @@ def correspondence():
                     checked += 1
                 else:
                     raise AssertionError('invalid envelope accepted')
+                native = {'tool_calls': [{'id': 'fixture-call', 'type': 'function',
+                    'function': {'name': 'metta', 'arguments': json.dumps(
+                        {'program': commands})}}]}
+                assert model_commentary.finish(
+                    plan, note, 'tool_calls', native) == commands
+                checked += 1
+                for mutation in (
+                        ('stop', native),
+                        ('tool_calls', {'tool_calls': [*native['tool_calls'],
+                            native['tool_calls'][0]]}),
+                        ('tool_calls', {'tool_calls': [{**native['tool_calls'][0],
+                            'function': {'name': 'other', 'arguments':
+                                native['tool_calls'][0]['function']['arguments']}}]}),
+                ):
+                    try:
+                        model_commentary.finish(plan, note, mutation[0], mutation[1])
+                    except model_commentary.OutputError:
+                        checked += 1
+                    else:
+                        raise AssertionError('invalid native tool call accepted')
     return checked
 
 

@@ -160,18 +160,43 @@
      (let* ((($key $value) (car-atom $fields))
             ($_ (py-call (builtins.setattr $plan $key $value)))
             ($rest (cdr-atom $fields))) (chatgpt:attributes $plan $rest))))
+(= (chatgpt:system-messages $parts)
+   (if (== $parts ()) ()
+     (let (JsonString $text) (car-atom $parts)
+       (cons-atom
+         (JsonObject ((JsonPair "role" (JsonString "system"))
+                      (JsonPair "content" (JsonString $text))))
+         (chatgpt:system-messages (cdr-atom $parts))))))
 (= (chatgpt:command-plan $selected $tokens $effort $prompt $session)
    (let* (($model (str:byte-slice $selected 8 (str:byte-length $selected)))
           ($effort-text (str:concat "" $effort))
           ((ChatGPTPrompt $parts $user) (chatgpt:split $prompt 3 ()))
           ($stable (chatgpt:unchunk-all $parts))
-          ($base-request (JsonObject ((JsonPair "model" (JsonString $model))
-             (JsonPair "max_tokens" (JsonNumber (repr $tokens)))
-             (JsonPair "stable" (JsonArray $stable)) (JsonPair "user" (JsonString $user)))))
+          ($native (== (str:concat "" (py-call (model_commentary.enabled_flag))) "true"))
+          ($cache (str:sha256 (repr ($model (if (== $stable ()) () (car-atom $stable))))))
+          ($tool (json-parse (py-call (model_commentary.tool_schema_json))))
+          ($system-messages (chatgpt:system-messages $stable))
+          ($messages (llm:v1:append $system-messages
+             ((JsonObject ((JsonPair "role" (JsonString "user"))
+                           (JsonPair "content" (JsonString $user)))))))
+          ($base-request
+            (if $native
+              (JsonObject ((JsonPair "model" (JsonString $model))
+                 (JsonPair "max_tokens" (JsonNumber (repr $tokens)))
+                 (JsonPair "messages" (JsonArray $messages))
+                 (JsonPair "role_policy" (JsonString "merge-system-developer"))
+                 (JsonPair "tools" (JsonArray ($tool)))
+                 (JsonPair "tool_choice" (JsonString "auto"))))
+              (JsonObject ((JsonPair "model" (JsonString $model))
+                 (JsonPair "max_tokens" (JsonNumber (repr $tokens)))
+                 (JsonPair "stable" (JsonArray $stable))
+                 (JsonPair "user" (JsonString $user))))))
           ($reasoned-request (if (or (== $effort-text "default") (or (== $effort-text "") (== $effort-text "None"))) $base-request
              (llm:v1:with $base-request "reasoning" (JsonObject ((JsonPair "effort" (JsonString $effort-text)))))))
-          ($cache (str:sha256 (repr ($model (if (== $stable ()) () (car-atom $stable))))))
-          ($request (llm:v1:with $reasoned-request "cache_key" (JsonString $cache)))
+          ($request (if $native
+             (llm:v1:with $reasoned-request "extensions"
+               (JsonObject ((JsonPair "prompt_cache_key" (JsonString $cache)))))
+             (llm:v1:with $reasoned-request "cache_key" (JsonString $cache))))
           ($wire-request (llm:v1:render $request))
           ($account (llm:v1:get $session "value"))
           ($alias-json (llm:v1:get $account "credential_alias")) ($alias (llm:v1:text $alias-json))
@@ -196,7 +221,7 @@
      ; Numeric false flags preserve Python truth values across the historical
      ; PeTTa foreign bridge, whose ungrounded False spelling is a Python string.
      (chatgpt:attributes $plan
-       (("kind" "command") ("encoding" "default")
+       (("kind" "command") ("encoding" (if $native "messages" "default"))
         ("ready" "true") ("claimed" 0) ("sent" 0) ("stream" 0)
         ("request_profile" "chatgpt-plan") ("epoch" $ticket) ("correlation" $ticket)
         ("provider" "openai") ("protocol" "responses") ("base" $base) ("headers" $headers)

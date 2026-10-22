@@ -264,7 +264,8 @@ class ContextCompactionTests(unittest.TestCase):
         result = self.render(capacity=10000)
         self.assertLessEqual(len(result.encode()) / 2.5, 10000)
         self.assertGreater(result.index("REQUIRED_COMMAND_OUTPUT"), result.index("TASK_CONTEXT "))
-        self.assertTrue(result.endswith("No prose or Markdown outside the JSON object."))
+        self.assertTrue(result.endswith(
+            "Assistant text is public work commentary, never commands."))
 
     def test_commentary_contract_is_applied_before_protected_history_and_admission(self):
         import public_worklog
@@ -288,7 +289,9 @@ class ContextCompactionTests(unittest.TestCase):
         self.assertEqual(len(self.peer.requests), 1)
         wire = json.dumps(self.peer.requests[0][2])
         self.assertIn("PROTECTED_NATIVE_HISTORY", wire)
-        self.assertIn("return one JSON object", wire)
+        self.assertIn("advertised metta tool exactly once", wire)
+        self.assertEqual(self.peer.requests[0][2]["tools"][0]
+                         ["function"]["name"], "metta")
         self.assertEqual([n["text"] for n in public_worklog.transact(worklog, "read")[1]],
                          ["Checked the retained evidence."])
 

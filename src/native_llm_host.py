@@ -144,6 +144,15 @@ def command_plan(model, tokens, effort, prompt):
                         for part in stable for block in provider_protocol.chunk_blocks(part)]
             messages.append({"role": "user", "content": user})
             result = dict(model=selected, max_tokens=int(tokens), messages=messages, cache_system=True)
+        elif model_commentary.enabled():
+            stable = provider_protocol.joined(stable)
+            messages = ([{"role": "system", "content": "".join(stable)}] if stable else [])
+            messages.append({"role": "user", "content": user})
+            result = dict(model=selected, max_tokens=int(tokens), messages=messages,
+                          role_policy="merge-system-developer")
+            if stable and protocol == "responses":
+                result["extensions"] = {"prompt_cache_key":
+                    provider_protocol.cache_key("openai", selected, stable[0])}
         else:
             stable = provider_protocol.joined(stable)
             result = dict(model=selected, max_tokens=int(tokens), stable=stable, user=user)
@@ -152,9 +161,11 @@ def command_plan(model, tokens, effort, prompt):
                 result["cache_key"] = provider_protocol.cache_key("openai", selected, stable[0])
         if str(effort) not in ("default", "", "None"):
             result["reasoning"] = {"effort": str(effort)}
+        if model_commentary.enabled():
+            result.update(tools=[model_commentary.tool_schema()], tool_choice="auto")
         return result
     plan = _plan("command", model, tokens, conversation)
-    if getattr(plan, "protocol", "") == "anthropic":
+    if getattr(plan, "protocol", "") == "anthropic" or model_commentary.enabled():
         plan.encoding = "messages"
     plan.prompt_layout = provider_protocol.prompt_observation(prompt)
     plan.prompt_text = str(prompt)
@@ -432,6 +443,7 @@ def finish(plan, epoch, correlation, encoded, canonical):
         content = model_commentary.finish(plan, content, reason, result["choices"][0]["message"])
     except model_commentary.OutputError as error:
         code = {"unfinished command output": "incomplete-output",
+                "invalid native tool output": "invalid-native-tool",
                 "refused or structured command output": "refused-or-structured-output"}.get(str(error), "invalid-envelope")
         native_lifetime.command_output_rejected(plan, code)
         observed_prompt = str(getattr(plan, "prompt_text", ""))

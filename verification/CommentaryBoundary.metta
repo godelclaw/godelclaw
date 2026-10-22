@@ -1,7 +1,9 @@
 ; A small HOL model, not a refinement proof of the runtime.
-; Church-encoded envelopes carry two independently typed fields. Dispatch
-; selects only commands. No parser, transport, broker or privacy claim follows
-; without a separate implementation correspondence argument.
+; Church-encoded turn results carry two independently typed fields. A provider
+; native tool call or a compatibility JSON envelope may instantiate the
+; Commands field; dispatch selects only that field. No parser, transport,
+; broker or privacy claim follows without a separate implementation
+; correspondence argument.
 !(import! &self holkernel)
 
 ; Primitive HOL BETA applies its abstraction to its own bound variable.

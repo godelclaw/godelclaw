@@ -32,7 +32,7 @@ class CommentaryHOLAuthenticationTests(unittest.TestCase):
                     checker.authenticate(forged)
 
     def test_finite_implementation_correspondence(self):
-        self.assertEqual(checker.correspondence(), 108)
+        self.assertEqual(checker.correspondence(), 180)
 
     @unittest.skipUnless(os.environ.get('CETTA_BIN'), 'set CETTA_BIN for native HOL checking')
     def test_native_model_exact_sequents(self):

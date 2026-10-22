@@ -327,7 +327,7 @@ class NativeTaskContext(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('ORIGINAL_FINDING_RETAINED', result.stdout)
         self.assertIn('TASK_CONTEXT', result.stdout)
-        self.assertIn('return one JSON object', result.stdout)
+        self.assertIn('advertised `metta` tool exactly once', result.stdout)
         self.assertNotIn('Python projection used', result.stdout + result.stderr)
         self.assertNotIn('protected history crossed', result.stdout + result.stderr)
 

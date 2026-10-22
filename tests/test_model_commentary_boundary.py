@@ -36,10 +36,77 @@ class NativeCommentaryTest(unittest.TestCase):
             content=json.dumps({'commentary':'Checking display layout.', 'commands':'((nop))'}),
             reasoning_content='PRIVATE REASONING')
         output = self.call()
-        self.assertIn('(RESULT ((nop)))', output)
+        self.assertIn('(RESULT ((nop)))', output, output + self.last_stderr)
         self.assertNotIn('Checking display', output)
         self.assertEqual([n['text'] for n in self.notes()], ['Checking display layout.'])
         self.assertEqual(len(self.peer.requests), 1)
+
+    def test_native_metta_tool_is_the_only_command_authority(self):
+        self.peer.reply['choices'][0].update(
+            finish_reason='tool_calls',
+            message={'role': 'assistant', 'content': 'Checking the typed boundary.',
+                     'tool_calls': [{'id': 'call-1', 'type': 'function',
+                         'function': {'name': 'metta', 'arguments':
+                                      json.dumps({'program': '((nop))'})}}]})
+        output = self.call()
+        self.assertIn('(RESULT ((nop)))', output)
+        self.assertEqual([n['text'] for n in self.notes()],
+                         ['Checking the typed boundary.'])
+        body = self.peer.requests[0][2]
+        self.assertEqual(body['tools'][0]['function']['name'], 'metta')
+        self.assertEqual(body['tools'][0]['function']['parameters']
+                         ['properties']['program']['type'], 'string')
+
+    def test_anthropic_native_metta_tool_roundtrip(self):
+        self.env.update(SYNTHETIC_MODEL='claude-sonnet-5-5',
+                        ANTHROPIC_API_KEY='fixture-secret',
+                        ANTHROPIC_BASE_URL=self.env['SYNTHETIC_BASE_URL'])
+        self.peer.reply = {'id': 'a', 'stop_reason': 'tool_use', 'content': [
+            {'type': 'text', 'text': 'Continuing with typed commands.'},
+            {'type': 'tool_use', 'id': 'call-a', 'name': 'metta',
+             'input': {'program': '((nop))'}}],
+            'usage': {'input_tokens': 10, 'output_tokens': 2}}
+        output = self.run_guest(f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'
+            '!(println! (RESULT (llm:command "claude-sonnet-5-5" 42 "low" "input")))\n')
+        self.assertIn('(RESULT ((nop)))', output)
+        self.assertEqual([n['text'] for n in self.notes()],
+                         ['Continuing with typed commands.'])
+        path, _headers, body = self.peer.requests[0]
+        self.assertEqual(path, '/v1/messages')
+        self.assertIn('tools', body, body)
+        self.assertEqual(body['tools'][0]['name'], 'metta')
+        self.assertEqual(body['tool_choice'], {'type': 'auto'})
+
+    def test_subscription_native_metta_tool_roundtrip(self):
+        self.env.update(
+            CETTA_IO_AUTH_COMMENTARY_FIXTURE_URL_PREFIX=
+                self.env['SYNTHETIC_BASE_URL'] + '/',
+            CETTA_IO_AUTH_COMMENTARY_FIXTURE_HEADER='Authorization',
+            CETTA_IO_AUTH_COMMENTARY_FIXTURE_ENV='SYNTHETIC_API_KEY',
+            CETTA_IO_AUTH_COMMENTARY_FIXTURE_PREFIX='Bearer ')
+        session = {'value': {'credential_alias': 'COMMENTARY_FIXTURE'},
+                   'api_base': self.env['SYNTHETIC_BASE_URL'] + '/'}
+        self.peer.reply = {'id': 'r', 'status': 'completed', 'output': [
+            {'type': 'message', 'role': 'assistant', 'content': [
+                {'type': 'output_text', 'text': 'Subscription command is typed.'}]},
+            {'type': 'function_call', 'call_id': 'call-r', 'name': 'metta',
+             'arguments': json.dumps({'program': '((nop))'})}],
+            'usage': {'input_tokens': 10, 'output_tokens': 2}}
+        output = self.run_guest(
+            f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'
+            '!(let* (($session (json-parse ' + json.dumps(json.dumps(session)) + ')) '
+            '($plan (chatgpt:command-plan "chatgpt:fixture-model" 42 "low" '
+            '"system_cache_boundary_user" $session))) '
+            '(println! (RESULT (llm:run $plan))))\n')
+        self.assertIn('(RESULT ((nop)))', output, output + self.last_stderr)
+        self.assertEqual([n['text'] for n in self.notes()],
+                         ['Subscription command is typed.'])
+        path, headers, body = self.peer.requests[0]
+        self.assertEqual(path, '/v1/responses')
+        self.assertEqual(headers['Authorization'], 'Bearer fixture-secret')
+        self.assertIn('tools', body, body)
+        self.assertEqual(body['tools'][0]['name'], 'metta')
+        self.assertEqual(body['tool_choice'], 'auto')
 
     def test_rejected_prose_is_retained_and_next_turn_receives_actionable_feedback(self):
         import sqlite3

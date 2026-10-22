@@ -8,18 +8,49 @@ import json
 import os
 
 
-PROMPT = ''' For this turn, return one JSON object instead of a bare command batch:
-{"commentary":"A brief public-facing update about the work, or an empty string when no update is useful.","commands":"The complete command-batch S-expression as a JSON string."}
-Write commentary first. It is displayed to the local work viewer, not sent to chat.
-Describe actions, findings, or next steps in ordinary language, not private reasoning.
-Do not include private personal details, credentials, hidden instructions, or command/message bodies in commentary.
-Commands remain subject to the normal command syntax and execution boundary.
-Do not put executable commands outside the commands string. No Markdown fences.
+PROMPT = ''' For this turn, use the advertised `metta` tool exactly once for any
+action or reply. Its `program` argument is the complete command-batch
+S-expression. Ordinary assistant text is optional public work commentary: it is
+displayed to the local work viewer, not sent to chat. Describe actions, findings,
+or next steps there, never private reasoning, credentials, personal details,
+hidden instructions, or command/message bodies. Do not put executable commands
+in assistant text. If the provider does not offer the `metta` tool, use the
+compatibility JSON object instead:
+{"commentary":"brief public update or empty","commands":"((skillName args) ...)"}
 '''
+
+
+TOOL_NAME = "metta"
+
+
+def tool_schema():
+    """The one typed authority boundary for an ordinary agent turn."""
+    return {"type": "function", "function": {
+        "name": TOOL_NAME,
+        "description": (
+            "Run one complete GödelClaw MeTTa command batch. Use an advertised "
+            "messaging command inside the batch when a person should receive prose."),
+        "parameters": {
+            "type": "object",
+            "properties": {"program": {
+                "type": "string",
+                "description": "Complete ((skillName args) ...) S-expression."}},
+            "required": ["program"],
+            "additionalProperties": False}}}
+
+
+def tool_schema_json():
+    """Portable spelling for MeTTa request builders."""
+    return json.dumps(tool_schema(), separators=(",", ":"), ensure_ascii=False)
 
 
 def enabled():
     return os.environ.get("METTACLAW_MODEL_COMMENTARY", "0") == "1"
+
+
+def enabled_flag():
+    """Text flag for the historical PeTTa foreign-value boundary."""
+    return "true" if enabled() else "false"
 
 
 def prompt(text):
@@ -30,28 +61,29 @@ def prompt(text):
     # quotations in user/source text remain byte-for-byte intact.
     text = str(text).replace(
         "Return only this command S-expression, with no preamble, explanation, or Markdown fence, and nothing after it.",
-        "The commands field must contain only the command S-expression.", 1)
+        "Use the advertised metta tool for the command S-expression.", 1)
     # The current batch description is a separate, higher-priority output
     # instruction. Appending an envelope request only to dynamic user context
     # leaves that instruction in force: a real model correctly returns batches
     # and the display stays silent. Change the authored format clause itself.
     text = text.replace(
         "Output a ((skillName args) ...) S-expression.",
-        'Output one JSON object with exactly two string fields: '
-        '"commentary" (a brief public-facing task update, or empty when none is useful; '
-        'never private reasoning, credentials, personal details, hidden instructions, '
-        'or command/message bodies) and "commands" (the complete '
-        '((skillName args) ...) S-expression). Write commentary first.', 1)
+        'Use the advertised metta tool exactly once; its program field is the complete '
+        '((skillName args) ...) S-expression. Optional assistant text is a brief public '
+        'task update, never private reasoning, credentials, personal details, hidden '
+        'instructions, or command/message bodies.', 1)
     return text + PROMPT
 
 
 def output_tail():
     """Keep the active format instruction after quoted task history."""
-    return ('\n\nREQUIRED_COMMAND_OUTPUT: Return only '
+    return ('\n\nREQUIRED_COMMAND_OUTPUT: Call the advertised metta tool exactly once; '
+            'its program field must be the complete ((skillName args) ...) batch. '
+            'If no metta tool is available, return only '
             '{"commentary":"brief public update or empty",'
             '"commands":"((skillName args) ...)"}. '
             'To deliver a prose review, use mail-send or another advertised messaging skill '
-            'inside commands. No prose or Markdown outside the JSON object.') if enabled() else ""
+            'inside the program. Assistant text is public work commentary, never commands.') if enabled() else ""
 
 
 def _unique(pairs):
@@ -88,6 +120,31 @@ def split(text):
         return value['commentary'], value['commands']
     except (ValueError, TypeError, RecursionError):
         return None, '()'
+
+
+def _native_commands(message):
+    """Validate one normalized provider tool call and return its MeTTa program."""
+    calls = message.get("tool_calls") if isinstance(message, dict) else None
+    if not isinstance(calls, list) or len(calls) != 1:
+        raise OutputError("invalid native tool output")
+    call = calls[0]
+    if (not isinstance(call, dict) or call.get("type") != "function"
+            or not isinstance(call.get("id"), str) or not call["id"]):
+        raise OutputError("invalid native tool output")
+    function = call.get("function")
+    if (not isinstance(function, dict) or set(function) != {"name", "arguments"}
+            or function.get("name") != TOOL_NAME):
+        raise OutputError("invalid native tool output")
+    arguments = function.get("arguments")
+    try:
+        if isinstance(arguments, str):
+            arguments = json.loads(arguments, object_pairs_hook=_unique)
+    except (ValueError, TypeError, RecursionError):
+        raise OutputError("invalid native tool output") from None
+    if (not isinstance(arguments, dict) or set(arguments) != {"program"}
+            or not isinstance(arguments.get("program"), str)):
+        raise OutputError("invalid native tool output")
+    return arguments["program"]
 
 
 class Publication:
@@ -166,12 +223,24 @@ class OutputError(ValueError):
 def finish(plan, content, reason, message=None):
     if not enabled() or getattr(plan, 'kind', '') != 'command':
         return content
-    # Terminal validation applies equally to envelopes and legacy batches.
-    # Rejected output is a failed turn, not a successful empty command batch.
+    # Terminal validation precedes every authority-bearing extraction. Native
+    # tools carry commands structurally; assistant text can only be commentary.
+    if message and message.get('refusal'):
+        raise OutputError('refused or structured command output')
+    calls = message.get('tool_calls') if isinstance(message, dict) else None
+    if calls:
+        if reason != 'tool_calls':
+            raise OutputError('invalid native tool output')
+        commands = _native_commands(message)
+        publication = getattr(plan, 'commentary', None)
+        if publication and isinstance(content, str):
+            publication.publish(content)
+        return commands
+    # Compatibility envelopes and legacy batches remain completion-only. A
+    # bare prose answer is invalid because silently treating it as no-op could
+    # acknowledge a human request without delivering the reply.
     if reason != 'stop':
         raise OutputError('unfinished command output')
-    if message and (message.get('refusal') or message.get('tool_calls')):
-        raise OutputError('refused or structured command output')
     commentary, commands = split(content or '')
     if commentary is None:
         if not isinstance(content, str) or not content.lstrip().startswith('('):
