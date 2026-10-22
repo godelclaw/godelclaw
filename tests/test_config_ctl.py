@@ -1,4 +1,5 @@
 import json
+from isolated_env import isolated_environ  # noqa: E402
 from pathlib import Path
 import shutil
 import subprocess
@@ -49,11 +50,11 @@ class ConfigEditingTests(unittest.TestCase):
 
     def test_render_says_when_the_callers_environment_is_replaced(self):
         import os
-        replaced = self.run_cli("render", env={**os.environ, "METTACLAW_REASONING_EFFORT": "high"})
+        replaced = self.run_cli("render", env={**isolated_environ(), "METTACLAW_REASONING_EFFORT": "high"})
         self.assertEqual(replaced.returncode, 0, replaced.stderr)
         self.assertIn("METTACLAW_REASONING_EFFORT='high' from the caller's environment is replaced by 'default'",
                       replaced.stderr)
-        agreeing = self.run_cli("render", env={**os.environ, "METTACLAW_REASONING_EFFORT": "default"})
+        agreeing = self.run_cli("render", env={**isolated_environ(), "METTACLAW_REASONING_EFFORT": "default"})
         self.assertNotIn("METTACLAW_REASONING_EFFORT", agreeing.stderr)
 
     def test_setting_is_validated_then_survives_render_with_other_values_preserved(self):

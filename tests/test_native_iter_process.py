@@ -1,4 +1,5 @@
 import os
+from isolated_env import isolated_environ  # noqa: E402
 from pathlib import Path
 import subprocess
 import tempfile
@@ -30,7 +31,7 @@ APPEND = """\
 )
 class NativeIterProcessTests(unittest.TestCase):
     def run_request(self, directory: Path, timeout: str = "2") -> str:
-        environment = dict(os.environ)
+        environment = isolated_environ()
         environment.update({
             "LD_LIBRARY_PATH": os.pathsep.join(filter(None, (
                 str(PETTA_ENV / "lib"), environment.get("LD_LIBRARY_PATH")

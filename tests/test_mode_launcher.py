@@ -1,5 +1,6 @@
 """Startup failures and mode selection races, without provider credentials."""
 import importlib.util
+from isolated_env import isolated_environ  # noqa: E402
 import json
 import os
 from pathlib import Path
@@ -61,7 +62,7 @@ class ModeLauncherTests(unittest.TestCase):
                 '((Implication (Inheritance a b) (Inheritance a c)) (stv 1.0 0.9))))))\n')
             result = subprocess.run(
                 [os.environ["MODE_TEST_CETTA_BIN"], "--lang", "petta", str(probe)],
-                env={**os.environ, "PYTHONHOME": sys.prefix,
+                env={**isolated_environ(), "PYTHONHOME": sys.prefix,
                      "LD_LIBRARY_PATH": str(Path(sys.prefix) / "lib")},
                 text=True, capture_output=True, timeout=20)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -90,7 +91,7 @@ class ModeLauncherTests(unittest.TestCase):
                     '!(println! (EXISTS (if (exists-file ' + json.dumps(str(present)) + ') yes no)))\n' +
                     '!(println! (MISSING (if (exists-file ' + json.dumps(str(root / "absent")) + ') yes no)))\n' +
                     '!(println! (DIRECTORY (if (exists-directory ' + json.dumps(directory) + ') yes no)))\n')
-                env = {**os.environ, "PYTHONHOME": sys.prefix,
+                env = {**isolated_environ(), "PYTHONHOME": sys.prefix,
                        "LD_LIBRARY_PATH": str(Path(sys.prefix) / "lib"),
                        "PYTHONPATH": os.pathsep.join([str(ROOT / "src"), str(ROOT / "modes")])}
                 process = subprocess.Popen(command + [str(entry), "--silent"], cwd=root,
@@ -128,7 +129,7 @@ class ModeLauncherTests(unittest.TestCase):
                     '!(println! (INITIAL (collapse (initLoop))))\n'
                     '!(processLoop (rooted weak-process-core-v1 coordinates-empty))\n'
                     '!(println! SHOULD_NOT_RUN_AFTER_SWITCH)\n')
-                env = {**os.environ, "PYTHONHOME": sys.prefix,
+                env = {**isolated_environ(), "PYTHONHOME": sys.prefix,
                        "LD_LIBRARY_PATH": str(Path(sys.prefix) / "lib"),
                        "PYTHONPATH": str(ROOT / "src"),
                        "METTACLAW_LOOP_MODE_PATH": str(base / "mode.json"),
@@ -157,17 +158,17 @@ class ModeLauncherTests(unittest.TestCase):
             self.assertEqual(failure.exception.errno, 8)
             entry = path / "a program.metta"
             command = launcher.engine_command("petta", entry, {"PETTA_ROOT": directory})
-            self.assertEqual(launcher.run_child(command, path, os.environ.copy()), 7)
+            self.assertEqual(launcher.run_child(command, path, isolated_environ()), 7)
             self.assertEqual((path / "argv.txt").read_text().splitlines(), [str(entry), "--silent"])
 
     def test_spawn_failure_keeps_original_error(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(FileNotFoundError):
-                launcher.run_child([directory + "/missing-engine"], directory, os.environ.copy())
+                launcher.run_child([directory + "/missing-engine"], directory, isolated_environ())
 
     def test_killed_engine_is_not_reported_as_success(self):
         with tempfile.TemporaryDirectory() as directory:
-            status = launcher.run_child([sys.executable, "-c", "import os,signal; os.kill(os.getpid(),signal.SIGKILL)"], directory, os.environ.copy())
+            status = launcher.run_child([sys.executable, "-c", "import os,signal; os.kill(os.getpid(),signal.SIGKILL)"], directory, isolated_environ())
             self.assertEqual(status, 128 + signal.SIGKILL)
 
     def test_new_selection_does_not_change_running_policy(self):

@@ -1,6 +1,7 @@
 """Resource-lifetime witness through the real SWI-PeTTa/Janus boundary."""
 
 import http.server
+from isolated_env import isolated_environ  # noqa: E402
 import os
 import pathlib
 import re
@@ -42,7 +43,7 @@ class ProviderTimeoutProbeTest(unittest.TestCase):
         server = SlowHeaderServer(("127.0.0.1", 0), SlowHeaders)
         worker = threading.Thread(target=server.serve_forever, daemon=True)
         worker.start()
-        env = dict(os.environ)
+        env = isolated_environ()
         env.update({
             "METTACLAW_SKIP_INITIALIZE": "1",
             "METTACLAW_SKIP_CONFIG": "1",

@@ -2,6 +2,7 @@
 import http.server
 import json
 import os
+from isolated_env import isolated_environ  # noqa: E402
 from pathlib import Path
 import subprocess
 import sys
@@ -60,7 +61,7 @@ class CodingSessionTests(unittest.TestCase):
         modules = self.directory / "fixture_modules"
         modules.mkdir()
         (modules / "openai.py").write_text("class OpenAI:\n    pass\n")
-        self.env = {**os.environ, "PYTHONHOME": sys.prefix, "LD_LIBRARY_PATH": str(Path(sys.prefix) / "lib"),
+        self.env = {**isolated_environ(), "PYTHONHOME": sys.prefix, "LD_LIBRARY_PATH": str(Path(sys.prefix) / "lib"),
             # The agent's own path (run.sh): sessions inherit it, and iter mode's modules are not on it.
             "PYTHONPATH": os.pathsep.join([str(modules), str(ROOT / "src"), str(ROOT / "channels")]),
             "METTACLAW_ACTIVE_ENGINE": "cetta", "METTACLAW_ENGINE": "cetta", "METTACLAW_LLM_TRANSPORT": "native",

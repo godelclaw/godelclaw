@@ -7,6 +7,7 @@ An optional CETTA_ACTIVITY_PYTHON_PREFIX selects the embedded engine Python.
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
+from isolated_env import isolated_environ  # noqa: E402
 from pathlib import Path
 import re
 import socket
@@ -86,7 +87,7 @@ class Pilot:
         self.wait(lambda l: l == "ready", after=start - .1)
 
     def start_worker(self):
-        env = dict(os.environ)
+        env = isolated_environ()
         # Fixture-only credentials and private configuration; never use an
         # inherited production ledger, key, URL, notification or lifecycle.
         for key in list(env):

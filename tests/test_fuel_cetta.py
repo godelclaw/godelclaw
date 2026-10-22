@@ -4,6 +4,7 @@ Every operation is evaluated by CeTTa over the same state file the Python
 module reads, for every discipline, for malformed and missing state, and for
 numbers, integer text and junk inputs."""
 import importlib
+from isolated_env import isolated_environ  # noqa: E402
 import json
 import os
 from pathlib import Path
@@ -59,7 +60,7 @@ class NativeFuelTests(unittest.TestCase):
         program.write_text("\n".join(lines) + "\n")
         try:
             result = subprocess.run([os.environ["CETTA_BIN"], "--lang", "petta", "--import-mode", "ancestor-walk",
-                                     str(program)], cwd=ROOT, env=dict(os.environ), capture_output=True,
+                                     str(program)], cwd=ROOT, env=isolated_environ(), capture_output=True,
                                     text=True, timeout=300)
         finally:
             program.unlink()

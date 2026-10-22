@@ -1,5 +1,6 @@
 """Exercise real loop processes through production provider/CWP adapters."""
 import http.server
+from isolated_env import isolated_environ  # noqa: E402
 import json
 import os
 from pathlib import Path
@@ -156,7 +157,7 @@ class ModeRuntimeTests(unittest.TestCase):
             threading.Thread(target=provider.serve_forever, daemon=True).start()
             channel = ChannelServer(state/'channel.sock')
             try:
-                fixture_environment = os.environ.copy()
+                fixture_environment = isolated_environ()
                 accelerated_engine(state, engine, fixture_environment)
                 for mode in ('iter', 'omega'):
                     (agent/'memory/loop_mode.json').write_text(json.dumps({'mode': mode}))

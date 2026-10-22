@@ -7,6 +7,7 @@ Each zone runs one CeTTa process; Python computes the same cases here in
 that zone. Set CETTA_BIN to a Python-enabled cetta.
 """
 import json
+from isolated_env import isolated_environ  # noqa: E402
 import os
 import pathlib
 import re
@@ -85,7 +86,7 @@ def forbid():
 
 
 def cetta_env(directory, zone):
-    env = dict(os.environ)
+    env = isolated_environ()
     env.update(TZ=zone, METTACLAW_ENGINE="cetta", METTACLAW_ACTIVE_ENGINE="cetta",
                CLOCK_RECORD=str(directory / "record.jsonl"),
                PYTHONPATH=os.pathsep.join((str(directory), str(ROOT / "src"),

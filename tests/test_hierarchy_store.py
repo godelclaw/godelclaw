@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Native hierarchy conformance. Python starts fixtures; MeTTa owns policy."""
 import argparse
+from isolated_env import isolated_environ  # noqa: E402
 from concurrent.futures import ThreadPoolExecutor
 import json
 import os
@@ -54,7 +55,7 @@ class HierarchyTests(unittest.TestCase):
                           '(= (expect $label $actual $wanted) '
                           '(if (== $actual $wanted) (println! (OK $label)) '
                           '(println! (FAIL $label $actual $wanted))))\n' + body)
-        env = dict(os.environ)
+        env = isolated_environ()
         # The core engine must not fall through to a Python/SWI module search.
         env.pop('PYTHONPATH', None)
         run = subprocess.run([ARGS.engine, '--lang', dialect, str(source)], cwd=ROOT,

@@ -1,6 +1,7 @@
 """The shell launcher defaults and recovers independently of real engines."""
 
 import os
+from isolated_env import isolated_environ  # noqa: E402
 import pathlib
 import signal
 import shutil
@@ -60,7 +61,7 @@ class EngineLauncherTests(unittest.TestCase):
             'mkdir -p "$(dirname "$METTACLAW_RECYCLE_REQUEST_PATH")"; '
             ': >"$METTACLAW_RECYCLE_REQUEST_PATH"; fi; '
             'exit "${CETTA_EXIT_CODE:-0}"')
-        self.env = os.environ.copy()
+        self.env = isolated_environ()
         for name in (
                 "METTACLAW_ENGINE", "METTACLAW_ACTIVE_ENGINE",
                 "METTACLAW_ENGINE_STATE_PATH",

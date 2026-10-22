@@ -1,5 +1,6 @@
 """The same file-read contract runs on CeTTa and SWI-PeTTa."""
 import hashlib
+from isolated_env import isolated_environ  # noqa: E402
 import json
 import os
 from pathlib import Path
@@ -76,7 +77,7 @@ class FileReadEngineTests(unittest.TestCase):
                 "!(import! &self ./src/file_io)\n" +
                 ("!(py-call (file_read_probe.forbid_python_reads))\n" if engine == "cetta" else "") +
                 "\n".join(assertions) + "\n!(println! FILE_READ_CONTRACT_OK)\n", encoding="utf-8")
-            env = dict(os.environ)
+            env = isolated_environ()
             python = Path(os.environ.get("PETTA_PY_ENV", Path.home() / "miniforge3/envs/petta"))
             env.update({
                 "METTACLAW_ACTIVE_ENGINE": engine,

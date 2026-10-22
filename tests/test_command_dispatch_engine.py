@@ -2,6 +2,7 @@
 
 import json
 import os
+from isolated_env import isolated_environ  # noqa: E402
 import pathlib
 import shlex
 import subprocess
@@ -40,7 +41,7 @@ class CommandDispatchEngineTest(unittest.TestCase):
             pathlib.Path.home() / "repos" / "CeTTa-runtime" / "cetta"))
 
     def _cetta_env(self):
-        env = dict(os.environ)
+        env = isolated_environ()
         # These direct launches bypass run.sh, which normally selects the
         # CeTTa backends. Otherwise the test silently exercises SWI adapters.
         env["METTACLAW_ENGINE"] = "cetta"
@@ -203,7 +204,7 @@ class CommandDispatchEngineTest(unittest.TestCase):
                 "(quote %s)))\n" % response,
                 encoding="utf-8",
             )
-            env = dict(os.environ)
+            env = isolated_environ()
             env.update({
                 "METTACLAW_SKIP_INITIALIZE": "1",
                 "METTACLAW_ENGINE": "petta",
@@ -337,7 +338,7 @@ class CommandDispatchEngineTest(unittest.TestCase):
                 % json.dumps(command),
                 encoding="utf-8",
             )
-            env = dict(os.environ)
+            env = isolated_environ()
             env.update({
                 "METTACLAW_SKIP_INITIALIZE": "1",
                 "METTACLAW_ENGINE": "petta",

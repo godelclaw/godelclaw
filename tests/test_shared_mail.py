@@ -1,5 +1,6 @@
 """CLI round trips against the real service, with a staged member account."""
 import json
+from isolated_env import isolated_environ  # noqa: E402
 import os
 from pathlib import Path
 import pwd
@@ -274,7 +275,7 @@ class SharedMailTests(unittest.TestCase):
         config.write_text('socket = "service.sock"\ncetta = "./engine"\nagent = "reviewer"\n')
         command = self.work / 'claw-mail'
         command.symlink_to(CLI)
-        env = dict(os.environ)
+        env = isolated_environ()
         for key in ('CETTA_BIN', 'CETTA_SHARED_MAIL_SOCKET', 'CLAW_MAIL_AGENT'):
             env.pop(key, None)
         result = subprocess.run([sys.executable, str(command), '--config', str(config), 'inbox', '--count'],
@@ -293,7 +294,7 @@ class SharedMailTests(unittest.TestCase):
         self.assertEqual(config.stat().st_mode & 0o777, 0o600)
         self.assertEqual((destination / 'bin/claw-mail').resolve(), CLI)
         self.assertTrue((destination / 'skills/claw-mail/SKILL.md').is_file())
-        env = dict(os.environ)
+        env = isolated_environ()
         for key in ('CETTA_BIN', 'CETTA_SHARED_MAIL_SOCKET', 'CLAW_MAIL_AGENT'):
             env.pop(key, None)
         result = subprocess.run([sys.executable, str(destination / 'bin/claw-mail'),

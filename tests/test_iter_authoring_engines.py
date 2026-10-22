@@ -1,4 +1,5 @@
 import os
+from isolated_env import isolated_environ  # noqa: E402
 from pathlib import Path
 import subprocess
 import tempfile
@@ -10,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class IterAuthoringEngineTests(unittest.TestCase):
     def run_probe(self, directory):
-        env = dict(os.environ)
+        env = isolated_environ()
         env.update({
             "METTACLAW_ENGINE": "petta",
             "METTACLAW_ITER_PROCESS_DIR": str(directory),

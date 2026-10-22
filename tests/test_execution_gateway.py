@@ -1,6 +1,7 @@
 """Qualify the real IPC, child processes and durable queue with local tools."""
 
 from concurrent.futures import ThreadPoolExecutor
+from isolated_env import isolated_environ  # noqa: E402
 import hashlib
 import json
 import os
@@ -276,7 +277,7 @@ class GatewayTest(unittest.TestCase):
         self.assertEqual(path.read_text(), "effect\n")
 
     def engine_environment(self, agent, engine):
-        env = dict(os.environ)
+        env = isolated_environ()
         env.update({
             "METTACLAW_SKIP_INITIALIZE": "1", "METTACLAW_ENGINE": engine,
             "METTACLAW_ENGINE_STATE_PATH": str(self.base / agent / "engine"),

@@ -16,6 +16,7 @@ the Python delivery here. Native strings holding NUL are compared.
 Set CETTA_BIN to a Python-enabled cetta.
 """
 import hashlib
+from isolated_env import isolated_environ  # noqa: E402
 import json
 import os
 import pathlib
@@ -196,7 +197,7 @@ VALUES = {
 
 
 def cetta_env(directory, engine="cetta"):
-    env = dict(os.environ)
+    env = isolated_environ()
     env.update(METTACLAW_ENGINE=engine, METTACLAW_ACTIVE_ENGINE=engine,
                PROSE_RECORD=str(directory / "record.jsonl"),
                PROSE_CASES=str(directory / "cases.json"),

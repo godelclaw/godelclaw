@@ -1,5 +1,6 @@
 """Offline native HTTP/provider qualification; every key and reply is a fixture."""
 import http.server
+from isolated_env import isolated_environ  # noqa: E402
 import json
 import os
 from pathlib import Path
@@ -54,7 +55,7 @@ class NativeBoundaryTests(unittest.TestCase):
         threading.Thread(target=self.peer.serve_forever, daemon=True).start()
         latch = self.directory / "lifecycle.json"
         latch.write_text('{"schema":1,"state":"running"}')
-        self.env = {**os.environ, "PYTHONHOME": sys.prefix,
+        self.env = {**isolated_environ(), "PYTHONHOME": sys.prefix,
             "LD_LIBRARY_PATH": str(Path(sys.prefix) / "lib"),
             "PYTHONPATH": os.pathsep.join([str(modules), str(ROOT / "src"), str(ROOT / "modes"), str(ROOT / "modes/iter")]),
             "METTACLAW_ACTIVE_ENGINE": "cetta", "METTACLAW_ENGINE": "cetta", "METTACLAW_LLM_TRANSPORT": "native",

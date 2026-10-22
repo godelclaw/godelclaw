@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+from isolated_env import isolated_environ  # noqa: E402
 import pathlib
 import subprocess
 import tempfile
@@ -12,7 +13,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 class ConfigPrivacyTest(unittest.TestCase):
     def test_default_transport_state_is_outside_checkout(self):
-        environment = os.environ.copy()
+        environment = isolated_environ()
         environment["XDG_STATE_HOME"] = "/tmp/pettaclaw-state"
         environment["METTACLAW_INSTANCE"] = "test-claw"
         result = subprocess.run(

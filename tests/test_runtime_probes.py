@@ -1,6 +1,7 @@
 """Require semantic witnesses from the real PeTTa runtime probes."""
 
 import os
+from isolated_env import isolated_environ  # noqa: E402
 import json
 import pathlib
 import re
@@ -129,7 +130,7 @@ class RuntimeProbeTest(unittest.TestCase):
                     pins_path = pathlib.Path(directory) / "pins.txt"
                     pins_path.write_text(
                         "GODEL_NATIVE_ITER_PIN\n", encoding="utf-8")
-                    env = dict(os.environ)
+                    env = isolated_environ()
                     env.update({
                         "METTACLAW_SKIP_INITIALIZE": "1",
                         "METTACLAW_SKIP_CONFIG": "1",
@@ -215,7 +216,7 @@ class RuntimeProbeTest(unittest.TestCase):
             state = pathlib.Path(directory)
             tmp = state / "tmp"
             tmp.mkdir()
-            env = dict(os.environ)
+            env = isolated_environ()
             env.update({
                 "CETTA_BIN": os.fspath(cetta),
                 "METTACLAW_SKIP_INITIALIZE": "1",
