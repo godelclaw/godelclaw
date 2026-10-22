@@ -146,6 +146,7 @@
         (if (llm:host-flag $owned)
         (let* (($status (llm:status-http $id))
               ($_ (llm:progress $plan $status))
+              ($_ (llm:commentary-progress $plan $id))
               ($event (llm:wait-http $id $milliseconds)))
          (llm:observe-plan $plan $state $epoch $correlation $protocol $id $event))
         (llm:v1:rejected ownership-error))))
@@ -239,3 +240,19 @@
 (= (llm:status-http $id) (io:try-status $id))
 (: llm:wait-http (-> Atom Number %Undefined%))
 (= (llm:wait-http $id $milliseconds) (io:try-wait $id $milliseconds))
+
+ ; Optional owned text observation. Only inert chunk values cross the portable
+; function/return error boundary. Host publication runs outside that boundary.
+(= (llm:commentary-progress $plan $id)
+   (let $readable (py-call (native_llm_host.commentary_readable $plan))
+     (if (llm:host-flag $readable)
+       (let* (($offset (py-call (native_llm_host.commentary_offset $plan)))
+              ($chunk (llm:commentary-read $id $offset)))
+         (case $chunk
+           (((http:chunk $next $text $phase)
+             (py-call (native_llm_host.commentary_chunk $plan $next $text $phase)))
+            ($other (py-call (native_llm_host.commentary_unavailable $plan)))))) 1)))
+(= (llm:commentary-read $id $offset)
+   (function (case (io:http-read $id $offset 65536)
+     (((http:chunk $next $text $phase) (return (http:chunk $next $text $phase)))
+      ($other (return (io:no-prefix)))))))

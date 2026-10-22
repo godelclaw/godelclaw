@@ -120,6 +120,20 @@ class ContextCompactionTests(unittest.TestCase):
         self.assertIsNone(self.checkpoint())
         self.assert_parent_unchanged()
 
+    def test_internal_handoff_is_not_a_public_commentary_turn(self):
+        import public_worklog
+        worklog = self.directory / "public"
+        public_worklog.transact(worklog, "on")
+        self.env.update(METTACLAW_MODEL_COMMENTARY="1", METTACLAW_PUBLIC_WORK_DIR=str(worklog),
+                        METTACLAW_PUBLIC_WORK_LIB="")
+        self.populate(25)
+        self.peer.reply["choices"][0]["message"]["content"] = "PRIVATE_HANDOFF: retain the task evidence."
+        result = self.render(capacity=10000)
+        self.assertNotIn("WITHHELD:", result)
+        self.assertIn("PRIVATE_HANDOFF", result)
+        self.assertEqual(public_worklog.transact(worklog, "read")[1], [])
+        self.assert_parent_unchanged()
+
     def test_live_driver_retains_input_and_paces_a_failed_handoff_before_capture(self):
         self.populate(25)
         with self.fixture.store.transaction() as db:

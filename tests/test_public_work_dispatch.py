@@ -108,6 +108,7 @@ class Fixture:
                 "PETTA_PY_ENV": str(pathlib.Path.home() / "miniforge3" /
                                      "envs" / "petta"),
                 "METTACLAW_ENGINE_STATE_PATH": str(d / "engine-selection"),
+                "METTACLAW_PUBLIC_TOOL_RECEIPTS": "1",
                 "METTACLAW_EFFECT_RECEIPT_PATH": str(d / "receipts.jsonl"),
                 "METTACLAW_STIMULUS_FRONTIER_PATH": str(d / "stimulus-frontier"),
                 "METTACLAW_PUBLIC_WORK_DIR": str(root),

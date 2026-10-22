@@ -177,6 +177,8 @@ def capture_public_epoch(turn):
     Off, no sink, or any failure remembers nothing, so the later event is
     dropped.  Never raises.
     """
+    if os.environ.get("METTACLAW_PUBLIC_TOOL_RECEIPTS", "0") != "1":
+        return 0
     try:
         sink = _sink()
         enabled, epoch = sink.status() if sink else (False, None)
@@ -193,6 +195,8 @@ def capture_public_epoch(turn):
 
 def _publish_public_event(turn, disposition, command, result, at) -> int:
     """Best-effort display; never raises and never reports itself."""
+    if os.environ.get("METTACLAW_PUBLIC_TOOL_RECEIPTS", "0") != "1":
+        return 0
     if getattr(_reporting, "active", False):
         return 0
     _reporting.active = True

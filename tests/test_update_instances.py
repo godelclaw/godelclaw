@@ -25,6 +25,7 @@ class ReleasePermissionsTest(unittest.TestCase):
             "src/native_lifetime.py", "src/llm_policy.py",
             "src/cognitive_health.py", "src/provider_protocol.py",
             "src/provider_stream.py",
+            "src/model_commentary.py", "src/commentary_stream.py",
         ):
             self.assertIn(required, selected)
         for mode in ("iter", "omega"):

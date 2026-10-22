@@ -1,6 +1,7 @@
 ;; Named, replaceable additions surrounding the two-equation process core.
 ;; This file does not decide success or failure and owns no process root.
 !(import! &self ./src/native_llm.metta)
+!(import! &self ./src/model_commentary.py)
 !(import! &self ./src/strategy_host.py)
 !(import! &self ./src/instance_hooks.metta)
 
@@ -40,9 +41,10 @@
    (case $request
      (((ContextPreparationFailed $reason) (py-call (strategy_host.preparation_failed $reason)))
       ($ready
-        (if (== (py-call (strategy_host.capture $ready $wake)) 1)
-            (llm:command $model $tokens $reasoning $ready)
-            (progn (py-call (cognitive_health.turn_failed "strategy-not-ready")) "()"))))))
+        (let $wire-request (py-call (model_commentary.prompt $ready))
+          (if (== (py-call (strategy_host.capture $wire-request $wake)) 1)
+              (llm:command $model $tokens $reasoning $wire-request)
+              (progn (py-call (cognitive_health.turn_failed "strategy-not-ready")) "()")))))))
 
 (= (addition-request-observation $request)
    (case $request

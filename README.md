@@ -1057,6 +1057,58 @@ Returned provider or command data does not prove task completion.
 These observations grant no tool authority and acknowledge no messages or
 receipts. The packet informs the model and does not gate execution. Strict standalone Iter/Omega profiles retain their existing context.
 
+## Opt-in model-written work commentary
+
+Managed command-mode calls can set `METTACLAW_MODEL_COMMENTARY=1` to request
+an explicit JSON envelope with `commentary` and `commands` string fields.
+The authored commentary goes to the configured local public worklog; only the
+command string continues to the ordinary command parser and effect broker.
+Structured coding-mode calls retain their existing contract. The feature is
+off by default and does not send commentary to a chat channel.
+
+Publication captures the worklog sharing epoch before the provider call.
+Output from an earlier sharing epoch is dropped after an off/on cycle. Sink
+failures do not fail a provider call. Reasoning payloads, command arguments,
+and tool results are not used as commentary sources. Authored commentary is
+not a success receipt or an automatic confidentiality guarantee: the model
+must write it for the audience that can see the viewer.
+
+On a native CeTTa build providing `io:http-read`, streaming Chat Completions
+(`METTACLAW_LLM_STREAM=1`) and Responses calls can publish the first complete
+`commentary` string before provider completion. The observer reads bounded,
+non-consuming text snapshots from the existing owned HTTP request; it never
+submits a second request or releases commands. Publication waits for the JSON
+string and its following field separator, not individual tokens. Other
+transports and older CeTTa builds retain completion-time publication.
+
+Early commentary is provisional and can remain visible if the provider later
+fails or truncates the response. Final command validation is independent:
+malformed envelopes, unfinished completions, refusals and tool-call output
+release no commands. Legacy parenthesized command batches remain accepted
+only after normal completion. Neither a displayed note nor a returned command
+batch is evidence that any tool or task succeeded.
+
+### Small checked architecture model
+
+`verification/CommentaryBoundary.metta` uses the native HOL Light kernel to
+check command selection and commentary noninterference for a small, typed,
+Church-encoded envelope model. The reported sequents have no hypotheses or
+axiom dependencies. This is **not** a refinement proof of the JSON parser,
+HTTP transport, dispatcher, or running agent, nor a confidentiality theorem.
+
+With a Python/HTTP-enabled CeTTa and its matching Python environment, run:
+
+```sh
+PYTHONPATH=src:tests python scripts/check_commentary_boundary.py --cetta "$CETTA_BIN"
+```
+
+The checker authenticates the exact two conclusions, hypotheses and axiom
+lists, rejects forged-result controls, records model/implementation hashes,
+and runs 108 finite implementation correspondence cases. These tests connect
+the model to selected parser outcomes; they do not prove universal runtime
+correspondence. `tests/test_commentary_boundary_hol.py` covers authentication
+and the native model check.
+
 ## Credits and license
 
 This fork builds on [patham9/mettaclaw](https://github.com/patham9/mettaclaw).
@@ -1066,3 +1118,8 @@ and the progression of the work.
 
 Iter and Omega retain their upstream licenses and exact source manifests under
 [`modes/`](modes/README.md). See [LICENSE](LICENSE) for this repository's license.
+
+Public tool-receipt notices are diagnostic-only and disabled by default. Set
+`METTACLAW_PUBLIC_TOOL_RECEIPTS=1` explicitly to publish them; the private command
+records remain available without publishing notices or computing public receipt IDs.
+Authored model commentary uses the separate `METTACLAW_MODEL_COMMENTARY=1` path.

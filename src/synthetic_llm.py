@@ -434,9 +434,14 @@ def chat(model, max_tokens, effort, prompt):
             raise RuntimeError("provider credential is not configured")
         endpoint, body = provider_protocol.command_body(
             provider["protocol"], provider.get("model", effective_model), max_tokens, effort, prompt)
+        import model_commentary
+        from types import SimpleNamespace
+        commentary_plan = SimpleNamespace(kind="command")
+        model_commentary.begin(commentary_plan)
         result = _exchange(provider, endpoint, body, max_tokens)
         content = result["choices"][0]["message"].get("content")
         finish = result["choices"][0].get("finish_reason")
+        content = model_commentary.finish(commentary_plan, content, finish, result["choices"][0]["message"])
         if finish == "length":
             import helper
             content = helper.complete_command_prefix(content or "")

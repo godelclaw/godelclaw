@@ -51,6 +51,10 @@ input_ack_seconds = 15
 # Ordinary input waits for a turn boundary;
 # /stop suspends. "legacy" retains the previous arrival freshness policy.
 input_policy = "cooperative"
+# Authored updates in the local work viewer; never private reasoning.
+model_commentary = false
+# Optional diagnostic notices, not the ordinary work display.
+public_tool_receipts = false
 # Record task history and restore it after a restart.
 observed_strategy = true
 # Agent tools accept explicit overrides of these defaults.

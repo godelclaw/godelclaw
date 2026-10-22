@@ -56,6 +56,7 @@ class Base:
         self.addCleanup(self.temporary.cleanup)
         self.path = pathlib.Path(self.temporary.name) / "receipts.jsonl"
         environment = mock.patch.dict(os.environ, {
+            "METTACLAW_PUBLIC_TOOL_RECEIPTS": "1",
             "METTACLAW_EFFECT_RECEIPT_PATH": str(self.path),
             "METTACLAW_OBSERVED_STRATEGY": "0",
         })

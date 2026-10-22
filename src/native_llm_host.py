@@ -23,6 +23,7 @@ import provider_protocol
 import synthetic_llm
 import native_lifetime
 import provider_stream
+import model_commentary
 
 _session_epoch = uuid.uuid4().hex
 _claim_lock = threading.Lock()
@@ -269,6 +270,7 @@ def claim(plan):
             llm_policy.fail(plan.correlation, sent=False)
             return "false"
         plan.claimed = True
+        model_commentary.begin(plan)
         return "true"
 
 
@@ -322,6 +324,38 @@ def decoded_body(plan, body):
         return json.dumps({"ok": True, "body": value})
     except (ValueError, TypeError, KeyError, RecursionError):
         return json.dumps({"ok": False})
+
+
+def commentary_readable(plan):
+    observer = getattr(plan, "commentary_stream", None)
+    return "true" if observer and not observer.disabled and not observer.prefix.done else "false"
+
+
+def commentary_offset(plan):
+    return plan.commentary_stream.offset
+
+
+def commentary_chunk(plan, offset, text, phase):
+    observer = getattr(plan, "commentary_stream", None)
+    if observer is None or observer.disabled:
+        return 1
+    try:
+        offset, text = int(offset), str(text)
+        if (str(phase) not in ("waiting", "complete") or
+                offset != observer.offset + len(text.encode("utf-8"))):
+            raise ValueError("invalid observer cursor")
+        observer.offset = offset
+        observer.feed(text)
+    except (ValueError, TypeError, UnicodeError):
+        observer.disabled = True
+    return 1
+
+
+def commentary_unavailable(plan):
+    observer = getattr(plan, "commentary_stream", None)
+    if observer:
+        observer.disabled = True
+    return 1
 
 
 def waiting(plan, count=0, quiet=0):
@@ -378,6 +412,10 @@ def finish(plan, epoch, correlation, encoded, canonical):
         return _box({"message": result["choices"][0]["message"],
                      "finish": reason, "llm_result": boundary, "usage": result.get("usage", {})})
     content = result["choices"][0]["message"].get("content")
+    try:
+        content = model_commentary.finish(plan, content, reason, result["choices"][0]["message"])
+    except model_commentary.OutputError as error:
+        return synthetic_llm._empty_action(error)
     if reason == "length":
         import helper
         content = helper.complete_command_prefix(content or "")
