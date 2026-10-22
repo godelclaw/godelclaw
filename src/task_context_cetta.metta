@@ -34,14 +34,15 @@
                             (JsonPair "decode_error" (JsonString (repr $error))))))))))
 
 ; SQLite joins source records once; the MeTTa view performs no repeated
-; scans of the complete action/attempt lists.
+; scans of the complete action/attempt lists. Materialize the issued selection:
+; otherwise SQLite may re-run its grouped actions scan for every joined call.
 (= (task:pairs-sql)
    (task:scoped-pairs-sql "SELECT ? UNION SELECT f.request FROM task_frames f JOIN family ON f.parent=family.id" "t.result" ""))
 (= (task:scoped-pairs-sql $family $result $tail)
    (let* (($exists (state:rows (state:query "SELECT 1 FROM sqlite_master WHERE name='command_attempts'" ())))
           ($attempts (if (== $exists ()) "SELECT '' AS ticket,0 AS position,NULL AS result WHERE 0" "SELECT ticket,position,result FROM command_attempts")))
      (str:join "" ("WITH RECURSIVE family(id) AS (" $family "), "
-       "issued AS (SELECT serial,request,ticket,command FROM actions WHERE rowid IN (SELECT MAX(rowid) FROM actions WHERE request IN family GROUP BY serial)), "
+       "issued AS MATERIALIZED (SELECT serial,request,ticket,command FROM actions WHERE rowid IN (SELECT MAX(rowid) FROM actions WHERE request IN family GROUP BY serial)), "
        "proposed AS (SELECT serial,request,commands,disposition FROM task_proposals WHERE request IN family UNION ALL "
        "SELECT serial,request,CASE WHEN json_type(command)='object' THEN COALESCE(json_extract(command,'$.commands'),'[]') ELSE json_array(json(command)) END,'legacy' FROM issued WHERE serial NOT IN (SELECT serial FROM task_proposals)), "
        "attempted AS (" $attempts ") "
