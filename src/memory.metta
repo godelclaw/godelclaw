@@ -1,3 +1,8 @@
+; Select engine-specific definitions here, independent of import order.
+!(import! &self ./src/engine_modes.py)
+(= (memory:cetta? $engine)
+   (case $engine ((cetta True) ("cetta" True) ($other False))))
+
 ;Configured at runtime memory and history in amount of characters:
 (= (maxFeedback) (empty))
 (= (maxRecallItems) (empty))
@@ -15,15 +20,15 @@
 ;; The running proposal window: what the model requested over the last few
 ;; substantive turns. Broker receipts, not this transcript, say what ran.
 ;; No-op turns do not consume a slot.
+!(if (memory:cetta? (py-call (engine_modes.active_engine)))
+     (import! &self ./src/action_window_cetta)
+     (import! &self ./src/action_window_python))
+
 (= (recentActions)
-   (py-call (helper.recent_actions
-              (py-call (helper.path_from_env "METTACLAW_HISTORY_PATH" "./memory/history.metta"))
-              (maxRecentTurns))))
+   (action-window:recent (action-window:history-path) (maxRecentTurns)))
 
 (= (relevantFiles)
-   (py-call (helper.relevant_files
-              (py-call (helper.path_from_env "METTACLAW_HISTORY_PATH" "./memory/history.metta"))
-              (maxRecentTurns))))
+   (action-window:files (action-window:history-path) (maxRecentTurns)))
 
 (= (addToHistory $lastmessage $response $msgnew)
    (if $msgnew
@@ -39,7 +44,7 @@
 
 ; The native path owns memory controls and durable write retries in MeTTa.
 ; The older SWI-PeTTa adapter remains available without a second new policy.
-!(if (file-io:cetta? (py-call (engine_modes.active_engine)))
+!(if (memory:cetta? (py-call (engine_modes.active_engine)))
      (import! &self ./src/semantic_memory_cetta)
      (import! &self ./src/semantic_memory_legacy))
 
