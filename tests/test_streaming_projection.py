@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -12,7 +13,7 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path[:0]=[str(ROOT/'src'),str(ROOT/'ui/worklog')]
 import stream_sink
 from stream_lifecycle import TRANSITIONS
-from viewer import Reader,clean,lines,save_checkpoint,load_checkpoint,read_all
+from viewer import Reader,clean,lines,save_checkpoint,load_checkpoint,clock,span,command_text,read_all
 
 
 class ProjectionLaws(unittest.TestCase):
@@ -116,6 +117,36 @@ class ProjectionLaws(unittest.TestCase):
             self.assertEqual(len(p.sessions['s']['items']),4)
             self.assertTrue(all(len(v['text'])==50 for v in p.sessions['s']['items'].values()))
 
+
+    def test_items_keep_when_they_began_and_executions_how_long_they_ran(self):
+        p=stream_sink.Projection();base=dict(producer='p',session='s',attempt='a')
+        p.apply({**base,'sequence':1,'time':100.0,'kind':'attempt.open','model':'m'})
+        p.apply({**base,'sequence':2,'time':103.0,'kind':'text.delta','item':'1','channel':'commentary','text':'stream'})
+        p.apply({**base,'sequence':3,'time':105.0,'kind':'text.reconcile','item':'answer','channel':'commentary','text':'final'})
+        p.apply({**base,'sequence':4,'time':105.5,'kind':'attempt.finished','source':'terminal','status':'completed',
+                 'texts':[dict(item='answer',channel='commentary',text='final')]})
+        p.apply(dict(producer='p',session='s',sequence=5,time=106.0,kind='tool.dispatching',item='t',command="['rest', 60]"))
+        p.apply(dict(producer='p',session='s',sequence=6,time=108.5,kind='tool.finished',source='executor',item='t',status='returned'))
+        session=p.sessions['s']
+        self.assertEqual(session['call_took'],5.5)
+        answer=next(v for v in session['items'].values() if v.get('channel')=='commentary')
+        self.assertEqual(answer['started'],103.0)
+        tool=next(v for v in session['items'].values() if v.get('command'))
+        self.assertEqual((tool['started'],tool['dispatched'],tool['updated']),(106.0,106.0,108.5))
+        text='\n'.join(lines(p))
+        self.assertIn('last call 5.5s',text)
+        self.assertIn(clock(106.0)+'  $ (rest 60)  [returned] · 2.5s',text)
+
+    def test_times_and_commands_read_as_issued(self):
+        now=time.mktime((2026,10,23,12,0,0,0,0,-1))
+        self.assertEqual(clock(now-3600,now),'11:00:00')
+        self.assertEqual(clock(now-86400,now),'10-22 12:00')
+        self.assertEqual(clock(0),'')
+        self.assertEqual([span(s) for s in (0.04,12,185,7300)],['0.0s','12s','3m05s','2h01m'])
+        self.assertEqual(command_text("['rest', 3600, 'say \"hi\"\\nthen']"),'(rest 3600 "say \\"hi\\"\\nthen")')
+        self.assertEqual(command_text("['send', '3600', ['a', 1]]"),'(send "3600" ("a" 1))')
+        for raw in ("cd src && pytest", "[1, 2]", "['unclosed", "[]"):
+            self.assertEqual(command_text(raw),raw)
 
     def test_a_cold_viewer_applies_every_producer_in_time_order(self):
         with tempfile.TemporaryDirectory() as d:

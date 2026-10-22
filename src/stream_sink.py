@@ -325,15 +325,19 @@ class Projection:
         self.seen[producer] = sequence
         sid = event.get("session", "agent")
         session = self.sessions.setdefault(sid, dict(items={}, status="running",
-            title=sid, instance=event.get("instance", "Agent"), parent=event.get("parent_session", ""), updated=0))
+            title=sid, instance=event.get("instance", "Agent"), parent=event.get("parent_session", ""), updated=0,
+            started=event.get("time", 0)))
         session["updated"] = event.get("time", 0)
         session["owner"]=(event.get("pid"),event.get("process_start"))
         kind = event.get("kind")
         if kind == "attempt.open":
             session["status"] = "thinking"
             session["model"] = event.get("model", "")
+            session["call_started"] = event.get("time", 0)
         elif kind == "attempt.finished":
             session["status"] = "ready" if event.get("status") == "completed" else "interrupted"
+            if session.get("call_started"):
+                session["call_took"] = max(0, event.get("time", 0) - session["call_started"])
         if kind == "session.open":
             session["title"] = event.get("text", sid)
         elif kind == "session.finished":
@@ -344,11 +348,14 @@ class Projection:
         elif kind in KINDS:
             key = (event.get("attempt", ""), event.get("item", ""),
                    event.get("part"), event.get("channel", ""))
+            began = event.get("time", 0)
             if kind == "text.reconcile":
+                # The reconciled text began when its streamed version did.
                 for old_key in list(session["items"]):
                     if old_key[0] == key[0] and old_key[3] == event.get("channel"):
-                        del session["items"][old_key]
-            item = session["items"].setdefault(key, dict(text="", kind=kind, status="forming", lifecycle="Forming"))
+                        began = min(began, session["items"].pop(old_key).get("started") or began)
+            item = session["items"].setdefault(key, dict(text="", kind=kind, status="forming", lifecycle="Forming",
+                                                         started=began))
             if item.get("terminal") and kind not in ("text.reconcile", "text.snapshot"):
                 return False
             source = event.get("source", "provider")
@@ -358,6 +365,8 @@ class Projection:
                 "text.reconcile": "TerminalFinish", "attempt.finished": "TerminalFinish"}.get(kind)
             if kind in ("tool.started", "tool.finished") and source != "executor":
                 return False
+            if kind in ("tool.dispatching", "tool.started") and "dispatched" not in item:
+                item["dispatched"] = event.get("time", 0)
             if transition:
                 item["lifecycle"] = TRANSITIONS[(item["lifecycle"], transition)]
                 item["status"] = item["lifecycle"].lower()
@@ -380,13 +389,16 @@ class Projection:
                 item["lifecycle"] = "Finished"
             if kind == "attempt.finished":
                 if isinstance(event.get("texts"), list):
+                    # A final text keeps the time its streamed version began.
+                    began = {k: v.get("started") for k, v in session["items"].items()}
                     for old_key in list(session["items"]):
                         if old_key[0] == key[0] and old_key[3] in ("commentary", "reasoning-summary"):
                             del session["items"][old_key]
                     for text in event["texts"]:
                         text_key=(key[0],text["item"],text.get("part"),text["channel"])
                         session["items"][text_key]={**text, "text": text["text"][-self.tail_chars:],
-                            "kind":"text.snapshot", "lifecycle":"Finished", "terminal":True}
+                            "kind":"text.snapshot", "lifecycle":"Finished", "terminal":True,
+                            "started": began.get(text_key) or event.get("time", 0), "updated": event.get("time", 0)}
                 for old_key, old in session["items"].items():
                     if old_key[0] == key[0] and old.get("channel"):
                         old["status"] = event.get("status", "interrupted")

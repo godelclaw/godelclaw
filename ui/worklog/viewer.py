@@ -1,5 +1,6 @@
 """Local working display over typed observations; never imports the live agent."""
 import argparse
+import ast
 import atexit
 import hashlib
 import json
@@ -57,6 +58,72 @@ def clean(text):
 def headline(text, width=120):
     text=clean(text).replace("\n"," ")
     return text if len(text)<=width else text[:width-1]+"…"
+
+
+def clock(seconds, now=None):
+    """Local wall time of an observation: HH:MM:SS today, MM-DD HH:MM before."""
+    if not seconds:
+        return ""
+    moment, today = time.localtime(float(seconds)), time.localtime(time.time() if now is None else now)
+    return time.strftime("%H:%M:%S" if moment[:3] == today[:3] else "%m-%d %H:%M", moment)
+
+
+def span(seconds):
+    seconds = max(0.0, float(seconds))
+    if seconds < 10:
+        return "%.1fs" % seconds
+    if seconds < 60:
+        return "%ds" % seconds
+    if seconds < 3600:
+        return "%dm%02ds" % divmod(int(seconds), 60)
+    return "%dh%02dm" % divmod(int(seconds) // 60, 60)
+
+
+def command_text(command):
+    """Agent commands arrive as Python list text; show the MeTTa form issued."""
+    text = str(command)
+    if not (text.startswith("[") and text.endswith("]")):
+        return text
+    try:
+        value = ast.literal_eval(text)
+    except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+        return text
+    if not (isinstance(value, list) and value and isinstance(value[0], str)):
+        return text
+    def atom(v):
+        if isinstance(v, bool): return str(v)
+        if isinstance(v, (int, float)): return repr(v)
+        if isinstance(v, str): return json.dumps(v, ensure_ascii=False)
+        if isinstance(v, (list, tuple)): return "(" + " ".join(map(atom, v)) + ")"
+        return str(v)
+    return "(" + " ".join([value[0]] + [atom(v) for v in value[1:]]) + ")"
+
+
+def item_title(session, item):
+    channel = item.get("channel")
+    return ("Reasoning summary" if channel == "reasoning-summary" else
+            session.get("instance", "Agent") if channel == "commentary" else
+            "$ " + headline(command_text(item["command"])) if item.get("command") else
+            item.get("name") or item["kind"].replace(".", " "))
+
+
+def call_times(session):
+    """When the model call in progress began, or how long the last one took,
+    and when the session last changed."""
+    text = ""
+    if session.get("status") == "thinking" and session.get("call_started"):
+        text += " · since " + clock(session["call_started"])
+    elif session.get("call_took") is not None:
+        text += " · last call " + span(session["call_took"])
+    return text + (" · updated " + clock(session["updated"]) if session.get("updated") else "")
+
+
+def item_times(item):
+    """When the item began and, once an execution has finished, how long it ran."""
+    began = clock(item.get("started") or item.get("updated"))
+    ran = item.get("updated", 0) - item.get("dispatched", 0)
+    took = span(ran) if item.get("dispatched") and item.get("terminal") and ran >= 0 else ""
+    return began, took
 
 
 class Reader:
@@ -120,7 +187,7 @@ def lines(projection, selected=None, full=False):
         if selected and identity != selected and session.get("parent") != selected:
             continue
         result += [(clean(session["title"]) if full else headline(session["title"])) + "  [" + session["status"] + "]" +
-                   (" · " + clean(session["model"]) if session.get("model") else "")]
+                   (" · " + clean(session["model"]) if session.get("model") else "") + call_times(session)]
         if session.get("parent"):
             result.append("  Parent: " + clean(session["parent"]))
         if session.get("plan"):
@@ -133,13 +200,10 @@ def lines(projection, selected=None, full=False):
             kind = item["kind"]
             if kind in ("attempt.open", "attempt.finished"):
                 continue
-            channel = item.get("channel")
-            title = ("Reasoning summary" if channel == "reasoning-summary" else
-                     session.get("instance", "Agent") if channel == "commentary" else
-                     "$ " + headline(item["command"]) if item.get("command") else
-                     item.get("name") or kind.replace(".", " "))
+            title, (began, took) = item_title(session, item), item_times(item)
             status = item.get("status", "")
-            result.append("  " + title + ("  [" + status + "]" if status else ""))
+            result.append("  " + (began + "  " if began else "") + title + ("  [" + status + "]" if status else "") +
+                          (" · " + took if took else ""))
             text = clean(item.get("text", ""))
             visible = text.splitlines() if full else text.splitlines()[-12:]
             if len(text.splitlines()) > 12:
@@ -163,19 +227,18 @@ def render_items(session, items, cache, width=120, rows=8):
     for key,item in items:
         if item["kind"] in ("attempt.open","attempt.finished"): continue
         channel=item.get("channel","")
-        title=("Reasoning summary" if channel=="reasoning-summary" else session.get("instance","Agent")
-               if channel=="commentary" else "$ "+headline(item["command"]) if item.get("command")
-               else item.get("name") or item["kind"].replace("."," "))
+        title,(began,took)=item_title(session,item),item_times(item)
         text=clean(item.get("text",""))
         visible="\n".join(text.splitlines()[-rows:])
         visible=visible[-max(80,width*rows):]
         if visible!=text:visible="…\n"+visible
-        stamp=(key,item.get("updated"),item.get("status"),visible)
+        stamp=(key,item.get("updated"),item.get("status"),visible,began,took)
         if stamp not in cache:
-            heading=Text(title,style="bold cyan" if channel else "bold")
-            heading.append("  "+item.get("status",""),style="dim")
+            heading=Text(began+"  " if began else "",style="dim")
+            heading.append(title,style="bold cyan" if channel else "bold")
+            heading.append("  "+item.get("status","")+(" · "+took if took else ""),style="dim")
             body=Markdown(visible) if channel else Text(visible)
-            cache[stamp]=Group(heading,body,Text(""))
+            cache[stamp]=Group(heading,body,Text("")) if visible.strip() else Group(heading,Text(""))
             while len(cache)>128:del cache[next(iter(cache))]
         rendered.append(cache[stamp])
     return Group(*rendered)
@@ -217,7 +280,7 @@ def main(argv=None):
             elif plain and (not args.session or record.get("session")==args.session or record.get("parent_session")==args.session):
                 key=(record.get("session"),record.get("item"),record.get("channel"))
                 if key!=plain_key:
-                    print("\n"+clean(record.get("session",""))+" · "+clean(record.get("channel") or record.get("name") or record["kind"]),flush=True)
+                    print("\n"+clock(record.get("time"))+"  "+clean(record.get("session",""))+" · "+clean(record.get("channel") or record.get("name") or record["kind"]),flush=True)
                     plain_key=key
                 if record["kind"] in ("text.delta","tool.output"):
                     print(clean(record.get("text","")),end="",flush=True)
@@ -258,10 +321,13 @@ def main(argv=None):
         groups=[]
         if focused and focused[0][1].get("parent"):
             parent=projection.sessions.get(focused[0][1]["parent"],{})
-            groups.append(Text("Agent mode: "+parent.get("status","available")+"   ·   Coding session: "+focused[0][0],style="dim"))
+            started=focused[0][1].get("started")
+            groups.append(Text("Agent mode: "+parent.get("status","available")+"   ·   Coding session: "+focused[0][0]+
+                               ("   ·   started "+clock(started) if started else ""),style="dim"))
         for sid,session in focused:
             header=Text(headline(session["title"])+"  ["+session["status"]+"]",style="bold green")
             if session.get("model"): header.append(" · "+clean(session["model"]),style="dim")
+            header.append(call_times(session),style="dim")
             plans=[]
             try:
                 plans=[Text(clean(p["step"])+" ["+p["status"]+"]",style="dim") for p in json.loads(session.get("plan","{}" )).get("plan",[])]
