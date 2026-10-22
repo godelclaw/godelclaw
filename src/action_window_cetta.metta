@@ -5,6 +5,7 @@
 !(import! &self (library re))
 !(import! &self (library math))
 !(import! &self (library system))
+!(import! &self ./src/strategy_host.py)
 !(import! &self ./src/undelivered_prose_unicode)
 !(import! &self ./src/action_window_unicode)
 
@@ -251,3 +252,21 @@
        (let $atom (str:string->symbol $text) (format-args "{}" ($atom))))))
 (= (action-window:recent $path $limit) (aw:legacy-atom (aw:recent-actions $path $limit)))
 (= (action-window:files $path $limit) (aw:legacy-atom (aw:relevant-files $path $limit)))
+
+; The two context_sources loaders, computed here with their arguments and
+; condition and handed to the bundle as text: the history path as Python
+; reads it (raw, no Symbol round trip), helper.int_env's turn count, and the
+; recent-proposals view only off the strategy path, where the loader shows
+; its TASK_CONTEXT notice instead.
+(= (aw:int-env $name $default)
+   (let $text (system:getenv-or-default $name "")
+     (if (== $text "") $default
+       (case (catch (aw:int $text)) (((Error $call $why) $default) ($n $n))))))
+(= (action-window:context-views)
+   (let* (($history (system:getenv-or-default "METTACLAW_HISTORY_PATH" "./memory/history.metta"))
+          ($turns (aw:int-env "METTACLAW_RECENT_ACTION_TURNS" 12))
+          ($files (aw:relevant-files $history $turns)))
+     (if (== (py-call (strategy_host.enabled_flag)) 1)
+       (("relevant-files" $files))
+       (let $recent (aw:recent-actions $history $turns)
+         (("recent-proposals" $recent) ("relevant-files" $files))))))

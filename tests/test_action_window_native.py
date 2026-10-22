@@ -465,6 +465,116 @@ class NativeActionWindowTest(unittest.TestCase):
                                         METTACLAW_HISTORY_PATH=configured)
                 self.assert_callers(stdout)
 
+    # The live path: turn_additions hands action-window:context-views to
+    # context_sources.bundle_with_views. Both sources must render exactly as
+    # the bundle's own Python loaders render them, under each environment the
+    # loaders read: history path, turn count and the strategy notice.
+    BOUNDARY_ENVIRONMENTS = (
+        {}, {"METTACLAW_OBSERVED_STRATEGY": "1"}, {"METTACLAW_OBSERVED_STRATEGY": "true"},
+        {"METTACLAW_RECENT_ACTION_TURNS": ""}, {"METTACLAW_RECENT_ACTION_TURNS": "3"},
+        {"METTACLAW_RECENT_ACTION_TURNS": "3", "METTACLAW_OBSERVED_STRATEGY": "1"},
+        {"METTACLAW_RECENT_ACTION_TURNS": "bad"}, {"METTACLAW_RECENT_ACTION_TURNS": "0"},
+        {"METTACLAW_RECENT_ACTION_TURNS": "-4"}, {"METTACLAW_RECENT_ACTION_TURNS": " 2 "},
+        {"METTACLAW_RECENT_ACTION_TURNS": "٢"}, {"METTACLAW_RECENT_ACTION_TURNS": "1_0"},
+        {"METTACLAW_RECENT_ACTION_TURNS": "2.0"}, {"METTACLAW_RECENT_ACTION_TURNS": "99999999999999999999"},
+        {"METTACLAW_HISTORY_PATH": None}, {"METTACLAW_HISTORY_PATH": ""},
+        {"METTACLAW_HISTORY_PATH": "True"}, {"METTACLAW_HISTORY_PATH": "missing.metta"},
+        {"METTACLAW_HISTORY_PATH": 'odd_"_\\n_\n_č.metta'}, {"METTACLAW_HISTORY_PATH": "nul.metta"},
+    )
+
+    def boundary_journals(self):
+        rng = random.Random(102302)
+        turns = []
+        for index in range(30):
+            if index % 7 == 3:
+                response = "((nop))"
+            else:
+                response = '((shell "cat src/m%d/f%d.py") (send "%s"))' % (
+                    index % 4, index, "x" * rng.choice([10, 900, 2500]))
+            turns.append(journal_block("2026-10-23 00:%02d:00" % index, response,
+                                       message="hi tests/in%d.py" % index if index % 2 else None,
+                                       feedback="(e docs/e%d.md)" % index if index % 5 == 0 else None))
+        journals = {"history.metta": "".join(turns), "memory/history.metta": "".join(turns[:9]),
+                    "True": journal_block("T", '((shell "src/upper.py"))'),
+                    "true": journal_block("t", '((shell "src/lower.py"))'),
+                    'odd_"_\\n_\n_č.metta': "".join(turns[20:]),
+                    "nul.metta": journal_block("n", '((shell "before\x00after src/nul.py"))')}
+        for name, content in journals.items():
+            path = self.directory / name
+            path.parent.mkdir(exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+
+    @contextlib.contextmanager
+    def oracle_environment(self, settings):
+        saved, cwd = dict(os.environ), os.getcwd()
+        os.environ.update(guest_env(self.directory))
+        for name, value in settings.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        os.chdir(self.directory)
+        try:
+            yield
+        finally:
+            os.chdir(cwd)
+            os.environ.clear()
+            os.environ.update(saved)
+
+    def boundary_run(self, lines, settings, swi, imports=()):
+        # On CeTTa, warm the bundle's imports, then forbid the helpers and I/O.
+        guard = [] if swi else ["!(py-call (action_window_probe.action_loaders))",
+                                "!(py-call (action_window_probe.forbid))"]
+        self.run_guest(CALLER_HEADER + ["!(import! &self ./src/memory)", *imports] + guard + lines,
+                       "petta" if swi else "cetta", swi, cwd=self.directory, **settings)
+
+    def test_bundle_sources_are_identical_on_both_engines(self):
+        import action_window_probe
+
+        self.boundary_journals()
+        compared, texts = 0, []
+        for settings in self.BOUNDARY_ENVIRONMENTS:
+            with self.oracle_environment(settings), contextlib.redirect_stdout(io.StringIO()):
+                expected = action_window_probe.action_sources()
+            texts.append(expected)
+            for swi in (False, True):
+                with self.subTest(settings=settings, swi=swi):
+                    output = self.directory / "sources"
+                    output.unlink(missing_ok=True)
+                    self.boundary_run(["!(let $views (action-window:context-views) "
+                                       "(py-call (action_window_probe.write_action_sources $views %s)))" % q(output)],
+                                      settings, swi)
+                    self.assertEqual(output.read_text(encoding="utf-8"), expected)
+                    compared += 1
+        self.assertEqual(compared, 2 * len(self.BOUNDARY_ENVIRONMENTS))
+        # Text, not a Symbol, crosses here: NUL in a proposal reaches the bundle.
+        self.assertTrue(any("\0" in text for text in texts))
+        self.assertGreaterEqual(len(set(texts)), 10)  # the environments do change the views
+        print("Compared %d bundle source texts across CeTTa and SWI" % compared)
+
+    def test_live_context_addition_hands_native_views_to_the_bundle(self):
+        import action_window_probe
+        import context_sources
+
+        self.boundary_journals()
+        for settings in ({}, {"METTACLAW_RECENT_ACTION_TURNS": "3", "METTACLAW_OBSERVED_STRATEGY": "1"}):
+            with self.oracle_environment(settings), contextlib.redirect_stdout(io.StringIO()):
+                expected = context_sources.layout(
+                    context_sources.Projector().project(action_window_probe.action_loaders()))
+            for client, swi in ((client, swi) for client in ("True", "False") for swi in (False, True)):
+                with self.subTest(settings=settings, client=client, swi=swi):
+                    output = self.directory / "bundle"
+                    output.unlink(missing_ok=True)
+                    self.boundary_run([
+                        "(= (tg:client-metta?) %s)" % client,
+                        "(= (tg:conversation-events) ())", "(= (tg:get $key $default) $default)",
+                        '(= (tg:conversation-window-for $events $chat) "CONVERSATION")',
+                        '(= (tg:route-view) "ROUTE")',
+                        "!(py-call (action_window_probe.record_bundle %s))" % q(output),
+                        "!(addition-context-sources)"], settings, swi,
+                        imports=["!(import! &self ./src/turn_additions)"])
+                    self.assertEqual(output.read_text(encoding="utf-8"), expected)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -124,7 +124,7 @@ class Projector:
 _PROJECTOR = Projector()
 
 
-def _loaders(conversation=None):
+def _loaders(conversation=None, views=None):
     import active_queries
     import commitment_projection
     import development_state
@@ -143,6 +143,9 @@ def _loaders(conversation=None):
     turns = helper.int_env("METTACLAW_RECENT_ACTION_TURNS", 12)
     events = helper.int_env("METTACLAW_CONVERSATION_EVENTS", 64)
     specs = {spec.source_id: spec for spec in SOURCE_SPECS}
+    # Source texts the caller computed with these same arguments and
+    # conditions: on CeTTa, the two action views are computed natively.
+    views = dict(views or ())
     return (
         (specs["work-state"], goals.work_state_view),
         (specs["commitment-state"], commitment_projection.view),
@@ -153,9 +156,9 @@ def _loaders(conversation=None):
         (specs["effect-receipts"], lambda: "Task receipts are in TASK_CONTEXT." if strategy_host.enabled() else effect_receipts.view()),
         (specs["development-state"], development_state.view),
         (specs["recent-proposals"],
-         lambda: "Task proposals and their dispositions are in TASK_CONTEXT." if strategy_host.enabled() else helper.recent_actions(history, limit=turns)),
+         lambda: "Task proposals and their dispositions are in TASK_CONTEXT." if strategy_host.enabled() else views["recent-proposals"] if "recent-proposals" in views else helper.recent_actions(history, limit=turns)),
         (specs["relevant-files"],
-         lambda: helper.relevant_files(history, limit=turns)),
+         lambda: views["relevant-files"] if "relevant-files" in views else helper.relevant_files(history, limit=turns)),
         (specs["project-evidence"], project_evidence.view),
         (specs["project-capabilities"], project_capabilities.view),
         # The MeTTa Telegram client renders the conversation itself.
@@ -183,11 +186,19 @@ def layout(observations):
         Projector.render_observations(group) for group in groups)
 
 
-def bundle(conversation=None):
-    """One ordered context bundle; never raises across the MeTTa boundary."""
+def bundle(conversation=None, views=None):
+    """One ordered context bundle; never raises across the MeTTa boundary.
+
+    views are (source_id, text) pairs of sources already computed by the
+    caller; any source not among them is loaded here."""
     try:
-        observations = _PROJECTOR.project(_loaders(conversation))
+        observations = _PROJECTOR.project(_loaders(conversation, views))
         projection = layout(observations)
         return projection
     except Exception:
         return "SOURCE[context-bundle] status=unavailable"
+
+
+def bundle_with_views(views, *conversation):
+    """bundle() for MeTTa, which cannot pass conversation=None."""
+    return bundle(*conversation, views=views)

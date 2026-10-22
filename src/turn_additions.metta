@@ -5,14 +5,17 @@
 !(import! &self ./src/strategy_host.py)
 !(import! &self ./src/instance_hooks.metta)
 
+;; action-window:context-views comes from memory.metta's engine switch: the
+;; proposal window and touched files computed natively on CeTTa, () on SWI.
 (= (addition-context-sources)
-   (if (tg:client-metta?)
-       (let $conversation
-            (if (== (py-call (strategy_host.conversation_mode)) "chat")
-                (tg:conversation-window-for (tg:conversation-events) (tg:get reply-chat ""))
-                (tg:route-view))
-         (py-call (context_sources.bundle $conversation)))
-       (py-call (context_sources.bundle))))
+   (let $views (action-window:context-views)
+     (if (tg:client-metta?)
+         (let $conversation
+              (if (== (py-call (strategy_host.conversation_mode)) "chat")
+                  (tg:conversation-window-for (tg:conversation-events) (tg:get reply-chat ""))
+                  (tg:route-view))
+           (py-call (context_sources.bundle_with_views $views $conversation)))
+         (py-call (context_sources.bundle_with_views $views)))))
 
 (= (addition-effect-turn-begin $turn)
    (py-call (effect_frontier.begin $turn)))
