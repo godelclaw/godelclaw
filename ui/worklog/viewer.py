@@ -107,7 +107,7 @@ def lines(projection, selected=None, full=False):
     return result or ["Waiting for agent or coding-session output…"]
 
 
-def render_items(session, items, cache):
+def render_items(session, items, cache, width=120, rows=8):
     from rich.console import Group
     from rich.markdown import Markdown
     from rich.text import Text
@@ -119,11 +119,14 @@ def render_items(session, items, cache):
                if channel=="commentary" else "$ "+headline(item["command"]) if item.get("command")
                else item.get("name") or item["kind"].replace("."," "))
         text=clean(item.get("text",""))
-        stamp=(key,item.get("updated"),item.get("status"),text)
+        visible="\n".join(text.splitlines()[-rows:])
+        visible=visible[-max(80,width*rows):]
+        if visible!=text:visible="…\n"+visible
+        stamp=(key,item.get("updated"),item.get("status"),visible)
         if stamp not in cache:
             heading=Text(title,style="bold cyan" if channel else "bold")
             heading.append("  "+item.get("status",""),style="dim")
-            body=Markdown(text) if channel else Text("\n".join(text.splitlines()[-10:]))
+            body=Markdown(visible) if channel else Text(visible)
             cache[stamp]=Group(heading,body,Text(""))
             while len(cache)>128:del cache[next(iter(cache))]
         rendered.append(cache[stamp])
@@ -183,16 +186,22 @@ def main(argv=None):
     def render():
         sessions=[(sid,s) for sid,s in projection.sessions.items() if not args.session or sid==args.session or s.get("parent")==args.session]
         sessions.sort(key=lambda pair:pair[1]["updated"])
+        active_children=[p for p in sessions if p[1].get("parent") and p[1]["status"] not in ("done","failed","stopped","interrupted")]
+        focused=active_children[-1:] or sessions[-1:]
         groups=[]
-        for sid,session in sessions[-3:]:
+        if focused and focused[0][1].get("parent"):
+            parent=projection.sessions.get(focused[0][1]["parent"],{})
+            groups.append(Text("Agent mode: "+parent.get("status","available")+"   ·   Coding session: "+focused[0][0],style="dim"))
+        for sid,session in focused:
             header=Text(headline(session["title"])+"  ["+session["status"]+"]",style="bold green")
             if session.get("model"): header.append(" · "+clean(session["model"]),style="dim")
             plans=[]
             try:
                 plans=[Text(clean(p["step"])+" ["+p["status"]+"]",style="dim") for p in json.loads(session.get("plan","{}" )).get("plan",[])]
             except (ValueError,TypeError,KeyError):pass
-            items=list(session["items"].items())[-6:]
-            groups.append(Group(header,*plans,render_items(session,items,cache)))
+            items=[p for p in session["items"].items() if p[1]["kind"] not in ("attempt.open","attempt.finished")][-4:]
+            rows=max(3,(console.height-12-min(6,len(plans)))//max(1,len(items))-2)
+            groups.append(Group(header,*plans[-6:],render_items(session,items,cache,max(20,console.width-8),rows)))
         return Panel(Group(*groups) if groups else Text("Waiting for agent or coding-session output…"),
                      title="Agent work",subtitle="Reasoning summaries · commentary · tool evidence")
     last_size=console.size
