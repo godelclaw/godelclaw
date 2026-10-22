@@ -1076,6 +1076,8 @@ receipts. The packet informs the model and does not gate execution. Strict stand
 
 Managed command-mode calls can set `METTACLAW_MODEL_COMMENTARY=1` to request
 an explicit JSON envelope with `commentary` and `commands` string fields.
+A single whole JSON code fence is accepted as framing; terminal validation
+and the complete envelope schema still apply before commands are released.
 Rejected replies retain their public answer as evidence. The next preparation
 reports the format error and its receipt ID; `(model-result "id" offset)` pages
 through the public text without provider reasoning. A rejected reply executes

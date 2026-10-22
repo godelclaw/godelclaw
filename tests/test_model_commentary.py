@@ -76,13 +76,37 @@ class CommentaryTest(unittest.TestCase):
     def test_legacy_commands_unchanged(self):
         self.assertEqual(commentary.split('((nop))'), (None, '((nop))'))
 
-    def test_prose_and_fenced_envelopes_cannot_enter_command_recovery(self):
+    def test_prose_and_unframed_data_cannot_enter_command_recovery(self):
         envelope = json.dumps({'commentary': 'Example ((nop))', 'commands': '((nop))'})
-        for source in ('```json\n' + envelope + '\n```',
-                       'Here is my output: ' + envelope,
+        for source in ('Here is my output: ' + envelope,
                        'Working on ((nop))', 'nop'):
             with self.subTest(source=source):
                 self.assertEqual(commentary.split(source), (None, '()'))
+
+    def test_single_fence_preserves_the_exact_envelope_and_terminal_gate(self):
+        value = json.dumps(dict(commentary='Checked λ\u2028; literal ``` in data.', commands='((nop))'), ensure_ascii=False)
+        for header in ('```json', '```JSON', '```'):
+            framed = header + '\n' + value + '\n```'
+            self.assertEqual(commentary.split(framed), commentary.split(value))
+            for cut in range(1, len(framed)):
+                self.assertEqual(commentary.split(framed[:cut])[1], '()')
+            plan = SimpleNamespace(kind='command')
+            for reason in ('length', 'refusal', 'content_filter', 'tool_calls', 'unknown'):
+                with self.assertRaises(commentary.OutputError):
+                    commentary.finish(plan, framed, reason)
+            with self.assertRaises(commentary.OutputError):
+                commentary.finish(plan, framed, 'stop', {'refusal': 'declined'})
+            self.assertEqual(commentary.finish(plan, framed, 'stop'), '((nop))')
+
+    def test_fences_do_not_admit_surrounding_prose_or_other_programs(self):
+        value = json.dumps(dict(commentary='Example ((shell "wrong"))', commands='((nop))'))
+        for framed in ('prefix\n```json\n' + value + '\n```',
+                       '```json\n' + value + '\n```\nsuffix',
+                       '```json\n' + value + '\n```\n```json\n' + value + '\n```',
+                       '```metta\n((shell "wrong"))\n```',
+                       '```\n((shell "wrong"))\n```',
+                       '```json\n{"commentary":"ok","commands":"((nop))","commands":"((shell wrong))"}\n```'):
+            self.assertEqual(commentary.split(framed), (None, '()'))
 
     def test_complete_envelope_separates_authored_text(self):
         content = json.dumps({'commentary': 'Checking the display.', 'commands': '((nop))'})

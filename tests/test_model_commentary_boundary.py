@@ -65,6 +65,12 @@ class NativeCommentaryTest(unittest.TestCase):
             '!(println! (py-call (native_lifetime.evidence_context)))\n')
         self.assertNotIn('PREVIOUS_COMMAND_OUTPUT_REJECTED', feedback)
 
+    def test_complete_fenced_json_crosses_the_same_native_terminal_boundary(self):
+        self.peer.reply['choices'][0]['message']['content'] = '```json\n' + json.dumps(
+            dict(commentary='Checked the source.', commands='((nop))')) + '\n```'
+        self.assertIn('(RESULT ((nop)))', self.call())
+        self.assertEqual([n['text'] for n in self.notes()], ['Checked the source.'])
+
     def test_responses_protocol_preserves_the_same_separation(self):
         from test_responses_stream_engine import response
         reply = response()

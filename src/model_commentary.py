@@ -66,10 +66,19 @@ def _unique(pairs):
 def split(text):
     """Legacy command batches remain valid; malformed envelopes run nothing."""
     text = str(text)
+    framed = text.strip()
+    if framed.startswith('```'):
+        lines = framed.split('\n')
+        if (len(lines) < 3 or lines[0].strip().lower() not in ('```json', '```')
+                or lines[-1].strip() != '```'):
+            return None, '()'
+        text = '\n'.join(lines[1:-1])
+        if not text.lstrip().startswith('{'):
+            return None, '()'
     if not text.lstrip().startswith('{'):
-        # Only a legacy parenthesized batch is eligible for the command
-        # parser. Never let prose/fences around an envelope enter its recovery
-        # path, where parentheses in commentary could become actions.
+        # Only a legacy parenthesized batch enters command recovery. An
+        # optional whole JSON fence is framing, never a search for commands
+        # in prose, partial output or an arbitrary code block.
         return None, text if text.lstrip().startswith('(') else '()'
     try:
         value = json.loads(text, object_pairs_hook=_unique)
