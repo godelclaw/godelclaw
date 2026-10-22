@@ -47,6 +47,15 @@
      (if $subscription (Error llm:structured chatgpt-command-mode-only)
        (let $plan (py-call (native_llm_host.structured_plan $request)) (llm:run $plan)))))
 
+(= (llm:structured-json-plan $text)
+   (let $selected (py-call (synthetic_llm.current_model))
+     (if (str:starts-with $selected "chatgpt:")
+       (let $session (chatgpt:session)
+         (case $session
+           (((ChatGPTUnavailable $why) (Error llm:structured-json-plan $why))
+            ($ready (chatgpt:structured-plan $selected (json-parse $text) $ready)))))
+       (py-call (native_llm_host.structured_json_plan $text)))))
+
 (= (llm:run $plan)
    (let $state (llm:begin $plan) (llm:after-submit $plan $state)))
 

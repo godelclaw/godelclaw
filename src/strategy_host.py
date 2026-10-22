@@ -152,7 +152,7 @@ def prepare(prompt, output_tokens=32768):
     prompt += "\n" + _runtime_projection
     import task_context
     task_context.focus(ledger(), _focus)
-    view = task_context.projection(ledger(), _focus, _context_trigger)
+    view = task_context.conversation_projection(ledger(), _focus, _context_trigger)
     import context_budget
     capacity = context_capacity(output_tokens)
     available = context_budget.available(prompt, capacity)
@@ -222,9 +222,9 @@ def task_read(identity, offset=0):
         return "TASK_READ_FAILED: " + str(error)
 
 
-def task_history(request, offset=0):
+def task_history(request, offset=0, count=20):
     import task_context
-    return strategy.encoded(task_context.history(ledger(), str(request), int(offset)))
+    return strategy.encoded(task_context.history(ledger(), str(request), int(offset), int(count)))
 
 
 def task_note(text, sources="[]"):
@@ -272,6 +272,16 @@ def provider_failed():
         ledger().decide(_sample["serial"], {"kind": "failure"}, time.time(), guard(),
                         max(1, cognitive_health.retry_wait_seconds()))
     return 1
+
+
+def preparation_failed(reason):
+    """Retain this input and use the ordinary retry pacing before admission."""
+    import synthetic_llm
+    code = str(reason)
+    if not code.startswith("context-") or len(code) > 96:
+        code = "context-preparation-failed"
+    print("[context] preparation withheld: " + code)
+    return synthetic_llm._empty_action(RuntimeError(code))
 
 
 def batch_limit(requested, commands):

@@ -111,7 +111,9 @@
           ($function (coding:field $call "function"))
           ($name (coding:text (coding:field $function "name")))
           ($args (coding:arguments (coding:text (coding:field $function "arguments"))))
-          ($output (coding:tool $dir $workdir $name $args)))
+          ($output (if (fs:is-file (coding:file $dir "stop"))
+                     "Cancelled before execution; this call was not run."
+                     (coding:tool $dir $workdir $name $args))))
      (coding:record $dir (coding:tool-message $id $output))))
 ; What a reply without text did, for the progress line, as Codex shows the
 ; commands it runs: the command, the patched files or the plan update.
@@ -145,13 +147,24 @@
 (= (coding:tools) (json-parse (fs:read-text "identity/coding-tools.json")))
 (= (coding:request $messages $effort $tools)
    (let* (($pairs ((JsonPair "model" (JsonString "session")) (JsonPair "max_tokens" (JsonNumber "32768"))
-                   (JsonPair "messages" (JsonArray $messages)) (JsonPair "cache_messages" (JsonBool True))))
+                   (JsonPair "messages" (JsonArray (coding:wire-messages $messages))) (JsonPair "cache_messages" (JsonBool True))))
           ($reasoned (if (== $effort "default") $pairs
                        (cons-atom (JsonPair "reasoning" (JsonObject ((JsonPair "effort" (JsonString $effort))))) $pairs))))
      (JsonObject (if (== $tools ()) $reasoned (cons-atom (JsonPair "tools" $tools) $reasoned)))))
+; Input occurrence metadata belongs to the local transcript, never the wire.
+; Provider reasoning/signature fields and all other message fields survive.
+(= (coding:wire-fields $fields)
+   (if (== $fields ()) ()
+     (let (JsonPair $key $value) (car-atom $fields)
+       (let $rest (coding:wire-fields (cdr-atom $fields))
+         (if (== $key "_coding_input") $rest (cons-atom (car-atom $fields) $rest))))))
+(= (coding:wire-messages $messages)
+   (if (== $messages ()) ()
+     (let (JsonObject $fields) (car-atom $messages)
+       (cons-atom (JsonObject (coding:wire-fields $fields)) (coding:wire-messages (cdr-atom $messages))))))
 (= (coding:ask-once $dir $request)
    (let* (($text (json-stringify $request))
-          ($plan (py-call (native_llm_host.structured_json_plan $text)))
+          ($plan (llm:structured-json-plan $text))
           ($box (llm:run $plan))
           ($reply (coding:file $dir "reply.json"))
           ($_ (py-call (native_llm_host.structured_json_result $box $reply))))
@@ -166,23 +179,63 @@
       ($reply (case (coding:field $reply "message")
                 ((JsonNull (if (>= $attempt 4) (CallFailed "no message in the reply")
                              (coding:ask $dir $request (+ $attempt 1))))
-                 ($message $reply)))))))
+                 ($message (coding:validate-reply $reply))))))))
+
+(= (coding:validate-reply $reply)
+   (let* (($message (coding:field $reply "message"))
+          ($calls (coding:items (coding:field $message "tool_calls")))
+          ($finish (coding:text (coding:field $reply "finish")))
+          ($refusal (coding:text (coding:field $message "refusal"))))
+     (if (not (== $refusal "")) (CallFailed "The provider refused the request.")
+       (if (or (and (== $finish "stop") (== $calls ()))
+               (and (== $finish "tool_calls") (not (== $calls ())))) $reply
+         (CallFailed (str:concat "Incomplete or invalid provider finish: " $finish))))))
 
 ; Tokens are estimated at four bytes each, as Codex estimates new items.
 (= (coding:estimate $messages) (/ (str:byte-length (json-stringify (JsonArray $messages))) 4))
 (= (coding:window)
    (let $capacity (py-call (strategy_host.context_capacity 32768))
      (if (== (get-metatype $capacity) Grounded) $capacity 200000)))
-(= (coding:steering $lines $out)
+(= (coding:steering $lines $index $out)
    (if (== $lines ()) (coding:reverse $out ())
-     (coding:steering (cdr-atom $lines)
-       (cons-atom (coding:message "user" (str:concat "From the requester, mid-task: " (coding:text (car-atom $lines)))) $out))))
+     (let (JsonObject $fields) (coding:message "user" (str:concat "From the requester, mid-task: " (coding:text (car-atom $lines))))
+       (coding:steering (cdr-atom $lines) (+ $index 1)
+         (cons-atom (JsonObject (cons-atom (JsonPair "_coding_input" (JsonNumber (repr $index))) $fields)) $out)))))
+(= (coding:inbox-position $messages $consumed)
+   (if (== $messages ()) $consumed
+     (case (coding:field (car-atom $messages) "_coding_input")
+       (((JsonNumber $index) (coding:inbox-position (cdr-atom $messages) (max $consumed (+ 1 (str:string->number $index)))))
+        ($other (coding:inbox-position (cdr-atom $messages) $consumed))))))
 (= (coding:fold-inbox $dir $messages $consumed)
-   (let* (($lines (coding:json-lines (coding:file $dir "inbox.jsonl")))
-          ($new (coding:drop $lines $consumed)))
-     (if (== $new ()) (Folded $messages $consumed)
-       (let $added (coding:record-all $dir (coding:steering $new ()) ())
-         (Folded (coding:append-list $messages $added) (+ $consumed (length $new)))))))
+   (let* (($position (coding:inbox-position $messages $consumed))
+          ($lines (coding:json-lines (coding:file $dir "inbox.jsonl")))
+          ($new (coding:drop $lines $position)))
+     (if (== $new ()) (Folded $messages $position)
+       (let $added (coding:record-all $dir (coding:steering $new $position ()) ())
+         (Folded (coding:append-list $messages $added) (+ $position (length $new)))))))
+
+; A restart can find a recorded assistant call without its result. Retain
+; uncertainty and satisfy the tool protocol; never replay an unknown effect.
+(= (coding:remove-call $calls $id)
+   (if (== $calls ()) ()
+     (let $rest (coding:remove-call (cdr-atom $calls) $id)
+       (if (== (coding:text (coding:field (car-atom $calls) "id")) $id) $rest
+         (cons-atom (car-atom $calls) $rest)))))
+(= (coding:pending-calls $messages $pending)
+   (if (== $messages ()) $pending
+     (let* (($message (car-atom $messages)) ($role (coding:text (coding:field $message "role")))
+            ($next (if (== $role "assistant") (coding:append-list $pending (coding:items (coding:field $message "tool_calls")))
+                     (if (== $role "tool") (coding:remove-call $pending (coding:text (coding:field $message "tool_call_id"))) $pending))))
+       (coding:pending-calls (cdr-atom $messages) $next))))
+(= (coding:uncertain-results $dir $calls $out)
+   (if (== $calls ()) (coding:reverse $out ())
+     (let* (($id (coding:text (coding:field (car-atom $calls) "id")))
+            ($record (coding:record $dir (coding:tool-message $id
+              "Interrupted; outcome unknown. This call was not automatically replayed. Inspect the existing evidence before deciding what to do next."))))
+       (coding:uncertain-results $dir (coding:remove-call (cdr-atom $calls) $id) (cons-atom $record $out)))))
+(= (coding:repair-inflight $dir $messages)
+   (let $results (coding:uncertain-results $dir (coding:pending-calls $messages ()) ())
+     (coding:append-list $messages $results)))
 
 ; The compacted history keeps the instructions, the task and the requester's
 ; later messages, then the handoff summary; the full history is archived.
@@ -191,23 +244,46 @@
      (let $message (car-atom $messages)
        (coding:requester-messages (cdr-atom $messages)
          (if (== (coding:text (coding:field $message "role")) "user") (cons-atom $message $out) $out)))))
+(= (coding:message-lines $messages)
+   (if (== $messages ()) ()
+     (cons-atom (str:concat (json-stringify (car-atom $messages)) "\n")
+                (coding:message-lines (cdr-atom $messages)))))
 (= (coding:rewrite $dir $messages)
-   (let* (($history (coding:file $dir "messages.jsonl"))
-          ($archive (str:join "" ($history "." (repr (coding:now)) ".archived")))
-          ($_ (py-call (os.replace $history $archive)))
-          ($_ (coding:record-all $dir $messages ())))
-     $messages))
+   (case (catch
+           (let* (($history (coding:file $dir "messages.jsonl"))
+                  ($archive (str:join "" ($history "." (repr (coding:now)) "." (py-call (secrets.token_hex 4)) ".archived")))
+                  ; Keep the live transcript available until the complete
+                  ; replacement is published. Copy before the atomic write.
+                  ($_ (py-call (shutil.copyfile $history $archive)))
+                  ($receipt (fs:update-text $history "replace" (str:join "" (coding:message-lines $messages)) "" "")))
+             (case $receipt
+               ((("written" $_ $_ $_ $_) (Compacted $messages))
+                ($error (CompactionFailed (str:concat "History replacement failed: " (repr $error))))))))
+     (((Error $where $why) (CompactionFailed (str:join " " ((repr $where) (repr $why)))))
+      ($result $result))))
+(= (coding:summary-tool-free? $message)
+   (and (== (coding:field $message "function_call") JsonNull)
+     (case (coding:field $message "tool_calls")
+       ((JsonNull True) ((JsonArray ()) True) ($other False)))))
+(= (coding:accept-summary $dir $messages $reply)
+   (let* (($message (coding:field $reply "message"))
+          ($summary (coding:text (coding:field $message "content"))))
+     (if (not (and (== (coding:text (coding:field $reply "finish")) "stop")
+                    (and (== (coding:text (coding:field $message "role")) "assistant")
+                         (coding:summary-tool-free? $message))))
+       (CompactionFailed "The handoff must be a complete, tool-free assistant summary.")
+       (if (== (str:trim $summary) "") (CompactionFailed "The handoff summary was empty.")
+         (let* (($head (cons-atom (car-atom $messages) (coding:requester-messages (cdr-atom $messages) ())))
+                ($handoff (coding:message "user" (str:concat
+                  "Another model began this task and left this handoff summary; continue from it and do not restart from scratch.\n\n"
+                  $summary))))
+           (coding:rewrite $dir (coding:append-list $head ($handoff))))))))
 (= (coding:compact $dir $messages $effort)
    (let* (($ask (coding:append-list $messages ((coding:message "user" (fs:read-text "identity/coding-compact.md")))))
           ($reply (coding:ask $dir (coding:request $ask $effort ()) 0)))
      (case $reply
-       (((CallFailed $why) $messages)
-        ($ok (let* (($summary (coding:text (coding:field (coding:field $ok "message") "content")))
-                    ($head (cons-atom (car-atom $messages) (coding:requester-messages (cdr-atom $messages) ())))
-                    ($handoff (coding:message "user" (str:concat
-                      "Another model began this task and left this handoff summary; continue from it and do not restart from scratch.\n\n"
-                      $summary))))
-               (coding:rewrite $dir (coding:append-list $head ($handoff)))))))))
+       (((CallFailed $why) (CompactionFailed $why))
+        ($ok (coding:accept-summary $dir $messages $ok))))))
 
 (= (coding:finish $dir $status $text $steps $inbox)
    (let* (($_ (fs:update-text (coding:file $dir "report.txt") "replace" $text "" ""))
@@ -216,19 +292,33 @@
 (= (coding:loop $dir $workdir $effort $window $tools $messages $steps $inbox)
    (if (fs:is-file (coding:file $dir "stop")) (coding:finish $dir "stopped" "Stopped by the requester." $steps $inbox)
      (let* (((Folded $steered $next) (coding:fold-inbox $dir $messages $inbox))
-            ($current (if (> (coding:estimate $steered) (* 0.9 $window)) (coding:compact $dir $steered $effort) $steered))
-            ($reply (coding:ask $dir (coding:request $current $effort $tools) 0)))
-       (case $reply
+            ($prepared (if (> (coding:estimate $steered) (* 0.9 $window)) (coding:compact $dir $steered $effort) (Compacted $steered))))
+       (case $prepared
+         (((CompactionFailed $why)
+            (coding:finish $dir "failed" (str:concat "The session could not compact its history: " $why) $steps $inbox))
+          ((Compacted $current) (coding:turn $dir $workdir $effort $window $tools $current $steps $next)))))))
+(= (coding:turn $dir $workdir $effort $window $tools $current $steps $next)
+   (case (coding:ask $dir (coding:request $current $effort $tools) 0)
          (((CallFailed $why) (coding:finish $dir "failed" (str:concat "The model call failed: " $why) $steps $next))
           ($ok
             (let* (($message (coding:record $dir (coding:field $ok "message")))
                    ($calls (coding:items (coding:field $message "tool_calls")))
                    ($text (coding:text (coding:field $message "content")))
                    ($_ (coding:state $dir "running" (+ $steps 1) (coding:progress $text $calls) $next)))
-              (if (== $calls ()) (coding:finish $dir "done" $text (+ $steps 1) $next)
+              (if (== $calls ())
+                (coding:after-final $dir $workdir $effort $window $tools
+                  (coding:append-list $current ($message)) (+ $steps 1) $next $text)
                 (let $results (coding:run-calls $dir $workdir $calls ())
                   (coding:loop $dir $workdir $effort $window $tools
-                    (coding:append-list $current (cons-atom $message $results)) (+ $steps 1) $next))))))))))
+                    (coding:append-list $current (cons-atom $message $results)) (+ $steps 1) $next))))))))
+
+; Guidance can arrive while the model is answering. A no-tool reply ends only
+; the input frontier it saw; newer guidance continues this same transcript.
+(= (coding:after-final $dir $workdir $effort $window $tools $messages $steps $inbox $text)
+   (if (fs:is-file (coding:file $dir "stop")) (coding:finish $dir "stopped" "Stopped by the requester." $steps $inbox)
+     (let (Folded $current $next) (coding:fold-inbox $dir $messages $inbox)
+       (if (> $next $inbox) (coding:loop $dir $workdir $effort $window $tools $current $steps $next)
+         (coding:finish $dir "done" $text $steps $next)))))
 
 (= (coding:begin $dir $task $workdir)
    (let* (($instructions (fs:read-text "identity/coding-instructions.md"))
@@ -242,7 +332,7 @@
           ($chosen (coding:text (coding:field $task-json "effort")))
           ($effort (if (== $chosen "") "high" $chosen))
           ($existing (coding:json-lines (coding:file $dir "messages.jsonl")))
-          ($messages (if (== $existing ()) (coding:begin $dir $task $workdir) $existing))
+          ($messages (if (== $existing ()) (coding:begin $dir $task $workdir) (coding:repair-inflight $dir $existing)))
           ($state (coding:json-file (coding:file $dir "state.json") (JsonObject ())))
           ($steps (coding:number (coding:field $state "steps") 0))
           ($inbox (coding:number (coding:field $state "inbox") 0))

@@ -2,7 +2,7 @@
 (= (state:cetta? $engine)
    (case $engine ((cetta True) ("cetta" True) ($other False))))
 !(if (state:cetta? (py-call (engine_modes.active_engine)))
-     (import! &self ./src/task_context_views)
+     (import! &self ./src/context_compaction)
      (import! &self ./src/state_python))
 !(if (state:cetta? (py-call (engine_modes.active_engine))) (import! &self ./src/runtime_cetta) True)
 
@@ -15,6 +15,7 @@
               ($trigger (py-call (strategy_host.context_input "trigger")))
               ($capacity-value (py-call (strategy_host.context_input "capacity" $tokens)))
               ($capacity (format-args "{}" ($capacity-value)))
-              ($model (py-call (strategy_host.context_input "model"))))
-         (task:append-context $base $focus $trigger $capacity $model)) $prompt)
+              ($model (py-call (strategy_host.context_input "model")))
+              ($effort (system:getenv-or-default "METTACLAW_REASONING_EFFORT" "default")))
+         (context:prepare $base $focus $trigger $capacity $model $tokens $effort)) $prompt)
      (py-call (strategy_host.prepare $prompt $tokens))))

@@ -6,6 +6,8 @@ turn that asks for it, and the checker answers format questions for free
 
 # skill -> (min_args, max_args). None = variadic tail.
 ARITY = {
+    "work": (1, 2), "work-status": (0, 1), "work-steer": (2, 2),
+    "work-resume": (1, 1), "work-stop": (1, 1),
     "memory-node": (4, 6), "memory-link": (2, 2), "memory-summary": (2, 2),
     "memory-open": (1, 2), "memory-find": (1, 2), "memory-original": (2, 2),
     "memory-focus": (1, 2), "memory-window": (1, 1),
@@ -52,6 +54,11 @@ ARITY = {
 }
 
 PAGES = {
+    "work": 'usage: (work "task" ["workdir"])\nStart an independent coding session with its own transcript and plan. It runs until a complete reply calls no tools, or you stop it, and mails its report back. You can continue talking while it works.',
+    "work-status": 'usage: (work-status ["id"])\nList sessions or inspect one session\'s progress, plan and final report.',
+    "work-steer": 'usage: (work-steer "id" "guidance")\nAppend guidance to the same coding transcript. Guidance arriving during a final reply continues the task before it is marked done.',
+    "work-resume": 'usage: (work-resume "id")\nExplicitly resume an inactive session with its existing task, transcript, plan and inbox. An active session is not launched again. Interrupted tool effects remain uncertain and are never automatically replayed.',
+    "work-stop": 'usage: (work-stop "id")\nStop the session, keeping its evidence and plan. Only explicit work-resume clears its stop request.',
     "settings": 'usage: (settings ["namespace"])\nLive native catalogue of module-registered settings, including current/default value, units, domain, description and persistence. New registrations appear immediately. An empty namespace lists all.',
     "setting": 'usage: (setting "namespace" "key" [value])\nInspect one setting or invoke its registered writer. Numeric strings are accepted for numeric domains. The module retains ownership of validation and storage.',
     "remember": ('usage: (remember "text")\n'
@@ -87,8 +94,8 @@ PAGES = {
     "mail-receive": ('usage: (mail-receive)\n'
                      'Check native mail now. Arrivals also enter turns automatically;\n'
                      'acknowledgement follows a committed turn. CeTTa only.'),
-    "task-read": 'usage: (task-read "call-id" offset [page-bytes])\nRead an exact recorded call/result pair. Offsets count characters; next=null ends it.',
-    "task-history": 'usage: (task-history "request-id" offset [count]); count=0 reads all entries\nTask-scoped ordered call/result index, including compacted history.',
+    "task-read": 'usage: (task-read "record-id" offset [page-bytes])\nRead an exact retained input or call/result pair, including archived evidence. Offsets count characters; next=null ends it.',
+    "task-history": 'usage: (task-history "request-id|conversation:owner" offset [count]); count=0 reads all entries\nA request gives its task-family call index. The conversation root shown in TASK_CONTEXT indexes all input and call occurrences across frames, including compacted history.',
     "task-note": 'usage: (task-note "findings, uncertainties, next steps" "JSON list of call IDs")\nAppend a task note with evidence references. A note is an interpretation, not certified truth.',
 
     "command-receipts": 'usage: (command-receipts) or (command-receipts "NEXT_CURSOR")\nPages of attempted commands with stable IDs and recorded dispositions/results. Follow next_cursor until null; concatenate chunk records by ID and character offset. Uncertain is not success.',

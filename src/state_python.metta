@@ -11,6 +11,7 @@
 (= (task-read $id $offset) (py-call (strategy_host.task_read $id $offset)))
 (= (task-history $id) (py-call (strategy_host.task_history $id)))
 (= (task-history $id $offset) (py-call (strategy_host.task_history $id $offset)))
+(= (task-history $id $offset $count) (py-call (strategy_host.task_history $id $offset $count)))
 (= (task-note $text) (py-call (strategy_host.task_note (py-call (helper.decode_safe_text $text)))))
 (= (task-note $text $sources)
    (py-call (strategy_host.task_note (py-call (helper.decode_safe_text $text)) (py-call (helper.decode_safe_text $sources)))))

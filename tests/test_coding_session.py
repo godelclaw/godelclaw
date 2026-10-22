@@ -7,7 +7,10 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
+from types import SimpleNamespace
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -19,6 +22,9 @@ class Script(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         self.server.requests.append(body)
+        before_reply = getattr(self.server, "before_reply", None)
+        if before_reply:
+            before_reply(body)
         reply = self.server.replies.pop(0) if self.server.replies else self.server.final
         data = json.dumps(reply).encode()
         self.send_response(200)
@@ -74,8 +80,8 @@ class CodingSessionTests(unittest.TestCase):
         self.server.server_close()
         self.temporary.cleanup()
 
-    def session(self, task, workspace):
-        session = self.directory / "session"
+    def session(self, task, workspace, name="session"):
+        session = self.directory / name
         session.mkdir()
         (session / "task.json").write_text(json.dumps({"task": task, "workdir": str(workspace), "effort": "default"}))
         return session
@@ -86,6 +92,42 @@ class CodingSessionTests(unittest.TestCase):
                                 cwd=ROOT, env=self.env, capture_output=True, text=True, timeout=120)
         self.assertEqual(result.returncode, 0, result.stdout[-2000:] + result.stderr[-2000:])
         return result
+
+    def run_probe(self, forms, module="coding_session.metta", cwd=ROOT):
+        probe = self.directory / "coding_probe.metta"
+        probe.write_text('!(import! &self (library lib_import))\n'
+                         '!(import! &self ' + json.dumps(str(ROOT / "src" / module)) + ')\n' + forms)
+        result = subprocess.run([os.environ["CETTA_BIN"], "--lang", "petta", "--import-mode", "ancestor-walk", str(probe)],
+                                cwd=cwd, env=self.env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stdout[-2000:] + result.stderr[-2000:])
+        return result
+
+    def fake_work_scope(self):
+        """Record executable scope commands without touching the user's service manager."""
+        binary = self.directory / "fixture_bin"
+        binary.mkdir()
+        active, launches = self.directory / "scope-active", self.directory / "scope-launches.jsonl"
+        scripts = {
+            "systemctl": 'import os, sys\nfrom pathlib import Path\n'
+                         'sys.exit(0 if sys.argv[1:3] == ["--user", "is-active"] and '
+                         'Path(os.environ["FIXTURE_SCOPE_ACTIVE"]).is_file() else 3)\n',
+            "systemd-run": 'import json, os, sys\n'
+                           'try:\n'
+                           '    fd = os.open(os.environ["FIXTURE_SCOPE_ACTIVE"], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)\n'
+                           'except FileExistsError:\n'
+                           '    sys.exit(1)\n'
+                           'os.close(fd)\n'
+                           'with open(os.environ["FIXTURE_SCOPE_LAUNCHES"], "a") as stream:\n'
+                           '    stream.write(json.dumps(sys.argv[1:]) + "\\n")\n'
+        }
+        for name, source in scripts.items():
+            executable = binary / name
+            executable.write_text("#!" + sys.executable + "\n" + source)
+            executable.chmod(0o755)
+        self.env.update(PATH=str(binary) + os.pathsep + self.env.get("PATH", ""),
+                        METTACLAW_INSTANCE="fixture", FIXTURE_SCOPE_ACTIVE=str(active),
+                        FIXTURE_SCOPE_LAUNCHES=str(launches))
+        return active, launches
 
     def test_runs_tools_until_a_reply_calls_none(self):
         workspace = self.directory / "workspace"
@@ -131,6 +173,80 @@ class CodingSessionTests(unittest.TestCase):
         self.assertIn("From the requester, mid-task: Also mention the line count.",
                       json.dumps(self.server.requests[0]["messages"]))
 
+    def test_steering_during_a_final_reply_continues_the_same_session(self):
+        workspace = self.directory / "workspace"; workspace.mkdir()
+        session = self.session("Investigate the task.", workspace)
+        def steer(_):
+            if len(self.server.requests) == 1:
+                (session / "inbox.jsonl").write_text(json.dumps("Keep the source-only qualification.") + "\n")
+        self.server.before_reply = steer
+        self.server.replies = [reply("Initial report."), reply("Qualified report: inspected, not compiled.")]
+        self.run_session(session)
+        self.assertEqual(len(self.server.requests), 2)
+        continued = self.server.requests[1]["messages"]
+        self.assertEqual(continued[-2]["content"], "Initial report.")
+        self.assertIn("Keep the source-only qualification.", continued[-1]["content"])
+        self.assertEqual((session / "report.txt").read_text(), "Qualified report: inspected, not compiled.")
+        self.assertEqual(json.loads((session / "state.json").read_text())["inbox"], 1)
+
+    def test_resuming_uses_prior_messages_and_new_guidance_once(self):
+        workspace = self.directory / "workspace"; workspace.mkdir()
+        session = self.session("Keep working in this session.", workspace)
+        self.server.replies = [reply("First report.")]
+        self.run_session(session)
+        (session / "inbox.jsonl").write_text(json.dumps("Now verify the result.") + "\n")
+        self.server.replies = [reply("Verified report.")]
+        self.run_session(session)
+        resumed = self.server.requests[1]["messages"]
+        self.assertEqual([m["role"] for m in resumed], ["system", "user", "assistant", "user"])
+        self.assertEqual(resumed[2]["content"], "First report.")
+        self.assertEqual(sum("Now verify the result." in str(m.get("content")) for m in resumed), 1)
+        self.assertEqual((session / "report.txt").read_text(), "Verified report.")
+        self.assertFalse(any("_coding_input" in m for m in resumed))
+
+    def test_resume_records_uncertain_tools_without_replaying_them(self):
+        workspace = self.directory / "workspace"; workspace.mkdir()
+        session = self.session("Inspect the interrupted command before continuing.", workspace)
+        marker = workspace / "counter.txt"; marker.write_text("effect already happened\n")
+        pending = call("interrupted", "exec_command", {"cmd": "echo repeated >> counter.txt"})
+        messages = [{"role": "system", "content": "fixture instructions"},
+                    {"role": "user", "content": "Inspect existing evidence."},
+                    {"role": "assistant", "content": "Running command.", "tool_calls": [pending]}]
+        (session / "messages.jsonl").write_text("".join(json.dumps(m)+"\n" for m in messages))
+        self.server.replies = [reply("The earlier effect needs verification.")]
+        self.run_session(session)
+        sent = self.server.requests[0]["messages"]
+        results = [m for m in sent if m.get("tool_call_id") == "interrupted"]
+        self.assertEqual(len(results), 1)
+        self.assertIn("unknown", results[0]["content"])
+        self.assertIn("not automatically replayed", results[0]["content"])
+        self.assertEqual(marker.read_text(), "effect already happened\n")
+
+    def test_restart_does_not_duplicate_already_recorded_steering(self):
+        workspace = self.directory / "workspace"; workspace.mkdir()
+        session = self.session("Continue from the existing transcript.", workspace)
+        messages = [{"role": "system", "content": "instructions"},
+                    {"role": "user", "content": "Original task."},
+                    {"role": "user", "content": "From the requester, mid-task: ONE_STEERING_OCCURRENCE", "_coding_input": 0}]
+        (session / "messages.jsonl").write_text("".join(json.dumps(m)+"\n" for m in messages))
+        (session / "inbox.jsonl").write_text(json.dumps("ONE_STEERING_OCCURRENCE")+"\n")
+        (session / "state.json").write_text(json.dumps({"status":"running", "steps":0, "inbox":0}))
+        self.server.replies = [reply("Continued.")]
+        self.run_session(session)
+        sent = self.server.requests[0]["messages"]
+        self.assertEqual(sum("ONE_STEERING_OCCURRENCE" in str(m.get("content")) for m in sent), 1)
+        self.assertFalse(any("_coding_input" in m for m in sent))
+
+    def test_incomplete_tool_reply_cannot_execute_an_effect(self):
+        workspace = self.directory / "workspace"; workspace.mkdir()
+        session = self.session("Return a complete tool call.", workspace)
+        incomplete = reply("Cut off.", [call("cut", "exec_command", {"cmd":"touch must-not-exist"})])
+        incomplete["choices"][0]["finish_reason"] = "length"
+        self.server.replies = [incomplete]
+        self.run_session(session)
+        self.assertFalse((workspace / "must-not-exist").exists())
+        self.assertEqual(json.loads((session / "state.json").read_text())["status"], "failed")
+
     def test_compacts_past_ninety_percent_into_a_handoff_summary(self):
         workspace = self.directory / "workspace"
         workspace.mkdir()
@@ -147,6 +263,268 @@ class CodingSessionTests(unittest.TestCase):
         self.assertEqual([m["role"] for m in after], ["system", "user", "user"])
         self.assertIn("SUMMARY: listed 1..30000", after[-1]["content"])
         self.assertEqual(len(list(session.glob("messages.jsonl.*.archived"))), 1)
+        self.assertEqual(json.loads((session / "state.json").read_text())["status"], "done")
+
+    def test_second_compaction_and_resume_keep_handoffs_and_steering(self):
+        workspace = self.directory / "workspace"; workspace.mkdir()
+        self.env["METTACLAW_CONTEXT_WINDOW_TOKENS"] = "40000"
+        session = self.session("Continue the same investigation.", workspace)
+        inbox = session / "inbox.jsonl"
+        inbox.write_text(json.dumps("FIRST_GUIDANCE: preserve uncertainty.") + "\n")
+        def steer(_):
+            if len(self.server.requests) == 3:
+                with inbox.open("a") as stream:
+                    stream.write(json.dumps("SECOND_GUIDANCE: include verification limits.") + "\n")
+        self.server.before_reply = steer
+        self.server.replies = [
+            reply("First evidence.", [call("c1", "exec_command", {"cmd": "seq 1 30000"})]),
+            reply("FIRST_HANDOFF: inspected the first range; preserve uncertainty."),
+            reply("More evidence.", [call("c2", "exec_command", {"cmd": "seq 30001 60000"})]),
+            reply("SECOND_HANDOFF: inspected the next range; no extra verification."),
+            reply("Finished with the stated limits.")]
+        self.run_session(session)
+        self.assertEqual(len(self.server.requests), 5)
+        second_compaction = self.server.requests[3]
+        self.assertNotIn("tools", second_compaction)
+        self.assertIn("FIRST_HANDOFF", json.dumps(second_compaction["messages"]))
+        after = self.server.requests[4]["messages"]
+        for marker in ("FIRST_GUIDANCE", "SECOND_GUIDANCE", "FIRST_HANDOFF", "SECOND_HANDOFF"):
+            self.assertEqual(sum(marker in str(m.get("content")) for m in after), 1)
+        archives = list(session.glob("messages.jsonl.*.archived"))
+        self.assertEqual(len(archives), 2)
+        self.assertTrue(any("FIRST_HANDOFF" in archive.read_text() for archive in archives))
+        recorded = [json.loads(line) for line in (session / "messages.jsonl").read_text().splitlines()]
+        self.assertEqual([m["_coding_input"] for m in recorded if "_coding_input" in m], [0, 1])
+        self.assertEqual(json.loads((session / "state.json").read_text())["inbox"], 2)
+
+        self.server.replies = [reply("Continued from the preserved handoffs.")]
+        self.run_session(session)
+        self.assertEqual(self.server.requests[5]["messages"],
+                         [{k: v for k, v in m.items() if k != "_coding_input"} for m in recorded])
+        self.assertEqual(len(list(session.glob("messages.jsonl.*.archived"))), 2)
+
+    def test_invalid_compaction_keeps_history_and_cursor_and_never_runs_tools(self):
+        workspace = self.directory / "workspace"; workspace.mkdir()
+        self.env["METTACLAW_CONTEXT_WINDOW_TOKENS"] = "40000"
+        truncated = reply("Partial handoff.")
+        truncated["choices"][0]["finish_reason"] = "length"
+        refused = reply("No summary.")
+        refused["choices"][0]["message"]["refusal"] = "fixture refusal"
+        invalid = [reply(""), reply(" \n\t "), reply(None), truncated, refused,
+                   reply("Run this instead.", [call("unsafe-summary", "exec_command", {"cmd": "touch must-not-run"})])]
+        for index, summary in enumerate(invalid):
+            with self.subTest(summary=index):
+                session = self.session("Preserve existing evidence.", workspace, "invalid-%d" % index)
+                messages = [{"role": "system", "content": "fixture instructions"},
+                            {"role": "user", "content": "Original task."},
+                            {"role": "assistant", "content": "EXISTING_EVIDENCE " + "x" * 40000},
+                            {"role": "user", "content": "From the requester, mid-task: RECORDED_GUIDANCE", "_coding_input": 0}]
+                history = session / "messages.jsonl"
+                history.write_text("".join(json.dumps(m) + "\n" for m in messages))
+                original = history.read_bytes()
+                (session / "inbox.jsonl").write_text(json.dumps("RECORDED_GUIDANCE") + "\n")
+                (session / "state.json").write_text(json.dumps({"status": "running", "steps": 7, "inbox": 0}))
+                before = len(self.server.requests)
+                self.server.replies = [summary]
+                self.run_session(session)
+                self.assertEqual(len(self.server.requests), before + 1)
+                self.assertNotIn("tools", self.server.requests[-1])
+                self.assertEqual(history.read_bytes(), original)
+                self.assertEqual(list(session.glob("messages.jsonl.*.archived")), [])
+                state = json.loads((session / "state.json").read_text())
+                self.assertEqual((state["status"], state["steps"], state["inbox"]), ("failed", 7, 0))
+                self.assertIn("could not compact", (session / "report.txt").read_text())
+                self.assertFalse((workspace / "must-not-run").exists())
+
+        self.server.replies = [reply("Valid handoff after retry."), reply("Continued from existing evidence.")]
+        self.run_session(session)
+        self.assertEqual(self.server.requests[-2]["messages"][:-1],
+                         [{k: v for k, v in m.items() if k != "_coding_input"} for m in messages])
+        self.assertEqual(next(session.glob("messages.jsonl.*.archived")).read_bytes(), original)
+        self.assertEqual(json.loads((session / "state.json").read_text())["inbox"], 1)
+
+    def test_rewrite_failure_keeps_the_live_history_and_its_archive(self):
+        module = self.directory / "fixture_modules" / "coding_rewrite_fault.py"
+        module.write_text('import os, shutil\n'
+                          '_copy = shutil.copyfile\n'
+                          'def install(mode):\n'
+                          '    def archive(source, target):\n'
+                          '        result = _copy(source, target)\n'
+                          '        assert os.path.isfile(source), "live history disappeared"\n'
+                          '        if mode == "interrupt": raise OSError("fixture interruption after archive")\n'
+                          '        os.chmod(os.path.dirname(source), 0o500)\n'
+                          '        return result\n'
+                          '    shutil.copyfile = archive\n'
+                          '    return 1\n')
+        for mode in ("interrupt", "denied"):
+            with self.subTest(mode=mode):
+                session = self.directory / mode; session.mkdir()
+                history = session / "messages.jsonl"
+                original = b'{"role": "user", "content": "Preserve original bytes."}\n'
+                history.write_bytes(original)
+                forms = ('!(import! &self ' + json.dumps(str(module)) + ')\n'
+                         '!(py-call (coding_rewrite_fault.install ' + json.dumps(mode) + '))\n'
+                         '!(println! (coding:rewrite ' + json.dumps(str(session)) +
+                         ' ((coding:message "user" "Replacement transcript."))))\n')
+                try:
+                    result = self.run_probe(forms)
+                finally:
+                    session.chmod(0o700)
+                self.assertIn("CompactionFailed", result.stdout)
+                self.assertEqual(history.read_bytes(), original)
+                archives = list(session.glob("messages.jsonl.*.archived"))
+                self.assertEqual(len(archives), 1)
+                self.assertEqual(archives[0].read_bytes(), original)
+
+    def test_work_resume_keeps_one_session_and_its_existing_evidence(self):
+        active, launches = self.fake_work_scope()
+        self.env.update(METTACLAW_ACTIVITY_CALL_SCOPE="parent-conversation", METTACLAW_ACTIVITY_CALL_LANE="interactive")
+        runner = self.directory / "runner's directory $(touch RESUME_INJECTION)"
+        runner.mkdir()
+        identity = "work-resume-fixture"
+        session = runner / "memory" / "coding" / identity
+        session.mkdir(parents=True)
+        workspace = self.directory / "workspace"; workspace.mkdir()
+        (session / "task.json").write_text(json.dumps({"task": "Original investigation.", "workdir": str(workspace), "effort": "default"}))
+        (session / "plan.json").write_text('{"plan":[{"step":"verify existing evidence","status":"in_progress"}]}\n')
+        prior = [{"role": "system", "content": "fixture instructions"},
+                 {"role": "user", "content": "Original investigation."},
+                 {"role": "assistant", "content": "Existing qualified result."},
+                 {"role": "user", "content": "From the requester, mid-task: SAVED_GUIDANCE", "_coding_input": 0}]
+        (session / "messages.jsonl").write_text("".join(json.dumps(m) + "\n" for m in prior))
+        (session / "inbox.jsonl").write_text(json.dumps("SAVED_GUIDANCE") + "\n")
+        (session / "state.json").write_text(json.dumps({"status": "done", "steps": 2, "inbox": 1}))
+        stop = session / "stop"; stop.write_text("")
+        saved = {name: (session / name).read_bytes() for name in ("task.json", "plan.json", "messages.jsonl")}
+
+        result = self.run_probe('!(println! (work-status ' + json.dumps(identity) + '))\n'
+                                '!(println! (work-steer ' + json.dumps(identity) + ' "NEW_GUIDANCE"))\n',
+                                module="coding_work.metta", cwd=runner)
+        self.assertIn("WORK_STEERED", result.stdout)
+        self.assertTrue(stop.is_file())
+        self.assertFalse(launches.exists())
+        result = self.run_probe('!(println! (work-resume ' + json.dumps(identity) + '))\n',
+                                module="coding_work.metta", cwd=runner)
+        self.assertIn("WORK_RESUMING " + identity, result.stdout)
+        self.assertFalse(stop.exists())
+        deadline = time.monotonic() + 5
+        while not launches.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertTrue(active.is_file())
+        args = json.loads(launches.read_text())
+        self.assertIn("--unit=fixture-" + identity, args)
+        self.assertEqual(args[-1], str(session))
+        self.assertIn("METTACLAW_COGNITIVE_HEALTH_PATH=" + str(session / "health.json"), args)
+        self.assertIn("METTACLAW_LLM_COMPLETION_PATH=" + str(session / "completion.json"), args)
+        self.assertIn("METTACLAW_LLM_LEDGER_PATH=" + self.env["METTACLAW_LLM_LEDGER_PATH"], args)
+        self.assertIn("METTACLAW_ACTIVITY_CALL_SCOPE=" + identity, args)
+        self.assertIn("METTACLAW_ACTIVITY_CALL_LANE=background", args)
+        self.assertNotIn("METTACLAW_ACTIVITY_CALL_SCOPE=parent-conversation", args)
+        self.assertFalse((runner / "RESUME_INJECTION").exists())
+        for name, content in saved.items():
+            self.assertEqual((session / name).read_bytes(), content)
+        guidance = [json.loads(line) for line in (session / "inbox.jsonl").read_text().splitlines()]
+        self.assertEqual(guidance[:2], ["SAVED_GUIDANCE", "NEW_GUIDANCE"])
+        self.assertEqual(len(guidance), 3)
+        self.assertIn("existing evidence and plan", guidance[-1])
+
+        before = (session / "inbox.jsonl").read_bytes()
+        result = self.run_probe('!(println! (work-resume ' + json.dumps(identity) + '))\n',
+                                module="coding_work.metta", cwd=runner)
+        self.assertIn("WORK_RUNNING " + identity, result.stdout)
+        self.assertEqual(len(launches.read_text().splitlines()), 1)
+        self.assertEqual((session / "inbox.jsonl").read_bytes(), before)
+        self.server.replies = [reply("Resumed and verified the existing result.")]
+        self.run_session(session)
+        sent = self.server.requests[0]["messages"]
+        self.assertEqual(sent[:len(prior)], [{k: v for k, v in m.items() if k != "_coding_input"} for m in prior])
+        for text in guidance:
+            self.assertEqual(sum(text in str(m.get("content")) for m in sent), 1)
+        self.assertTrue((session / "messages.jsonl").read_bytes().startswith(saved["messages.jsonl"]))
+        for name in ("task.json", "plan.json"):
+            self.assertEqual((session / name).read_bytes(), saved[name])
+        state = json.loads((session / "state.json").read_text())
+        self.assertEqual((state["status"], state["steps"], state["inbox"]), ("done", 3, 3))
+        self.assertEqual(list((runner / "memory" / "coding").iterdir()), [session])
+
+    def test_work_resume_leaves_a_running_scope_and_its_stop_flag_untouched(self):
+        active, launches = self.fake_work_scope()
+        active.write_text("already running")
+        identity = "work-already-running"
+        session = self.directory / "memory" / "coding" / identity
+        session.mkdir(parents=True)
+        fixtures = {"task.json": '{"task":"Original task."}', "messages.jsonl": '{"role":"user","content":"Existing transcript."}\n',
+                    "plan.json": '{"plan":[]}', "inbox.jsonl": '"Existing guidance."\n', "stop": ""}
+        for name, text in fixtures.items():
+            (session / name).write_text(text)
+        result = self.run_probe('!(println! (work-resume ' + json.dumps(identity) + '))\n'
+                                '!(println! (work-resume "missing-session"))\n',
+                                module="coding_work.metta", cwd=self.directory)
+        self.assertIn("WORK_RUNNING " + identity, result.stdout)
+        self.assertIn("work-resume: no session missing-session", result.stdout)
+        for name, text in fixtures.items():
+            self.assertEqual((session / name).read_text(), text)
+        self.assertFalse(launches.exists())
+        self.assertFalse((self.directory / "memory" / "coding" / "missing-session").exists())
+
+    def test_coding_launch_shares_account_admission_with_an_active_parent(self):
+        _, launches = self.fake_work_scope()
+        identity = "work-scoped-admission"
+        session = self.directory / "memory" / "coding" / identity
+        session.mkdir(parents=True)
+        (session / "task.json").write_text(json.dumps({"task": "Use the existing account admission.",
+                                                       "workdir": str(self.directory), "effort": "default"}))
+        self.env.update(METTACLAW_ACTIVITY_CALL_SCOPE="parent-conversation", METTACLAW_ACTIVITY_CALL_LANE="interactive",
+                        METTACLAW_ACTIVITY_CALL_CAPACITY="2", METTACLAW_ACTIVITY_INTERACTIVE_RESERVE="1",
+                        METTACLAW_OBSERVED_STRATEGY="0")
+        # Preserve even a ledger selected indirectly by the parent's health path.
+        self.env.pop("METTACLAW_LLM_LEDGER_PATH", None)
+        parent_ledger = self.directory / "llm-budget.sqlite3"
+        self.run_probe('!(println! (work-resume ' + json.dumps(identity) + '))\n',
+                       module="coding_work.metta", cwd=self.directory)
+        deadline = time.monotonic() + 5
+        while not launches.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        args = json.loads(launches.read_text())
+        own = dict(arg.split("=", 1) for arg in args if arg.startswith("METTACLAW_") and "=" in arg)
+        self.assertEqual(own["METTACLAW_LLM_LEDGER_PATH"], str(parent_ledger))
+        self.assertEqual((own["METTACLAW_ACTIVITY_CALL_SCOPE"], own["METTACLAW_ACTIVITY_CALL_LANE"]),
+                         (identity, "background"))
+        self.assertNotIn("METTACLAW_ACTIVITY_CALL_CAPACITY", own)
+        self.assertNotIn("METTACLAW_ACTIVITY_INTERACTIVE_RESERVE", own)
+        self.env.update(own)
+        observed = {}
+        with mock.patch.object(sys, "path", [str(ROOT / "src")] + sys.path), mock.patch.dict(os.environ, self.env, clear=True):
+            import llm_policy
+            import native_lifetime
+            parent = SimpleNamespace(correlation=llm_policy.admit("synthetic", 32), epoch="fixture-parent",
+                                     activity="parent-conversation", lane="interactive", cap=1024)
+            self.assertTrue(native_lifetime.claim(parent))
+            def while_child_is_submitted(_):
+                with native_lifetime.transaction() as db:
+                    observed["active"] = db.execute("SELECT activity,lane FROM native_calls WHERE state IN ('claimed','submitted')").fetchall()
+                # With the parent's slot free, a duplicate child still has no authority.
+                observed["parent_settled"] = native_lifetime.settle(parent, "completed", "parent evidence")
+                replay = SimpleNamespace(correlation=llm_policy.admit("synthetic", 32), epoch="fixture-replay",
+                                         activity=identity, lane="background", cap=1024)
+                observed["replay_claimed"] = native_lifetime.claim(replay)
+                llm_policy.fail(replay.correlation, sent=False)
+                other = SimpleNamespace(correlation=llm_policy.admit("synthetic", 32), epoch="fixture-other",
+                                        activity="another-coding-session", lane="background", cap=1024)
+                observed["extra_background_claimed"] = native_lifetime.claim(other)
+                llm_policy.fail(other.correlation, sent=False)
+            self.server.before_reply = while_child_is_submitted
+            self.server.replies = [reply("The coding worker used the shared account.")]
+            self.run_session(session)
+            self.assertCountEqual(observed["active"], [("parent-conversation", "interactive"), (identity, "background")])
+            self.assertTrue(observed["parent_settled"])
+            self.assertFalse(observed["replay_claimed"])
+            self.assertFalse(observed["extra_background_claimed"])
+            with native_lifetime.transaction() as db:
+                row = db.execute("SELECT state FROM native_calls WHERE activity=?", (identity,)).fetchone()
+            self.assertEqual(row, ("completed",))
+        self.assertEqual(len(self.server.requests), 1)
+        self.assertFalse((session / "llm-budget.sqlite3").exists())
         self.assertEqual(json.loads((session / "state.json").read_text())["status"], "done")
 
     def test_long_runs_have_no_step_cap(self):

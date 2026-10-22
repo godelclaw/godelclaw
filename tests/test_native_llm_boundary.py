@@ -137,6 +137,62 @@ def retained():
         self.assertEqual(body["messages"], [{"role": "system", "content": "system"},
             {"role": "user", "content": "user"}])
 
+    def test_subscription_structured_plan_roundtrips_tools_and_reasoning(self):
+        # The native credential alias is a fixture scoped to this local HTTP
+        # server; account secrets and actual sign-in are outside this test.
+        self.env.update(CETTA_IO_AUTH_STRUCTURED_FIXTURE_URL_PREFIX=self.env["SYNTHETIC_BASE_URL"] + "/",
+                        CETTA_IO_AUTH_STRUCTURED_FIXTURE_HEADER="Authorization",
+                        CETTA_IO_AUTH_STRUCTURED_FIXTURE_ENV="SYNTHETIC_API_KEY",
+                        CETTA_IO_AUTH_STRUCTURED_FIXTURE_PREFIX="Bearer ")
+        session = {"value": {"credential_alias": "STRUCTURED_FIXTURE"},
+                   "api_base": self.env["SYNTHETIC_BASE_URL"] + "/"}
+        request = {"model": "session", "max_tokens": 256, "cache_messages": True,
+                   "messages": [{"role": "system", "content": "coding instructions"},
+                                {"role": "user", "content": "Inspect the existing evidence."}],
+                   "tools": [{"type": "function", "function": {"name": "inspect",
+                             "description": "Read evidence", "parameters": {"type": "object", "properties": {}}}}]}
+        self.peer.reply = {"id": "r", "status": "completed", "output": [
+            {"id": "reason", "type": "reasoning", "encrypted_content": "opaque-fixture"},
+            {"id": "item", "type": "function_call", "call_id": "c17", "name": "inspect", "arguments": "{}"}],
+            "usage": {"input_tokens": 10, "output_tokens": 2}}
+        result = self.directory / "structured.json"
+        output = self.run_guest('!(import! &self ' + json.dumps(str(ROOT / 'src/native_llm.metta')) + ')\n'
+            '!(let* (($request (json-parse ' + json.dumps(json.dumps(request)) + ')) '
+            '($session (json-parse ' + json.dumps(json.dumps(session)) + ')) '
+            '($plan (chatgpt:structured-plan "chatgpt:fixture-model" $request $session)) '
+            '($reply (llm:run $plan))) '
+            '(py-call (native_llm_host.structured_json_result $reply ' + json.dumps(str(result)) + ')))\n')
+        self.assertTrue(result.is_file(), output + self.last_stderr)
+        reply = json.loads(result.read_text())
+        self.assertEqual(reply["finish"], "tool_calls")
+        self.assertEqual(reply["message"]["tool_calls"][0]["id"], "c17")
+        self.assertEqual(reply["message"]["tool_calls"][0]["function"]["name"], "inspect")
+        self.assertEqual(len(self.peer.requests), 1)
+        path, headers, body = self.peer.requests[0]
+        self.assertEqual(path, "/v1/responses")
+        self.assertEqual(headers["Authorization"], "Bearer fixture-secret")
+        self.assertEqual(body["model"], "fixture-model")
+        self.assertTrue(body["stream"])
+        self.assertFalse(body["store"])
+        self.assertNotIn("max_output_tokens", body)
+        self.assertEqual(body["tools"][0]["name"], "inspect")
+        self.assertIn("opaque-fixture", json.dumps(reply["message"]))
+
+        # The next call must return the original reasoning and function-call
+        # occurrence alongside its matching result, not just assistant prose.
+        request["messages"].extend([reply["message"],
+            {"role": "tool", "tool_call_id": "c17", "content": "evidence retained"}])
+        self.run_guest('!(import! &self ' + json.dumps(str(ROOT / 'src/native_llm.metta')) + ')\n'
+            '!(let* (($request (json-parse ' + json.dumps(json.dumps(request)) + ')) '
+            '($session (json-parse ' + json.dumps(json.dumps(session)) + ')) '
+            '($plan (chatgpt:structured-plan "chatgpt:fixture-model" $request $session))) (llm:run $plan))\n')
+        self.assertEqual(len(self.peer.requests), 2)
+        returned = self.peer.requests[1][2]["input"]
+        self.assertIn("opaque-fixture", json.dumps(returned))
+        self.assertTrue(any(item.get("type") == "function_call_output" and
+                            item.get("call_id") == "c17" and item.get("output") == "evidence retained"
+                            for item in returned))
+
     def test_subscription_policy_default_path_is_resolved_and_persistent(self):
         self.env.pop("METTACLAW_CHATGPT_POLICY_PATH", None)
         prefix = f'!(import! &self "{ROOT}/src/native_llm.metta")\n'

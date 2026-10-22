@@ -97,11 +97,12 @@ def _members(db, root):
 
 
 def _pairs(store, db, members):
-    marks = ",".join("?" for _ in members)
+    marks = ",".join("?" for _ in members) if members is not None else "SELECT id FROM requests"
+    parameters = members if members is not None else ()
     proposals = {r["serial"]: dict(r) for r in db.execute(
-        "SELECT * FROM task_proposals WHERE request IN (" + marks + ")", members)}
+        "SELECT * FROM task_proposals WHERE request IN (" + marks + ")", parameters)}
     actions = {r["serial"]: dict(r) for r in db.execute(
-        "SELECT * FROM actions WHERE request IN (" + marks + ")", members)}
+        "SELECT * FROM actions WHERE request IN (" + marks + ") ORDER BY rowid", parameters)}
     # Older journals already have complete admitted proposals and attempts.
     for serial, action in actions.items():
         if serial not in proposals:
@@ -141,6 +142,13 @@ def read(store, identity, offset=0, size=8192):
         frame = projection(store, str(identity)[len("task-frame:"):])
         frame.pop("transcript")
         return _page(identity, frame, offset, size)
+    if str(identity).startswith("task-input:"):
+        request = str(identity)[len("task-input:"):]
+        with store.transaction() as db:
+            row = db.execute("SELECT content FROM requests WHERE id=?", (request,)).fetchone()
+        if row is None:
+            raise ValueError("unknown input identity")
+        return _page(identity, _input(request, row[0]), offset, size)
     with store.transaction() as db:
         owner, serial, position = str(identity).rsplit(":", 2)
         if owner != store.get(db, "owner"):
@@ -185,6 +193,12 @@ def resolve(store, identity, reason):
 
 
 def projection(store, request, trigger="continuation-tick"):
+    if str(request).startswith("conversation:"):
+        with store.transaction() as db:
+            if request != "conversation:" + store.get(db, "owner"):
+                raise ValueError("conversation belongs to another ledger")
+            focus = store.get(db, "context_focus")
+        return conversation_projection(store, focus, trigger)
     with store.transaction() as db:
         root = _root(db, request)
         members = _members(db, root)
@@ -196,6 +210,52 @@ def projection(store, request, trigger="continuation-tick"):
         pairs = _pairs(store, db, members)
     return dict(root=root, focus=request, trigger=str(trigger), requests=requests,
                 notes=notes, transcript=pairs, archive=None)
+
+
+def _input(request, content):
+    return dict(id="task-input:" + request, request=request, command=None,
+                disposition="input", result=content)
+
+
+def _conversation_pairs(store, db):
+    # The existing delivery/capture events give causal order. No second event
+    # journal or change to task ancestry is needed.
+    delivered, captured = {}, {}
+    last = 0
+    for row in db.execute("SELECT sequence,event FROM events ORDER BY sequence"):
+        last = row[0]
+        event = json.loads(row[1])
+        if event.get("kind") == "deliver":
+            delivered.setdefault(event["request"], row[0])
+        elif event.get("kind") == "capture":
+            captured.setdefault(event["serial"], row[0])
+    ordered = [(delivered.get(r["id"], 0), 0, n, _input(r["id"], r["content"]))
+               for n, r in enumerate(db.execute("SELECT id,content FROM requests ORDER BY rowid"))]
+    for pair in _pairs(store, db, None):
+        _, serial, position = pair["id"].rsplit(":", 2)
+        ordered.append((captured.get(int(serial), last + int(serial) + 1),
+                        1, int(position), pair))
+    return [row[3] for row in sorted(ordered, key=lambda row: row[:3])]
+
+
+def conversation_projection(store, request, trigger="continuation-tick"):
+    """The conversation spans frames; focus does not change its evidence set.
+
+    Task ancestry and task-specific retrieval remain separate. The native
+    working view additionally pushes its saved offset and result excerpts
+    into SQL, so it need not reload archived result bodies on every turn.
+    """
+    with store.transaction() as db:
+        root = "conversation:" + store.get(db, "owner")
+        task_root = _root(db, request)
+        requests = [dict(r) for r in db.execute("""SELECT r.id,r.content,r.status,c.kind,c.note
+            FROM requests r JOIN request_context c ON c.request=r.id
+            WHERE r.id IN (SELECT id FROM requests) ORDER BY r.rowid""")]
+        notes = [dict(r) for r in db.execute("""SELECT * FROM task_notes
+            WHERE request IN (SELECT id FROM requests) ORDER BY sequence""")]
+        pairs = _conversation_pairs(store, db)
+    return dict(root=root, task_root=task_root, focus=request, trigger=str(trigger),
+                requests=requests, notes=notes, transcript=pairs, archive=None, offset=0)
 
 
 def compact(view, byte_budget=None, *, measure=None):
@@ -262,12 +322,13 @@ def index_view(view, reason):
 
 def history(store, request, offset=0, count=20):
     """An index for recovering pairs omitted by compaction."""
-    offset = int(offset)
-    if offset < 0:
+    offset, count = int(offset), int(count)
+    if offset < 0 or count < 0:
         raise ValueError("invalid history offset")
     view = projection(store, request)
     pairs = view["transcript"]
+    selected = pairs[offset:] if count == 0 else pairs[offset:offset+count]
     entries = [dict(id=p["id"], command=p["command"], disposition=p["disposition"],
-                    retrieve=["task-read", p["id"], 0]) for p in pairs[offset:offset+count]]
+                    retrieve=["task-read", p["id"], 0]) for p in selected]
     return dict(root=view["root"], entries=entries, total=len(pairs),
                 next=offset+len(entries) if offset+len(entries) < len(pairs) else None)

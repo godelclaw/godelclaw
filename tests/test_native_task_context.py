@@ -154,13 +154,47 @@ class NativeTaskContext(unittest.TestCase):
         self.assertEqual(rendered[1]["request"], "other")
         self.assertEqual(rendered[2]["disposition"], "not_run")
 
-    def full_view(self, fixture, capacity, out):
+    def full_view(self, fixture, capacity, out, focus="guide"):
         prompt = "P_cache_boundary_STABLE_cache_boundary_CONV_cache_boundary_TURN"
-        self.guest(fixture.path, '!(import! &self ./src/task_context_views)\n'
+        stdout = self.guest(fixture.path, '!(import! &self ./src/task_context_views)\n'
             '!(fs:update-text '+json.dumps(str(out))+' "replace" (task:append-context '+json.dumps(prompt)+
-            ' "guide" "continuation-tick" '+json.dumps(str(capacity))+' "model") "" "")\n!(println! TASK_CONTEXT_OK)\n')
+            ' '+json.dumps(focus)+' "continuation-tick" '+json.dumps(str(capacity))+' "model") "" "")\n!(println! TASK_CONTEXT_OK)\n')
+        self.assertTrue(out.is_file(), stdout)
         text = out.read_text()
         return text, json.loads(text[text.rindex("TASK_CONTEXT ") + len("TASK_CONTEXT "):])
+
+    def test_new_frame_keeps_prior_evidence_in_the_working_window(self):
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        for i in range(9): fixture.call([["read-file", str(i)]], ["A_FINDING_%d" % i])
+        before, first = self.full_view(fixture, 400000, fixture.path.parent / "before.txt")
+        fixture.store.accept("group-post", "B_UNRELATED_INPUT", kind="notification")
+        reference.task_context.begin(fixture.store, "group-post", "channel-event", previous="guide", chat="group")
+        fixture.call([["help", "work"]], ["B_RESULT"], "group-post")
+        after, second = self.full_view(fixture, 400000, fixture.path.parent / "after.txt", "group-post")
+        self.assertIn("A_FINDING_0", after)
+        self.assertIn("A_FINDING_8", after)
+        self.assertIn("B_RESULT", after)
+        self.assertIn("B_UNRELATED_INPUT", after)
+        self.assertEqual(second["root"], first["root"])
+        self.assertEqual(second["task_root"], "group-post")
+        self.assertEqual(second["focus"], "group-post")
+        self.assertEqual(second["window"]["transcript_steps"], 12)
+        self.assertEqual(after.split("_cache_boundary_")[2], before.split("_cache_boundary_")[2])
+        self.assertEqual(reference.task_context.history(fixture.store, "guide")["total"], 9)
+        self.assertEqual(reference.task_context.history(fixture.store, "group-post")["total"], 1)
+
+    def test_native_conversation_projection_matches_python_and_preserves_occurrences(self):
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        fixture.call([["read-file", "a"]], ["same observation"])
+        fixture.store.accept("other", "Other input")
+        reference.task_context.begin(fixture.store, "other", "channel-event", previous="guide")
+        fixture.call([["read-file", "b"]], ["same observation"], "other")
+        expected = reference.encoded(reference.task_context.conversation_projection(fixture.store, "other", "channel-event"))
+        out = fixture.path.parent / "conversation.json"
+        self.guest(fixture.path, '!(fs:update-text '+json.dumps(str(out))+
+                   ' "replace" (state:encoded (task:conversation-projection "other" "channel-event" 0 0)) "" "")\n!(println! TASK_CONTEXT_OK)\n')
+        self.assertEqual(out.read_text(), expected)
+        self.assertEqual(len(json.loads(out.read_text())["transcript"]), 4)
 
     def test_whole_window_view_is_append_only_ahead_of_the_turn(self):
         fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
@@ -175,11 +209,11 @@ class NativeTaskContext(unittest.TestCase):
         self.assertIn("CONV", turn); self.assertNotIn("CONV", transcript)
         chunks = [c.strip() for c in transcript.split("\n_cache_chunk_\n")]
         self.assertEqual(len(chunks), 2)
-        self.assertEqual(view["window"]["transcript_steps"], 22)
+        self.assertEqual(view["window"]["transcript_steps"], 23)
         self.assertEqual(view["transcript"], [])
         recent = first[first.index("TASK_RECENT newest steps"):first.rindex("TASK_CONTEXT ")]
-        self.assertEqual(recent.count("\n## step "), 6)
-        self.assertIn("\n## step 16 · [\"read-file\",\"14\"] · returned · id ", recent)
+        self.assertEqual(recent.count("\n## step "), 7)
+        self.assertIn("\n## step 17 · [\"read-file\",\"14\"] · returned · id ", recent)
         self.assertIn("step 14 λ step 14 λ", recent)
         self.assertNotIn("MIDDLE", first)
         self.assertIn("tokens truncated; task-read shows the whole result", first)
@@ -201,17 +235,20 @@ class NativeTaskContext(unittest.TestCase):
         text, _ = self.full_view(fixture, 400000, fixture.path.parent / "dedupe.txt")
         recent = text[text.index("TASK_RECENT newest steps"):text.rindex("TASK_CONTEXT ")]
         self.assertEqual(recent.count(same), 1)
-        self.assertIn("(same result as step 0)", recent)
+        self.assertIn("(same result as step 1)", recent)
 
-    def test_whole_window_compacts_past_ninety_percent_to_the_newest_fifth(self):
+    def test_overflow_cannot_advance_without_a_durable_handoff(self):
         fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
         for i in range(60): fixture.call([["read-file", str(i)]], [("step %d " % i) * 200])
-        _, view = self.full_view(fixture, 20000, fixture.path.parent / "view.txt")
+        # Pure rendering is not permission to discard history. The live driver
+        # must first generate and atomically publish a successful handoff.
+        output = self.guest(fixture.path, '!(import! &self ./src/task_context_views)\n'
+            '!(println! (task:append-context "prompt" "guide" "continuation-tick" "20000" "model"))\n'
+            '!(println! TASK_CONTEXT_OK)\n')
+        self.assertIn('ContextPreparationFailed "context-compaction-required"', output)
         with fixture.store.transaction() as db:
-            start = int(json.loads(db.execute("SELECT value FROM meta WHERE key='task_window:guide'").fetchone()[0]))
-        self.assertGreater(start, 0)
-        self.assertEqual(view["archive"]["count"], str(start) if isinstance(view["archive"]["count"], str) else start)
-        self.assertLessEqual(view["window"]["transcript_steps"], 60 - start)
+            self.assertEqual(db.execute("SELECT count(*) FROM meta WHERE key LIKE 'task_window:%'").fetchone()[0], 0)
+        self.assertEqual(reference.task_context.history(fixture.store, "guide")["total"], 60)
 
     def test_legacy_history_keeps_numeric_order_and_original_identities(self):
         fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)

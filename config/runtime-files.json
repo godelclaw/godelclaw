@@ -150,6 +150,7 @@
   "src/command_pipeline.metta",
   "src/commitment_projection.py",
   "src/context_budget.py",
+  "src/context_compaction.metta",
   "src/context_sources.py",
   "src/development_state.py",
   "src/durable_telegram.py",

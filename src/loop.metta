@@ -230,8 +230,7 @@
           ($send (addition-protected-request (coding-request-prompt $request) (maxOutputToken)))
           ;; Normal operation records shape and identity, never prompt bytes.
           ;; The prompt already lives in the owned task/history stores.
-          ($_ (println! (CHARS_SENT: (string_length $send)
-                                    sha256 (str:sha256 $send))))
+          ($_ (addition-request-observation $send))
           ($rmode (policy-reasoning (loop-active-policy $periphery)
                                     (reasoningMode)))
           ($respi (addition-model-call

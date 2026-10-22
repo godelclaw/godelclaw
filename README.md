@@ -873,6 +873,26 @@ bytes and `(task-history "request" offset [count])` defaults to 20 entries;
 count zero retrieves all entries. These are presentation windows, not storage
 limits. Compacted evidence has explicit recovery links and is never deleted.
 
+In full context mode, the working conversation spans task frames. Incoming
+requests and tool results retain their original order and identities when
+focus changes; task ancestry still controls task-specific retrieval. Complete
+transcript chunks remain stable for provider caching. At the model-window
+threshold, a tool-free model call folds older records into a handoff. The
+summary and its source frontier are published together in one SQLite
+transaction. An empty, incomplete or failed handoff leaves the old frontier
+intact and retains input for the ordinary retry path. Original records remain
+available through `task-history`, `task-read` and `request-read`.
+
+`work` starts an independent coding session with an append-only transcript,
+plan and steering inbox. `work-status`, `work-steer`, `work-stop` and
+`work-resume` connect it to the agent loop. Sessions run until a complete
+model reply calls no tools, with no step cap. New guidance received during
+that final reply continues the same session. A resumed session retains its
+evidence and reports interrupted tool effects as uncertain instead of
+replaying them. Coding calls share the account's provider ledger while
+keeping their own call identities and health state. Structured sessions use
+the selected API provider or the native ChatGPT subscription route.
+
 Credential redaction, configured chat permissions, occurrence identities for
 message delivery, memory supervision, and the operator stop remain in place.
 An uncertain Telegram delivery never causes an automatic resend and does not

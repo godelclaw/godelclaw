@@ -5,6 +5,7 @@ only scoped credential aliases, ordinary headers and non-secret plans cross
 the guest boundary. Upstream transformations remain upstream host helpers.
 """
 import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -25,6 +26,18 @@ import provider_stream
 
 _session_epoch = uuid.uuid4().hex
 _claim_lock = threading.Lock()
+
+
+def call_scope():
+    configured = os.environ.get("METTACLAW_ACTIVITY_CALL_SCOPE", "")
+    if configured or os.environ.get("METTACLAW_OBSERVED_STRATEGY") != "1":
+        return configured
+    identity = os.environ.get("METTACLAW_STRATEGY_PATH") or os.environ.get("METTACLAW_ENGINE_STATE_PATH", "")
+    return "agent-" + hashlib.sha256(identity.encode()).hexdigest()[:24]
+
+
+def call_lane():
+    return os.environ.get("METTACLAW_ACTIVITY_CALL_LANE") or ("interactive" if call_scope() else "")
 
 
 def enabled():
@@ -79,8 +92,7 @@ def _plan(kind, model, tokens, builder):
                     options[field] = request["extensions"][field]
             provider_protocol.synthetic_body(options)  # validate before budget admission
         reserve = {}
-        if (os.environ.get("METTACLAW_ACTIVITY_CALL_SCOPE") and
-                os.environ.get("METTACLAW_ACTIVITY_CALL_LANE") == "background"):
+        if call_scope() and call_lane() == "background":
             reserve = dict(reserved_output=int(os.environ.get("METTACLAW_ACTIVITY_RESERVED_OUTPUT", "0")),
                            reserved_requests=int(os.environ.get("METTACLAW_ACTIVITY_INTERACTIVE_RESERVE", "1")))
         ticket = llm_policy.admit(provider["name"], tokens,
@@ -105,8 +117,7 @@ def _plan(kind, model, tokens, builder):
         import strategy_host
         captured_guard = strategy_host.guard() if strategy_host.enabled() else None
         return SimpleNamespace(kind=kind, encoding="default", ready="true", correlation=ticket, protocol=provider["protocol"],
-            activity=os.environ.get("METTACLAW_ACTIVITY_CALL_SCOPE", ""),
-            lane=os.environ.get("METTACLAW_ACTIVITY_CALL_LANE", ""),
+            activity=call_scope(), lane=call_lane(),
             epoch=_session_epoch, provider=provider["name"], base=provider["base"], headers=json.dumps(headers),
             request=json.dumps(request, ensure_ascii=False), sent=False, claimed=False,
             guard=captured_guard, stream=stream,
@@ -154,6 +165,20 @@ def structured_json_plan(text):
     return structured_plan(json.loads(str(text)))
 
 
+def for_compaction(plan):
+    """Reuse the selected provider and its admission, without claiming a turn.
+
+    This also works with subscription command plans: their wire encoding stays
+    unchanged, while their complete plain-text reply is returned as a message.
+    """
+    plan.purpose = "compaction"
+    return plan
+
+
+def _compaction(plan):
+    return getattr(plan, "purpose", None) == "compaction"
+
+
 def _box(value):
     """The box iter mode unwraps; outside iter mode, such as in a coding
     session, iter_host is not importable and a plain holder does the same."""
@@ -170,8 +195,11 @@ def structured_json_result(box, path):
     A file, because text returned through py-call becomes an interned symbol
     in the PeTTa lane, and model replies are large and never repeat."""
     value = getattr(box, "value", box)
-    text = json.dumps({"message": value.get("message"), "finish": value.get("finish"),
-                       "usage": value.get("usage") or {}}, ensure_ascii=False)
+    payload = {"message": value.get("message"), "finish": value.get("finish"),
+               "usage": value.get("usage") or {}}
+    if "call_id" in value:
+        payload["call_id"] = value["call_id"]
+    text = json.dumps(payload, ensure_ascii=False)
     temporary = str(path) + ".tmp"
     with open(temporary, "w", encoding="utf-8") as stream:
         stream.write(text)
@@ -251,7 +279,8 @@ def submitted(plan, transport_id):
     import process_supervision
     process_supervision.provider_wait(plan.timeout / 1000)
     native_lifetime.submitted(plan, transport_id)
-    cognitive_health.turn_started(plan.provider)
+    if not _compaction(plan):
+        cognitive_health.turn_started(plan.provider)
     return True
 
 
@@ -309,7 +338,8 @@ def waiting(plan, count=0, quiet=0):
     plan.last_progress_record = now
     plan.last_soft = soft
     native_lifetime.progress(plan, count, quiet, soft)
-    cognitive_health.provider_progress(count, quiet, soft, plan.timeout)
+    if not _compaction(plan):
+        cognitive_health.provider_progress(count, quiet, soft, plan.timeout)
     import process_supervision
     process_supervision.provider_data(count)
     return 1
@@ -332,12 +362,17 @@ def finish(plan, epoch, correlation, encoded, canonical):
     import strategy_host
     native_lifetime.settle(plan, "completed", str(canonical))
     result["transport"] = "native"
-    synthetic_llm._completion_metadata(result, getattr(plan, "prompt_layout", None))
-    if hasattr(plan, "prompt_text"):
+    if not _compaction(plan):
+        synthetic_llm._completion_metadata(result, getattr(plan, "prompt_layout", None))
+    if getattr(plan, "prompt_text", None) and not _compaction(plan):
         import context_budget
         context_budget.observe(plan.prompt_text, result.get("usage", {}))
     if plan.provider == "anthropic":
         synthetic_llm._tally_anthropic(result["usage"])
+    if _compaction(plan):
+        return _box({"message": result["choices"][0]["message"], "finish": reason,
+                     "llm_result": boundary, "usage": result.get("usage", {}),
+                     "call_id": plan.correlation})
     if plan.kind == "structured":
         cognitive_health.turn_completed(len(str(encoded).encode()))
         return _box({"message": result["choices"][0]["message"],
@@ -355,7 +390,7 @@ def finish(plan, epoch, correlation, encoded, canonical):
 
 def duplicate_plan(plan):
     # Do not mutate the original plan's in-flight admission transaction.
-    if plan.kind == "command":
+    if plan.kind == "command" and not _compaction(plan):
         return synthetic_llm._empty_action(RuntimeError("duplicate native plan"))
     raise RuntimeError("duplicate native plan")
 
@@ -403,6 +438,8 @@ def failed(plan, correlation, kind, status=0):
     error.status = int(status) or None
     if getattr(plan, "retry_after", None) is not None:
         error.retry_after = plan.retry_after
+    if _compaction(plan):
+        raise RuntimeError("context compaction provider failed: " + type(error).__name__) from None
     if plan.kind == "command":
         return synthetic_llm._empty_action(error)
     synthetic_llm._empty_action(error)

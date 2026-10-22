@@ -1,7 +1,7 @@
 !(import! &self ./src/topic_jobs.py)
 (= (getLegacySkills)
    (;INTERNAL:
-    "- Coding mode for real work: (work \"task\") or (work \"task\" \"workdir\") starts a session that keeps working (plan, commands, patches, tests) until done and mails you its report; meanwhile you stay free. (work-status) lists sessions, (work-status \"id\") shows plan and report, (work-steer \"id\" \"text\") adds guidance, (work-stop \"id\") stops it. CeTTa only."
+    "- Coding mode for real work: (work \"task\") or (work \"task\" \"workdir\") starts a session that keeps working (plan, commands, patches, tests) until done and mails you its report; meanwhile you stay free. (work-status) lists sessions, (work-status \"id\") shows plan and report, (work-steer \"id\" \"text\") adds guidance, (work-resume \"id\") continues the same finished or interrupted session, and (work-stop \"id\") stops it. CeTTa only."
     "- Send native peer mail: (mail-send \"name\" \"text\"). Incoming mail enters a turn automatically. When it asks about work you can inspect, inspect it first (the commit, files, logs or a run) across as many steps as it takes, then reply with mail-send from what you found; the sender sees nothing until you reply. Mail from another account shows its sender as \"account/agent\"; mail-send to that name replies into its inbox. (mail-receive) checks now. CeTTa only."
     "- Discover module-registered settings (CeTTa): (settings) or (settings \"namespace\"); inspect/change one with (setting \"namespace\" \"key\" [value]). Values, defaults, units, domains and persistence come from each module. New registrations appear automatically; (help \"settings\") describes the registration protocol."
     "- Remember a particular string such as skills and memories: (remember \"string\")"
@@ -31,7 +31,7 @@
     "- Reversibly disable or enable one Iter transformation using the leading-underscore convention: (iter-transform-disable \"10_name.metta\") | (iter-transform-enable \"10_name.metta\")"
     "- Inspect authoritative command receipts: (command-receipts), then (command-receipts \"NEXT_CURSOR\") for more"
     "- Task view: the whole model window by default. (context-policy) shows it, (context-policy task_tokens) opts into a token budget, (context-policy \"full\") returns to the whole window. Older evidence remains retrievable."
-    "- Task evidence: (task-history \"request-id\" \"offset\") indexes pairs; (task-read \"call-id\" \"offset\") recovers full results. (task-note \"findings, uncertainties and next steps\" \"JSON list of call IDs\") retains source references."
+    "- Task evidence: the working transcript spans task frames; focus does not erase earlier work. (task-history \"request-id\" \"offset\") indexes one task; use TASK_CONTEXT.root for the conversation-wide archive. (task-read \"call-id\" \"offset\") recovers full results. (task-note \"findings, uncertainties and next steps\" \"JSON list of call IDs\") retains source references."
     "- Separate topic notes, always keeping operator messages reachable: (topics) | (topic-select \"name\") | (topic-note \"notes\")"
     ;SHELL AND FILE I/O:
     "- Shell: (shell \"command\" [timeout-seconds]); default 120s, 0 for no deadline. Partial output survives timeout."

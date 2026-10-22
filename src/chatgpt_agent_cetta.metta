@@ -188,8 +188,8 @@
           ($first (py-call (operator.getitem $wait "first")))
           ($idle (py-call (operator.getitem $wait "idle")))
           ($cap (chatgpt-policy "response-bytes"))
-          ($activity (system:getenv-or-default "METTACLAW_ACTIVITY_CALL_SCOPE" ""))
-          ($lane (system:getenv-or-default "METTACLAW_ACTIVITY_CALL_LANE" ""))
+          ($activity (py-call (native_llm_host.call_scope)))
+          ($lane (py-call (native_llm_host.call_lane)))
           ; Subscription quotas are independent of API-key billing/cooldowns.
           ($ticket (py-call (llm_policy.admit "chatgpt" $tokens)))
           ($plan (py-call (types.SimpleNamespace))))
@@ -203,6 +203,23 @@
         ("request" $wire-request) ("timeout" $hard) ("soft" $soft) ("connect" $connect)
         ("first" $first) ("idle" $idle) ("cap" $cap) ("prompt_text" $prompt)
         ("activity" $activity) ("lane" $lane)))))
+
+; Structured sessions use the same authenticated subscription route. Only the
+; request/encoding changes; admission, peer-owned credentials and recovery are
+; identical to ordinary agent calls.
+(= (chatgpt:structured-plan $selected $request $session)
+   (let* (((JsonNumber $token-text) (llm:v1:get $request "max_tokens"))
+          ($tokens (str:string->number $token-text))
+          ($plan (chatgpt:command-plan $selected $tokens "default" "" $session))
+          ($model (str:byte-slice $selected 8 (str:byte-length $selected)))
+          ((JsonObject $fields) $request)
+          ($uncached (llm:v1:without $fields "cache_messages"))
+          ($remaining (llm:v1:without $uncached "cache_ttl"))
+          ($portable (JsonObject $remaining))
+          ($named (llm:v1:with $portable "model" (JsonString $model)))
+          ($canonical (llm:v1:with $named "role_policy" (JsonString "merge-system-developer")))
+          ($wire (llm:v1:render $canonical)))
+     (chatgpt:attributes $plan (("kind" "structured") ("request" $wire)))))
 (= (chatgpt:command $selected $tokens $effort $prompt)
    (let $session-value (chatgpt:session)
     (case $session-value

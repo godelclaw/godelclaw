@@ -37,9 +37,17 @@
      $selected $legacy $system $activity $advertised))
 
 (= (addition-model-call $model $tokens $reasoning $request $wake)
-   (if (== (py-call (strategy_host.capture $request $wake)) 1)
-       (llm:command $model $tokens $reasoning $request)
-       (progn (py-call (cognitive_health.turn_failed "strategy-not-ready")) "()")))
+   (case $request
+     (((ContextPreparationFailed $reason) (py-call (strategy_host.preparation_failed $reason)))
+      ($ready
+        (if (== (py-call (strategy_host.capture $ready $wake)) 1)
+            (llm:command $model $tokens $reasoning $ready)
+            (progn (py-call (cognitive_health.turn_failed "strategy-not-ready")) "()"))))))
+
+(= (addition-request-observation $request)
+   (case $request
+     (((ContextPreparationFailed $reason) (println! (CONTEXT_PREPARATION_FAILED: $reason)))
+      ($ready (println! (CHARS_SENT: (string_length $ready) sha256 (str:sha256 $ready)))))))
 
 (= (addition-balance-response $raw)
    (model-response-balance (py-call (strategy_host.normalize_response $raw))))

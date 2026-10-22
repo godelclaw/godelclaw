@@ -75,6 +75,32 @@ class TaskContextTests(unittest.TestCase):
                          ["new"])
         self.assertNotIn("old task evidence", encoded(view))
 
+    def test_conversation_survives_independent_frames_without_merging_tasks(self):
+        self.call([["read-file", "source-a"]], ["same source observation"])
+        first = task_context.conversation_projection(self.store, "guide")
+        identity = first["transcript"][1]["id"]
+        task_context.note(self.store, "guide", "Finding from A", encoded([identity]))
+        self.store.accept("unrelated", "Unrelated group post", kind="notification")
+        task_context.begin(self.store, "unrelated", "channel-event", previous="guide", chat="group")
+        self.call([["read-file", "source-b"]], ["same source observation"], "unrelated")
+        fresh = Ledger(self.path)
+        view = task_context.conversation_projection(fresh, "unrelated")
+        self.assertEqual(view["root"], first["root"])
+        self.assertEqual(view["task_root"], "unrelated")
+        self.assertEqual(view["focus"], "unrelated")
+        self.assertEqual([p["request"] for p in view["transcript"]], ["guide", "guide", "unrelated", "unrelated"])
+        self.assertEqual(len({p["id"] for p in view["transcript"]}), 4)
+        self.assertEqual([p["result"] for p in view["transcript"] if p["disposition"] != "input"], ["same source observation"] * 2)
+        self.assertEqual(view["notes"][0]["text"], "Finding from A")
+        self.assertEqual(task_context.projection(fresh, "unrelated")["root"], "unrelated")
+        self.assertEqual(task_context.history(fresh, "guide")["total"], 1)
+        self.assertEqual(task_context.history(fresh, view["root"])["total"], 4)
+        self.assertEqual(json.loads(task_context.read(fresh, identity)["text"])["result"], "same source observation")
+
+    def test_virtual_conversation_scope_cannot_address_another_ledger(self):
+        with self.assertRaisesRegex(ValueError, "another ledger"):
+            task_context.projection(self.store, "conversation:foreign")
+
     def test_correction_during_wait_survives_until_correlated_resumption(self):
         self.call([["read-file","contract"]],["earlier finding"])
         with self.store.transaction() as db:
