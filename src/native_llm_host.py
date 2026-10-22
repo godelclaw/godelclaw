@@ -431,6 +431,9 @@ def finish(plan, epoch, correlation, encoded, canonical):
     try:
         content = model_commentary.finish(plan, content, reason, result["choices"][0]["message"])
     except model_commentary.OutputError as error:
+        code = {"unfinished command output": "incomplete-output",
+                "refused or structured command output": "refused-or-structured-output"}.get(str(error), "invalid-envelope")
+        native_lifetime.command_output_rejected(plan, code)
         return synthetic_llm._empty_action(error)
     if reason == "length":
         import helper

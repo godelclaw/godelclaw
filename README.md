@@ -1076,6 +1076,11 @@ receipts. The packet informs the model and does not gate execution. Strict stand
 
 Managed command-mode calls can set `METTACLAW_MODEL_COMMENTARY=1` to request
 an explicit JSON envelope with `commentary` and `commands` string fields.
+Rejected replies retain their public answer as evidence. The next preparation
+reports the format error and its receipt ID; `(model-result "id" offset)` pages
+through the public text without provider reasoning. A rejected reply executes
+no commands and leaves its input unsettled. A later accepted reply clears the
+format reminder.
 The authored commentary goes to the configured local public worklog; only the
 command string continues to the ordinary command parser and effect broker.
 Structured coding-mode calls retain their existing contract. The feature is

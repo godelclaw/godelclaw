@@ -41,6 +41,30 @@ class NativeCommentaryTest(unittest.TestCase):
         self.assertEqual([n['text'] for n in self.notes()], ['Checking display layout.'])
         self.assertEqual(len(self.peer.requests), 1)
 
+    def test_rejected_prose_is_retained_and_next_turn_receives_actionable_feedback(self):
+        import sqlite3
+        text = "A substantive review that has not been sent to its requester."
+        self.peer.reply['choices'][0]['message']['content'] = text
+        output = self.call()
+        self.assertIn('(RESULT ())', output)
+        with sqlite3.connect(self.directory / 'ledger.db') as db:
+            identity, state, reason = db.execute(
+                "SELECT id,state,reason FROM native_calls ORDER BY created DESC LIMIT 1").fetchone()
+        self.assertEqual((state, reason), ('completed', 'command-output:invalid-envelope'))
+        self.assertEqual(self.notes(), [])
+        feedback = self.run_guest(f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'
+            '!(println! (py-call (native_lifetime.evidence_context)))\n'
+            '!(println! (py-call (native_lifetime.model_result "' + identity + '")))\n')
+        self.assertIn('PREVIOUS_COMMAND_OUTPUT_REJECTED', feedback)
+        self.assertIn(text, feedback)
+        self.assertIn('No commands', feedback)
+        self.peer.reply['choices'][0]['message']['content'] = json.dumps(
+            dict(commentary='', commands='((nop))'))
+        self.assertIn('(RESULT ((nop)))', self.call())
+        feedback = self.run_guest(f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'
+            '!(println! (py-call (native_lifetime.evidence_context)))\n')
+        self.assertNotIn('PREVIOUS_COMMAND_OUTPUT_REJECTED', feedback)
+
     def test_responses_protocol_preserves_the_same_separation(self):
         from test_responses_stream_engine import response
         reply = response()

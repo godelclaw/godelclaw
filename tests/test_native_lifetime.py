@@ -232,6 +232,38 @@ class NativeLifetimeTest(unittest.TestCase):
         self.assertTrue(native_lifetime.settle(internal, "completed", "handoff"))
         self.assertTrue(native_lifetime.claim(self.plan()))
 
+    def test_rejected_public_answer_is_recoverable_and_feedback_clears_after_acceptance(self):
+        import json
+        plan = self.plan(); self.assertTrue(native_lifetime.claim(plan))
+        plan.cap = 16384
+        text = "Recovered review λ " * 700
+        boundary = dict(items=[dict(kind="message", role="assistant", parts=[
+            dict(kind="reasoning", text="PRIVATE_REASONING_MUST_NOT_APPEAR"),
+            dict(kind="text", text=text)])])
+        native_lifetime.settle(plan, "completed", json.dumps(boundary))
+        self.assertTrue(native_lifetime.command_output_rejected(plan, "invalid-envelope"))
+        notice = native_lifetime.evidence_context()
+        self.assertIn("PREVIOUS_COMMAND_OUTPUT_REJECTED", notice)
+        self.assertIn(plan.correlation, notice)
+        self.assertIn("No commands", notice)
+        chunks, offset = [], 0
+        while True:
+            raw = native_lifetime.result(plan.correlation, offset)
+            self.assertLessEqual(len(raw), 2400)
+            self.assertNotIn("PRIVATE_REASONING", raw)
+            value = json.loads(raw)
+            self.assertFalse(value["action_authority"])
+            self.assertEqual(value["representation"], "assistant-text")
+            chunks.append(value["result"])
+            if value["next_offset"] is None:
+                break
+            self.assertGreater(value["next_offset"], offset)
+            offset = value["next_offset"]
+        self.assertEqual("".join(chunks), text)
+        accepted = self.plan(); self.assertTrue(native_lifetime.claim(accepted))
+        native_lifetime.settle(accepted, "completed", "accepted")
+        self.assertNotIn("PREVIOUS_COMMAND_OUTPUT_REJECTED", native_lifetime.evidence_context())
+
 
 if __name__ == "__main__":
     unittest.main()

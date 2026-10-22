@@ -274,5 +274,6 @@
 (= (command-receipts $cursor) (py-call (strategy_host.command_receipts $cursor)))
 (= (model-jobs) (py-call (native_lifetime.jobs)))
 (= (model-result $id) (py-call (native_lifetime.model_result $id)))
+(= (model-result $id $offset) (py-call (native_lifetime.model_result $id $offset)))
 
 !(import! &self ./src/command_dispatch)

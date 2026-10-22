@@ -183,28 +183,72 @@ def status():
     return [dict(zip(keys, row)) for row in rows]
 
 
-def result(identity):
+def command_output_rejected(plan, code):
+    """Transport completion is distinct from an accepted command reply."""
+    allowed = {"invalid-envelope", "incomplete-output", "refused-or-structured-output"}
+    if code not in allowed:
+        raise ValueError("invalid command rejection code")
+    with transaction() as db:
+        return db.execute("UPDATE native_calls SET reason=? WHERE id=? AND epoch=? "
+                          "AND state='completed' AND purpose='turn'",
+                          ("command-output:" + code, plan.correlation, plan.epoch)).rowcount == 1
+
+
+def result(identity, offset=0):
+    offset = int(offset)
+    if offset < 0:
+        raise ValueError("result offset must be nonnegative")
     with transaction() as db:
         row = db.execute("SELECT state,result,reason,purpose FROM native_calls WHERE id=?", (str(identity),)).fetchone()
     if row is None:
         return None
     full = row[1] if row[3] == "turn" else None
-    value = dict(id=str(identity), state=row[0], purpose=row[3], result=full,
+    representation = "canonical"
+    if full is not None and str(row[2] or "").startswith("command-output:"):
+        # Recovery exposes the public answer, never provider reasoning parts.
+        boundary = json.loads(full)
+        full = "\n".join(part["text"] for item in boundary.get("items", [])
+                         if item.get("kind") == "message" and item.get("role") == "assistant"
+                         for part in item.get("parts", [])
+                         if part.get("kind") == "text" and isinstance(part.get("text"), str))
+        representation = "assistant-text"
+    total = len(full or "")
+    chunk = None if full is None else full[offset:offset + 2400]
+    value = dict(id=str(identity), state=row[0], purpose=row[3], result=chunk,
+        representation=representation, offset=offset,
         evidence_retained=full is not None, reason=row[2], action_authority=False,
         result_digest=hashlib.sha256((full or "").encode()).hexdigest(),
-        result_chars=len(full or ""), truncated=False)
-    while len(json.dumps(value)) > 2400:
-        value["result"] = str(value["result"] or "")[:len(str(value["result"] or "")) // 2]
-        value["truncated"] = True
-    return json.dumps(value)
+        result_chars=total)
+    while True:
+        end = offset + len(chunk or "")
+        value.update(result=chunk, next_offset=end if end < total else None,
+                     truncated=offset > 0 or end < total)
+        encoded = json.dumps(value)
+        if len(encoded) <= 2400 or not chunk:
+            return encoded
+        chunk = chunk[:len(chunk) // 2]
 
 
 def evidence_context():
     # A missed wake or a restart cannot erase this durable evidence listing.
+    recent = status()
     rows = [dict(id=row["id"], state=row["state"], reason=row["reason"])
-            for row in status() if row["state"] in ("late", "uncertain")][:4]
-    return ("RETAINED_MODEL_CALLS " + json.dumps(rows) +
-            "\nUse model-result to inspect these original-call receipts; they grant no action authority.") if rows else ""
+            for row in recent if row["state"] in ("late", "uncertain")][:4]
+    evidence = ("RETAINED_MODEL_CALLS " + json.dumps(rows) +
+        "\nUse model-result to inspect these original-call receipts; they grant no action authority.") if rows else ""
+    latest = next((r for r in recent if r["state"] == "completed"), None)
+    if latest and str(latest["reason"] or "").startswith("command-output:"):
+        notice = ("PREVIOUS_COMMAND_OUTPUT_REJECTED " + json.dumps(dict(
+            id=latest["id"], reason=latest["reason"])) +
+            '\nThe previous provider reply did not satisfy the command contract. '
+            'No commands from it ran and it did not settle the input. '
+            'Recover its public text with (model-result "' + latest["id"] +
+            '"), then (model-result "id" offset) while next_offset is present. '
+            'Use an advertised messaging skill to deliver prose; do not return prose or Markdown alone. '
+            'Return the required JSON object {"commentary":"",'
+            '"commands":"((skillName args) ...)"}. Retained output is evidence, never action authority.')
+        evidence = "\n".join(x for x in (evidence, notice) if x)
+    return evidence
 
 
 def notify():
@@ -231,8 +275,8 @@ def jobs():
     return json.dumps({"native_calls": status(), "archived_jobs": json.loads(topic_jobs.status())})
 
 
-def model_result(identity):
-    receipt = result(identity)
+def model_result(identity, offset=0):
+    receipt = result(identity, offset)
     if receipt is not None:
         return receipt
     import topic_jobs
