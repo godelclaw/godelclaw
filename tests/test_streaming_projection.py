@@ -12,10 +12,25 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path[:0]=[str(ROOT/'src'),str(ROOT/'ui/worklog')]
 import stream_sink
 from stream_lifecycle import TRANSITIONS
-from viewer import Reader,clean,lines
+from viewer import Reader,clean,lines,save_checkpoint,load_checkpoint
 
 
 class ProjectionLaws(unittest.TestCase):
+    def test_checkpoint_reconnect_reads_only_new_bytes_and_respects_epoch(self):
+        with tempfile.TemporaryDirectory() as d:
+            w=stream_sink.Writer(d,'s');w.emit(dict(kind='text.delta',item='i',text='first'));w.flush(2)
+            r,p=Reader(d),stream_sink.Projection()
+            for event in r.read():p.apply(event)
+            checkpoint=Path(d)/'viewers/state.json';epoch=(True,'initial')
+            save_checkpoint(checkpoint,r,p,epoch)
+            r2,p2=Reader(d),stream_sink.Projection()
+            self.assertTrue(load_checkpoint(checkpoint,r2,p2,epoch))
+            self.assertEqual(r2.read(),[]);self.assertEqual(p2.sessions,p.sessions)
+            w.emit(dict(kind='text.delta',item='i',text='second'));w.flush(2)
+            rows=r2.read();self.assertEqual(len(rows),1);p2.apply(rows[0])
+            self.assertEqual(next(iter(p2.sessions['s']['items'].values()))['text'],'firstsecond')
+            self.assertFalse(load_checkpoint(checkpoint,Reader(d),stream_sink.Projection(),(True,'new')))
+
     def test_generated_lifecycle_is_the_real_projection_transition(self):
         events={"ProviderText":("text.delta","provider"),"ProviderTool":("tool.forming","provider"),
             "ExecutorStart":("tool.started","executor"),"ExecutorFinish":("tool.finished","executor"),

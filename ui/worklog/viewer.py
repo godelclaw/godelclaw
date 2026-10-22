@@ -1,5 +1,7 @@
 """Local working display over typed observations; never imports the live agent."""
 import argparse
+import atexit
+import hashlib
 import json
 import os
 import re
@@ -11,6 +13,35 @@ import unicodedata
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 from stream_sink import Projection, control
+
+
+def save_checkpoint(path, reader, projection, epoch):
+    value={"version":1,"epoch":epoch,"offsets":reader.offsets,"seen":projection.seen,
+        "sessions":{sid:{**s,"items":[[list(k),v] for k,v in s["items"].items()]}
+                    for sid,s in projection.sessions.items()}}
+    try:
+        path.parent.mkdir(parents=True,exist_ok=True)
+        temporary=path.with_suffix('.'+str(os.getpid())+'.tmp')
+        temporary.write_text(json.dumps(value,ensure_ascii=False))
+        os.replace(temporary,path)
+    except (OSError,ValueError,TypeError):pass
+
+
+def load_checkpoint(path, reader, projection, epoch):
+    try:
+        value=json.loads(path.read_text())
+        if value['version']!=1 or value['epoch']!=list(epoch):return False
+        sessions={sid:{**s,"items":{tuple(k):v for k,v in s['items']}}
+                  for sid,s in value['sessions'].items()}
+        for session in sessions.values():
+            if 'owner' in session:session['owner']=tuple(session['owner'])
+            for item in session['items'].values():
+                if 'owner' in item:item['owner']=tuple(item['owner'])
+        offsets={str(k):(int(v[0]),int(v[1])) for k,v in value['offsets'].items()}
+        seen={str(k):int(v) for k,v in value['seen'].items()}
+        reader.offsets,projection.sessions,projection.seen=offsets,sessions,seen
+        return True
+    except (OSError,ValueError,KeyError,TypeError):return False
 
 
 def clean(text):
@@ -145,10 +176,17 @@ def main(argv=None):
     args = parser.parse_args(argv)
     reader, projection = Reader(args.dir), Projection(tail_chars=16777216 if args.full else 12000)
     previous_epoch = control(args.dir)
+    checkpoint=args.dir/"viewers"/(hashlib.sha256((args.session or '*').encode()).hexdigest()[:16]+'.json')
+    use_checkpoint=not args.full and not args.json
+    if use_checkpoint:load_checkpoint(checkpoint,reader,projection,previous_epoch)
+    last_saved=time.monotonic()
+    def save():
+        if use_checkpoint:save_checkpoint(checkpoint,reader,projection,previous_epoch)
+    if use_checkpoint:atexit.register(save)
     plain = not sys.stdout.isatty() and not args.once and not args.json
     plain_key = None
     def update():
-        nonlocal projection, previous_epoch, plain_key
+        nonlocal projection, previous_epoch, plain_key, last_saved
         epoch = control(args.dir)
         epoch_changed = epoch != previous_epoch
         if epoch_changed:
@@ -168,9 +206,24 @@ def main(argv=None):
                     print(clean(record.get("text","")),end="",flush=True)
                 elif record["kind"] in ("tool.finished","session.finished","gap"):
                     print("\n"+clean(record.get("status",""))+" "+clean(record.get("text","")),flush=True)
+        # This is a viewport cache, not the task transcript. Raw observations
+        # and execution artifacts remain available for explicit retrieval.
+        if not args.full:
+            while len(projection.sessions)>32:
+                oldest=min(projection.sessions,key=lambda sid:projection.sessions[sid]['updated'])
+                del projection.sessions[oldest]
+        if use_checkpoint and time.monotonic()-last_saved>=5:
+            save();last_saved=time.monotonic()
         return projection.refresh_owners() or bool(records) or epoch_changed
     update()
     if args.once:
+        while True:
+            records=reader.read()
+            if not records:break
+            for record in records:
+                projection.apply(record)
+                if args.json:print(json.dumps(record,ensure_ascii=False))
+        projection.refresh_owners()
         if not args.json: print("\n".join(lines(projection, args.session, args.full)))
         return 0
     if args.json or not sys.stdout.isatty():
