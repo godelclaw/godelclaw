@@ -199,6 +199,9 @@ class CodingSessionTests(unittest.TestCase):
         events=[json.loads(l) for p in (self.directory/'display').glob('*.jsonl') for l in p.read_text().splitlines()]
         self.assertEqual(len([e for e in events if e['kind']=='tool.started']),1)
         self.assertEqual(len([e for e in events if e['kind']=='tool.finished']),1)
+        second_finished=[e['time'] for e in events if e['kind']=='attempt.finished'][1]
+        second_output=[e['time'] for e in events if e['kind']=='tool.output' and 'second' in e.get('text','')][0]
+        self.assertLess(second_output,second_finished,"yielded output waited for model completion")
 
     def test_long_output_is_cut_in_the_middle_and_steering_is_folded_in(self):
         workspace = self.directory / "workspace"

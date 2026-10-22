@@ -1,8 +1,12 @@
 ; Native process ownership and incremental file observation. The saved record
 ; is evidence, never permission to relaunch a process after a restart.
-!(import! &self (library io))
+!(import! &self io)
+!(import! &self fs)
+!(import! &self system)
+!(import! &self str)
+!(import! &self ./src/coding_values.metta)
 !(import! &self ./src/stream_sink.py)
-(StreamProcessPump)
+!(import! &self ./src/coding_io.py)
 
 (= (coding:execution $id)
    (collapse (match &self (CodingProcess $id $handle $reader $decoder $dir $log $start)
@@ -38,9 +42,10 @@
    (if (== $records ()) 1
      (progn (coding:observe (car-atom $records)) (coding:harvest-list (cdr-atom $records)))))
 (= (coding:harvest)
-   (coding:harvest-list (collapse (match &self
+   (let $records (collapse (match &self
      (CodingProcess $id $handle $reader $decoder $dir $log $start)
-     (CodingProcess $id $handle $reader $decoder $dir $log $start)))))
+     (CodingProcess $id $handle $reader $decoder $dir $log $start)))
+     (coding:harvest-list $records)))
 (= (coding:poll-until $dir $id $deadline)
    (let* (($live (coding:execution $id))
           ($now (system:monotonic-ns)))

@@ -285,6 +285,7 @@
   "src/runtime_cetta.metta",
   "config/runtime-files.json",
   "src/coding_process.metta",
+  "src/coding_values.metta",
   "src/stream_events.metta",
   "src/stream_sse.metta",
   "src/stream_runtime.metta",

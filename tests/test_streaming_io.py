@@ -69,7 +69,9 @@ class StreamingPeer(boundary.Peer):
         self.send_response(200); self.end_headers()
         chunks = [
             event({"type": "response.reasoning_summary_text.delta", "item_id": "r", "output_index": 0,
-                   "summary_index": 0, "delta": "Checking ž 🐈"}),
+                   "summary_index": 0, "sequence_number": 1, "delta": "Checking ž 🐈"}),
+            event({"type": "response.reasoning_summary_text.delta", "item_id": "r", "output_index": 0,
+                   "summary_index": 0, "sequence_number": 1, "delta": "Checking ž 🐈"}),
             event({"type": "response.output_text.delta", "item_id": "m", "output_index": 1,
                    "content_index": 0, "delta": "Running the boundary checks."}),
             event({"type": "response.output_item.added", "output_index": 2,
@@ -181,6 +183,7 @@ class NativeStreamTests(unittest.TestCase):
                     time.sleep(.02)
                 records=[e for e in self.observations() if e.get("attempt") not in old_attempts]
                 self.assertTrue(any(e.get("text")=="Checking ž 🐈" for e in records),records)
+                self.assertEqual(sum(e.get("text")=="Checking ž 🐈" for e in records),1)
                 self.assertIsNone(self.process.poll())
                 self.assertNotIn("PRIVATE_ARGUMENT",json.dumps(records))
                 self.assertNotIn("opaque",json.dumps(records))

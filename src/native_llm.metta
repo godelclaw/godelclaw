@@ -148,7 +148,6 @@
         (let* (($status (llm:status-http $id))
               ($_ (llm:progress $plan $status))
               ($_ (stream:progress $plan $id))
-              ($_ (stream:poll-processes))
               ($_ (llm:commentary-progress $plan $id))
               ($event (llm:wait-http $id $milliseconds)))
          (llm:observe-plan $plan $state $epoch $correlation $protocol $id $event))

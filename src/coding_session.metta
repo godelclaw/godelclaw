@@ -19,24 +19,16 @@
 !(import! &self (library json))
 !(import! &self ./src/apply_patch.py)
 !(import! &self ./src/coding_io.py)
+!(import! &self ./src/coding_values.metta)
 !(import! &self ./src/coding_process.metta)
 
 (= (coding:file $dir $name) (path:join $dir $name))
-(= (coding:member $pairs $key)
-   (if (== $pairs ()) JsonNull
-     (let (JsonPair $name $value) (car-atom $pairs)
-       (if (== $name $key) $value (coding:member (cdr-atom $pairs) $key)))))
-(= (coding:field $value $key)
-   (case $value (((JsonObject $pairs) (coding:member $pairs $key)) ($other JsonNull))))
-(= (coding:text $value) (case $value (((JsonString $text) $text) ($other ""))))
 (= (coding:items $value) (case $value (((JsonArray $items) $items) ($other ()))))
 (= (coding:reverse $items $out)
    (if (== $items ()) $out (coding:reverse (cdr-atom $items) (cons-atom (car-atom $items) $out))))
 (= (coding:append-list $first $second) (coding:reverse (coding:reverse $first ()) $second))
 (= (coding:drop $items $count)
    (if (or (<= $count 0) (== $items ())) $items (coding:drop (cdr-atom $items) (- $count 1))))
-(= (coding:number $value $default)
-   (case $value (((JsonNumber $text) (str:string->number $text)) ($other $default))))
 
 (= (coding:json-file $path $default)
    (if (fs:is-file $path) (json-parse (fs:read-text $path)) $default))
@@ -83,12 +75,6 @@
 ; agent's METTACLAW_* settings (session health, recycle, wake and ledger paths,
 ; channel sockets, bot token), its live module path and its provider keys.
 ; Tests run from a session otherwise wrote into that session and the live ledger.
-(= (coding:workspace-shell $cmd)
-   (let $keep-ssh (== (system:getenv-or-default "METTACLAW_CODING_ALLOW_SSH_AUTH" "0") "1")
-     (str:join "" (
-       "for v in $(compgen -e); do case $v in METTACLAW_*|CETTA_IO_AUTH_*|*_API_KEY|*_TOKEN|*_SECRET|*_PASSWORD|AWS_*|AZURE_*|GCLOUD_*|GOOGLE_APPLICATION_CREDENTIALS|TG_BOT_TOKEN) unset $v;; esac; done; unset PYTHONPATH"
-       (if $keep-ssh "" " SSH_AUTH_SOCK GIT_ASKPASS")
-       "; " $cmd))))
 (= (coding:exec $workdir $args)
    (let $dir (py-call (coding_io.transient_root)) (coding:exec-owned $dir $workdir $args)))
 (= (coding:now) (py-call (time.time)))
@@ -176,10 +162,20 @@
           ($plan (if (== (coding:field $request "tools") JsonNull)
                      (py-call (native_llm_host.for_compaction $raw-plan))
                      (py-call (native_llm_host.for_coding $raw-plan))))
-          ($box (llm:run $plan))
+          ($pending (llm:begin $plan))
+          ($box (coding:wait-provider $plan $pending))
           ($reply (coding:file $dir "reply.json"))
           ($_ (py-call (native_llm_host.structured_json_result $box $reply))))
      (json-parse (fs:read-text $reply))))
+
+; This session schedules its own process owner while waiting on the same
+; admitted provider request. No callback searches another module's local space.
+(= (coding:wait-provider $plan $state)
+   (case $state
+     (((llm:v1:pending $epoch $correlation $protocol $handle)
+       (let* (($_ (coding:harvest)) ($next (llm:wait-once $plan $state 100)))
+         (coding:wait-provider $plan $next)))
+      ($terminal (llm:after-submit $plan $terminal)))))
 ; A Python error as its type and message; repr of the error object shows
 ; only an address.
 (= (coding:error-text $where $why)

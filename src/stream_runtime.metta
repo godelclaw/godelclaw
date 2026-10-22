@@ -3,10 +3,6 @@
 !(import! &self ./src/stream_events)
 !(import! &self ./src/stream_sink.py)
 
-(= (stream:poll-processes)
-   (let $enabled (collapse (match &self (StreamProcessPump) True))
-     (if (== $enabled ()) 1 (coding:harvest))))
-
 (= (stream:current $id)
    (let $found (collapse (match &self (StreamCursor $id $value) $value))
      (if (== $found ()) (sse:new) (car-atom $found))))
