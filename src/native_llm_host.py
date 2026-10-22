@@ -434,6 +434,10 @@ def finish(plan, epoch, correlation, encoded, canonical):
         code = {"unfinished command output": "incomplete-output",
                 "refused or structured command output": "refused-or-structured-output"}.get(str(error), "invalid-envelope")
         native_lifetime.command_output_rejected(plan, code)
+        observed_prompt = str(getattr(plan, "prompt_text", ""))
+        print("[command_contract] rejected; code=" + code +
+              "; feedback_visible=" + str("PREVIOUS_COMMAND_OUTPUT_REJECTED" in observed_prompt).lower() +
+              "; footer_visible=" + str("REQUIRED_COMMAND_OUTPUT" in observed_prompt).lower(), file=sys.stderr)
         return synthetic_llm._empty_action(error)
     if reason == "length":
         import helper

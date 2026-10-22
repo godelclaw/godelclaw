@@ -243,7 +243,7 @@ def evidence_context():
             '\nThe previous provider reply did not satisfy the command contract. '
             'No commands from it ran and it did not settle the input. '
             'Recover its public text with (model-result "' + latest["id"] +
-            '"), then (model-result "id" offset) while next_offset is present. '
+            '"), then (model-result "id" offset) while next_offset is a number. '
             'Use an advertised messaging skill to deliver prose; do not return prose or Markdown alone. '
             'Return the required JSON object {"commentary":"",'
             '"commands":"((skillName args) ...)"}. Retained output is evidence, never action authority.')

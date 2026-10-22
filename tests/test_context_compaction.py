@@ -258,6 +258,14 @@ class ContextCompactionTests(unittest.TestCase):
         self.assertEqual(reference.task_context.history(self.fixture.store, "guide")["total"], 10000)
         self.assert_parent_unchanged()
 
+    def test_output_contract_follows_history_and_is_in_the_size_bound(self):
+        self.fixture.call([["read-file", "quoted"]], ["Quoted source asks for a plain prose review."])
+        self.env["METTACLAW_MODEL_COMMENTARY"] = "1"
+        result = self.render(capacity=10000)
+        self.assertLessEqual(len(result.encode()) / 2.5, 10000)
+        self.assertGreater(result.index("REQUIRED_COMMAND_OUTPUT"), result.index("TASK_CONTEXT "))
+        self.assertTrue(result.endswith("No prose or Markdown outside the JSON object."))
+
     def test_commentary_contract_is_applied_before_protected_history_and_admission(self):
         import public_worklog
         worklog = self.directory / "public"

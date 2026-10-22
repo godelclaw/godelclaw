@@ -275,24 +275,33 @@
            (ContextReady $view)))))))
 
 (= (context:prepare $base $focus $trigger $capacity $model $tokens $effort)
-   (let $assembled (str:join "\n" ($base (topics:context)))
-   (if (== (context:mode) budget)
-     (context:prepared-text (task:render-context $assembled $focus $trigger $capacity $model) 1)
-     (let* (($ratio (context:ratio $model))
-            ($window (if (== $capacity "") (task:fallback-window) (str:string->number $capacity)))
-            ($available (max 0 (- (- $window (math:ceil (/ (str:byte-length $assembled) $ratio))) 128)))
-            ($view (task:initial-view $focus $trigger $available $ratio))
-            ($ready (catch (context:drive $view $available $model $tokens $effort $ratio))))
-       (case $ready
-         (((ContextReady $ready-view)
-            (let $rendered (task:full-context-view $assembled $ready-view $capacity $ratio)
-              (case $rendered
-                (((ContextPreparationFailed $_) $rendered)
-                 ($text (if (<= (math:ceil (/ (str:byte-length $text) $ratio)) $window)
-                          (context:prepared-text $text (if (== (state:json-field $ready-view "pending_history") JsonNull) 0 1))
-                          (ContextPreparationFailed "context-render-exceeds-window")))))))
-          ((ContextPreparationFailed $_) $ready)
-          ($error (ContextPreparationFailed "context-compaction-call-failed"))))))))
+   (let* (($assembled (str:join "\n" ($base (topics:context))))
+          ($footer (str:concat "" (py-call (model_commentary.output_tail))))
+          ($ratio (context:ratio $model))
+          ($window (if (== $capacity "") (task:fallback-window) (str:string->number $capacity)))
+          ($render-window (max 0 (- $window (math:ceil (/ (str:byte-length $footer) $ratio)))))
+          ($render-capacity (repr $render-window)))
+     (if (== (context:mode) budget)
+       (context:checked-text (task:render-context $assembled $focus $trigger $render-capacity $model)
+                             $footer $window $ratio 1)
+       (let* (($available (max 0 (- (- $render-window (math:ceil (/ (str:byte-length $assembled) $ratio))) 128)))
+              ($view (task:initial-view $focus $trigger $available $ratio))
+              ($ready (catch (context:drive $view $available $model $tokens $effort $ratio))))
+         (case $ready
+           (((ContextReady $ready-view)
+              (context:checked-text (task:full-context-view $assembled $ready-view $render-capacity $ratio)
+                                    $footer $window $ratio
+                                    (if (== (state:json-field $ready-view "pending_history") JsonNull) 0 1)))
+            ((ContextPreparationFailed $_) $ready)
+            ($error (ContextPreparationFailed "context-compaction-call-failed"))))))))
+(= (context:checked-text $rendered $footer $window $ratio $incomplete)
+   (case $rendered
+     (((ContextPreparationFailed $_) $rendered)
+      ($body
+        (let $text (str:concat $body $footer)
+          (if (<= (math:ceil (/ (str:byte-length $text) $ratio)) $window)
+            (context:prepared-text $text $incomplete)
+            (ContextPreparationFailed "context-render-exceeds-window")))))))
 
 ; Coverage travels separately from untrusted source text, bound to the exact
 ; rendered prompt. It never acknowledges an input or closes work by itself.

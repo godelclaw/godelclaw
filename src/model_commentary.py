@@ -45,6 +45,15 @@ def prompt(text):
     return text + PROMPT
 
 
+def output_tail():
+    """Keep the active format instruction after quoted task history."""
+    return ('\n\nREQUIRED_COMMAND_OUTPUT: Return only '
+            '{"commentary":"brief public update or empty",'
+            '"commands":"((skillName args) ...)"}. '
+            'To deliver a prose review, use mail-send or another advertised messaging skill '
+            'inside commands. No prose or Markdown outside the JSON object.') if enabled() else ""
+
+
 def _unique(pairs):
     value = {}
     for key, item in pairs:
