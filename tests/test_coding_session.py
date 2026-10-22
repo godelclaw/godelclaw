@@ -580,6 +580,32 @@ class CodingSessionTests(unittest.TestCase):
         state = json.loads((session / "state.json").read_text())
         self.assertEqual((state["status"], state["steps"]), ("done", 61))
 
+    def test_commands_run_without_the_agent_runtime_environment(self):
+        # A session's test run once wrote into the session's own recycle and
+        # health files and into the live ledger, through inherited METTACLAW_* paths.
+        self.env.update(ANTHROPIC_API_KEY="fixture-anthropic", TAVILY_API_KEY="fixture-tavily",
+                        KEEP_THIS="kept")
+        workspace = self.directory / "workspace"
+        workspace.mkdir()
+        listing = ('env | cut -d= -f1 | grep -E "^(METTACLAW_|PYTHONPATH$|ANTHROPIC_API_KEY$|'
+                   'SYNTHETIC_API_KEY$|TAVILY_API_KEY$|KEEP_THIS$)" | sort | tr "\\n" " "')
+        result = self.run_probe('!(Out (coding:exec %s (json-parse %s)))'
+                                % (json.dumps(str(workspace)), json.dumps(json.dumps({"cmd": listing}))))
+        out = result.stdout[result.stdout.index("(Out "):]
+        self.assertIn("Exit code: 0", out)
+        self.assertIn("KEEP_THIS", out)
+        for name in ("METTACLAW_", "PYTHONPATH", "ANTHROPIC_API_KEY", "SYNTHETIC_API_KEY", "TAVILY_API_KEY"):
+            self.assertNotIn(name, out)
+
+    def test_a_failed_call_names_the_python_error_and_its_message(self):
+        fixture = self.directory / "fixture_modules" / "boom_fixture.py"
+        fixture.write_text('def boom():\n    raise RuntimeError("provider said no: 429")\n')
+        result = self.run_probe('!(import! &self %s)\n'
+                                '!(Text (case (catch (py-call (boom_fixture.boom))) '
+                                '(((Error $where $why) (coding:error-text $where $why)) ($other none))))'
+                                % json.dumps(str(fixture)))
+        self.assertIn("RuntimeError: provider said no: 429", result.stdout)
+
     def test_work_starts_a_scope_that_reports_by_mail(self):
         import shutil, time
         if not shutil.which("systemd-run"):

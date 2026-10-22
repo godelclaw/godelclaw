@@ -78,13 +78,19 @@
 
 (= (coding:exec-report $code $seconds $output)
    (str:join "" ("Exit code: " $code "\nWall time: " (repr $seconds) " seconds\nOutput:\n" (coding:cut $output))))
+; Commands run in the workspace's shell, not the agent's runtime: without the
+; agent's METTACLAW_* settings (session health, recycle, wake and ledger paths,
+; channel sockets, bot token), its live module path and its provider keys.
+; Tests run from a session otherwise wrote into that session and the live ledger.
+(= (coding:workspace-shell $cmd)
+   (str:concat "for v in $(compgen -e); do case $v in METTACLAW_*) unset $v;; esac; done; unset PYTHONPATH ANTHROPIC_API_KEY SYNTHETIC_API_KEY TAVILY_API_KEY; " $cmd))
 (= (coding:exec $workdir $args)
    (let* (($cmd (coding:text (coding:field $args "cmd")))
           ($given (coding:text (coding:field $args "workdir")))
           ($dir (if (== $given "") $workdir $given))
           ($timeout (coding:number (coding:field $args "timeout_ms") 600000))
           ($start (system:monotonic-ns))
-          ($result (proc:run ("bash" "-lc" $cmd) $dir inherit $timeout 0 "merged"))
+          ($result (proc:run ("bash" "-lc" (coding:workspace-shell $cmd)) $dir inherit $timeout 0 "merged"))
           ($seconds (/ (math:floor (/ (- (system:monotonic-ns) $start) 10000000)) 100.0)))
      (case $result
        (((proc:exited $code $out $err) (coding:exec-report (repr $code) $seconds (str:concat $out $err)))
@@ -171,12 +177,21 @@
           ($reply (coding:file $dir "reply.json"))
           ($_ (py-call (native_llm_host.structured_json_result $box $reply))))
      (json-parse (fs:read-text $reply))))
+; A Python error as its type and message; repr of the error object shows
+; only an address.
+(= (coding:error-text $where $why)
+   (case $where
+     (((python_error $type $exc)
+        (case (catch (py-call (builtins.str $exc)))
+          (((Error $a $b) (repr $where))
+           ($message (format-args "{}: {}" ($type $message))))))
+      ($other (str:join " " ((repr $where) (repr $why)))))))
 ; Failed calls are retried with a growing wait, as Codex retries five times.
 (= (coding:ask $dir $request $attempt)
    (case (catch (coding:ask-once $dir $request))
      (((Error $where $why)
-        (let $_ (println! (CodingCallFailed attempt $attempt $where $why))
-          (if (>= $attempt 4) (CallFailed (str:join " " ((repr $where) (repr $why))))
+        (let $_ (println! (CodingCallFailed attempt $attempt (coding:error-text $where $why)))
+          (if (>= $attempt 4) (CallFailed (coding:error-text $where $why))
             (let* (($wait (* 2 (+ $attempt 1))) ($_ (py-call (time.sleep $wait)))) (coding:ask $dir $request (+ $attempt 1))))))
       ($reply (case (coding:field $reply "message")
                 ((JsonNull (if (>= $attempt 4) (CallFailed "no message in the reply")
