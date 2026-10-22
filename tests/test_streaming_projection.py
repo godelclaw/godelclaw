@@ -12,7 +12,7 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path[:0]=[str(ROOT/'src'),str(ROOT/'ui/worklog')]
 import stream_sink
 from stream_lifecycle import TRANSITIONS
-from viewer import Reader,clean,lines,save_checkpoint,load_checkpoint
+from viewer import Reader,clean,lines,save_checkpoint,load_checkpoint,read_all
 
 
 class ProjectionLaws(unittest.TestCase):
@@ -116,5 +116,21 @@ class ProjectionLaws(unittest.TestCase):
             self.assertEqual(len(p.sessions['s']['items']),4)
             self.assertTrue(all(len(v['text'])==50 for v in p.sessions['s']['items'].values()))
 
+
+    def test_a_cold_viewer_applies_every_producer_in_time_order(self):
+        with tempfile.TemporaryDirectory() as d:
+            old,new=stream_sink.Writer(d,'s'),stream_sink.Writer(d,'s')
+            for n in range(300):old.emit(dict(kind='text.delta',item='old%d'%n,text='x'))
+            old.flush(2)
+            new.emit(dict(kind='attempt.finished',attempt='a',source='terminal',status='completed'));new.flush(2)
+            written=sum(1 for f in Path(d).glob('*.jsonl') for line in f.read_text().splitlines() if line.strip())
+            self.assertGreater(written,2*128)  # more than one bounded pass per file
+            events=read_all(Reader(d))
+            self.assertEqual(len(events),written)
+            self.assertEqual([e['time'] for e in events],sorted(e['time'] for e in events))
+            p=stream_sink.Projection()
+            for event in events:p.apply(event)
+            self.assertEqual(p.sessions['s']['status'],'ready')
+            self.assertGreaterEqual(p.sessions['s']['updated'],max(i['updated'] for i in p.sessions['s']['items'].values()))
 
 if __name__=='__main__':unittest.main()

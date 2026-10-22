@@ -93,7 +93,24 @@ class Reader:
                 continue
         # Preserve each producer's sequence on reconnect, including its reserved
         # terminal slots. Wall time only orders independent producers for display.
-        return sorted(output, key=lambda e: (e.get("time", 0), e.get("producer", ""), e.get("sequence", 0)))
+        return sorted(output, key=order)
+
+
+def order(event):
+    return (event.get("time", 0), event.get("producer", ""), event.get("sequence", 0))
+
+
+def read_all(reader, passes=4096):
+    """Every complete record now available, in display order. Each pass reads a
+    bounded slice of each file; applying passes one by one let an older
+    producer's records land after newer ones when a viewer started cold."""
+    records = []
+    for _ in range(passes):
+        batch = reader.read()
+        if not batch:
+            break
+        records += batch
+    return sorted(records, key=order)
 
 
 def lines(projection, selected=None, full=False):
@@ -192,7 +209,7 @@ def main(argv=None):
         if epoch_changed:
             projection = Projection(tail_chars=16777216 if args.full else 12000)
             previous_epoch = epoch
-        records = reader.read()
+        records = read_all(reader)
         for record in records:
             projection.apply(record)
             if args.json:
@@ -217,12 +234,9 @@ def main(argv=None):
         return projection.refresh_owners() or bool(records) or epoch_changed
     update()
     if args.once:
-        while True:
-            records=reader.read()
-            if not records:break
-            for record in records:
-                projection.apply(record)
-                if args.json:print(json.dumps(record,ensure_ascii=False))
+        for record in read_all(reader):
+            projection.apply(record)
+            if args.json:print(json.dumps(record,ensure_ascii=False))
         projection.refresh_owners()
         if not args.json: print("\n".join(lines(projection, args.session, args.full)))
         return 0
