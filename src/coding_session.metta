@@ -83,7 +83,11 @@
 ; channel sockets, bot token), its live module path and its provider keys.
 ; Tests run from a session otherwise wrote into that session and the live ledger.
 (= (coding:workspace-shell $cmd)
-   (str:concat "for v in $(compgen -e); do case $v in METTACLAW_*) unset $v;; esac; done; unset PYTHONPATH ANTHROPIC_API_KEY SYNTHETIC_API_KEY TAVILY_API_KEY; " $cmd))
+   (let $keep-ssh (== (system:getenv-or-default "METTACLAW_CODING_ALLOW_SSH_AUTH" "0") "1")
+     (str:join "" (
+       "for v in $(compgen -e); do case $v in METTACLAW_*|CETTA_IO_AUTH_*|*_API_KEY|*_TOKEN|*_SECRET|*_PASSWORD|AWS_*|AZURE_*|GCLOUD_*|GOOGLE_APPLICATION_CREDENTIALS|TG_BOT_TOKEN) unset $v;; esac; done; unset PYTHONPATH"
+       (if $keep-ssh "" " SSH_AUTH_SOCK GIT_ASKPASS")
+       "; " $cmd))))
 (= (coding:exec $workdir $args)
    (let* (($cmd (coding:text (coding:field $args "cmd")))
           ($given (coding:text (coding:field $args "workdir")))
@@ -307,21 +311,58 @@
        (((CallFailed $why) (CompactionFailed $why))
         ($ok (coding:accept-summary $dir $messages $ok))))))
 
+(= (coding:proc-text $result)
+   (case $result
+     (((proc:exited 0 $out $err) (str:trim (str:concat $out $err)))
+      ((proc:exited $code $out $err)
+       (str:join "" ("unavailable (git exited " (repr $code) "): " (str:trim (str:concat $out $err)))))
+      ((proc:signaled $signal $out $err)
+       (str:join "" ("unavailable (git signal " (repr $signal) "): " (str:trim (str:concat $out $err)))))
+      ((proc:timed-out $out $err) "unavailable (git observation timed out)")
+      ($other (str:concat "unavailable: " (repr $other))))))
+(= (coding:workspace-evidence $workdir)
+   (let* (($status (coding:proc-text
+                     (proc:run ("git" "status" "--short" "--untracked-files=all")
+                               $workdir inherit 30000 0 "merged")))
+          ($unstaged (coding:proc-text
+                       (proc:run ("git" "diff" "--stat")
+                                 $workdir inherit 30000 0 "merged")))
+          ($staged (coding:proc-text
+                     (proc:run ("git" "diff" "--cached" "--stat")
+                               $workdir inherit 30000 0 "merged"))))
+     (coding:cut (str:join "" (
+       "status:\n" (if (== $status "") "clean" $status)
+       "\n\nunstaged diff:\n" (if (== $unstaged "") "none" $unstaged)
+       "\n\nstaged diff:\n" (if (== $staged "") "none" $staged))))))
+(= (coding:failure-handover $dir $workdir $reason)
+   (let* (($state (coding:json-file (coding:file $dir "state.json") (JsonObject ())))
+          ($progress (coding:text (coding:field $state "progress")))
+          ($plan (if (fs:is-file (coding:file $dir "plan.json"))
+                   (coding:cut (fs:read-text (coding:file $dir "plan.json"))) "none recorded"))
+          ($id (coding:last (str:split "/" $dir))))
+     (str:join "" (
+       "The coding session stopped before completion.\n\nReason:\n" $reason
+       "\n\nLast progress:\n" (if (== $progress "") "none recorded" $progress)
+       "\n\nPlan:\n" $plan
+       "\n\nWorkspace changes:\n" (coding:workspace-evidence $workdir)
+       "\n\nResume without replaying uncertain effects:\n(work-resume \"" $id "\")"))))
 (= (coding:finish $dir $status $text $steps $inbox)
    (let* (($_ (fs:update-text (coding:file $dir "report.txt") "replace" $text "" ""))
           ($_ (coding:state $dir $status $steps $text $inbox)))
      (CodingFinished $status)))
+(= (coding:fail $dir $workdir $reason $steps $inbox)
+   (coding:finish $dir "failed" (coding:failure-handover $dir $workdir $reason) $steps $inbox))
 (= (coding:loop $dir $workdir $effort $window $tools $messages $steps $inbox)
    (if (fs:is-file (coding:file $dir "stop")) (coding:finish $dir "stopped" "Stopped by the requester." $steps $inbox)
      (let* (((Folded $steered $next) (coding:fold-inbox $dir $messages $inbox))
             ($prepared (if (> (coding:estimate $steered) (* 0.9 $window)) (coding:compact $dir $steered $effort) (Compacted $steered))))
        (case $prepared
          (((CompactionFailed $why)
-            (coding:finish $dir "failed" (str:concat "The session could not compact its history: " $why) $steps $inbox))
+            (coding:fail $dir $workdir (str:concat "The session could not compact its history: " $why) $steps $inbox))
           ((Compacted $current) (coding:turn $dir $workdir $effort $window $tools $current $steps $next)))))))
 (= (coding:turn $dir $workdir $effort $window $tools $current $steps $next)
    (case (coding:ask $dir (coding:request $current $effort $tools) 0)
-         (((CallFailed $why) (coding:finish $dir "failed" (str:concat "The model call failed: " $why) $steps $next))
+         (((CallFailed $why) (coding:fail $dir $workdir (str:concat "The model call failed: " $why) $steps $next))
           ($ok
             (let* (($message (coding:record $dir (coding:field $ok "message")))
                    ($calls (coding:items (coding:field $message "tool_calls")))

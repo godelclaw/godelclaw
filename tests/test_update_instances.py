@@ -125,6 +125,9 @@ class PairedUpdateTest(unittest.TestCase):
                     instances[-1]["control_services"] = [name + "-control"]
             plan = work / "plan.json"
             selected = instances[:1] if single else instances
+            for item in selected:
+                (Path(item["state_dir"]) / "runtime-release.json").write_text(
+                    json.dumps({"schema": 1, "release": "old", "model": "stale-model"}) + "\n")
             plan.write_text(json.dumps({"instances": selected,
                                         "boot_timeout": -1 if runtime_missing else 60}))
             if shared_environment:
@@ -205,6 +208,9 @@ class PairedUpdateTest(unittest.TestCase):
                     self.assertEqual(pids[item['name']], '1')
                     self.assertFalse((Path(item['state_dir']) / 'recycle.requested').exists())
                     self.assertFalse((Path(item['state_dir']) / 'runtime-release.json').exists())
+                elif not unchanged:
+                    marker = json.loads((Path(item['state_dir']) / 'runtime-release.json').read_text())
+                    self.assertNotIn('model', marker)
 
     def test_single_instance_updates_without_touching_its_peer(self):
         self.exercise(single=True, controls=True)

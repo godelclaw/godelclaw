@@ -46,6 +46,15 @@ def enabled():
                       and os.environ.get("METTACLAW_ACTIVE_ENGINE") == "cetta") else "false"
 
 
+def coding_session():
+    """Coding scopes outlive the agent process and have their own stop/resume.
+
+    An engine or mode recycle belongs to the cognitive service. Applying it to
+    an independent coding scope used to kill a useful session mid-task.
+    """
+    return os.environ.get("METTACLAW_CODING_SESSION") == "1"
+
+
 def gate():
     if os.environ.get("METTACLAW_MODE_RUNTIME"):
         import runtime_host
@@ -54,7 +63,7 @@ def gate():
         return True
     import engine_modes
     import lifecycle
-    if engine_modes.recycle_requested():
+    if not coding_session() and engine_modes.recycle_requested():
         raise SystemExit(0)
     # The independent control responder continues while cognition is paused.
     waiting = False
@@ -64,7 +73,7 @@ def gate():
             process_supervision.progress("operator-wait", 60)
             waiting = True
         synthetic_llm.time.sleep(.25)
-        if engine_modes.recycle_requested():
+        if not coding_session() and engine_modes.recycle_requested():
             raise SystemExit(0)
         # This bounded wait has returned and the operator latch was read
         # again. A frozen evaluator cannot reach this new wait boundary.

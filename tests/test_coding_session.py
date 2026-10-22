@@ -68,7 +68,11 @@ class CodingSessionTests(unittest.TestCase):
             "METTACLAW_LLM_POLICY": "managed", "METTACLAW_LLM_POLICY_PATH": "",
             "METTACLAW_LLM_LEDGER_PATH": str(self.directory / "ledger.db"),
             "METTACLAW_COGNITIVE_HEALTH_PATH": str(self.directory / "health.json"),
+            "METTACLAW_LLM_COMPLETION_PATH": str(self.directory / "completion.json"),
+            "METTACLAW_PROVIDER_OBSERVATION_PATH": str(self.directory / "providers.json"),
             "METTACLAW_RECYCLE_REQUEST_PATH": str(self.directory / "recycle"),
+            "METTACLAW_WAKE_REQUEST_PATH": str(self.directory / "wake"),
+            "METTACLAW_CODING_SESSION": "1",
             "METTACLAW_LIFECYCLE_PATH": str(latch), "SYNTHETIC_MODEL": "fixture-model",
             "METTACLAW_MODEL_STATE_PATH": str(self.directory / "model"),
             "METTACLAW_CONTEXT_WINDOW_TOKENS": "100000",
@@ -438,6 +442,7 @@ class CodingSessionTests(unittest.TestCase):
         (session / "inbox.jsonl").write_text(json.dumps("SAVED_GUIDANCE") + "\n")
         (session / "state.json").write_text(json.dumps({"status": "done", "steps": 2, "inbox": 1}))
         stop = session / "stop"; stop.write_text("")
+        recycle = session / "recycle.requested"; recycle.write_text("old request\n")
         saved = {name: (session / name).read_bytes() for name in ("task.json", "plan.json", "messages.jsonl")}
 
         result = self.run_probe('!(println! (work-status ' + json.dumps(identity) + '))\n'
@@ -450,6 +455,7 @@ class CodingSessionTests(unittest.TestCase):
                                 module="coding_work.metta", cwd=runner)
         self.assertIn("WORK_RESUMING " + identity, result.stdout)
         self.assertFalse(stop.exists())
+        self.assertFalse(recycle.exists())
         deadline = time.monotonic() + 5
         while not launches.exists() and time.monotonic() < deadline:
             time.sleep(0.02)
@@ -459,9 +465,12 @@ class CodingSessionTests(unittest.TestCase):
         self.assertEqual(args[-1], str(session))
         self.assertIn("METTACLAW_COGNITIVE_HEALTH_PATH=" + str(session / "health.json"), args)
         self.assertIn("METTACLAW_LLM_COMPLETION_PATH=" + str(session / "completion.json"), args)
+        self.assertIn("METTACLAW_PROVIDER_OBSERVATION_PATH=" + str(session / "providers.json"), args)
         self.assertIn("METTACLAW_LLM_LEDGER_PATH=" + self.env["METTACLAW_LLM_LEDGER_PATH"], args)
         self.assertIn("METTACLAW_ACTIVITY_CALL_SCOPE=" + identity, args)
         self.assertIn("METTACLAW_ACTIVITY_CALL_LANE=background", args)
+        self.assertIn("METTACLAW_CODING_SESSION=1", args)
+        self.assertIn("TMPDIR=" + str(session / "tmp"), args)
         self.assertNotIn("METTACLAW_ACTIVITY_CALL_SCOPE=parent-conversation", args)
         self.assertFalse((runner / "RESUME_INJECTION").exists())
         for name, content in saved.items():
@@ -583,19 +592,62 @@ class CodingSessionTests(unittest.TestCase):
     def test_commands_run_without_the_agent_runtime_environment(self):
         # A session's test run once wrote into the session's own recycle and
         # health files and into the live ledger, through inherited METTACLAW_* paths.
-        self.env.update(ANTHROPIC_API_KEY="fixture-anthropic", TAVILY_API_KEY="fixture-tavily",
+        self.env.update(ANTHROPIC_API_KEY="fixture-anthropic", OPENAI_API_KEY="fixture-openai",
+                        TAVILY_API_KEY="fixture-tavily", TG_BOT_TOKEN="fixture-telegram",
+                        AWS_SECRET_ACCESS_KEY="fixture-aws", SSH_AUTH_SOCK="/fixture/agent.sock",
                         KEEP_THIS="kept")
         workspace = self.directory / "workspace"
         workspace.mkdir()
-        listing = ('env | cut -d= -f1 | grep -E "^(METTACLAW_|PYTHONPATH$|ANTHROPIC_API_KEY$|'
-                   'SYNTHETIC_API_KEY$|TAVILY_API_KEY$|KEEP_THIS$)" | sort | tr "\\n" " "')
+        listing = ('env | cut -d= -f1 | grep -E "^(METTACLAW_|PYTHONPATH$|.*_API_KEY$|'
+                   '.*_TOKEN$|AWS_.*|SSH_AUTH_SOCK$|KEEP_THIS$)" | sort | tr "\\n" " "')
         result = self.run_probe('!(Out (coding:exec %s (json-parse %s)))'
                                 % (json.dumps(str(workspace)), json.dumps(json.dumps({"cmd": listing}))))
         out = result.stdout[result.stdout.index("(Out "):]
         self.assertIn("Exit code: 0", out)
         self.assertIn("KEEP_THIS", out)
-        for name in ("METTACLAW_", "PYTHONPATH", "ANTHROPIC_API_KEY", "SYNTHETIC_API_KEY", "TAVILY_API_KEY"):
+        for name in ("METTACLAW_", "PYTHONPATH", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
+                     "SYNTHETIC_API_KEY", "TAVILY_API_KEY", "TG_BOT_TOKEN",
+                     "AWS_SECRET_ACCESS_KEY", "SSH_AUTH_SOCK"):
             self.assertNotIn(name, out)
+
+    def test_ssh_agent_requires_an_explicit_coding_opt_in(self):
+        self.env.update(SSH_AUTH_SOCK="/fixture/agent.sock", METTACLAW_CODING_ALLOW_SSH_AUTH="1")
+        workspace = self.directory / "workspace"
+        workspace.mkdir()
+        command = 'printf "%s" "$SSH_AUTH_SOCK"'
+        result = self.run_probe('!(Out (coding:exec %s (json-parse %s)))'
+                                % (json.dumps(str(workspace)), json.dumps(json.dumps({"cmd": command}))))
+        self.assertIn("/fixture/agent.sock", result.stdout)
+
+    def test_agent_recycle_does_not_end_an_independent_coding_scope(self):
+        workspace = self.directory / "workspace"
+        workspace.mkdir()
+        session = self.session("Finish despite the agent recycle.", workspace)
+        Path(self.env["METTACLAW_RECYCLE_REQUEST_PATH"]).write_text("agent engine switch\n")
+        self.server.replies = [reply("Coding scope completed independently.")]
+        self.run_session(session)
+        state = json.loads((session / "state.json").read_text())
+        self.assertEqual(state["status"], "done")
+        self.assertIn("completed independently", (session / "report.txt").read_text())
+
+    def test_failed_session_reports_plan_changes_and_resume_command(self):
+        workspace = self.directory / "workspace"
+        workspace.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=workspace, check=True)
+        (workspace / "unfinished.txt").write_text("valuable work\n")
+        session = self.session("Preserve a useful failure handover.", workspace)
+        (session / "plan.json").write_text('{"plan":[{"step":"verify","status":"in_progress"}]}\n')
+        self.server.replies = [{"id": "r", "choices": [{"message": {
+            "role": "assistant", "content": "", "refusal": "fixture refusal"},
+            "finish_reason": "stop"}], "usage": {"prompt_tokens": 10, "completion_tokens": 2}}]
+        self.run_session(session)
+        state = json.loads((session / "state.json").read_text())
+        report = (session / "report.txt").read_text()
+        self.assertEqual(state["status"], "failed")
+        self.assertIn("provider refused", report.lower())
+        self.assertIn("in_progress", report)
+        self.assertIn("?? unfinished.txt", report)
+        self.assertIn('(work-resume "session")', report)
 
     def test_a_failed_call_names_the_python_error_and_its_message(self):
         fixture = self.directory / "fixture_modules" / "boom_fixture.py"

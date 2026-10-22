@@ -115,6 +115,8 @@ class RuntimeProbeTest(unittest.TestCase):
                 with self.subTest(probe=probe):
                     probe_state = pathlib.Path(directory) / pathlib.Path(probe).stem
                     probe_state.mkdir(exist_ok=True)
+                    probe_tmp = probe_state / "tmp"
+                    probe_tmp.mkdir(exist_ok=True)
                     iter_directory = (
                         pathlib.Path(directory) / "native-iter-multiturn"
                         if probe == "tests/native_iter_multiturn_probe.metta"
@@ -139,6 +141,22 @@ class RuntimeProbeTest(unittest.TestCase):
                                                   "petta"),
                         "METTACLAW_ENGINE_STATE_PATH": os.path.join(
                             probe_state, "engine"),
+                        "METTACLAW_MODEL_STATE_PATH": os.path.join(
+                            probe_state, "model.metta"),
+                        "METTACLAW_LLM_LEDGER_PATH": os.path.join(
+                            probe_state, "llm-budget.sqlite3"),
+                        "METTACLAW_LLM_COMPLETION_PATH": os.path.join(
+                            probe_state, "completion.json"),
+                        "METTACLAW_PROVIDER_OBSERVATION_PATH": os.path.join(
+                            probe_state, "providers.json"),
+                        "METTACLAW_COGNITIVE_HEALTH_PATH": os.path.join(
+                            probe_state, "health.json"),
+                        "METTACLAW_RECYCLE_REQUEST_PATH": os.path.join(
+                            probe_state, "recycle.requested"),
+                        "METTACLAW_WAKE_REQUEST_PATH": os.path.join(
+                            probe_state, "wake.requested"),
+                        "METTACLAW_CHATGPT_POLICY_PATH": os.path.join(
+                            probe_state, "chatgpt.json"),
                         "METTACLAW_LOOP_MODE_PATH": os.path.join(
                             probe_state, "loop-mode.json"),
                         "METTACLAW_CHROMA_DIR": os.path.join(
@@ -155,6 +173,7 @@ class RuntimeProbeTest(unittest.TestCase):
                         "METTACLAW_LIFECYCLE_PATH": os.fspath(lifecycle),
                         "METTACLAW_DEPLOYMENT_STATE_PATH": os.fspath(
                             deployment),
+                        "TMPDIR": os.fspath(probe_tmp),
                         "PATH": os.pathsep.join((
                             os.fspath(test_bin), env.get("PATH", ""),
                         )),
@@ -193,6 +212,9 @@ class RuntimeProbeTest(unittest.TestCase):
         if not cetta.is_file():
             self.skipTest("CeTTa executable is unavailable")
         with tempfile.TemporaryDirectory() as directory:
+            state = pathlib.Path(directory)
+            tmp = state / "tmp"
+            tmp.mkdir()
             env = dict(os.environ)
             env.update({
                 "CETTA_BIN": os.fspath(cetta),
@@ -205,7 +227,24 @@ class RuntimeProbeTest(unittest.TestCase):
                                           "miniforge3" / "envs" / "petta"),
                 "METTACLAW_ENGINE_STATE_PATH": os.path.join(
                     directory, "engine"),
+                "METTACLAW_MODEL_STATE_PATH": os.path.join(
+                    directory, "model.metta"),
+                "METTACLAW_LLM_LEDGER_PATH": os.path.join(
+                    directory, "llm-budget.sqlite3"),
+                "METTACLAW_LLM_COMPLETION_PATH": os.path.join(
+                    directory, "completion.json"),
+                "METTACLAW_PROVIDER_OBSERVATION_PATH": os.path.join(
+                    directory, "providers.json"),
+                "METTACLAW_COGNITIVE_HEALTH_PATH": os.path.join(
+                    directory, "health.json"),
+                "METTACLAW_RECYCLE_REQUEST_PATH": os.path.join(
+                    directory, "recycle.requested"),
+                "METTACLAW_WAKE_REQUEST_PATH": os.path.join(
+                    directory, "wake.requested"),
+                "METTACLAW_CHATGPT_POLICY_PATH": os.path.join(
+                    directory, "chatgpt.json"),
                 "METTACLAW_CHROMA_DIR": os.path.join(directory, "chroma"),
+                "TMPDIR": os.fspath(tmp),
             })
             result = subprocess.run(
                 ["./run.sh", "tests/context_sources_probe.metta"],

@@ -282,6 +282,10 @@ def main():
                       "parent_release": previous.get("release"),
                       "files": {**previous.get("files", {}), **files},
                       "pid": service(instance["service"], "show"), "verified_at": time.time()}
+            # The active model is mutable agent state, not a property of a
+            # source release. Older markers captured it once and then lied
+            # after /model changed. Runtime projections read the live state.
+            marker.pop("model", None)
             for key in ("source_commit", "engine_revision"):
                 if key in manifest:
                     marker[key] = manifest[key]

@@ -46,6 +46,8 @@
 
 (= (work:launch $id)
    (let* (($dir (work:dir $id))
+          ($tmp (path:join $dir "tmp"))
+          ($_ (proc:run ("mkdir" "-p" "--" $tmp) (system:cwd) inherit 10000 0 "merged"))
           ($binary (system:getenv-or-default "CETTA_BIN" "cetta"))
           ($ledger (py-call (builtins.str (py-call (llm_policy.ledger_path)))))
           ;; The session shares the account's ledger and usage tally, as
@@ -56,8 +58,11 @@
                                     "METTACLAW_ACTIVITY_CALL_LANE=background"
                                     (work:quote (str:concat "METTACLAW_COGNITIVE_HEALTH_PATH=" (path:join $dir "health.json")))
                                     (work:quote (str:concat "METTACLAW_LLM_COMPLETION_PATH=" (path:join $dir "completion.json")))
+                                    (work:quote (str:concat "METTACLAW_PROVIDER_OBSERVATION_PATH=" (path:join $dir "providers.json")))
                                     (work:quote (str:concat "METTACLAW_RECYCLE_REQUEST_PATH=" (path:join $dir "recycle.requested")))
                                     (work:quote (str:concat "METTACLAW_WAKE_REQUEST_PATH=" (path:join $dir "wake.requested")))
+                                    (work:quote (str:concat "TMPDIR=" $tmp))
+                                    "METTACLAW_CODING_SESSION=1"
                                     "METTACLAW_OBSERVED_STRATEGY=0")))
           ($launch (str:join "" ("systemd-run --user --scope --quiet --collect --unit=" (work:quote (work:unit $id)) " -- " $own " "
                                  (work:quote $binary) " --lang petta --import-mode ancestor-walk coding_main.metta -- " (work:quote $dir)
@@ -77,7 +82,9 @@
      (if (not (fs:is-file $task-path)) (str:concat "work-resume: no session " $id)
        (if (work:running? $id) (str:concat "WORK_RUNNING " $id)
          (let* (($stop (path:join $dir "stop"))
+                ($recycle (path:join $dir "recycle.requested"))
                 ($_ (if (fs:exists $stop) (proc:run ("rm" "--" $stop) $dir inherit 10000 0 "merged") ()))
+                ($_ (if (fs:exists $recycle) (proc:run ("rm" "--" $recycle) $dir inherit 10000 0 "merged") ()))
                 ($line (json-stringify (JsonString "Resume this session from its existing evidence and plan. Verify uncertain effects before choosing new actions.")))
                 ($_ (py-call (coding_io.append_line (path:join $dir "inbox.jsonl") $line)))
                 ($_ (work:launch $id)))
