@@ -395,3 +395,8 @@ PAGES['task-resolve'] = 'No resolution bookkeeping is required. Calls remain in 
 
 for _retired in ("background-model", "model-adopt", "model-retire", "goal-review-save", "task-resolve"):
     ARITY.pop(_retired, None)
+
+
+def command_names_text():
+    """Snapshot the bare-command vocabulary for native response parsing."""
+    return "\n".join(sorted(ARITY))

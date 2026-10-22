@@ -251,7 +251,7 @@
           ;; Prose that no command carries reached no one. It is kept, marked
           ;; undelivered, so the next turn sees what she wrote and that it
           ;; was not sent.
-          ($prose (py-call (helper.undelivered_prose $respi)))
+          ($prose (model-response-undelivered-prose $respi))
           ($undelivered
             (if (== (py-call (helper.text_nonempty $prose)) 1)
                 (repr (UNDELIVERED: $prose NOT_DELIVERED_TO_ANY_CHANNEL_USE_send))
