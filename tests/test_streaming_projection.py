@@ -51,6 +51,16 @@ class ProjectionLaws(unittest.TestCase):
         p.apply(dict(producer="p",sequence=1,session="s",kind="tool.started",source="provider",item="i",status="running"))
         self.assertNotEqual(next(iter(p.sessions['s']['items'].values()))['status'],'running')
 
+    def test_finished_receipts_do_not_become_uncertain_when_the_worker_exits(self):
+        p=stream_sink.Projection();base=dict(producer='p',session='s',pid=1,process_start='fixture')
+        p.apply({**base,'sequence':1,'kind':'patch','source':'executor','item':'patch','status':'applied','text':'Success'})
+        p.apply({**base,'sequence':2,'kind':'tool.forming','attempt':'a','item':'tool','name':'exec_command'})
+        p.apply({**base,'sequence':3,'kind':'attempt.finished','attempt':'a','source':'terminal','status':'completed'})
+        p.refresh_owners()
+        items=p.sessions['s']['items']
+        self.assertEqual(items[('', 'patch',None,'')]['status'],'applied')
+        self.assertEqual(items[('a','tool',None,'')]['status'],'proposed')
+
     def test_terminal_reconciles_missing_and_changed_items(self):
         p=stream_sink.Projection();base=dict(producer="p",session="s",attempt="a")
         p.apply({**base,"sequence":1,"kind":"text.delta","item":"old","channel":"commentary","text":"wrong"})

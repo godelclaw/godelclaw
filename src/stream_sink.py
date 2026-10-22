@@ -375,6 +375,9 @@ class Projection:
                 item["terminal"] = True
             if kind in ("text.snapshot", "text.reconcile"):
                 item["terminal"] = True
+            if kind in ("patch", "steering") or (kind=="maintenance" and event.get("status")!="running"):
+                item["terminal"] = True
+                item["lifecycle"] = "Finished"
             if kind == "attempt.finished":
                 if isinstance(event.get("texts"), list):
                     for old_key in list(session["items"]):
@@ -388,6 +391,9 @@ class Projection:
                     if old_key[0] == key[0] and old.get("channel"):
                         old["status"] = event.get("status", "interrupted")
                         old["terminal"] = True
+                    elif old_key[0] == key[0] and old.get("kind")=="tool.forming":
+                        old.update(status="proposed" if event.get("status")=="completed" else "not run",
+                                   terminal=True,lifecycle="Finished")
             while len(session["items"]) > self.max_items:
                 del session["items"][next(iter(session["items"]))]
         if kind == "gap":
