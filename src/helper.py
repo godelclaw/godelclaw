@@ -735,7 +735,7 @@ def change_mark(name, text):
 # bulky and already acted on, the commands are small and are what is missed.
 
 _ACTION_TAIL_BYTES = 262144
-_NOISE = ("(nop)", "(no_commands_parsed)", "()")
+_NOISE = ("(nop)", "(no_commands_parsed)")
 
 
 def _action_blocks(path):
@@ -760,25 +760,45 @@ def _action_blocks(path):
     return blocks
 
 
-def _commands_of(block):
-    """The command s-expression a turn issued, without the inbound message.
+def _journal_line(line):
+    """A journal line without the quote that opens it.
 
-    A block is `<time>` then an optional `HUMAN_MESSAGE: <envelope>` then the
-    response. Only the response belongs here: the message is already carried,
-    in better form, by the conversation window."""
+    appendToHistory writes each turn as one tuple whose "\\n" strings become
+    literal newlines, so a line after the first reads `" ((cmd ...`,
+    `" "HUMAN_MESSAGE: " ...` or `" ERROR_FEEDBACK: ...`."""
+    text = line.lstrip()
+    return text[1:].lstrip() if text.startswith('"') else text
+
+
+def _commands_of(block):
+    """The command s-expression a turn issued, without the inbound message
+    or the error feedback that followed it.
+
+    A block is `<time>`, an optional `HUMAN_MESSAGE: <envelope>`, the
+    response, and an optional `ERROR_FEEDBACK: ...`. Only the response
+    belongs here: the message is carried by the conversation window, and
+    feedback is an output, not a proposal."""
     for index, line in enumerate(block[1:], 1):
-        if line.lstrip().startswith("(("):
-            return "\n".join(block[index:]).strip()
+        if _journal_line(line).startswith("(("):
+            lines = [_journal_line(line)]
+            for rest in block[index + 1:]:
+                if _journal_line(rest).startswith("ERROR_FEEDBACK:") or rest.strip() == '")':
+                    break
+                lines.append(rest)
+            text = "\n".join(lines).strip()
+            return text[:-1].rstrip() if text.endswith('"') and not text.endswith('\\"') else text
     return ""
 
 
 def _is_noise(commands):
-    """A turn that issued nothing worth a slot in the window."""
-    if not commands:
-        return True
-    if len(commands) < 40 and any(part in commands for part in _NOISE):
-        return True
-    return not commands.replace("(", "").replace(")", "").strip()
+    """A turn that issued nothing worth a slot: only no-op forms and parentheses.
+
+    Matching a noise token anywhere in a short command also discarded real
+    proposals such as `((shell "echo ()"))`."""
+    rest = "".join(commands.split())
+    for part in _NOISE:
+        rest = rest.replace(part, "")
+    return not rest.replace("(", "").replace(")", "")
 
 
 def recent_actions(path, limit=8, max_chars=12000):
@@ -796,7 +816,10 @@ def recent_actions(path, limit=8, max_chars=12000):
         for block in _action_blocks(str(path)):
             commands = _commands_of(block)
             if not _is_noise(commands):
-                blocks.append("%s %s" % (block[0].strip(), commands))
+                stamp = block[0].strip()
+                # A journal stamp line ends with the quote that opens "\n".
+                stamp = stamp[:-1].rstrip() if stamp.endswith('" "') else stamp
+                blocks.append("%s %s" % (stamp, commands))
         if not blocks:
             return "(no prior actions recorded)"
         chosen, used = [], 0
@@ -822,7 +845,7 @@ def relevant_files(path, limit=8, max_paths=25):
     discipline to stay true and decays on its own as actions age out."""
     try:
         window = recent_actions(path, limit=limit, max_chars=60000)
-        seen = []
+        found = []
         pattern = r"(?<![\w/.])((?:~/|\./|/)?(?:[\w.@+-]+/)+[\w.@+-]+)"
         for match in re.finditer(pattern, window):
             candidate = match.group(1).rstrip(".,;:'\"")
@@ -841,9 +864,12 @@ def relevant_files(path, limit=8, max_paths=25):
             suffixed = "." in candidate.rsplit("/", 1)[-1]
             if not (rooted or known or suffixed):
                 continue
+            found.append(candidate)
+        # Most recent first: a path mentioned again ranks by its last mention.
+        seen = []
+        for candidate in reversed(found):
             if candidate not in seen:
                 seen.append(candidate)
-        seen.reverse()
         return " ".join(seen[:max(1, int(max_paths))]) or "(none)"
     except Exception as exc:
         print("[helper] relevant_files error:", type(exc).__name__)
