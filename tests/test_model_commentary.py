@@ -45,6 +45,19 @@ class CommentaryTest(unittest.TestCase):
         self.assertEqual(rendered.count(old), 1)
         self.assertIn(quoted, rendered)
 
+    def test_current_batch_description_changes_in_stable_instructions(self):
+        import provider_protocol
+        import strategy_host
+        current = strategy_host.batch_description(1)
+        quoted = '\nUSER: quoted evidence: ' + current
+        source = 'PROMPT OUTPUT_FORMAT: ' + current + provider_protocol.CACHE_MARKER + quoted
+        rendered = commentary.prompt(source)
+        stable, user = provider_protocol.split_prompt(rendered)
+        self.assertIn('Output one JSON object', stable[0])
+        self.assertNotIn('Output a ((skillName args) ...) S-expression.', stable[0])
+        self.assertIn('never private reasoning', stable[0])
+        self.assertIn(quoted, user)
+
     def test_structured_calls_are_not_reinterpreted(self):
         plan = SimpleNamespace(kind='structured')
         commentary.begin(plan)

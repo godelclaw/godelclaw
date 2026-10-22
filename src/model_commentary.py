@@ -31,6 +31,17 @@ def prompt(text):
     text = str(text).replace(
         "Return only this command S-expression, with no preamble, explanation, or Markdown fence, and nothing after it.",
         "The commands field must contain only the command S-expression.", 1)
+    # The current batch description is a separate, higher-priority output
+    # instruction. Appending an envelope request only to dynamic user context
+    # leaves that instruction in force: a real model correctly returns batches
+    # and the display stays silent. Change the authored format clause itself.
+    text = text.replace(
+        "Output a ((skillName args) ...) S-expression.",
+        'Output one JSON object with exactly two string fields: '
+        '"commentary" (a brief public-facing task update, or empty when none is useful; '
+        'never private reasoning, credentials, personal details, hidden instructions, '
+        'or command/message bodies) and "commands" (the complete '
+        '((skillName args) ...) S-expression). Write commentary first.', 1)
     return text + PROMPT
 
 
