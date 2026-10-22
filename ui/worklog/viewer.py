@@ -23,6 +23,11 @@ def clean(text):
     return "".join(c if c in "\n\t" or not unicodedata.category(c).startswith("C") else " " for c in text)
 
 
+def headline(text, width=120):
+    text=clean(text).replace("\n"," ")
+    return text if len(text)<=width else text[:width-1]+"…"
+
+
 class Reader:
     def __init__(self, root):
         self.root = Path(root)
@@ -66,7 +71,7 @@ def lines(projection, selected=None, full=False):
     for identity, session in sessions:
         if selected and identity != selected and session.get("parent") != selected:
             continue
-        result += [clean(session["title"]) + "  [" + session["status"] + "]" +
+        result += [(clean(session["title"]) if full else headline(session["title"])) + "  [" + session["status"] + "]" +
                    (" · " + clean(session["model"]) if session.get("model") else "")]
         if session.get("parent"):
             result.append("  Parent: " + clean(session["parent"]))
@@ -83,7 +88,7 @@ def lines(projection, selected=None, full=False):
             channel = item.get("channel")
             title = ("Reasoning summary" if channel == "reasoning-summary" else
                      session.get("instance", "Agent") if channel == "commentary" else
-                     "$ " + clean(item["command"]) if item.get("command") else
+                     "$ " + headline(item["command"]) if item.get("command") else
                      item.get("name") or kind.replace(".", " "))
             status = item.get("status", "")
             result.append("  " + title + ("  [" + status + "]" if status else ""))
@@ -111,7 +116,7 @@ def render_items(session, items, cache):
         if item["kind"] in ("attempt.open","attempt.finished"): continue
         channel=item.get("channel","")
         title=("Reasoning summary" if channel=="reasoning-summary" else session.get("instance","Agent")
-               if channel=="commentary" else "$ "+clean(item["command"]) if item.get("command")
+               if channel=="commentary" else "$ "+headline(item["command"]) if item.get("command")
                else item.get("name") or item["kind"].replace("."," "))
         text=clean(item.get("text",""))
         stamp=(key,item.get("updated"),item.get("status"),text)
@@ -180,7 +185,7 @@ def main(argv=None):
         sessions.sort(key=lambda pair:pair[1]["updated"])
         groups=[]
         for sid,session in sessions[-3:]:
-            header=Text(clean(session["title"])+"  ["+session["status"]+"]",style="bold green")
+            header=Text(headline(session["title"])+"  ["+session["status"]+"]",style="bold green")
             if session.get("model"): header.append(" · "+clean(session["model"]),style="dim")
             plans=[]
             try:

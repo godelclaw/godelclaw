@@ -161,6 +161,45 @@ class CodingSessionTests(unittest.TestCase):
         self.assertTrue(any(m.get("tool_call_id") == "c1" for m in second["messages"]))
         self.assertTrue(any(t["function"]["name"] == "apply_patch" for t in second["tools"]))
 
+    def test_launcher_does_not_wait_on_the_background_scope_output_pipe(self):
+        active, launches = self.fake_work_scope()
+        fake = self.directory/"fixture_bin/systemd-run"
+        fake.write_text(fake.read_text()+
+            '\nimport time\ntime.sleep(2)\nos.unlink(os.environ["FIXTURE_SCOPE_ACTIVE"])\n')
+        result = self.run_probe('!(println! (work "fixture" '+json.dumps(str(self.directory))+'))',
+                                module="coding_work.metta",cwd=self.directory)
+        self.assertIn("WORK_STARTED", result.stdout)
+        deadline=time.monotonic()+1
+        while not active.exists() and time.monotonic()<deadline:time.sleep(.01)
+        self.assertTrue(active.exists(),"launcher waited for scope completion; inherited pipe keeps its timeout owner attached")
+        deadline=time.monotonic()+3
+        while active.exists() and time.monotonic()<deadline:time.sleep(.05)
+        self.assertFalse(active.exists())
+
+    def test_yielded_process_streams_while_the_next_provider_call_waits(self):
+        workspace=self.directory/"workspace";workspace.mkdir()
+        session=self.session("Yield, observe and verify.",workspace)
+        self.env["METTACLAW_STREAM_DIR"]=str(self.directory/"display")
+        self.server.replies=[reply("Start the delayed command.",[call("c1","exec_command",
+            dict(cmd="printf first; sleep 1; printf second; sleep 1; printf third",yield_time_ms=0))])]
+        def before(body):
+            if len(self.server.requests)==2:
+                result=next(m['content'] for m in reversed(body['messages']) if m['role']=='tool')
+                identity=result.split('Execution ID: ',1)[1].split('\n',1)[0]
+                (session/"inbox.jsonl").write_text(json.dumps("Verify all three pieces.")+"\n")
+                time.sleep(1.2)
+                self.server.replies=[reply("Observe completion.",[call("c2","exec_poll",
+                    dict(execution_id=identity,yield_time_ms=3000))]),reply("All three pieces verified.")]
+        self.server.before_reply=before
+        self.run_session(session)
+        self.assertEqual((session/'report.txt').read_text(),"All three pieces verified.")
+        self.assertEqual(len(list((session/'executions').glob('*.log'))),1)
+        self.assertEqual(next((session/'executions').glob('*.log')).read_text(),'firstsecondthird')
+        self.assertTrue(any('Verify all three pieces.' in str(m.get('content','')) for m in self.server.requests[-1]['messages']))
+        events=[json.loads(l) for p in (self.directory/'display').glob('*.jsonl') for l in p.read_text().splitlines()]
+        self.assertEqual(len([e for e in events if e['kind']=='tool.started']),1)
+        self.assertEqual(len([e for e in events if e['kind']=='tool.finished']),1)
+
     def test_long_output_is_cut_in_the_middle_and_steering_is_folded_in(self):
         workspace = self.directory / "workspace"
         workspace.mkdir()

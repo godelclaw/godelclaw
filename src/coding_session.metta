@@ -119,7 +119,8 @@
                      (coding:tool $dir $workdir $name $args))))
      (progn
        (if (== $name "apply_patch")
-         (py-call (stream_sink.event "patch" $id $output "returned" "apply_patch")) 1)
+         (let $status (if (str:starts-with $output "Success.") "applied" "rejected")
+           (py-call (stream_sink.event "patch" $id $output $status "apply_patch"))) 1)
        (coding:record $dir (coding:tool-message $id $output)))))
 ; What a reply without text did, for the progress line, as Codex shows the
 ; commands it runs: the command, the patched files or the plan update.

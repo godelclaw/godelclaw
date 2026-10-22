@@ -69,7 +69,7 @@
                                     (work:quote (str:concat "TMPDIR=" $tmp))
                                     "METTACLAW_CODING_SESSION=1"
                                     "METTACLAW_OBSERVED_STRATEGY=0")))
-          ($launch (str:join "" ("cd " (work:quote $runtime) " && systemd-run --user --scope --quiet --collect --unit=" (work:quote (work:unit $id)) " -- " $own " "
+          ($launch (str:join "" ("cd " (work:quote $runtime) " || exit 1; systemd-run --user --scope --quiet --collect --unit=" (work:quote (work:unit $id)) " -- " $own " "
                                  (work:quote $binary) " --lang petta --import-mode ancestor-walk coding_main.metta -- " (work:quote $dir)
                                  " > " (work:quote (path:join $dir "run.log")) " 2>&1 &")))
           ($_ (work:shell $launch)))
