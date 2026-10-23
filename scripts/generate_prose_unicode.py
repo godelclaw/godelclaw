@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Write src/undelivered_prose_unicode.metta from this Python's own tables.
 
-The native helper.undelivered_prose (src/undelivered_prose.metta) reads text
+The native helper.undelivered_prose (src/undelivered_prose.metta), and
+helper.balance_parentheses (src/balance_parentheses.metta) after it, read text
 as Python's str does: str.strip/split whitespace, str.splitlines boundaries
 and str.isalnum.  CeTTa's character classes are ASCII-only, so those sets are
 written out here as regular-expression classes of explicit code points,
@@ -62,6 +63,8 @@ def tables():
         "line-break": escaped(13) + escaped(10) + "|" + char_class(breaks),
         # A run of whitespace within a line.
         "blank-run": char_class(blanks) + "+",
+        # One character of str.strip() / str.isspace().
+        "space": char_class(space),
         # A word of str.split(): a run of anything but whitespace.
         "word": char_class(space, negated=True) + "+",
         "alnum": char_class(alnum),

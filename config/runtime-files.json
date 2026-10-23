@@ -139,6 +139,8 @@
   "src/attention_parameters.metta",
   "src/attention_studies.json",
   "src/attention_studies.metta",
+  "src/balance_parentheses.metta",
+  "src/balance_parentheses_python.metta",
   "src/channels.metta",
   "src/chatgpt_agent_cetta.metta",
   "src/chatgpt_plan_cetta.metta",
