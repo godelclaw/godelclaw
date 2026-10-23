@@ -53,7 +53,10 @@
       ($other
        (if (or (== (get-metatype $value) Symbol) (== $other String))
          (let* (($text (aw:trim $value))
-                ($digits (aw:ascii-digits $text (aw:decimal-patterns))))
+                ; Settings normally contain ASCII digits; Unicode conversion
+                ; is needed only when the integer grammar does not match yet.
+                ($digits (if (re:is-match (get-state &aw-integer) $text) $text
+                           (aw:ascii-digits $text (aw:decimal-patterns)))))
            (if (and (not (re:is-match (re:compile "[\\x{1C}-\\x{1F}]") $value))
                     (re:is-match (get-state &aw-integer) $digits))
              (let $plain (str:join "" (str:split "_" $digits))
@@ -137,9 +140,15 @@
      ((((Error $call $why) $_) "(proposal window unavailable)")
       (($_ (Error $call $why)) "(proposal window unavailable)")
       ($valid
-       (let $text (aw:path-text $path)
-         (if (aw:contains $text (str:from-codepoints (0))) "(proposal window unavailable)"
-           (aw:select (aw:action-blocks $text) (max 1 $limit) (max 500 $budget) 0 ())))))))
+       (aw:recent-from (aw:checked-blocks $path) $limit $budget)))))
+(= (aw:checked-blocks $path)
+   (let $text (aw:path-text $path)
+     (if (aw:contains $text (str:from-codepoints (0))) (Error aw:history invalid-path)
+       (aw:action-blocks $text))))
+(= (aw:recent-from $blocks $limit $budget)
+   (case $blocks
+     (((Error $call $why) "(proposal window unavailable)")
+      ($ready (aw:select $ready (max 1 $limit) (max 500 $budget) 0 ())))))
 (= (aw:path-text $path)
    (case (get-type $path)
      ((Bool (if $path "True" "False")) ($other (format-args "{}" ($path))))))
@@ -265,8 +274,13 @@
 (= (action-window:context-views)
    (let* (($history (system:getenv-or-default "METTACLAW_HISTORY_PATH" "./memory/history.metta"))
           ($turns (aw:int-env "METTACLAW_RECENT_ACTION_TURNS" 12))
-          ($files (aw:relevant-files $history $turns)))
-     (if (== (py-call (strategy_host.enabled_flag)) 1)
+          ($blocks (aw:checked-blocks $history)))
+     (aw:context-views $blocks $turns (py-call (strategy_host.enabled_flag)))))
+; Both budgets select from one captured journal, so a concurrent append cannot
+; give the two views different histories. The strategy path selects only once.
+(= (aw:context-views $blocks $turns $strategy)
+   (let $files (aw:files-checked (aw:recent-from $blocks $turns 60000) 25)
+     (if (== $strategy 1)
        (("relevant-files" $files))
-       (let $recent (aw:recent-actions $history $turns)
+       (let $recent (aw:recent-from $blocks $turns 12000)
          (("recent-proposals" $recent) ("relevant-files" $files))))))

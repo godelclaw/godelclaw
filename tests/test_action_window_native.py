@@ -528,6 +528,23 @@ class NativeActionWindowTest(unittest.TestCase):
         self.run_guest(CALLER_HEADER + ["!(import! &self ./src/memory)", *imports] + guard + lines,
                        "petta" if swi else "cetta", swi, cwd=self.directory, **settings)
 
+    def test_context_views_share_the_captured_journal(self):
+        history = self.history("snapshot.metta", journal_block("before", '((shell "cat src/before.py"))'))
+        recent = helper.recent_actions(history, limit=12)
+        files = helper.relevant_files(history, limit=12)
+        replacement = journal_block("after", '((shell "cat src/after.py"))')
+        output = self.run_guest([
+            "!(import! &self ./src/action_window_cetta)",
+            "!(let* (($captured (aw:checked-blocks %s)) "
+            "($_ (fs:update-text %s \"replace\" %s \"\" \"\"))) "
+            "(println! (SnapshotParity "
+            '(== (aw:context-views $captured 12 0) (("recent-proposals" %s) ("relevant-files" %s))) '
+            '(== (aw:context-views $captured 12 1) (("relevant-files" %s))))))'
+            % (q(history), q(history), q(replacement), q(recent), q(files), q(files)),
+        ])
+        self.assertRegex(output, r"\(SnapshotParity (?:True|true) (?:True|true)\)")
+        self.assertNotEqual(helper.relevant_files(history, limit=12), files)
+
     def test_bundle_sources_are_identical_on_both_engines(self):
         import action_window_probe
 
