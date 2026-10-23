@@ -273,7 +273,7 @@ class ProviderRoutingTest(unittest.TestCase):
                 "retired-model", 6000, "medium", "hello")
         self.assertEqual(out, "()")
         health = synthetic_llm.cognitive_health.snapshot()
-        self.assertEqual(health["last_failure_type"], "httperror")
+        self.assertEqual(health["last_failure_type"], "provider-rejected-404")
 
     def test_local_provider_failure_has_a_nonzero_default_pace(self):
         synthetic_llm._consecutive_empty = 0
@@ -285,6 +285,24 @@ class ProviderRoutingTest(unittest.TestCase):
             self.assertEqual(synthetic_llm._empty_action(
                 RuntimeError("local adapter fault")), "()")
         self.assertEqual(failed.call_args.kwargs["retry_after"], 7)
+
+    def test_a_rejected_request_pauses_for_the_longest_backoff_and_is_named(self):
+        # The provider would answer the same request the same way: no 15 s loop.
+        def failure(status):
+            error = RuntimeError("provider status")
+            error.status = status
+            return error
+        for status, wait, label in ((401, 30, "provider-rejected-401"), (403, 30, "provider-rejected-403"),
+                                    (413, 30, "provider-rejected-413"), (400, 30, "provider-rejected-400"),
+                                    (429, 7, "RuntimeError"), (503, 7, "RuntimeError"), (408, 7, "RuntimeError")):
+            with self.subTest(status=status):
+                synthetic_llm._consecutive_empty = 0
+                with mock.patch.dict(os.environ, {"SYNTHETIC_EMPTY_BACKOFF": "7",
+                                                  "SYNTHETIC_EMPTY_BACKOFF_CAP": "30"}), \
+                     mock.patch.object(synthetic_llm.cognitive_health, "turn_failed") as failed:
+                    self.assertEqual(synthetic_llm._empty_action(failure(status)), "()")
+                self.assertEqual(failed.call_args.kwargs["retry_after"], wait)
+                self.assertEqual(failed.call_args.args[0], label)
 
     def test_set_model_claude_requires_key(self):
         self.enable_flag()

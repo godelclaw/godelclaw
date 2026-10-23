@@ -26,9 +26,13 @@ class Script(http.server.BaseHTTPRequestHandler):
         before_reply = getattr(self.server, "before_reply", None)
         if before_reply:
             before_reply(body)
-        reply = self.server.replies.pop(0) if self.server.replies else self.server.final
-        data = json.dumps(reply).encode()
-        self.send_response(200)
+        status = getattr(self.server, "status", 200)
+        if status != 200:
+            data = json.dumps({"error": {"type": "fixture", "message": "fixture rejection"}}).encode()
+        else:
+            reply = self.server.replies.pop(0) if self.server.replies else self.server.final
+            data = json.dumps(reply).encode()
+        self.send_response(status)
         self.end_headers()
         self.wfile.write(data)
 
@@ -321,6 +325,16 @@ class CodingSessionTests(unittest.TestCase):
         sent = self.server.requests[0]["messages"]
         self.assertEqual(sum("ONE_STEERING_OCCURRENCE" in str(m.get("content")) for m in sent), 1)
         self.assertFalse(any("_coding_input" in m for m in sent))
+
+    def test_a_rejected_request_ends_the_session_at_once_with_its_status(self):
+        workspace = self.directory / "workspace"
+        workspace.mkdir()
+        session = self.session("Anything.", workspace)
+        self.server.status = 401
+        self.run_session(session)
+        self.assertEqual(len(self.server.requests), 1)
+        self.assertEqual(json.loads((session / "state.json").read_text())["status"], "failed")
+        self.assertIn("rejected the request: HTTP 401", (session / "report.txt").read_text())
 
     def test_incomplete_tool_reply_cannot_execute_an_effect(self):
         workspace = self.directory / "workspace"; workspace.mkdir()

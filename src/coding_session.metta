@@ -187,16 +187,22 @@
            ($message (format-args "{}: {}" ($type $message))))))
       ($other (str:join " " ((repr $where) (repr $why)))))))
 ; Failed calls are retried with a growing wait, as Codex retries five times.
+; A request the provider rejected would only be rejected again: the session
+; stops at once, and its report names the status.
 (= (coding:ask $dir $request $attempt)
    (case (catch (coding:ask-once $dir $request))
      (((Error $where $why)
-        (let $_ (println! (CodingCallFailed attempt $attempt (coding:error-text $where $why)))
-          (if (>= $attempt 4) (CallFailed (coding:error-text $where $why))
+        (let* (($text (coding:error-text $where $why))
+               ($_ (println! (CodingCallFailed attempt $attempt $text))))
+          (if (or (>= $attempt 4) (coding:rejected? $text)) (CallFailed $text)
             (let* (($wait (* 2 (+ $attempt 1))) ($_ (py-call (time.sleep $wait)))) (coding:ask $dir $request (+ $attempt 1))))))
       ($reply (case (coding:field $reply "message")
                 ((JsonNull (if (>= $attempt 4) (CallFailed "no message in the reply")
                              (coding:ask $dir $request (+ $attempt 1))))
                  ($message (coding:validate-reply $reply))))))))
+
+(= (coding:rejected? $text)
+   (case (str:find $text "provider rejected the request") (((TextNotFound $_) False) ($at True))))
 
 (= (coding:validate-reply $reply)
    (let* (($message (coding:field $reply "message"))

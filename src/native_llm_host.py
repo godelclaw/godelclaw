@@ -560,4 +560,6 @@ def failed(plan, correlation, kind, status=0):
         wait = cognitive_health.retry_wait_seconds()
         if wait:
             runtime_host.sleep(wait)
+    if synthetic_llm._rejected_status(error.status):
+        raise RuntimeError("native provider rejected the request: HTTP %d" % error.status) from None
     raise RuntimeError("native provider failed: " + type(error).__name__) from None

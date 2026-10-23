@@ -96,6 +96,12 @@ def retry_after_seconds(headers):
             return None
 
 
+def _rejected_status(status):
+    """A client error the provider would return again for the same request.
+    Timeouts, conflicts, too-early and rate limits can pass on a later try."""
+    return isinstance(status, int) and 400 <= status < 500 and status not in (408, 409, 425, 429)
+
+
 def _empty_action(reason):
     """Record failure and let the independent, interruptible loop own waiting."""
     global _consecutive_empty
@@ -115,6 +121,11 @@ def _empty_action(reason):
         wait = max(0, float(retry))
     import admission_frontier
     code = admission_frontier.failure_code(reason)
+    if _rejected_status(status):
+        # Sending the same request again cannot succeed: pause as long as the
+        # longest backoff, and name the status where the operator looks.
+        wait = max(wait, cap)
+        code = "provider-rejected-%d" % status
     cognitive_health.turn_failed(code, retry_after=wait)
     # Exception messages may contain URLs, headers or response bodies.
     print("[synthetic_llm] failed provider turn: " + code +
