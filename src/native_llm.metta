@@ -32,9 +32,11 @@
 
 ; Providers report each model's window. The host reads Synthetic's catalog and
 ; Anthropic's model metadata; the ChatGPT list needs this runtime's sign-in.
+; The host's answer crosses as a Symbol: compare its text, so that no other
+; provider's model ever reaches the ChatGPT list.
 (= (llm:observe-window)
    (if (llm:native?)
-     (let $model (py-call (synthetic_llm.model_window_due))
+     (let $model (format-args "{}" ((py-call (synthetic_llm.model_window_due))))
        (if (== $model "") True (chatgpt:observe-window $model)))
      True))
 

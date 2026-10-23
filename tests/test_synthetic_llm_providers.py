@@ -100,6 +100,10 @@ class ProviderRoutingTest(unittest.TestCase):
             self.assertEqual(synthetic_llm._cached_observation("model-window")["value"]["id"], model)
         with mock.patch.object(synthetic_llm, "current_model", return_value="claude-fixture"):
             self.assertEqual(synthetic_llm.model_window_due(), "")
+        before = synthetic_llm._cached_observation("model-window")
+        self.assertEqual(synthetic_llm.observe_model_window("", 0, "chatgpt-models"), 0)
+        self.assertEqual(synthetic_llm.observe_model_window("claude-fixture", 900000, "chatgpt-models"), 0)
+        self.assertEqual(synthetic_llm._cached_observation("model-window"), before)
 
     def test_synthetic_default_path_unchanged(self):
         out, seen = self.capture_chat("syn:large:text")

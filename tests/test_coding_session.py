@@ -386,6 +386,19 @@ class CodingSessionTests(unittest.TestCase):
         self.assertEqual(observed["attempted_model"], "chatgpt:fixture")
         self.assertNotIn("value", observed)
 
+    def test_a_window_read_never_asks_chatgpt_about_another_providers_model(self):
+        # The host's "no ChatGPT model is due" reaches MeTTa as a Symbol, which
+        # never equals the String "".
+        del self.env["METTACLAW_CONTEXT_WINDOW_TOKENS"]
+        result = self.run_probe('!(import! &self ' + json.dumps(str(ROOT / "src" / "coding_session.metta")) + ')\n'
+                                '!(println! (Observed (llm:observe-window)))\n'
+                                '!(println! (Window (coding:window)))\n', module="native_llm.metta")
+        self.assertIn("(Observed true)", result.stdout)
+        self.assertIn("(Window 200000)", result.stdout)
+        observations = self.directory / "providers.json"
+        record = json.loads(observations.read_text()).get("model-window", {}) if observations.exists() else {}
+        self.assertNotIn("attempted_model", record)
+
     def test_a_window_reported_after_the_first_step_is_used(self):
         # A session's provider facts start empty and arrive after its first call.
         workspace = self.directory / "workspace"

@@ -668,6 +668,8 @@ def model_window_due():
 
 def observe_model_window(model, context, source):
     """Record the window the native runtime read for a model; 0 when none."""
+    if not str(model).startswith("chatgpt:"):
+        return 0
     context = int(context) if type(context) in (int, float) else 0
     if context > 0:
         _store_observation("model-window", {"id": str(model), "context": context,
