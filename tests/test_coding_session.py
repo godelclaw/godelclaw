@@ -89,6 +89,35 @@ class CodingContextTests(unittest.TestCase):
         self.assertFalse((self.directory / "context.json").exists())
 
 
+class EnginePinTests(unittest.TestCase):
+    def test_a_session_keeps_the_engine_file_it_started_on(self):
+        sys.path.insert(0, str(ROOT / "src"))
+        import coding_io
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            root = tmp / "root"; (root / "config").mkdir(parents=True)
+            (root / "config" / "runtime-files.json").write_text('["coding_main.metta"]')
+            (root / "coding_main.metta").write_text("; fixture\n")
+            engine = tmp / "engine-v1"; engine.write_text("engine one")
+            link = tmp / "current"; link.symlink_to(engine)
+            session = tmp / "memory" / "coding" / "work-pin"; session.mkdir(parents=True)
+            with mock.patch.dict(os.environ, {"CETTA_BIN": str(link)}):
+                coding_io.freeze_runtime(root, session)
+            record = json.loads((session / "runtime.json").read_text())
+            self.assertEqual(record["binary"], str(engine))
+            self.assertEqual(coding_io.runtime_binary(session), str(engine))
+            self.assertEqual(coding_io.engine_problem(session), "")
+            # A link flip leaves the session on the file it started with.
+            engine2 = tmp / "engine-v2"; engine2.write_text("engine two")
+            link.unlink(); link.symlink_to(engine2)
+            self.assertEqual(coding_io.runtime_binary(session), str(engine))
+            self.assertEqual(coding_io.engine_problem(session), "")
+            engine.write_text("engine one, rebuilt in place")
+            self.assertIn("has changed since", coding_io.engine_problem(session))
+            engine.unlink()
+            self.assertIn("is gone", coding_io.engine_problem(session))
+
+
 @unittest.skipUnless(os.environ.get("CETTA_BIN"), "set CETTA_BIN to an HTTP-enabled Python build")
 class CodingSessionTests(unittest.TestCase):
     def setUp(self):
@@ -622,6 +651,20 @@ class CodingSessionTests(unittest.TestCase):
         self.env.update(METTACLAW_MODEL_STATE_PATH=str(session / "model.metta"))
         self.run_session(session)
         self.assertEqual({request["model"] for request in self.server.requests}, {"fixture-pinned"})
+
+    def test_work_resume_refuses_a_session_whose_engine_is_gone(self):
+        active, launches = self.fake_work_scope()
+        runner = self.directory / "runner"
+        session = runner / "memory" / "coding" / "work-engine-fixture"
+        session.mkdir(parents=True)
+        (session / "task.json").write_text(json.dumps({"task": "Long job.", "workdir": str(self.directory)}))
+        (session / "state.json").write_text(json.dumps({"status": "interrupted", "steps": 3}))
+        (session / "runtime.json").write_text(json.dumps({"root": str(ROOT), "digest": "fixture",
+                                                          "binary": str(self.directory / "engine-gone"),
+                                                          "binary_sha256": "0" * 64}))
+        result = self.run_probe('!(println! (work-resume "work-engine-fixture"))\n', module="coding_work.metta", cwd=runner)
+        self.assertIn("the engine this session started on is gone", result.stdout)
+        self.assertFalse(launches.exists())
 
     def test_work_resume_keeps_one_session_and_its_existing_evidence(self):
         active, launches = self.fake_work_scope()

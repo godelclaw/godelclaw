@@ -99,9 +99,42 @@ def freeze_runtime(root, directory):
             except FileExistsError: pass
         finally:
             if temporary.exists():shutil.rmtree(temporary)
-    record.write_text(json.dumps(dict(root=str(target),digest=digest,
-        binary=os.environ.get("CETTA_BIN","cetta"))))
+    binary = os.environ.get("CETTA_BIN", "cetta")
+    binary = os.path.realpath(shutil.which(binary) or binary)
+    try:
+        engine = _file_digest(binary)
+    except OSError:
+        engine = None
+    # The engine is pinned by its resolved file and content: a resume after
+    # an upgrade or a link flip must not run a different engine.
+    record.write_text(json.dumps(dict(root=str(target), digest=digest,
+        binary=binary, binary_sha256=engine)))
     return str(target)
+
+
+def _file_digest(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for block in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def engine_problem(directory):
+    """Why a session cannot resume on the engine it started on, or ""."""
+    record = Path(str(directory)) / "runtime.json"
+    if not record.is_file():
+        return ""
+    value = json.loads(record.read_text())
+    if not value.get("binary_sha256"):
+        return ""
+    try:
+        current = _file_digest(value["binary"])
+    except OSError:
+        return "the engine this session started on is gone (%s)" % value["binary"]
+    if current != value["binary_sha256"]:
+        return "the engine this session started on has changed since (%s)" % value["binary"]
+    return ""
 
 
 def session_model(directory, fallback):

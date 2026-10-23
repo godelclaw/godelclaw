@@ -115,6 +115,8 @@
    (let* (($dir (work:dir $id)) ($task-path (path:join $dir "task.json")))
      (if (not (fs:is-file $task-path)) (str:concat "work-resume: no session " $id)
        (if (work:running? $id) (str:concat "WORK_RUNNING " $id)
+       (let $engine (format-args "{}" ((py-call (coding_io.engine_problem $dir))))
+       (if (not (== $engine "")) (str:join "" ("work-resume: " $engine "; start a new session for this task"))
          (let* (($stop (path:join $dir "stop"))
                 ($recycle (path:join $dir "recycle.requested"))
                 ($_ (if (fs:exists $stop) (proc:run ("rm" "--" $stop) $dir inherit 10000 0 "merged") ()))
@@ -122,7 +124,7 @@
                 ($line (json-stringify (JsonString "Resume this session from its existing evidence and plan. Verify uncertain effects before choosing new actions.")))
                 ($_ (py-call (coding_io.append_line (path:join $dir "inbox.jsonl") $line)))
                 ($_ (work:launch $id)))
-           (str:concat "WORK_RESUMING " $id))))))
+           (str:concat "WORK_RESUMING " $id))))))))
 
 (= (work:line $id)
    (let* (($state (work:json (path:join (work:dir $id) "state.json")))
