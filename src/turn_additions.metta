@@ -24,7 +24,12 @@
          (py-call (context_sources.bundle_with_views $views)))))
 
 (= (addition-effect-turn-begin $turn)
-   (py-call (effect_frontier.begin $turn)))
+   (let $_ (addition-reap-work) (py-call (effect_frontier.begin $turn))))
+
+;; Coding sessions that ended without their report are recorded and their
+;; requester told, at the next turn. Coding mode runs on CeTTa only.
+(= (addition-reap-work)
+   (case (py-call (engine_modes.active_engine)) (("cetta" (work:reap)) (cetta (work:reap)) ($other 0))))
 
 (= (addition-strategy-begin $turn $source $message)
    (let $receipt (py-call (strategy_host.begin $turn $source $message))

@@ -666,6 +666,67 @@ class CodingSessionTests(unittest.TestCase):
         self.assertIn("the engine this session started on is gone", result.stdout)
         self.assertFalse(launches.exists())
 
+    def dead_session_fixture(self):
+        sent = self.directory / "sent.txt"
+        mailer = self.directory / "mailer"
+        mailer.write_text('#!/bin/sh\nprintf "%s|%s|%s\\n" "$CLAW_MAIL_AGENT" "$2" "$3" >> ' + str(sent) + '\n')
+        mailer.chmod(0o755)
+        self.env.update(METTACLAW_WORK_MAIL=str(mailer))
+        runner = self.directory / "runner"
+        sessions = runner / "memory" / "coding"
+        for name, status in (("work-dead-fixture", "running"), ("work-done-fixture", "done")):
+            folder = sessions / name; folder.mkdir(parents=True)
+            (folder / "task.json").write_text(json.dumps({"task": "Long job.", "workdir": str(self.directory),
+                                                          "requester": "requester-fixture"}))
+            (folder / "state.json").write_text(json.dumps({"status": status, "steps": 7, "progress": "$ make test", "inbox": 0}))
+            (folder / "plan.json").write_text('{"plan":[{"step":"build","status":"in_progress"}]}')
+        return runner, sessions / "work-dead-fixture", sessions / "work-done-fixture", sent
+
+    def test_a_session_that_died_is_recorded_and_its_requester_told_once(self):
+        active, launches = self.fake_work_scope()
+        runner, dead, done, sent = self.dead_session_fixture()
+        active.write_text("")  # while its scope runs, a running session is left alone
+        result = self.run_probe('!(println! (Live (work:reap)))\n', module="coding_work.metta", cwd=runner)
+        self.assertIn("(Live 0)", result.stdout)
+        active.unlink()
+        result = self.run_probe('!(println! (Reaped (work:reap)))\n!(println! (Again (work:reap)))\n',
+                                module="coding_work.metta", cwd=runner)
+        self.assertIn("(Reaped 1)", result.stdout)
+        self.assertIn("(Again 0)", result.stdout)
+        self.assertEqual(json.loads((dead / "state.json").read_text())["status"], "interrupted")
+        report = (dead / "report.txt").read_text()
+        self.assertIn("ended without finishing", report)
+        self.assertIn("$ make test", report)
+        self.assertIn('(work-resume "work-dead-fixture")', report)
+        agent, to, text = sent.read_text().split("|", 2)
+        self.assertEqual((agent, to), ("work-dead-fixture", "requester-fixture"))
+        self.assertIn("interrupted after 7 steps", text)
+        self.assertFalse((done / "report.txt").exists())
+        # Resuming moves that report aside, so a later ending is noticed again.
+        result = self.run_probe('!(println! (work-resume "work-dead-fixture"))\n', module="coding_work.metta", cwd=runner)
+        self.assertIn("WORK_RESUMING work-dead-fixture", result.stdout)
+        self.assertFalse((dead / "report.txt").exists())
+        self.assertIn("ended without finishing", (dead / "report.previous.txt").read_text())
+
+    def test_the_next_turn_reaps_a_dead_session(self):
+        active, launches = self.fake_work_scope()
+        runner, dead, done, sent = self.dead_session_fixture()
+        # The boot imports coding_work.metta before turn_additions.metta.
+        result = self.run_probe('!(import! &self ' + json.dumps(str(ROOT / "src" / "turn_additions.metta")) + ')\n'
+                                '!(println! (Hook (addition-reap-work)))\n', module="coding_work.metta", cwd=runner)
+        self.assertIn("(Hook 1)", result.stdout)
+        self.assertTrue(sent.is_file())
+
+    def test_work_stop_records_its_own_report_without_mail(self):
+        active, launches = self.fake_work_scope()
+        runner, dead, done, sent = self.dead_session_fixture()
+        active.write_text("")
+        result = self.run_probe('!(println! (work-stop "work-dead-fixture"))\n', module="coding_work.metta", cwd=runner)
+        self.assertIn("WORK_STOPPED work-dead-fixture", result.stdout)
+        self.assertEqual(json.loads((dead / "state.json").read_text())["status"], "stopped")
+        self.assertIn("Stopped by the requester.", (dead / "report.txt").read_text())
+        self.assertFalse(sent.exists())
+
     def test_work_resume_keeps_one_session_and_its_existing_evidence(self):
         active, launches = self.fake_work_scope()
         self.env.update(METTACLAW_ACTIVITY_CALL_SCOPE="parent-conversation", METTACLAW_ACTIVITY_CALL_LANE="interactive")

@@ -137,6 +137,20 @@ def engine_problem(directory):
     return ""
 
 
+def mark_state(directory, status):
+    """Set a session's recorded status, keeping the rest of its state."""
+    path = Path(str(directory)) / "state.json"
+    try:
+        state = json.loads(path.read_text())
+    except (OSError, ValueError):
+        state = {}
+    state["status"] = str(status)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(state))
+    os.replace(temporary, path)
+    return 1
+
+
 def session_model(directory, fallback):
     """The model a session keeps, written to its own state file so the
     agent's model file never reaches the session. It is the model in

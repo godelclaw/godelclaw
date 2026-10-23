@@ -121,6 +121,10 @@
                 ($recycle (path:join $dir "recycle.requested"))
                 ($_ (if (fs:exists $stop) (proc:run ("rm" "--" $stop) $dir inherit 10000 0 "merged") ()))
                 ($_ (if (fs:exists $recycle) (proc:run ("rm" "--" $recycle) $dir inherit 10000 0 "merged") ()))
+                ;; The last ending's report stays as evidence, out of the way
+                ;; of this run's own report.
+                ($report (path:join $dir "report.txt"))
+                ($_ (if (fs:is-file $report) (proc:run ("mv" "--" $report (path:join $dir "report.previous.txt")) $dir inherit 10000 0 "merged") ()))
                 ($line (json-stringify (JsonString "Resume this session from its existing evidence and plan. Verify uncertain effects before choosing new actions.")))
                 ($_ (py-call (coding_io.append_line (path:join $dir "inbox.jsonl") $line)))
                 ($_ (work:launch $id)))
@@ -140,12 +144,15 @@
      (let $id (car-atom $ids)
        (work:lines (cdr-atom $ids) (if (== (str:trim $id) "") $out (str:join "\n" ($out (work:line $id))))))))
 (= (work-status)
+   (let $_ (work:reap) (work:status-all)))
+(= (work:status-all)
    (case (proc:run ("ls" "-1" "--" (work:root)) (system:cwd) inherit 10000 0 "merged")
      (((proc:exited 0 $out $err) (let $text (work:lines (str:split "\n" $out) "WORK_SESSIONS")
                                    (if (== $text "WORK_SESSIONS") "WORK_SESSIONS none" $text)))
       ($other "WORK_SESSIONS none"))))
 (= (work-status $id)
-   (let* (($dir (work:dir $id))
+   (let* (($_ (work:reap))
+          ($dir (work:dir $id))
           ($plan (if (fs:is-file (path:join $dir "plan.json")) (fs:read-text (path:join $dir "plan.json")) "none"))
           ($report (if (fs:is-file (path:join $dir "report.txt")) (fs:read-text (path:join $dir "report.txt")) "")))
      (if (fs:is-file (path:join $dir "task.json"))
@@ -162,6 +169,59 @@
      (if (fs:is-file (path:join $dir "task.json"))
        (let* (($_ (fs:update-text (path:join $dir "stop") "replace" "" "" ""))
               ($_ (proc:run ("systemctl" "--user" "stop" (str:concat (work:unit $id) ".scope"))
-                            (system:cwd) inherit 10000 0 "merged")))
+                            (system:cwd) inherit 10000 0 "merged"))
+              ;; Stopping the scope ends the session before it can write
+              ;; its own report; the one who stopped it needs no mail.
+              ($_ (if (fs:is-file (path:join $dir "report.txt")) ()
+                    (work:ended $id $dir "stopped" "Stopped by the requester."))))
          (str:concat "WORK_STOPPED " $id))
        (str:concat "work-stop: no session " $id))))
+
+; A session marked running whose scope is gone ended without its report: it
+; was stopped, killed or crashed, and so could not say so itself. Its report
+; records that, and its requester is told as for any other ending, once.
+(= (work:reap)
+   (case (proc:run ("ls" "-1" "--" (work:root)) (system:cwd) inherit 10000 0 "merged")
+     (((proc:exited 0 $out $err) (work:reap-ids (str:split "\n" $out) 0))
+      ($other 0))))
+(= (work:reap-ids $ids $count)
+   (if (== $ids ()) $count
+     (let $id (str:trim (car-atom $ids))
+       (work:reap-ids (cdr-atom $ids) (+ $count (if (== $id "") 0 (work:reap-one $id)))))))
+(= (work:reap-one $id)
+   (let* (($dir (work:dir $id))
+          ($status (work:text (work:field (work:json (path:join $dir "state.json")) "status"))))
+     (if (== $status "running")
+       (if (fs:is-file (path:join $dir "report.txt")) 0
+         (if (work:running? $id) 0
+           (let* (($_ (work:ended $id $dir "interrupted"
+                        "The session ended without finishing: its process is gone (it was stopped, killed or crashed) and it wrote no report."))
+                  ($_ (work:notify $id $dir "interrupted")))
+             1)))
+       0)))
+(= (work:ended $id $dir $status $why)
+   (let* (($state (work:json (path:join $dir "state.json")))
+          ($progress (work:text (work:field $state "progress")))
+          ($plan (if (fs:is-file (path:join $dir "plan.json")) (work:clip (fs:read-text (path:join $dir "plan.json")) 2000) "none recorded"))
+          ($report (str:join "" ($why "\n\nLast progress:\n" (if (== $progress "") "none recorded" $progress)
+                                 "\n\nPlan:\n" $plan "\n\nResume without replaying uncertain effects:\n(work-resume \"" $id "\")")))
+          ($_ (fs:update-text (path:join $dir "report.txt") "replace" $report "" ""))
+          ($_ (py-call (coding_io.mark_state $dir $status))))
+     $status))
+; The same mail coding:notify (coding_session.metta) sends when a session ends
+; by itself.
+(= (work:notify $id $dir $status)
+   (let* (($task (work:json (path:join $dir "task.json")))
+          ($requester (work:text (work:field $task "requester")))
+          ($steps (work:text (work:field (work:json (path:join $dir "state.json")) "steps")))
+          ($report (fs:read-text (path:join $dir "report.txt")))
+          ($text (str:join "" ("Work " $id " " $status " after " (if (== $steps "") "0" $steps) " steps. Task: "
+                               (work:text (work:field $task "task")) "\n\nReport:\n" $report)))
+          ($mailer (system:getenv-or-default "METTACLAW_WORK_MAIL" "claw-mail"))
+          ($worklog (system:getenv-or-default "METTACLAW_WORKLOG_COMMAND" ""))
+          ($_ (if (== $requester "") ()
+                (proc:run ("env" (str:concat "CLAW_MAIL_AGENT=" $id) $mailer "send" $requester $text) $dir inherit 60000 0 "merged")))
+          ($_ (if (== $worklog "") ()
+                (proc:run ($worklog "add" (str:join "" ("Work " $id " " $status ": " (str:char-slice $report 0 900))))
+                          $dir inherit 60000 0 "merged"))))
+     $status))
