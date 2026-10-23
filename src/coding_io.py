@@ -104,6 +104,25 @@ def freeze_runtime(root, directory):
     return str(target)
 
 
+def session_model(directory, fallback):
+    """The model a session keeps, written to its own state file so the
+    agent's model file never reaches the session. It is the model in
+    task.json; for a session from before models were recorded, the one its
+    state file already names, or else the fallback. task.json is never
+    rewritten: resuming keeps the session's record as it was."""
+    directory = Path(str(directory))
+    model = str(json.loads((directory / "task.json").read_text()).get("model") or "")
+    state = directory / "model.metta"
+    if not model and state.is_file():
+        found = re.search(r"\(active-model\s+([^\s()]+)\s*\)", state.read_text())
+        model = found.group(1) if found else ""
+    model = model or str(fallback)
+    text = "(active-model %s)\n" % model
+    if not state.is_file() or state.read_text() != text:
+        state.write_text(text)
+    return model
+
+
 def runtime_binary(directory):
     return json.loads((Path(str(directory))/"runtime.json").read_text())["binary"]
 

@@ -900,6 +900,23 @@ def model_in_observed_catalog(name):
     return None if not ids else str(name) in ids
 
 
+def session_model_error(name):
+    """Why a model id cannot serve a coding session, or "" when it can.
+    The checks set_model applies, without persisting or switching anything."""
+    name = str(name).strip()
+    if _is_anthropic_model(name):
+        if not os.environ.get("ANTHROPIC_API_KEY", ""):
+            return "anthropic provider not configured (ANTHROPIC_API_KEY missing)"
+        if name not in _anthropic_models():
+            return f"unknown anthropic model '{name}'; available: " + ", ".join(_anthropic_models())
+        return ""
+    import re as _re
+    if (not name or len(name) > 200
+            or not _re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/+@-]*", name)):
+        return f"invalid model id '{name}'"
+    return ""
+
+
 def set_model(name):
     """Switch the model for subsequent chat() calls.
 

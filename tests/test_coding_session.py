@@ -585,6 +585,44 @@ class CodingSessionTests(unittest.TestCase):
                 self.assertEqual(len(archives), 1)
                 self.assertEqual(archives[0].read_bytes(), original)
 
+    def test_a_session_keeps_the_model_and_effort_it_starts_with(self):
+        active, launches = self.fake_work_scope()
+        runner = self.directory / "runner"; runner.mkdir()
+        workspace = json.dumps(str(self.directory))
+        result = self.run_probe('!(println! (work "Chosen." ' + workspace + ' "fixture-other" "medium"))\n'
+                                '!(println! (work "Bad model." ' + workspace + ' "bad model"))\n'
+                                '!(println! (work "Bad effort." ' + workspace + ' "fixture-other" "loud"))\n',
+                                module="coding_work.metta", cwd=runner)
+        self.assertIn("WORK_STARTED work-", result.stdout)
+        self.assertIn("work: invalid model id 'bad model'", result.stdout)
+        self.assertIn('work: unknown effort \\"loud\\"', result.stdout)  # println! escapes the quotes
+        [session] = list((runner / "memory" / "coding").iterdir())
+        task = json.loads((session / "task.json").read_text())
+        self.assertEqual((task["model"], task["effort"]), ("fixture-other", "medium"))
+        self.assertEqual((session / "model.metta").read_text(), "(active-model fixture-other)\n")
+        deadline = time.monotonic() + 5
+        while not launches.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        args = json.loads(launches.read_text())
+        self.assertIn("SYNTHETIC_MODEL=fixture-other", args)
+        self.assertIn("METTACLAW_MODEL_STATE_PATH=" + str(session / "model.metta"), args)
+        # Without a choice, the session keeps the agent's model of that moment.
+        active.unlink(); launches.unlink()
+        self.run_probe('!(println! (work "Default." ' + workspace + '))\n', module="coding_work.metta", cwd=runner)
+        [default] = [s for s in (runner / "memory" / "coding").iterdir() if s != session]
+        task = json.loads((default / "task.json").read_text())
+        self.assertEqual((task["model"], task["effort"]), ("fixture-model", "high"))
+
+    def test_a_session_calls_the_provider_with_its_own_model(self):
+        workspace = self.directory / "workspace"; workspace.mkdir()
+        session = self.session("Report.", workspace)
+        (session / "model.metta").write_text("(active-model fixture-pinned)\n")
+        # The agent's own model file names another model; the session never reads it.
+        (self.directory / "model").write_text("(active-model fixture-agent)\n")
+        self.env.update(METTACLAW_MODEL_STATE_PATH=str(session / "model.metta"))
+        self.run_session(session)
+        self.assertEqual({request["model"] for request in self.server.requests}, {"fixture-pinned"})
+
     def test_work_resume_keeps_one_session_and_its_existing_evidence(self):
         active, launches = self.fake_work_scope()
         self.env.update(METTACLAW_ACTIVITY_CALL_SCOPE="parent-conversation", METTACLAW_ACTIVITY_CALL_LANE="interactive")

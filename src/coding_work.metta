@@ -27,8 +27,30 @@
 (= (work:clip $text $limit)
    (if (<= (str:char-length $text) $limit) $text (str:concat (str:char-slice $text 0 $limit) " …")))
 
+;; A session keeps the model and effort it starts with: the agent's own model
+;; and "high" unless the call names others. Switching the agent's model later
+;; does not change a running or resumed session.
+(= (work:agent-model) (format-args "{}" ((py-call (synthetic_llm.current_model)))))
+(= (work:efforts) ("default" "minimal" "low" "medium" "high" "xhigh" "max"))
+(= (work:known? $item $items)
+   (if (== $items ()) False
+     (if (== (car-atom $items) $item) True (work:known? $item (cdr-atom $items)))))
+(= (work:choice-problem $model $effort)
+   (let* (($problem (format-args "{}" ((py-call (synthetic_llm.session_model_error $model)))))
+          ($efforts (work:efforts)))
+     (if (== $problem "")
+       (if (work:known? $effort $efforts) ""
+         (str:join "" ("unknown effort \"" $effort "\"; use one of " (repr $efforts))))
+       $problem)))
 (= (work $task) (work $task ""))
-(= (work $task $workdir)
+(= (work $task $workdir) (work:start $task $workdir (work:agent-model) "high"))
+(= (work $task $workdir $model) (work $task $workdir $model "high"))
+(= (work $task $workdir $model $effort)
+   (let* (($chosen (if (== $model "") (work:agent-model) $model))
+          ($level (if (== $effort "") "high" $effort))
+          ($problem (work:choice-problem $chosen $level)))
+     (if (== $problem "") (work:start $task $workdir $chosen $level) (str:concat "work: " $problem))))
+(= (work:start $task $workdir $model $effort)
    (let* (($stamp (py-call (time.strftime "%Y%m%d-%H%M%S")))
           ($salt (py-call (secrets.token_hex 2)))
           ($id (format-args "work-{}-{}" ($stamp $salt)))
@@ -37,7 +59,8 @@
           ($where (if (== $workdir "") (system:getenv-or-default "HOME" "/") $workdir))
           ($requester (system:getenv-or-default "METTACLAW_MAIL_NAME" ""))
           ($task-json (JsonObject ((JsonPair "task" (JsonString $task)) (JsonPair "workdir" (JsonString $where))
-                                   (JsonPair "requester" (JsonString $requester)) (JsonPair "effort" (JsonString "high")))))
+                                   (JsonPair "requester" (JsonString $requester)) (JsonPair "effort" (JsonString $effort))
+                                   (JsonPair "model" (JsonString $model)))))
           ($_ (fs:update-text (path:join $dir "task.json") "replace" (json-stringify $task-json) "" ""))
           ($_ (work:launch $id)))
      (str:join "" ("WORK_STARTED " $id ". It runs on its own and mails you its report when done; "
@@ -49,6 +72,10 @@
           ($tmp (path:join $dir "tmp"))
           ($_ (proc:run ("mkdir" "-p" "--" $tmp) (system:cwd) inherit 10000 0 "merged"))
           ($runtime (py-call (coding_io.freeze_runtime (system:cwd) $dir)))
+          ;; The session reads its model from its own state file, never the
+          ;; agent's; a session from before models were recorded keeps the
+          ;; agent's model of the moment it resumes.
+          ($model (format-args "{}" ((py-call (coding_io.session_model $dir (work:agent-model))))))
           ($binary (py-call (coding_io.runtime_binary $dir)))
           ($pythonpath (py-call (coding_io.runtime_pythonpath $runtime (system:cwd))))
           ($ledger (py-call (builtins.str (py-call (llm_policy.ledger_path)))))
@@ -67,6 +94,8 @@
                                     (work:quote (str:concat "METTACLAW_RECYCLE_REQUEST_PATH=" (path:join $dir "recycle.requested")))
                                     (work:quote (str:concat "METTACLAW_WAKE_REQUEST_PATH=" (path:join $dir "wake.requested")))
                                     (work:quote (str:concat "TMPDIR=" $tmp))
+                                    (work:quote (str:concat "SYNTHETIC_MODEL=" $model))
+                                    (work:quote (str:concat "METTACLAW_MODEL_STATE_PATH=" (path:join $dir "model.metta")))
                                     "METTACLAW_CODING_SESSION=1"
                                     "METTACLAW_OBSERVED_STRATEGY=0")))
           ($launch (str:join "" ("cd " (work:quote $runtime) " || exit 1; systemd-run --user --scope --quiet --collect --unit=" (work:quote (work:unit $id)) " -- " $own " "
@@ -99,7 +128,11 @@
    (let* (($state (work:json (path:join (work:dir $id) "state.json")))
           ($task (work:text (work:field (work:json (path:join (work:dir $id) "task.json")) "task"))))
      (str:join "" ($id " · " (work:text (work:field $state "status")) " · " (work:text (work:field $state "steps"))
-                   " steps · " (work:clip $task 120) "\n    " (work:clip (work:text (work:field $state "progress")) 240)))))
+                   " steps · " (work:session-model $id) " · " (work:clip $task 120)
+                   "\n    " (work:clip (work:text (work:field $state "progress")) 240)))))
+(= (work:session-model $id)
+   (let $task (work:json (path:join (work:dir $id) "task.json"))
+     (str:join "" ((work:text (work:field $task "model")) " " (work:text (work:field $task "effort"))))))
 (= (work:lines $ids $out)
    (if (== $ids ()) $out
      (let $id (car-atom $ids)
