@@ -16,10 +16,13 @@ class LoopRetrySafetyTest(unittest.TestCase):
         self.assertNotIn(
             "(CHARS_SENT: (string_length $send) $send)", self.loop
         )
+        # The loop hands the request to its observation addition, which
+        # logs only the request's length and digest.
+        self.assertIn("(addition-request-observation $send)", self.loop)
+        additions = (ROOT / "src" / "turn_additions.metta").read_text(encoding="utf-8")
         self.assertIn(
-            "(CHARS_SENT: (string_length $send)\n"
-            "                                    sha256 (str:sha256 $send))",
-            self.loop,
+            "(CHARS_SENT: (string_length $ready) sha256 (str:sha256 $ready))",
+            additions,
         )
 
     def test_provider_retry_uses_non_channel_backoff(self):
