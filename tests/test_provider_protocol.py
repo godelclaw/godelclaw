@@ -84,6 +84,20 @@ class ProtocolTests(unittest.TestCase):
                        max_tokens=100, cache_system=False)
         disabled = protocol.anthropic_body(request, "fixture")
         self.assertNotIn("cache_control", disabled["system"][0])
+        partial = dict(system=[dict(type="text", text=str(i)) for i in range(5)], messages=[])
+        partial["system"][1]["cache_control"] = dict(type="ephemeral")
+        protocol.anthropic_cache_system(partial, [0, 1, 4])
+        self.assertEqual([i for i, b in enumerate(partial["system"]) if "cache_control" in b], [0, 1])
+        mixed = dict(system=[dict(type="text", text=str(i)) for i in range(6)], messages=[])
+        mixed["system"][2]["cache_control"] = dict(type="ephemeral", ttl="1h")
+        mixed["system"][5]["cache_control"] = dict(type="ephemeral")
+        protocol.anthropic_cache_system(mixed, [0, 4, 5])
+        self.assertEqual([(i, b["cache_control"].get("ttl", "5m")) for i, b in enumerate(mixed["system"])
+                          if "cache_control" in b], [(0, "1h"), (2, "1h"), (4, "5m"), (5, "5m")])
+        request["cache_system"] = True
+        request["messages"].insert(1, dict(role="system", content="more instructions"))
+        owned = protocol.anthropic_body(request, "fixture")
+        self.assertEqual([i for i, b in enumerate(owned["system"]) if "cache_control" in b], [1])
 
     def test_cache_observation_identifies_changed_prefix_without_retaining_content(self):
         bodies = [protocol.command_body("anthropic", "fixture", 100, "high",

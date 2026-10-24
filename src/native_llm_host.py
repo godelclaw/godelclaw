@@ -255,9 +255,16 @@ def policy_metadata(plan):
 def request_metadata(plan):
     """One request observation, separate from the small progress facts frame."""
     value = json.loads(policy_metadata(plan))
-    if hasattr(plan, "cache_layout"):
-        value["origin"] = {**value["origin"], "cache_layout": plan.cache_layout}
+    value["origin"] = request_origin(plan)
     return json.dumps(value, separators=(",", ":"))
+
+
+def request_origin(plan):
+    """Cache evidence needs no native lease fields on fallback wire plans."""
+    origin = dict(getattr(plan, "call_origin", {}) or {})
+    if hasattr(plan, "cache_layout"):
+        origin["cache_layout"] = plan.cache_layout
+    return origin
 
 
 def note_admitted(plan):
@@ -495,13 +502,14 @@ def wire_body(plan, body):
     if plan.stream and plan.protocol == "chat-completions":
         value.update(stream=True, stream_options={"include_usage": True})
     if plan.protocol == "anthropic":
-        provider_protocol.anthropic_cache_system(value, getattr(plan, "cache_boundaries", ()))
+        if hasattr(plan, "cache_boundaries"):
+            provider_protocol.anthropic_cache_system(value, plan.cache_boundaries)
         plan.cache_layout = provider_protocol.anthropic_cache_observation(value)
         plan.cache_layout["regions"] = list(getattr(plan, "cache_boundaries", ()))
     if not getattr(plan, "native_ledger", False):
-        origin = json.loads(request_metadata(plan))["origin"]
+        origin = request_origin(plan)
         llm_policy.describe(plan.correlation, model=plan.call_context["model"],
-                            protocol=plan.protocol, purpose=plan.call_context["purpose"], origin=origin)
+                            protocol=plan.protocol, purpose=plan.call_context["purpose"], origin=origin or None)
     return json.dumps(value, ensure_ascii=False)
 
 

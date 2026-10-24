@@ -153,7 +153,7 @@ def describe(ticket, *, model, protocol, purpose="unspecified", transport="nativ
             return False
         detail = dict(model=str(model), protocol=str(protocol), purpose=str(purpose), transport=str(transport))
         if origin is not None:
-            detail.update(trigger=origin["trigger"], turn_id=origin["turn_id"])
+            detail.update(trigger=origin.get("trigger", "unspecified"), turn_id=origin.get("turn_id", ""))
             if "cache_layout" in origin:
                 detail["cache_layout"] = origin["cache_layout"]
         return history_event(conn, ticket, "request", detail)

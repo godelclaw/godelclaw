@@ -1056,6 +1056,10 @@ publishing commands. Epoch checks reject foreign callbacks; replayed completions
 cannot publish twice. An ambiguous commit does not authorize command execution
 or automatically retry the transaction. The existing SQLite format is shared
 with Python, including recovery of interrupted calls.
+Recovery from local ledger-write faults remains incomplete: a received answer
+can be lost to a caller's retry, or an unresolved commit can retain an active
+lease. Ordinary transport and cache qualification do not cover those failure
+paths; they require retaining the answer and reconciling its local receipt.
 Claim identities remain in the history after terminal receipt pruning, allowing
 late usage to be attributed without accepting a foreign epoch or replaying work.
 Malformed counters remain unknown; exact JSON counts can exceed SQLite's legacy

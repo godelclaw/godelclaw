@@ -448,6 +448,32 @@ def retained():
             self.assertEqual(context["cache_layout"], {**provider_protocol.anthropic_cache_observation(body), "regions": [0, 1, 4]})
             self.assertNotIn("stable", json.dumps(context))
 
+    def test_anthropic_coding_request_keeps_its_explicit_cache_settings(self):
+        self.peer.delay = .01
+        self.peer.reply = {"id": "fixture", "stop_reason": "end_turn",
+                           "content": [{"type": "text", "text": "done"}]}
+        self.env.update(ANTHROPIC_API_KEY="fixture-secret", ANTHROPIC_BASE_URL=self.env["SYNTHETIC_BASE_URL"],
+                        SYNTHETIC_MODEL="claude-fixture", METTACLAW_ANTHROPIC_CACHE_TTL="1h")
+        request = dict(model="claude-fixture", max_tokens=100, cache_messages=True,
+                       reasoning=dict(effort="high"), tools=[dict(type="function", function=dict(
+                           name="nop", description="Fixture", parameters=dict(type="object", properties={})))],
+                       messages=[dict(role="system", content="instructions"), dict(role="system", content="policy"),
+                                 dict(role="user", content="old"), dict(role="assistant", content="draft"),
+                                 dict(role="user", content="resume")])
+        for lang in ("he", "petta"):
+            text = json.dumps(json.dumps(request))
+            self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n' + self.disable_python_accounting() +
+                f'!(let $plan (py-call (native_llm_host.native_structured_json_plan {text})) '
+                '(llm:run (py-call (native_llm_host.for_coding $plan))))\n', lang)
+            body = self.peer.requests[-1][2]
+            self.assertEqual([b["text"] for b in body["system"]], ["instructions", "policy"])
+            self.assertEqual([i for i, b in enumerate(body["system"]) if "cache_control" in b], [1])
+            markers = [b["cache_control"] for b in body["system"] if "cache_control" in b]
+            markers += [b["cache_control"] for m in body["messages"] for b in m["content"] if "cache_control" in b]
+            self.assertEqual(markers, [{"type": "ephemeral"}] * 3)
+            self.assertEqual(body["output_config"], {"effort": "high"})
+            self.assertEqual(body["tools"][0]["name"], "nop")
+
     def test_codecs_keep_tools_reasoning_usage_and_stops(self):
         fixtures = [("anthropic", {"id": "a", "stop_reason": "tool_use", "content": [
             {"type": "thinking", "thinking": "opaque", "signature": "signed"},

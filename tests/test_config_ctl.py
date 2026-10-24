@@ -80,6 +80,15 @@ class ConfigEditingTests(unittest.TestCase):
             self.assertEqual((self.root / "config/local.toml").read_text(), self.original)
             self.assertEqual((self.root / ".env").read_text(), "original environment\n")
 
+    def test_cache_ttl_is_validated_before_replacing_configuration(self):
+        invalid = self.run_cli("set", "context.anthropic_cache_ttl", "forever")
+        self.assertEqual(invalid.returncode, 2)
+        self.assertEqual((self.root / "config/local.toml").read_text(), self.original)
+        self.assertEqual((self.root / ".env").read_text(), "original environment\n")
+        valid = self.run_cli("set", "context.anthropic_cache_ttl", "1h")
+        self.assertEqual(valid.returncode, 0, valid.stderr)
+        self.assertIn("METTACLAW_ANTHROPIC_CACHE_TTL='1h'", (self.root / ".env").read_text())
+
     def test_shell_metacharacters_stay_data_and_paired_update_holds_edits(self):
         marker = self.root / "must-not-exist"
         value = '$(touch ' + str(marker) + '); `touch ' + str(marker) + '`'

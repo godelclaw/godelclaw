@@ -98,7 +98,7 @@ def anthropic_cache_system(body, boundaries=()):
     marked = [i for i, block in enumerate(system) if "cache_control" in block]
     if not marked:
         return body
-    marker = system[marked[-1]]["cache_control"]
+    last = marked[-1]
     elsewhere = sum("cache_control" in tool for tool in body.get("tools", []))
     elsewhere += sum("cache_control" in block for message in body.get("messages", [])
                      for block in message.get("content", []) if isinstance(block, dict))
@@ -106,12 +106,15 @@ def anthropic_cache_system(body, boundaries=()):
     slots = max(0, 4 - elsewhere - len(marked))
     # The tail checkpoint may itself change. Its predecessor protects the
     # completed history before it; declared region ends protect static text.
-    candidates = list(boundaries) + [len(system) - 2, 0]
+    candidates = list(boundaries) + [last - 1, 0]
     for index in candidates:
         if slots == 0:
             break
-        if 0 <= index < len(system) and index not in marked:
-            system[index]["cache_control"] = copy.deepcopy(marker)
+        if 0 <= index <= last and index not in marked:
+            # Longer-lived entries must precede shorter-lived ones. Copy
+            # the next checkpoint's lifetime rather than the final one's.
+            following = min(point for point in marked if point >= index)
+            system[index]["cache_control"] = copy.deepcopy(system[following]["cache_control"])
             marked.append(index)
             slots -= 1
     return body
@@ -276,7 +279,6 @@ def anthropic_body(request, model):
     extra = request.get("extra_body", {})
     effort = request.get("reasoning", extra.get("reasoning", {})).get("effort")
     payload.update(anthropic_reasoning(effort, extra.get("enable_thinking")))
-    anthropic_cache_system(payload)
     return payload
 
 
