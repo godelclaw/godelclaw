@@ -85,7 +85,7 @@ class NativeContextBundleTest(unittest.TestCase):
         self.assertEqual(out.read_text(), "SOURCE[s] status=stale-known revision=" +
                          context_sources.Projector._revision("🙂é日本") + "\n🙂é…")
 
-    def compare(self, scenarios, prelude=(), engine="cetta", swi=False, trigger="idle", **settings):
+    def compare(self, scenarios, prelude=(), engine="cetta", swi=False, trigger="idle", oracle_scenarios=None, **settings):
         import strategy_host
         lines = HEADER + CALLER + list(prelude)
         lines += ["!(py-call (context_bundle_probe.trigger %s))" % q(trigger)]
@@ -97,10 +97,10 @@ class NativeContextBundleTest(unittest.TestCase):
         with mock.patch.dict(os.environ, environment, clear=True), mock.patch.object(context_sources, "_PROJECTOR", projector), mock.patch.object(context_sources, "_loaders", probe.fixture_loaders), mock.patch.object(strategy_host, "_context_trigger", trigger):
             helper._change_marks.clear()
             for index, fixture in enumerate(scenarios):
-                probe.fixture = fixture
+                probe.fixture = fixture if oracle_scenarios is None else oracle_scenarios[index]
                 probe.calls.clear()
                 path = self.directory / ("fixture-%d.json" % index)
-                path.write_text(json.dumps(fixture, ensure_ascii=False), encoding="utf-8")
+                path.write_text(json.dumps(fixture, ensure_ascii=True), encoding="utf-8")
                 lines += ["!(py-call (context_bundle_probe.configure %s %d))" % (q(path), 1 if engine == "cetta" else 0),
                           "!(py-call (context_bundle_probe.record %s (addition-context-sources)))" % q(log)]
                 expected.append(context_sources.bundle())
@@ -108,6 +108,7 @@ class NativeContextBundleTest(unittest.TestCase):
         actual = [json.loads(line) for line in log.read_text().splitlines()]
         save_evidence("caller-parity", {"engine_route": engine, "swi": swi, "settings": settings,
                                        "trigger": trigger, "fixtures": scenarios,
+                                       "oracle_fixtures": oracle_scenarios,
                                        "expected": expected, "actual": actual})
         self.assertEqual([entry["text"] for entry in actual], expected)
         for entry in actual:
@@ -123,6 +124,68 @@ class NativeContextBundleTest(unittest.TestCase):
                       {key: " \t\n\u001c\u3000" for key in base},
                       {key: {"raises": True} for key in base},
                       {key: None for key in base}, base])
+
+    def test_surrogate_replacement_preserves_revisions_at_real_caller(self):
+        # fx045 in the read-only review reproduction is "lone\ud800surrogate".
+        # Render replacement is intentional; revisions are exactly the oracle's
+        # already-existing UTF-8 errors="replace" hash, never a new hash policy.
+        scenarios = []
+        oracles = []
+        values = ["lone\ud800surrogate", "low\udfffend", "pair\ud83d\ude42end",
+                  "🙂\ud800e\u0301漢\udc00", "clean recovery 🙂", " \t"]
+        for raw in values:
+            # JSON combines a high/low surrogate pair into one astral scalar.
+            # Build exact Python loader strings from code points instead.
+            scenarios.append({s.source_id: {"codepoints": list(map(ord, raw))}
+                              for s in context_sources.SOURCE_SPECS})
+            normalized = raw.encode("utf-8", "replace").decode("utf-8")
+            oracles.append({s.source_id: normalized for s in context_sources.SOURCE_SPECS})
+        actual = self.compare(scenarios, oracle_scenarios=oracles)
+        for raw, row in zip(values, actual):
+            for spec in context_sources.SOURCE_SPECS:
+                revision = context_sources.Projector._revision(raw if raw.strip() else "")
+                self.assertRegex(row["text"], r"SOURCE\[%s\] status=(?:known|absent) revision=%s" %
+                                 (re.escape(spec.source_id), re.escape(revision)))
+        self.assertIn("lone?surrogate", actual[0]["text"])
+
+    def test_decode_failures_are_source_local_stale_and_recoverable(self):
+        faults = [(2, '"\\ud800"'), (2, '"unterminated'), (2, '{"not":"text"}'),
+                  (2, 'null'), (2, 7), (9,), (2,), ()]
+        for source_id in ("work-state", "effect-receipts", "conversation"):
+            for fault in faults:
+                with self.subTest(source=source_id, wire=fault):
+                    scenarios, oracles = [], []
+                    for step, value in enumerate((None, "known A 🙂", None, None,
+                                                  "recovered B 漢字", " \t", None, "recovered C")):
+                        neighbors = {s.source_id: "neighbor %s step %d" % (s.source_id, step)
+                                     for s in context_sources.SOURCE_SPECS}
+                        fixture = dict(neighbors)
+                        fixture[source_id] = {"wire": fault} if value is None else value
+                        expected = dict(neighbors)
+                        expected[source_id] = {"raises": True} if value is None else value
+                        scenarios.append(fixture)
+                        oracles.append(expected)
+                    rows = self.compare(scenarios, oracle_scenarios=oracles, prelude=[
+                        "!(py-call (context_bundle_probe.inject_wire_faults))"])
+                    statuses = [re.search(r"SOURCE\[%s\] status=([^ ]+)" % re.escape(source_id),
+                                          row["text"]).group(1) for row in rows]
+                    self.assertEqual(statuses, ["unavailable", "known", "stale-known", "stale-known",
+                                                "known", "absent", "unavailable", "known"])
+                    for row in rows:
+                        self.assertEqual(row["text"].count("SOURCE["), 13)
+        print("Compared 192 real-caller decode-fault steps, with all 13 loaders called once per step")
+
+    def test_all_python_whitespace_and_near_misses_at_real_caller(self):
+        spaces = [chr(c) for c in range(0x110000) if chr(c).isspace()]
+        self.assertEqual(len(spaces), 29)
+        values = [""]
+        for space in spaces:
+            values.extend((space * 3, space + "known", "known" + space))
+        for near in ("\u200b", "\ufeff", "\u180e", "\u2060", "\0"):
+            self.assertFalse(near.isspace())
+            values.extend((near, " " + near, near + " \t\n"))
+        self.compare([{s.source_id: value for s in context_sources.SOURCE_SPECS} for value in values])
+        print("Compared all 29 Python whitespace scalars and 5 near misses at the real caller")
 
     def test_every_source_clipping_unicode_and_conversion_at_caller(self):
         scenarios = []

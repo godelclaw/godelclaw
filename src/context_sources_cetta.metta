@@ -9,13 +9,20 @@
 !(bind! &ctx-known (new-state ()))
 !(bind! &ctx-blank (new-state
    (re:compile (str:join "" ("\\A" (prose:pattern space) "*\\z")))))
+!(bind! &ctx-first-space (new-state (re:compile (prose:pattern space))))
+
+(= (ctx:blank? $raw)
+   (if (== $raw "") True
+     (if (re:is-match (get-state &ctx-first-space) (str:char-slice $raw 0 1))
+       (re:is-match (get-state &ctx-blank) $raw) False)))
 
 (= (ctx:revision $raw) (str:concat "sha256:" (str:sha256 $raw)))
 (= (ctx:clip $raw $limit $tail)
-   (if (<= (str:char-length $raw) $limit) $raw
-     (if $tail
-       (str:concat "…\n" (str:char-slice $raw (- (str:char-length $raw) (- $limit 2)) (str:char-length $raw)))
-       (str:concat (str:char-slice $raw 0 (- $limit 1)) "…"))))
+   (let $length (str:char-length $raw)
+     (if (<= $length $limit) $raw
+       (if $tail
+         (str:concat "…\n" (str:char-slice $raw (- $length (- $limit 2)) $length))
+         (str:concat (str:char-slice $raw 0 (- $limit 1)) "…")))))
 (= (ctx:previous $id $known)
    (if (== $known ()) Missing
      (let (($key $text $revision) $rest) (decons-atom $known)
@@ -39,26 +46,39 @@
           ((Previous $text $revision) (CtxObservation $id "stale-known" $text $revision)))))
       (("missing") (ctx:absent $id))
       (("value" $raw)
-       (if (re:is-match (get-state &ctx-blank) $raw) (ctx:absent $id)
+       (if (ctx:blank? $raw) (ctx:absent $id)
          (let* (($text (ctx:clip $raw $limit $tail))
                 ($revision (ctx:revision $raw))
                 ($_ (change-state! &ctx-known
                       (cons-atom ($id $text $revision) (ctx:without $id (get-state &ctx-known))))))
            (CtxObservation $id "known" $text $revision))))
       ($other (Error ctx:observe invalid-outcome)))))
+; Assembly still crosses Python once to prepare and once for each of the 13
+; loaders: 14 calls per complete bundle, pending later loader ports. This is
+; not a full-turn count (view computation and other additions are separate).
 (= (ctx:project $loaders $specs)
    (if (== $specs ()) ()
      (let* (((($key $limit $tail) $rest) (decons-atom $specs))
             ($id (str:symbol->string $key))
-            ($outcome (ctx:decode (py-call (context_source_loaders.load $loaders $id))))
+            ; Keep loader/str(value) conversion outside the decode catch: a
+            ; conversion exception still fails the bundle, exactly as Python.
+            ($wire (py-call (context_source_loaders.load $loaders $id)))
+            ($outcome (ctx:decode $wire))
             ($observation (ctx:observe $id $limit $tail $outcome))
             ($others (ctx:project $loaders $rest)))
        (cons-atom $observation $others))))
 (= (ctx:decode $wire)
    (case $wire
      (((0) ("unavailable")) ((1) ("missing"))
-      ((2 $encoded) ("value" (json:parse (str:symbol->string $encoded))))
-      ($other (Error ctx:decode invalid-outcome)))))
+      ((2 $encoded)
+       (ctx:decoded (collapse (catch (json:parse (str:symbol->string $encoded))))))
+      ($other ("unavailable")))))
+; Residual transport failures cost only their source. Never invent absence or
+; install non-text data: admission retains the prior value as stale-known.
+(= (ctx:decoded $answers)
+   (case $answers
+     ((($text) (if (== (get-type $text) String) ("value" $text) ("unavailable")))
+      ($other ("unavailable")))))
 (= (ctx:render-one $observation)
    (let (CtxObservation $id $status $text $revision) $observation
      (str:join "" ("SOURCE[" $id "] status=" $status " revision="

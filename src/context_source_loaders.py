@@ -29,4 +29,10 @@ def load(loaders, source_id):
     # Projector.observe. Keep conversion outside the loader exception boundary.
     # Foreign string atoms have a hidden payload after NUL. JSON is a wire
     # encoding, not projection policy; the native JSON parser recovers a String.
-    return (1,) if value is None else (2, json.dumps(str(value), ensure_ascii=True))
+    if value is None:
+        return (1,)
+    # Match the bytes the oracle hashes. Lone surrogates cannot be rendered by
+    # the native decoder: intentionally display '?' rather than lose a source.
+    # str(value) still runs outside the loader exception boundary.
+    text = str(value).encode("utf-8", "replace").decode("utf-8")
+    return (2, json.dumps(text, ensure_ascii=True))

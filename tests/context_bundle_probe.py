@@ -47,6 +47,10 @@ def fixture_loaders(conversation=None, views=None):
                 raise RuntimeError("fixture unavailable")
             if isinstance(value, dict) and value.get("broken_text"):
                 return BrokenText()
+            if isinstance(value, dict) and "codepoints" in value:
+                return "".join(chr(c) for c in value["codepoints"])
+            if isinstance(value, dict) and "wire" in value:
+                return "loaded before injected wire failure"
             return value
         result.append((spec, counted))
     return result
@@ -55,7 +59,7 @@ def fixture_loaders(conversation=None, views=None):
 def record(path, text):
     with open(path, "a", encoding="utf-8") as stream:
         stream.write(json.dumps({"text": str(text), "calls": calls.copy(),
-                                 "forbidden": forbidden_calls}, ensure_ascii=False) + "\n")
+                                 "forbidden": forbidden_calls}, ensure_ascii=True) + "\n")
     return 1
 
 
@@ -73,4 +77,21 @@ def fail_prepare():
 def trigger(value):
     import strategy_host
     strategy_host._context_trigger = str(value)
+    return 1
+
+
+def inject_wire_faults():
+    """Corrupt transport only AFTER the retained loader/conversion has run."""
+    import context_source_loaders
+
+    original = context_source_loaders.load
+
+    def load(loaders, source_id):
+        wire = original(loaders, source_id)
+        value = fixture.get(source_id)
+        if isinstance(value, dict) and "wire" in value:
+            return tuple(value["wire"])
+        return wire
+
+    context_source_loaders.load = load
     return 1
