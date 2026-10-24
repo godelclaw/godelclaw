@@ -12,8 +12,9 @@ import time
 from isolated_env import isolated_environ
 
 ROOT = Path(__file__).resolve().parents[1]
-PYTHON = "/home/oruzi/miniforge3/envs/petta/bin/python"
-ENGINE = "/home/oruzi/.local/lib/pettaclaw/cetta-ours-streaming-20261022/cetta"
+# The engine under qualification and its matching Python come from the caller.
+PYTHON = sys.executable
+ENGINE = os.environ.get("CETTA_BIN", "cetta")
 SUITES = {
     "native": ["-m", "unittest", "-v", "test_context_bundle_native"],
     "regression": ["-m", "unittest", "-v", "test_pins_context_native", "test_turn_additions",
@@ -48,7 +49,7 @@ def main():
             if any(part in name.upper() for part in ("TOKEN", "SECRET", "PASSWORD", "CREDENTIAL", "API_KEY")):
                 env.pop(name)
         env.update(CETTA_BIN=ENGINE, PETTA_PY_ENV=str(Path(PYTHON).parents[1]),
-                   PETTA_ROOT="/home/oruzi/repos/PeTTa", OPENAI_API_KEY="test-only-unused",
+                   PETTA_ROOT=os.environ.get("PETTA_ROOT", str(Path.home() / "repos/PeTTa")), OPENAI_API_KEY="test-only-unused",
                    PYTHONPATH=os.pathsep.join(str(ROOT / part) for part in ("tests", "src", "channels")),
                    PYTHONDONTWRITEBYTECODE="1", TMPDIR=temp,
                    XDG_STATE_HOME=str(directory / "state"), XDG_CONFIG_HOME=str(directory / "config"),

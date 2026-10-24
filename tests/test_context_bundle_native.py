@@ -19,7 +19,8 @@ import context_bundle_probe as probe
 import helper
 from test_pins_context_native import guest_env, q
 
-ENGINE = "/home/oruzi/.local/lib/pettaclaw/cetta-ours-streaming-20261022/cetta"
+ENGINE = os.environ.get("CETTA_BIN", "cetta")
+PETTA_ROOT = Path(os.environ.get("PETTA_ROOT", Path.home() / "repos/PeTTa"))
 VM_LIMIT = 25165824 * 1024
 
 
@@ -48,7 +49,7 @@ def guest(directory, lines, engine="cetta", swi=False, boot=False, **settings):
         source.write("\n".join(lines) + "\n")
         source.flush()
         if swi:
-            command = ["bash", "/home/oruzi/repos/PeTTa/run.sh", source.name, "default"]
+            command = ["bash", str(PETTA_ROOT / "run.sh"), source.name, "default"]
         else:
             command = [ENGINE, "--lang", "petta", "--import-mode", "ancestor-walk"]
             if boot:
@@ -288,7 +289,7 @@ class NativeContextBundleTest(unittest.TestCase):
         self.compare(fixtures, engine="petta", swi=True)
 
     def test_production_boot_real_telegram_views_with_python_bundle_disabled(self):
-        library = Path("/home/oruzi/repos/petta_lib_chromadb")
+        library = Path(os.environ.get("PETTA_LIB_CHROMADB", ROOT / "repos" / "petta_lib_chromadb"))
         self.assertTrue((library / "lib_chromadb.metta").is_file())
         shutil.copytree(library, self.directory / "repos" / "petta_lib_chromadb",
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".git"))
@@ -338,7 +339,11 @@ class NativeContextBundleTest(unittest.TestCase):
         self.assertEqual(len(sequences), 781)
         # Read the ACTUAL model source, compile its proofs in this temporary
         # program and execute admit. No MeTTapedia build/cache is touched.
-        model = Path(os.environ.get("CONTEXT_PROJECTION_LEAN", "/home/oruzi/repos/MeTTapedia/lean/pettaclaw/ContextProjection.lean"))
+        model = Path(os.environ.get("CONTEXT_PROJECTION_LEAN",
+                                    Path.home() / "repos/MeTTapedia/lean/pettaclaw/ContextProjection.lean"))
+        lean_bin = os.environ.get("LEAN_BIN") or shutil.which("lean") or str(Path.home() / ".elan/bin/lean")
+        if not model.is_file() or not Path(lean_bin).exists():
+            self.skipTest("set CONTEXT_PROJECTION_LEAN and LEAN_BIN to replay the Lean model")
         lean_source = model.read_text()
         lean = self.directory / "Replay.lean"
         lean.write_text(lean_source + '\n\ndef replaySequences : List (List Nat) := ' +
@@ -354,7 +359,7 @@ def main : IO Unit := do
       previous := ContextProjection.admit previous observation
       IO.println s!"MODEL {i} {j} {previous.getD "-"}"
 ''', encoding="utf-8")
-        command = ["/home/oruzi/.elan/bin/lean", "+leanprover/lean4:v4.33.1", "--run", str(lean)]
+        command = [lean_bin, "+leanprover/lean4:v4.33.1", "--run", str(lean)]
         result = subprocess.run(command, cwd=self.directory, env=guest_env(self.directory), capture_output=True, text=True, timeout=180)
         evidence = os.environ.get("CONTEXT_BUNDLE_EVIDENCE")
         if evidence:
