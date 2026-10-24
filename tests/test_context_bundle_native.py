@@ -228,6 +228,30 @@ class NativeContextBundleTest(unittest.TestCase):
                                  trigger=trigger,
                                  METTACLAW_EFFECT_RECEIPT_PATH=str(self.directory / "receipts"))
 
+    def test_operator_event_selects_chat_window_instead_of_route(self):
+        # Native Telegram route/chat output is supplied without touching Python's
+        # conversation loader. Execute both callers with the same synthetic
+        # client equations and compare directly with bundle(conversation=...).
+        for mode in ("chat", "route"):
+            log = self.directory / "native-conversation"
+            log.unlink(missing_ok=True)
+            path = self.directory / "fixture-native.json"
+            path.write_text(json.dumps({s.source_id: "fixed" for s in context_sources.SOURCE_SPECS if s.source_id != "conversation"}))
+            lines = HEADER + ["!(import! &self ./src/memory)", "!(import! &self ./src/turn_additions)",
+                              "(= (tg:client-metta?) True)", '(= (tg:conversation-events) 64)',
+                              '(= (tg:get reply-chat "") "fixture-chat")',
+                              '(= (tg:conversation-window-for $events $chat) "native chat 🙂")',
+                              '(= (tg:route-view) "native route 漢字")',
+                              '!(py-call (context_bundle_probe.trigger %s))' % q("operator-event" if mode == "chat" else "idle"),
+                              '!(py-call (context_bundle_probe.configure %s))' % q(path),
+                              '!(py-call (context_bundle_probe.record %s (addition-context-sources)))' % q(log)]
+            guest(self.directory, lines, METTACLAW_OBSERVED_STRATEGY="1")
+            got = json.loads(log.read_text())["text"]
+            with mock.patch.dict(os.environ, guest_env(self.directory), clear=True), mock.patch.object(context_sources, "_loaders", probe.fixture_loaders), mock.patch.object(context_sources, "_PROJECTOR", context_sources.Projector()):
+                probe.fixture = json.loads(path.read_text())
+                want = context_sources.bundle(conversation="native " + ("chat 🙂" if mode == "chat" else "route 漢字"))
+            self.assertEqual(got, want)
+
     def test_bad_and_missing_action_views_cost_only_their_sources(self):
         fixture = {s.source_id: "fixed" for s in context_sources.SOURCE_SPECS
                    if s.source_id not in {"pins", "recent-proposals", "relevant-files"}}
@@ -315,9 +339,9 @@ class NativeContextBundleTest(unittest.TestCase):
             conv = self.directory / ("conversation-%d" % i)
             conversations.append(conv)
             lines += ["!(py-call (context_bundle_probe.configure %s))" % q(path),
-                      '!(py-call (context_bundle_probe.trigger "idle"))',
+                      "!(py-call (context_bundle_probe.trigger %s))" % q("operator-event" if i % 2 == 0 else "idle"),
                       "!(py-call (context_bundle_probe.note %s %s))" % (q(conv),
-                       '(tg:route-view)'),
+                       '(tg:conversation-window-for (tg:conversation-events) (tg:get reply-chat ""))' if i % 2 == 0 else '(tg:route-view)'),
                       "!(py-call (context_bundle_probe.record %s (addition-context-sources)))" % q(log)]
         guest(self.directory, lines, boot=True, METTACLAW_TELEGRAM_CLIENT="metta", METTACLAW_OBSERVED_STRATEGY="1")
         actual = [json.loads(row) for row in log.read_text().splitlines()]
@@ -330,7 +354,10 @@ class NativeContextBundleTest(unittest.TestCase):
                 expected.append(context_sources.bundle(conversation=conversation))
                 self.assertEqual(row["text"], expected[-1])
                 self.assertEqual(row["forbidden"], 0)
-                self.assertNotIn("hello from fixture", conversation)
+                if i % 2 == 0:
+                    self.assertIn("hello from fixture 🙂", conversation)
+                else:
+                    self.assertNotIn("hello from fixture", conversation)
         save_evidence("boot-parity", {"fixtures": scenarios, "expected": expected, "actual": actual,
                                      "conversations": [path.read_text() for path in conversations]})
 
