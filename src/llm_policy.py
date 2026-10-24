@@ -96,6 +96,72 @@ def ledger_path():
     return home / os.environ.get("METTACLAW_INSTANCE", "default") / "llm-budget.sqlite3"
 
 
+def history_event(conn, ticket, event, detail, *, now=None):
+    """Append one fact per call/event, in the transaction that owns the fact.
+
+    This history has no admission authority and is not pruned with requests.
+    Callers supply metadata/counters, never prompts, credentials or responses.
+    """
+    return conn.execute(
+        "INSERT OR IGNORE INTO llm_call_history(call_id,event,observed,detail) VALUES(?,?,?,?)",
+        (ticket, event, time.time() if now is None else now,
+         json.dumps(detail, sort_keys=True, separators=(",", ":")))).rowcount == 1
+
+
+def usage_evidence(usage):
+    """Keep reported token counts; an absent counter is unknown, not zero."""
+    def count(value):
+        return value if type(value) is int and value >= 0 else None
+
+    usage = usage if isinstance(usage, dict) else {}
+    fields = ("prompt_tokens", "input_tokens", "completion_tokens", "output_tokens",
+              "total_tokens", "cache_read_input_tokens", "cache_creation_input_tokens",
+              "prompt_cache_hit_tokens", "prompt_cache_miss_tokens", "reasoning_tokens")
+    reported = {key: value for key in fields
+                if (value := count(usage.get(key))) is not None}
+    for key in ("input_tokens_details", "prompt_tokens_details",
+                "output_tokens_details", "completion_tokens_details"):
+        if isinstance(usage.get(key), dict):
+            details = {name: value for name in ("cached_tokens", "reasoning_tokens",
+                                               "audio_tokens", "accepted_prediction_tokens",
+                                               "rejected_prediction_tokens")
+                       if (value := count(usage[key].get(name))) is not None}
+            if details:
+                reported[key] = details
+    incoming = reported.get("prompt_tokens", reported.get("input_tokens"))
+    details = reported.get("prompt_tokens_details", reported.get("input_tokens_details", {}))
+    cached = details.get("cached_tokens", reported.get("cache_read_input_tokens",
+                                                       reported.get("prompt_cache_hit_tokens")))
+    if "cache_read_input_tokens" in usage:
+        read = reported.get("cache_read_input_tokens")
+        write = count(usage.get("cache_creation_input_tokens", 0))
+        incoming = (incoming + read + write
+                    if incoming is not None and read is not None and write is not None else None)
+    if incoming is not None and cached is not None and cached > incoming:
+        cached = None  # Keep the original counters, but do not value an inconsistent split.
+    counts = dict(input_tokens=incoming, cached_tokens=cached,
+                  output_tokens=reported.get("completion_tokens", reported.get("output_tokens")))
+    status = ("reported" if all(value is not None for value in counts.values()) else
+              "partial" if any(value is not None for value in counts.values()) else "unknown")
+    return dict(counts=counts, usage_status=status, reported_usage=reported)
+
+
+def describe(ticket, *, model, protocol, purpose="unspecified", transport="native"):
+    """Pin the metadata of the actual wire request before it is submitted."""
+    with transaction() as conn:
+        if not conn.execute("SELECT 1 FROM requests WHERE id=?", (ticket,)).fetchone():
+            return False
+        return history_event(conn, ticket, "request", dict(
+            model=str(model), protocol=str(protocol), purpose=str(purpose), transport=str(transport)))
+
+
+def submitted(ticket):
+    with transaction() as conn:
+        if not conn.execute("SELECT 1 FROM requests WHERE id=? AND status='pending'", (ticket,)).fetchone():
+            return False
+        return history_event(conn, ticket, "submitted", {})
+
+
 @contextlib.contextmanager
 def transaction():
     path = ledger_path()
@@ -106,8 +172,13 @@ def transaction():
                      "reserved INTEGER NOT NULL, status TEXT NOT NULL, output INTEGER, "
                      "provider TEXT NOT NULL, mode TEXT NOT NULL, finish TEXT)")
         conn.execute("CREATE TABLE IF NOT EXISTS cooldowns (provider TEXT PRIMARY KEY, until REAL NOT NULL)")
+        conn.execute("CREATE TABLE IF NOT EXISTS llm_call_history (sequence INTEGER PRIMARY KEY, "
+                     "call_id TEXT NOT NULL, event TEXT NOT NULL, observed REAL NOT NULL, "
+                     "detail TEXT NOT NULL, UNIQUE(call_id,event))")
+        conn.execute("CREATE INDEX IF NOT EXISTS llm_call_history_time ON llm_call_history(event,observed)")
         conn.commit()
         conn.execute("BEGIN IMMEDIATE")
+        history_event(conn, "", "recording-started", {"schema": 1})
         columns = {row[1] for row in conn.execute("PRAGMA table_info(requests)")}
         for name in ("owner", "fingerprint"):
             if name not in columns:
@@ -131,6 +202,7 @@ def recover_interrupted():
         for ticket, owner in conn.execute("SELECT id,owner FROM requests WHERE status='pending'").fetchall():
             if owner != _owner and not _owner_live(owner):
                 conn.execute("UPDATE requests SET status='unknown' WHERE id=?", (ticket,))
+                history_event(conn, ticket, "unknown", {"reason": "owner-exited"})
 
 
 def unknown_context():
@@ -160,6 +232,10 @@ def admit(provider, max_output, *, now=None, mode=None, request_fingerprint="",
                 raise AdmissionDenied("provider-cooldown", cooldown[0] - now)
         conn.execute("INSERT INTO requests(id,started,reserved,status,output,provider,mode,finish,owner,fingerprint) VALUES(?,?,?,'pending',NULL,?,?,NULL,?,?)",
                      (ticket, now, maximum, provider, mode, _owner, request_fingerprint))
+        history_event(conn, ticket, "admitted", dict(
+            provider=str(provider), mode=mode,
+            instance=os.environ.get("METTACLAW_INSTANCE", "default"),
+            session=os.environ.get("METTACLAW_ACTIVITY_CALL_SCOPE", "")), now=now)
         # Expired accounting windows no longer own admission authority.
         conn.execute("DELETE FROM requests WHERE started<? AND status NOT IN ('pending','unknown')", (now-172800,))
     try:
@@ -178,8 +254,15 @@ def complete(ticket, result):
         output = max(0, int(output))
     finish = str(result["choices"][0].get("finish_reason", "unknown"))[:64]
     with transaction() as conn:
+        if conn.execute("SELECT 1 FROM llm_call_history WHERE call_id=? AND event='admitted'",
+                        (ticket,)).fetchone():
+            # A late response can supply usage even when its commands cannot
+            # commit. Replayed observations still contribute only once.
+            history_event(conn, ticket, "usage", usage_evidence(usage))
         changed = conn.execute("UPDATE requests SET status='completed',output=?,finish=? WHERE id=? AND status='pending'",
                                (output, finish, ticket)).rowcount
+        if changed:
+            history_event(conn, ticket, "completed", {"finish": finish})
     return changed == 1
 
 
@@ -193,6 +276,8 @@ def fail(ticket, *, status=None, retry_after=None, sent=True, now=None):
         # a network timeout cannot prove the provider did no billable work.
         conn.execute("UPDATE requests SET status='failed',output=? WHERE id=?",
                      (None if sent else 0, ticket))
+        history_event(conn, ticket, "failed", {
+            "sent": bool(sent), "http_status": status if type(status) is int else None}, now=now)
         policy = configuration(row[1])
         if policy["profile"] == "managed" and status in (402, 429):
             delay = policy["quota_cooldown_seconds"]

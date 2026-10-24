@@ -103,6 +103,7 @@ def recover():
                         "finish='transport-unknown' WHERE id=?",
                         (identity,),
                     )
+                    llm_policy.history_event(db, identity, "unknown", {"reason": reason}, now=now)
                 continue
             if started is not None and process_start(pid) == started:
                 continue
@@ -110,6 +111,7 @@ def recover():
             db.execute("UPDATE native_calls SET state=?,reason='process-interrupted-remote-outcome-unknown',updated=? WHERE id=?",
                        (outcome, now, identity))
             db.execute("UPDATE requests SET status='unknown',output=NULL,finish='interrupted-unknown' WHERE id=? AND status='pending'", (identity,))
+            llm_policy.history_event(db, identity, "unknown", {"reason": "process-interrupted"}, now=now)
 
 
 def claim(plan):
@@ -143,8 +145,10 @@ def claim(plan):
 
 def submitted(plan, transport):
     with transaction() as db:
-        db.execute("UPDATE native_calls SET state='submitted',transport=?,updated=? WHERE id=? AND epoch=? AND state='claimed'",
-                   (int(transport), time.time(), plan.correlation, plan.epoch))
+        changed = db.execute("UPDATE native_calls SET state='submitted',transport=?,updated=? WHERE id=? AND epoch=? AND state='claimed'",
+                             (int(transport), time.time(), plan.correlation, plan.epoch)).rowcount
+        if changed:
+            llm_policy.history_event(db, plan.correlation, "submitted", {})
 
 
 def progress(plan, count, quiet, soft):
@@ -172,6 +176,7 @@ def settle(plan, state, result=None, reason=None):
         if changed and accounting_uncertain:
             db.execute("UPDATE requests SET status='unknown',output=NULL,finish='transport-unknown' WHERE id=?",
                        (plan.correlation,))
+            llm_policy.history_event(db, plan.correlation, "unknown", {"reason": "transport-unknown"})
         return changed
 
 

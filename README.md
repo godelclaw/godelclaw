@@ -1022,6 +1022,35 @@ It reads through `sqlite:observe`, so it cannot create, lock or change the
 ledger, and reports active-call contradictions and model outcomes. It does not
 reconcile rows, submit calls, or change the live loop policy.
 
+### Provider usage history
+
+Each admitted model call retains an append-only history in the provider ledger:
+the provider and session, actual wire model, purpose, submission, outcome and
+reported token counts. Agent turns, coding work and compaction remain distinct.
+Cache usage describes the actual run; running the same task again can cost a
+different amount.
+Usage observations are keyed by call ID, so replaying a completion does not add
+its usage twice. This history survives the short admission-accounting window.
+It contains no prompts, responses or credentials.
+
+Export a read-only report with:
+
+```sh
+python3 scripts/usage_report.py --ledger "$METTACLAW_LLM_LEDGER_PATH" \
+  --since 2026-10-24T00:00:00Z --timezone UTC
+```
+
+Reports group calls by admission day, instance, session, provider, model and
+purpose. They distinguish known counts from calls with missing usage; failed
+requests that may have reached a provider remain unknown. A late usage receipt
+can update the accounting without committing a failed turn. Monetary cost stays
+unpriced until a provider bill or a separate, versioned price valuation is
+attached. An older ledger without this history is reported as untracked, rather
+than as zero spend. Reading a report cannot create or migrate a ledger.
+MeTTa callers can import `src/usage_history.metta` and call
+`(usage:events ledger since until)` to read the same identified events through
+native `sqlite:observe`.
+
 ## Illustrations
 
 The upstream examples show memory recall, tool use and learning in a grid-world

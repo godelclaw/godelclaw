@@ -4,6 +4,7 @@ from isolated_env import isolated_environ  # noqa: E402
 import json
 import os
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -238,6 +239,16 @@ def retained():
                 actual_path, _, body = self.peer.requests[-1]
                 self.assertEqual(actual_path, "/v1" + path)
                 self.assertEqual(body, expected)
+                conn = sqlite3.connect(self.directory / "ledger.db")
+                try:
+                    context = json.loads(conn.execute("SELECT detail FROM llm_call_history "
+                        "WHERE event='request' ORDER BY sequence DESC LIMIT 1").fetchone()[0])
+                    self.assertEqual((context["model"], context["protocol"], context["purpose"]),
+                                     (effective, protocol, "turn"))
+                    self.assertEqual(conn.execute("SELECT COUNT(*) FROM llm_call_history "
+                        "WHERE event='usage'").fetchone()[0], len(self.peer.requests))
+                finally:
+                    conn.close()
 
     def test_a_plan_can_be_submitted_only_once(self):
         self.peer.delay = .01

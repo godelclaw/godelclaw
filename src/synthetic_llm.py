@@ -368,7 +368,7 @@ def _authenticated_request(provider, endpoint, body):
                                   json.dumps(body).encode("utf-8"), headers)
 
 
-def _completion_metadata(result, prompt_layout=None):
+def _completion_metadata(result, prompt_layout=None, *, call_context=None):
     """No messages, tool arguments, signatures, credentials or raw errors."""
     path = os.environ.get("METTACLAW_LLM_COMPLETION_PATH")
     if not path:
@@ -398,6 +398,14 @@ def _completion_metadata(result, prompt_layout=None):
                         provider_stop=value["provider_stop"],
                         output_tokens=usage.get("output_tokens", usage.get("completion_tokens")),
                         **value["cache"])
+            # This JSONL is a compatibility view; the call history in the
+            # provider ledger owns idempotence and durable usage evidence.
+            for key, count in llm_policy.usage_evidence(usage)["counts"].items():
+                if count is not None:
+                    line[key] = count
+            if isinstance(call_context, dict):
+                line.update({key: call_context[key] for key in
+                             ("call_id", "provider", "model", "purpose") if key in call_context})
             fd = os.open(os.path.join(os.path.dirname(path) or ".", "llm-usage.jsonl"),
                          os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
             with os.fdopen(fd, "a") as stream:
@@ -406,24 +414,32 @@ def _completion_metadata(result, prompt_layout=None):
             pass
 
 
-def _exchange(provider, endpoint, body, max_tokens):
+def _exchange(provider, endpoint, body, max_tokens, *, purpose="unspecified"):
     ticket = llm_policy.admit(provider["name"], max_tokens, request_fingerprint=llm_policy.fingerprint(body))
+    context = dict(call_id=ticket, provider=provider["name"],
+                   model=str(body.get("model", "")), purpose=purpose)
+    llm_policy.describe(ticket, model=context["model"], protocol=provider["protocol"],
+                        purpose=purpose, transport="python")
     cognitive_health.turn_started(provider["name"])
+    sent = False
     try:
         import process_supervision
         process_supervision.provider_wait(_float_env("SYNTHETIC_TIMEOUT", 120.0, 1.0))
-        payload = _request_json(_authenticated_request(provider, endpoint, body),
+        request = _authenticated_request(provider, endpoint, body)
+        llm_policy.submitted(ticket)
+        sent = True
+        payload = _request_json(request,
                                 _float_env("SYNTHETIC_TIMEOUT", 120.0, 1.0))
         result = provider_protocol.normalize_response(provider["protocol"], payload)
         llm_policy.complete(ticket, result)
-        _completion_metadata(result)
+        _completion_metadata(result, call_context=context)
         if provider["name"] == "anthropic":
             _tally_anthropic(payload.get("usage", {}))
         return result
     except BaseException as error:
         status = getattr(error, "code", None)
         retry = retry_after_seconds(getattr(error, "headers", None))
-        llm_policy.fail(ticket, status=status, retry_after=retry)
+        llm_policy.fail(ticket, status=status, retry_after=retry, sent=sent)
         raise
 
 
@@ -434,7 +450,8 @@ def structured_chat(request):
         raise RuntimeError("provider credential is not configured")
     endpoint, payload = provider_protocol.structured_body(
         provider["protocol"], provider.get("model", selected), request)
-    return _exchange(provider, endpoint, payload, request["max_tokens"])
+    return _exchange(provider, endpoint, payload, request["max_tokens"],
+                     purpose="coding" if os.environ.get("METTACLAW_CODING_SESSION") == "1" else "structured")
 
 
 def chat(model, max_tokens, effort, prompt):
@@ -449,7 +466,7 @@ def chat(model, max_tokens, effort, prompt):
         from types import SimpleNamespace
         commentary_plan = SimpleNamespace(kind="command")
         model_commentary.begin(commentary_plan)
-        result = _exchange(provider, endpoint, body, max_tokens)
+        result = _exchange(provider, endpoint, body, max_tokens, purpose="turn")
         content = result["choices"][0]["message"].get("content")
         finish = result["choices"][0].get("finish_reason")
         content = model_commentary.finish(commentary_plan, content, finish, result["choices"][0]["message"])
@@ -609,6 +626,11 @@ def _sanitize_models(payload):
 def _sanitize_quota(payload):
     """Retain only the numbers rendered by the local operator control."""
     result = {}
+    plan = payload.get("planWeeklyLimit")
+    if isinstance(plan, dict):
+        result["planWeeklyLimit"] = {
+            key: plan.get(key) for key in ("percentRemaining", "nextRegenAt", "nextRegenPercent")
+        }
     week = payload.get("weeklyTokenLimit")
     if isinstance(week, dict):
         result["weeklyTokenLimit"] = {
@@ -769,9 +791,12 @@ def _percent(value):
 
 def quota():
     """Render the durable quota observation; refresh only in the background."""
-    on_anthropic = _is_anthropic_model(current_model())
-    provider_tag = "Anthropic API" if on_anthropic else "Synthetic"
-    parts = [f"model={current_model()} ({provider_tag})"]
+    selected = current_model()
+    on_anthropic = _is_anthropic_model(selected)
+    provider_tag = ("Anthropic API" if on_anthropic else
+                    "ChatGPT subscription" if selected.startswith("chatgpt:") else
+                    "OpenAI API" if selected.startswith("openai:") else "Synthetic")
+    parts = [f"model={selected} ({provider_tag})"]
     if on_anthropic:
         try:
             with open(_usage_path(), encoding="utf-8") as fh:
@@ -786,8 +811,11 @@ def quota():
     data = record.get("value") if isinstance(record.get("value"), dict) else {}
     refresh_provider_observations_async(("quota",))
     if data:
+        plan = data.get("planWeeklyLimit") or {}
+        if plan:
+            parts.append(f"synthetic_weekly={_percent(plan.get('percentRemaining'))}% remaining")
         week = data.get("weeklyTokenLimit") or {}
-        if week:
+        if week and not plan:
             parts.append(f"synthetic_weekly={week.get('remainingCredits', '?')} "
                          f"of {week.get('maxCredits', '?')} "
                          f"({_percent(week.get('percentRemaining'))}%)")

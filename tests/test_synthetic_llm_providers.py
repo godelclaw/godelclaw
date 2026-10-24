@@ -569,6 +569,33 @@ class ProviderResourceLifetimeTest(unittest.TestCase):
 
 
 class CompletionUsageLogTest(unittest.TestCase):
+    def test_new_quota_schema_and_selected_subscription_remain_distinct(self):
+        payload = dict(planWeeklyLimit=dict(percentRemaining=54.25,
+                       nextRegenAt="2026-10-24T14:00:00Z", nextRegenPercent=2),
+                       private="private quota sentinel")
+        value = synthetic_llm._sanitize_quota(payload)
+        self.assertEqual(value, dict(planWeeklyLimit=payload["planWeeklyLimit"]))
+        with mock.patch.object(synthetic_llm, "current_model", return_value="chatgpt:fixture-model"), \
+             mock.patch.object(synthetic_llm, "_cached_observation", return_value=dict(value=value)), \
+             mock.patch.object(synthetic_llm, "refresh_provider_observations_async"):
+            shown = synthetic_llm.quota()
+        self.assertIn("ChatGPT subscription", shown)
+        self.assertIn("synthetic_weekly=54.2% remaining", shown)
+        self.assertNotIn("private quota sentinel", shown)
+
+    def test_missing_cache_usage_still_logs_the_known_input_count(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "completion.json"
+            result = dict(choices=[dict(finish_reason="stop")],
+                          usage=dict(prompt_tokens=12000, completion_tokens=40))
+            with mock.patch.dict(os.environ, METTACLAW_LLM_COMPLETION_PATH=str(path)):
+                synthetic_llm._completion_metadata(result)
+            row = json.loads(path.with_name("llm-usage.jsonl").read_text())
+            self.assertEqual(row["input_tokens"], 12000)
+            self.assertNotIn("cached_tokens", row)
+
     def test_usage_history_appends_counts_and_preserves_unknown_without_messages(self):
         import tempfile
         from pathlib import Path

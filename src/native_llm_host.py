@@ -349,6 +349,12 @@ def wait_settings():
 
 def wire_body(plan, body):
     value = json.loads(str(body))
+    plan.call_context = dict(
+        call_id=plan.correlation,
+        provider="chatgpt" if getattr(plan, "request_profile", "") == "chatgpt-plan" else plan.provider,
+        model=str(value.get("model", "")), purpose=getattr(plan, "purpose", "turn"))
+    llm_policy.describe(plan.correlation, model=plan.call_context["model"],
+                        protocol=plan.protocol, purpose=plan.call_context["purpose"])
     if plan.provider == "synthetic":
         value = provider_protocol.synthetic_body(value)
     if stream_sink.configured():
@@ -451,7 +457,8 @@ def finish(plan, epoch, correlation, encoded, canonical):
     native_lifetime.settle(plan, "completed", str(canonical))
     result["transport"] = "native"
     if not _compaction(plan):
-        synthetic_llm._completion_metadata(result, getattr(plan, "prompt_layout", None))
+        synthetic_llm._completion_metadata(result, getattr(plan, "prompt_layout", None),
+                                          call_context=getattr(plan, "call_context", None))
     if getattr(plan, "prompt_text", None) and not _compaction(plan):
         import context_budget
         context_budget.observe(plan.prompt_text, result.get("usage", {}))
