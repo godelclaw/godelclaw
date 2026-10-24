@@ -167,10 +167,10 @@ class ProviderRoutingTest(unittest.TestCase):
         self.enable_flag()
         os.environ["ANTHROPIC_API_KEY"] = "anth-key"
         os.environ["SYNTHETIC_MODEL"] = "claude-opus-5-5"
-        seen = {}
+        requests = []
 
         def fake_request_json(req, timeout=None):
-            seen["body"] = json.loads(req.data)
+            requests.append(json.loads(req.data))
             return {"content": [{"type": "text", "text": "((rest))"}],
                     "usage": {"input_tokens": 5}}
 
@@ -180,39 +180,60 @@ class ProviderRoutingTest(unittest.TestCase):
                 "syn:large:text", 6000, "medium",
                 "HEAD_cache_boundary_STABLE_cache_boundary_CONV"
                 "_cache_boundary_TURN read _cache_boundary_ in a file")
-        system = seen["body"]["system"]
+            synthetic_llm.chat(
+                "syn:large:text", 6000, "medium",
+                "HEAD_cache_boundary_STABLE_cache_boundary_CONV changed"
+                "_cache_boundary_NEXT TURN")
+        system = requests[0]["system"]
         self.assertEqual([block["text"] for block in system],
                          ["HEAD", "STABLE", "CONV"])
-        # One breakpoint on the last block: Anthropic finds earlier cached
-        # prefixes at block boundaries.
+        # Earlier regions need written checkpoints of their own: lookback
+        # alone does not create an entry for an unchanged prefix.
         self.assertEqual([block.get("cache_control") for block in system],
-                         [None, None, {"type": "ephemeral"}])
-        self.assertEqual(seen["body"]["messages"],
+                         [{"type": "ephemeral"}] * 3)
+        self.assertEqual(requests[0]["messages"],
                          [{"role": "user",
                            "content": [{"type": "text", "text": "TURN read _cache_boundary_ in a file"}]}])
+        changed = requests[1]["system"]
+        self.assertEqual(changed[:2], system[:2])
+        self.assertEqual(changed[2], {"type": "text", "text": "CONV changed",
+                                      "cache_control": {"type": "ephemeral"}})
+        self.assertEqual(requests[1]["messages"],
+                         [{"role": "user", "content": [{"type": "text", "text": "NEXT TURN"}]}])
 
-    def test_anthropic_transcript_chunks_are_blocks_with_one_breakpoint(self):
+    def test_anthropic_transcript_chunks_keep_stable_checkpoints_within_four_slots(self):
         self.enable_flag()
         os.environ["ANTHROPIC_API_KEY"] = "anth-key"
         os.environ["SYNTHETIC_MODEL"] = "claude-opus-5-5"
-        seen = {}
+        requests = []
 
         def fake_request_json(req, timeout=None):
-            seen["body"] = json.loads(req.data)
+            requests.append(json.loads(req.data))
             return {"content": [{"type": "text", "text": "((rest))"}],
                     "usage": {"input_tokens": 5}}
 
+        chunks = ["STEPS 0-7", "STEPS 8-15", "STEPS 16-23", "STEPS 24-31", "STEPS 32-39"]
         with mock.patch.object(synthetic_llm, "_request_json", fake_request_json):
-            synthetic_llm.chat(
-                "syn:large:text", 6000, "medium",
-                "HEAD_cache_boundary_STABLE_cache_boundary_\n\nSTEPS 0-7\n_cache_chunk_\nSTEPS 8-15\n\n"
-                "_cache_boundary_CONVERSATION TURN")
-        system = seen["body"]["system"]
+            for count in (2, len(chunks)):
+                synthetic_llm.chat(
+                    "syn:large:text", 6000, "medium",
+                    "HEAD_cache_boundary_STABLE_cache_boundary_\n\n" +
+                    "\n_cache_chunk_\n".join(chunks[:count]) +
+                    "\n\n_cache_boundary_CONVERSATION TURN")
+        system = requests[0]["system"]
         self.assertEqual([block["text"] for block in system],
                          ["HEAD", "STABLE", "STEPS 0-7", "STEPS 8-15"])
         self.assertEqual([block.get("cache_control") for block in system],
-                         [None, None, None, {"type": "ephemeral"}])
-        self.assertNotIn("_cache_chunk_", json.dumps(seen["body"]))
+                         [{"type": "ephemeral"}] * 4)
+        grown = requests[1]["system"]
+        self.assertEqual([block["text"] for block in grown], ["HEAD", "STABLE"] + chunks)
+        self.assertEqual(grown[:2], system[:2])
+        self.assertEqual([i for i, block in enumerate(grown) if "cache_control" in block],
+                         [0, 1, len(grown) - 2, len(grown) - 1])
+        for body in requests:
+            self.assertNotIn("_cache_chunk_", json.dumps(body))
+            self.assertEqual(body["messages"], [{"role": "user", "content": [
+                {"type": "text", "text": "CONVERSATION TURN"}]}])
 
     def test_synthetic_request_carries_no_layout_boundary(self):
         seen = {}
