@@ -1040,7 +1040,9 @@ its usage twice. This history survives the short admission-accounting window.
 It contains no prompts, responses or credentials.
 
 Anthropic requests also record the encoded system blocks' byte counts, hashes,
-prefix hashes and cache lifetimes. Earlier stable regions and the history before
+prefix hashes and cache lifetimes. Native full-context prompts put completed
+transcript chunks before current project facts, so a source revision does not
+invalidate the history prefix. Earlier stable regions and the history before
 its newest block receive cache checkpoints, within the provider's four-slot
 limit. A shared prefix alone does not establish a cache hit: a prior request
 must have written an unexpired entry within a breakpoint's lookback window.

@@ -66,6 +66,9 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual([i for i, b in enumerate(body["system"]) if "cache_control" in b], [0, 1, 3, 4])
         self.assertEqual(body["messages"], [{"role": "user", "content": [{"type": "text", "text": "user"}]}])
         self.assertEqual(body["output_config"], {"effort": "high"})
+        _, reordered = protocol.command_body("anthropic", "fixture", 100, "high",
+            "S_cache_boundary_A\n_cache_chunk_\nB\n_cache_chunk_\nC_cache_boundary_T_cache_boundary_user")
+        self.assertEqual([i for i, b in enumerate(reordered["system"]) if "cache_control" in b], [0, 2, 3, 4])
 
     def test_anthropic_respects_other_cache_slots_and_explicit_opt_out(self):
         for other in range(4):

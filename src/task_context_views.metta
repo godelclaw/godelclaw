@@ -388,11 +388,10 @@
    (if (< (length $pairs) (task:chunk-size)) (Chunks (task:reverse $out ()) $seen)
      (let (Stepped $text $next) (task:chunk-text (task:take $pairs (task:chunk-size)) $index $seen)
        (task:chunks (task:drop $pairs (task:chunk-size)) (+ $index (task:chunk-size)) $next (cons-atom $text $out)))))
-; The transcript slot follows the second boundary and is the last cached
-; block: the conversation, which changes with every message, moves behind it
-; into per-turn text, so a new message does not invalidate cached steps. The
-; layout keeps three boundaries; chunk markers let a provider cache each
-; complete chunk as its own block.
+; Completed history precedes current project facts: a source revision must
+; not invalidate the much larger immutable transcript. Conversation and
+; per-turn state follow both. Keep three region boundaries, with a separate
+; wire block for each complete transcript chunk.
 (= (task:place-transcript $base $chunks)
    (case (str:find $base "_cache_boundary_")
      (((TextNotFound $_) $base)
@@ -402,7 +401,7 @@
           (case (str:find $rest "_cache_boundary_")
             (((TextNotFound $_) $base)
              ($second
-               (let* (($upto (str:byte-slice $rest 0 (+ $second 16)))
+               (let* (($facts (str:byte-slice $rest 0 (+ $second 16)))
                       ($after (str:byte-slice $rest (+ $second 16) (str:byte-length $rest)))
                       ($slot (if (== $chunks ()) "" (str:join "\n_cache_chunk_\n" $chunks))))
                  (case (str:find $after "_cache_boundary_")
@@ -410,7 +409,7 @@
                     ($third
                       (let* (($conversation (str:byte-slice $after 0 $third))
                              ($turn (str:byte-slice $after (+ $third 16) (str:byte-length $after))))
-                        (str:join "" ($head $upto "\n\n" $slot "\n\n_cache_boundary_" $conversation $turn)))))))))))))))
+                        (str:join "" ($head "\n\n" $slot "\n\n_cache_boundary_" $facts $conversation $turn)))))))))))))))
 (= (task:full-context $base $focus $trigger $capacity $ratio)
    (task:full-context-view $base (task:conversation-view $focus $trigger) $capacity $ratio))
 (= (task:full-context-view $base $view $capacity $ratio)

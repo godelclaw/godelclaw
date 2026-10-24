@@ -106,7 +106,11 @@ def anthropic_cache_system(body, boundaries=()):
     slots = max(0, 4 - elsewhere - len(marked))
     # The tail checkpoint may itself change. Its predecessor protects the
     # completed history before it; declared region ends protect static text.
-    candidates = list(boundaries) + [last - 1, 0]
+    # The transcript may precede current facts. Protect the predecessor of
+    # its endpoint, rather than assuming history is the final region.
+    spans = [(end - start, end) for start, end in zip([-1] + list(boundaries), boundaries)]
+    history_end = max(spans)[1] if spans else last
+    candidates = list(boundaries) + [history_end - 1, last - 1, 0]
     for index in candidates:
         if slots == 0:
             break

@@ -154,8 +154,8 @@ class NativeTaskContext(unittest.TestCase):
         self.assertEqual(rendered[1]["request"], "other")
         self.assertEqual(rendered[2]["disposition"], "not_run")
 
-    def full_view(self, fixture, capacity, out, focus="guide"):
-        prompt = "P_cache_boundary_STABLE_cache_boundary_CONV_cache_boundary_TURN"
+    def full_view(self, fixture, capacity, out, focus="guide", facts="STABLE"):
+        prompt = "P_cache_boundary_" + facts + "_cache_boundary_CONV_cache_boundary_TURN"
         stdout = self.guest(fixture.path, '!(import! &self ./src/task_context_views)\n'
             '!(fs:update-text '+json.dumps(str(out))+' "replace" (task:append-context '+json.dumps(prompt)+
             ' '+json.dumps(focus)+' "continuation-tick" '+json.dumps(str(capacity))+' "model") "" "")\n!(println! TASK_CONTEXT_OK)\n')
@@ -179,7 +179,7 @@ class NativeTaskContext(unittest.TestCase):
         self.assertEqual(second["task_root"], "group-post")
         self.assertEqual(second["focus"], "group-post")
         self.assertEqual(second["window"]["transcript_steps"], 12)
-        self.assertEqual(after.split("_cache_boundary_")[2], before.split("_cache_boundary_")[2])
+        self.assertEqual(after.split("_cache_boundary_")[1], before.split("_cache_boundary_")[1])
         self.assertEqual(reference.task_context.history(fixture.store, "guide")["total"], 9)
         self.assertEqual(reference.task_context.history(fixture.store, "group-post")["total"], 1)
 
@@ -237,8 +237,8 @@ class NativeTaskContext(unittest.TestCase):
         for i in range(20): fixture.call([["read-file", str(i)]], [("step %d λ " % i) * 40])
         first, view = self.full_view(fixture, 400000, fixture.path.parent / "first.txt")
         self.assertEqual(first.count("_cache_boundary_"), 3)
-        head, transcript, turn = first.split("_cache_boundary_")[1:]
-        self.assertTrue(head.startswith("STABLE"))
+        transcript, facts, turn = first.split("_cache_boundary_")[1:]
+        self.assertTrue(facts.startswith("STABLE"))
         self.assertIn("TASK_TRANSCRIPT steps 0-7", transcript)
         self.assertIn("CONV", turn); self.assertNotIn("CONV", transcript)
         chunks = [c.strip() for c in transcript.split("\n_cache_chunk_\n")]
@@ -255,10 +255,31 @@ class NativeTaskContext(unittest.TestCase):
         self.assertIn("_cache-chunk_", transcript)
         for i in range(20, 31): fixture.call([["read-file", str(i)]], [("later %d " % i) * 40])
         second, later = self.full_view(fixture, 400000, fixture.path.parent / "second.txt")
-        later_chunks = [c.strip() for c in second.split("_cache_boundary_")[2].split("\n_cache_chunk_\n")]
+        later_chunks = [c.strip() for c in second.split("_cache_boundary_")[1].split("\n_cache_chunk_\n")]
         self.assertEqual(later_chunks[:2], chunks)
         self.assertEqual(len(later_chunks), 4)
         self.assertEqual(later["window"]["first_step_here"], 32)
+
+    def test_project_revision_preserves_the_completed_history_cache_prefix(self):
+        import provider_protocol
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        for i in range(20):
+            fixture.call([["read-file", str(i)]], ["inspected source " + str(i)])
+        first, _ = self.full_view(fixture, 400000, fixture.path.parent / "before-revision.txt")
+        second, _ = self.full_view(fixture, 400000, fixture.path.parent / "after-revision.txt", facts="NEW_REVISION")
+        stable, _ = provider_protocol.split_prompt(first)
+        history_end = provider_protocol.cache_boundaries(stable)[1]
+        self.assertGreater(history_end, 0)
+        bodies = [provider_protocol.command_body("anthropic", "fixture", 100, "high", prompt)[1]
+                  for prompt in (first, second)]
+        a, b = map(provider_protocol.anthropic_cache_observation, bodies)
+        self.assertEqual(a["blocks"][:history_end + 1], b["blocks"][:history_end + 1])
+        self.assertNotEqual(a["blocks"][-1]["prefix_digest"], b["blocks"][-1]["prefix_digest"])
+        self.assertIn("cache_control", bodies[0]["system"][history_end])
+        for text in (first, second):
+            self.assertIn("inspected source 0", text)
+            self.assertIn("inspected source 19", text)
+            self.assertIn("CONV", text)
 
     def test_whole_window_points_to_an_identical_earlier_result(self):
         fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
