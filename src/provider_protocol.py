@@ -74,6 +74,76 @@ def prompt_observation(prompt):
                 blocks=[dict(chars=len(part), digest=hashlib.sha256(part.encode()).hexdigest()) for part in stable])
 
 
+def cache_boundaries(stable):
+    """System block endpoints of the caller's declared prompt regions."""
+    ends, count = [], 0
+    for part in stable:
+        blocks = chunk_blocks(part)
+        if blocks:
+            count += len(blocks)
+            ends.append(count - 1)
+    return ends
+
+
+def anthropic_cache_system(body, boundaries=()):
+    """Keep earlier stable checkpoints as well as the growing history's end.
+
+    Lookback can read a previously written endpoint; it does not create cache
+    entries for every unchanged block. Never consume slots already used by a
+    caller's tool/message breakpoints, or turn an explicit cache opt-out on.
+    """
+    system = body.get("system")
+    if not isinstance(system, list) or not system:
+        return body
+    marked = [i for i, block in enumerate(system) if "cache_control" in block]
+    if not marked:
+        return body
+    marker = system[marked[-1]]["cache_control"]
+    elsewhere = sum("cache_control" in tool for tool in body.get("tools", []))
+    elsewhere += sum("cache_control" in block for message in body.get("messages", [])
+                     for block in message.get("content", []) if isinstance(block, dict))
+    elsewhere += int("cache_control" in body)
+    slots = max(0, 4 - elsewhere - len(marked))
+    # The tail checkpoint may itself change. Its predecessor protects the
+    # completed history before it; declared region ends protect static text.
+    candidates = list(boundaries) + [len(system) - 2, 0]
+    for index in candidates:
+        if slots == 0:
+            break
+        if 0 <= index < len(system) and index not in marked:
+            system[index]["cache_control"] = copy.deepcopy(marker)
+            marked.append(index)
+            slots -= 1
+    return body
+
+
+def anthropic_cache_observation(body):
+    """Hash the actual encoded blocks in linear time; retain no prompt text."""
+    def encoded(value):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True,
+                          separators=(",", ":")).encode("utf-8")
+
+    settings = {key: value for key, value in body.items()
+                if key not in ("system", "messages", "max_tokens", "stream", "metadata", "cache_control")}
+    prefix = hashlib.sha256(encoded(settings))
+    scope = prefix.hexdigest()
+    blocks = []
+    system = body.get("system", [])
+    if isinstance(system, str):
+        system = [{"type": "text", "text": system}]
+    for index, block in enumerate(system):
+        content = encoded({k: v for k, v in block.items() if k != "cache_control"})
+        prefix.update(len(content).to_bytes(8, "big"))
+        prefix.update(content)
+        marker = block.get("cache_control")
+        blocks.append(dict(index=index, bytes=len(content),
+                           digest=hashlib.sha256(content).hexdigest(),
+                           prefix_digest=prefix.hexdigest(),
+                           ttl=marker.get("ttl", "5m") if marker else None))
+    return dict(version=1, scope=scope, blocks=blocks,
+                messages_digest=hashlib.sha256(encoded(body.get("messages", []))).hexdigest())
+
+
 def cache_observation(usage):
     def count(value):
         return value if type(value) is int and 0 <= value <= 10**12 else None
@@ -119,12 +189,10 @@ def command_body(protocol, model, tokens, effort, prompt):
                 "messages": [{"role": "user", "content": [{"type": "text", "text": user}]}]}
         blocks = [{"type": "text", "text": text} for part in stable for text in chunk_blocks(part)]
         if blocks:
-            # One breakpoint, on the last stable block. Anthropic finds the
-            # previous turn's cached prefix at an earlier block boundary, so a
-            # growing transcript adds its new chunks without rewriting the rest.
             blocks[-1]["cache_control"] = {"type": "ephemeral"}
             body["system"] = blocks
         body.update(anthropic_reasoning(str(effort)))
+        anthropic_cache_system(body, cache_boundaries(stable))
         return "/messages", body
     stable = joined(stable)
     system = "".join(stable)
@@ -208,6 +276,7 @@ def anthropic_body(request, model):
     extra = request.get("extra_body", {})
     effort = request.get("reasoning", extra.get("reasoning", {})).get("effort")
     payload.update(anthropic_reasoning(effort, extra.get("enable_thinking")))
+    anthropic_cache_system(payload)
     return payload
 
 

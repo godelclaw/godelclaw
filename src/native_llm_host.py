@@ -156,13 +156,17 @@ def command_plan(model, tokens, effort, prompt, *, native_ledger=False):
     def conversation(protocol, selected):
         stable, user = provider_protocol.split_prompt(prompt)
         if protocol == "anthropic":
-            # Every stable block is its own system message and the encoder
-            # caches only the last one; earlier cached prefixes are found at
-            # block boundaries, so a growing transcript is never rewritten.
+            # Keep complete transcript chunks as separate wire blocks. The
+            # final wire adapter also marks the earlier stable region ends.
             messages = [{"role": "system", "content": block}
                         for part in stable for block in provider_protocol.chunk_blocks(part)]
             messages.append({"role": "user", "content": user})
             result = dict(model=selected, max_tokens=int(tokens), messages=messages, cache_system=True)
+            ttl = os.environ.get("METTACLAW_ANTHROPIC_CACHE_TTL", "5m")
+            if ttl not in ("5m", "1h"):
+                raise ValueError("Anthropic cache TTL must be 5m or 1h")
+            if ttl != "5m":
+                result["cache_ttl"] = ttl
         elif model_commentary.enabled():
             stable = provider_protocol.joined(stable)
             messages = ([{"role": "system", "content": "".join(stable)}] if stable else [])
@@ -187,6 +191,7 @@ def command_plan(model, tokens, effort, prompt, *, native_ledger=False):
     if getattr(plan, "protocol", "") == "anthropic" or model_commentary.enabled():
         plan.encoding = "messages"
     plan.prompt_layout = provider_protocol.prompt_observation(prompt)
+    plan.cache_boundaries = provider_protocol.cache_boundaries(provider_protocol.split_prompt(prompt)[0])
     plan.prompt_text = str(prompt)
     return plan
 
@@ -245,6 +250,14 @@ def policy_metadata(plan):
         progress_soft=getattr(plan, "last_soft", 0),
         retry_after=getattr(plan, "retry_after", None),
         origin=getattr(plan, "call_origin", {})), separators=(",", ":"))
+
+
+def request_metadata(plan):
+    """One request observation, separate from the small progress facts frame."""
+    value = json.loads(policy_metadata(plan))
+    if hasattr(plan, "cache_layout"):
+        value["origin"] = {**value["origin"], "cache_layout": plan.cache_layout}
+    return json.dumps(value, separators=(",", ":"))
 
 
 def note_admitted(plan):
@@ -466,10 +479,6 @@ def wire_body(plan, body):
         call_id=plan.correlation,
         provider="chatgpt" if getattr(plan, "request_profile", "") == "chatgpt-plan" else plan.provider,
         model=str(value.get("model", "")), purpose=getattr(plan, "purpose", "turn"))
-    if not getattr(plan, "native_ledger", False):
-        llm_policy.describe(plan.correlation, model=plan.call_context["model"],
-                            protocol=plan.protocol, purpose=plan.call_context["purpose"],
-                            origin=getattr(plan, "call_origin", None))
     if plan.provider == "synthetic":
         value = provider_protocol.synthetic_body(value)
     if stream_sink.configured():
@@ -485,6 +494,14 @@ def wire_body(plan, body):
             status="awaiting", epoch=getattr(plan, "display_epoch", "initial")))
     if plan.stream and plan.protocol == "chat-completions":
         value.update(stream=True, stream_options={"include_usage": True})
+    if plan.protocol == "anthropic":
+        provider_protocol.anthropic_cache_system(value, getattr(plan, "cache_boundaries", ()))
+        plan.cache_layout = provider_protocol.anthropic_cache_observation(value)
+        plan.cache_layout["regions"] = list(getattr(plan, "cache_boundaries", ()))
+    if not getattr(plan, "native_ledger", False):
+        origin = json.loads(request_metadata(plan))["origin"]
+        llm_policy.describe(plan.correlation, model=plan.call_context["model"],
+                            protocol=plan.protocol, purpose=plan.call_context["purpose"], origin=origin)
     return json.dumps(value, ensure_ascii=False)
 
 

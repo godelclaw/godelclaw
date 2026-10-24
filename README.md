@@ -1039,6 +1039,16 @@ Usage observations are keyed by call ID, so replaying a completion does not add
 its usage twice. This history survives the short admission-accounting window.
 It contains no prompts, responses or credentials.
 
+Anthropic requests also record the encoded system blocks' byte counts, hashes,
+prefix hashes and cache lifetimes. Earlier stable regions and the history before
+its newest block receive cache checkpoints, within the provider's four-slot
+limit. A shared prefix alone does not establish a cache hit: a prior request
+must have written an unexpired entry within a breakpoint's lookback window.
+`[context] anthropic_cache_ttl` defaults to `"5m"`; `"1h"` is available for
+agent turns spaced farther apart, with a higher cache-write price. Coding
+requests retain their own cache settings. Actual read/write counters remain
+the evidence that caching worked.
+
 The native path uses `src/llm_policy_cetta.metta` and
 `src/native_lifetime_cetta.metta`, through `src/llm_accounting_cetta.metta`.
 Completion commits usage, request state and the native receipt together before

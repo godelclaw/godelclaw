@@ -47,7 +47,7 @@
                    (lp:field $metadata "maximum" 0) (lp:field $metadata "fingerprint" "") (system:wall-time))))))
 (: account:describe (-> %Undefined% %Undefined%))
 (= (account:describe $plan)
-   (let $metadata (account:metadata $plan)
+   (let $metadata (json:parse (lp:text (py-call (native_llm_host.request_metadata $plan))))
      (case (lp:describe-origin (lp:field $metadata "id" "") (lp:field $metadata "model" "")
                         (lp:field $metadata "protocol" "") (lp:field $metadata "purpose" "turn")
                         "native" (lp:field $metadata "origin" (JsonObject ())) (system:wall-time))

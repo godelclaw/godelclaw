@@ -322,7 +322,9 @@
           ($turn (lp:field $origin "turn_id" ""))
           ($fields (if (ue:equal $origin (JsonObject ())) $base
                      (lp:append $base ((JsonPair "trigger" $trigger) (JsonPair "turn_id" $turn))))))
-     (JsonObject $fields)))
+     (let $layout (lp:field $origin "cache_layout" JsonNull)
+       (JsonObject (if (ue:equal $layout JsonNull) $fields
+                     (lp:append $fields ((JsonPair "cache_layout" $layout))))))))
 (: lp:describe-origin (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (lp:describe-origin $ticket $model $protocol $purpose $transport $origin $now)
    (lp:statement-changed (lp:transaction

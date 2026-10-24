@@ -184,6 +184,8 @@ def main():
 
     emit("METTACLAW_RECENT_ACTION_TURNS",
          context.get("recent_action_turns"))
+    emit("METTACLAW_ANTHROPIC_CACHE_TTL",
+         context.get("anthropic_cache_ttl"))
     emit("METTACLAW_CONVERSATION_EVENTS",
          context.get("conversation_events"))
     emit("METTACLAW_REPORTS_ROOT",

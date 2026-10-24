@@ -80,6 +80,8 @@ allow_private = true
 provider = "auto"
 
 [context]
+# Anthropic cache lifetime; 1h can cover agents that rest between turns.
+anthropic_cache_ttl = "5m"
 # Views remain bounded, but their horizons are ordinary replaceable policy.
 recent_action_turns = 12
 conversation_events = 64

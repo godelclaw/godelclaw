@@ -422,6 +422,32 @@ def retained():
         self.assertIn("(nop)", out)
         self.assertEqual(len(self.peer.requests), 1)
 
+    def test_anthropic_native_checkpoints_ttl_and_private_request_evidence(self):
+        self.peer.delay = .01
+        self.peer.reply = {"id": "fixture", "stop_reason": "end_turn",
+                           "content": [{"type": "text", "text": "(nop)"}],
+                           "usage": {"input_tokens": 3, "output_tokens": 2,
+                                     "cache_read_input_tokens": 10, "cache_creation_input_tokens": 1}}
+        self.env.update(ANTHROPIC_API_KEY="fixture-secret", ANTHROPIC_BASE_URL=self.env["SYNTHETIC_BASE_URL"],
+                        SYNTHETIC_MODEL="claude-fixture", METTACLAW_ANTHROPIC_CACHE_TTL="1h")
+        prompt = "stable λ_cache_boundary_sources_cache_boundary_A\n_cache_chunk_\nB\n_cache_chunk_\nC_cache_boundary_input"
+        for lang in ("he", "petta"):
+            out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n' + self.disable_python_accounting() +
+                f'!(llm:command "claude-fixture" 100 "high" {json.dumps(prompt, ensure_ascii=False)})\n', lang)
+            self.assertIn("(nop)", out, self.last_stderr[-1000:])
+            body = self.peer.requests[-1][2]
+            self.assertEqual([b["text"] for b in body["system"]], ["stable λ", "sources", "A", "B", "C"])
+            self.assertEqual([i for i, b in enumerate(body["system"]) if "cache_control" in b], [0, 1, 3, 4])
+            self.assertTrue(all(b["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+                                for b in body["system"] if "cache_control" in b))
+            self.assertEqual(body["messages"], [{"role": "user", "content": [{"type": "text", "text": "input"}]}])
+            self.assertEqual(body["output_config"], {"effort": "high"})
+            with sqlite3.connect(self.directory / "ledger.db") as db:
+                context = json.loads(db.execute("SELECT detail FROM llm_call_history WHERE event='request' "
+                                                "ORDER BY sequence DESC LIMIT 1").fetchone()[0])
+            self.assertEqual(context["cache_layout"], {**provider_protocol.anthropic_cache_observation(body), "regions": [0, 1, 4]})
+            self.assertNotIn("stable", json.dumps(context))
+
     def test_codecs_keep_tools_reasoning_usage_and_stops(self):
         fixtures = [("anthropic", {"id": "a", "stop_reason": "tool_use", "content": [
             {"type": "thinking", "thinking": "opaque", "signature": "signed"},

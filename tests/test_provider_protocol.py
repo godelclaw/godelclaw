@@ -1,3 +1,4 @@
+import copy
 import json
 from pathlib import Path
 import sys
@@ -57,6 +58,76 @@ class ProtocolTests(unittest.TestCase):
                                          "S_cache_boundary_T_cache_boundary_A\n_cache_chunk_\nB\n_cache_chunk_\nC_cache_boundary_user")
         # The cache key follows the first stable part, which a growing transcript leaves unchanged.
         self.assertEqual(body["prompt_cache_key"], other["prompt_cache_key"])
+
+    def test_anthropic_preserves_region_checkpoints_and_history_before_tail(self):
+        prompt = "S_cache_boundary_T_cache_boundary_A\n_cache_chunk_\nB\n_cache_chunk_\nC_cache_boundary_user"
+        _, body = protocol.command_body("anthropic", "fixture", 100, "high", prompt)
+        self.assertEqual([b["text"] for b in body["system"]], ["S", "T", "A", "B", "C"])
+        self.assertEqual([i for i, b in enumerate(body["system"]) if "cache_control" in b], [0, 1, 3, 4])
+        self.assertEqual(body["messages"], [{"role": "user", "content": [{"type": "text", "text": "user"}]}])
+        self.assertEqual(body["output_config"], {"effort": "high"})
+
+    def test_anthropic_respects_other_cache_slots_and_explicit_opt_out(self):
+        for other in range(4):
+            body = dict(system=[dict(type="text", text=str(i)) for i in range(9)],
+                        messages=[dict(role="user", content=[dict(type="text", text="message",
+                                     cache_control={"type": "ephemeral"}) for _ in range(other)])])
+            body["system"][-1]["cache_control"] = dict(type="ephemeral", ttl="1h")
+            before = copy.deepcopy(body)
+            protocol.anthropic_cache_system(body, [0, 1, 8])
+            controls = [b.get("cache_control") for b in body["system"] if "cache_control" in b]
+            self.assertEqual(len(controls) + other, 4)
+            self.assertTrue(all(c == dict(type="ephemeral", ttl="1h") for c in controls))
+            self.assertEqual(body["messages"], before["messages"])
+            self.assertEqual([b["text"] for b in body["system"]], [b["text"] for b in before["system"]])
+        request = dict(messages=[dict(role="system", content="private"), dict(role="user", content="input")],
+                       max_tokens=100, cache_system=False)
+        disabled = protocol.anthropic_body(request, "fixture")
+        self.assertNotIn("cache_control", disabled["system"][0])
+
+    def test_cache_observation_identifies_changed_prefix_without_retaining_content(self):
+        bodies = [protocol.command_body("anthropic", "fixture", 100, "high",
+                    "static λ_cache_boundary_state_cache_boundary_history-" + str(i) + "_cache_boundary_input")[1]
+                  for i in range(2)]
+        first, second = map(protocol.anthropic_cache_observation, bodies)
+        self.assertEqual(first["scope"], second["scope"])
+        self.assertEqual(first["blocks"][:2], second["blocks"][:2])
+        self.assertNotEqual(first["blocks"][2]["prefix_digest"], second["blocks"][2]["prefix_digest"])
+        self.assertNotIn("static", json.dumps(first))
+        self.assertNotIn("input", json.dumps(first))
+        changed_effort = copy.deepcopy(bodies[1])
+        changed_effort["output_config"]["effort"] = "low"
+        self.assertNotEqual(protocol.anthropic_cache_observation(changed_effort)["scope"], first["scope"])
+
+    def test_written_checkpoint_model_matches_changing_tail_and_lookback_limit(self):
+        # A cache entry exists only where a previous request put a marker.
+        # Matching earlier content alone cannot read an unwritten endpoint.
+        def writes(body):
+            return {b["prefix_digest"] for b in protocol.anthropic_cache_observation(body)["blocks"] if b["ttl"]}
+
+        def reads(body, entries):
+            blocks = protocol.anthropic_cache_observation(body)["blocks"]
+            return {block["index"] for end in blocks if end["ttl"]
+                    for block in blocks[max(0, end["index"] - 19):end["index"] + 1]
+                    if block["prefix_digest"] in entries}
+
+        def request(tail, corrected):
+            body = dict(model="fixture", system=[dict(type="text", text="stable " * 500),
+                                                  dict(type="text", text=tail, cache_control=dict(type="ephemeral"))],
+                        messages=[])
+            return protocol.anthropic_cache_system(body, [0, 1]) if corrected else body
+
+        self.assertEqual(reads(request("next", False), writes(request("old", False))), set())
+        self.assertEqual(reads(request("next", True), writes(request("old", True))), {0})
+        old = dict(model="fixture", system=[dict(type="text", text=str(i)) for i in range(2)], messages=[])
+        old["system"][-1]["cache_control"] = dict(type="ephemeral")
+        grown = copy.deepcopy(old)
+        grown["system"][-1].pop("cache_control")
+        grown["system"].extend(dict(type="text", text=str(i)) for i in range(2, 22))
+        grown["system"][-1]["cache_control"] = dict(type="ephemeral")
+        self.assertEqual(reads(grown, writes(old)), set())
+        protocol.anthropic_cache_system(grown, [1, 21])
+        self.assertEqual(reads(grown, writes(old)), {1})
 
     def test_omega_system_user_delimiter(self):
         _, body = protocol.command_body("responses", "gpt-5.5", 20, "high", " system :-:-:-: new input ")
