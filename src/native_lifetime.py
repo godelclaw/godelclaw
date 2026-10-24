@@ -140,6 +140,7 @@ def claim(plan):
         now = time.time()
         db.execute("INSERT INTO native_calls(id,epoch,pid,process_start,created,updated,state,guard,activity,lane,purpose) VALUES (?,?,?,?,?,?,'claimed',?,?,?,?)",
                    (plan.correlation, plan.epoch, os.getpid(), process_start(os.getpid()), now, now, getattr(plan, "guard", None), activity, lane, purpose))
+        llm_policy.history_event(db, plan.correlation, "claimed", {"epoch": plan.epoch}, now=now)
     return True
 
 

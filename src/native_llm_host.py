@@ -85,7 +85,7 @@ def gate():
     return True
 
 
-def _plan(kind, model, tokens, builder):
+def _plan(kind, model, tokens, builder, *, native_ledger=False):
     ticket = None
     provider = None
     try:
@@ -106,8 +106,14 @@ def _plan(kind, model, tokens, builder):
         if call_scope() and call_lane() == "background":
             reserve = dict(reserved_output=int(os.environ.get("METTACLAW_ACTIVITY_RESERVED_OUTPUT", "0")),
                            reserved_requests=int(os.environ.get("METTACLAW_ACTIVITY_INTERACTIVE_RESERVE", "1")))
-        ticket = llm_policy.admit(provider["name"], tokens,
-            request_fingerprint=llm_policy.fingerprint(request), **reserve)
+        fingerprint = llm_policy.fingerprint(request)
+        if native_ledger:
+            if any(value < 0 for value in reserve.values()):
+                raise ValueError("reserved capacity must be nonnegative")
+            ticket = uuid.uuid4().hex
+        else:
+            ticket = llm_policy.admit(provider["name"], tokens,
+                request_fingerprint=fingerprint, **reserve)
         alias = "LLM_" + provider["name"].upper()
         prefix = "CETTA_IO_AUTH_" + alias
         credential_env = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY",
@@ -128,22 +134,25 @@ def _plan(kind, model, tokens, builder):
         import strategy_host
         captured_guard = strategy_host.guard() if strategy_host.enabled() else None
         return SimpleNamespace(kind=kind, encoding="default", ready="true", correlation=ticket, protocol=provider["protocol"],
+            native_ledger=bool(native_ledger), max_output=int(tokens),
+            request_fingerprint=fingerprint, wire_model=str(request.get("model", selected)),
             activity=call_scope(), lane=call_lane(),
             epoch=_session_epoch, provider=provider["name"], base=provider["base"], headers=json.dumps(headers),
             request=json.dumps(request, ensure_ascii=False), sent=False, claimed=False,
-            guard=captured_guard, stream=stream,
+            guard=captured_guard, stream=stream, call_origin=strategy_host.accounting_origin(),
             timeout=settings["hard"], connect=settings["connect"], first=settings["first"],
             idle=settings["idle"], soft=settings["soft"],
             cap=cap)
     except Exception as error:
-        if ticket:
+        if ticket and not native_ledger:
             llm_policy.fail(ticket, sent=False)
         return SimpleNamespace(kind=kind, encoding="default", ready="false", error=error,
+                               native_ledger=bool(native_ledger),
                                provider=provider["name"] if provider else "unknown",
                                correlation="unsubmitted", sent=False)
 
 
-def command_plan(model, tokens, effort, prompt):
+def command_plan(model, tokens, effort, prompt, *, native_ledger=False):
     def conversation(protocol, selected):
         stable, user = provider_protocol.split_prompt(prompt)
         if protocol == "anthropic":
@@ -174,7 +183,7 @@ def command_plan(model, tokens, effort, prompt):
         if model_commentary.enabled():
             result.update(tools=[model_commentary.tool_schema()], tool_choice="auto")
         return result
-    plan = _plan("command", model, tokens, conversation)
+    plan = _plan("command", model, tokens, conversation, native_ledger=native_ledger)
     if getattr(plan, "protocol", "") == "anthropic" or model_commentary.enabled():
         plan.encoding = "messages"
     plan.prompt_layout = provider_protocol.prompt_observation(prompt)
@@ -185,6 +194,109 @@ def command_plan(model, tokens, effort, prompt):
 def structured_json_plan(text):
     """A structured request given as JSON text, as the coding loop builds it."""
     return structured_plan(json.loads(str(text)))
+
+
+def native_command_plan(model, tokens, effort, prompt):
+    return command_plan(model, tokens, effort, prompt, native_ledger=True)
+
+
+def native_structured_plan(request):
+    return structured_plan(request, native_ledger=True)
+
+
+def native_structured_json_plan(text):
+    return structured_plan(json.loads(str(text)), native_ledger=True)
+
+
+def ticket():
+    """An identifier source, with no policy or database operation."""
+    return uuid.uuid4().hex
+
+
+def native_accounting(plan):
+    return "true" if getattr(plan, "native_ledger", False) else "false"
+
+
+def begin_native_claim(plan):
+    """Protect an interop object from simultaneous/replayed begin calls."""
+    with _claim_lock:
+        if getattr(plan, "claim_started", False) or getattr(plan, "claimed", False):
+            return "false"
+        if not hasattr(plan, "call_origin"):
+            import strategy_host
+            plan.call_origin = strategy_host.accounting_origin()
+        plan.claim_started = True
+    return "true"
+
+
+def policy_metadata(plan):
+    """A small facts frame. Never parse or copy the prompt/request here."""
+    started = getattr(plan, "submitted_at", None)
+    soft = int(started is not None and
+               (time.monotonic() - started) * 1000 >= getattr(plan, "soft", float("inf")))
+    context = getattr(plan, "call_context", {})
+    return json.dumps(dict(id=plan.correlation, epoch=plan.epoch,
+        provider="chatgpt" if getattr(plan, "request_profile", "") == "chatgpt-plan" else plan.provider,
+        maximum=getattr(plan, "max_output", 0), fingerprint=getattr(plan, "request_fingerprint", ""),
+        model=context.get("model", getattr(plan, "wire_model", "")), protocol=plan.protocol,
+        purpose=getattr(plan, "purpose", "turn"), activity=getattr(plan, "activity", ""),
+        lane=getattr(plan, "lane", ""), guard=getattr(plan, "guard", None), cap=plan.cap,
+        sent=bool(getattr(plan, "sent", False)), soft_elapsed=soft,
+        progress_soft=getattr(plan, "last_soft", 0),
+        retry_after=getattr(plan, "retry_after", None),
+        origin=getattr(plan, "call_origin", {})), separators=(",", ":"))
+
+
+def note_admitted(plan):
+    try:
+        import strategy_host
+        strategy_host.provider_admitted(plan.correlation)
+        return "true"
+    except Exception as error:
+        plan.error = error
+        return "false"
+
+
+def claim_effect(plan):
+    plan.claimed = True
+    try:
+        stream_sink.begin(plan)
+        model_commentary.begin(plan)
+        return "true"
+    except Exception as error:
+        plan.error = error
+        return "false"
+
+
+def policy_rejected(plan, reason, retry=-1):
+    code = str(reason)
+    if code == "provider-cooldown":
+        plan.error = llm_policy.AdmissionDenied(code, float(retry))
+    elif not getattr(plan, "error", None):
+        plan.error = RuntimeError("native provider accounting failed")
+    plan.ready = "false"
+    return "false"
+
+
+def policy_committed(plan, evidence):
+    if getattr(plan, "native_publication", "") == "published":
+        return 0
+    plan.native_publication = "ready"
+    plan.native_usage = json.loads(str(evidence))
+    return 1
+
+
+def rejection_code(plan):
+    return getattr(plan, "command_rejection_code", "")
+
+
+def accounting_observation_error(plan, stage):
+    # A progress write is not submission authority. Keep the owned HTTP call
+    # attached; terminal usage must still commit before any commands return.
+    code = str(stage) if str(stage) in ("submitted", "progress", "completion", "rejection", "failure") else "metadata"
+    plan.accounting_observation_error = code
+    print("[native_accounting] ledger observation failed; stage=" + code, file=sys.stderr)
+    return 0
 
 
 def for_compaction(plan):
@@ -245,7 +357,7 @@ def compaction_failure_result(plan, path):
     return 1
 
 
-def structured_plan(request):
+def structured_plan(request, *, native_ledger=False):
     value = getattr(request, "value", request)
     def conversation(protocol, selected):
         result = copy.deepcopy(value)
@@ -291,7 +403,7 @@ def structured_plan(request):
             result["extensions"] = extensions
         return result
     return _plan("structured", synthetic_llm.current_model(), value["max_tokens"],
-                 conversation)
+                 conversation, native_ledger=native_ledger)
 
 
 def field(plan, name):
@@ -318,7 +430,8 @@ def submitted(plan, transport_id):
     plan.submitted_at = time.monotonic()
     import process_supervision
     process_supervision.provider_wait(plan.timeout / 1000)
-    native_lifetime.submitted(plan, transport_id)
+    if not getattr(plan, "native_ledger", False):
+        native_lifetime.submitted(plan, transport_id)
     if not _compaction(plan):
         cognitive_health.turn_started(plan.provider)
     return True
@@ -353,8 +466,10 @@ def wire_body(plan, body):
         call_id=plan.correlation,
         provider="chatgpt" if getattr(plan, "request_profile", "") == "chatgpt-plan" else plan.provider,
         model=str(value.get("model", "")), purpose=getattr(plan, "purpose", "turn"))
-    llm_policy.describe(plan.correlation, model=plan.call_context["model"],
-                        protocol=plan.protocol, purpose=plan.call_context["purpose"])
+    if not getattr(plan, "native_ledger", False):
+        llm_policy.describe(plan.correlation, model=plan.call_context["model"],
+                            protocol=plan.protocol, purpose=plan.call_context["purpose"],
+                            origin=getattr(plan, "call_origin", None))
     if plan.provider == "synthetic":
         value = provider_protocol.synthetic_body(value)
     if stream_sink.configured():
@@ -425,13 +540,16 @@ def waiting(plan, count=0, quiet=0):
     rejects effects when paused or steered. No new model request is made here.
     """
     now = time.monotonic()
+    plan.progress_record_due = False
     soft = int((now - plan.submitted_at) * 1000 >= plan.soft)
     if (now - getattr(plan, "last_progress_record", -float("inf")) < 2
             and soft == getattr(plan, "last_soft", None)):
         return 1
     plan.last_progress_record = now
     plan.last_soft = soft
-    native_lifetime.progress(plan, count, quiet, soft)
+    plan.progress_record_due = True
+    if not getattr(plan, "native_ledger", False):
+        native_lifetime.progress(plan, count, quiet, soft)
     if not _compaction(plan):
         cognitive_health.provider_progress(count, quiet, soft, plan.timeout)
     import process_supervision
@@ -451,14 +569,23 @@ def finish(plan, epoch, correlation, encoded, canonical):
         return failed(plan, correlation, "refused-tool-call")
     if not isinstance(result.get("usage"), dict):
         result["usage"] = {}
-    if not llm_policy.complete(plan.correlation, result):
+    if getattr(plan, "native_ledger", False):
+        with _claim_lock:
+            accounted = getattr(plan, "native_publication", "") == "ready"
+            if accounted:
+                plan.native_publication = "published"
+        if not accounted:
+            return failed(plan, correlation, "uncommitted-native-accounting")
+    elif not llm_policy.complete(plan.correlation, result):
         return failed(plan, correlation, "duplicate-completion")
     import strategy_host
-    native_lifetime.settle(plan, "completed", str(canonical))
+    if not getattr(plan, "native_ledger", False):
+        native_lifetime.settle(plan, "completed", str(canonical))
     result["transport"] = "native"
     if not _compaction(plan):
         synthetic_llm._completion_metadata(result, getattr(plan, "prompt_layout", None),
-                                          call_context=getattr(plan, "call_context", None))
+                                          call_context=getattr(plan, "call_context", None),
+                                          usage_evidence=getattr(plan, "native_usage", None))
     if getattr(plan, "prompt_text", None) and not _compaction(plan):
         import context_budget
         context_budget.observe(plan.prompt_text, result.get("usage", {}))
@@ -482,7 +609,10 @@ def finish(plan, epoch, correlation, encoded, canonical):
         code = {"unfinished command output": "incomplete-output",
                 "invalid native tool output": "invalid-native-tool",
                 "refused or structured command output": "refused-or-structured-output"}.get(str(error), "invalid-envelope")
-        native_lifetime.command_output_rejected(plan, code)
+        if getattr(plan, "native_ledger", False):
+            plan.command_rejection_code = code
+        else:
+            native_lifetime.command_output_rejected(plan, code)
         observed_prompt = str(getattr(plan, "prompt_text", ""))
         print("[command_contract] rejected; code=" + code +
               "; feedback_visible=" + str("PREVIOUS_COMMAND_OUTPUT_REJECTED" in observed_prompt).lower() +
@@ -541,7 +671,7 @@ def response_retry_after(plan, seconds):
 def failed(plan, correlation, kind, status=0):
     stream_sink.final(plan, reason=str(kind))
     _record_failure(plan, kind, status)
-    if getattr(plan, "ready", "false") == "true":
+    if getattr(plan, "ready", "false") == "true" and not getattr(plan, "native_ledger", False):
         llm_policy.fail(plan.correlation, status=int(status) or None, sent=plan.sent,
                         retry_after=getattr(plan, "retry_after", None))
         uncertain = plan.sent and str(kind) == "transport-error"

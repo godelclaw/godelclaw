@@ -19,9 +19,11 @@ def _grade(call):
     usage = call.get("usage", {})
     counts = usage.get("counts", {})
     if status == "failed" and call.get("failure", {}).get("sent") is False and not usage:
-        counts = dict.fromkeys(("input_tokens", "cached_tokens", "output_tokens"), 0)
+        counts = dict.fromkeys(("input_tokens", "cached_tokens", "output_tokens", "cache_write_tokens"), 0)
         result["not_submitted_calls"] = 1
-    for name in ("input_tokens", "cached_tokens", "output_tokens"):
+    else:
+        counts = dict(counts, cache_write_tokens=usage.get("reported_usage", {}).get("cache_creation_input_tokens"))
+    for name in ("input_tokens", "cached_tokens", "output_tokens", "cache_write_tokens"):
         value = counts.get(name)
         if type(value) is int and value >= 0:
             result["known_" + name] = value
@@ -79,11 +81,11 @@ def report(path, *, since=0, until=None, zone="UTC"):
             key = (datetime.fromtimestamp(call["admitted"], tz).date().isoformat(),
                    call.get("instance", "unrecorded"), call.get("session", ""),
                    call.get("provider", "unrecorded"), call.get("model", "unrecorded"),
-                   call.get("purpose", "unspecified"))
+                   call.get("purpose", "unspecified"), call.get("trigger", "unrecorded"))
             grade = _grade(call)
             groups.setdefault(key, Counter()).update(grade)
             totals.update(grade)
-        fields = ("day", "instance", "session", "provider", "model", "purpose")
+        fields = ("day", "instance", "session", "provider", "model", "purpose", "trigger")
         value["groups"] = [dict(zip(fields, key), **counts) for key, counts in sorted(groups.items())]
         value["totals"] = dict(totals)
         return value

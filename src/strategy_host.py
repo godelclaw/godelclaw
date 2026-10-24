@@ -281,6 +281,16 @@ def provider_admitted(ticket=None):
     return None
 
 
+def accounting_origin():
+    """Small observed wake facts, without input text or a new ledger write."""
+    with _lock:
+        source = _context_trigger if _turn is not None else "unspecified"
+        if source not in {"operator-event", "channel-event", "heartbeat-event",
+                          "autonomous-trigger", "continuation-tick", "scheduled-command"}:
+            source = "unspecified"
+        return dict(trigger=source, turn_id=str(_turn) if source != "unspecified" else "")
+
+
 def goal_review_save(inventory_digest, entries):
     return "Goal inventory reviews are no longer required. Use goals and goal-write as needed."
 

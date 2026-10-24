@@ -658,8 +658,11 @@ libraries construct requests and decode Chat Completions, Anthropic Messages or
 OpenAI Responses. This requires the versioned `llm:v1:` API and owner-selected
 `io:wait`, progress observations and independent HTTP timeout settings in the
 chosen CeTTa build. SWI-PeTTa retains the Python HTTP adapter.
-Python owns provider/model selection, upstream prompt splitting, cache identity,
-credential scope and the admission ledger; this is not yet a Python-free deployment.
+Python owns provider/model selection, upstream prompt splitting, cache identity
+and credential scope. The native call path owns policy admission, call leases,
+cooldowns and usage writes in MeTTa over transactional SQLite. Python remains
+the reference implementation and the non-native transport's ledger owner;
+this is not yet a Python-free deployment.
 
 The native library preserves ordered items and parts, call IDs, optional usage,
 raw completion reasons and native reasoning attachments. Imported modes still
@@ -1027,11 +1030,26 @@ reconcile rows, submit calls, or change the live loop policy.
 Each admitted model call retains an append-only history in the provider ledger:
 the provider and session, actual wire model, purpose, submission, outcome and
 reported token counts. Agent turns, coding work and compaction remain distinct.
+Native calls also pin the observed wake source and process-local turn ID before submission,
+so a heartbeat can be distinguished from a human message or continuation.
+Those labels contain no message text; older records remain unrecorded.
 Cache usage describes the actual run; running the same task again can cost a
 different amount.
 Usage observations are keyed by call ID, so replaying a completion does not add
 its usage twice. This history survives the short admission-accounting window.
 It contains no prompts, responses or credentials.
+
+The native path uses `src/llm_policy_cetta.metta` and
+`src/native_lifetime_cetta.metta`, through `src/llm_accounting_cetta.metta`.
+Completion commits usage, request state and the native receipt together before
+publishing commands. Epoch checks reject foreign callbacks; replayed completions
+cannot publish twice. An ambiguous commit does not authorize command execution
+or automatically retry the transaction. The existing SQLite format is shared
+with Python, including recovery of interrupted calls.
+Claim identities remain in the history after terminal receipt pruning, allowing
+late usage to be attributed without accepting a foreign epoch or replaying work.
+Malformed counters remain unknown; exact JSON counts can exceed SQLite's legacy
+INTEGER column without losing digits. Provider wire validation remains separate.
 
 Export a read-only report with:
 
@@ -1040,8 +1058,9 @@ python3 scripts/usage_report.py --ledger "$METTACLAW_LLM_LEDGER_PATH" \
   --since 2026-10-24T00:00:00Z --timezone UTC
 ```
 
-Reports group calls by admission day, instance, session, provider, model and
-purpose. They distinguish known counts from calls with missing usage; failed
+Reports group calls by admission day, instance, session, provider, model,
+purpose and wake source. Cache reads and reported cache writes are counted
+separately. They distinguish known counts from calls with missing usage; failed
 requests that may have reached a provider remain unknown. A late usage receipt
 can update the accounting without committing a failed turn. Monetary cost stays
 unpriced until a provider bill or a separate, versioned price valuation is

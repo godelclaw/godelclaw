@@ -146,13 +146,15 @@ def usage_evidence(usage):
     return dict(counts=counts, usage_status=status, reported_usage=reported)
 
 
-def describe(ticket, *, model, protocol, purpose="unspecified", transport="native"):
+def describe(ticket, *, model, protocol, purpose="unspecified", transport="native", origin=None):
     """Pin the metadata of the actual wire request before it is submitted."""
     with transaction() as conn:
         if not conn.execute("SELECT 1 FROM requests WHERE id=?", (ticket,)).fetchone():
             return False
-        return history_event(conn, ticket, "request", dict(
-            model=str(model), protocol=str(protocol), purpose=str(purpose), transport=str(transport)))
+        detail = dict(model=str(model), protocol=str(protocol), purpose=str(purpose), transport=str(transport))
+        if origin is not None:
+            detail.update(trigger=origin["trigger"], turn_id=origin["turn_id"])
+        return history_event(conn, ticket, "request", detail)
 
 
 def submitted(ticket):
@@ -248,17 +250,20 @@ def admit(provider, max_output, *, now=None, mode=None, request_fingerprint="",
 
 
 def complete(ticket, result):
-    usage = result.get("usage", {})
-    output = usage.get("completion_tokens", usage.get("output_tokens"))
-    if output is not None:
-        output = max(0, int(output))
+    evidence = usage_evidence(result.get("usage", {}))
+    # Accounting cannot strand valid model work on a malformed counter.
+    output = evidence["counts"]["output_tokens"]
+    # The compatibility INTEGER column is narrower than the JSON receipt.
+    # Preserve every reported digit there, without overflowing this column.
+    if output is not None and output > 2**63 - 1:
+        output = None
     finish = str(result["choices"][0].get("finish_reason", "unknown"))[:64]
     with transaction() as conn:
         if conn.execute("SELECT 1 FROM llm_call_history WHERE call_id=? AND event='admitted'",
                         (ticket,)).fetchone():
             # A late response can supply usage even when its commands cannot
             # commit. Replayed observations still contribute only once.
-            history_event(conn, ticket, "usage", usage_evidence(usage))
+            history_event(conn, ticket, "usage", evidence)
         changed = conn.execute("UPDATE requests SET status='completed',output=?,finish=? WHERE id=? AND status='pending'",
                                (output, finish, ticket)).rowcount
         if changed:

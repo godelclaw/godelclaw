@@ -237,13 +237,14 @@
           ($activity (py-call (native_llm_host.call_scope)))
           ($lane (py-call (native_llm_host.call_lane)))
           ; Subscription quotas are independent of API-key billing/cooldowns.
-          ($ticket (py-call (llm_policy.admit "chatgpt" $tokens)))
+          ($ticket (py-call (native_llm_host.ticket)))
           ($plan (py-call (types.SimpleNamespace))))
      ; Numeric false flags preserve Python truth values across the historical
      ; PeTTa foreign bridge, whose ungrounded False spelling is a Python string.
      (chatgpt:attributes $plan
        (("kind" "command") ("encoding" (if $native "messages" "default"))
         ("ready" "true") ("claimed" 0) ("sent" 0) ("stream" 0)
+        ("native_ledger" 1) ("max_output" $tokens) ("wire_model" $model)
         ("request_profile" "chatgpt-plan") ("epoch" $ticket) ("correlation" $ticket)
         ("provider" "openai") ("protocol" "responses") ("base" $base) ("headers" $headers)
         ("request" $wire-request) ("timeout" $hard) ("soft" $soft) ("connect" $connect)

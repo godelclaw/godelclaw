@@ -146,6 +146,18 @@ class UsageHistoryTests(unittest.TestCase):
         self.assertEqual(evidence["counts"], dict(input_tokens=60, cached_tokens=20, output_tokens=4))
         self.assertEqual(evidence["reported_usage"], usage)
 
+    def test_report_separates_cache_writes_and_trigger_without_inventing_missing_counts(self):
+        ticket = llm_policy.admit('anthropic', 100, now=100)
+        llm_policy.describe(ticket, model='fixture-model', protocol='anthropic', purpose='turn',
+                            origin=dict(trigger='heartbeat-event', turn_id='wake-7'))
+        llm_policy.complete(ticket, dict(choices=[dict(finish_reason='stop')],
+            usage=dict(input_tokens=10, cache_read_input_tokens=20, cache_creation_input_tokens=30, output_tokens=4)))
+        llm_policy.complete(self.call(), result())
+        report = self.report()
+        self.assertEqual(report['totals']['known_cache_write_tokens'], 30)
+        self.assertEqual(report['totals']['cache_write_tokens_unknown_calls'], 1)
+        self.assertEqual({g['trigger'] for g in report['groups']}, {'heartbeat-event', 'unrecorded'})
+
     def test_partial_usage_retains_each_known_counter_without_a_reporting_cap(self):
         evidence = llm_policy.usage_evidence(dict(cache_read_input_tokens=20, output_tokens=4))
         self.assertEqual(evidence["counts"], dict(input_tokens=None, cached_tokens=20, output_tokens=4))
@@ -153,6 +165,25 @@ class UsageHistoryTests(unittest.TestCase):
         evidence = llm_policy.usage_evidence(dict(prompt_tokens=huge, completion_tokens=0,
                                                 prompt_tokens_details=dict(cached_tokens=huge)))
         self.assertEqual(evidence["counts"], dict(input_tokens=huge, cached_tokens=huge, output_tokens=0))
+
+    def test_bad_output_counter_is_unknown_and_cannot_strand_a_completed_response(self):
+        for value in ('abc', '5_0', '+5', True, 1.5, -1, {}, []):
+            with self.subTest(value=value):
+                ticket = self.call()
+                response = result(); response['usage']['completion_tokens'] = value
+                self.assertTrue(llm_policy.complete(ticket, response))
+                with closing(sqlite3.connect(self.ledger)) as db:
+                    self.assertEqual(db.execute('SELECT status,output FROM requests WHERE id=?', (ticket,)).fetchone(),
+                                     ('completed', None))
+
+    def test_exact_usage_can_exceed_the_legacy_sqlite_integer_column(self):
+        ticket = self.call()
+        huge = 10**30
+        self.assertTrue(llm_policy.complete(ticket, result(outgoing=huge)))
+        self.assertEqual(self.report()['totals']['known_output_tokens'], huge)
+        with closing(sqlite3.connect(self.ledger)) as db:
+            self.assertEqual(db.execute('SELECT status,output FROM requests WHERE id=?', (ticket,)).fetchone(),
+                             ('completed', None))
 
     def test_native_wire_records_subscription_billing_and_compaction_purpose(self):
         ticket = llm_policy.admit("chatgpt", 100, now=100)
@@ -180,6 +211,18 @@ class UsageHistoryTests(unittest.TestCase):
         self.assertEqual((row["model"], row["provider"], row["purpose"]),
                          ("sent-model", "synthetic", "coding"))
         self.assertTrue(row["call_id"])
+
+    def test_python_auxiliary_usage_tally_cannot_fail_a_completed_answer(self):
+        provider = dict(name='anthropic', protocol='anthropic', base='https://example.invalid/v1', key='fixture-secret')
+        payload = dict(stop_reason='end_turn', content=[dict(type='text', text='(nop)')],
+                       usage=dict(input_tokens=10, output_tokens='abc'))
+        with patch.object(synthetic_llm, '_request_json', return_value=payload), \
+             patch('cognitive_health.turn_started'), patch('process_supervision.provider_wait'):
+            answer = synthetic_llm._exchange(provider, '/messages', dict(model='fixture'), 100)
+        self.assertEqual(answer['choices'][0]['message']['content'], '(nop)')
+        with closing(sqlite3.connect(self.ledger)) as db:
+            self.assertEqual(db.execute('SELECT status,output FROM requests').fetchall(), [('completed', None)])
+        self.assertEqual(self.report()['totals']['output_tokens_unknown_calls'], 1)
 
     def test_report_does_not_write_or_create_a_database(self):
         llm_policy.complete(self.call(), result())
@@ -225,6 +268,10 @@ class UsageHistoryTests(unittest.TestCase):
     @unittest.skipUnless(CETTA, "set CETTA_BIN to exercise the native MeTTa reader")
     def test_metta_reads_the_same_history_without_python_or_writes(self):
         llm_policy.complete(self.call(), result())
+        # The reader's final 1000 argument is a busy timeout, never a row cap.
+        with llm_policy.transaction() as db:
+            db.executemany("INSERT INTO llm_call_history(call_id,event,observed,detail) VALUES(?,'admitted',101,'{}')",
+                           [('fixture-%d' % i,) for i in range(1001)])
         before = self.ledger.read_bytes()
         entry = self.root / "probe.metta"
         entry.write_text('!(import! &self ' + json.dumps(str(ROOT / 'src/usage_history.metta')) + ')\n'
@@ -239,7 +286,7 @@ class UsageHistoryTests(unittest.TestCase):
         # Retain every substantive result so a duplicated answer cannot hide.
         lines = [line.strip() for line in run.stdout.splitlines()
                  if line.strip() and line.strip().lower() != "true"]
-        self.assertEqual(lines, ["4"])
+        self.assertEqual(lines, ["1005"])
         self.assertEqual(self.ledger.read_bytes(), before)
 
 

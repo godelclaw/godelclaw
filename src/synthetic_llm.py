@@ -286,7 +286,7 @@ def _tally_anthropic(usage):
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(d, fh)
         os.replace(tmp, _usage_path())
-    except OSError:
+    except (OSError, ValueError, TypeError, OverflowError):
         pass
 
 
@@ -368,7 +368,7 @@ def _authenticated_request(provider, endpoint, body):
                                   json.dumps(body).encode("utf-8"), headers)
 
 
-def _completion_metadata(result, prompt_layout=None, *, call_context=None):
+def _completion_metadata(result, prompt_layout=None, *, call_context=None, usage_evidence=None):
     """No messages, tool arguments, signatures, credentials or raw errors."""
     path = os.environ.get("METTACLAW_LLM_COMPLETION_PATH")
     if not path:
@@ -400,7 +400,8 @@ def _completion_metadata(result, prompt_layout=None, *, call_context=None):
                         **value["cache"])
             # This JSONL is a compatibility view; the call history in the
             # provider ledger owns idempotence and durable usage evidence.
-            for key, count in llm_policy.usage_evidence(usage)["counts"].items():
+            evidence = usage_evidence if isinstance(usage_evidence, dict) else llm_policy.usage_evidence(usage)
+            for key, count in evidence["counts"].items():
                 if count is not None:
                     line[key] = count
             if isinstance(call_context, dict):

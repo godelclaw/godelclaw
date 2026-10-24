@@ -1,9 +1,12 @@
-; Provider transport runs in CeTTa; model selection, operator admission and
-; upstream Python transformations stay at explicit host boundaries.
+; Provider transport and policy transactions run in CeTTa. Model selection,
+; credential packaging and upstream transformations remain host boundaries.
 !(import! &self ./src/native_llm_host.py)
-(: llm:host-flag (-> Atom Bool))
+!(import! &self ./src/interop_flags_cetta.metta)
+; A flag consumes a computed value. Atom would treat an inline host call as
+; quoted syntax and silently classify it as false.
+(: llm:host-flag (-> %Undefined% Bool))
 (= (llm:host-flag $value)
-   (case $value ((True True) (true True) ("true" True) ($other False))))
+   (host:flag $value))
 (: llm:command-kind? (-> Atom Bool))
 (= (llm:command-kind? $value)
    (case $value ((command True) ("command" True) ($other False))))
@@ -20,15 +23,20 @@
    (let $value (py-call (native_llm_host.enabled)) (llm:host-flag $value)))
 (= (llm:plan-ready $plan)
    (let $value (py-call (native_llm_host.field $plan "ready")) (llm:host-flag $value)))
-(= (llm:plan-claim $plan)
-   (let $value (py-call (native_llm_host.claim $plan)) (llm:host-flag $value)))
+(= (llm:uses-native-ledger $plan)
+   (llm:host-flag (py-call (native_llm_host.native_accounting $plan))))
 !(if (llm:native?)
-     (let $_ (import! &self llm:command)
-       (let $_ (import! &self llm:compat)
-         (let $_ (import! &self llm:io)
-           (let $_ (import! &self ./src/responses_stream_cetta.metta)
-             (let $_ (import! &self ./src/chatgpt_agent_cetta.metta)
-               (import! &self ./src/stream_runtime.metta)))))) True)
+     (let* (($command-module (import! &self llm:command))
+            ($compat-module (import! &self llm:compat))
+            ($io-module (import! &self llm:io))
+            ($policy-module (import! &self ./src/llm_accounting_cetta.metta))
+            ($responses-module (import! &self ./src/responses_stream_cetta.metta))
+            ($chatgpt-module (import! &self ./src/chatgpt_agent_cetta.metta)))
+       (import! &self ./src/stream_runtime.metta)) True)
+
+(= (llm:plan-claim $plan)
+   (if (llm:uses-native-ledger $plan) (account:claim $plan)
+     (let $value (py-call (native_llm_host.claim $plan)) (llm:host-flag $value))))
 
 ; Providers report each model's window. The host reads Synthetic's catalog and
 ; Anthropic's model metadata; the ChatGPT list needs this runtime's sign-in.
@@ -45,7 +53,7 @@
      (let $selected (py-call (synthetic_llm.current_model $model))
        (if (str:starts-with $selected "chatgpt:")
          (chatgpt:command $selected $tokens $effort $prompt)
-         (let $plan (py-call (native_llm_host.command_plan $model $tokens $effort $prompt)) (llm:run $plan))))
+         (let $plan (py-call (native_llm_host.native_command_plan $model $tokens $effort $prompt)) (llm:run $plan))))
      (let* (($selected (py-call (synthetic_llm.current_model $model)))
             ($subscription (llm:subscription-model? $selected)))
        (if $subscription
@@ -56,7 +64,7 @@
    (let* (($selected (py-call (synthetic_llm.current_model)))
           ($subscription (llm:subscription-model? $selected)))
      (if $subscription (Error llm:structured chatgpt-command-mode-only)
-       (let $plan (py-call (native_llm_host.structured_plan $request)) (llm:run $plan)))))
+       (let $plan (py-call (native_llm_host.native_structured_plan $request)) (llm:run $plan)))))
 
 (= (llm:structured-json-plan $text)
    (let $selected (py-call (synthetic_llm.current_model))
@@ -65,7 +73,7 @@
          (case $session
            (((ChatGPTUnavailable $why) (Error llm:structured-json-plan $why))
             ($ready (chatgpt:structured-plan $selected (json-parse $text) $ready)))))
-       (py-call (native_llm_host.structured_json_plan $text)))))
+       (py-call (native_llm_host.native_structured_json_plan $text)))))
 
 (= (llm:run $plan)
    (let $state (llm:begin $plan) (llm:after-submit $plan $state)))
@@ -93,7 +101,8 @@
             ($name (llm:v1:protocol $protocol))
             ($submitted (llm:start-plan $plan $epoch $correlation $name $base $headers-outcome $encoded $timeout $cap)))
        $submitted)
-     (llm:v1:failed duplicate duplicate duplicate-plan not-started))
+     (if (llm:plan-ready $plan) (llm:v1:failed duplicate duplicate duplicate-plan not-started)
+       (llm:v1:failed unsubmitted unsubmitted admission-error not-started)))
      (llm:v1:failed unsubmitted unsubmitted admission-error not-started)))
 
 (: llm:start-plan (-> Atom Atom Atom Atom Atom Atom Atom Atom Atom %Undefined%))
@@ -118,12 +127,16 @@
           ($connect (py-call (native_llm_host.field $plan "connect")))
           ($first (py-call (native_llm_host.field $plan "first")))
           ($idle (py-call (native_llm_host.field $plan "idle")))
-          ($submitted (llm:submit-http $url $headers $wire $timeout $cap $connect $first $idle)))
+          ($described (if (llm:uses-native-ledger $plan) (account:describe $plan) True)))
+     (if $described
+      (let $submitted (llm:submit-http $url $headers $wire $timeout $cap $connect $first $idle)
      (case $submitted
        (((io:pending $id)
-         (let $_ (py-call (native_llm_host.submitted $plan $id))
+         (let $_ (if (llm:uses-native-ledger $plan) (account:submitted $plan $id)
+                   (py-call (native_llm_host.submitted $plan $id)))
            (llm:v1:pending $epoch $correlation $protocol $id)))
-        ($other (llm:v1:failed $epoch $correlation submit-error not-started))))))
+        ($other (llm:v1:failed $epoch $correlation submit-error not-started)))))
+      (llm:v1:failed $epoch $correlation native-accounting-error not-started))))
 
 (: llm:submit-headers (-> Atom Atom Atom Atom Atom Atom Atom Atom %Undefined%))
 (= (llm:submit-headers $epoch $correlation $protocol $base $headers-outcome $encoded $timeout $cap)
@@ -168,7 +181,8 @@
 (= (llm:progress $plan $status)
    (case $status
      (((io:progress $id $phase $age $bytes $quiet)
-       (py-call (native_llm_host.waiting $plan $bytes $quiet)))
+       (if (llm:uses-native-ledger $plan) (account:progress $plan $bytes $quiet)
+         (py-call (native_llm_host.waiting $plan $bytes $quiet))))
       ($other 1))))
 
 (: llm:observe-plan (-> Atom Atom Atom Atom Atom Atom Atom %Undefined%))
@@ -232,12 +246,15 @@
               (let* (($canonical (llm:v1:render-outcome $result))
                      ($encoded (llm:v1:render-outcome $legacy)))
                 (llm:finish-rendered $plan $epoch $correlation $encoded $canonical)))
-             ((llm:v1:error $code) (py-call (native_llm_host.failed $plan $correlation $code)))))))
+             ((llm:v1:error $code) (llm:failed-plan $plan $correlation $code 0))))))
       ((llm:v1:failed $epoch $correlation (http-status $status) $certainty)
-        (py-call (native_llm_host.failed $plan $correlation http-status $status)))
+        (llm:failed-plan $plan $correlation http-status $status))
       ((llm:v1:failed $epoch $correlation $reason $certainty)
-        (py-call (native_llm_host.failed $plan $correlation $reason)))
-      ($other (py-call (native_llm_host.failed $plan unknown invalid-phase))))))
+        (llm:failed-plan $plan $correlation $reason 0))
+      ($other (llm:failed-plan $plan unknown invalid-phase 0)))))
+(= (llm:failed-plan $plan $correlation $kind $status)
+   (if (llm:uses-native-ledger $plan) (account:failed $plan $correlation $kind $status)
+     (py-call (native_llm_host.failed $plan $correlation $kind $status))))
 
 (: llm:finish-rendered (-> Atom Atom Atom Atom Atom %Undefined%))
 (= (llm:finish-rendered $plan $epoch $correlation $encoded $canonical)
@@ -245,9 +262,11 @@
      (((llm:v1:ok $legacy-text)
        (case $canonical
          (((llm:v1:ok $canonical-text)
-           (py-call (native_llm_host.finish $plan $epoch $correlation $legacy-text $canonical-text)))
-          ((llm:v1:error $code) (py-call (native_llm_host.failed $plan $correlation $code))))))
-      ((llm:v1:error $other-code) (py-call (native_llm_host.failed $plan $correlation $other-code))))))
+           (if (llm:uses-native-ledger $plan)
+             (account:complete $plan $epoch $correlation $legacy-text $canonical-text)
+             (py-call (native_llm_host.finish $plan $epoch $correlation $legacy-text $canonical-text))))
+          ((llm:v1:error $code) (llm:failed-plan $plan $correlation $code 0)))))
+      ((llm:v1:error $other-code) (llm:failed-plan $plan $correlation $other-code 0)))))
 
  ; Native error boundaries use CeTTa's generated language spellings.
 (: llm:submit-http (-> Atom Atom Atom Atom Atom Atom Atom Atom %Undefined%))

@@ -103,7 +103,7 @@
        (case $session
          (((ChatGPTUnavailable $_) (ContextPreparationFailed "context-compaction-account-unavailable"))
           ($ready (chatgpt:command-plan $model $tokens $effort $prompt $ready)))))
-     (py-call (native_llm_host.command_plan $model $tokens $effort $prompt))))
+     (py-call (native_llm_host.native_command_plan $model $tokens $effort $prompt))))
 (= (context:ask $model $tokens $effort $prompt)
    (let $planned (context:plan $model $tokens $effort $prompt)
      (case $planned
