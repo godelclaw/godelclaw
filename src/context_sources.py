@@ -126,14 +126,25 @@ _PROJECTOR = Projector()
 
 def _supplied(views):
     """(source_id, text) pairs a caller computed itself. Anything malformed
-    is ignored, so those sources load here as they otherwise would."""
+    is ignored, so those sources load here as they otherwise would; one bad
+    entry costs only itself, so a caller's valid views are never discarded
+    with it. A blank text is ignored too: a caller that found nothing must
+    not turn its source into a valid empty observation, which would clear the
+    source instead of leaving it to its loader. (No loader's own answer is
+    ever blank.)"""
     supplied = {}
     try:
-        for source_id, text in views or ():
-            if isinstance(source_id, str) and isinstance(text, str):
-                supplied[source_id] = text
-    except (TypeError, ValueError):
+        entries = iter(views or ())
+    except TypeError:
         return {}
+    for entry in entries:
+        try:
+            source_id, text = entry
+        except (TypeError, ValueError):
+            continue
+        if (isinstance(source_id, str) and isinstance(text, str)
+                and text.strip()):
+            supplied[source_id] = text
     return supplied
 
 
@@ -157,7 +168,8 @@ def _loaders(conversation=None, views=None):
     events = helper.int_env("METTACLAW_CONVERSATION_EVENTS", 64)
     specs = {spec.source_id: spec for spec in SOURCE_SPECS}
     # Source texts the caller computed with these same arguments and
-    # conditions: on CeTTa, the two action views are computed natively.
+    # conditions: on CeTTa, the two action views and the pins body are
+    # computed natively.
     views = _supplied(views)
     return (
         (specs["work-state"], goals.work_state_view),
@@ -165,7 +177,11 @@ def _loaders(conversation=None, views=None):
         (specs["task-phase"], task_phase.view),
         (specs["active-query-declaration"], active_queries.view),
         (specs["affect-gestalt"], goals.affect_view),
-        (specs["pins"], pins.context_view),
+        # A native body is marked here, by the same owner (and state) as the
+        # body pins.py's own reader makes when no native body was supplied.
+        (specs["pins"],
+         lambda: pins.mark_context_body(views["pins-body"])
+         if "pins-body" in views else pins.context_view()),
         (specs["effect-receipts"], lambda: "Task receipts are in TASK_CONTEXT." if strategy_host.enabled() else effect_receipts.view()),
         (specs["development-state"], development_state.view),
         (specs["recent-proposals"],

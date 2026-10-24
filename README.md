@@ -870,6 +870,13 @@ not the database format. Embedded Python and CeTTa must use the same shared
 SQLite library (`SQLITE_PROVIDER=system`) while grandfathered journal writers
 remain. Those writers and runtime-observation adapters are still Python.
 
+The live pins context view reads and formats its body in native MeTTa on
+CeTTa. Python remains the SWI backend and the fallback for unavailable native
+views. Both routes use one Python change-marker owner at the context boundary,
+so switching backends preserves the same changed/unchanged sequence. The
+native port preserves the existing view policy and is qualified against the
+Python reader; it is not a speed optimization.
+
 Pins have no automatic count or text limit. `context-policy` adjusts the task
 context target. Native `(task-read "id" offset [page-bytes])` defaults to 8192
 bytes and `(task-history "request" offset [count])` defaults to 20 entries;

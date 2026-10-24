@@ -96,17 +96,33 @@ def view():
     return helper.change_mark("pins", text) + " " + text
 
 
+NO_PINS = "(no pins)"
+
+
+def mark_context_body(body):
+    """The one place the context view's change marker is applied.
+
+    The body is the marker-free view text. The marker state lives in
+    helper._change_marks under "pins-context" for every producer of that body
+    (this module's own reader and the native one), so the streak is one
+    sequence whichever of them produced a turn's body. No pins: no marker,
+    and the streak is left as it stood.
+    """
+    if body == NO_PINS:
+        return body
+    import helper
+    return helper.change_mark("pins-context", body) + " " + body
+
+
 def context_view():
     """Bounded newest-first working view; the ``pins`` tool retains full access."""
     with _LOCK:
         lines = _read()
     if not lines:
-        return "(no pins)"
+        return NO_PINS
     visible = [line if len(line) <= _CONTEXT_LINE
                else line[:_CONTEXT_LINE - 1] + "…"
                for line in lines[-_CONTEXT_PINS:]]
     header = "PINNED newest %d of %d; (pins) reads the full retained list" % (
         len(visible), len(lines))
-    text = header + "\n" + " | ".join(visible)
-    import helper
-    return helper.change_mark("pins-context", text) + " " + text
+    return mark_context_body(header + "\n" + " | ".join(visible))

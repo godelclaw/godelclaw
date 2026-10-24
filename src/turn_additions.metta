@@ -4,6 +4,9 @@
 !(import! &self ./src/model_commentary.py)
 !(import! &self ./src/strategy_host.py)
 !(import! &self ./src/instance_hooks.metta)
+;; The native pins context view needs its own libraries, not whichever module
+;; happened to load them first. On SWI-PeTTa it is never asked (see below).
+!(import! &self ./src/pins_context_cetta.metta)
 
 ;; action-window:context-views comes from memory.metta's engine switch: the
 ;; proposal window and touched files computed natively on CeTTa, () on SWI.
@@ -13,8 +16,29 @@
    (let $computed (collapse (catch (action-window:context-views)))
      (if (== $computed ()) ()
        (case (car-atom $computed) (((Error $call $why) ()) ($views $views))))))
+
+;; The pins context view: computed natively on CeTTa, left to pins.py's own
+;; loader on SWI-PeTTa. Only exactly (("pins-body" <text>)) is accepted: the
+;; marker-free body, to which context_sources applies the one change marker. A failed
+;; read, an unreduced call or any other shape yields no view, so the bundle's
+;; pins loader answers exactly as it did before; the view is never invented
+;; as empty. The action views above are unaffected either way.
+(= (addition-pins-views)
+   (case (py-call (engine_modes.active_engine))
+     (("cetta" (addition-pins-views-native)) (cetta (addition-pins-views-native)) ($other ()))))
+(= (addition-pins-views-native)
+   (let $computed (collapse (catch (pinsctx:context-views)))
+     (case $computed
+       ((((("pins-body" $text))) (addition-pins-view $text))
+        ($other ())))))
+(= (addition-pins-view $text)
+   (if (== (get-type $text) String) (("pins-body" $text)) ()))
+(= (addition-context-views)
+   (let* (($action (addition-action-views))
+          ($pins (addition-pins-views)))
+     (union-atom $action $pins)))
 (= (addition-context-sources)
-   (let $views (addition-action-views)
+   (let $views (addition-context-views)
      (if (tg:client-metta?)
          (let $conversation
               (if (== (py-call (strategy_host.conversation_mode)) "chat")
