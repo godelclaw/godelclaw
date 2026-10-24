@@ -49,6 +49,9 @@ def scenario(**overrides):
 
 SCENARIOS = {
     "waiting": scenario(),
+    "recording": scenario(health={"schema": 2, "obligation_since": NOW - 40,
+                                  "in_flight_since": NOW - 12.7, "retry_at": 0,
+                                  "local_commit_pending": True, "response_bytes": 1234}),
     "backoff": scenario(health={"schema": 2, "obligation_since": NOW - 40, "in_flight_since": 0, "retry_at": NOW + 7.2,
                                 "last_outcome": "failed", "last_failed_at": NOW - 3, "last_failure_type": "ProviderTimeoutError"},
                         completion={"observed_at": NOW - 10, "usage": {"input_tokens": 100, "cache_read_input_tokens": 900,

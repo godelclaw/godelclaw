@@ -87,25 +87,39 @@
           ($recorded 1))))))
 (: account:publish (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (account:publish $plan $epoch $correlation $legacy $canonical $usage)
-   (let* (($ignored13 (py-call (native_llm_host.policy_committed $plan (json:stringify (ue:evidence $usage)))))
+   (if (ue:equal (py-call (native_llm_host.policy_committed $plan (json:stringify (ue:evidence $usage)))) 1)
+    (let* (
           ($answer (py-call (native_llm_host.finish $plan $epoch $correlation $legacy $canonical)))
-          ($ignored14 (account:note-rejection $plan))) $answer))
+          ($ignored14 (account:note-rejection $plan))) $answer)
+    (py-call (native_llm_host.completion_duplicate $plan))))
 (: account:finished (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (account:finished $plan $metadata $epoch $correlation $legacy $canonical $usage $answer)
+   (account:finished-step $plan $metadata $epoch $correlation $legacy $canonical $usage 0 $answer))
+(: account:finished-step (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
+(= (account:finished-step $plan $metadata $epoch $correlation $legacy $canonical $usage $attempt $answer)
    (case $answer
      (((LedgerChanged True) (account:publish $plan $epoch $correlation $legacy $canonical $usage))
-      ((LedgerChanged False) (account:failed $plan $correlation duplicate-completion 0))
+      ((LedgerChanged False) (account:reconcile $plan $metadata $epoch $correlation $legacy $canonical $usage $attempt))
       ((LedgerInvalid $invalid) (account:failed $plan $correlation invalid-native-evidence 0))
-      ((LedgerError (sqlite:error $category $code $message failed))
-       ; A known rollback has not published anything. Settle the failed call,
-       ; without retrying the completion or sending another provider request.
-       (let $rollback (py-call (native_llm_host.accounting_observation_error $plan "completion"))
-         (account:failed $plan $correlation native-accounting-error 0)))
-      ($error
-       ; No retry of a failed/unknown commit, and no authority to execute the
-       ; response. The host failure publication does not write this ledger.
-       (let $ignored15 (py-call (native_llm_host.accounting_observation_error $plan "completion"))
-         (py-call (native_llm_host.failed $plan $correlation native-accounting-error 0)))))))
+      ((LedgerError $storage) (account:reconcile $plan $metadata $epoch $correlation $legacy $canonical $usage $attempt))
+      ($invalid (py-call (native_llm_host.completion_conflict $plan))))))
+
+; Keep the received answer in this owned continuation. Local write/read errors
+; never escape into a caller's provider-retry loop, and never release the lease.
+(: account:reconcile (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
+(= (account:reconcile $plan $metadata $epoch $correlation $legacy $canonical $usage $attempt)
+   (case (nl:completion-state $metadata (lp:text $canonical))
+     (((LedgerCompletion committed) (account:publish $plan $epoch $correlation $legacy $canonical $usage))
+      ((LedgerCompletion pending)
+       (let* (($wait (py-call (native_llm_host.completion_wait $plan $attempt)))
+              ($reason (lp:field (account:first-choice (json:parse $legacy)) "finish_reason" "unknown")))
+         (account:finished-step $plan $metadata $epoch $correlation $legacy $canonical $usage (+ $attempt 1)
+           (nl:complete $metadata $usage $reason (lp:text $canonical)
+                        (lp:field $metadata "soft_elapsed" 0) (system:wall-time)))))
+      ((LedgerError $unreadable)
+       (let $wait (py-call (native_llm_host.completion_wait $plan $attempt))
+         (account:reconcile $plan $metadata $epoch $correlation $legacy $canonical $usage (+ $attempt 1))))
+      ($conflict (py-call (native_llm_host.completion_conflict $plan))))))
 (: account:complete (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (account:complete $plan $epoch $correlation $legacy $canonical)
    (let* (($metadata (account:metadata $plan)) ($result (json:parse $legacy))

@@ -80,7 +80,8 @@ def _provider(now):
         raise ValueError("future cognitive receipt")
     call = {"phase": "idle"}
     if pending:
-        call.update(phase="waiting", ageSeconds=_age(pending, now))
+        call.update(phase="recording" if value.get("local_commit_pending") is True else "waiting",
+                    ageSeconds=_age(pending, now))
         if value.get("soft_wait_elapsed") is True:
             call["softWaitElapsed"] = True
         if type(value.get("response_bytes")) is int:

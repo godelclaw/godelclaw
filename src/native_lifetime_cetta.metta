@@ -157,6 +157,19 @@
 
 ; Request, usage receipt and native settlement commit together. Epoch checks
 ; apply to both the usage observation and the authority to complete a turn.
+(: nl:completion-state (-> %Undefined% %Undefined% %Undefined%))
+(= (nl:completion-state $metadata $canonical)
+   (let* (($id (nl:field $metadata "id" "")) ($epoch (nl:field $metadata "epoch" "")))
+     ; A fresh read resolves an ambiguous local commit. A receipt is authority
+     ; only for this call, epoch and exact canonical answer, committed together.
+     (case (sqlite:observe (lp:path)
+       "SELECT CASE WHEN r.status='completed' AND n.state='completed' AND n.result=? THEN 'committed' WHEN r.status='pending' AND n.state IN ('claimed','submitted') THEN 'pending' ELSE 'conflict' END FROM native_calls n JOIN requests r ON r.id=n.id WHERE n.id=? AND n.epoch=?"
+       ($canonical $id $epoch) 5000)
+       (((sqlite:result $columns (("committed")) $changes $row-id) (LedgerCompletion committed))
+        ((sqlite:result $columns (("pending")) $changes $row-id) (LedgerCompletion pending))
+        ((sqlite:result $columns $rows $changes $row-id) (LedgerCompletion conflict))
+        ($error (LedgerError $error))))))
+
 (: nl:complete (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (nl:complete $metadata $usage $finish $canonical $soft $now)
    (let* (($evidence (ue:evidence $usage)) ($output (lp:output $evidence)) ($reason (lp:text $finish)))

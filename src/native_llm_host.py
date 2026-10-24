@@ -299,10 +299,12 @@ def policy_rejected(plan, reason, retry=-1):
 
 
 def policy_committed(plan, evidence):
-    if getattr(plan, "native_publication", "") == "published":
-        return 0
-    plan.native_publication = "ready"
-    plan.native_usage = json.loads(str(evidence))
+    usage = json.loads(str(evidence))
+    with _claim_lock:
+        if getattr(plan, "native_publication", "") in ("ready", "published"):
+            return 0
+        plan.native_publication = "ready"
+        plan.native_usage = usage
     return 1
 
 
@@ -317,6 +319,38 @@ def accounting_observation_error(plan, stage):
     plan.accounting_observation_error = code
     print("[native_accounting] ledger observation failed; stage=" + code, file=sys.stderr)
     return 0
+
+
+class CompletionConflict(RuntimeError):
+    """A received answer has no matching owned local receipt."""
+
+
+def completion_duplicate(plan):
+    if plan.kind == "command" and not _compaction(plan):
+        return "()"
+    raise CompletionConflict("completion already delivered; provider request not replayed")
+
+
+def completion_wait(plan, attempt):
+    """Only pace local recording; the MeTTa continuation owns its answer."""
+    attempt = max(0, int(attempt))
+    if attempt == 0:
+        print("[native_accounting] received answer retained; waiting for local storage; call=" +
+              plan.correlation, file=sys.stderr)
+    if not _compaction(plan):
+        cognitive_health.result_recording(attempt)
+    try:
+        import process_supervision
+        process_supervision.progress("local-commit-wait", 60)
+    except Exception:
+        pass  # Observation storage must not discard the held provider answer.
+    time.sleep(min(5.0, .1 * 2 ** min(attempt, 6)))
+    return 1
+
+
+def completion_conflict(plan):
+    plan.error = CompletionConflict("local completion receipt conflict; provider request not replayed")
+    return failed(plan, plan.correlation, "local-completion-conflict")
 
 
 def for_compaction(plan):
@@ -607,15 +641,18 @@ def finish(plan, epoch, correlation, encoded, canonical):
     if not getattr(plan, "native_ledger", False):
         native_lifetime.settle(plan, "completed", str(canonical))
     result["transport"] = "native"
-    if not _compaction(plan):
-        synthetic_llm._completion_metadata(result, getattr(plan, "prompt_layout", None),
-                                          call_context=getattr(plan, "call_context", None),
-                                          usage_evidence=getattr(plan, "native_usage", None))
-    if getattr(plan, "prompt_text", None) and not _compaction(plan):
-        import context_budget
-        context_budget.observe(plan.prompt_text, result.get("usage", {}))
-    if plan.provider == "anthropic":
-        synthetic_llm._tally_anthropic(result["usage"])
+    try:
+        if not _compaction(plan):
+            synthetic_llm._completion_metadata(result, getattr(plan, "prompt_layout", None),
+                                               call_context=getattr(plan, "call_context", None),
+                                               usage_evidence=getattr(plan, "native_usage", None))
+        if getattr(plan, "prompt_text", None) and not _compaction(plan):
+            import context_budget
+            context_budget.observe(plan.prompt_text, result.get("usage", {}))
+        if plan.provider == "anthropic":
+            synthetic_llm._tally_anthropic(result["usage"])
+    except Exception:
+        print("[native_llm] completion observation unavailable; committed answer retained", file=sys.stderr)
     if _compaction(plan):
         stream_sink.final(plan, reason=reason)
         return _box({"message": result["choices"][0]["message"], "finish": reason,

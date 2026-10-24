@@ -79,12 +79,12 @@ class NativeBoundaryTests(unittest.TestCase):
         self.peer.server_close()
         self.temporary.cleanup()
 
-    def run_guest(self, forms, lang="petta"):
+    def run_guest(self, forms, lang="petta", timeout=20):
         entry = self.directory / "probe.metta"
         entry.write_text(forms)
         result = subprocess.run([os.environ["CETTA_BIN"], "--lang", lang,
             "--import-mode", "ancestor-walk", "--quiet", str(entry)],
-            cwd=ROOT, env=self.env, capture_output=True, text=True, timeout=20)
+            cwd=ROOT, env=self.env, capture_output=True, text=True, timeout=timeout)
         self.assertEqual(result.returncode, 0, result.stderr[-2000:])
         self.assertNotIn("fixture-secret", result.stdout + result.stderr)
         self.last_stderr = result.stderr
@@ -114,13 +114,6 @@ def draft():
     plan = native_llm_host.native_command_plan("fixture-model", 42, "low", "input")
     strategy_host._turn, strategy_host._context_trigger = "wake-8", "operator-event"
     return plan
-
-def abort_completion():
-    import os, sqlite3
-    with sqlite3.connect(os.environ["METTACLAW_LLM_LEDGER_PATH"]) as db:
-        db.execute("CREATE TRIGGER fixture_abort BEFORE UPDATE OF state ON native_calls "
-                   "WHEN NEW.state='completed' BEGIN SELECT RAISE(ABORT,'fixture completion fault'); END")
-    return 1
 
 def abort_description():
     import os, sqlite3, native_llm_host
@@ -221,7 +214,8 @@ def retained():
             self.assertEqual(db.execute("SELECT COUNT(*) FROM llm_call_history WHERE event='admitted'").fetchone()[0], 1)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM llm_call_history WHERE event='usage'").fetchone()[0], 0)
 
-    def test_unknown_commit_does_not_publish_commands_or_attempt_another_transition(self):
+    def test_unknown_commit_is_read_back_before_retrying_the_local_write(self):
+        legacy = json.dumps(json.dumps(self.peer.reply))
         out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n' +
             self.disable_python_accounting() +
             '!(let* (($plan (py-call (native_llm_host.native_command_plan "fixture-model" 42 "low" "input")))\n'
@@ -229,33 +223,29 @@ def retained():
             '        ($epoch (py-call (native_llm_host.field $plan "epoch")))\n'
             '        ($id (py-call (native_llm_host.field $plan "correlation"))))\n'
             '   (println! (RESULT (account:finished $plan (account:metadata $plan) $epoch $id\n'
-            '       "{}" "{}" (JsonObject ())\n'
+            f'       {legacy} "{{}}" (JsonObject ((JsonPair "prompt_tokens" 10) (JsonPair "completion_tokens" 2)))\n'
             '       (LedgerError (sqlite:error io 10 "fixture commit fault" unknown-outcome))))))\n')
-        self.assertIn('(RESULT ())', out)
+        self.assertIn('(nop)', out)
         self.assertEqual(self.peer.requests, [])
         with sqlite3.connect(self.directory / 'ledger.db') as db:
-            self.assertEqual(db.execute('SELECT status FROM requests').fetchall(), [('pending',)])
-            self.assertEqual(db.execute('SELECT state FROM native_calls').fetchall(), [('claimed',)])
-            self.assertEqual(db.execute('SELECT event FROM llm_call_history ORDER BY sequence').fetchall(),
-                             [('recording-started',), ('admitted',), ('claimed',)])
+            self.assertEqual(db.execute('SELECT status FROM requests').fetchall(), [('completed',)])
+            self.assertEqual(db.execute('SELECT state FROM native_calls').fetchall(), [('completed',)])
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM llm_call_history WHERE event='usage'").fetchone()[0], 1)
+            usage = json.loads(db.execute("SELECT detail FROM llm_call_history WHERE event='usage'").fetchone()[0])
+            self.assertEqual((usage['counts']['input_tokens'], usage['counts']['output_tokens']), (10, 2))
 
-    def test_precommit_evidence_rejection_and_definite_rollback_release_the_call(self):
-        for kind in ('evidence', 'rollback'):
-            with self.subTest(kind=kind):
-                self.env['METTACLAW_LLM_LEDGER_PATH'] = str(self.directory / (kind + '.db'))
-                inject = ('(py-call (builtins.setattr $plan "cap" 1))' if kind == 'evidence' else
-                          '(py-call (accounting_fixture.abort_completion))')
-                out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n' +
-                    self.disable_python_accounting() +
-                    '!(let* (($plan (py-call (native_llm_host.native_command_plan "fixture-model" 42 "low" "input")))\n'
-                    '        ($pending (llm:begin $plan)) ($injected ' + inject + '))\n'
-                    '   (println! (RESULT (llm:after-submit $plan $pending))))\n')
-                self.assertIn('(RESULT ())', out)
-                with sqlite3.connect(self.env['METTACLAW_LLM_LEDGER_PATH']) as db:
-                    self.assertEqual(db.execute('SELECT status FROM requests').fetchall(), [('failed',)])
-                    self.assertEqual(db.execute('SELECT state FROM native_calls').fetchall(), [('failed',)])
-                    self.assertEqual(db.execute("SELECT COUNT(*) FROM llm_call_history WHERE event='usage'").fetchone()[0], 0)
-        self.assertEqual(len(self.peer.requests), 2)
+    def test_precommit_evidence_rejection_releases_the_call(self):
+        out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n' +
+            self.disable_python_accounting() +
+            '!(let* (($plan (py-call (native_llm_host.native_command_plan "fixture-model" 42 "low" "input")))\n'
+            '        ($pending (llm:begin $plan)) ($injected (py-call (builtins.setattr $plan "cap" 1))))\n'
+            '   (println! (RESULT (llm:after-submit $plan $pending))))\n')
+        self.assertIn('(RESULT ())', out)
+        with sqlite3.connect(self.env['METTACLAW_LLM_LEDGER_PATH']) as db:
+            self.assertEqual(db.execute('SELECT status FROM requests').fetchall(), [('failed',)])
+            self.assertEqual(db.execute('SELECT state FROM native_calls').fetchall(), [('failed',)])
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM llm_call_history WHERE event='usage'").fetchone()[0], 0)
+        self.assertEqual(len(self.peer.requests), 1)
 
     def test_malformed_wire_usage_fails_cleanly_without_stranding_a_call(self):
         self.peer.delay = .01

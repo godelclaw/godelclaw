@@ -89,6 +89,13 @@ class RuntimeContextTest(unittest.TestCase):
         self.assertIs(facts["turnPending"], True)
         self.assertEqual(view.read(self.now+31)["call"]["phase"], "failed")
 
+    def test_received_answer_waiting_for_storage_is_not_provider_wait(self):
+        self.write("health.json", dict(schema=2, obligation_since=self.now-100,
+            in_flight_since=self.now-60, retry_at=0, local_commit_pending=True))
+        facts = view.read(self.now)
+        self.assertEqual(facts["call"], {"phase": "recording", "ageSeconds": 60})
+        self.assertTrue(facts["turnPending"])
+
     def test_missing_stale_future_and_false_channel_are_distinct(self):
         for stamp in (self.now-31, self.now+1):
             self.write("modes/control-status.json", dict(observed_at=stamp, channel_ready=True))

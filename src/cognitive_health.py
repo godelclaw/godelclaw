@@ -128,6 +128,7 @@ def turn_started(provider="unknown", now=None):
                 "response_bytes": 0,
                 "transport_quiet_ms": 0,
                 "soft_wait_elapsed": False,
+                "local_commit_pending": False,
             })
             _write(value)
         return 1
@@ -145,6 +146,18 @@ def provider_progress(response_bytes, quiet_ms, soft_elapsed, hard_ms):
                          hard_deadline_ms=int(hard_ms))
             _write(value)
     return 1
+
+
+def result_recording(attempt):
+    """A received answer awaits local storage, not another provider call."""
+    try:
+        with _lock:
+            value = _read()
+            value.update(local_commit_pending=True, local_commit_attempts=max(0, int(attempt)))
+            _write(value)
+        return 1
+    except Exception:
+        return 0
 
 
 def turn_completed(response_bytes=0, now=None):
@@ -175,6 +188,7 @@ def turn_completed(response_bytes=0, now=None):
                 "retry_at": 0,
                 "last_response_bytes": size,
                 "last_outcome": "completed",
+                "local_commit_pending": False,
                 "failure_streak": 0,
             })
             field = ("completed_count" if admitted

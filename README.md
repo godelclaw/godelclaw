@@ -1055,13 +1055,32 @@ The native path uses `src/llm_policy_cetta.metta` and
 `src/native_lifetime_cetta.metta`, through `src/llm_accounting_cetta.metta`.
 Completion commits usage, request state and the native receipt together before
 publishing commands. Epoch checks reject foreign callbacks; replayed completions
-cannot publish twice. An ambiguous commit does not authorize command execution
-or automatically retry the transaction. The existing SQLite format is shared
-with Python, including recovery of interrupted calls.
-Recovery from local ledger-write faults remains incomplete: a received answer
-can be lost to a caller's retry, or an unresolved commit can retain an active
-lease. Ordinary transport and cache qualification do not cover those failure
-paths; they require retaining the answer and reconciling its local receipt.
+cannot publish twice. The native path keeps a received answer in its owned
+continuation when a local write fails. A fresh read resolves an ambiguous
+commit: a matching call, epoch and exact answer permit publication; an active
+pending row permits another local write; an unavailable read keeps the answer
+waiting. None of these paths sends another provider request. A conflicting
+receipt is reported and stops a coding retry. `/activity` distinguishes
+`recording-result` from waiting for a provider. This uses the existing ledger;
+no second journal or schema migration is required.
+
+The recovery model assumes faithful SQLite observations and a live continuation
+while local recording retries. A crash before any durable write can still lose
+an answer held only in memory; the existing interrupted-call recovery reports
+that outcome as unknown and does not automatically replay that call. This is
+not an exactly-once guarantee for external effects. Python retains the shared
+SQLite format and reference policy; the local-write repair above is native.
+
+`tests/test_completion_recovery.py` exercises rolled-back writes, a real lock,
+lost commit acknowledgement, duplicate publication and the real coding retry
+boundary. Its receipt-query cases come from MeTTapedia's
+`lean/pettaclaw/LlmCompletionRecovery.lean`. To compile that model and check the
+fixture, set `RECOVERY_MODEL` to that file and run:
+
+```sh
+python3 scripts/check_completion_recovery_model.py --model "$RECOVERY_MODEL"
+```
+
 Claim identities remain in the history after terminal receipt pruning, allowing
 late usage to be attributed without accepting a foreign epoch or replaying work.
 Malformed counters remain unknown; exact JSON counts can exceed SQLite's legacy

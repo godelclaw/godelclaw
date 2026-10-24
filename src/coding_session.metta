@@ -202,7 +202,8 @@
                  ($message (coding:validate-reply $reply))))))))
 
 (= (coding:rejected? $text)
-   (case (str:find $text "provider rejected the request") (((TextNotFound $_) False) ($at True))))
+   (or (case (str:find $text "provider rejected the request") (((TextNotFound $provider-missing) False) ($provider-at True)))
+       (case (str:find $text "CompletionConflict") (((TextNotFound $receipt-missing) False) ($receipt-at True)))))
 
 (= (coding:validate-reply $reply)
    (let* (($message (coding:field $reply "message"))

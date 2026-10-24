@@ -1,0 +1,254 @@
+[
+  {
+    "request": "pending",
+    "call": "submitted",
+    "same_owner": false,
+    "same_answer": false,
+    "expected": "conflict"
+  },
+  {
+    "request": "pending",
+    "call": "submitted",
+    "same_owner": false,
+    "same_answer": true,
+    "expected": "conflict"
+  },
+  {
+    "request": "pending",
+    "call": "submitted",
+    "same_owner": true,
+    "same_answer": false,
+    "expected": "pending"
+  },
+  {
+    "request": "pending",
+    "call": "submitted",
+    "same_owner": true,
+    "same_answer": true,
+    "expected": "pending"
+  },
+  {
+    "request": "pending",
+    "call": "completed",
+    "same_owner": false,
+    "same_answer": false,
+    "expected": "conflict"
+  },
+  {
+    "request": "pending",
+    "call": "completed",
+    "same_owner": false,
+    "same_answer": true,
+    "expected": "conflict"
+  },
+  {
+    "request": "pending",
+    "call": "completed",
+    "same_owner": true,
+    "same_answer": false,
+    "expected": "conflict"
+  },
+  {
+    "request": "pending",
+    "call": "completed",
+    "same_owner": true,
+    "same_answer": true,
+    "expected": "conflict"
+  },
+  {
+    "request": "pending",
+    "call": "uncertain",
+    "same_owner": false,
+    "same_answer": false,
+    "expected": "conflict"
+  },
+  {
+    "request": "pending",
+    "call": "uncertain",
+    "same_owner": false,
+    "same_answer": true,
+    "expected": "conflict"
+  },
+  {
+    "request": "pending",
+    "call": "uncertain",
+    "same_owner": true,
+    "same_answer": false,
+    "expected": "conflict"
+  },
+  {
+    "request": "pending",
+    "call": "uncertain",
+    "same_owner": true,
+    "same_answer": true,
+    "expected": "conflict"
+  },
+  {
+    "request": "completed",
+    "call": "submitted",
+    "same_owner": false,
+    "same_answer": false,
+    "expected": "conflict"
+  },
+  {
+    "request": "completed",
+    "call": "submitted",
+    "same_owner": false,
+    "same_answer": true,
+    "expected": "conflict"
+  },
+  {
+    "request": "completed",
+    "call": "submitted",
+    "same_owner": true,
+    "same_answer": false,
+    "expected": "conflict"
+  },
+  {
+    "request": "completed",
+    "call": "submitted",
+    "same_owner": true,
+    "same_answer": true,
+    "expected": "conflict"
+  },
+  {
+    "request": "completed",
+    "call": "completed",
+    "same_owner": false,
+    "same_answer": false,
+    "expected": "conflict"
+  },
+  {
+    "request": "completed",
+    "call": "completed",
+    "same_owner": false,
+    "same_answer": true,
+    "expected": "conflict"
+  },
+  {
+    "request": "completed",
+    "call": "completed",
+    "same_owner": true,
+    "same_answer": false,
+    "expected": "conflict"
+  },
+  {
+    "request": "completed",
+    "call": "completed",
+    "same_owner": true,
+    "same_answer": true,
+    "expected": "committed"
+  },
+  {
+    "request": "completed",
+    "call": "uncertain",
+    "same_owner": false,
+    "same_answer": false,
+    "expected": "conflict"
+  },
+  {
+    "request": "completed",
+    "call": "uncertain",
+    "same_owner": false,
+    "same_answer": true,
+    "expected": "conflict"
+  },
+  {
+    "request": "completed",
+    "call": "uncertain",
+    "same_owner": true,
+    "same_answer": false,
+    "expected": "conflict"
+  },
+  {
+    "request": "completed",
+    "call": "uncertain",
+    "same_owner": true,
+    "same_answer": true,
+    "expected": "conflict"
+  },
+  {
+    "request": "failed",
+    "call": "submitted",
+    "same_owner": false,
+    "same_answer": false,
+    "expected": "conflict"
+  },
+  {
+    "request": "failed",
+    "call": "submitted",
+    "same_owner": false,
+    "same_answer": true,
+    "expected": "conflict"
+  },
+  {
+    "request": "failed",
+    "call": "submitted",
+    "same_owner": true,
+    "same_answer": false,
+    "expected": "conflict"
+  },
+  {
+    "request": "failed",
+    "call": "submitted",
+    "same_owner": true,
+    "same_answer": true,
+    "expected": "conflict"
+  },
+  {
+    "request": "failed",
+    "call": "completed",
+    "same_owner": false,
+    "same_answer": false,
+    "expected": "conflict"
+  },
+  {
+    "request": "failed",
+    "call": "completed",
+    "same_owner": false,
+    "same_answer": true,
+    "expected": "conflict"
+  },
+  {
+    "request": "failed",
+    "call": "completed",
+    "same_owner": true,
+    "same_answer": false,
+    "expected": "conflict"
+  },
+  {
+    "request": "failed",
+    "call": "completed",
+    "same_owner": true,
+    "same_answer": true,
+    "expected": "conflict"
+  },
+  {
+    "request": "failed",
+    "call": "uncertain",
+    "same_owner": false,
+    "same_answer": false,
+    "expected": "conflict"
+  },
+  {
+    "request": "failed",
+    "call": "uncertain",
+    "same_owner": false,
+    "same_answer": true,
+    "expected": "conflict"
+  },
+  {
+    "request": "failed",
+    "call": "uncertain",
+    "same_owner": true,
+    "same_answer": false,
+    "expected": "conflict"
+  },
+  {
+    "request": "failed",
+    "call": "uncertain",
+    "same_owner": true,
+    "same_answer": true,
+    "expected": "conflict"
+  }
+]

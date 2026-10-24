@@ -118,7 +118,8 @@ def status(now=None):
         problems.append("cognitive-boundary-stale")
     if cognition_required and pending_age is not None:
         if pending_age > stale_after:
-            problems.append("model-turn-overdue")
+            problems.append("local-completion-blocked" if cognition.get("local_commit_pending") is True
+                            else "model-turn-overdue")
     elif cognition_required and turn_age is not None and turn_age > stale_after:
         problems.append("model-turn-stale")
     elif cognition_required and not cognition:
@@ -238,8 +239,8 @@ def activity_report(now=None):
         steps = 0
         steps_source = "operator-latch"
     elif pending_age is not None:
-        state = "working"
-        wake = "now"
+        state = "recording-result" if cognition.get("local_commit_pending") is True else "working"
+        wake = "local-storage" if state == "recording-result" else "now"
         try:
             steps = max(0, int(cognition.get("budget_at_start", loops)))
         except (TypeError, ValueError):
@@ -273,9 +274,11 @@ def activity_report(now=None):
         wake = "human-or-%ss" % delay if delay else "retry-ready"
     import process_supervision
     progress = process_supervision.observation(now)
-    if lifecycle_enabled and state in ("working", "retrying"):
+    if lifecycle_enabled and state in ("working", "retrying", "recording-result"):
         if progress["state"] in ("stalled", "memory-pressure"):
             state, wake = progress["state"], "supervisor"
+        elif state == "recording-result":
+            pass
         elif progress["state"] == "waiting":
             state, wake = "waiting", "provider-or-deadline"
         elif (progress["state"] == "unknown" and checkpoint_age is not None
@@ -283,7 +286,7 @@ def activity_report(now=None):
             state, wake = "unconfirmed", "check-supervisor"
     age = lambda value: "never" if value is None else "%ss" % value
     if pending_age is not None:
-        turn = "pending:%s" % age(pending_age)
+        turn = ("recording-result:%s" if cognition.get("local_commit_pending") is True else "pending:%s") % age(pending_age)
     elif cognition.get("last_outcome") == "failed":
         failed_at = float(cognition.get("last_failed_at", 0) or 0)
         failed_age = None if not failed_at else max(0, int(now - failed_at))

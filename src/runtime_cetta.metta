@@ -132,7 +132,7 @@
        (if (rt:member $label (rt:reasons)) $label "unclassified-failure"))))
 (= (rt:thousandths $ms) (math:trunc (/ (- $ms (% $ms 1000)) 1000)))
 (= (rt:waiting-pairs $health $now)
-   (let* (($base ((JsonPair "phase" (JsonString "waiting"))
+   (let* (($base ((JsonPair "phase" (JsonString (if (rt:true-json (rt:get $health "local_commit_pending")) "recording" "waiting")))
                   (JsonPair "ageSeconds" (rt:opt-json (rt:age (rt:get $health "in_flight_since") $now)))))
           ($soft (if (rt:true-json (rt:get $health "soft_wait_elapsed"))
                    ((JsonPair "softWaitElapsed" (JsonBool True))) ()))

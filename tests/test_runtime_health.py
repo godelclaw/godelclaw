@@ -14,6 +14,19 @@ import runtime_health  # noqa: E402
 
 
 class RuntimeHealthTest(unittest.TestCase):
+    def test_local_recording_is_visible_without_claiming_a_new_provider_call(self):
+        self.write(self.working, {"saved_at": 990, "loops": 50})
+        self.write(self.cognitive, {"schema": 2, "in_flight_since": 980,
+                                   "local_commit_pending": True})
+        with mock.patch("loop_modes.current_mode", return_value="godelclaw"), \
+             mock.patch("engine_modes.active_engine", return_value="cetta"), \
+             mock.patch("synthetic_llm.current_model", return_value="fixture"), \
+             mock.patch("process_supervision.observation", return_value={"state": "waiting"}):
+            report = runtime_health.activity_report(now=1000)
+        self.assertIn("activity: recording-result", report)
+        self.assertIn("wake=local-storage", report)
+        self.assertIn("turn=recording-result:20s", report)
+
     def test_completed_provider_turn_cannot_hide_a_stalled_command(self):
         self.write(self.working, {"saved_at": 100, "loops": 50})
         self.write(self.cognitive, {"schema": 2, "last_outcome": "completed", "last_completed_at": 110})
