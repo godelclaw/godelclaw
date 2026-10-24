@@ -13,6 +13,7 @@ import subprocess
 
 _open = builtins.open
 python_reads = 0
+_bundle_path = None
 
 
 def write(path, hexbytes):
@@ -58,23 +59,22 @@ def pins_loaders(conversation=None, views=None, loaders=None):
 
 
 def record_bundle(path):
-    """Let the real bundle() run with only the pins source; log each text."""
+    """Restrict the real caller to pins; record_caller observes either route."""
     import context_sources
+    global _bundle_path
 
     original = context_sources._loaders
     context_sources._loaders = lambda conversation=None, views=None: pins_loaders(
         conversation, views, original)
     context_sources._PROJECTOR = context_sources.Projector()
-    bundle = context_sources.bundle
+    _bundle_path = path
+    return 1
 
-    def recorded(*args, **kwargs):
-        text = bundle(*args, **kwargs)
-        with _open(path, "a", encoding="utf-8") as stream:
-            stream.write(json.dumps({"text": text, "python_reads": python_reads},
-                                    ensure_ascii=False) + "\n")
-        return text
 
-    context_sources.bundle = recorded
+def record_caller(text):
+    with _open(_bundle_path, "a", encoding="utf-8") as stream:
+        stream.write(json.dumps({"text": text, "python_reads": python_reads},
+                                ensure_ascii=False) + "\n")
     return 1
 
 

@@ -588,7 +588,7 @@ class NativeActionWindowTest(unittest.TestCase):
                         '(= (tg:conversation-window-for $events $chat) "CONVERSATION")',
                         '(= (tg:route-view) "ROUTE")',
                         "!(py-call (action_window_probe.record_bundle %s))" % q(output),
-                        "!(addition-context-sources)"], settings, swi,
+                        "!(py-call (action_window_probe.record_caller (addition-context-sources)))"], settings, swi,
                         imports=["!(import! &self ./src/turn_additions)"])
                     self.assertEqual(output.read_text(encoding="utf-8"), expected)
 
@@ -611,7 +611,7 @@ class NativeActionWindowTest(unittest.TestCase):
                     "(= (action-window:context-views) %s)" % broken,
                     "(= (tg:client-metta?) False)",
                     "!(py-call (action_window_probe.record_bundle %s))" % q(output),
-                    "!(addition-context-sources)"], cwd=self.directory)
+                    "!(py-call (action_window_probe.record_caller (addition-context-sources)))"], cwd=self.directory)
                 self.assertEqual(output.read_text(encoding="utf-8"), expected)
 
 if __name__ == "__main__":

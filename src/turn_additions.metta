@@ -7,6 +7,11 @@
 ;; The native pins context view needs its own libraries, not whichever module
 ;; happened to load them first. On SWI-PeTTa it is never asked (see below).
 !(import! &self ./src/pins_context_cetta.metta)
+!(import! &self ./src/engine_modes.py)
+!(case (py-call (engine_modes.active_engine))
+   (("cetta" (import! &self ./src/context_sources_cetta.metta))
+    (cetta (import! &self ./src/context_sources_cetta.metta))
+    ($other (import! &self ./src/context_sources_python.metta))))
 
 ;; action-window:context-views comes from memory.metta's engine switch: the
 ;; proposal window and touched files computed natively on CeTTa, () on SWI.
@@ -44,8 +49,8 @@
               (if (== (py-call (strategy_host.conversation_mode)) "chat")
                   (tg:conversation-window-for (tg:conversation-events) (tg:get reply-chat ""))
                   (tg:route-view))
-           (py-call (context_sources.bundle_with_views $views $conversation)))
-         (py-call (context_sources.bundle_with_views $views)))))
+           (context-bundle:with-views $views $conversation))
+         (context-bundle:with-views $views))))
 
 (= (addition-effect-turn-begin $turn)
    (let $_ (addition-reap-work) (py-call (effect_frontier.begin $turn))))

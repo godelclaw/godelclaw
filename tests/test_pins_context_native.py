@@ -369,7 +369,7 @@ class NativePinsContextTest(unittest.TestCase):
             if write:
                 lines.append("!(py-call (pins_context_probe.write %s %s))" % (
                     q(self.pins), q("missing" if content is None else content.hex())))
-            lines.append("!(addition-context-sources)")
+            lines.append("!(py-call (pins_context_probe.record_caller (addition-context-sources)))")
         self.run_guest(lines, engine, swi, **env)
         return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
 
@@ -429,12 +429,13 @@ class NativePinsContextTest(unittest.TestCase):
         for scenario in scenarios:
             expected += self.oracle_bundles([content for content, _ in scenario])
             lines.append("!(py-call (pins_context_probe.reset_state))")
+            lines.append("!(change-state! &ctx-known ())")
             for content, backend in scenario:
                 lines.append("!(py-call (pins_context_probe.write %s %s))" % (
                     q(self.pins), q("missing" if content is None else content.hex())))
                 if backend == "fallback":
                     lines.append("!(let $b (get-state &pinsctx-saved) (remove-atom &self (= (pinsctx:context-views) $b)))")
-                lines.append("!(addition-context-sources)")
+                lines.append("!(py-call (pins_context_probe.record_caller (addition-context-sources)))")
                 if backend == "fallback":
                     lines.append("!(let $b (get-state &pinsctx-saved) (add-atom &self (= (pinsctx:context-views) $b)))")
                 malformed = content is not None and not self.decodes(content)
@@ -688,7 +689,7 @@ class NativePinsContextTest(unittest.TestCase):
         for content in steps:
             lines += ["!(py-call (pins_context_probe.write %s %s))" % (
                 q(self.pins), q("missing" if content is None else content.hex())),
-                "!(addition-context-sources)"]
+                "!(py-call (pins_context_probe.record_caller (addition-context-sources)))"]
         probe.write_text("\n".join(lines) + "\n", encoding="utf-8")
         env = guest_env(self.directory, "cetta", METTACLAW_SKIP_INITIALIZE="1",
                         METTACLAW_REPOS_DIR=str(repos), METTACLAW_CHROMA_DIR=str(self.directory / "chroma"),

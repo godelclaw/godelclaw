@@ -6,6 +6,7 @@ import subprocess
 
 _open = builtins.open
 _expected = []
+_bundle_path = None
 
 
 def load(path):
@@ -58,20 +59,19 @@ def write_action_sources(views, path):
 
 
 def record_bundle(path):
-    """Let the real bundle() run with only the two sources and write its text."""
+    """Restrict the real caller to two sources; observe either assembly route."""
     import context_sources
+    global _bundle_path
 
     original = context_sources._loaders
     context_sources._loaders = lambda conversation=None, views=None: action_loaders(
         conversation, views, original)
     context_sources._PROJECTOR = context_sources.Projector()
-    bundle = context_sources.bundle
+    _bundle_path = path
+    return 1
 
-    def recorded(*args, **kwargs):
-        text = bundle(*args, **kwargs)
-        with _open(path, "w", encoding="utf-8") as stream:
-            stream.write(text)
-        return text
 
-    context_sources.bundle = recorded
+def record_caller(text):
+    with _open(_bundle_path, "w", encoding="utf-8") as stream:
+        stream.write(text)
     return 1
