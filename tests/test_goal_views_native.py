@@ -192,11 +192,11 @@ class GoalViewsTest(unittest.TestCase):
         # Python accepts a non-scalar in an unused field; native JSON refuses.
         self.compare("affect_view", [self.step(goal(), mood=b'{"mood":{"unused":"\\ud800"}}')])
 
-    @unittest.expectedFailure
-    def test_capability_gap_goal_float_overflow_before_clamp(self):
-        # Python float(decimal) becomes infinity, then _goal_dict clamps it.
-        # The evaluator's numeric conversion raises before reaching clamp.
-        self.compare("work_state_view", [self.step(goal(sti="9" * 400))])
+    def test_goal_float_overflow_still_clamps(self):
+        # Clamping before conversion is equivalent even for float overflow.
+        self.compare("work_state_view", [self.step(goal(sti=value, lti=value)) for value in
+            ("9" * 400, "9" * 400 + ".5", "-" + "9" * 400,
+             "٩" * 400 + ".٥", "0." + "0" * 400 + "5")])
 
     @unittest.expectedFailure
     def test_capability_gap_json_exponent_overflow(self):

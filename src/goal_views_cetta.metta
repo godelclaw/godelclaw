@@ -72,10 +72,16 @@
                     (Error gv:float invalid-number)))))) (Error gv:float invalid-number)))))))
 (= (gv:float-digits $digits)
    (* 1.0 (str:string->number (str:join "" (str:split "_" $digits)))))
-; Captured goal fields already passed _NUMBER; avoid validating them twice.
+; Captured fields passed _NUMBER. Saturate before float conversion: every
+; negative decimal clamps to zero and every positive integer part >= 1 to
+; one, even when Python float(text) would first overflow to infinity.
 (= (gv:goal-number $text)
-   (let $number (str:string->number $text)
-     (if (== (get-type $number) Number) (* 1.0 $number) (gv:float $text))))
+   (if (str:starts-with $text "-") 0.0
+     (let* (($digits (if (str:is-all-in ascii $text) $text
+                       (sv:ascii-digits $text (aw:decimal-patterns))))
+            ($head (car-atom (str:split "." $digits)))
+            ($whole (if (== $head "") 0 (str:string->number $head))))
+       (if (>= $whole 1) 1.0 (gv:float-digits $digits)))))
 !(bind! &gv-float (new-state (re:compile "\\A[+-]?(?:[0-9](?:_?[0-9])*(?:\\.(?:[0-9](?:_?[0-9])*)?)?|\\.[0-9](?:_?[0-9])*)(?:[eE][+-]?[0-9](?:_?[0-9])*)?\\z")))
 (= (gv:mantissa $value $denominator)
    (if (< $value 1048576.0) (gv:mantissa (* $value 4294967296.0) (* $denominator 4294967296))
