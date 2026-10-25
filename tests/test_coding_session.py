@@ -259,11 +259,27 @@ class CodingSessionTests(unittest.TestCase):
                 result=next(m['content'] for m in reversed(body['messages']) if m['role']=='tool')
                 identity=result.split('Execution ID: ',1)[1].split('\n',1)[0]
                 (session/"inbox.jsonl").write_text(json.dumps("Verify all three pieces.")+"\n")
-                time.sleep(1.2)
+                # Keep the provider pending until the independent tool stream
+                # is observed. A fixed sleep races scheduling on a busy host.
+                deadline = time.monotonic() + 15
+                self.server.observed_tool_stream = False
+                while time.monotonic() < deadline:
+                    for path in (self.directory / 'display').glob('*.jsonl'):
+                        for line in path.read_text().splitlines():
+                            try:
+                                event = json.loads(line)
+                            except ValueError:
+                                continue
+                            if event.get('kind') == 'tool.output' and 'second' in event.get('text', ''):
+                                self.server.observed_tool_stream = True
+                    if self.server.observed_tool_stream:
+                        break
+                    time.sleep(.02)
                 self.server.replies=[reply("Observe completion.",[call("c2","exec_poll",
                     dict(execution_id=identity,yield_time_ms=3000))]),reply("All three pieces verified.")]
         self.server.before_reply=before
         self.run_session(session)
+        self.assertTrue(self.server.observed_tool_stream, 'tool output was not published while the provider waited')
         self.assertEqual((session/'report.txt').read_text(),"All three pieces verified.")
         self.assertEqual(len(list((session/'executions').glob('*.log'))),1)
         self.assertEqual(next((session/'executions').glob('*.log')).read_text(),'firstsecondthird')
@@ -840,6 +856,25 @@ class CodingSessionTests(unittest.TestCase):
         self.assertIn('SAVED_BEFORE_PROCESS_DIED', (dead / 'report.txt').read_text())
         self.assertIn('SAVED_BEFORE_PROCESS_DIED', sent.read_text())
 
+    def test_live_worker_identity_prevents_false_interruption_without_scope(self):
+        import native_lifetime
+        active, launches = self.fake_work_scope()
+        runner, dead, done, sent = self.dead_session_fixture()
+        state = json.loads((dead / 'state.json').read_text())
+        state['worker_owner'] = '%d:%s' % (os.getpid(), native_lifetime.process_start(os.getpid()) or 'portable')
+        (dead / 'state.json').write_text(json.dumps(state))
+        self.run_report_watcher(runner)
+        self.assertEqual(json.loads((dead / 'state.json').read_text())['status'], 'running')
+        self.assertFalse(sent.exists())
+
+    def test_service_manager_error_is_not_evidence_of_a_dead_worker(self):
+        active, launches = self.fake_work_scope()
+        runner, dead, done, sent = self.dead_session_fixture()
+        (self.directory / 'fixture_bin/systemctl').write_text('#!/bin/sh\nexit 1\n')
+        self.run_report_watcher(runner)
+        self.assertEqual(json.loads((dead / 'state.json').read_text())['status'], 'running')
+        self.assertFalse(sent.exists())
+
 
     def test_the_next_turn_reaps_a_dead_session(self):
         active, launches = self.fake_work_scope()
@@ -850,7 +885,7 @@ class CodingSessionTests(unittest.TestCase):
         self.assertIn("(Hook 1)", result.stdout)
         self.assertTrue(sent.is_file())
 
-    def test_work_stop_records_its_own_report_without_mail(self):
+    def test_work_stop_queues_the_same_report_handover_as_worker_stop(self):
         active, launches = self.fake_work_scope()
         runner, dead, done, sent = self.dead_session_fixture()
         active.write_text("")
@@ -859,6 +894,9 @@ class CodingSessionTests(unittest.TestCase):
         self.assertEqual(json.loads((dead / "state.json").read_text())["status"], "stopped")
         self.assertIn("Stopped by the requester.", (dead / "report.txt").read_text())
         self.assertFalse(sent.exists())
+        self.run_report_watcher(runner)
+        self.assertEqual(self.delivery_receipt(dead)['delivery'], 'delivered')
+        self.assertIn('stopped after 7 steps', sent.read_text())
 
     def test_work_resume_keeps_one_session_and_its_existing_evidence(self):
         active, launches = self.fake_work_scope()
@@ -891,6 +929,7 @@ class CodingSessionTests(unittest.TestCase):
         result = self.run_probe('!(println! (work-resume ' + json.dumps(identity) + '))\n',
                                 module="coding_work.metta", cwd=runner)
         self.assertIn("WORK_RESUMING " + identity, result.stdout)
+        self.assertEqual(json.loads((session / 'state.json').read_text())['status'], 'done')
         self.assertFalse(stop.exists())
         self.assertFalse(recycle.exists())
         deadline = time.monotonic() + 5

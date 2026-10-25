@@ -77,6 +77,30 @@ class RejectionTests(unittest.TestCase):
         rejection.record(400, captured=captured)
         self.assertFalse(rejection.blocked())
 
+    def test_first_input_can_recover_after_inbox_observation_was_absent(self):
+        self.context.pop('operator_input')
+        self.block()
+        self.context['operator_input'] = [1, 101, 101]
+        self.assertFalse(rejection.blocked())
+
+    def test_real_context_tracks_policy_and_checkpoint_without_opening_missing_db(self):
+        import sqlite3
+        self.facts.stop()
+        db_path = self.root / 'strategy.db'
+        with mock.patch.dict(os.environ, METTACLAW_STRATEGY_PATH=str(db_path)):
+            before = rejection.context()
+            self.assertFalse(db_path.exists())
+            (self.root / 'context-policy.json').write_text('{"mode":"full"}')
+            self.assertNotEqual(rejection.context()['configuration'], before['configuration'])
+            with sqlite3.connect(db_path) as db:
+                db.execute('CREATE TABLE meta (key TEXT PRIMARY KEY,value TEXT)')
+                db.execute('INSERT INTO meta VALUES (?,?)', ('task_window:conversation:fixture', 'old'))
+            before = rejection.context()
+            rejection.record(400, captured=before)
+            with sqlite3.connect(db_path) as db:
+                db.execute('UPDATE meta SET value=?', ('new checked handoff',))
+            self.assertFalse(rejection.blocked())
+
     def test_transient_and_auth_failures_keep_their_existing_recovery(self):
         for status in (401, 403, 408, 409, 425, 429, 500, 503):
             self.assertFalse(rejection.record(status))

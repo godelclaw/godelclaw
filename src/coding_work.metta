@@ -10,6 +10,7 @@
 !(import! &self (library json))
 !(import! &self ./src/coding_io.py)
 !(import! &self ./src/coding_delivery.metta)
+!(import! &self ./src/process_identity_cetta.metta)
 
 (= (work:root) (path:join (system:cwd) "memory/coding"))
 (= (work:dir $id) (path:join (work:root) $id))
@@ -106,10 +107,14 @@
           ($_ (work:shell $launch)))
      (WorkLaunched $id)))
 
-(= (work:running? $id)
+(= (work:scope-state $id)
    (case (proc:run ("systemctl" "--user" "is-active" "--quiet" (str:concat (work:unit $id) ".scope"))
                   (system:cwd) inherit 10000 0 "merged")
-     (((proc:exited 0 $out $err) True) ($other False))))
+     (((proc:exited 0 $out $err) active)
+      ((proc:exited 3 $out $err) inactive)
+      ((proc:exited 4 $out $err) inactive)
+      ($other unknown))))
+(= (work:running? $id) (== (work:scope-state $id) active))
 
 ; Resumption keeps this session's task, transcript, plan and inbox identities.
 ; The named systemd scope prevents a second worker for the same session.
@@ -137,7 +142,7 @@
    (let* (($state (work:json (path:join (work:dir $id) "state.json")))
           ($task (work:text (work:field (work:json (path:join (work:dir $id) "task.json")) "task"))))
      (str:join "" ($id " · " (work:text (work:field $state "status")) " · " (work:text (work:field $state "steps"))
-                   " steps · " (work:session-model $id) " · " (work:clip $task 120)
+                   " steps · " (work:session-model $id) " · report=" (delivery:status (work:dir $id)) " · " (work:clip $task 120)
                    "\n    " (work:clip (work:text (work:field $state "progress")) 240)))))
 (= (work:session-model $id)
    (let $task (work:json (path:join (work:dir $id) "task.json"))
@@ -173,8 +178,8 @@
        (let* (($_ (fs:update-text (path:join $dir "stop") "replace" "" "" ""))
               ($_ (proc:run ("systemctl" "--user" "stop" (str:concat (work:unit $id) ".scope"))
                             (system:cwd) inherit 10000 0 "merged"))
-              ;; Stopping the scope ends the session before it can write
-              ;; its own report; the one who stopped it needs no mail.
+              ;; Every ending has the same report handover, including a stop
+              ;; that ends the scope before its worker can write a report.
               ($_ (if (fs:is-file (path:join $dir "report.txt")) ()
                     (work:ended $id $dir "stopped" "Stopped by the requester."))))
          (str:concat "WORK_STOPPED " $id))
@@ -198,10 +203,13 @@
           ($_ (delivery:flush $dir))
           ($status (work:text (work:field $state "status"))))
      (if (== $status "running")
-         (if (work:running? $id) 0
-           (let* (($_ (work:ended $id $dir "interrupted"
-                        "The session ended without finishing its recorded ending: its process is gone (it was stopped, killed or crashed)."))
-                  ($_ (work:notify $id $dir "interrupted")))
+         (if (or (!= (work:scope-state $id) inactive)
+                 (process:alive? (work:text (work:field $state "worker_owner")))) 0
+           (let* (($ending (if (fs:is-file (path:join $dir "stop")) "stopped" "interrupted"))
+                  ($_ (work:ended $id $dir $ending
+                        (if (== $ending "stopped") "Stopped by the requester."
+                          "The session ended without finishing its recorded ending: its process is gone (it was stopped, killed or crashed).")))
+                  ($_ (work:notify $id $dir $ending)))
              1))
        0)))
 (= (work:ended $id $dir $status $why)

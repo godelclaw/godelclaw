@@ -1,0 +1,28 @@
+; Process identity shared by provider leases and coding-session observation.
+!(import! &self fs)
+!(import! &self str)
+!(import! &self system)
+(= (process:last $items)
+   (if (== (cdr-atom $items) ()) (car-atom $items) (process:last (cdr-atom $items))))
+(: process:birth (-> %Undefined% %Undefined%))
+(= (process:birth $pid)
+   (case (fs:read-text-result (format-args "/proc/{}/stat" ($pid)) 0 "raw")
+     ((("ok" $stat)
+       (let $fields (str:split-whitespace (process:last (str:split ")" $stat)))
+         (if (or (< (size-atom $fields) 20)
+                 (or (== (car-atom $fields) "Z") (== (car-atom $fields) "X")))
+           JsonNull (index-atom $fields 19))))
+      ($other JsonNull))))
+(= (process:owner)
+   (let* (($pid (system:pid)) ($birth (process:birth $pid)))
+     (format-args "{}:{}" ($pid (if (== $birth JsonNull) "portable" $birth)))))
+(: process:alive? (-> %Undefined% Bool))
+(= (process:alive? $owner)
+   (let $parts (str:split ":" $owner)
+     (if (!= (size-atom $parts) 2) False
+       (let* (($pid-text (car-atom $parts)) ($birth (index-atom $parts 1)))
+         (if (or (== $pid-text "") (not (str:is-all-in digit $pid-text))) False
+           (let $pid (str:string->number $pid-text)
+             (if (<= $pid 0) False
+               (if (== $birth "portable") (system:pid-alive? $pid)
+                 (== (process:birth $pid) $birth)))))))))

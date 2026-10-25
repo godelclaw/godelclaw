@@ -45,6 +45,33 @@ class ContextCompactionTests(unittest.TestCase):
         for n in range(count):
             self.fixture.call([["read-file", str(n)]], [("FINDING_%d λ " % n) * 200], request)
 
+    def test_provider_size_rejection_compacts_once_before_retrying_changed_context(self):
+        self.populate(8)
+        self.env['METTACLAW_OBSERVED_STRATEGY'] = '1'
+        forms = f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'
+        call = '!(println! (RESULT (llm:command "fixture-model" 256 "default" "retained task input")))\n'
+        error = {'error': {'code': 'context_length_exceeded', 'message': 'Context too long'}}
+        self.peer.status, self.peer.reply = 400, error
+        self.run_guest(forms + call)
+        self.assertEqual(len(self.peer.requests), 1)
+        self.assertEqual(json.loads(self.health.read_text())['provider_rejection']['repair'], 'requested')
+        self.peer.status = 200
+        self.peer.reply = {'id': 'summary', 'choices': [{'message': {
+            'role': 'assistant', 'content': 'HANDOFF: retained earlier findings.'}, 'finish_reason': 'stop'}],
+            'usage': {'prompt_tokens': 100, 'completion_tokens': 20}}
+        rendered = self.render('repair', capacity=200000)
+        self.assertIn('HANDOFF: retained earlier findings.', rendered)
+        self.assertGreater(self.checkpoint()['start'], 0)
+        self.assertEqual(len(self.peer.requests), 2)
+        # If the changed request is also rejected, do not pay for the same repair again.
+        self.peer.status, self.peer.reply = 400, error
+        self.run_guest(forms + call)
+        self.assertEqual(len(self.peer.requests), 3)
+        self.assertNotEqual(json.loads(self.health.read_text())['provider_rejection'].get('repair'), 'requested')
+        self.render('blocked', capacity=200000)
+        self.run_guest(forms + call)
+        self.assertEqual(len(self.peer.requests), 3)
+
     def render(self, name="view", capacity=20000, focus="guide"):
         out = self.directory / (name + ".txt")
         q = json.dumps

@@ -1,6 +1,6 @@
 ; Completion and mail acceptance are different facts. The worker commits a
 ; pending ending in state.json; report-outbox holds immutable message bodies
-; and separate accepted receipts. A notifier never rewrites worker state.
+; and separate accepted receipts. Recording acceptance never rewrites worker state.
 ; Retries share one occurrence id, including after a crash or session resume.
 !(import! &self (library fs))
 !(import! &self (library path))
@@ -29,6 +29,17 @@
    (if (== (delivery:field $state "delivery_version") (JsonNumber "1"))
      (delivery:text (delivery:field $state "progress"))
      (if (fs:is-file (path:join $dir "report.txt")) (fs:read-text (path:join $dir "report.txt")) "")))
+(= (delivery:identity $dir $state $status)
+   (let* (($previous (delivery:text (delivery:field $state "delivery_id")))
+          ($report (if (== (delivery:field $state "delivery_version") (JsonNumber "1"))
+                     "" (delivery:report $dir $state))))
+     (if (== $previous "")
+       (str:char-slice (str:sha256 (json-stringify (JsonArray (
+         (JsonString (delivery:last (str:split "/" $dir))) (JsonString $status)
+         (JsonString $report) (delivery:field $state "updated") (delivery:field $state "steps"))))) 0 32)
+       $previous)))
+(= (delivery:message-path $dir $state $status)
+   (path:join (delivery:outbox $dir) (str:concat (delivery:identity $dir $state $status) ".json")))
 
 ; Read all message facts from one ending snapshot. Once queued, neither a
 ; changed report.txt nor a running/resumed worker can change those bytes.
@@ -39,22 +50,21 @@
        (let* (($id (delivery:last (str:split "/" $dir)))
               ($steps (delivery:text (delivery:field $state "steps")))
               ($report (delivery:report $dir $state))
-              ($previous (delivery:text (delivery:field $state "delivery_id")))
-              ($mail (if (== $previous "")
-                       (str:char-slice (str:sha256 (json-stringify
-                         (JsonArray ((JsonString $id) (JsonString $status) (JsonString $report)
-                                     (delivery:field $state "updated"))))) 0 32) $previous))
-              ($path (path:join (delivery:outbox $dir) (str:concat $mail ".json")))
-              ($text (str:join "" ("Work " $id " " $status " after " (if (== $steps "") "0" $steps)
-                                   " steps. Task: " (delivery:text (delivery:field $task "task"))
+              ($mail (delivery:identity $dir $state $status))
+              ($path (path:join (delivery:outbox $dir) (str:concat $mail ".json"))))
+         (if (fs:is-file $path) $path
+           (delivery:write $dir $path $mail $id $requester $task $state $status $steps $report))))))
+(= (delivery:write $dir $path $mail $id $requester $task $state $status $steps $report)
+   (let* (($text (str:join "" ("Work " $id " " $status " after " (if (== $steps "") "0" $steps)
+                                   " steps. Ending recorded at " (delivery:text (delivery:field $state "updated"))
+                                   ". Task: " (delivery:text (delivery:field $task "task"))
                                    "\n\nReport:\n" $report)))
               ($envelope (JsonObject ((JsonPair "id" (JsonString $mail)) (JsonPair "from" (JsonString $id))
                                      (JsonPair "to" (JsonString $requester)) (JsonPair "text" (JsonString $text))
                                      (JsonPair "space" (JsonString (delivery:space $task $requester))))))
-              ($_ (if (fs:is-file $path) ()
-                    (let $_ (proc:run ("mkdir" "-p" "--" (delivery:outbox $dir)) $dir inherit 10000 0 "separate")
-                      (fs:update-text $path "replace" (json-stringify $envelope) "" "")))))
-         $path))))
+              ($_ (proc:run ("mkdir" "-p" "--" (delivery:outbox $dir)) $dir inherit 10000 0 "separate"))
+              ($_ (fs:update-text $path "replace" (json-stringify $envelope) "" "")))
+     $path))
 
 (= (delivery:accepted? $text $id)
    (let* (($receipt (json-parse $text))
@@ -74,7 +84,7 @@
        (let* (($item (delivery:json $path))
               ($id (delivery:text (delivery:field $item "id")))
               ($mailer (system:getenv-or-default "METTACLAW_WORK_MAIL" "claw-mail")))
-         (if (== $id "") "pending"
+         (if (== $id "") (delivery:pending-error $path "report envelope has no message identity")
            (let $result (proc:run ("env" (str:concat "CLAW_MAIL_AGENT=" (delivery:text (delivery:field $item "from")))
                            $mailer "send" (delivery:text (delivery:field $item "to"))
                            (delivery:text (delivery:field $item "text")) "--id" $id "--json" "--space"
@@ -100,6 +110,22 @@
      (let* (($name (car-atom $names))
             ($_ (if (str:ends-with $name ".json") (delivery:attempt $dir (path:join (delivery:outbox $dir) $name)) ())))
        (delivery:flush-names $dir (cdr-atom $names)))))
+
+(= (delivery:scan $dir $names $total $pending)
+   (if (== $names ()) (ReportMail $total $pending)
+     (let* (($name (car-atom $names)) ($message (str:ends-with $name ".json"))
+            ($waiting (and $message (not (fs:is-file (str:concat (path:join (delivery:outbox $dir) $name) ".accepted"))))))
+       (delivery:scan $dir (cdr-atom $names) (+ $total (if $message 1 0)) (+ $pending (if $waiting 1 0))))))
+(= (delivery:status $dir)
+   (let* (($state (delivery:json (path:join $dir "state.json")))
+          ($names (if (fs:exists (delivery:outbox $dir)) (fs:entries (delivery:outbox $dir)) ()))
+          ((ReportMail $total $pending) (delivery:scan $dir $names 0 0))
+          ($current (delivery:message-path $dir $state (delivery:text (delivery:field $state "status"))))
+          ($waiting (and (== (delivery:field $state "delivery") (JsonString "pending"))
+                     (not (fs:is-file (str:concat $current ".accepted"))))))
+     (if (or (> $pending 0) $waiting) "pending"
+       (if (> $total 0) "accepted"
+         (delivery:text (delivery:field $state "delivery"))))))
 
 (= (coding:deliver $dir $status)
    (delivery:attempt $dir (delivery:prepare $dir (delivery:json (path:join $dir "state.json")) $status)))

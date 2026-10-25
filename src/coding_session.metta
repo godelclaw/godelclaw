@@ -22,6 +22,7 @@
 !(import! &self ./src/coding_values.metta)
 !(import! &self ./src/coding_process.metta)
 !(import! &self ./src/coding_delivery.metta)
+!(import! &self ./src/process_identity_cetta.metta)
 
 (= (coding:file $dir $name) (path:join $dir $name))
 (= (coding:items $value) (case $value (((JsonArray $items) $items) ($other ()))))
@@ -60,6 +61,7 @@
                                   (JsonPair "progress" (JsonString $progress))
                                   (JsonPair "delivery" (JsonString (if (== $status "running") "none" "pending")))
                                   (JsonPair "delivery_version" (JsonNumber "1"))
+                                  (JsonPair "worker_owner" (JsonString (process:owner)))
                                   (JsonPair "inbox" (JsonNumber (repr $inbox)))
                                   (JsonPair "updated" (JsonNumber (repr (coding:now)))))))
      "" ""))

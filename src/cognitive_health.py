@@ -180,6 +180,7 @@ def turn_completed(response_bytes=0, now=None):
         with _lock:
             value = _read()
             admitted = bool(float(value.get("in_flight_since", 0) or 0))
+            value.pop('provider_context_repair', None)
             value.update({
                 "schema": 2,
                 "pending_since": 0,
@@ -243,7 +244,7 @@ def retry_wait_seconds(now=None):
     """
     import provider_rejection
     if provider_rejection.blocked():
-        return 1  # Select the interruptible wait, not another provider attempt.
+        return 0 if provider_rejection.repair_pending() else 1
     try:
         with _lock:
             retry_at = float(_read().get("retry_at", 0) or 0)
@@ -277,6 +278,8 @@ def wait_for_retry(seconds=None):
         remaining = deadline - now
         import provider_rejection
         blocked = provider_rejection.blocked()
+        if blocked and provider_rejection.repair_pending():
+            return "provider context repair requested"
         if blocked:
             provider_rejection.notify()
         if remaining <= 0 and not blocked:

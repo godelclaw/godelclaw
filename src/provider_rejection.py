@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import sqlite3
 
 import cognitive_health
 
@@ -51,11 +52,11 @@ def context():
     root = Path(__file__).resolve().parents[1]
     state = Path(cognitive_health._path()).parent
     import synthetic_llm
-    facts = {"model": synthetic_llm.current_model()}
+    facts = {"model": synthetic_llm.current_model(), "operator_input": [0, None, None], "mode_input": ""}
     release = _json(state / "runtime-release.json")
     if isinstance(release, dict):
         facts["release"] = release.get("release")
-    files = [root / "config/local.toml", root / "config/default.toml"]
+    files = [root / "config/local.toml", root / "config/default.toml", state / 'context-policy.json']
     for key in ("METTACLAW_MODEL_STATE_PATH", "METTACLAW_CHATGPT_POLICY_PATH", "METTACLAW_LLM_POLICY_PATH"):
         if os.environ.get(key):
             files.append(Path(os.environ[key]))
@@ -67,19 +68,29 @@ def context():
         except FileNotFoundError:
             stamps.append((str(path), None))
         except OSError:
-            return facts  # Missing observation is not evidence of correction.
-    facts["configuration"] = hashlib.sha256(json.dumps(stamps).encode()).hexdigest()
+            stamps = None
+            break  # Missing configuration observation does not hide input facts.
+    if stamps is not None:
+        facts["configuration"] = hashlib.sha256(json.dumps(stamps).encode()).hexdigest()
     mode_state = Path(os.environ.get("METTACLAW_MODE_STATE_ROOT", state / "modes"))
     control = _json(mode_state / "control-status.json")
     inbox = control.get("operator_inbox") if isinstance(control, dict) else None
-    if isinstance(inbox, dict) and type(inbox.get("pending")) is int:
+    if isinstance(inbox, dict) and type(inbox.get("pending")) is int and inbox['pending'] > 0:
         facts["operator_input"] = [inbox.get(k) for k in
                                    ("pending", "newestMessageAt", "oldestMessageAt")]
     mode = os.environ.get("METTACLAW_MODE_RUNTIME")
     if mode:
         offered = _json(Path(mode) / "offered-input.json")
-        if offered is not None:
+        if offered:
             facts["mode_input"] = hashlib.sha256(json.dumps(offered, sort_keys=True).encode()).hexdigest()
+    checkpoint = os.environ.get('METTACLAW_STRATEGY_PATH')
+    if checkpoint:
+        try:
+            with sqlite3.connect(Path(checkpoint).resolve().as_uri() + '?mode=ro', uri=True, timeout=.1) as db:
+                rows = db.execute("SELECT key,value FROM meta WHERE key GLOB 'task_window:*' ORDER BY key").fetchall()
+            facts['checkpoint'] = hashlib.sha256(json.dumps(rows).encode()).hexdigest()
+        except (OSError, sqlite3.Error):
+            pass
     return facts
 
 
@@ -91,6 +102,7 @@ def blocked():
         if not isinstance(block, dict):
             return False
         before, now = block.get("context", {}), context()
+        before = {'operator_input': [0, None, None], 'mode_input': '', **before}
         if any(key in now and now[key] != value for key, value in before.items()):
             health.pop("provider_rejection", None)
             health["retry_at"] = 0
@@ -137,10 +149,34 @@ def record(status, code="", message="", captured=None):
         if prior.get("id") != identity:
             health["provider_rejection"] = dict(id=identity, status=status, code=safe_text(code, 64),
                                                message=safe_text(message), context=snapshot)
+            external = {k: v for k, v in snapshot.items() if k != 'checkpoint'}
+            size_error = status == 413 or code in ('context_length_exceeded', 'string_above_max_length')
+            if (size_error and os.environ.get('METTACLAW_ACTIVE_ENGINE') == 'cetta'
+                    and os.environ.get('METTACLAW_OBSERVED_STRATEGY') == '1'
+                    and health.get('provider_context_repair') != external):
+                health['provider_rejection']['repair'] = 'requested'
         health["retry_at"] = 0
         _save(health)
     notify()
     return True
+
+
+def repair_pending():
+    with cognitive_health._lock:
+        return _health().get('provider_rejection', {}).get('repair') == 'requested'
+
+
+def begin_context_repair():
+    """Claim one real compaction, never permission to resend unchanged input."""
+    with cognitive_health._lock:
+        health = _health()
+        block = health.get('provider_rejection', {})
+        if block.get('repair') != 'requested':
+            return 0
+        block['repair'] = 'attempted'
+        health['provider_context_repair'] = {k: v for k, v in block['context'].items() if k != 'checkpoint'}
+        _save(health)
+        return 0 if cognitive_health._path() in _unwritten else 1
 
 
 def notify():
@@ -148,7 +184,7 @@ def notify():
     with cognitive_health._lock:
         health = _health()
         block = health.get("provider_rejection")
-        if not isinstance(block, dict) or block.get("alert_queued"):
+        if not isinstance(block, dict) or block.get("alert_queued") or block.get('repair') == 'requested':
             return 0
         try:
             import mode_channel

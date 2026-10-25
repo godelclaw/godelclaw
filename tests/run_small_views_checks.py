@@ -2,7 +2,7 @@
 
 Run with the matching Python and CETTA_BIN, --evidence outside this checkout.
 The inherited runner strips credentials, uses isolated_environ, blocks tmux,
-and enforces ulimit -v 25165824. Never run the tmux shadow here.
+and inherits the caller's process limits. Never run the tmux shadow here.
 """
 import run_context_bundle_checks as runner
 

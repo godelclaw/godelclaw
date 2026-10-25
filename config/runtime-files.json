@@ -241,6 +241,7 @@
   "src/pins.py",
   "src/pins_context_cetta.metta",
   "src/process_supervision.py",
+  "src/process_identity_cetta.metta",
   "src/project_capabilities.py",
   "src/project_evidence.py",
   "src/public_worklog.py",

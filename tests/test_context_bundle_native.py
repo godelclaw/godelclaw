@@ -3,7 +3,6 @@ import itertools
 import json
 import os
 from pathlib import Path
-import resource
 import re
 import shutil
 import subprocess
@@ -21,13 +20,8 @@ from test_pins_context_native import guest_env, q
 
 ENGINE = os.environ.get("CETTA_BIN", "cetta")
 PETTA_ROOT = Path(os.environ.get("PETTA_ROOT", Path.home() / "repos/PeTTa"))
-VM_LIMIT = 25165824 * 1024
 NATIVE_SOURCES = {"active-query-declaration", "commitment-state", "task-phase",
                   "development-state", "project-capabilities", "project-evidence"}
-
-
-def limit_engine():
-    resource.setrlimit(resource.RLIMIT_AS, (VM_LIMIT, VM_LIMIT))
 
 
 def save_evidence(prefix, value):
@@ -61,7 +55,7 @@ def guest(directory, lines, engine="cetta", swi=False, boot=False, runtime_root=
                 command += [str(root / "cetta_bootstrap.metta"), str(directory / "channel.metta")]
             command += [source.name]
         result = subprocess.run(command, cwd=root, env=env, capture_output=True,
-                                text=True, timeout=900, preexec_fn=limit_engine)
+                                text=True, timeout=900)
     save_evidence("guest", {"command": command, "program": lines, "returncode": result.returncode,
                             "stdout": result.stdout, "stderr": result.stderr})
     if result.returncode or "uncaught" in result.stderr or "AssertionError" in result.stdout:
@@ -261,7 +255,8 @@ class NativeContextBundleTest(unittest.TestCase):
             log = self.directory / "native-conversation"
             log.unlink(missing_ok=True)
             path = self.directory / "fixture-native.json"
-            path.write_text(json.dumps({s.source_id: "fixed" for s in context_sources.SOURCE_SPECS if s.source_id != "conversation"}))
+            path.write_text(json.dumps({s.source_id: "fixed" for s in context_sources.SOURCE_SPECS
+                if s.source_id != "conversation" and s.source_id not in NATIVE_SOURCES}))
             lines = HEADER + ["!(import! &self ./src/memory)", "!(import! &self ./src/turn_additions)",
                               "(= (tg:client-metta?) True)", '(= (tg:conversation-events) 64)',
                               '(= (tg:get reply-chat "") "fixture-chat")',

@@ -1,5 +1,6 @@
 ; Provider policy and its usage history, owned by native SQLite transactions.
 ; The Python implementation remains the oracle and non-CeTTa fallback.
+!(import! &self ./process_identity_cetta.metta)
 !(case (import! &self (library sqlite))
      (((Error $where $why)
        (let $reason (format-args "{}" ($why))
@@ -99,27 +100,13 @@
 ; Portable owners use the existing signal-zero liveness observation.
 (: lp:process-start (-> %Undefined% %Undefined%))
 (= (lp:process-start $pid)
-   (case (fs:read-text-result (format-args "/proc/{}/stat" ($pid)) 0 "raw")
-     ((("ok" $stat)
-       (let $fields (str:split-whitespace (lp:last (str:split ")" $stat)))
-         (if (or (ue:equal (lp:nth $fields 0) "Z") (ue:equal (lp:nth $fields 0) "X"))
-           JsonNull (let $stamp (lp:nth $fields 19) (if (ue:equal $stamp "") JsonNull $stamp)))))
-      ($other JsonNull))))
+   (process:birth $pid))
 (: lp:owner (-> %Undefined%))
 (= (lp:owner)
-   (let* (($pid (system:pid)) ($start (lp:process-start $pid))
-          ($stamp (if (ue:equal $start JsonNull) "portable" $start)))
-     (format-args "{}:{}" ($pid $stamp))))
+   (process:owner))
 (: lp:owner-live (-> %Undefined% %Undefined%))
 (= (lp:owner-live $owner)
-   (let $parts (str:split ":" $owner)
-     (if (not (ue:equal (size-atom $parts) 2)) False
-       (let* (($pid-text (car-atom $parts)) ($stamp (car-atom (cdr-atom $parts))))
-         (if (or (ue:equal $pid-text "") (not (str:is-all-in digit $pid-text))) False
-           (let $pid (str:string->number $pid-text)
-             (if (<= $pid 0) False
-               (if (ue:equal $stamp "portable") (system:pid-alive? $pid)
-                 (ue:equal (lp:process-start $pid) $stamp)))))))))
+   (process:alive? $owner))
 
 (: lp:event (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (lp:event $ticket $event $detail $now)

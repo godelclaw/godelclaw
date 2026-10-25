@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import statistics
+import resource
 import shutil
 import subprocess
 import tarfile
@@ -186,7 +187,7 @@ def main():
             (Path(evidence) / "small-views-measurements.json").write_text(json.dumps({
                 "summaries": summaries, "profiles": profiles, "raw": routes,
                 "baseline": BASELINE + " runtime from temporary git archive; fixture probe only added to tests",
-                "memory_limit_kib": 25165824}, indent=2) + "\n")
+                "address_space_limits_bytes": resource.getrlimit(resource.RLIMIT_AS)}, indent=2) + "\n")
     finally:
         case.doCleanups()
 

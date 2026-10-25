@@ -134,7 +134,14 @@ def engine_info(binary, provenance):
     binary = str(Path(resolved).resolve())
     result = subprocess.run([binary, "--version"], env=isolated_environ(),
                             capture_output=True, text=True, check=True)
-    return {"binary": binary, "sha256": digest(binary), "version_command": result.args,
+    sha = digest(binary)
+    manifest_path = Path(binary).parent / 'build-manifest.json'
+    build = None
+    if manifest_path.is_file():
+        manifest = json.loads(manifest_path.read_text())
+        build = {'revision': manifest.get('revision'), 'manifest_sha256': digest(manifest_path),
+                 'binary_matches': manifest.get('files', {}).get(Path(binary).name) == sha}
+    return {"binary": binary, "sha256": sha, "build": build, "version_command": result.args,
             "version_returncode": result.returncode, "stdout": result.stdout,
             "stderr": result.stderr, "provenance": provenance}
 
@@ -194,17 +201,16 @@ def run(args, evidence):
     # records Git fixture creation, archive commands and engine version exits.
     import context_bundle_transcripts  # noqa: F401
     engines = {"production": engine_info(os.environ.get("CETTA_BIN", "cetta"),
-               "Existing installed production qualification binary; not rebuilt or switched")}
+               "Caller-selected primary comparison engine; identity is observed, not inferred from its label")}
     if args.test_engine:
         engines["test"] = engine_info(args.test_engine,
-            "Requester checkpoint f8e82ff15df8428b9e797732bad6e25a; reviewer-supplied TEST binary. "
-            "Production features, modified metadata and pidfd wakeup are reviewer claims, not a build certification.")
+            "Caller-selected candidate engine; matching build manifest is recorded when available")
     case = SmallViewsTest()
     case.setUp()
     try:
         step, manifest = cold_fixtures(case)
         wrapper, real_git = make_git_wrapper(case.directory)
-        versions = {"historical": BASELINE, "submitted": SUBMITTED}
+        versions = {"historical": args.baseline_revision or BASELINE, "submitted": SUBMITTED}
         if args.revised_revision:
             versions["revised"] = args.revised_revision
         roots = {name: archive_runtime(case.directory, revision, name) for name, revision in versions.items()}
@@ -265,13 +271,12 @@ def main():
     parser.add_argument("--expiry-wait", type=float, default=2.1)
     parser.add_argument("--test-engine", default=os.environ.get("SMALL_VIEWS_TEST_CETTA_BIN"))
     parser.add_argument("--revised-revision", default=os.environ.get("SMALL_VIEWS_REVISED_REVISION"))
+    parser.add_argument("--baseline-revision", help="pre-port runtime; defaults to the original trial baseline")
     args = parser.parse_args()
     assert args.expiry_wait > 2 and min(args.processes, args.cold_samples, args.warm_samples) > 0
     evidence = Path(os.environ["CONTEXT_BUNDLE_EVIDENCE"]).resolve()
     evidence.mkdir(parents=True, exist_ok=True)
     assert not (evidence / "cold-caller-measurements.json").exists(), "use a NEW evidence directory"
-    bound = 25165824 * 1024
-    resource.setrlimit(resource.RLIMIT_AS, (bound, bound))
     with tempfile.TemporaryDirectory(prefix="small-views-cold-") as temp:
         directory = Path(temp)
         deny = directory / "deny-bin"

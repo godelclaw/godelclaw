@@ -25,11 +25,6 @@ SUITES = {
 }
 
 
-def limit():
-    bound = 25165824 * 1024
-    resource.setrlimit(resource.RLIMIT_AS, (bound, bound))
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("suite", choices=SUITES)
@@ -63,7 +58,7 @@ def main():
         command = ([PYTHON, "-c", entry, "unittest"] + SUITES[args.suite][2:]
                    if args.suite != "bench" else [PYTHON] + SUITES[args.suite])
         result = subprocess.run(command, cwd=ROOT, env=env, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True, preexec_fn=limit)
+                                stderr=subprocess.STDOUT, text=True)
     transcript = result.stdout + "\nACTUAL_EXIT_CODE=%d\n" % result.returncode
     path = evidence / (args.suite + ".txt")
     if path.exists():
@@ -71,7 +66,7 @@ def main():
     path.write_text(transcript, encoding="utf-8")
     (evidence / (args.suite + "-result.json")).write_text(json.dumps({
         "command": command, "cwd": str(ROOT), "returncode": result.returncode,
-        "engine": ENGINE, "ulimit_v_kib": 25165824,
+        "engine": ENGINE, "address_space_limits_bytes": resource.getrlimit(resource.RLIMIT_AS),
         "tmux": "denied by PATH stub, no server access"}, indent=2) + "\n")
     print(transcript, end="")
     return result.returncode

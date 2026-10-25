@@ -941,6 +941,10 @@ configuration or release identity. Clock ticks do not resend that rejected
 request. `/activity` shows the blockage and the independent control plane queues
 one operator notice. Authentication and transient provider failures retain their
 own recovery and backoff.
+For a recognized context-size rejection, the native full-window path first
+tries a checkpoint compaction. Only a changed checkpoint permits another turn
+request. If that repair fails or the changed request is rejected again, the
+block remains visible; a successful turn allows repair of a future incident.
 
 Credential redaction, configured chat permissions, occurrence identities for
 message delivery, memory supervision, and the operator stop remain in place.

@@ -148,7 +148,7 @@ def mark_state(directory, status, report=None):
     if report is not None:
         state['progress'] = str(report)
         state['delivery_version'] = 1
-    state['delivery'] = 'none' if status == 'stopped' else 'pending'
+    state['delivery'] = 'pending'
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(state))
     os.replace(temporary, path)
