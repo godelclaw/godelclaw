@@ -53,7 +53,11 @@ class ProtocolTests(unittest.TestCase):
     def test_transcript_chunks_join_for_prefix_caching_providers(self):
         prompt = "S_cache_boundary_T_cache_boundary_A\n_cache_chunk_\nB_cache_boundary_user"
         _, body = protocol.command_body("responses", "gpt-5.5", 20, "high", prompt)
-        self.assertEqual(body["instructions"], "STA\n\nB")
+        self.assertNotIn("instructions", body)
+        self.assertEqual(body["input"], [{"role": "system", "content": "S"},
+                                       {"role": "system", "content": "T"},
+                                       {"role": "system", "content": "A\n\nB"},
+                                       {"role": "user", "content": "user"}])
         _, other = protocol.command_body("responses", "gpt-5.5", 20, "high",
                                          "S_cache_boundary_T_cache_boundary_A\n_cache_chunk_\nB\n_cache_chunk_\nC_cache_boundary_user")
         # The cache key follows the first stable part, which a growing transcript leaves unchanged.
@@ -148,8 +152,9 @@ class ProtocolTests(unittest.TestCase):
 
     def test_omega_system_user_delimiter(self):
         _, body = protocol.command_body("responses", "gpt-5.5", 20, "high", " system :-:-:-: new input ")
-        self.assertEqual(body["instructions"], "system")
-        self.assertEqual(body["input"], "new input")
+        self.assertNotIn("instructions", body)
+        self.assertEqual(body["input"], [{"role": "system", "content": "system"},
+                                       {"role": "user", "content": "new input"}])
         self.assertEqual(body["reasoning"], {"effort": "high"})
         self.assertFalse(body["store"])
 

@@ -88,6 +88,10 @@ def _provider(now):
             call["transportBytes"] = max(0, value["response_bytes"])
         if type(value.get("transport_quiet_ms")) is int:
             call["transportQuietSeconds"] = max(0, value["transport_quiet_ms"]) // 1000
+    elif isinstance(value.get("provider_rejection"), dict):
+        rejected = value["provider_rejection"]
+        call.update(phase="blocked", status=rejected.get("status"),
+                    code=rejected.get("code", ""), message=rejected.get("message", ""))
     elif value.get("last_outcome") == "failed":
         call.update(phase="backoff" if retry > now else "failed",
                     ageSeconds=_age(value.get("last_failed_at"), now))

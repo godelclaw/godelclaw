@@ -1,0 +1,9 @@
+[Unit]
+Description=Observe %i coding sessions and hand over pending reports
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/godelclaw/runtime.env
+EnvironmentFile=%h/.config/godelclaw/work-delivery-%i.env
+ExecStart=/bin/sh -c 'cd "$METTACLAW_WORK_ROOT" && exec "$CETTA_BIN" --lang petta --quiet "$METTACLAW_WORK_ROOT/work_delivery_main.metta"'
+TimeoutStartSec=infinity

@@ -238,6 +238,9 @@ def activity_report(now=None):
         wake = "/start"
         steps = 0
         steps_source = "operator-latch"
+    elif cognition.get("provider_rejection"):
+        state, wake = "blocked", "input-or-configuration"
+        steps, steps_source = loops, "checkpoint"
     elif pending_age is not None:
         state = "recording-result" if cognition.get("local_commit_pending") is True else "working"
         wake = "local-storage" if state == "recording-result" else "now"
@@ -333,7 +336,11 @@ def activity_report(now=None):
         outcome=cognition.get("last_outcome", "none"),
         progress=progress["state"],
         background=topic_jobs.activity(),
-    )
+    ) + ((" | provider-rejection=HTTP %s %s: %s" %
+           (cognition['provider_rejection'].get('status', '?'),
+            cognition['provider_rejection'].get('code', ''),
+            cognition['provider_rejection'].get('message', '')))[:240]
+          if cognition.get('provider_rejection') else "")
 
 
 if __name__ == "__main__":

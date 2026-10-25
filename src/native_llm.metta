@@ -49,7 +49,8 @@
      True))
 
 (= (llm:command $model $tokens $effort $prompt)
-   (if (llm:native?)
+   (if (not (llm:host-flag (py-call (native_llm_host.request_allowed)))) "()"
+    (if (llm:native?)
      (let $selected (py-call (synthetic_llm.current_model $model))
        (if (str:starts-with $selected "chatgpt:")
          (chatgpt:command $selected $tokens $effort $prompt)
@@ -58,7 +59,7 @@
             ($subscription (llm:subscription-model? $selected)))
        (if $subscription
          (py-call (synthetic_llm._empty_action chatgpt-requires-native-cetta))
-         (py-call (synthetic_llm.chat $model $tokens $effort $prompt))))))
+         (py-call (synthetic_llm.chat $model $tokens $effort $prompt)))))))
 
 (= (llm:structured $request)
    (let* (($selected (py-call (synthetic_llm.current_model)))

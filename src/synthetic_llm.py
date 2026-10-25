@@ -122,14 +122,17 @@ def _empty_action(reason):
     import admission_frontier
     code = admission_frontier.failure_code(reason)
     if _rejected_status(status):
-        # Sending the same request again cannot succeed: pause as long as the
-        # longest backoff, and name the status where the operator looks.
         wait = max(wait, cap)
         code = "provider-rejected-%d" % status
+    import provider_rejection
+    blocked = provider_rejection.blocked()
+    if blocked:
+        wait = 0
     cognitive_health.turn_failed(code, retry_after=wait)
     # Exception messages may contain URLs, headers or response bodies.
     print("[synthetic_llm] failed provider turn: " + code +
-          f"; retry in {wait:.0f}s", file=sys.stderr)
+          ("; awaiting corrective input or configuration" if blocked else f"; retry in {wait:.0f}s"),
+          file=sys.stderr)
     return "()"
 
 
@@ -416,6 +419,8 @@ def _completion_metadata(result, prompt_layout=None, *, call_context=None, usage
 
 
 def _exchange(provider, endpoint, body, max_tokens, *, purpose="unspecified"):
+    import provider_rejection
+    correction = provider_rejection.context() if purpose == "turn" else None
     ticket = llm_policy.admit(provider["name"], max_tokens, request_fingerprint=llm_policy.fingerprint(body))
     context = dict(call_id=ticket, provider=provider["name"],
                    model=str(body.get("model", "")), purpose=purpose)
@@ -441,6 +446,10 @@ def _exchange(provider, endpoint, body, max_tokens, *, purpose="unspecified"):
         status = getattr(error, "code", None)
         retry = retry_after_seconds(getattr(error, "headers", None))
         llm_policy.fail(ticket, status=status, retry_after=retry, sent=sent)
+        if purpose == "turn" and status in provider_rejection.INVALID_REQUEST:
+            raw = error.read(16384) if hasattr(error, "read") else b""
+            code, message = provider_rejection.error_fields(raw.decode("utf-8", "replace"))
+            provider_rejection.record(status, code, message, correction)
         raise
 
 
@@ -456,6 +465,9 @@ def structured_chat(request):
 
 
 def chat(model, max_tokens, effort, prompt):
+    import provider_rejection
+    if provider_rejection.blocked():
+        return "()"
     effective_model = current_model(str(model))
     provider = _provider_for(effective_model)
     try:

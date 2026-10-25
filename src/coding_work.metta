@@ -61,6 +61,7 @@
           ($requester (system:getenv-or-default "METTACLAW_MAIL_NAME" ""))
           ($task-json (JsonObject ((JsonPair "task" (JsonString $task)) (JsonPair "workdir" (JsonString $where))
                                    (JsonPair "requester" (JsonString $requester)) (JsonPair "effort" (JsonString $effort))
+                                   (JsonPair "requester_space" (JsonString (system:getenv-or-default "METTACLAW_MAIL_SPACE" "agent-mail")))
                                    (JsonPair "model" (JsonString $model)))))
           ($_ (fs:update-text (path:join $dir "task.json") "replace" (json-stringify $task-json) "" ""))
           ($_ (work:launch $id)))
@@ -120,6 +121,7 @@
        (if (not (== $engine "")) (str:join "" ("work-resume: " $engine "; start a new session for this task"))
          (let* (($stop (path:join $dir "stop"))
                 ($recycle (path:join $dir "recycle.requested"))
+                ($_ (delivery:preserve $dir))
                 ($_ (if (fs:exists $stop) (proc:run ("rm" "--" $stop) $dir inherit 10000 0 "merged") ()))
                 ($_ (if (fs:exists $recycle) (proc:run ("rm" "--" $recycle) $dir inherit 10000 0 "merged") ()))
                 ;; The last ending's report stays as evidence, out of the way
@@ -192,27 +194,26 @@
 (= (work:reap-one $id)
    (let* (($dir (work:dir $id))
           ($state (work:json (path:join $dir "state.json")))
+          ($_ (delivery:preserve $dir))
+          ($_ (delivery:flush $dir))
           ($status (work:text (work:field $state "status"))))
      (if (== $status "running")
-       (if (fs:is-file (path:join $dir "report.txt")) 0
          (if (work:running? $id) 0
            (let* (($_ (work:ended $id $dir "interrupted"
-                        "The session ended without finishing: its process is gone (it was stopped, killed or crashed) and it wrote no report."))
+                        "The session ended without finishing its recorded ending: its process is gone (it was stopped, killed or crashed)."))
                   ($_ (work:notify $id $dir "interrupted")))
-             1)))
-       ; An ended session whose report mail could not be handed over yet.
-       (if (and (== (work:text (work:field $state "delivery")) "pending")
-                (or (== $status "done") (or (== $status "failed") (== $status "interrupted"))))
-         (let $_ (coding:deliver $dir $status) 0)
-         0))))
+             1))
+       0)))
 (= (work:ended $id $dir $status $why)
    (let* (($state (work:json (path:join $dir "state.json")))
           ($progress (work:text (work:field $state "progress")))
           ($plan (if (fs:is-file (path:join $dir "plan.json")) (work:clip (fs:read-text (path:join $dir "plan.json")) 2000) "none recorded"))
+          ($saved (if (fs:is-file (path:join $dir "report.txt")) (fs:read-text (path:join $dir "report.txt")) ""))
           ($report (str:join "" ($why "\n\nLast progress:\n" (if (== $progress "") "none recorded" $progress)
+                                 (if (== $saved "") "" (str:concat "\n\nSaved report:\n" $saved))
                                  "\n\nPlan:\n" $plan "\n\nResume without replaying uncertain effects:\n(work-resume \"" $id "\")")))
           ($_ (fs:update-text (path:join $dir "report.txt") "replace" $report "" ""))
-          ($_ (py-call (coding_io.mark_state $dir $status))))
+          ($_ (py-call (coding_io.mark_state $dir $status $report))))
      $status))
 ; The same announcement coding:notify (coding_session.metta) makes when a
 ; session ends by itself.

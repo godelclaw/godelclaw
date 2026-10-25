@@ -241,6 +241,9 @@ def retry_wait_seconds(now=None):
     The adapter returns immediately after recording failure. Operator input
     can interrupt the ordinary channel wait; no provider sleep hides it.
     """
+    import provider_rejection
+    if provider_rejection.blocked():
+        return 1  # Select the interruptible wait, not another provider attempt.
     try:
         with _lock:
             retry_at = float(_read().get("retry_at", 0) or 0)
@@ -272,14 +275,18 @@ def wait_for_retry(seconds=None):
             return "recycle requested"
         now = time.monotonic()
         remaining = deadline - now
-        if remaining <= 0:
+        import provider_rejection
+        blocked = provider_rejection.blocked()
+        if blocked:
+            provider_rejection.notify()
+        if remaining <= 0 and not blocked:
             return "rested %ds provider retry" % math.ceil(delay)
         if now >= next_progress:
             import process_supervision
-            window = min(10.0, remaining)
-            process_supervision.progress("provider-backoff", window)
+            window = 10.0 if blocked else min(10.0, remaining)
+            process_supervision.progress("provider-rejected" if blocked else "provider-backoff", window)
             next_progress = now + max(1.0, window)
-        time.sleep(min(1.0, remaining))
+        time.sleep(1.0 if blocked else min(1.0, remaining))
 
 
 def turn_succeeded():

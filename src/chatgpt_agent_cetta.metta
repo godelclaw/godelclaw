@@ -189,7 +189,8 @@
                       (JsonPair "content" (JsonString $text))))
          (chatgpt:system-messages (cdr-atom $parts))))))
 (= (chatgpt:command-plan $selected $tokens $effort $prompt $session)
-   (let* (($model (str:byte-slice $selected 8 (str:byte-length $selected)))
+   (let* (($correction (py-call (native_llm_host.correction_context)))
+          ($model (str:byte-slice $selected 8 (str:byte-length $selected)))
           ($effort-text (str:concat "" $effort))
           ((ChatGPTPrompt $parts $user) (chatgpt:split $prompt 3 ()))
           ($stable (chatgpt:unchunk-all $parts))
@@ -213,14 +214,12 @@
                  (JsonPair "tool_choice" (JsonString "auto"))))
               (JsonObject ((JsonPair "model" (JsonString $model))
                  (JsonPair "max_tokens" (JsonNumber (repr $tokens)))
-                 (JsonPair "stable" (JsonArray $stable))
-                 (JsonPair "user" (JsonString $user))))))
+                 (JsonPair "messages" (JsonArray $messages))
+                 (JsonPair "role_policy" (JsonString "preserve"))))))
           ($reasoned-request (if (or (== $effort-text "default") (or (== $effort-text "") (== $effort-text "None"))) $base-request
              (llm:v1:with $base-request "reasoning" (JsonObject ((JsonPair "effort" (JsonString $effort-text)))))))
-          ($request (if $native
-             (llm:v1:with $reasoned-request "extensions"
-               (JsonObject ((JsonPair "prompt_cache_key" (JsonString $cache)))))
-             (llm:v1:with $reasoned-request "cache_key" (JsonString $cache))))
+          ($request (llm:v1:with $reasoned-request "extensions"
+             (JsonObject ((JsonPair "prompt_cache_key" (JsonString $cache))))))
           ($wire-request (llm:v1:render $request))
           ($account (llm:v1:get $session "value"))
           ($alias-json (llm:v1:get $account "credential_alias")) ($alias (llm:v1:text $alias-json))
@@ -245,14 +244,14 @@
      ; Numeric false flags preserve Python truth values across the historical
      ; PeTTa foreign bridge, whose ungrounded False spelling is a Python string.
      (chatgpt:attributes $plan
-       (("kind" "command") ("encoding" (if $native "messages" "default"))
+       (("kind" "command") ("encoding" "messages")
         ("ready" "true") ("claimed" 0) ("sent" 0) ("stream" 0)
         ("native_ledger" 1) ("max_output" $tokens) ("wire_model" $model)
         ("request_profile" "chatgpt-plan") ("epoch" $ticket) ("correlation" $ticket)
         ("provider" "openai") ("protocol" "responses") ("base" $base) ("headers" $headers)
         ("request" $wire-request) ("timeout" $hard) ("soft" $soft) ("connect" $connect)
         ("first" $first) ("idle" $idle) ("cap" $cap) ("prompt_text" $prompt)
-        ("activity" $activity) ("lane" $lane)))))
+        ("activity" $activity) ("lane" $lane) ("correction_context" $correction)))))
 
 ; Structured sessions use the same authenticated subscription route. Only the
 ; request/encoding changes; admission, peer-owned credentials and recovery are
@@ -267,7 +266,7 @@
           ($remaining (llm:v1:without $uncached "cache_ttl"))
           ($portable (JsonObject $remaining))
           ($named (llm:v1:with $portable "model" (JsonString $model)))
-          ($canonical (llm:v1:with $named "role_policy" (JsonString "merge-system-developer")))
+          ($canonical (llm:v1:with $named "role_policy" (JsonString "preserve")))
           ($wire (llm:v1:render $canonical)))
      (chatgpt:attributes $plan (("kind" "structured") ("request" $wire)))))
 (= (chatgpt:command $selected $tokens $effort $prompt)

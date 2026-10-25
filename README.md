@@ -918,6 +918,30 @@ replaying them. Coding calls share the account's provider ledger while
 keeping their own call identities and health state. Structured sessions use
 the selected API provider or the native ChatGPT subscription route.
 
+A finished session commits its pending report before attempting notification.
+Immutable messages and matching mailbox acceptance receipts live in the session's
+`report-outbox`; acceptance means handed to the mailbox, not read by the recipient.
+Retries preserve the message identity and do not rewrite a resumed worker's state.
+Historical sessions without a delivery record are not mailed again.
+
+The optional `deploy/systemd/godelclaw-work-delivery@.timer` runs
+`work_delivery_main.metta` independently of model turns. Install its matching
+service template in the user service directory and provide
+`~/.config/godelclaw/runtime.env` plus `work-delivery-NAME.env`. The latter names
+`METTACLAW_WORK_ROOT` (the installed instance), `METTACLAW_INSTANCE` (the same scope
+prefix as its worker), and the matching Python embedding environment. It may also
+set `METTACLAW_WORK_MAIL`, `METTACLAW_MAIL_NAME` and `METTACLAW_MAIL_SPACE`.
+Enable it with `systemctl --user enable --now godelclaw-work-delivery@NAME.timer`.
+Its scan observes worker scopes and retries report mail; it makes no model calls
+and never reruns coding tools.
+
+Deterministic request errors such as HTTP 400 retain the input and a structured
+reason in the cognitive receipt. They wait for changed operator input, model,
+configuration or release identity. Clock ticks do not resend that rejected
+request. `/activity` shows the blockage and the independent control plane queues
+one operator notice. Authentication and transient provider failures retain their
+own recovery and backoff.
+
 Credential redaction, configured chat permissions, occurrence identities for
 message delivery, memory supervision, and the operator stop remain in place.
 An uncertain Telegram delivery never causes an automatic resend and does not

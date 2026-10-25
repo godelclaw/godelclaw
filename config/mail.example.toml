@@ -3,6 +3,8 @@
 # Environment variables and ~ expand locally; relative paths use this file's directory.
 socket = "${XDG_RUNTIME_DIR}/claw-mail/space.sock"
 cetta = "cetta"
-space = "agent-mail"
+# Owners send to their authenticated inbox by default; members use the
+# granted agent-mail append space. Override to address a native agent:
+# space = "agent-mail"
 # Set CLAW_MAIL_AGENT per task/session, or set one default here:
 # agent = "reviewer"

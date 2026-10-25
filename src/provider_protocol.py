@@ -204,12 +204,14 @@ def command_body(protocol, model, tokens, effort, prompt):
     stable = joined(stable)
     system = "".join(stable)
     if protocol == "responses":
-        body = {"model": model, "input": user, "max_output_tokens": int(tokens),
+        items = [{"role": "system", "content": part} for part in stable]
+        items.append({"role": "user", "content": user})
+        body = {"model": model, "input": items, "max_output_tokens": int(tokens),
                 "store": False}
         if str(effort) not in ("default", "", "None"):
             body["reasoning"] = {"effort": str(effort)}
         if stable:
-            body.update(instructions=system, prompt_cache_key=cache_key("openai", model, stable[0]))
+            body["prompt_cache_key"] = cache_key("openai", model, stable[0])
         return "/responses", body
     if protocol != "chat-completions":
         raise ValueError("unsupported provider protocol")
@@ -291,9 +293,11 @@ def responses_body(request, model):
     for message in request["messages"]:
         role = message["role"]
         if role in ("system", "developer"):
-            if items:
-                raise ValueError("system instructions must precede the conversation")
-            system.append(message.get("content", ""))
+            content = message.get("content", "")
+            if not isinstance(content, str):
+                raise ValueError("unsupported Responses instruction content")
+            items.append({"role": role, "content": content})
+            system.append(content)
         elif role == "tool":
             items.append({"type": "function_call_output", "call_id": message["tool_call_id"],
                           "output": message.get("content", "")})
@@ -319,7 +323,7 @@ def responses_body(request, model):
                "store": False, "include": ["reasoning.encrypted_content"]}
     if system:
         text = "\n\n".join(system)
-        payload.update(instructions=text, prompt_cache_key=cache_key("openai", model, text))
+        payload["prompt_cache_key"] = cache_key("openai", model, text)
     if "reasoning" in request:
         payload["reasoning"] = request["reasoning"]
     if request.get("tools"):

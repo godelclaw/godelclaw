@@ -137,7 +137,7 @@ def engine_problem(directory):
     return ""
 
 
-def mark_state(directory, status):
+def mark_state(directory, status, report=None):
     """Set a session's recorded status, keeping the rest of its state."""
     path = Path(str(directory)) / "state.json"
     try:
@@ -145,6 +145,10 @@ def mark_state(directory, status):
     except (OSError, ValueError):
         state = {}
     state["status"] = str(status)
+    if report is not None:
+        state['progress'] = str(report)
+        state['delivery_version'] = 1
+    state['delivery'] = 'none' if status == 'stopped' else 'pending'
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(state))
     os.replace(temporary, path)

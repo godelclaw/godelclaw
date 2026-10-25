@@ -68,8 +68,11 @@ class ChatGPTAgentTests(unittest.TestCase):
         self.assertEqual(body['model'], 'fixture-model')
         self.assertTrue(body['stream']); self.assertFalse(body['store'])
         self.assertNotIn('max_output_tokens', body); self.assertNotIn('stream_options', body)
-        self.assertEqual(body['instructions'], 'stableprefixapi')
-        self.assertEqual(body['input'], [{'role': 'user', 'content': 'user _cache_boundary_ literal'}])
+        self.assertNotIn('instructions', body)
+        self.assertEqual(body['input'], [{'role': 'system', 'content': 'stable'},
+                                         {'role': 'system', 'content': 'prefix'},
+                                         {'role': 'system', 'content': 'api'},
+                                         {'role': 'user', 'content': 'user _cache_boundary_ literal'}])
         self.assertEqual(body['reasoning'], {'effort': 'high'})
         with sqlite3.connect(self.directory/'ledger.db') as db:
             state, canonical = db.execute('SELECT state,result FROM native_calls').fetchone()

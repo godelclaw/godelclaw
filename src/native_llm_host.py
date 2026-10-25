@@ -47,6 +47,16 @@ def enabled():
                       and os.environ.get("METTACLAW_ACTIVE_ENGINE") == "cetta") else "false"
 
 
+def request_allowed():
+    import provider_rejection
+    return "false" if provider_rejection.blocked() else "true"
+
+
+def correction_context():
+    import provider_rejection
+    return provider_rejection.context()
+
+
 def coding_session():
     """Coding scopes outlive the agent process and have their own stop/resume.
 
@@ -134,6 +144,7 @@ def _plan(kind, model, tokens, builder, *, native_ledger=False):
         import strategy_host
         captured_guard = strategy_host.guard() if strategy_host.enabled() else None
         return SimpleNamespace(kind=kind, encoding="default", ready="true", correlation=ticket, protocol=provider["protocol"],
+            correction_context=correction_context() if kind == "command" else None,
             native_ledger=bool(native_ledger), max_output=int(tokens),
             request_fingerprint=fingerprint, wire_model=str(request.get("model", selected)),
             activity=call_scope(), lane=call_lane(),
@@ -167,12 +178,13 @@ def command_plan(model, tokens, effort, prompt, *, native_ledger=False):
                 raise ValueError("Anthropic cache TTL must be 5m or 1h")
             if ttl != "5m":
                 result["cache_ttl"] = ttl
-        elif model_commentary.enabled():
+        elif protocol == "responses" or model_commentary.enabled():
             stable = provider_protocol.joined(stable)
-            messages = ([{"role": "system", "content": "".join(stable)}] if stable else [])
+            parts = stable if protocol == "responses" else (["".join(stable)] if stable else [])
+            messages = [{"role": "system", "content": part} for part in parts]
             messages.append({"role": "user", "content": user})
             result = dict(model=selected, max_tokens=int(tokens), messages=messages,
-                          role_policy="merge-system-developer")
+                          role_policy="preserve" if protocol == "responses" else "merge-system-developer")
             if stable and protocol == "responses":
                 result["extensions"] = {"prompt_cache_key":
                     provider_protocol.cache_key("openai", selected, stable[0])}
@@ -188,7 +200,7 @@ def command_plan(model, tokens, effort, prompt, *, native_ledger=False):
             result.update(tools=[model_commentary.tool_schema()], tool_choice="auto")
         return result
     plan = _plan("command", model, tokens, conversation, native_ledger=native_ledger)
-    if getattr(plan, "protocol", "") == "anthropic" or model_commentary.enabled():
+    if getattr(plan, "protocol", "") in ("anthropic", "responses") or model_commentary.enabled():
         plan.encoding = "messages"
     plan.prompt_layout = provider_protocol.prompt_observation(prompt)
     plan.cache_boundaries = provider_protocol.cache_boundaries(provider_protocol.split_prompt(prompt)[0])
@@ -426,7 +438,9 @@ def structured_plan(request, *, native_ledger=False):
         if protocol == "chat-completions":
             # Keep the imported compatible-provider request layout explicit.
             result["chat_profile"] = "compatible"
-        if protocol in ("anthropic", "responses"):
+        if protocol == "responses":
+            result["role_policy"] = "preserve"
+        elif protocol == "anthropic":
             # The imported loops already use this mapping. The generic library
             # preserves developer roles unless a caller explicitly selects it.
             result["role_policy"] = "merge-system-developer"
@@ -516,6 +530,10 @@ def wait_settings():
 
 def wire_body(plan, body):
     value = json.loads(str(body))
+    if getattr(plan, 'kind', None) == 'command' and plan.protocol == 'responses':
+        # Command turns rebuild context from their ledger; only structured
+        # coding conversations replay opaque reasoning items to the provider.
+        value.pop('include', None)
     plan.call_context = dict(
         call_id=plan.correlation,
         provider="chatgpt" if getattr(plan, "request_profile", "") == "chatgpt-plan" else plan.provider,
@@ -706,22 +724,8 @@ def _one_line(text, limit):
 def provider_error(plan, body):
     """The provider's own code and message for a rejected request, as Codex
     shows them. Request bytes are never logged; long bodies are cut."""
-    text = str(body)
-    try:
-        value = json.loads(text)
-    except ValueError:
-        value = None
-    code = message = ""
-    if isinstance(value, dict):
-        error = value.get("error", value)
-        if isinstance(error, dict):
-            code = str(error.get("code") or error.get("type") or "")
-            message = str(error.get("message") or "")
-        if not message and isinstance(value.get("detail"), str):
-            message = value["detail"]
-    elif text.strip():
-        message = text
-    plan.provider_error = (_one_line(code, 64), _one_line(message, 400))
+    import provider_rejection
+    plan.provider_error = provider_rejection.error_fields(body)
     return 1
 
 
@@ -782,6 +786,9 @@ def failed(plan, correlation, kind, status=0):
             retry_after=getattr(error, "retry_after", -1), reason="provider-failure")
         raise RuntimeError("context compaction provider failed: " + type(error).__name__) from None
     if plan.kind == "command":
+        import provider_rejection
+        code, message = getattr(plan, "provider_error", ("", ""))
+        provider_rejection.record(int(status), code, message, getattr(plan, "correction_context", None))
         return synthetic_llm._empty_action(error)
     synthetic_llm._empty_action(error)
     if os.environ.get("METTACLAW_MODE_RUNTIME"):

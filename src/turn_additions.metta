@@ -4,6 +4,7 @@
 !(import! &self ./src/model_commentary.py)
 !(import! &self ./src/strategy_host.py)
 !(import! &self ./src/instance_hooks.metta)
+!(import! &self ./src/interop_flags_cetta.metta)
 ;; The native pins context view needs its own libraries, not whichever module
 ;; happened to load them first. On SWI-PeTTa it is never asked (see below).
 !(import! &self ./src/pins_context_cetta.metta)
@@ -43,8 +44,7 @@
           ($pins (addition-pins-views)))
      (union-atom $action $pins)))
 (= (addition-chat-mode?)
-   (case (py-call (strategy_host.conversation_mode))
-     (("chat" True) (chat True) ($other False))))
+   (== (host:text (py-call (strategy_host.conversation_mode))) "chat"))
 (= (addition-context-sources)
    (let $views (addition-context-views)
      (if (tg:client-metta?)

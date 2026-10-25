@@ -162,6 +162,7 @@ def main(argv=None):
     for command in commands.choices.values():
         command.add_argument('--json', action='store_true', default=argparse.SUPPRESS,
                              help=argparse.SUPPRESS)
+        command.add_argument('--space', default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if not args.socket or not args.cetta:
         parser.error('choose socket and cetta in arguments, environment, or mail.toml')

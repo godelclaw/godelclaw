@@ -669,7 +669,8 @@ class CodingSessionTests(unittest.TestCase):
     def dead_session_fixture(self):
         sent = self.directory / "sent.txt"
         mailer = self.directory / "mailer"
-        mailer.write_text('#!/bin/sh\nprintf "%s|%s|%s\\n" "$CLAW_MAIL_AGENT" "$2" "$3" >> ' + str(sent) + '\n')
+        mailer.write_text('#!/bin/sh\nprintf "%s|%s|%s\\n" "$CLAW_MAIL_AGENT" "$2" "$3" >> ' + str(sent) +
+                          '\nprintf \'{"status":"accepted","id":"%s"}\\n\' "$5"\n')
         mailer.chmod(0o755)
         self.env.update(METTACLAW_WORK_MAIL=str(mailer))
         runner = self.directory / "runner"
@@ -681,6 +682,16 @@ class CodingSessionTests(unittest.TestCase):
             (folder / "state.json").write_text(json.dumps({"status": status, "steps": 7, "progress": "$ make test", "inbox": 0}))
             (folder / "plan.json").write_text('{"plan":[{"step":"build","status":"in_progress"}]}')
         return runner, sessions / "work-dead-fixture", sessions / "work-done-fixture", sent
+
+    def delivery_receipt(self, session):
+        records = list((session / 'report-outbox').glob('*.json'))
+        self.assertEqual(len(records), 1)
+        path = records[0]
+        item = json.loads(path.read_text())
+        accepted = path.with_suffix('.json.accepted').exists()
+        error = path.with_suffix('.json.error')
+        return {'delivery_id': item['id'], 'delivery': 'delivered' if accepted else 'pending',
+                'delivery_error': '' if accepted or not error.exists() else error.read_text()}
 
     def test_a_session_that_died_is_recorded_and_its_requester_told_once(self):
         active, launches = self.fake_work_scope()
@@ -694,7 +705,8 @@ class CodingSessionTests(unittest.TestCase):
         self.assertIn("(Reaped 1)", result.stdout)
         self.assertIn("(Again 0)", result.stdout)
         dead_state = json.loads((dead / "state.json").read_text())
-        self.assertEqual((dead_state["status"], dead_state["delivery"]), ("interrupted", "delivered"))
+        self.assertEqual(dead_state["status"], "interrupted")
+        self.assertEqual(self.delivery_receipt(dead)['delivery'], 'delivered')
         report = (dead / "report.txt").read_text()
         self.assertIn("ended without finishing", report)
         self.assertIn("$ make test", report)
@@ -721,8 +733,9 @@ class CodingSessionTests(unittest.TestCase):
         result = self.run_probe('!(println! (Ended (coding:announce ' + json.dumps(str(done)) + ' "done")))\n',
                                 module="coding_work.metta", cwd=runner)
         self.assertIn("(Ended \"pending\")", result.stdout)
-        state = json.loads((done / "state.json").read_text())
-        self.assertEqual((state["status"], state["delivery"]), ("done", "pending"))
+        state = self.delivery_receipt(done)
+        self.assertEqual(json.loads((done / "state.json").read_text())['status'], 'done')
+        self.assertEqual(state["delivery"], "pending")
         self.assertIn("mailer exited 75: mail service down", state["delivery_error"])
         self.assertRegex(state["delivery_id"], r"^[0-9a-f]{32}$")
         self.assertFalse(sent.exists())
@@ -731,7 +744,7 @@ class CodingSessionTests(unittest.TestCase):
         active.write_text("")  # the running fixture session is still alive
         self.run_probe('!(println! (First (work:reap)))\n!(println! (Second (work:reap)))\n',
                        module="coding_work.metta", cwd=runner)
-        retried = json.loads((done / "state.json").read_text())
+        retried = self.delivery_receipt(done)
         self.assertEqual((retried["delivery"], retried["delivery_id"], retried["delivery_error"]),
                          ("delivered", state["delivery_id"], ""))
         mail = sent.read_text()
@@ -748,6 +761,85 @@ class CodingSessionTests(unittest.TestCase):
         self.assertIn("(Reaped 0)", result.stdout)
         self.assertFalse(sent.exists())
         self.assertNotIn("delivery", json.loads((done / "state.json").read_text()))
+
+    def run_report_watcher(self, runner):
+        result = subprocess.run([os.environ['CETTA_BIN'], '--lang', 'petta', '--quiet',
+                                 str(ROOT / 'work_delivery_main.metta')], cwd=runner,
+                                env=self.env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn('(work:reap)', result.stdout)
+        return result
+
+    def test_independent_watcher_recovers_finish_before_announce_without_parent(self):
+        active, launches = self.fake_work_scope()
+        runner, dead, done, sent = self.dead_session_fixture()
+        active.write_text('')
+        state = {'status': 'done', 'steps': 7, 'progress': 'Report committed before announce.',
+                 'updated': 1234, 'delivery': 'pending', 'delivery_version': 1}
+        (done / 'state.json').write_text(json.dumps(state))
+        before = (done / 'state.json').read_bytes()
+        working = self.env['METTACLAW_WORK_MAIL']
+        broken = self.directory / 'unavailable-mailer'
+        broken.write_text('#!/bin/sh\nexit 75\n')
+        broken.chmod(0o755)
+        self.env['METTACLAW_WORK_MAIL'] = str(broken)
+        self.server.status = 400  # No parent inference is available or needed.
+        self.run_report_watcher(runner)
+        pending = self.delivery_receipt(done)
+        self.assertEqual(pending['delivery'], 'pending')
+        self.env['METTACLAW_WORK_MAIL'] = working
+        self.run_report_watcher(runner)
+        self.run_report_watcher(runner)
+        self.assertEqual(self.delivery_receipt(done)['delivery'], 'delivered')
+        self.assertEqual((done / 'state.json').read_bytes(), before)
+        self.assertEqual(sent.read_text().count('work-done-fixture|'), 1)
+        self.assertIn('Report committed before announce.', sent.read_text())
+        self.assertEqual(self.server.requests, [])
+
+    def test_zero_exit_without_matching_mail_receipt_remains_pending(self):
+        active, launches = self.fake_work_scope()
+        runner, dead, done, sent = self.dead_session_fixture()
+        active.write_text('')
+        (done / 'state.json').write_text(json.dumps({'status': 'done', 'steps': 7,
+            'progress': 'Keep this report.', 'delivery': 'pending', 'delivery_version': 1}))
+        for response in ('not JSON', '{"status":"accepted","id":"wrong"}',
+                         '{"status":"error","id":"wrong"}'):
+            with self.subTest(response=response):
+                mailer = Path(self.env['METTACLAW_WORK_MAIL'])
+                mailer.write_text('#!/bin/sh\nprintf \'%s\\n\' ' + __import__('shlex').quote(response) + '\n')
+                self.run_report_watcher(runner)
+                receipt = self.delivery_receipt(done)
+                self.assertEqual(receipt['delivery'], 'pending')
+                self.assertIn('matching acceptance receipt', receipt['delivery_error'])
+        self.assertEqual(self.server.requests, [])
+
+    def test_resumed_session_keeps_pending_message_bytes_without_state_overwrite(self):
+        active, launches = self.fake_work_scope()
+        runner, dead, done, sent = self.dead_session_fixture()
+        active.write_text('')
+        state = {'status': 'done', 'steps': 7, 'progress': 'OLD_ENDING',
+                 'updated': 1234, 'delivery': 'pending', 'delivery_version': 1}
+        (done / 'state.json').write_text(json.dumps(state))
+        self.run_probe('!(delivery:preserve ' + json.dumps(str(done)) + ')\n',
+                       module='coding_work.metta', cwd=runner)
+        running = json.dumps({**state, 'status': 'running', 'progress': 'NEW_WORK', 'delivery': 'none'})
+        (done / 'state.json').write_text(running)
+        (done / 'report.txt').write_text('A different report')
+        self.run_report_watcher(runner)
+        self.assertEqual((done / 'state.json').read_text(), running)
+        self.assertIn('OLD_ENDING', sent.read_text())
+        self.assertNotIn('NEW_WORK', sent.read_text())
+        self.assertEqual(self.server.requests, [])
+
+    def test_report_written_before_terminal_state_survives_dead_worker(self):
+        active, launches = self.fake_work_scope()
+        runner, dead, done, sent = self.dead_session_fixture()
+        (dead / 'report.txt').write_text('SAVED_BEFORE_PROCESS_DIED')
+        self.run_report_watcher(runner)
+        self.assertEqual(json.loads((dead / 'state.json').read_text())['status'], 'interrupted')
+        self.assertIn('SAVED_BEFORE_PROCESS_DIED', (dead / 'report.txt').read_text())
+        self.assertIn('SAVED_BEFORE_PROCESS_DIED', sent.read_text())
+
 
     def test_the_next_turn_reaps_a_dead_session(self):
         active, launches = self.fake_work_scope()
@@ -1011,7 +1103,8 @@ class CodingSessionTests(unittest.TestCase):
         workspace.mkdir()
         sent = self.directory / "sent.txt"
         mailer = self.directory / "mailer"
-        mailer.write_text('#!/bin/sh\nprintf "%s|%s|%s\\n" "$CLAW_MAIL_AGENT" "$2" "$3" >> ' + str(sent) + '\n')
+        mailer.write_text('#!/bin/sh\nprintf "%s|%s|%s\\n" "$CLAW_MAIL_AGENT" "$2" "$3" >> ' + str(sent) +
+                          '\nprintf \'{"status":"accepted","id":"%s"}\\n\' "$5"\n')
         mailer.chmod(0o755)
         self.env.update(METTACLAW_WORK_MAIL=str(mailer), METTACLAW_MAIL_NAME="requester-fixture",
                         CETTA_BIN=os.environ["CETTA_BIN"])

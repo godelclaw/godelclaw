@@ -5,9 +5,14 @@ py-call result compared with a String literal, directly or through a variable
 bound to it, and a case over a py-call result whose String pattern lacks the
 same text as a Symbol. Convert with (format-args "{}" (...)) or match both."""
 import json
+import os
 from pathlib import Path
 import re
+import subprocess
+import sys
+import tempfile
 import unittest
+from isolated_env import isolated_environ
 
 ROOT = Path(__file__).resolve().parents[1]
 LITERAL = r'"(?:[^"\\]|\\.)*"'
@@ -106,6 +111,36 @@ class HostBoundaryTests(unittest.TestCase):
         self.assertEqual(problems('(= (a) (case (py-call (m.f)) (("chat" 1) (chat 1) ($other 0))))'), [])
         self.assertEqual(problems('(= (a) (== (format-args "{}" ((py-call (m.f)))) "chat"))'), [])
         self.assertEqual(problems('; (== (py-call (m.f)) "chat")\n(= (a) "(== (py-call (m.f)) \\"x\\")")'), [])
+
+
+@unittest.skipUnless(os.environ.get('CETTA_BIN'), 'set CETTA_BIN to a Python-enabled engine')
+class NativeHostTextTests(unittest.TestCase):
+    def test_bridge_and_native_text_have_one_kind_and_identical_contents(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            module = root / 'text_fixture.py'
+            module.write_text('def text():\n    return \'λ "quoted"\\nchat\'\n')
+            script = root / 'probe.metta'
+            script.write_text('\n'.join([
+                '!(import! &self (library lib_import))',
+                '!(import! &self ' + json.dumps(str(ROOT / 'src/interop_flags_cetta.metta')) + ')',
+                '!(import! &self ' + json.dumps(str(module)) + ')',
+                '!(println! (TEXT (== (host:text (py-call (text_fixture.text))) "λ \\"quoted\\"\\nchat")))',
+                '!(println! (KIND (get-type (host:text (py-call (text_fixture.text))))))',
+                '!(println! (NATIVE (== (host:text "chat") "chat")))',
+                '!(println! (SYMBOL (== (host:text chat) "chat")))',
+                '!(println! (NUMBER (host:text 123)))',
+                '!(println! (EXPRESSION (host:text (data value))))',
+            ]) + '\n')
+            env = {**isolated_environ(), 'PYTHONHOME': sys.prefix,
+                   'PYTHONPATH': str(root), 'LD_LIBRARY_PATH': str(Path(sys.prefix) / 'lib')}
+            result = subprocess.run([os.environ['CETTA_BIN'], '--lang', 'petta', '--quiet', str(script)],
+                                    capture_output=True, text=True, env=env, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            for expected in ('(TEXT true)', '(KIND String)', '(NATIVE true)', '(SYMBOL true)',
+                             '(NUMBER (Error host:text expected-text))',
+                             '(EXPRESSION (Error host:text expected-text))'):
+                self.assertIn(expected, result.stdout)
 
 
 if __name__ == "__main__":

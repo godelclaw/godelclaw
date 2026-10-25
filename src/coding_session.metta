@@ -58,6 +58,8 @@
      (json-stringify (JsonObject ((JsonPair "status" (JsonString $status))
                                   (JsonPair "steps" (JsonNumber (repr $steps)))
                                   (JsonPair "progress" (JsonString $progress))
+                                  (JsonPair "delivery" (JsonString (if (== $status "running") "none" "pending")))
+                                  (JsonPair "delivery_version" (JsonNumber "1"))
                                   (JsonPair "inbox" (JsonNumber (repr $inbox)))
                                   (JsonPair "updated" (JsonNumber (repr (coding:now)))))))
      "" ""))

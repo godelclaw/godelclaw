@@ -48,6 +48,9 @@ def scenario(**overrides):
 
 
 SCENARIOS = {
+    "provider-rejected": scenario(health={"schema": 2, "obligation_since": NOW - 40,
+        "in_flight_since": 0, "retry_at": 0, "last_outcome": "failed",
+        "provider_rejection": {"status": 400, "code": "invalid_input", "message": "Field too long"}}),
     "waiting": scenario(),
     "recording": scenario(health={"schema": 2, "obligation_since": NOW - 40,
                                   "in_flight_since": NOW - 12.7, "retry_at": 0,

@@ -638,8 +638,7 @@ def retained():
 
 
 class ProviderErrorTests(unittest.TestCase):
-    """Each provider's error shape yields one bounded line; bodies that are
-    not JSON keep only their text."""
+    """Retain bounded structured reasons without logging arbitrary bodies."""
 
     def reason(self, body):
         import types
@@ -657,12 +656,12 @@ class ProviderErrorTests(unittest.TestCase):
                          ("overloaded_error", "Overloaded"))
         self.assertEqual(self.reason(json.dumps({"detail": "Unsupported model"})), ("", "Unsupported model"))
 
-    def test_other_bodies_are_one_bounded_line(self):
+    def test_unstructured_bodies_are_not_logged(self):
         code, message = self.reason("<html>\n<body>Bad\tGateway</body>\x00</html>")
-        self.assertEqual((code, message), ("", "<html> <body>Bad Gateway</body> </html>"))
+        self.assertEqual((code, message), ("", "Non-JSON provider rejection"))
         code, message = self.reason("x" * 5000)
-        self.assertEqual(len(message), 401)
-        self.assertEqual(self.reason(""), ("", ""))
+        self.assertEqual(message, "Non-JSON provider rejection")
+        self.assertEqual(self.reason(""), ("", "Non-JSON provider rejection"))
 
 
 if __name__ == "__main__":

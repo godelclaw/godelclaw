@@ -1,12 +1,7 @@
-; A session's report reaches its requester by mail. How a session ended and
-; whether its report was handed over are separate durable facts in its
-; state.json: `status` records the ending, `delivery` records `delivered` or
-; `pending`, with the mail's id and the last error. The reaper retries a
-; pending delivery at the next turn, so a report is not lost while the mail
-; service or the requester is down. Every attempt sends the same occurrence id,
-; so the requester gets one mail however many attempts it took. Sessions
-; recorded before delivery was tracked have no `delivery` and are not mailed
-; again.
+; Completion and mail acceptance are different facts. The worker commits a
+; pending ending in state.json; report-outbox holds immutable message bodies
+; and separate accepted receipts. A notifier never rewrites worker state.
+; Retries share one occurrence id, including after a crash or session resume.
 !(import! &self (library fs))
 !(import! &self (library path))
 !(import! &self (library proc))
@@ -24,49 +19,90 @@
 (= (delivery:text $value)
    (case $value (((JsonString $text) $text) ((JsonNumber $text) $text) ($other ""))))
 (= (delivery:last $items) (if (== (cdr-atom $items) ()) (car-atom $items) (delivery:last (cdr-atom $items))))
-(= (delivery:append $first $second)
-   (if (== $first ()) $second (cons-atom (car-atom $first) (delivery:append (cdr-atom $first) $second))))
-(= (delivery:own? $name)
-   (or (== $name "delivery") (or (== $name "delivery_id") (== $name "delivery_error"))))
-(= (delivery:others $pairs)
-   (if (== $pairs ()) ()
-     (let* (((JsonPair $name $value) (car-atom $pairs)) ($rest (delivery:others (cdr-atom $pairs))))
-       (if (delivery:own? $name) $rest (cons-atom (JsonPair $name $value) $rest)))))
-(= (delivery:record $dir $outcome $mail $error)
-   (let* (($path (path:join $dir "state.json"))
-          ($kept (case (delivery:json $path) (((JsonObject $pairs) (delivery:others $pairs)) ($other ()))))
-          ($own ((JsonPair "delivery" (JsonString $outcome)) (JsonPair "delivery_id" (JsonString $mail))
-                 (JsonPair "delivery_error" (JsonString $error))))
-          ($_ (fs:update-text $path "replace" (json-stringify (JsonObject (delivery:append $kept $own))) "" "")))
-     $outcome))
-(= (delivery:failure $result)
-   (case $result
-     (((proc:exited $code $out $err) (str:join "" ("mailer exited " (repr $code) ": " (str:trim (str:concat $out $err)))))
-      ((proc:signaled $signal $out $err) (str:concat "mailer killed by signal " (repr $signal)))
-      ((proc:timed-out $out $err) "mailer timed out")
-      ($other (str:concat "mailer did not run: " (repr $other))))))
+(= (delivery:outbox $dir) (path:join $dir "report-outbox"))
+(= (delivery:space $task $requester)
+   (case (delivery:field $task "requester_space")
+     (((JsonString $space) $space)
+      ($other (if (== $requester (system:getenv-or-default "METTACLAW_MAIL_NAME" ""))
+                (system:getenv-or-default "METTACLAW_MAIL_SPACE" "agent-mail") "")))))
+(= (delivery:report $dir $state)
+   (if (== (delivery:field $state "delivery_version") (JsonNumber "1"))
+     (delivery:text (delivery:field $state "progress"))
+     (if (fs:is-file (path:join $dir "report.txt")) (fs:read-text (path:join $dir "report.txt")) "")))
 
-; The report mail, sent or retried. With no requester there is nothing to hand
-; over, and nothing is recorded.
-(= (coding:deliver $dir $status)
+; Read all message facts from one ending snapshot. Once queued, neither a
+; changed report.txt nor a running/resumed worker can change those bytes.
+(= (delivery:prepare $dir $state $status)
    (let* (($task (delivery:json (path:join $dir "task.json")))
           ($requester (delivery:text (delivery:field $task "requester"))))
-     (if (== $requester "") "none"
+     (if (== $requester "") ""
        (let* (($id (delivery:last (str:split "/" $dir)))
-              ($steps (delivery:text (delivery:field (delivery:json (path:join $dir "state.json")) "steps")))
-              ($report (if (fs:is-file (path:join $dir "report.txt")) (fs:read-text (path:join $dir "report.txt")) ""))
-              ($text (str:join "" ("Work " $id " " $status " after " (if (== $steps "") "0" $steps) " steps. Task: "
-                                   (delivery:text (delivery:field $task "task")) "\n\nReport:\n" $report)))
-              ($mail (str:char-slice (str:sha256 (str:join ":" ($id $status $report))) 0 32))
-              ($mailer (system:getenv-or-default "METTACLAW_WORK_MAIL" "claw-mail"))
-              ($result (proc:run ("env" (str:concat "CLAW_MAIL_AGENT=" $id) $mailer "send" $requester $text "--id" $mail)
-                                 $dir inherit 60000 0 "merged")))
-         (case $result
-           (((proc:exited 0 $out $err) (delivery:record $dir "delivered" $mail ""))
-            ($failed (delivery:record $dir "pending" $mail (delivery:failure $failed)))))))))
+              ($steps (delivery:text (delivery:field $state "steps")))
+              ($report (delivery:report $dir $state))
+              ($previous (delivery:text (delivery:field $state "delivery_id")))
+              ($mail (if (== $previous "")
+                       (str:char-slice (str:sha256 (json-stringify
+                         (JsonArray ((JsonString $id) (JsonString $status) (JsonString $report)
+                                     (delivery:field $state "updated"))))) 0 32) $previous))
+              ($path (path:join (delivery:outbox $dir) (str:concat $mail ".json")))
+              ($text (str:join "" ("Work " $id " " $status " after " (if (== $steps "") "0" $steps)
+                                   " steps. Task: " (delivery:text (delivery:field $task "task"))
+                                   "\n\nReport:\n" $report)))
+              ($envelope (JsonObject ((JsonPair "id" (JsonString $mail)) (JsonPair "from" (JsonString $id))
+                                     (JsonPair "to" (JsonString $requester)) (JsonPair "text" (JsonString $text))
+                                     (JsonPair "space" (JsonString (delivery:space $task $requester))))))
+              ($_ (if (fs:is-file $path) ()
+                    (let $_ (proc:run ("mkdir" "-p" "--" (delivery:outbox $dir)) $dir inherit 10000 0 "separate")
+                      (fs:update-text $path "replace" (json-stringify $envelope) "" "")))))
+         $path))))
 
-; A session's ending: its report mail, and a note in the public worklog when a
-; worklog command is configured. Retries only resend the mail.
+(= (delivery:accepted? $text $id)
+   (let* (($receipt (json-parse $text))
+          ($status (delivery:text (delivery:field $receipt "status"))))
+     (and (== (delivery:field $receipt "id") (JsonString $id))
+          (or (== $status "accepted") (== $status "duplicate")))))
+(= (delivery:failure $result)
+   (case $result
+     (((proc:exited 0 $out $err) "mailer returned no matching acceptance receipt")
+      ((proc:exited $code $out $err) (str:join "" ("mailer exited " (repr $code) ": " (str:trim $err))))
+      ((proc:signaled $signal $out $err) (str:concat "mailer killed by signal " (repr $signal)))
+      ((proc:timed-out $out $err) "mailer timed out")
+      ($other "mailer did not run"))))
+(= (delivery:attempt $dir $path)
+   (if (== $path "") "none"
+     (if (fs:is-file (str:concat $path ".accepted")) "delivered"
+       (let* (($item (delivery:json $path))
+              ($id (delivery:text (delivery:field $item "id")))
+              ($mailer (system:getenv-or-default "METTACLAW_WORK_MAIL" "claw-mail")))
+         (if (== $id "") "pending"
+           (let $result (proc:run ("env" (str:concat "CLAW_MAIL_AGENT=" (delivery:text (delivery:field $item "from")))
+                           $mailer "send" (delivery:text (delivery:field $item "to"))
+                           (delivery:text (delivery:field $item "text")) "--id" $id "--json" "--space"
+                           (delivery:text (delivery:field $item "space"))) $dir inherit 60000 0 "separate")
+             (case $result
+               (((proc:exited 0 $out $err)
+                 (if (delivery:accepted? $out $id)
+                   (let $_ (fs:update-text (str:concat $path ".accepted") "replace" $out "" "")
+                     (if (fs:is-file (str:concat $path ".accepted")) "delivered" "pending"))
+                   (delivery:pending-error $path (delivery:failure $result))))
+                ($failed (delivery:pending-error $path (delivery:failure $failed)))))))))))
+(= (delivery:pending-error $path $why)
+   (let $_ (fs:update-text (str:concat $path ".error") "replace" $why "" "") "pending"))
+(= (delivery:preserve $dir)
+   (let $state (delivery:json (path:join $dir "state.json"))
+     (if (== (delivery:field $state "delivery") (JsonString "pending"))
+       (delivery:prepare $dir $state (delivery:text (delivery:field $state "status"))) "")))
+(= (delivery:flush $dir)
+   (if (fs:exists (delivery:outbox $dir))
+     (delivery:flush-names $dir (fs:entries (delivery:outbox $dir))) 0))
+(= (delivery:flush-names $dir $names)
+   (if (== $names ()) 0
+     (let* (($name (car-atom $names))
+            ($_ (if (str:ends-with $name ".json") (delivery:attempt $dir (path:join (delivery:outbox $dir) $name)) ())))
+       (delivery:flush-names $dir (cdr-atom $names)))))
+
+(= (coding:deliver $dir $status)
+   (delivery:attempt $dir (delivery:prepare $dir (delivery:json (path:join $dir "state.json")) $status)))
 (= (coding:announce $dir $status)
    (let* (($outcome (coding:deliver $dir $status))
           ($worklog (system:getenv-or-default "METTACLAW_WORKLOG_COMMAND" ""))
