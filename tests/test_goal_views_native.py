@@ -185,7 +185,7 @@ class GoalViewsTest(unittest.TestCase):
     @unittest.expectedFailure
     def test_capability_gap_json_nonfinite_mood(self):
         # Python's non-standard JSON extension; never count this as parity.
-        self.compare("affect_view", [self.step(goal(), mood=b'{"mood":{"C":NaN}}')])
+        self.compare("affect_view", [self.step(goal(), mood=b'{"mood":{"Cn":0.5,"C":NaN,"Ct":-0.25}}')])
 
     @unittest.expectedFailure
     def test_capability_gap_json_unused_lone_surrogate(self):
@@ -198,7 +198,6 @@ class GoalViewsTest(unittest.TestCase):
             ("9" * 400, "9" * 400 + ".5", "-" + "9" * 400,
              "٩" * 400 + ".٥", "0." + "0" * 400 + "5")])
 
-    @unittest.expectedFailure
     def test_capability_gap_json_exponent_overflow(self):
         self.compare("affect_view", [self.step(goal(), mood=b'{"mood":{"C":1e400}}')])
 
