@@ -13,10 +13,14 @@ A patch is
     *** End of File             optional: the hunk ends at the end of the file
     *** End Patch
 
-Paths are relative to the workspace or absolute. Every file is checked before
-any is written, so a patch applies whole or not at all. A hunk's context is
-matched exactly, then ignoring trailing whitespace, then ignoring surrounding
-whitespace, as Codex matches it.
+Paths are relative to the workspace or absolute, and no two operations may
+target the same file. Every hunk is checked and every new content is staged
+beside its target before any target changes, so a failure up to that point
+leaves the files as they were. The final renames are not atomic as a group: a
+failure among them is reported with what was and was not applied. A hunk's
+context is matched exactly, then ignoring trailing whitespace, then ignoring
+surrounding whitespace, then also mapping typographic dashes, quotes and
+spaces to ASCII, as Codex matches it.
 """
 import os
 from pathlib import Path
@@ -81,11 +85,22 @@ def _parse(text):
     return operations
 
 
+# Codex's loosest pass: dashes and minus to "-", single and double quotes to
+# ASCII quotes, and non-breaking and typographic spaces to a space.
+_TYPOGRAPHIC = str.maketrans(
+    {**{c: "-" for c in "\u2010\u2011\u2012\u2013\u2014\u2015\u2212"},
+     **{c: "'" for c in "\u2018\u2019\u201a\u201b"},
+     **{c: '"' for c in "\u201c\u201d\u201e\u201f"},
+     **{c: " " for c in "\u00a0\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+                         "\u202f\u205f\u3000"}})
+
+
 def _find(lines, block, start, eof):
     """The index where block occurs at or after start, trying looser matches."""
     if not block:
         return len(lines) if eof else start
-    for normal in (lambda s: s, lambda s: s.rstrip(), lambda s: s.strip()):
+    for normal in (lambda s: s, lambda s: s.rstrip(), lambda s: s.strip(),
+                   lambda s: s.strip().translate(_TYPOGRAPHIC)):
         wanted = [normal(x) for x in block]
         last = len(lines) - len(block)
         candidates = [last] if eof else range(start, last + 1)
@@ -125,18 +140,38 @@ def _updated(path, text, hunks):
     return "\n".join(lines) + ("\n" if trailing or not lines else "")
 
 
-def _write(path, text):
-    path.parent.mkdir(parents=True, exist_ok=True)
+def _stage(path, text, created):
+    """Write text beside path under a fresh name; record directories it creates."""
+    missing = [parent for parent in reversed(path.parents) if not parent.exists()]
+    for directory in missing:
+        directory.mkdir()
+        created.append(directory)
     handle, temporary = tempfile.mkstemp(dir=path.parent, prefix="." + path.name + ".")
-    with os.fdopen(handle, "w", encoding="utf-8") as stream:
-        stream.write(text)
-    if path.exists():
-        os.chmod(temporary, path.stat().st_mode & 0o7777)
-    os.replace(temporary, path)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            stream.write(text)
+        if path.exists():
+            os.chmod(temporary, path.stat().st_mode & 0o7777)
+    except BaseException:
+        os.unlink(temporary)
+        raise
+    return temporary
+
+
+def _discard(staged, created):
+    for temporary in staged:
+        if temporary is not None and os.path.exists(temporary):
+            os.unlink(temporary)
+    for directory in reversed(created):
+        try:
+            directory.rmdir()
+        except OSError:
+            pass
 
 
 def apply(patch, workdir="."):
-    """Apply the patch; return a receipt, or 'Patch failed: reason' with nothing written."""
+    """Apply the patch and return a receipt; 'Patch failed: reason' means nothing
+    was written, and 'Patch partly applied' names what was and was not applied."""
     try:
         base = Path(str(workdir)).expanduser()
         resolve = lambda name: (Path(name).expanduser() if os.path.isabs(os.path.expanduser(name))
@@ -147,28 +182,50 @@ def apply(patch, workdir="."):
             if kind == "add":
                 if target.exists():
                     raise PatchError("%s already exists" % operation[1])
-                planned.append(("write", target, "\n".join(operation[2]) + "\n"))
+                planned.append(("write", target, "\n".join(operation[2]) + "\n", operation[1]))
                 receipt.append("A " + operation[1])
             elif kind == "delete":
                 if not target.is_file():
                     raise PatchError("%s does not exist" % operation[1])
-                planned.append(("remove", target, None))
+                planned.append(("remove", target, None, operation[1]))
                 receipt.append("D " + operation[1])
             else:
                 if not target.is_file():
                     raise PatchError("%s does not exist" % operation[1])
                 text = _updated(operation[1], target.read_text(encoding="utf-8"), operation[3])
                 if operation[2]:
-                    planned += [("write", resolve(operation[2]), text), ("remove", target, None)]
+                    planned += [("write", resolve(operation[2]), text, operation[2]),
+                                ("remove", target, None, operation[1])]
                     receipt.append("M %s -> %s" % (operation[1], operation[2]))
                 else:
-                    planned.append(("write", target, text))
+                    planned.append(("write", target, text, operation[1]))
                     receipt.append("M " + operation[1])
-        for action, target, text in planned:
-            if action == "write":
-                _write(target, text)
-            else:
-                target.unlink()
+        seen = set()
+        for action, target, text, name in planned:
+            key = target.resolve()
+            if key in seen:
+                raise PatchError("multiple operations target %s" % name)
+            seen.add(key)
+        staged, created = [], []
+        try:
+            for action, target, text, name in planned:
+                staged.append(_stage(target, text, created) if action == "write" else None)
+        except BaseException:
+            _discard(staged, created)
+            raise
+        done = []
+        for (action, target, text, name), temporary in zip(planned, staged):
+            try:
+                if action == "write":
+                    os.replace(temporary, target)
+                else:
+                    target.unlink()
+            except OSError as error:
+                _discard(staged, [])
+                rest = [n for _, _, _, n in planned[len(done):]]
+                return ("Patch partly applied: %s\nApplied: %s\nNot applied: %s"
+                        % (error, ", ".join(done) or "nothing", ", ".join(rest)))
+            done.append(name)
         return "Success. Updated the following files:\n" + "\n".join(receipt)
-    except (PatchError, OSError, UnicodeDecodeError) as error:
+    except (PatchError, OSError, UnicodeError) as error:
         return "Patch failed: " + str(error)
