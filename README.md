@@ -945,10 +945,12 @@ an empty marker list disables ancestor discovery. The loader does not import
 another coding client's personal configuration.
 
 The session saves the complete decoded text, source paths and text hashes in
-`guidance.json` before publishing the initial transcript. Resume uses this
+`guidance.json` before publishing the initial transcript. Invalid UTF-8 is
+decoded with replacement characters, as in the reference. Resume uses this
 snapshot, and compaction retains its instruction message verbatim. Unreadable
 instructions or a conflicting snapshot produce an explicit failure before a
-model call. New sessions read current files. Discovery covers the initial
+model call. Legacy transcripts acquire guidance once, after their existing
+history. New sessions read current files. Discovery covers the initial
 workspace chain; instructions below that directory still need to be read when
 working in those subdirectories.
 

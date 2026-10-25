@@ -134,7 +134,7 @@
      (if (== $sources ()) ()
        (let* (($paragraphs (guidance:paragraphs $sources))
               ($text (str:join "" ("# AGENTS.md instructions for " (coding:text (coding:field $payload "workspace"))
-                "\n\nGlobal guidance applies throughout this task. Project sources follow from repository root to working directory; more local guidance takes precedence for files in its scope.\n\n"
+                "\n\nGlobal guidance applies throughout this task. Project sources follow from repository root to working directory; more local guidance takes precedence for files in its scope. Direct instructions from the requester take precedence over these files.\n\n"
                 (str:join "\n\n" $paragraphs)))))
          ((JsonObject ((JsonPair "role" (JsonString "user")) (JsonPair "content" (JsonString $text))
                        (JsonPair "_coding_guidance" (JsonString $digest)))))))))

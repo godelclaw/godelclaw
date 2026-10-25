@@ -270,6 +270,22 @@ class GuidanceTests(unittest.TestCase):
         self.run_session(state)
         self.assert_sources(state, [(global_doc, 'PRIVATE_GLOBAL_RULE')])
 
+    def test_empty_snapshot_also_remains_required_after_a_task_has_started(self):
+        root, workspace = self.repo()
+        state = self.session('Retain an empty instruction snapshot.', workspace)
+        task = json.loads((state / 'task.json').read_text())
+        task['guidance'] = dict(home='', root_markers=['.git'], fallback_filenames=[])
+        (state / 'task.json').write_text(json.dumps(task))
+        self.run_session(state)
+        self.assertEqual(self.snapshot(state)['sources'], [])
+        (state / 'guidance.json').unlink()
+        self.write(root / 'AGENTS.md', 'NEW_INSTRUCTIONS')
+        self.server.requests.clear()
+        self.run_session(state)
+        self.assertEqual(self.server.requests, [])
+        self.assertFalse((state / 'guidance.json').exists())
+        self.assertIn('Saved coding guidance', (state / 'report.txt').read_text())
+
     def test_generated_per_directory_selection_matches_the_reference_rule(self):
         cases = []
         forms = []
