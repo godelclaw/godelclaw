@@ -7,6 +7,7 @@ import tempfile
 import unittest
 import test_command_dispatch_engine as dispatch
 import test_task_context as reference
+import provider_protocol
 ROOT = dispatch.ROOT
 
 class NativeTaskContext(unittest.TestCase):
@@ -238,7 +239,8 @@ class NativeTaskContext(unittest.TestCase):
         first, view = self.full_view(fixture, 400000, fixture.path.parent / "first.txt")
         self.assertEqual(first.count("_cache_boundary_"), 3)
         transcript, facts, turn = first.split("_cache_boundary_")[1:]
-        self.assertTrue(facts.startswith("STABLE"))
+        self.assertTrue(facts.startswith("TASK_REQUESTS "))
+        self.assertTrue(facts.split("\n_cache_chunk_\n", 1)[1].startswith("STABLE"))
         self.assertIn("TASK_TRANSCRIPT steps 0-7", transcript)
         self.assertIn("CONV", turn); self.assertNotIn("CONV", transcript)
         chunks = [c.strip() for c in transcript.split("\n_cache_chunk_\n")]
@@ -280,6 +282,44 @@ class NativeTaskContext(unittest.TestCase):
             self.assertIn("inspected source 0", text)
             self.assertIn("inspected source 19", text)
             self.assertIn("CONV", text)
+
+    def test_pending_index_precedes_volatile_state_without_losing_request_values(self):
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        for i in range(25):
+            fixture.store.accept('pending-' + str(i), 'λ _cache_boundary_ _cache_chunk_ _cache-boundary_ _cache-chunk_ \\_cache_chunk_ ' + str(i), kind='message')
+        with fixture.store.transaction() as db:
+            db.execute("UPDATE requests SET status='processed' WHERE id LIKE 'pending-%'")
+            expected = [dict(row) for row in db.execute("SELECT r.id,r.status,c.kind,c.note,substr(r.content,1,160) AS excerpt FROM requests r JOIN request_context c ON c.request=r.id ORDER BY r.rowid")]
+        before, view = self.full_view(fixture, 400000, fixture.path.parent / 'indexed-before.txt')
+        after, _ = self.full_view(fixture, 400000, fixture.path.parent / 'indexed-after.txt', facts='CHANGED_STATE')
+        def blocks(prompt):
+            return provider_protocol.command_body('responses', 'fixture', 100, 'high', prompt)[1]['input']
+        first, second = blocks(before), blocks(after)
+        indexed = [item['content'] for item in first if item['content'].startswith('TASK_REQUESTS')]
+        decoded = [row for part in indexed for row in json.loads(part[part.index('\n')+1:])]
+        self.assertEqual(decoded, expected)
+        self.assertEqual(view['requests'], {'source': 'TASK_REQUESTS', 'count': len(expected)})
+        self.assertEqual(before.count('_cache_boundary_'), 3)
+        last_index = max(i for i, item in enumerate(first) if item['content'].startswith('TASK_REQUESTS'))
+        self.assertEqual(first[:last_index+1], second[:last_index+1])
+        self.assertIn('STABLE', first[last_index+1]['content'])
+        self.assertIn('CHANGED_STATE', second[last_index+1]['content'])
+        fixture.store.accept('new-pending', 'A new request must stay visible', kind='message')
+        grown, _ = self.full_view(fixture, 400000, fixture.path.parent / 'indexed-grown.txt')
+        newer = [item['content'] for item in blocks(grown) if item['content'].startswith('TASK_REQUESTS')]
+        self.assertEqual(indexed[:-1], newer[:-1])
+        self.assertIn('new-pending', newer[-1])
+
+    def test_index_rearrangement_keeps_inline_metadata_when_layout_is_unstructured(self):
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        target = fixture.path.parent / 'plain-view.txt'
+        self.guest(fixture.path, '!(import! &self ./src/task_context_views)\n' +
+            '!(fs:update-text ' + json.dumps(str(target)) +
+            ' "replace" (task:full-context "PLAIN_BASE" "guide" "tick" "400000" 4) "" "")\n!(println! TASK_CONTEXT_OK)\n')
+        rendered = target.read_text()
+        view = json.loads(rendered[rendered.rindex('TASK_CONTEXT ')+13:])
+        self.assertIsInstance(view['requests'], list)
+        self.assertTrue(any(row['id']=='guide' for row in view['requests']))
 
     def test_whole_window_points_to_an_identical_earlier_result(self):
         fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)

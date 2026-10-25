@@ -336,8 +336,20 @@
      (((TextNotFound $_) $text)
       ($at (str:join "" ((str:byte-slice $text 0 $at) $replacement
              (task:escape (str:byte-slice $text (+ $at (str:byte-length $needle)) (str:byte-length $text)) $needle $replacement)))))))
-; Layout markers inside step content would split the prompt; a JSON escape of
-; the underscore keeps the decoded text identical.
+; JSON escapes protect structure while retaining the decoded request values.
+; Completed groups retain their endpoints when another request arrives.
+(= (task:index-chunks $requests $first)
+   (if (== $requests ()) ()
+     (let* (($group (task:take $requests (task:chunk-size)))
+            ($body (task:escape (task:escape (state:encoded (JsonArray $group))
+                      "_cache_boundary_" "\\u005fcache_boundary_") "_cache_chunk_" "\\u005fcache_chunk_"))
+            ($text (str:join "" ("TASK_REQUESTS entries " (repr $first) "-"
+                     (repr (+ $first (- (length $group) 1))) ":\n" $body)))
+            ($tail (task:index-chunks (task:drop $requests (task:chunk-size)) (+ $first (length $group)))))
+       (cons-atom $text $tail))))
+(= (task:index-text $requests)
+   (if (== $requests ()) "TASK_REQUESTS []"
+     (let $chunks (task:index-chunks $requests 0) (str:join "\n_cache_chunk_\n" $chunks))))
 ; A step reads as a short header and its result as plain text. A long
 ; result identical to an earlier one in the window is a pointer to that step;
 ; the pointer only looks back, so complete chunks stay unchanged.
@@ -393,6 +405,8 @@
 ; per-turn state follow both. Keep three region boundaries, with a separate
 ; wire block for each complete transcript chunk.
 (= (task:place-transcript $base $chunks)
+   (task:place-transcript $base $chunks ""))
+(= (task:place-transcript $base $chunks $index)
    (case (str:find $base "_cache_boundary_")
      (((TextNotFound $_) $base)
       ($first
@@ -409,7 +423,9 @@
                     ($third
                       (let* (($conversation (str:byte-slice $after 0 $third))
                              ($turn (str:byte-slice $after (+ $third 16) (str:byte-length $after))))
-                        (str:join "" ($head "\n\n" $slot "\n\n_cache_boundary_" $facts $conversation $turn)))))))))))))))
+                        (str:join "" ($head "\n\n" $slot "\n\n_cache_boundary_"
+                          (if (== $index "") "" (str:concat $index "\n_cache_chunk_\n"))
+                          $facts $conversation $turn)))))))))))))))
 (= (task:full-context $base $focus $trigger $capacity $ratio)
    (task:full-context-view $base (task:conversation-view $focus $trigger) $capacity $ratio))
 (= (task:full-context-view $base $view $capacity $ratio)
@@ -421,16 +437,24 @@
           ($pairs (task:items $view "transcript"))
           ($offset (str:string->number (state:text (state:json-field $view "offset"))))
           ($frame (task:working-frame $view $available $ratio))
-          ($space (max 0 (- (- $available (context:measure $frame $ratio)) (math:ceil (/ (str:byte-length $handoff) $ratio)))))
+          ($requests (task:quiet-focus (task:items $frame "requests") (task:string $view "focus") $trigger))
+          ($index (task:index-text $requests))
+          ($index-extra (max 0 (math:ceil (/ (- (str:byte-length $index)
+                              (str:byte-length (state:encoded (JsonArray $requests)))) $ratio))))
+          ($space (max 0 (- (- (- $available (context:measure $frame $ratio)) $index-extra)
+                         (math:ceil (/ (str:byte-length $handoff) $ratio)))))
           ((Window $start $shown) (task:window-from $root $pairs $offset $space $ratio))
           ($complete (* (task:chunk-size) (math:floor (/ (length $shown) (task:chunk-size)))))
           ((Chunks $chunks $seen) (task:chunks (task:take $shown $complete) $start () ()))
-          ($placed (task:place-transcript $base (if (== $handoff "") $chunks (cons-atom $handoff $chunks))))
+          ($placed (task:place-transcript $base (if (== $handoff "") $chunks (cons-atom $handoff $chunks))
+                     $index))
           ($recent (if (== $placed $base) $shown (task:drop $shown $complete)))
           ($first (if (== $placed $base) $start (+ $start $complete)))
           ((Stepped $recent-text $_) (task:steps-text (task:chunk-view $recent) $first (if (== $placed $base) () $seen) ()))
-          ($requests (task:quiet-focus (task:items $frame "requests") (task:string $view "focus") $trigger))
-          ($with-requests (state:json-set $frame "requests" (JsonArray $requests)))
+          ($request-view (if (== $placed $base) (JsonArray $requests)
+             (JsonObject ((JsonPair "source" (JsonString "TASK_REQUESTS"))
+                          (JsonPair "count" (task:number (length $requests)))))))
+          ($with-requests (state:json-set $frame "requests" $request-view))
           ($meta (state:json-set (state:json-set $with-requests "transcript" (JsonArray ())) "archive" (task:archive $root $start)))
           ($window-info (JsonObject ((JsonPair "mode" (JsonString "full"))
                           (JsonPair "transcript_steps" (task:number (length $shown)))

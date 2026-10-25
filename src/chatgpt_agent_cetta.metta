@@ -153,18 +153,19 @@
            (str:concat "-" (str:concat (str:byte-slice $hex 16 20)
              (str:concat "-" (str:byte-slice $hex 20 32)))))))))))
 
-; Transcript chunk markers only matter to providers with block caching; this
-; provider caches by prefix, so the chunks are joined as plain text. The cache
-; key follows the first, unchanging stable part.
-(= (chatgpt:unchunk $text)
-   (case (str:find $text "\n_cache_chunk_\n")
-     (((TextNotFound $_) $text)
-      ($at (str:join "" ((str:byte-slice $text 0 $at) "\n\n"
-             (chatgpt:unchunk (str:byte-slice $text (+ $at 15) (str:byte-length $text)))))))))
-(= (chatgpt:unchunk-all $parts)
+; Each completed chunk keeps its message ending when later chunks arrive.
+; The cache key still follows the first, unchanging stable part.
+(= (chatgpt:text-parts $texts)
+   (if (== $texts ()) ()
+     (let* (($text (car-atom $texts)) ($rest (chatgpt:text-parts (cdr-atom $texts))))
+       (if (== (str:trim $text) "") $rest (cons-atom (JsonString $text) $rest)))))
+(= (chatgpt:chunk-parts $parts)
    (if (== $parts ()) ()
-     (let (JsonString $text) (car-atom $parts)
-       (cons-atom (JsonString (chatgpt:unchunk $text)) (chatgpt:unchunk-all (cdr-atom $parts))))))
+     (let* (((JsonString $text) (car-atom $parts))
+            ($pieces (str:split "\n_cache_chunk_\n" $text))
+            ($prefix (chatgpt:text-parts $pieces))
+            ($tail (chatgpt:chunk-parts (cdr-atom $parts))))
+       (llm:v1:append $prefix $tail))))
 ; Only three layout markers have structural meaning. Later occurrences remain
 ; literal user text, matching the existing command-loop prompt contract.
 (= (chatgpt:split $text $remaining $stable)
@@ -193,7 +194,7 @@
           ($model (str:byte-slice $selected 8 (str:byte-length $selected)))
           ($effort-text (str:concat "" $effort))
           ((ChatGPTPrompt $parts $user) (chatgpt:split $prompt 3 ()))
-          ($stable (chatgpt:unchunk-all $parts))
+          ($stable (chatgpt:chunk-parts $parts))
           ($native (== (str:concat "" (py-call (model_commentary.enabled_flag))) "true"))
           ($cache (str:sha256 (repr ($model (if (== $stable ()) () (car-atom $stable))))))
           ($tool (json-parse (py-call (model_commentary.tool_schema_json))))

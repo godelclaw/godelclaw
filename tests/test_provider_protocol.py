@@ -50,18 +50,20 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(chat["messages"][0], {"role": "system", "content": "STU"})
         self.assertEqual(chat["messages"][1]["content"], "user _cache_boundary_ literal")
 
-    def test_transcript_chunks_join_for_prefix_caching_providers(self):
+    def test_responses_keep_completed_chunk_message_endings(self):
         prompt = "S_cache_boundary_T_cache_boundary_A\n_cache_chunk_\nB_cache_boundary_user"
         _, body = protocol.command_body("responses", "gpt-5.5", 20, "high", prompt)
         self.assertNotIn("instructions", body)
         self.assertEqual(body["input"], [{"role": "system", "content": "S"},
                                        {"role": "system", "content": "T"},
-                                       {"role": "system", "content": "A\n\nB"},
+                                       {"role": "system", "content": "A"},
+                                       {"role": "system", "content": "B"},
                                        {"role": "user", "content": "user"}])
         _, other = protocol.command_body("responses", "gpt-5.5", 20, "high",
                                          "S_cache_boundary_T_cache_boundary_A\n_cache_chunk_\nB\n_cache_chunk_\nC_cache_boundary_user")
         # The cache key follows the first stable part, which a growing transcript leaves unchanged.
         self.assertEqual(body["prompt_cache_key"], other["prompt_cache_key"])
+        self.assertEqual(body["input"][:-1], other["input"][:-2])
 
     def test_anthropic_preserves_region_checkpoints_and_history_before_tail(self):
         prompt = "S_cache_boundary_T_cache_boundary_A\n_cache_chunk_\nB\n_cache_chunk_\nC_cache_boundary_user"

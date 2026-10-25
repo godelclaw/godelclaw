@@ -890,7 +890,14 @@ limits. Compacted evidence has explicit recovery links and is never deleted.
 In full context mode, the working conversation spans task frames. Incoming
 requests and tool results retain their original order and identities when
 focus changes; task ancestry still controls task-specific retrieval. Complete
-transcript chunks remain stable for provider caching. At the model-window
+transcript chunks remain stable for provider caching. The current request-status
+index is emitted once as `TASK_REQUESTS` blocks before volatile turn sources;
+`TASK_CONTEXT` keeps focus, notes, window state and a source/count reference.
+Every selected entry remains present, including processed inputs whose work
+has not been explicitly settled. Completed index groups and transcript chunks
+retain separate Responses input items as the conversation grows. Cache reuse
+still depends on the provider's eligible boundaries and available entries.
+At the model-window
 threshold, a tool-free model call folds older records into a handoff. The
 summary and its source frontier are published together in one SQLite
 transaction. Preparation makes at most one summary call. A failed handoff

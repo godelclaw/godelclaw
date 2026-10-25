@@ -74,6 +74,12 @@ def capture_request(plan, body):
                 pass
 
 
+def observe_wire(plan, body):
+    """Observe after the subscription profile too; return the same text."""
+    capture_request(plan, str(body))
+    return body
+
+
 def call_scope():
     configured = os.environ.get("METTACLAW_ACTIVITY_CALL_SCOPE", "")
     if configured or os.environ.get("METTACLAW_OBSERVED_STRATEGY") != "1":
@@ -223,7 +229,8 @@ def command_plan(model, tokens, effort, prompt, *, native_ledger=False):
             if ttl != "5m":
                 result["cache_ttl"] = ttl
         elif protocol == "responses" or model_commentary.enabled():
-            stable = provider_protocol.joined(stable)
+            stable = (provider_protocol.response_blocks(stable) if protocol == "responses"
+                      else provider_protocol.joined(stable))
             parts = stable if protocol == "responses" else (["".join(stable)] if stable else [])
             messages = [{"role": "system", "content": part} for part in parts]
             messages.append({"role": "user", "content": user})
@@ -606,9 +613,7 @@ def wire_body(plan, body):
         origin = request_origin(plan)
         llm_policy.describe(plan.correlation, model=plan.call_context["model"],
                             protocol=plan.protocol, purpose=plan.call_context["purpose"], origin=origin or None)
-    body = json.dumps(value, ensure_ascii=False)
-    capture_request(plan, body)
-    return body
+    return json.dumps(value, ensure_ascii=False)
 
 
 def decoded_body(plan, body):

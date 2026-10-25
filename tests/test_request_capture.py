@@ -48,7 +48,8 @@ class RequestCaptureTests(unittest.TestCase):
                             reasoning=dict(effort='low'))
                 with mock.patch.object(host.stream_sink, 'configured', return_value=True), \
                      mock.patch.object(host.stream_sink, 'emit'):
-                    wire = host.wire_body(self.plan(protocol, provider), json.dumps(body))
+                    plan = self.plan(protocol, provider)
+                    wire = host.observe_wire(plan, host.wire_body(plan, json.dumps(body)))
                 record = next(row for row in self.records() if row['protocol'] == protocol)
                 self.assertEqual(record['wire_body'], wire)
                 self.assertNotIn('fixture-header-secret', json.dumps(record))
@@ -85,7 +86,7 @@ class NativeCaptureTests(unittest.TestCase):
     tearDown = boundary.NativeBoundaryTests.tearDown
     run_guest = boundary.NativeBoundaryTests.run_guest
 
-    def test_capture_equals_the_actual_http_body(self):
+    def check_capture(self, subscription=False):
         self.peer.delay = .01
         self.env.update(OPENAI_API_KEY='fixture-secret', OPENAI_BASE_URL=self.env['SYNTHETIC_BASE_URL'],
                         SYNTHETIC_MODEL='openai:fixture-model')
@@ -95,13 +96,30 @@ class NativeCaptureTests(unittest.TestCase):
         capture = Path(self.env['METTACLAW_COGNITIVE_HEALTH_PATH']).parent / 'request-capture'
         capture.mkdir()
         (capture / 'control.json').write_text('{"remaining":1,"purpose":"turn"}')
-        self.run_guest(f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'
-            '!(println! (RESULT (llm:command "openai:fixture-model" 100 "low" "private λ fixture")))\n')
+        forms = f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'
+        if subscription:
+            self.env.update(CETTA_IO_AUTH_CONTEXT_FIXTURE_URL_PREFIX=self.env['SYNTHETIC_BASE_URL']+'/',
+                CETTA_IO_AUTH_CONTEXT_FIXTURE_HEADER='Authorization',
+                CETTA_IO_AUTH_CONTEXT_FIXTURE_ENV='OPENAI_API_KEY', CETTA_IO_AUTH_CONTEXT_FIXTURE_PREFIX='Bearer ')
+            session=json.dumps(json.dumps({'value':{'credential_alias':'CONTEXT_FIXTURE'},
+                                         'api_base':self.env['SYNTHETIC_BASE_URL']+'/'}))
+            forms += f'!(let $plan (chatgpt:command-plan "chatgpt:fixture-model" 100 "low" "private λ fixture" (json-parse {session})) (println! (RESULT (llm:run $plan))))\n'
+        else:
+            forms += '!(println! (RESULT (llm:command "openai:fixture-model" 100 "low" "private λ fixture")))\n'
+        self.run_guest(forms)
         self.assertEqual(len(self.peer.requests), 1)
         records = [json.loads(path.read_text()) for path in capture.glob('*.json') if path.name != 'control.json']
         self.assertEqual(len(records), 1)
         self.assertEqual(json.loads(records[0]['wire_body']), self.peer.requests[0][2])
         self.assertNotIn('fixture-secret', json.dumps(records))
+        if subscription:
+            self.assertNotIn('max_output_tokens', json.loads(records[0]['wire_body']))
+
+    def test_capture_equals_the_actual_api_http_body(self):
+        self.check_capture()
+
+    def test_capture_equals_the_actual_subscription_http_body(self):
+        self.check_capture(subscription=True)
 
 
 if __name__ == '__main__':

@@ -26,6 +26,12 @@ def joined(stable):
     return ["\n\n".join(chunk_blocks(part)) for part in stable]
 
 
+def response_blocks(stable):
+    """Retain complete history endpoints as separate Responses input items."""
+    return [block for part in stable for block in part.split("\n" + CHUNK_MARKER + "\n")
+            if block.strip()]
+
+
 def split_prompt(prompt):
     text = str(prompt)
     parts = text.split(CACHE_MARKER, 3)
@@ -201,10 +207,8 @@ def command_body(protocol, model, tokens, effort, prompt):
         body.update(anthropic_reasoning(str(effort)))
         anthropic_cache_system(body, cache_boundaries(stable))
         return "/messages", body
-    stable = joined(stable)
-    system = "".join(stable)
     if protocol == "responses":
-        items = [{"role": "system", "content": part} for part in stable]
+        items = [{"role": "system", "content": part} for part in response_blocks(stable)]
         items.append({"role": "user", "content": user})
         body = {"model": model, "input": items, "max_output_tokens": int(tokens),
                 "store": False}
@@ -213,6 +217,8 @@ def command_body(protocol, model, tokens, effort, prompt):
         if stable:
             body["prompt_cache_key"] = cache_key("openai", model, stable[0])
         return "/responses", body
+    stable = joined(stable)
+    system = "".join(stable)
     if protocol != "chat-completions":
         raise ValueError("unsupported provider protocol")
     messages = ([{"role": "system", "content": system}] if stable else [])

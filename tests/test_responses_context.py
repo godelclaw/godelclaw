@@ -13,7 +13,7 @@ import provider_protocol
 
 
 LARGE = "λ" * 1_100_000
-PARTS = [LARGE, "policy", "completed history\n\nnext chunk"]
+PARTS = [LARGE, "policy", "completed history", "next chunk"]
 PROMPT = "_cache_boundary_".join([LARGE, "policy", "completed history\n_cache_chunk_\nnext chunk", "turn"])
 INPUT = [{"role": "system", "content": part} for part in PARTS] + [{"role": "user", "content": "turn"}]
 
