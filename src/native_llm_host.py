@@ -698,8 +698,36 @@ def duplicate_plan(plan):
     raise RuntimeError("duplicate native plan")
 
 
+def _one_line(text, limit):
+    text = " ".join("".join(c if c.isprintable() else " " for c in str(text)).split())
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
+def provider_error(plan, body):
+    """The provider's own code and message for a rejected request, as Codex
+    shows them. Request bytes are never logged; long bodies are cut."""
+    text = str(body)
+    try:
+        value = json.loads(text)
+    except ValueError:
+        value = None
+    code = message = ""
+    if isinstance(value, dict):
+        error = value.get("error", value)
+        if isinstance(error, dict):
+            code = str(error.get("code") or error.get("type") or "")
+            message = str(error.get("message") or "")
+        if not message and isinstance(value.get("detail"), str):
+            message = value["detail"]
+    elif text.strip():
+        message = text
+    plan.provider_error = (_one_line(code, 64), _one_line(message, 400))
+    return 1
+
+
 def _record_failure(plan, kind, status=0):
-    """Keep diagnostic categories without logging request or response bytes."""
+    """Keep diagnostic categories and the provider's stated reason, without
+    logging request or response bytes."""
     known = {"admission-error", "submit-error", "transport-error", "decode-error",
              "http-status", "correlation-error", "duplicate-completion",
              "invalid-phase", "retired-handle", "unfinished-provider-response",
@@ -720,6 +748,8 @@ def _record_failure(plan, kind, status=0):
     reason = error.reason if isinstance(error, llm_policy.AdmissionDenied) else admission_frontier.failure_code(error)
     detail = "; reason=" + reason if (reason in admission_frontier.DENIAL_CODES or
                                      reason == "provider-outcome-unknown") else ""
+    stated_code, stated = getattr(plan, "provider_error", ("", ""))
+    detail += ("; code=" + stated_code if stated_code else "") + ("; message=" + stated if stated else "")
     print(f"[native_llm] failed request: {code}; provider={provider}; "
           f"status={status}; sent={sent}; elapsed_ms={elapsed}; deadline_ms={deadline}{detail}",
           file=sys.stderr)

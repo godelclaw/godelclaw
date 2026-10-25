@@ -199,7 +199,9 @@
        (if (== $id $received)
          (if (and (>= $status 200) (< $status 300))
            (llm:decode-body $plan $epoch $correlation $protocol $body)
-           (llm:v1:failed $epoch $correlation (http-status $status) response-received))
+           ; Keep the provider's explanation, as Codex shows it.
+           (let $_ (py-call (native_llm_host.provider_error $plan $body))
+             (llm:v1:failed $epoch $correlation (http-status $status) response-received)))
          $state))
       ($other (llm:v1:failed $epoch $correlation transport-error remote-outcome-unknown)))))
 

@@ -555,6 +555,19 @@ def retained():
         self.run_guest(forms)
         self.assertEqual(len(self.peer.requests), 3)
 
+    def test_rejected_request_logs_the_providers_reason(self):
+        self.peer.status = 400
+        self.peer.reply = {"error": {
+            "message": "Invalid 'instructions': string too long.\nExpected a string with maximum length 1048576.",
+            "type": "invalid_request_error", "param": "instructions", "code": "string_above_max_length"}}
+        self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n'
+                       '!(llm:command "fixture-model" 42 "low" "PROMPT-SENTINEL-7")\n')
+        self.assertEqual(len(self.peer.requests), 1)
+        self.assertIn("failed request: http-status; provider=synthetic; status=400", self.last_stderr)
+        self.assertIn("; code=string_above_max_length; message=Invalid 'instructions': string too long. "
+                      "Expected a string with maximum length 1048576.", self.last_stderr)
+        self.assertNotIn("PROMPT-SENTINEL-7", self.last_stderr)
+
     def test_native_retry_after_reaches_the_shared_cooldown(self):
         self.peer.status=429
         self.peer.retry_after=2
@@ -622,6 +635,34 @@ def retained():
         out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n'
             '!(println! (RESULT (llm:command "fixture-model" 42 "low" "input")))\n')
         self.assertIn("(RESULT ())", out)
+
+
+class ProviderErrorTests(unittest.TestCase):
+    """Each provider's error shape yields one bounded line; bodies that are
+    not JSON keep only their text."""
+
+    def reason(self, body):
+        import types
+        import native_llm_host
+        plan = types.SimpleNamespace()
+        self.assertEqual(native_llm_host.provider_error(plan, body), 1)
+        return plan.provider_error
+
+    def test_openai_anthropic_and_chatgpt_shapes(self):
+        self.assertEqual(self.reason(json.dumps({"error": {"message": "too long", "type": "invalid_request_error",
+                                                           "code": "string_above_max_length"}})),
+                         ("string_above_max_length", "too long"))
+        self.assertEqual(self.reason(json.dumps({"type": "error", "error": {"type": "overloaded_error",
+                                                                            "message": "Overloaded"}})),
+                         ("overloaded_error", "Overloaded"))
+        self.assertEqual(self.reason(json.dumps({"detail": "Unsupported model"})), ("", "Unsupported model"))
+
+    def test_other_bodies_are_one_bounded_line(self):
+        code, message = self.reason("<html>\n<body>Bad\tGateway</body>\x00</html>")
+        self.assertEqual((code, message), ("", "<html> <body>Bad Gateway</body> </html>"))
+        code, message = self.reason("x" * 5000)
+        self.assertEqual(len(message), 401)
+        self.assertEqual(self.reason(""), ("", ""))
 
 
 if __name__ == "__main__":
