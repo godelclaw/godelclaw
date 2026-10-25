@@ -56,6 +56,20 @@ def guest_env(directory, engine="cetta", **overrides):
         XDG_STATE_HOME=str(directory / "state"),
         PYTHONPATH=os.pathsep.join(str(ROOT / name) for name in ("tests", "src", "channels")),
         TMPDIR=str(directory))
+    # Project-04 direct-boot qualification must never depend on live/default
+    # ledgers, settings, lifecycle/control files, or channel queues.
+    for name, filename in {
+        "METTACLAW_LLM_LEDGER_PATH": "ledger.db", "METTACLAW_STRATEGY_PATH": "strategy.sqlite3",
+        "METTACLAW_LLM_POLICY_PATH": "llm-policy.json", "METTACLAW_MODEL_STATE_PATH": "model",
+        "METTACLAW_COGNITIVE_HEALTH_PATH": "health.json", "METTACLAW_RECYCLE_REQUEST_PATH": "recycle",
+        "METTACLAW_WAKE_REQUEST_PATH": "wake", "METTACLAW_LIFECYCLE_PATH": "lifecycle.json",
+        "METTACLAW_DEPLOYMENT_STATE_PATH": "deployment.json", "METTACLAW_WORKING_SET_PATH": "working.json",
+        "METTACLAW_EFFECT_RECEIPT_PATH": "receipts.jsonl", "METTACLAW_LOOP_MODE_PATH": "loop-mode.json",
+        "METTACLAW_TELEGRAM_OFFSET_PATH": "offset", "METTACLAW_TELEGRAM_OUTBOX_PATH": "outbox.jsonl",
+        "METTACLAW_TELEGRAM_SEQUENCE_PATH": "sequence", "METTACLAW_TELEGRAM_HEALTH_PATH": "telegram-health.json",
+        "METTACLAW_TELEGRAM_ATTACHMENTS_DIR": "attachments", "METTACLAW_ENERGY_PATH": "energy.json",
+    }.items():
+        env[name] = str(directory / filename)
     if PYTHON.is_dir():
         env.update(PYTHONHOME=str(PYTHON), PYTHONNOUSERSITE="1",
                    LD_LIBRARY_PATH=str(PYTHON / "lib") + os.pathsep + env.get("LD_LIBRARY_PATH", ""))

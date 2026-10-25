@@ -6,6 +6,7 @@
 !(import! &self ./src/undelivered_prose_unicode)
 !(import! &self ./src/context_source_loaders.py)
 !(import! &self ./src/small_views_cetta.metta)
+!(import! &self ./src/goal_views_cetta.metta)
 
 !(bind! &ctx-known (new-state ()))
 !(bind! &ctx-blank (new-state
@@ -54,14 +55,15 @@
                       (cons-atom ($id $text $revision) (ctx:without $id (get-state &ctx-known))))))
            (CtxObservation $id "known" $text $revision))))
       ($other (Error ctx:observe invalid-outcome)))))
-; Assembly: prepare + seven retained loaders = eight Python crossings, down
-; from fourteen. Capability engine lookup adds one allowed crossing (nine
-; total here); this is NOT a full-turn count. Pins marker ownership is intact.
+; Assembly: prepare + five retained loaders = six loader crossings (was eight).
+; Add the shared Python work-state marker on successfully rendered work and
+; the allowed capability engine lookup: eight total. NOT a full-turn count.
 (= (ctx:load $loaders $id)
    (case $id
      (("active-query-declaration" (sv:load $id)) ("commitment-state" (sv:load $id))
       ("task-phase" (sv:load $id)) ("development-state" (sv:load $id))
       ("project-capabilities" (sv:load $id)) ("project-evidence" (sv:load $id))
+      ("work-state" (gv:load $id)) ("affect-gestalt" (gv:load $id))
       ($retained (ctx:decode (py-call (context_source_loaders.load $loaders $id)))))))
 (= (ctx:project $loaders $specs)
    (if (== $specs ()) ()

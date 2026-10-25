@@ -51,6 +51,16 @@ def main():
                    XDG_CACHE_HOME=str(directory / "cache"),
                    PATH=str(deny) + os.pathsep + env.get("PATH", ""),
                    CONTEXT_BUNDLE_EVIDENCE=str(evidence))
+        for name, filename in {
+            "METTACLAW_HISTORY_PATH": "history.metta", "METTACLAW_GOALS_PATH": "goals.metta",
+            "METTACLAW_PINS_PATH": "pins.txt", "METTACLAW_TELEGRAM_LOG_PATH": "updates.jsonl",
+            "METTACLAW_STRATEGY_PATH": "strategy.sqlite3", "METTACLAW_LLM_LEDGER_PATH": "ledger.db",
+            "METTACLAW_ENGINE_STATE_PATH": "engine", "METTACLAW_WORKING_SET_PATH": "working.json",
+            "METTACLAW_RECYCLE_REQUEST_PATH": "recycle", "METTACLAW_WAKE_REQUEST_PATH": "wake",
+            "METTACLAW_LIFECYCLE_PATH": "lifecycle.json", "METTACLAW_EFFECT_RECEIPT_PATH": "receipts.jsonl",
+        }.items():
+            env[name] = str(directory / filename)
+        env["METTACLAW_OBSERVED_STRATEGY"] = "0"
         # Record the existing harnesses' captured engine outputs too, without
         # changing their assertions or subprocess environments.
         entry = ("import context_bundle_transcripts,runpy,sys; "

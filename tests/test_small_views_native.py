@@ -103,10 +103,10 @@ class SmallViewsTest(unittest.TestCase):
         self.assertTrue(all(row["forbidden"] == 0 for row in actual))
         self.assertEqual([row["probe_events"] for row in actual], expected_probes)
         if caller and not swi:
-            retained = {s.source_id for s in context_sources.SOURCE_SPECS} - set(SOURCES)
+            retained = {s.source_id for s in context_sources.SOURCE_SPECS} - set(SOURCES) - {"work-state", "affect-gestalt"}
             self.assertEqual(actual[-1]["calls"], {key: len(steps) for key in retained})
             self.assertEqual(actual[-1]["engine_calls"], len(steps))
-            boundaries = {"prepare": len(steps), "retained-load": 7 * len(steps),
+            boundaries = {"prepare": len(steps), "retained-load": 5 * len(steps),
                           "engine-command": len(steps), "pins-engine": len(steps),
                           "action-strategy": len(steps)}
             if boot:

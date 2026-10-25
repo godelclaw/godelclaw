@@ -22,7 +22,8 @@ from test_pins_context_native import guest_env, q
 ENGINE = os.environ.get("CETTA_BIN", "cetta")
 PETTA_ROOT = Path(os.environ.get("PETTA_ROOT", Path.home() / "repos/PeTTa"))
 NATIVE_SOURCES = {"active-query-declaration", "commitment-state", "task-phase",
-                  "development-state", "project-capabilities", "project-evidence"}
+                  "development-state", "project-capabilities", "project-evidence",
+                  "work-state", "affect-gestalt"}
 
 
 def save_evidence(prefix, value):
@@ -187,7 +188,7 @@ class NativeContextBundleTest(unittest.TestCase):
     def test_decode_failures_are_source_local_stale_and_recoverable(self):
         faults = [(2, '"\\ud800"'), (2, '"unterminated'), (2, '{"not":"text"}'),
                   (2, 'null'), (2, 7), (9,), (2,), ()]
-        for source_id in ("work-state", "effect-receipts", "conversation"):
+        for source_id in ("pins", "effect-receipts", "conversation"):
             for fault in faults:
                 with self.subTest(source=source_id, wire=fault):
                     scenarios, oracles = [], []
@@ -209,7 +210,7 @@ class NativeContextBundleTest(unittest.TestCase):
                                                 "known", "absent", "unavailable", "known"])
                     for row in rows:
                         self.assertEqual(row["text"].count("SOURCE["), 13)
-        print("Compared 192 real-caller decode-fault steps, with seven retained Python loaders called once per step")
+        print("Compared 192 real-caller decode-fault steps, with five retained Python loaders called once per step")
 
     def test_all_python_whitespace_and_near_misses_at_real_caller(self):
         spaces = [chr(c) for c in range(0x110000) if chr(c).isspace()]
@@ -318,11 +319,12 @@ class NativeContextBundleTest(unittest.TestCase):
         self.compare([base])
         first = self.compare([{key: {"raises": True} for key in base}])[0]["text"]
         self.assertNotIn("stale-known", first)
-        self.assertEqual(first.count("status=unavailable"), 7)
+        self.assertEqual(first.count("status=unavailable"), 5)
 
     def test_text_conversion_failure_aborts_bundle_without_fallback(self):
-        for failed_index in (0, 6, 12):
-            values = {s.source_id: "known" for s in context_sources.SOURCE_SPECS}
+        for failed_index in (5, 6, 12):
+            values = {s.source_id: "known" for s in context_sources.SOURCE_SPECS
+                      if s.source_id not in NATIVE_SOURCES}
             values[context_sources.SOURCE_SPECS[failed_index].source_id] = {"broken_text": True}
             path = self.directory / "broken-text.json"
             path.write_text(json.dumps(values))
@@ -367,8 +369,8 @@ class NativeContextBundleTest(unittest.TestCase):
             "message_id": 1, "update_id": 1, "text": "hello from fixture 🙂", "note": ""}) + "\n")
         fixture = {s.source_id: "boot " + s.source_id for s in context_sources.SOURCE_SPECS
                    if s.source_id not in NATIVE_SOURCES | {"pins", "recent-proposals", "relevant-files", "conversation"}}
-        scenarios = [fixture, dict(fixture, **{"work-state": {"raises": True}}),
-                     dict(fixture, **{"work-state": " \t"}), fixture]
+        scenarios = [fixture, dict(fixture, **{"effect-receipts": {"raises": True}}),
+                     dict(fixture, **{"effect-receipts": " \t"}), fixture]
         lines = HEADER + ['!(tg:set reply-chat "7")']
         log = self.directory / "boot-bundles"
         conversations = []
