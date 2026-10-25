@@ -30,6 +30,50 @@ _session_epoch = uuid.uuid4().hex
 _claim_lock = threading.Lock()
 
 
+def capture_request(plan, body):
+    """Opt-in local wire capture; never log headers or affect call authority."""
+    health = os.environ.get("METTACLAW_COGNITIVE_HEALTH_PATH")
+    if not health:
+        return
+    directory = Path(health).parent / "request-capture"
+    control = directory / "control.json"
+    temporary = None
+    try:
+        if not control.is_file():
+            return
+        import fcntl
+        import tempfile
+        # The counter bounds diagnostic retention, not the agent's work.
+        with control.open("r+", encoding="utf-8") as stream:
+            fcntl.flock(stream, fcntl.LOCK_EX)
+            setting = json.load(stream)
+            remaining = setting.get("remaining")
+            purpose = getattr(plan, "purpose", "turn")
+            if type(remaining) is not int or remaining <= 0 or setting.get("purpose") != purpose:
+                return
+            record = dict(call_id=plan.correlation, protocol=plan.protocol,
+                          purpose=purpose, captured_at=time.time(), wire_body=body)
+            fd, temporary = tempfile.mkstemp(dir=directory, prefix=".capture-")
+            with os.fdopen(fd, "w", encoding="utf-8") as captured:
+                os.fchmod(captured.fileno(), 0o660)
+                json.dump(record, captured, ensure_ascii=False)
+            os.replace(temporary, directory / (uuid.uuid4().hex + ".json"))
+            temporary = None
+            setting["remaining"] = remaining - 1
+            stream.seek(0)
+            json.dump(setting, stream)
+            stream.truncate()
+    except (OSError, ValueError, TypeError, AttributeError, ImportError):
+        # Missing storage or a broken diagnostic switch cannot suppress work.
+        pass
+    finally:
+        if temporary is not None:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+
+
 def call_scope():
     configured = os.environ.get("METTACLAW_ACTIVITY_CALL_SCOPE", "")
     if configured or os.environ.get("METTACLAW_OBSERVED_STRATEGY") != "1":
@@ -562,7 +606,9 @@ def wire_body(plan, body):
         origin = request_origin(plan)
         llm_policy.describe(plan.correlation, model=plan.call_context["model"],
                             protocol=plan.protocol, purpose=plan.call_context["purpose"], origin=origin or None)
-    return json.dumps(value, ensure_ascii=False)
+    body = json.dumps(value, ensure_ascii=False)
+    capture_request(plan, body)
+    return body
 
 
 def decoded_body(plan, body):

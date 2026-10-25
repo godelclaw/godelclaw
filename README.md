@@ -1238,6 +1238,14 @@ batch is evidence that any tool or task succeeded.
 
 ### Live operator display
 
+For a local cache diagnosis, create `request-capture/control.json` beside the
+cognitive health file, containing `{"remaining": 2, "purpose": "turn"}`. The
+native host saves that many final encoded request bodies in the same directory,
+with call identities for comparison against usage. This is disabled when the
+control file is absent or its count is zero. Headers are excluded; prompt text
+is sensitive, so remove the captures after comparing them. Capturing does not
+send additional requests or change their contents.
+
 Set `paths.stream_dir` in private `config/local.toml` to enable the local
 operator stream. Use `python scripts/worklog_view.py --dir DIRECTORY`; select
 an agent and its coding children with `--session NAME`. `--once --full` reads
