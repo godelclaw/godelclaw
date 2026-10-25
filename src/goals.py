@@ -160,7 +160,7 @@ def _emit(goals, flags, budget, other, mood):
         lines.append("(goal-flag %s %s)" % (name, flag))
     if mood:
         lines.append("(mood %s)" % " ".join(
-            "%s:%s" % (d, _r(mood[d])) for d in MOOD_DIMS))
+            "%s:%s" % (d, _r(mood.get(d, 0.0))) for d in MOOD_DIMS))
     return lines
 
 
@@ -171,9 +171,26 @@ def _r(x):
 def _load_kernel_state(path):
     try:
         with open(path, encoding="utf-8") as fh:
-            return json.load(fh)
+            state = json.load(fh)
     except (OSError, ValueError):
         return {}
+    # Keep valid values in their original form/order; downstream coercion is
+    # unchanged. Malformed nonnumeric values retain their existing error path.
+    if isinstance(state, dict) and isinstance(state.get("mood"), dict):
+        mood = {}
+        for dim, value in state["mood"].items():
+            # Compare large integers before float() could overflow.
+            if isinstance(value, (int, float)) and not -1.0 <= value <= 1.0:
+                continue
+            try:
+                number = float(value)
+            except (TypeError, ValueError, OverflowError):
+                mood[dim] = value
+            else:
+                if -1.0 <= number <= 1.0:
+                    mood[dim] = value
+        state["mood"] = mood
+    return state
 
 
 def _mood_samples(log_path, offset):

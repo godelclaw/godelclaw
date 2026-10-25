@@ -10,16 +10,19 @@ import sys
 import tempfile
 import time
 
-from goal_bookkeeping_support import run
+from goal_bookkeeping_support import frozen_phase, run
 
 SUITES = {
     "arithmetic": ["-m", "unittest", "-v", "test_goal_bookkeeping_native.ArithmeticTests"],
     "capability": ["-m", "unittest", "-v", "test_goal_bookkeeping_native.CapabilityTests"],
     "candidates": ["-m", "unittest", "-v", "test_goal_bookkeeping_candidates.CandidateTests"],
     "gaps": ["-m", "unittest", "-v", "test_goal_bookkeeping_candidates.CandidateGapTests"],
-    "legacy-gaps": ["-m", "unittest", "-v", "test_goal_bookkeeping_candidates.LegacyStateGapTests"],
+    "hand-corrupted": ["-m", "unittest", "-v", "test_goal_bookkeeping_candidates.HandCorruptedStateDiagnostics"],
     "diagnostics": ["-m", "unittest", "-v", "test_goal_bookkeeping_native.OutOfDomainArithmeticDiagnostics"],
     "domain": ["-m", "unittest", "-v", "test_goal_bookkeeping_domain"],
+    "load-policy": ["-m", "unittest", "-v", "test_goal_bookkeeping_missing_mood"],
+    "load-native": ["-m", "unittest", "-v", "test_goal_bookkeeping_load"],
+    "views": ["tests/goal_bookkeeping_views_check.py"],
     "callers": ["-m", "unittest", "-v", "test_goal_bookkeeping_callers"],
     "utf8": ["-m", "unittest", "-v", "test_goal_bookkeeping_utf8"],
     "primitives": ["-m", "unittest", "-v", "test_goal_bookkeeping_native.PrimitiveTests"],
@@ -42,7 +45,8 @@ def main():
     target.mkdir(parents=True, exist_ok=True)
     os.environ["GOAL_BOOKKEEPING_EVIDENCE"] = str(target)
     with tempfile.TemporaryDirectory(prefix="goal04b-check-", dir="/tmp") as temp:
-        result = run([sys.executable] + SUITES[args.suite], Path(temp))
+        with frozen_phase(args.suite, Path(temp)):
+            result = run([sys.executable] + SUITES[args.suite], Path(temp))
     output = result.stdout + result.stderr + "\nACTUAL_EXIT_CODE=%d\n" % result.returncode
     (target / (args.suite + "-%d.txt" % time.time_ns())).write_text(output)
     print(output, end="")

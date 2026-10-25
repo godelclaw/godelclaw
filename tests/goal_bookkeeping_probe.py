@@ -48,6 +48,15 @@ def disable_writers():
     return 0
 
 
+def disable_affect_view():
+    disable_writers()
+    import goals
+    import helper
+    goals.affect_view = forbid
+    helper.change_mark = forbid
+    return 0
+
+
 _fallback_calls = {}
 
 

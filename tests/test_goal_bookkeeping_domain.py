@@ -90,15 +90,14 @@ class AffectDomainTests(unittest.TestCase):
         self.assertTrue(all(0 <= g["sti"] <= 1 and 0 <= g["lti"] <= 1 for g in parsed))
         self.assertLessEqual(sum(g["sti"] for g in parsed), len(parsed))
 
-    def test_legacy_out_of_range_initial_mood_is_not_repaired(self):
+    def test_legacy_out_of_range_initial_mood_is_dropped_then_seeded(self):
         state = {"streaks": {}, "log_offset": 0, "mood": {d: 2.0 for d in goals.MOOD_DIMS}}
         actual, _, _ = candidates.CandidateTests().compare({"goals.metta": encoded(goal() + "\n"),
             "goals_kernel.json": encoded(json.dumps(state)), "updates.jsonl": encoded(log_record(trace("0")))}, [op("kernel")])
         mood = json.loads(base64.b64decode(actual[0]["files"]["goals_kernel.json"]))["mood"]
-        self.assertEqual(mood["Cn"], 0.69 * 2.0 + (1 - 0.69) * 0.0)
-        self.assertGreater(mood["Cn"], 1.0)
+        self.assertEqual(mood["Cn"], 0.0)
         receipt("legacy-mood-precondition", {"initial": state, "actual": mood,
-            "claim": "new-sample filtering does NOT establish bounds from legacy out-of-range initial state"})
+            "claim": "authorized load filter drops all invalid dimensions; first sample seeds, not old 2.0-to-1.38"})
 
     def test_actual_binary64_endpoints_signed_zero_and_100_pass_track(self):
         expected, program = [], HEADER
@@ -132,9 +131,12 @@ class AffectDomainTests(unittest.TestCase):
             source.write_bytes((ROOT / "verification/GoalMoodBounds.lean").read_bytes())
             result = run([os.environ["LEAN_BIN"], "--run", str(source)], directory, cwd=directory)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            actual = json.loads(result.stdout)
+            lines = result.stdout.splitlines()
+            actual = json.loads(lines[0])
+            admitted = json.loads(lines[1])
             expected = [[x, y, 69 * x + 31 * y] for x in (-1, 0, 1) for y in (-1, 0, 1)]
-            receipt("mood-bound-model", {"expected": expected, "actual": actual,
+            receipt("mood-bound-model", {"expected": expected, "actual": actual, "admitted": admitted,
                 "scope": "integer-scaled mathematical numerator, NOT binary64 bit proof"})
             self.assertEqual(actual, expected)
+            self.assertEqual(admitted, [-100, 0, 100])
             self.assertTrue(all(-100 <= row[2] <= 100 for row in actual))

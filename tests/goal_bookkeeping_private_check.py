@@ -14,7 +14,7 @@ import sys
 import tempfile
 from unittest import mock
 
-from goal_bookkeeping_support import ROOT, engine, environment
+from goal_bookkeeping_support import ROOT, engine, environment, frozen_phase
 
 sys.path.insert(0, str(ROOT / "src"))
 import goals
@@ -33,6 +33,13 @@ def main():
     args = parser.parse_args()
     args.evidence.mkdir(mode=0o700, parents=True, exist_ok=True)
     assert args.evidence.stat().st_mode & 0o077 == 0, "private receipt directory must be 0700"
+    with mock.patch.dict(os.environ, {"GOAL_BOOKKEEPING_EVIDENCE": str(args.evidence.resolve())}):
+        with tempfile.TemporaryDirectory(prefix="goal04b-private-identity-") as temp:
+            with frozen_phase("private-copy", Path(temp)):
+                return check_private(args)
+
+
+def check_private(args):
     before = hashes(args.source_dir)
     rows = []
     with tempfile.TemporaryDirectory(prefix="goal04b-private-copy-", dir="/tmp") as temp:

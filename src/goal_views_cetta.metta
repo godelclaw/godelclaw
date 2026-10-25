@@ -1,4 +1,4 @@
-; Read-only goal views. Bookkeeping stays in goals.py. No Python-loader
+; Read-only goal views and shared project-04b kernel-state ingestion. No Python-loader
 ; fallback. The ONLY work-state change-marker owner remains helper.py.
 !(import! &self (library fs))
 !(import! &self (library str))
@@ -71,7 +71,9 @@
                   (if (re:is-match (get-state &gv-float) $digits) (gv:float-digits $digits)
                     (Error gv:float invalid-number)))))) (Error gv:float invalid-number)))))))
 (= (gv:float-digits $digits)
-   (* 1.0 (str:string->number (str:join "" (str:split "_" $digits)))))
+   (let $clean (str:join "" (str:split "_" $digits))
+     (* 1.0 (str:string->number (if (re:is-match (get-state &gv-negative-zero) $clean)
+              (str:concat $clean ".0") $clean)))))
 ; Captured fields passed _NUMBER. Saturate before float conversion: every
 ; negative decimal clamps to zero and every positive integer part >= 1 to
 ; one, even when Python float(text) would first overflow to infinity.
@@ -83,6 +85,8 @@
             ($whole (if (== $head "") 0 (str:string->number $head))))
        (if (>= $whole 1) 1.0 (gv:float-digits $digits)))))
 !(bind! &gv-float (new-state (re:compile "\\A[+-]?(?:[0-9](?:_?[0-9])*(?:\\.(?:[0-9](?:_?[0-9])*)?)?|\\.[0-9](?:_?[0-9])*)(?:[eE][+-]?[0-9](?:_?[0-9])*)?\\z")))
+; float("-0") is negative zero, unlike integer parsing followed by promotion.
+!(bind! &gv-negative-zero (new-state (re:compile "\\A-0+\\z")))
 (= (gv:mantissa $value $denominator)
    (if (< $value 1048576.0) (gv:mantissa (* $value 4294967296.0) (* $denominator 4294967296))
      (if (< $value 68719476736.0) (gv:mantissa (* $value 65536.0) (* $denominator 65536))
@@ -238,8 +242,41 @@
 (= (gv:kernel-json $text)
    (case (collapse (catch (json:parse $text)))
      ((($state) (case $state
-       (((JsonFailureV1 JsonParseV1 JsonSyntaxRejectedV1 $_ $_) (JsonObject ())) ($value $value))))
+       (((JsonFailureV1 JsonParseV1 JsonSyntaxRejectedV1 $_ $_) (JsonObject ()))
+        ($value (gv:filter-kernel-state $value)))))
       ($other (Error gv:kernel-json $other)))))
+; Views and writers use ONE loader. Drop only numerically invalid mood values;
+; retain raw valid representations and malformed values' existing error paths.
+(= (gv:valid-mood-value? $value)
+   (if (== (get-type $value) Number) (and (>= $value -1.0) (<= $value 1.0))
+     (if (== (get-type $value) String)
+       (if (re:is-match (get-state &sv-int-separators) $value) True
+        (let* (($text (sv:strip $value)) ($lower (str:lower $text))
+              ($digits (if (str:is-all-in ascii $text) $text (sv:ascii-digits $text (aw:decimal-patterns)))))
+         (if (sv:member $lower ("nan" "+nan" "-nan" "inf" "+inf" "-inf" "infinity" "+infinity" "-infinity")) False
+           (if (re:is-match (get-state &gv-float) $digits)
+             (gv:mood-string-valid? (str:join "" (str:split "_" $digits))) True))))
+       (gv:mood-number-valid? (catch (gv:float $value))))))
+(= (gv:mood-string-valid? $digits)
+   ; The native JSON scalar parser accepts overflow-sized JSON numerals before
+   ; double arithmetic; the native number parser also accepts forms like .5.
+   (let $number (catch (json:parse (if (str:starts-with $digits "+")
+                      (str:byte-slice $digits 1 (str:byte-length $digits)) $digits)))
+     (gv:mood-number-valid? (if (== (get-type $number) Number) $number
+       (catch (str:string->number $digits))))))
+(= (gv:mood-number-valid? $number)
+   (if (== (get-type $number) Number) (and (>= $number -1.0) (<= $number 1.0)) True))
+(= (gv:filter-mood $mood)
+   (case $mood
+     (((JsonObject $pairs) (JsonObject (filter-atom (sv:unique-pairs $pairs) $pair
+         (let (JsonPair $_ $stored) $pair (gv:valid-mood-value? $stored)))))
+      ($other $other))))
+(= (gv:filter-kernel-state $state)
+   (case $state
+     (((JsonObject $pairs) (JsonObject (map-atom (sv:unique-pairs $pairs) $pair
+         (let (JsonPair $key $value) $pair
+           (JsonPair $key (if (== $key "mood") (gv:filter-mood $value) $value))))))
+      ($other $other))))
 (= (gv:affect $path)
    (let* (($state (gv:kernel $path)) ($mood (sv:field $state "mood" (JsonObject ()))))
      (if (sv:truth $mood)

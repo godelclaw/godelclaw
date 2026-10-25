@@ -1,10 +1,12 @@
 """Isolated project-04b subprocesses and full, generated-fixture receipts."""
 import base64
+from contextlib import contextmanager
 import hashlib
 import json
 import os
 from pathlib import Path
 import resource
+import re
 import subprocess
 import sys
 import tempfile
@@ -13,6 +15,8 @@ from isolated_env import isolated_environ
 
 ROOT = Path(__file__).resolve().parents[1]
 LIMIT_KIB = 25165824
+FROZEN_EXE_SHA256 = "2c3a593f7482a60321e36b12a86e8fac788d0a690cda770af7b021a6df92fb7b"
+FROZEN_MANIFEST_SHA256 = "1b1648b95ab4428cffb00316c4e732b28621228318ceba824a860ce05b01a627"
 PATHS = {
     "METTACLAW_GOALS_PATH": "goals.metta",
     # Oracle kernel/compost paths are fixed neighbors, not environment knobs.
@@ -53,10 +57,13 @@ def environment(directory):
     env = isolated_environ()
     for name in list(env):
         if name.startswith(("METTACLAW_", "TELEGRAM_", "OPENAI_", "ANTHROPIC_", "SYNTHETIC_",
-                            "CETTA_IO_AUTH_")) or any(
+                            "CETTA_", "DYLD_")) or name in (
+                "LD_PRELOAD", "METTA_PATH", "METTA_LIBRARY_PATH") or any(
                 part in name.upper() for part in ("TOKEN", "SECRET", "PASSWORD", "CREDENTIAL", "API_KEY")):
             env.pop(name)
     env.update({name: str(directory / filename) for name, filename in PATHS.items()})
+    if os.environ.get("CETTA_BIN"):
+        env["CETTA_BIN"] = os.environ["CETTA_BIN"]
     deny = directory / "deny-bin"
     deny.mkdir(exist_ok=True)
     (deny / "tmux").write_text("#!/bin/sh\necho 'project 04b: tmux forbidden' >&2\nexit 126\n")
@@ -89,6 +96,61 @@ def receipt(kind, value):
             stream.write("\n")
 
 
+def frozen_identity(phase, edge):
+    """Read-only full bundle identity; a mismatch must stop, never repair."""
+    binary = Path(os.environ["CETTA_BIN"])
+    assert not binary.is_symlink(), "frozen executable must not be a symlink"
+    root = binary.resolve().parent
+    manifest = (root / "SHA256SUMS").read_bytes()
+    assert hashlib.sha256(manifest).hexdigest() == FROZEN_MANIFEST_SHA256, "frozen manifest changed"
+    rows = []
+    for line in manifest.decode("ascii").splitlines():
+        expected, name = line.split(maxsplit=1)
+        path = root / name
+        assert path.resolve().is_relative_to(root) and not path.is_symlink(), name
+        actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        assert actual == expected, (name, expected, actual)
+        rows.append({"file": name, "sha256": actual})
+    assert len(rows) == 341
+    assert hashlib.sha256(binary.read_bytes()).hexdigest() == FROZEN_EXE_SHA256
+    assert {r["file"] for r in rows} == {binary.name} | {
+        str(p.relative_to(root)) for p in (root / "lib").rglob("*") if p.is_file()}
+    result = {"phase": phase, "edge": edge, "binary": str(binary),
+              "manifest_sha256": FROZEN_MANIFEST_SHA256, "files": rows,
+              "provenance": "clean aec06044 supplied by reviewer; hashes are observations, not independent build certification"}
+    receipt("frozen-identity", result)
+    return result
+
+
+def frozen_resolution(directory):
+    libraries = ("lib_import", "fs", "str", "re", "json", "math", "system", "path")
+    program = "".join('!(import! &self (library %s))\n' % name for name in libraries)
+    # PeTTa's library descriptor uses the same native overlay resolver as
+    # import!. Native fast-path imports need not enter module-inventory!.
+    program += "".join('!(println! (FrozenLibrary (library %s)))\n' % name for name in libraries)
+    result = engine(directory, program)
+    assert result.returncode == 0, result.stdout + result.stderr
+    paths = [p.strip('"') for p in re.findall(r'\(FrozenLibrary ([^\n]+)\)', result.stdout)]
+    root = Path(os.environ["CETTA_BIN"]).resolve().parent
+    assert paths, "native library inventory did not expose paths"
+    assert len(paths) == len(libraries), result.stdout
+    assert all(Path(p + ".metta").is_file() and Path(p).resolve().is_relative_to(root / "lib") for p in paths), paths
+    assert all(any(Path(p).stem == name for p in paths) for name in libraries), paths
+    receipt("frozen-resolution", {"paths": paths, "libraries": libraries,
+        "environment": {k: v for k, v in environment(directory).items()
+                        if k.startswith(("CETTA_", "PETTA_", "LD_", "DYLD_"))}})
+
+
+@contextmanager
+def frozen_phase(name, directory):
+    frozen_identity(name, "START")
+    try:
+        frozen_resolution(directory)
+        yield
+    finally:
+        frozen_identity(name, "END")
+
+
 def run(command, directory, **kwargs):
     cwd = kwargs.pop("cwd", ROOT)
     env = environment(directory)
@@ -106,7 +168,7 @@ def run(command, directory, **kwargs):
     return result
 
 
-def engine(directory, program, runtime_root=ROOT):
+def engine(directory, program, runtime_root=ROOT, extra_env=None):
     # Probe sources live outside the checkout. Resolve only our explicit local
     # imports; ancestor-walk otherwise silently leaves missing calls unevaluated.
     runtime_root = Path(runtime_root)
@@ -117,7 +179,7 @@ def engine(directory, program, runtime_root=ROOT):
     path.write_text(program, encoding="utf-8")
     receipt("program", {"program": program})
     return run([os.environ["CETTA_BIN"], "--lang", "petta", "--import-mode", "ancestor-walk", str(path)], directory,
-               cwd=runtime_root, extra_env={"PYTHONPATH": os.pathsep.join((str(ROOT / "tests"), str(runtime_root / "src"), str(runtime_root / "channels")))})
+               cwd=runtime_root, extra_env={"PYTHONPATH": os.pathsep.join((str(ROOT / "tests"), str(runtime_root / "src"), str(runtime_root / "channels"))), **(extra_env or {})})
 
 
 def engine_info(directory):

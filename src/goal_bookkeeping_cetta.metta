@@ -134,7 +134,7 @@
      (gk:fmt $goal (gk:r $sti) (gk:r $lti))))
 (= (gk:mood-line $mood)
    (str:join "" ("(mood " (str:join " " (map-atom (gk:dims) $dim
-     (str:join ":" ($dim (gk:r (sv:field $mood $dim (Error gk:mood $dim))))))) ")")))
+     (str:join ":" ($dim (gk:r (sv:field $mood $dim 0.0)))))) ")")))
 (= (gk:emit $goals $flags $budget $other $mood)
    (let* (($prefix (if (== $other ()) $other
                     (if (!= (sv:strip (index-atom $other (- (size-atom $other) 1))) "")
@@ -163,11 +163,8 @@
      (if (== (get-type $result) String) (GkOk $result)
        (GkErr (str:concat "native json:stringify-python emission failed: " (gk:detail $result))))))
 (= (gk:emit-result $goals $flags $budget $other $mood)
-   (let $missing (if (sv:truth $mood)
-     (filter-atom (gk:dims) $dim (== (sv:field $mood $dim GkMissing) GkMissing)) ())
-     (if (!= $missing ()) (GkErr (str:join "" ("'" (car-atom $missing) "'")))
-       (let $text (catch (gk:emit $goals $flags $budget $other $mood))
-         (if (== (get-type $text) String) (GkOk $text) (GkErr (gk:detail $text)))))))
+   (let $text (catch (gk:emit $goals $flags $budget $other $mood))
+     (if (== (get-type $text) String) (GkOk $text) (GkErr (gk:detail $text)))))
 
 ; Offset is a BYTE offset before replacement decoding/newline translation.
 ; metadata + native tail reader seeks before replacement decoding. A changed

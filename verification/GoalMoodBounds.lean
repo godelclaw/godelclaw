@@ -14,6 +14,19 @@ theorem convexNumerator (n x y : Int)
   dsimp [numerator]
   omega
 
+-- Mathematical counterpart of dropping out-of-range stored coordinates.
+-- Does not model binary64 coercion, JSON parsing, NaN or persistence.
+def admitted (n : Int) (xs : List Int) : List Int :=
+  xs.filter fun x => decide (-n ≤ x ∧ x ≤ n)
+
+theorem admittedBound (n x : Int) (xs : List Int) (h : x ∈ admitted n xs) :
+    -n ≤ x ∧ x ≤ n := by
+  simp only [admitted, List.mem_filter, decide_eq_true_eq] at h
+  exact h.2
+
+theorem missingZeroBound (n : Int) (nonneg : 0 ≤ n) : -n ≤ 0 ∧ 0 ≤ n := by
+  omega
+
 def endpoints : List Int := [-1, 0, 1]
 
 def replay : List (List Int) := endpoints.flatMap fun x =>
@@ -21,4 +34,6 @@ def replay : List (List Int) := endpoints.flatMap fun x =>
 
 end GoalMoodBounds
 
-def main : IO Unit := IO.println (repr GoalMoodBounds.replay)
+def main : IO Unit := do
+  IO.println (repr GoalMoodBounds.replay)
+  IO.println (repr (GoalMoodBounds.admitted 100 [-200, -100, 0, 100, 200]))

@@ -327,16 +327,41 @@ class CandidateGapTests(unittest.TestCase):
 
 
 @unittest.skipUnless(os.environ.get("CETTA_BIN"), "set checkpoint CETTA_BIN")
-class LegacyStateGapTests(unittest.TestCase):
-    compare = CandidateTests.compare
+class HandCorruptedStateDiagnostics(unittest.TestCase):
+    def test_unused_lone_surrogate_remains_a_documented_parser_gap(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            raw = '{"extra": "\\ud800", "mood": {"C": 0.5}}'
+            kernel = directory / "goals_kernel.json"
+            kernel.write_text(raw)
+            expected = goals._load_kernel_state(kernel)
+            result = engine(directory, HEADER +
+                '!(py-call (goal_bookkeeping_probe.candidate_record "non-scalar" (gk:state (gv:path))))\n')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            actual = json.loads((directory / "observations.jsonl").read_text())["value"]
+            receipt("non-scalar-json-diagnostic", {"input": raw, "python": json.dumps(expected),
+                "native": actual, "scope": "known non-scalar JSON input gap, NOT parity or new domain approval"})
+            self.assertEqual(expected["mood"], {"C": 0.5})
+            self.assertEqual(actual, ["GkErr", "'object' object has no attribute 'get'"])
+            self.assertEqual(kernel.read_text(), raw)
 
-    def test_python_nonfinite_json_state_input(self):
-        for bad in (float("nan"), float("inf"), float("-inf")):
-            with self.subTest(legacy=repr(bad)):
-                state = {"streaks": {}, "log_offset": 0,
-                         "mood": {d: bad if d == "Cn" else 0.1 for d in goals.MOOD_DIMS}}
-                self.compare({"goals.metta": encoded(goal() + "\n"),
-                              "goals_kernel.json": encoded(json.dumps(state))}, [op("kernel")])
+    def test_nonfinite_tokens_have_documented_whole_file_parser_difference(self):
+        for token in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(token=token), tempfile.TemporaryDirectory() as temp:
+                directory = Path(temp)
+                raw = '{"extra": "preserve", "mood": {"Cn": ' + token + ', "C": 0.5}}'
+                kernel = directory / "goals_kernel.json"
+                kernel.write_text(raw)
+                expected = goals._load_kernel_state(kernel)
+                result = engine(directory, HEADER +
+                    '!(py-call (goal_bookkeeping_probe.text "corrupted" (json:stringify-python (gk:state (gv:path)))))\n')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                actual = json.loads((directory / "observations.jsonl").read_text())["text"]
+                receipt("hand-corrupted-json-diagnostic", {"input": raw, "python": expected,
+                    "native": actual, "scope": "OUT OF REACHABLE DOMAIN; this difference is NOT parity"})
+                self.assertEqual(expected, {"extra": "preserve", "mood": {"C": 0.5}})
+                self.assertEqual(actual, "{}")
+                self.assertEqual(kernel.read_text(), raw)
 
 if __name__ == "__main__":
     unittest.main()
