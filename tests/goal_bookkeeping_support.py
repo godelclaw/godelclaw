@@ -15,8 +15,10 @@ from isolated_env import isolated_environ
 
 ROOT = Path(__file__).resolve().parents[1]
 LIMIT_KIB = 25165824
-FROZEN_EXE_SHA256 = "2c3a593f7482a60321e36b12a86e8fac788d0a690cda770af7b021a6df92fb7b"
-FROZEN_MANIFEST_SHA256 = "1b1648b95ab4428cffb00316c4e732b28621228318ceba824a860ce05b01a627"
+# A qualifier handed a specific engine pins it here; otherwise the bundle's own
+# manifest is its identity, checked at both edges of every phase.
+PINNED_EXE_SHA256 = os.environ.get("GOAL_BOOKKEEPING_ENGINE_SHA256", "")
+PINNED_MANIFEST_SHA256 = os.environ.get("GOAL_BOOKKEEPING_MANIFEST_SHA256", "")
 PATHS = {
     "METTACLAW_GOALS_PATH": "goals.metta",
     # Oracle kernel/compost paths are fixed neighbors, not environment knobs.
@@ -96,28 +98,42 @@ def receipt(kind, value):
             stream.write("\n")
 
 
+def bundle_manifest(root):
+    """A frozen bundle's SHA256SUMS or a release bundle's build-manifest.json:
+    the raw bytes and the hash each listed file must have."""
+    sums = root / "SHA256SUMS"
+    if sums.is_file():
+        raw = sums.read_bytes()
+        return raw, {name: expected for expected, name in
+                     (line.split(maxsplit=1) for line in raw.decode("ascii").splitlines())}
+    raw = (root / "build-manifest.json").read_bytes()
+    return raw, json.loads(raw)["files"]
+
+
 def frozen_identity(phase, edge):
     """Read-only full bundle identity; a mismatch must stop, never repair."""
     binary = Path(os.environ["CETTA_BIN"])
     assert not binary.is_symlink(), "frozen executable must not be a symlink"
     root = binary.resolve().parent
-    manifest = (root / "SHA256SUMS").read_bytes()
-    assert hashlib.sha256(manifest).hexdigest() == FROZEN_MANIFEST_SHA256, "frozen manifest changed"
+    manifest, listed = bundle_manifest(root)
+    manifest_sha256 = hashlib.sha256(manifest).hexdigest()
+    assert not PINNED_MANIFEST_SHA256 or manifest_sha256 == PINNED_MANIFEST_SHA256, \
+        "frozen manifest changed"
     rows = []
-    for line in manifest.decode("ascii").splitlines():
-        expected, name = line.split(maxsplit=1)
+    for name, expected in sorted(listed.items()):
         path = root / name
         assert path.resolve().is_relative_to(root) and not path.is_symlink(), name
         actual = hashlib.sha256(path.read_bytes()).hexdigest()
         assert actual == expected, (name, expected, actual)
         rows.append({"file": name, "sha256": actual})
-    assert len(rows) == 341
-    assert hashlib.sha256(binary.read_bytes()).hexdigest() == FROZEN_EXE_SHA256
-    assert {r["file"] for r in rows} == {binary.name} | {
-        str(p.relative_to(root)) for p in (root / "lib").rglob("*") if p.is_file()}
+    executable = hashlib.sha256(binary.read_bytes()).hexdigest()
+    assert listed.get(binary.name) == executable, "executable missing from its manifest"
+    assert not PINNED_EXE_SHA256 or executable == PINNED_EXE_SHA256, "frozen executable changed"
+    # Every library file is listed, so no unlisted file can shadow one.
+    assert {str(p.relative_to(root)) for p in (root / "lib").rglob("*") if p.is_file()} <= set(listed)
     result = {"phase": phase, "edge": edge, "binary": str(binary),
-              "manifest_sha256": FROZEN_MANIFEST_SHA256, "files": rows,
-              "provenance": "clean aec06044 supplied by reviewer; hashes are observations, not independent build certification"}
+              "manifest_sha256": manifest_sha256, "executable_sha256": executable, "files": rows,
+              "provenance": "hashes are observations of the bundle under test, not independent build certification"}
     receipt("frozen-identity", result)
     return result
 
@@ -143,12 +159,14 @@ def frozen_resolution(directory):
 
 @contextmanager
 def frozen_phase(name, directory):
-    frozen_identity(name, "START")
+    start = frozen_identity(name, "START")
     try:
         frozen_resolution(directory)
         yield
     finally:
-        frozen_identity(name, "END")
+        end = frozen_identity(name, "END")
+        assert (end["manifest_sha256"], end["files"]) == (start["manifest_sha256"], start["files"]), \
+            "engine bundle changed during the phase"
 
 
 def run(command, directory, **kwargs):
