@@ -929,6 +929,34 @@ replaying them. Coding calls share the account's provider ledger while
 keeping their own call identities and health state. Structured sessions use
 the selected API provider or the native ChatGPT subscription route.
 
+Before its first model call, a coding session loads repository instructions
+natively. It finds the nearest ancestor containing a root marker (`.git` by
+default), then visits directories from that root to the workspace. Each directory
+selects its first regular file from `AGENTS.override.md`, `AGENTS.md`, then the
+configured fallback filenames. An empty project override still takes precedence.
+Without a root marker, only the workspace is searched. More local instructions
+take precedence for files in their scope; the task follows the loaded guidance.
+
+Optional agent-wide instructions come first, from `paths.coding_guidance_dir`
+(default `$ROOT/identity`, empty to disable). This layer selects the first
+nonempty `AGENTS.override.md` or `AGENTS.md`. Repository discovery can be configured
+with `coding.project_root_markers` and `coding.project_doc_fallback_filenames`;
+an empty marker list disables ancestor discovery. The loader does not import
+another coding client's personal configuration.
+
+The session saves the complete decoded text, source paths and text hashes in
+`guidance.json` before publishing the initial transcript. Resume uses this
+snapshot, and compaction retains its instruction message verbatim. Unreadable
+instructions or a conflicting snapshot produce an explicit failure before a
+model call. New sessions read current files. Discovery covers the initial
+workspace chain; instructions below that directory still need to be read when
+working in those subdirectories.
+
+The discovery reference is [Codex at `6aaac69480`](https://github.com/openai/codex/blob/6aaac69480/codex-rs/core/src/agents_md.rs).
+Tests exercise its scope, override and fallback rules through the native session
+and scripted providers. Complete text and visible read failures deliberately
+replace that reference's optional byte clipping and skipped read errors.
+
 A finished session commits its pending report before attempting notification.
 Immutable messages and matching mailbox acceptance receipts live in the session's
 `report-outbox`; acceptance means handed to the mailbox, not read by the recipient.

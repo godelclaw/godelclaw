@@ -10,6 +10,7 @@
 (= (coding:field $value $key)
    (case $value (((JsonObject $pairs) (coding:member $pairs $key)) ($other JsonNull))))
 (= (coding:text $value) (case $value (((JsonString $text) $text) ($other ""))))
+(= (coding:items $value) (case $value (((JsonArray $items) $items) ($other ()))))
 (= (coding:number $value $default)
    (case $value (((JsonNumber $text) (str:string->number $text)) ($other $default))))
 

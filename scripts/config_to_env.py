@@ -2,6 +2,7 @@
 import os
 import sys
 import math
+import json
 
 try:
     import tomllib
@@ -74,6 +75,16 @@ def main():
 
     paths = config.get("paths", {})
     agent = config.get("agent", {})
+    coding = config.get("coding", {})
+    for name in ("project_root_markers", "project_doc_fallback_filenames"):
+        value = coding.get(name, [".git"] if name == "project_root_markers" else [])
+        if (not isinstance(value, list) or any(not isinstance(item, str) or item in ("", ".", "..")
+                or "/" in item or "\0" in item for item in value)):
+            print("coding." + name + " must be an array of filenames", file=sys.stderr)
+            return 2
+    if not isinstance(paths.get("coding_guidance_dir", ""), str):
+        print("paths.coding_guidance_dir must be text", file=sys.stderr)
+        return 2
     timeout = agent.get("llm_timeout_seconds")
     if timeout is not None and (isinstance(timeout, bool)
             or not isinstance(timeout, (int, float))
@@ -138,6 +149,9 @@ def main():
     emit("METTACLAW_REPOS_DIR", expand(paths.get("repos_dir"), root))
     emit("METTACLAW_PUBLIC_WORK_DIR", expand(paths.get("public_work_dir"), root))
     emit("METTACLAW_STREAM_DIR", expand(paths.get("stream_dir"), root))
+    emit("METTACLAW_CODING_GUIDANCE_DIR", expand(paths.get("coding_guidance_dir", "$ROOT/identity"), root))
+    emit("METTACLAW_CODING_ROOT_MARKERS", json.dumps(coding.get("project_root_markers", [".git"])))
+    emit("METTACLAW_CODING_DOC_FALLBACKS", json.dumps(coding.get("project_doc_fallback_filenames", [])))
     emit("METTACLAW_EMBED_MODEL", expand(paths.get("embed_model"), root))
 
     emit("METTACLAW_OWNER", expand(agent.get("owner"), root))

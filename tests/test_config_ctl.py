@@ -41,6 +41,19 @@ class ConfigEditingTests(unittest.TestCase):
         self.assertEqual(self.run_cli("set", "agent.shell_timeout_seconds", "99").returncode, 0)
         self.assertIn("METTACLAW_SHELL_TIMEOUT_SECONDS='99'", (self.root / ".env").read_text())
 
+    def test_coding_guidance_configuration_preserves_discovery_lists_and_paths(self):
+        self.assertEqual(self.run_cli('render').returncode, 0)
+        generated = (self.root / '.env').read_text()
+        self.assertIn(str(self.root / 'identity'), generated)
+        self.assertIn('METTACLAW_CODING_ROOT_MARKERS=', generated)
+        self.assertIn('METTACLAW_CODING_DOC_FALLBACKS=', generated)
+        for key in ('coding.project_root_markers', 'coding.project_doc_fallback_filenames'):
+            previous = (self.root / 'config/local.toml').read_bytes()
+            self.assertEqual(self.run_cli('set', key, '["../outside"]').returncode, 2)
+            self.assertEqual((self.root / 'config/local.toml').read_bytes(), previous)
+        self.assertEqual(self.run_cli('set', 'coding.project_doc_fallback_filenames', '["TEAM_GUIDE.txt"]').returncode, 0)
+        self.assertIn('TEAM_GUIDE.txt', (self.root / '.env').read_text())
+
     def test_show_names_the_file_each_value_comes_from(self):
         rows = {row["setting"]: row for row in map(json.loads, self.run_cli("show").stdout.splitlines())}
         self.assertEqual((rows["agent.synthetic_model"]["value"], rows["agent.synthetic_model"]["origin"]),

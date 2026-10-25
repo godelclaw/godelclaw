@@ -148,6 +148,7 @@
   "src/claude_bridge.py",
   "src/coding_delivery.metta",
   "src/coding_io.py",
+  "src/coding_guidance.metta",
   "src/coding_session.metta",
   "src/coding_work.metta",
   "src/cognitive_health.py",

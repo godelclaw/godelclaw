@@ -29,6 +29,9 @@ public_work_dir = ""
 # Local operator summaries, commentary and execution output. Empty disables it.
 # This does not publish to Telegram or the deliberately public notes feed.
 stream_dir = ""
+# Optional agent-wide coding guidance; empty disables the global layer.
+# Files here are private agent data and are not copied into runtime releases.
+coding_guidance_dir = "$ROOT/identity"
 
 # Local Qwen3-Embedding-8B path. Fill this before using remember/query.
 embed_model = ""
@@ -90,6 +93,12 @@ conversation_events = 64
 # and a schema-1 project registry without changing the agent kernel.
 reports_root = ""
 project_registry_path = ""
+
+[coding]
+# Discovery walks to the nearest marker, then reads back down to the workspace.
+# An empty marker list restricts discovery to the workspace itself.
+project_root_markers = [".git"]
+project_doc_fallback_filenames = []
 
 [memory]
 collection = "memories"
