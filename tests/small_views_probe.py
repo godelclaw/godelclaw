@@ -31,6 +31,7 @@ boundary_calls = {}
 inside_python = False
 command = None
 counter_path = None
+replacement_events = []
 original_command = engine_modes.engine_command
 original_load = context_source_loaders.load
 original_prepare = context_source_loaders.prepare
@@ -67,6 +68,17 @@ def apply(path):
         else:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(base64.b64decode(encoded))
+    for name, encoded in value.get("replace_files", {}).items():
+        target = Path(name)
+        old = target.stat()
+        replacement = target.with_name(target.name + ".replacement")
+        replacement.write_bytes(base64.b64decode(encoded))
+        replacement.chmod(old.st_mode & 0o777)
+        os.replace(replacement, target)
+        new = target.stat()
+        assert old.st_ino != new.st_ino
+        replacement_events.append({"path": name, "old_device": old.st_dev, "old_inode": old.st_ino,
+                                   "new_device": new.st_dev, "new_inode": new.st_ino})
     for name, stamp in value.get("utime", {}).items():
         os.utime(name, ns=tuple(stamp))
     if "command" in value:
@@ -146,5 +158,6 @@ def record(path, text):
         stream.write(json.dumps({"text": str(text), "forbidden": forbidden_calls,
                                  "calls": calls.copy(), "engine_calls": engine_calls,
                                  "boundaries": boundary_calls.copy(),
+                                 "replacements": replacement_events.copy(),
                                  "probe_events": probe_events()}) + "\n")
     return 1

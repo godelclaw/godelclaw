@@ -20,9 +20,10 @@ def loaders(conversation=None, views=None):
     return result
 
 
-def configure(path, native):
+def configure(path, native, compatibility=0):
     global settings
     settings = json.loads(Path(path).read_text())
+    settings["compatibility_only"] = bool(compatibility)
     base.apply(path)
     base.retained_loaders = loaders
     return base.setup(native, 1)
@@ -94,6 +95,8 @@ def record(path, start, end, text):
     assert rendered.count("SOURCE[") == 13 and "SOURCE[context-bundle]" not in rendered
     assert "SOURCE[project-evidence] status=known" in rendered
     assert base.forbidden_calls == 0
+    capability_probes = len(base.probe_events()) - row["capability_events_before"]
+    assert capability_probes == (2 if row["workload"] == "prime" and not settings["compatibility_only"] else 0)
     delta = {key: value - row["calls_before"].get(key, 0) for key, value in base.calls.items()}
     assert all(value == 1 for value in delta.values()), delta
     row.update(start_ns=start, end_ns=end, ms=(end - start) / 1_000_000,
@@ -102,7 +105,7 @@ def record(path, start, end, text):
                forbidden=base.forbidden_calls,
                boundaries={key: value - row["boundaries_before"].get(key, 0)
                            for key, value in base.boundary_calls.items()},
-               capability_probe_count=len(base.probe_events()) - row["capability_events_before"])
+               capability_probe_count=capability_probes)
     previous_end = end
     with open(path, "a", encoding="utf-8") as stream:
         stream.write(json.dumps(row, ensure_ascii=True) + "\n")

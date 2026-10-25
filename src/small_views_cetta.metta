@@ -294,18 +294,15 @@
    (JsonObject ((JsonPair "error_kind" $kind) (JsonPair "state" "unavailable"))))
 
 !(bind! &sv-cap-cache (new-state ()))
-; fs:metadata has no mtime in the production engine. An explicit native
-; GNU-compatible stat dependency supplies seconds, nanoseconds and size.
-; Missing/incompatible STAT_BIN is unavailable, NEVER a Python workaround.
-!(bind! &sv-stat (new-state (re:compile "\\A(-?[0-9]+)\\|[^.]+\\.([0-9]{9}) [^|]+\\|([0-9]+)\\z")))
+; Requires the native modified-metadata capability. Match Python's complete
+; command, mtime_ns, size key: device/inode are deliberately NOT key fields.
+; Older engines or unavailable metadata yield only this source's unavailable
+; outcome, never an external command or Python metadata/loader fallback.
 (= (sv:artifact-key $command)
-   (let* (($binary (car-atom $command))
-          ($raw (sv:run ((system:getenv-or-default "STAT_BIN" "stat") "-Lc" "%Y|%y|%s" "--" $binary) 3000))
-          ($match (re:captures (get-state &sv-stat) $raw)))
-     (case $match
-       (((re:match $_ $_ $_)
-         ($command (re:group-text $match $raw 1) (re:group-text $match $raw 2) (re:group-text $match $raw 3)))
-        ($other (Error sv:artifact-key missing-native-mtime))))))
+   (case (fs:metadata (car-atom $command) follow-modified)
+     (((fs:info $kind $size (fs:identity $_ $_) (fs:modified $seconds $nanoseconds))
+       ($command (+ (* $seconds 1000000000) $nanoseconds) $size))
+      ($other (Error sv:artifact-key missing-native-mtime)))))
 (= (sv:capabilities)
    ; This is the explicitly retained engine_modes boundary (one per call).
    (let $command (sv:command (py-call (engine_modes.engine_command "cetta")))

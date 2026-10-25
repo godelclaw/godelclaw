@@ -7,7 +7,7 @@ and enforces ulimit -v 25165824. Never run the tmux shadow here.
 import run_context_bundle_checks as runner
 
 runner.SUITES = {
-    "native": ["-m", "unittest", "-v", "test_small_views_native"],
+    "native": ["-m", "unittest", "-v", "test_small_views_native", "test_small_views_cold_bench"],
     "regression": ["-m", "unittest", "-v", "test_project_capabilities", "test_project_evidence",
                    "test_commitment_projection", "test_task_phase", "test_context_sources",
                    "test_turn_additions", "test_pins_context_native", "test_action_window_native"],

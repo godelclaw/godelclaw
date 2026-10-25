@@ -148,7 +148,8 @@ def measured(case, step, root, engine, engine_label, runtime, revision, process,
     outputs.mkdir()
     lines = HEADER + CALLER + ["!(import! &self (library system))",
         "!(import! &self ./tests/small_views_cold_probe.py)",
-        "!(py-call (small_views_cold_probe.configure %s %d))" % (q(step), runtime != "historical")]
+        "!(py-call (small_views_cold_probe.configure %s %d %d))" %
+        (q(step), runtime != "historical", compatibility)]
     work = [("prime", 0)]
     if not compatibility:
         work += [("cold", n) for n in range(args.cold_samples)]

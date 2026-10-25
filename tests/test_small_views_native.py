@@ -2,6 +2,7 @@
 import base64
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import shutil
@@ -52,7 +53,7 @@ class SmallViewsTest(unittest.TestCase):
         expected = []
         expected_probes = []
         # Oracle and guest must begin with the SAME bytes and artifact key.
-        touched = {name for step in steps for field in ("files", "utime")
+        touched = {name for step in steps for field in ("files", "replace_files", "utime")
                    for name in step.get(field, {})}
         touched.update(step["command"][2] for step in steps if len(step.get("command", [])) >= 3)
         initial = {name: (Path(name).read_bytes(), Path(name).stat())
@@ -81,6 +82,7 @@ class SmallViewsTest(unittest.TestCase):
             else:
                 raw, info = snapshot
                 path.write_bytes(raw)
+                path.chmod(info.st_mode & 0o777)
                 os.utime(path, ns=(info.st_atime_ns, info.st_mtime_ns))
         log = self.directory / ("output-%d" % self.index)
         lines = (HEADER + ["!(import! &self ./tests/small_views_probe.py)"] + ([] if boot else CALLER)
@@ -250,6 +252,55 @@ print(mode.get("version", "fixture 日 r1") if sys.argv[-1] == "--version" else 
         # 2 + 0 + 1 + 1 + 2 + 1 + 2 + 2 + 0 + 0 + 2 + 2 + 0 = 15 on EACH route.
         self.assertEqual(len(probes), 15)
 
+    def test_capability_cache_ignores_replaced_inode(self):
+        path, mode, count = self.fake()
+        raw, stamp = path.read_bytes(), path.stat()
+        rows = self.compare("project-capabilities", [
+            {"command": [str(path), str(mode), str(count)], "files": {str(mode): encoded({})}},
+            {"replace_files": {str(path): encoded(raw)},
+             "files": {str(mode): encoded({"fail": True})},
+             "utime": {str(path): [stamp.st_atime_ns, stamp.st_mtime_ns]}},
+            {"utime": {str(path): [stamp.st_atime_ns, stamp.st_mtime_ns + 1]}}])
+        self.assertEqual(len(count.read_text().splitlines()), 3)  # hit, then mtime invalidation
+        self.assertEqual(len(rows[-1]["replacements"]), 1)
+        replacement = rows[-1]["replacements"][0]
+        self.assertNotEqual(replacement["old_inode"], replacement["new_inode"])
+
+    def test_capability_cache_follows_symlink_target_and_missing_artifact(self):
+        target, mode, count = self.fake()
+        link = self.directory / "artifact-link"
+        link.symlink_to(target.name)
+        stamp = target.stat()
+        self.compare("project-capabilities", [
+            {"command": [str(link), str(mode), str(count)], "files": {str(mode): encoded({})}},
+            {"files": {str(mode): encoded({"fail": True})}},
+            {"utime": {str(target): [stamp.st_atime_ns, stamp.st_mtime_ns + 1]}},
+            {"files": {str(mode): encoded({"version": "symlink recovery"})}},
+            {"files": {str(target): None}}])
+        self.assertEqual(len(count.read_text().splitlines()), 5)
+
+    def test_artifact_key_matches_python_nanoseconds_and_size(self):
+        target, mode, count = self.fake()
+        command = [str(target), str(mode), str(count)]
+        config, log = self.directory / "key-config", self.directory / "keys"
+        config.write_text(json.dumps({"command": command}))
+        lines = NATIVE_HEADER + ["!(py-call (small_views_probe.setup 1 0))",
+                                "!(py-call (small_views_probe.apply %s))" % q(config)]
+        expected = []
+        for index, nanoseconds in enumerate((target.stat().st_mtime_ns, 1, -1)):
+            path = self.directory / ("key-step-%d" % index)
+            path.write_text(json.dumps({"utime": {str(target): [nanoseconds, nanoseconds]}}))
+            os.utime(target, ns=(nanoseconds, nanoseconds))
+            info = target.stat()
+            expected.append([command, info.st_mtime_ns, info.st_size])
+            lines += ["!(py-call (small_views_probe.apply %s))" % q(path),
+                      "!(let ($command $mtime $size) (sv:artifact-key (sv:command "
+                      '(py-call (engine_modes.engine_command "cetta")))) '
+                      '(py-call (small_views_probe.record %s (json:stringify '
+                      '(JsonArray ((JsonArray $command) $mtime $size))))))' % q(log)]
+        guest(self.directory, lines, **self.settings)
+        self.assertEqual([json.loads(json.loads(line)["text"]) for line in log.read_text().splitlines()], expected)
+
     def test_capability_inventory_failure_timeout_and_strict_stream_decoding(self):
         path, mode, count = self.fake()
         steps = [{"command": [str(path), str(mode), str(count)],
@@ -331,21 +382,51 @@ print(mode.get("version", "fixture 日 r1") if sys.argv[-1] == "--version" else 
         self.compare(None, [{"command": [str(fake), str(mode), str(count)],
                              "files": {str(mode): encoded({})}}, {}], caller=True, boot=True)
 
-    def test_missing_native_stat_is_unavailable_without_python_workaround(self):
+    def test_unavailable_or_legacy_metadata_has_no_python_workaround(self):
         fake, mode, count = self.fake()
         mode.write_text("{}")
         step = self.directory / "step"
         step.write_text(json.dumps({"command": [str(fake), str(mode), str(count)]}))
-        log = self.directory / "missing-stat"
-        guest(self.directory, NATIVE_HEADER + [
-            "!(py-call (small_views_probe.setup 1 0))",
-            "!(py-call (small_views_probe.apply %s))" % q(step),
-            '!(py-call (small_views_probe.record %s (json:stringify (JsonArray (sv:load "project-capabilities")))))' % q(log)],
-              STAT_BIN=str(self.directory / "missing-stat-bin"), **self.settings)
-        row = json.loads(log.read_text())
-        self.assertEqual(json.loads(row["text"]), ["unavailable"])
-        self.assertEqual(row["forbidden"], 0)
-        self.assertFalse(count.exists(), "missing identity must not launch an artifact probe")
+        for index, reply in enumerate(('(fs:failed fs:denied metadata $path 13 (fs:progress 0 known-position) "fixture")',
+                                       '(fs:info regular 1 (fs:identity "1" "2"))')):
+            log = self.directory / ("missing-metadata-%d" % index)
+            guest(self.directory, NATIVE_HEADER + [
+                "!(py-call (small_views_probe.setup 1 0))",
+                "!(py-call (small_views_probe.apply %s))" % q(step),
+                '!(match &self (= (fs:metadata $path $links) $body) (remove-atom &self (= (fs:metadata $path $links) $body)))',
+                '(= (fs:metadata $path $links) %s)' % reply,
+                '!(py-call (small_views_probe.record %s (json:stringify (JsonArray (sv:load "project-capabilities")))))' % q(log)],
+                  **self.settings)
+            row = json.loads(log.read_text())
+            self.assertEqual(json.loads(row["text"]), ["unavailable"])
+            self.assertEqual(row["forbidden"], 0)
+            self.assertFalse(count.exists(), "missing identity must not launch an artifact probe")
+
+    def test_metadata_failure_retains_only_its_source_at_complete_caller(self):
+        fake, mode, count = self.fake()
+        mode.write_text("{}")
+        step, log = self.directory / "metadata-step", self.directory / "metadata-caller"
+        step.write_text(json.dumps({"command": [str(fake), str(mode), str(count)]}))
+        record = '!(py-call (small_views_probe.record %s (addition-context-sources)))' % q(log)
+        remove = '!(match &self (= (fs:metadata $path $links) $body) (remove-atom &self (= (fs:metadata $path $links) $body)))'
+        guest(self.directory, HEADER + CALLER + [
+            '!(import! &self ./tests/small_views_probe.py)',
+            '!(py-call (small_views_probe.setup 1 1))',
+            '!(py-call (small_views_probe.apply %s))' % q(step), record, remove,
+            '(= (fs:metadata $path $links) (if (== $links follow-modified) '
+            '(fs:failed fs:denied metadata $path 13 (fs:progress 0 known-position) "fixture") '
+            '(__cetta_lib_fs_metadata $path $links)))', record, remove,
+            '(= (fs:metadata $path $links) (__cetta_lib_fs_metadata $path $links))', record],
+              METTACLAW_OBSERVED_STRATEGY="0", **self.settings)
+        rows = [json.loads(line) for line in log.read_text().splitlines()]
+        self.assertEqual([row["text"].split('SOURCE[project-capabilities] status=', 1)[1].split(' ', 1)[0]
+                          for row in rows], ["known", "stale-known", "known"])
+        neighbors = [{key: status for key, status in re.findall(r"SOURCE\[([^]]+)\] status=([^ ]+)", row["text"])
+                      if key != "project-capabilities"} for row in rows]
+        self.assertTrue(all(row["forbidden"] == 0 for row in rows))
+        self.assertEqual(neighbors, [neighbors[0]] * 3)
+        self.assertEqual(len(neighbors[0]), 12)
+        self.assertEqual(len(count.read_text().splitlines()), 2)
 
     def test_empty_directory_paths_keep_each_sources_outcome(self):
         empty = self.directory / "empty"
