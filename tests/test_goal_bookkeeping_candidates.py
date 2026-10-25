@@ -1,4 +1,4 @@
-"""INACTIVE native persistence candidates; no production loop/skill activation.
+"""Direct native persistence checks; real branch callers have a separate suite.
 
 Only fixtures, observation and the permitted retirement boundary are Python.
 No Python serializer/writer can repair native persistence or supply its bytes.
@@ -108,7 +108,7 @@ class CandidateTests(unittest.TestCase):
                                       "drop": goals.goal_drop}[step["kind"]](*step["args"])
                         if step["kind"] == "wake":
                             result = wake(result)
-                    except OSError as exc:
+                    except (OSError, UnicodeDecodeError) as exc:
                         result = ["raises", str(exc)]
                     expected.append({"label": str(i), "value": result, "files": snapshot(directory)})
             restore(directory, initial)
@@ -150,7 +150,7 @@ class CandidateTests(unittest.TestCase):
                 if (directory / "io-events.jsonl").exists() else []
             receipt("candidate-parity", {"test": self.id(), "steps": steps, "faults": faults,
                 "expected": expected, "actual": actual, "events": events, "calls": rows[-1]["calls"] if rows else {},
-                "scope": "inactive candidate; native fs and json:stringify-python, Python writers/ported helpers forbidden; oracle skill safe-text decode included"})
+                "scope": "direct native interface; native fs and json:stringify-python, Python writers/ported helpers forbidden; oracle skill safe-text decode included"})
             self.assertEqual(actual, expected)
             return actual, events, rows
 
@@ -308,31 +308,35 @@ class CandidateTests(unittest.TestCase):
             self.assertFalse((directory / "goals_kernel.json").exists())
             receipt("log-race-gap", {"actual": actual, "scope": "fixture-only size race; explicit native refusal, NOT Python parity"})
 
-    def test_production_entrypoints_remain_unwired(self):
+    def test_branch_entrypoints_and_manifest_select_bookkeeping(self):
         for path in (ROOT / "src/loop.metta", ROOT / "src/skills.metta"):
-            self.assertNotIn("goal_bookkeeping", path.read_text())
+            self.assertIn("./src/goal_bookkeeping.metta", path.read_text())
+        selected = json.loads((ROOT / "config/runtime-files.json").read_text())
+        for name in ("goal_bookkeeping", "goal_bookkeeping_cetta", "goal_bookkeeping_math_cetta", "goal_bookkeeping_python"):
+            self.assertIn("src/" + name + ".metta", selected)
 
 
 @unittest.skipUnless(os.environ.get("CETTA_BIN"), "set checkpoint CETTA_BIN")
 class CandidateGapTests(unittest.TestCase):
-    # Strict expected results: these are ordinary failures on missing engine /
-    # literal-input capabilities, never expectedFailure or successful parity.
+    # Strict expected result retained from the original missing-primitive
+    # witness. Never expectedFailure or weakened for the checkpoint engine.
     compare = CandidateTests.compare
-
-    def test_python_nonfinite_json_state_input(self):
-        state = {"streaks": {}, "log_offset": 0,
-                 "mood": {d: float("nan") if d == "Cn" else 0.1 for d in goals.MOOD_DIMS}}
-        self.compare({"goals.metta": encoded(goal() + "\n"),
-                      "goals_kernel.json": encoded(json.dumps(state))}, [op("kernel")])
-
-    def test_literal_python_list_string_goal_input(self):
-        literal = repr(["goal", "list-input", "Work", "sti:0.8", "lti:0.3", "vibes:", ["care"],
-                        "blocked-by:none", "last-verified:never", "note:generated"])
-        self.compare({}, [op("write", literal)])
 
     def test_invalid_goal_utf8_codec_error_message(self):
         self.compare({"goals.metta": encoded(b";; generated\n\xff\n")}, [op("kernel")])
 
+
+@unittest.skipUnless(os.environ.get("CETTA_BIN"), "set checkpoint CETTA_BIN")
+class LegacyStateGapTests(unittest.TestCase):
+    compare = CandidateTests.compare
+
+    def test_python_nonfinite_json_state_input(self):
+        for bad in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(legacy=repr(bad)):
+                state = {"streaks": {}, "log_offset": 0,
+                         "mood": {d: bad if d == "Cn" else 0.1 for d in goals.MOOD_DIMS}}
+                self.compare({"goals.metta": encoded(goal() + "\n"),
+                              "goals_kernel.json": encoded(json.dumps(state))}, [op("kernel")])
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,4 +1,4 @@
-; INACTIVE SWI interface; the oracle remains the SWI writer.
+; SWI interface; the corrected oracle remains the SWI writer.
 !(import! &self ./src/goals.py)
 !(import! &self ./src/helper.py)
 (= (gk:kernel-pass) (py-call (goals.kernel_pass)))

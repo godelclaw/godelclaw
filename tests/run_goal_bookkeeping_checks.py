@@ -16,8 +16,12 @@ SUITES = {
     "arithmetic": ["-m", "unittest", "-v", "test_goal_bookkeeping_native.ArithmeticTests"],
     "capability": ["-m", "unittest", "-v", "test_goal_bookkeeping_native.CapabilityTests"],
     "candidates": ["-m", "unittest", "-v", "test_goal_bookkeeping_candidates.CandidateTests"],
-    "gaps": ["-m", "unittest", "-v", "test_goal_bookkeeping_candidates.CandidateGapTests",
-             "test_goal_bookkeeping_native.ArithmeticGapTests"],
+    "gaps": ["-m", "unittest", "-v", "test_goal_bookkeeping_candidates.CandidateGapTests"],
+    "legacy-gaps": ["-m", "unittest", "-v", "test_goal_bookkeeping_candidates.LegacyStateGapTests"],
+    "diagnostics": ["-m", "unittest", "-v", "test_goal_bookkeeping_native.OutOfDomainArithmeticDiagnostics"],
+    "domain": ["-m", "unittest", "-v", "test_goal_bookkeeping_domain"],
+    "callers": ["-m", "unittest", "-v", "test_goal_bookkeeping_callers"],
+    "utf8": ["-m", "unittest", "-v", "test_goal_bookkeeping_utf8"],
     "primitives": ["-m", "unittest", "-v", "test_goal_bookkeeping_native.PrimitiveTests"],
     "oracle": ["-m", "unittest", "-v", "test_goal_bookkeeping_oracle"],
     "replay": ["-m", "unittest", "-v", "test_goal_bookkeeping_replay"],
@@ -25,6 +29,7 @@ SUITES = {
     "regression": ["-m", "unittest", "-v", "test_goals_kernel", "test_work_state"],
     "bench": ["tests/goal_bookkeeping_bench.py"],
     "candidate-bench": ["tests/goal_bookkeeping_candidate_bench.py"],
+    "caller-bench": ["tests/goal_bookkeeping_caller_bench.py"],
 }
 
 

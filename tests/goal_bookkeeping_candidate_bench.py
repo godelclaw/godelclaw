@@ -1,4 +1,4 @@
-"""INACTIVE candidate versus oracle: one real pass/wake, fresh unread log data.
+"""Direct native interface versus oracle: one pass/wake, fresh unread log data.
 
 No production loop integration claim. Warm and instrumented distributions are
 separate. Python supplies fixtures/observations only, never native goal writes.
@@ -101,7 +101,7 @@ def main():
     receipt("candidate-bench-distributions", distributions)
     print(json.dumps({mode: {key: value for key, value in row.items() if key not in ("ns", "steps_ns")}
                       for mode, row in distributions.items()}, indent=2))
-    print("Inactive candidate function cost only; production loop/skills remain unwired. All distributions retained.")
+    print("Direct interface cost only; actual branch caller cost has a separate suite. All distributions retained.")
     return 0
 
 

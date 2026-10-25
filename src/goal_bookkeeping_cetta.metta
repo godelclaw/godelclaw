@@ -1,5 +1,6 @@
-; INACTIVE project-04b candidate. Neither loop.metta nor skills.metta imports
-; this module/its selector. Activation requires JSON qualification AND approval.
+; Project-04b native writers, selected by branch-only loop/skill wiring.
+; No installation/deployment is implied. Raw decode diagnostics use the
+; explicitly qualified str:utf8-error primitive; never a lossy Python bridge.
 ; A single serial evaluator owns writes and the in-process wake token. No
 ; cross-process lock, two-file transaction, rollback or retry is claimed.
 !(import! &self (library fs))
@@ -10,6 +11,7 @@
 !(import! &self (library system))
 !(import! &self (library path))
 !(import! &self ./src/goal_views_cetta.metta)
+!(import! &self ./src/pins_context_cetta.metta)
 !(import! &self ./src/goal_bookkeeping_math_cetta.metta)
 !(import! &self ./src/text_cetta.metta)
 !(import! &self ./src/strategy_host.py)
@@ -56,11 +58,28 @@
      ($other (gk:no-get $other)))))
 (= (gk:state $path) (gk:object (gv:kernel $path)))
 (= (gk:inventory $path $missing)
-   (case (catch (gv:read $path))
-     ((GvMissing (gk:parse $missing))
+   (case (catch (fs:read-text-result $path 0 "raw"))
+     ((("ok" $raw)
+       (case (str:utf8-error $raw)
+         ((StrUtf8WellFormedV1 (gk:parse (gv:lines (sv:universal $raw))))
+          ((StrUtf8ErrorV1 $start $end $byte $reason)
+            (GkReadErr (gk:utf8-message $start $end $byte $reason)))
+          ($unsupported (GkErr (str:concat "native UTF-8 error primitive unavailable: " (gk:detail $unsupported)))))))
+      (("missing" $_) (gk:parse $missing)) (("directory" $_) (gk:parse $missing))
+      (("denied" $_) (gk:parse $missing))
+      (("error" $class $why) (if (pinsctx:os-error? $class) (gk:parse $missing) (GkErr (gk:detail $why))))
       ((Error $_ $why) (GkErr (gk:detail $why)))
-      ($text (if (== (get-type $text) String) (gk:parse (gv:lines $text))
-               (GkErr (gk:detail $text)))))))
+      ($other (GkErr (gk:detail $other))))))
+(= (gk:utf8-message $start $end $byte $reason)
+   (let $why (case $reason
+     ((invalid-start-byte "invalid start byte")
+      (invalid-continuation-byte "invalid continuation byte")
+      (unexpected-end-of-data "unexpected end of data")))
+     (str:join "" ("'utf-8' codec can't decode "
+       (if (== (- $end $start) 1)
+         (str:join "" ("byte 0x" (sv:hex $byte 2) " in position " (repr $start)))
+         (str:join "" ("bytes in position " (repr $start) "-" (repr (- $end 1)))))
+       ": " $why))))
 
 ; Keep raw vibes and notes; canonical beats legacy and same-format last wins
 ; without changing the first stack position. Budget is last-wins too.
@@ -203,8 +222,22 @@
    (case $pairs
      ((LNil $sample)
       ((LCons $match $rest)
-        (gk:affect-pairs $rest $text (gk:set $sample (re:group-text $match $text 1)
-          (gv:float (re:group-text $match $text 2))))))))
+        (let $value (gk:affect-value (re:group-text $match $text 2))
+          (gk:affect-pairs $rest $text
+            (if (== $value GkaAbsent) $sample
+              (gk:set $sample (re:group-text $match $text 1) $value))))))))
+; _NUMBER has no exponent. Reject integer parts >=2 before any double
+; conversion (400-digit decimals may otherwise overflow the evaluator).
+; Integer part 1 still needs ordinary double parsing: 1.00000000000000001
+; rounds to 1.0 in Python and is valid. Preserve signed zero with float syntax.
+(= (gk:affect-value $raw)
+   (let* (($digits (if (str:is-all-in ascii $raw) $raw (sv:ascii-digits $raw (aw:decimal-patterns))))
+          ($absolute (if (str:starts-with $digits "-") (str:byte-slice $digits 1 (str:byte-length $digits)) $digits))
+          ($head (car-atom (str:split "." $absolute)))
+          ($whole (if (== $head "") 0 (str:string->number $head))))
+     (if (>= $whole 2) GkaAbsent
+       (let $value (gv:float-digits (if (sv:contains $digits ".") $digits (str:concat $digits ".0")))
+         (if (and (>= $value -1.0) (<= $value 1.0)) $value GkaAbsent)))))
 (= (gk:mood-vector $mood)
    (map-atom (gk:dims) $dim (gv:float (sv:field $mood $dim 0.0))))
 (= (gk:vector-object $dims $values)
@@ -300,6 +333,7 @@
      (case $result
        (((GkStatus $applied $message) (GkStatus $applied $message))
         ((GkErr $why) (GkStatus False (str:concat "goal-kernel error: " $why)))
+        ((GkReadErr $why) (GkStatus False (str:concat "goal-kernel error: " $why)))
         ((Error $_ $why) (GkStatus False (str:concat "goal-kernel error: " (gk:detail $why))))
         ($other (GkStatus False (str:concat "goal-kernel error: " (gk:detail $other))))))))
 (= (gk:kernel-attempt $path $log $token)
@@ -365,6 +399,7 @@
 (= (gk:write-valid $path $text $match $limit)
    (case (gk:inventory $path ())
      (((GkErr $why) (str:concat "goal-write rejected: " $why))
+      ((GkReadErr $why) (Error UnicodeDecodeError $why))
       ((GkParsed $goals $flags $budget $other)
         (let* (($goal (if (== $limit GkNoBudget) (gk:record $match $text True) GkNoGoal))
                ($next (if (== $limit GkNoBudget) (gk:put $goal $goals) $goals))
@@ -399,6 +434,7 @@
 (= (gk:drop-text $name $reason $path)
    (case (gk:inventory $path ())
      (((GkErr $why) (str:concat "goal-drop rejected: " $why))
+      ((GkReadErr $why) (Error UnicodeDecodeError $why))
       ((GkParsed $goals $flags $budget $other)
         (let* (($matches (filter-atom $goals $g (== (gk:name $g) $name))))
           (if (== $matches ()) (str:concat "no goal named " $name)

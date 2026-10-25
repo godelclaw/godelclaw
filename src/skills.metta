@@ -205,10 +205,10 @@
 ;; Autonomic goal-stack (to-mama spec v0.2): kernel math runs at wake events;
 ;; these skills are the semantic interface (appraisal, birth, death-review).
 !(import! &self ./src/goal_views.metta)
+!(import! &self ./src/goal_bookkeeping.metta)
 (= (goals) (goal-view:skill))
-(= (goal-write $atom)
-   (py-call (goals.goal_write (utils:decode-safe $atom))))
-(= (goal-drop $name $reason) (py-call (goals.goal_drop $name $reason)))
+(= (goal-write $atom) (gk:goal-write $atom))
+(= (goal-drop $name $reason) (gk:goal-drop $name $reason))
 (= (goal-review-save $digest $entries)
    (py-call (strategy_host.goal_review_save $digest (utils:decode-safe $entries))))
 

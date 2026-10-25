@@ -25,7 +25,7 @@ class FallbackTests(unittest.TestCase):
     def test_actual_swi_skills_and_direct_wake_bytes(self):
         self.compare(False)
 
-    def test_inactive_swi_selector_interfaces(self):
+    def test_swi_selector_interfaces(self):
         self.compare(True)
 
     def compare(self, candidate):
@@ -83,7 +83,7 @@ class FallbackTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             actual = [json.loads(line) for line in (directory / "observations.jsonl").read_text().splitlines()]
             receipt("swi-fallback", {"expected": expected, "actual": actual,
-                                     "inactive_selector": candidate,
+                                     "direct_selector": candidate,
                                      "scope": "real SWI skills and direct wake; NOT native caller qualification"})
             self.assertEqual([{k: v for k, v in row.items() if k != "calls"} for row in actual], expected)
             self.assertEqual(actual[-1]["calls"], {"goal_write": 2, "human_wake": 2, "kernel_pass": 1, "goal_drop": 1})

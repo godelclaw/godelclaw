@@ -34,6 +34,7 @@ PATHS = {
     "METTACLAW_DEPLOYMENT_STATE_PATH": "deployment.json",
     "METTACLAW_LOOP_MODE_PATH": "loop-mode.json",
     "METTACLAW_ENERGY_PATH": "energy.json",
+    "METTACLAW_FUEL_MODE_PATH": "fuel.json",
     "METTACLAW_PINS_PATH": "pins.txt",
     "METTACLAW_REPOS_DIR": "repos",
     "METTACLAW_CHROMA_DIR": "chroma",
@@ -105,15 +106,18 @@ def run(command, directory, **kwargs):
     return result
 
 
-def engine(directory, program):
+def engine(directory, program, runtime_root=ROOT):
     # Probe sources live outside the checkout. Resolve only our explicit local
     # imports; ancestor-walk otherwise silently leaves missing calls unevaluated.
+    runtime_root = Path(runtime_root)
     for part in ("src", "tests", "verification"):
-        program = program.replace("./" + part + "/", str(ROOT / part) + "/")
+        base = runtime_root if part == "src" else ROOT
+        program = program.replace("./" + part + "/", str(base / part) + "/")
     path = directory / "probe.metta"
     path.write_text(program, encoding="utf-8")
     receipt("program", {"program": program})
-    return run([os.environ["CETTA_BIN"], "--lang", "petta", "--import-mode", "ancestor-walk", str(path)], directory)
+    return run([os.environ["CETTA_BIN"], "--lang", "petta", "--import-mode", "ancestor-walk", str(path)], directory,
+               cwd=runtime_root, extra_env={"PYTHONPATH": os.pathsep.join((str(ROOT / "tests"), str(runtime_root / "src"), str(runtime_root / "channels")))})
 
 
 def engine_info(directory):

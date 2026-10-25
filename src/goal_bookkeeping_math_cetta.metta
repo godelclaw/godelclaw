@@ -1,4 +1,4 @@
-; INACTIVE project-04b runtime dependency. No production caller imports it.
+; Project-04b runtime arithmetic. Bounded kernel inputs; no generic overflow claim.
 !(import! &self (library math))
 
 ; Python 3.12 Neumaier accumulation, in precisely this double operation order.

@@ -193,9 +193,15 @@ def _mood_samples(log_path, offset):
                 if rec.get("kind") != "outbound":
                     continue
                 for trace in _AFFECT_RE.findall(rec.get("text", "")):
-                    pairs = dict(_AFFECT_PAIR_RE.findall(trace))
+                    # Filter before assigning dimensions: an invalid later
+                    # duplicate must not erase an earlier valid observation.
+                    pairs = {}
+                    for d, raw in _AFFECT_PAIR_RE.findall(trace):
+                        value = float(raw)
+                        if -1.0 <= value <= 1.0:
+                            pairs[d] = value
                     if len(pairs) >= 6:
-                        samples.append({d: float(v) for d, v in pairs.items()})
+                        samples.append(pairs)
             offset = fh.tell()
     except OSError:
         pass

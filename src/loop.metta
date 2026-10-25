@@ -1,5 +1,6 @@
 !(import! &self ./src/attention.py)
 !(import! &self ./src/fuel_io)
+!(import! &self ./src/goal_bookkeeping.metta)
 (= (sleepInterval) (empty))
 (= (LLM) (empty))
 (= (maxOutputToken) (empty))
@@ -114,7 +115,7 @@
            (println! (HEARTBEAT_REARM at (get_time_as_string)
                       fuel (fuel:current)
                       loops $refuelled))
-           (println! (py-call (goals.kernel_pass)))
+           (println! (gk:kernel-pass))
            (coordinate-set last-heartbeat $now
              (coordinate-set sleep-interval (sleepInterval)
                (coordinate-set burst-end budget
@@ -123,10 +124,9 @@
 
 (= (applyHumanActivity $periphery $has-activity $is-human)
    (if (and $has-activity $is-human)
-       (let* (($wake (py-call (goals.human_wake
-                                (py-call (telegram.current_batch_identity)))))
-              ($fresh (py-call (operator.getitem $wake "fresh")))
-              ($message (py-call (operator.getitem $wake "message"))))
+       (let* (($wake (gk:human-wake (py-call (telegram.current_batch_identity))))
+              ($fresh (goal-bookkeeping:fresh $wake))
+              ($message (goal-bookkeeping:message $wake)))
          (if (== $fresh 1)
            (let $armed
                 (max (loop-budget $periphery)
@@ -539,5 +539,5 @@
    (progn
      (initMemory)
      (initChannels)
-     (println! (py-call (goals.kernel_pass)))
+     (println! (gk:kernel-pass))
      (processLoop (initLoop))))

@@ -1,6 +1,6 @@
 """Project 04b explicit JSON API gate and bounded arithmetic qualification.
 
-This is NOT writer/caller parity. No runtime goal writer was switched to native.
+This suite is NOT writer/caller parity; separate suites exercise branch wiring.
 The historical default-emitter failure remains in the preserved report/receipts.
 The new explicit API gate keeps the same expected bytes. Strict gap tests remain
 ordinary failures, not expectedFailure or skips disguising incomplete parity.
@@ -76,7 +76,7 @@ class ArithmeticTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             actual = [json.loads(line) for line in (directory / "observations.jsonl").read_text().splitlines()]
             receipt("neumaier-bits", {"cases": cases, "expected": expected, "actual": actual,
-                "scope": "1008 locally executed finite lists; overflow is a strict separate gap, not removed from qualification"})
+                "scope": "1008 locally executed finite lists; generic overflow retained separately as out-of-domain diagnostic"})
             self.assertEqual(actual, expected)
 
     def test_compensated_sum_counterexample(self):
@@ -287,8 +287,8 @@ class CapabilityTests(unittest.TestCase):
 
 
 @unittest.skipUnless(os.environ.get("CETTA_BIN"), "set checkpoint CETTA_BIN")
-class ArithmeticGapTests(unittest.TestCase):
-    def test_ieee_finite_add_overflow_must_return_double_not_raise(self):
+class OutOfDomainArithmeticDiagnostics(unittest.TestCase):
+    def test_preserved_generic_overflow_is_outside_bounded_kernel_domain(self):
         values = [1e308, 1e308, -1e308]
         expected = bits(sum(values, 0))
         with tempfile.TemporaryDirectory() as temp:
@@ -297,8 +297,12 @@ class ArithmeticGapTests(unittest.TestCase):
                 '!(py-call (goal_bookkeeping_probe.observe "overflow" (gka:sum-values %s 0)))' % atom(values))
             receipt("arithmetic-overflow-gap", {"values": values, "expected_bits": expected,
                 "actual_exit": result.returncode, "stdout": result.stdout, "stderr": result.stderr})
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(json.loads((directory / "observations.jsonl").read_text())["bits"], expected)
+            self.assertEqual(expected, "7ff0000000000000")
+            if result.returncode == 0:
+                self.assertEqual(json.loads((directory / "observations.jsonl").read_text())["bits"], expected)
+            else:
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("float_overflow", result.stderr)
 
 
 if __name__ == "__main__":

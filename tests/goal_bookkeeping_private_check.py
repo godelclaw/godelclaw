@@ -1,6 +1,6 @@
 """Read only the three authorized source files; write PRIVATE disposable copies.
 
-Compares corrected Python and INACTIVE native candidates on private copies.
+Compares corrected Python and direct native interfaces on private copies.
 Private receipts must never be committed or published. Native Python writers
 are disabled; no Python serializer supplies any native persisted bytes.
 """
