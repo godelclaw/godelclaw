@@ -125,7 +125,7 @@
 (= (llm:network-plan $plan $epoch $correlation $protocol $url $headers $body $timeout $cap)
    (let* (($legacy-wire (py-call (native_llm_host.wire_body $plan $body)))
           ($profiled (if (chatgpt:plan? $plan) (chatgpt:wire $legacy-wire) $legacy-wire))
-          ($wire (py-call (native_llm_host.observe_wire $plan $profiled)))
+          ($wire (llm:observe-wire $plan $profiled))
           ($connect (py-call (native_llm_host.field $plan "connect")))
           ($first (py-call (native_llm_host.field $plan "first")))
           ($idle (py-call (native_llm_host.field $plan "idle")))
@@ -139,6 +139,15 @@
            (llm:v1:pending $epoch $correlation $protocol $id)))
         ($other (llm:v1:failed $epoch $correlation submit-error not-started)))))
       (llm:v1:failed $epoch $correlation native-accounting-error not-started))))
+
+; Without capture control, the final body stays in CeTTa.
+(= (llm:observe-wire $plan $body)
+   (let $health (system:getenv-or-default "METTACLAW_COGNITIVE_HEALTH_PATH" "")
+     (if (== $health "") $body
+       (let $control (path:join (path:dirname $health) "request-capture/control.json")
+         (case (catch (fs:is-file $control))
+           ((True (py-call (native_llm_host.observe_wire $plan $body)))
+            ($disabled $body)))))))
 
 (: llm:submit-headers (-> Atom Atom Atom Atom Atom Atom Atom Atom %Undefined%))
 (= (llm:submit-headers $epoch $correlation $protocol $base $headers-outcome $encoded $timeout $cap)

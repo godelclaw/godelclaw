@@ -121,6 +121,22 @@ class NativeCaptureTests(unittest.TestCase):
     def test_capture_equals_the_actual_subscription_http_body(self):
         self.check_capture(subscription=True)
 
+    def test_disabled_capture_does_not_send_the_body_back_to_the_host(self):
+        self.env.update(OPENAI_API_KEY='fixture-secret', OPENAI_BASE_URL=self.env['SYNTHETIC_BASE_URL'],
+                        SYNTHETIC_MODEL='openai:fixture-model')
+        self.peer.reply = {'id': 'r', 'status': 'completed', 'output': [
+            {'type': 'message', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': '((nop))'}]}],
+            'usage': {'input_tokens': 10, 'output_tokens': 2}}
+        probe = self.directory / 'capture_probe.py'
+        probe.write_text('import native_llm_host\n'
+            'def forbid(*args):\n    raise AssertionError("disabled capture crossed the host boundary")\n'
+            'def install():\n    native_llm_host.observe_wire = forbid\n    return True\n')
+        output = self.run_guest(f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'
+            f'!(import! &self "{probe}")\n!(py-call (capture_probe.install))\n'
+            '!(println! (RESULT (llm:command "openai:fixture-model" 100 "low" "private λ fixture")))\n')
+        self.assertIn('(RESULT ((nop)))', output)
+        self.assertEqual(len(self.peer.requests), 1)
+
 
 if __name__ == '__main__':
     unittest.main()
