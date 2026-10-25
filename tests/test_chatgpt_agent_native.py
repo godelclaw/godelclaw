@@ -78,6 +78,28 @@ class ChatGPTAgentTests(unittest.TestCase):
             self.assertEqual(raw['output'][0]['encrypted_content'], 'opaque-fixture')
             self.assertEqual(raw['usage'], {'input_tokens': 10, 'output_tokens': 2})
 
+    def test_commentary_route_keeps_stable_parts_out_of_instructions(self):
+        # The live route caps `instructions` at 1,048,576 characters, and the
+        # stable parts carry the transcript: a 1.1M-character part once made
+        # every request fail. Each part stays a system input item, in order.
+        self.env['METTACLAW_MODEL_COMMENTARY'] = '1'
+        prompt = self.directory/'prompt.txt'
+        stable = 'transcript ' * 100000
+        prompt.write_text(stable + '_cache_boundary_policy_cache_boundary_frame_cache_boundary_user turn')
+        out = self.guest('!(import! &self (library fs))\n'
+                         '!(let $prompt (fs:read-text '+json.dumps(str(prompt))+')\n'
+                         '   (println! (RESULT (llm:command "chatgpt:fixture-model" 42 "high" $prompt))))\n')
+        self.assertIn('(RESULT ', out)
+        self.assertEqual(len(self.identity_provider.api_requests), 1)
+        body = self.identity_provider.api_requests[0][2]
+        self.assertNotIn('instructions', body)
+        self.assertEqual(body['input'], [{'role': 'system', 'content': stable},
+                                         {'role': 'system', 'content': 'policy'},
+                                         {'role': 'system', 'content': 'frame'},
+                                         {'role': 'user', 'content': 'user turn'}])
+        self.assertEqual(body['tool_choice'], 'auto')
+        self.assertIn('prompt_cache_key', body)
+
     def test_catalogue_and_account_specific_models_preserve_server_order(self):
         out = self.guest('!(println! (settings "chatgpt"))\n!(println! (chatgpt-models))\n')
         self.assertIn('auth-deadline-ms', out); self.assertIn('response-bytes', out)

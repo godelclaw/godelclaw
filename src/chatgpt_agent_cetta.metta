@@ -200,12 +200,15 @@
           ($messages (llm:v1:append $system-messages
              ((JsonObject ((JsonPair "role" (JsonString "user"))
                            (JsonPair "content" (JsonString $user)))))))
+          ; The route rejects `instructions` longer than 1,048,576 characters,
+          ; and the stable parts carry the growing transcript. They stay input
+          ; items, in order, as Codex sends its context; the window decides.
           ($base-request
             (if $native
               (JsonObject ((JsonPair "model" (JsonString $model))
                  (JsonPair "max_tokens" (JsonNumber (repr $tokens)))
                  (JsonPair "messages" (JsonArray $messages))
-                 (JsonPair "role_policy" (JsonString "merge-system-developer"))
+                 (JsonPair "role_policy" (JsonString "preserve"))
                  (JsonPair "tools" (JsonArray ($tool)))
                  (JsonPair "tool_choice" (JsonString "auto"))))
               (JsonObject ((JsonPair "model" (JsonString $model))
