@@ -12,7 +12,7 @@ runner.SUITES = {
                    "test_commitment_projection", "test_task_phase", "test_context_sources",
                    "test_turn_additions", "test_pins_context_native", "test_action_window_native"],
     "bundle": ["-m", "unittest", "-v", "test_context_bundle_native"],
-    "bench": ["tests/small_views_bench.py"],
+    "bench": ["tests/small_views_cold_bench.py"],
 }
 
 if __name__ == "__main__":

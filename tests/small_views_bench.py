@@ -1,5 +1,8 @@
 """Warm loader/caller timings and individual native steps, on one engine.
 
+This is a WARM workload, not a production-like evidence-refresh estimate.
+Use small_views_cold_bench.py for cold complete-caller costs.
+
 The before route runs the starting commit's runtime from a temporary git
 archive, with only the fixture probe copied in. Both routes run the actual
 addition-context-sources caller on the same engine. This is not a full turn.
