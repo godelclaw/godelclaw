@@ -92,6 +92,36 @@ def running_settings(name, extra_keys=()):
     return min(candidates, key=lambda item: item[0])[1]
 
 
+def release_marker(previous, manifest, files, pid, receipt, instance):
+    marker = {**previous, 'schema': 1, 'release': manifest['release'],
+              'parent_release': (previous.get('parent_release') if previous.get('release') == manifest['release']
+                                 else previous.get('release')),
+              'files': {**previous.get('files', {}), **files}, 'pid': pid,
+              'verified_at': time.time(), 'activation_receipt': str(receipt)}
+    for key in ('model', 'activation'):
+        marker.pop(key, None)
+    for key in ('source_commit', 'engine_revision'):
+        if key in manifest:
+            marker[key] = manifest[key]
+        else:
+            marker.pop(key, None)
+    selected = instance.get('required_runtime', {}).get('CETTA_BIN')
+    if selected:
+        binary = Path(selected)
+        build = binary.parent / 'build-manifest.json'
+        selection = {'binary': selected, 'binary_sha256': sha(binary),
+                     'build_manifest': str(build) if build.is_file() else None}
+        if build.is_file():
+            value = json.loads(build.read_text())
+            selection.update(revision=value.get('revision'),
+                             manifest_matches_binary=selection['binary_sha256'] is not None and
+                                 value.get('files', {}).get(binary.name) == selection['binary_sha256'])
+        marker['engine_selection'] = selection
+    else:
+        marker.pop('engine_selection', None)
+    return marker
+
+
 def await_boundaries(entries, pids, timeout):
     deadline = time.monotonic() + float(timeout)
     waiting = list(entries)
@@ -278,17 +308,8 @@ def main():
                 previous = json.loads(path.read_text())
             except (OSError, ValueError):
                 previous = {}
-            marker = {**previous, "schema": 1, "release": manifest["release"],
-                      "parent_release": previous.get("release"),
-                      "files": {**previous.get("files", {}), **files},
-                      "pid": service(instance["service"], "show"), "verified_at": time.time()}
-            # The active model is mutable agent state, not a property of a
-            # source release. Older markers captured it once and then lied
-            # after /model changed. Runtime projections read the live state.
-            marker.pop("model", None)
-            for key in ("source_commit", "engine_revision"):
-                if key in manifest:
-                    marker[key] = manifest[key]
+            marker = release_marker(previous, manifest, files,
+                                    service(instance['service'], 'show'), output, instance)
             path.write_text(json.dumps(marker, sort_keys=True) + "\n")
             record["instances"][index]["pid_after"] = marker["pid"]
         record["status"] = "activated"; save()
