@@ -5,6 +5,7 @@
 !(import! &self (library json))
 !(import! &self ./src/undelivered_prose_unicode)
 !(import! &self ./src/context_source_loaders.py)
+!(import! &self ./src/small_views_cetta.metta)
 
 !(bind! &ctx-known (new-state ()))
 !(bind! &ctx-blank (new-state
@@ -53,17 +54,22 @@
                       (cons-atom ($id $text $revision) (ctx:without $id (get-state &ctx-known))))))
            (CtxObservation $id "known" $text $revision))))
       ($other (Error ctx:observe invalid-outcome)))))
-; Assembly still crosses Python once to prepare and once for each of the 13
-; loaders: 14 calls per complete bundle, pending later loader ports. This is
-; not a full-turn count (view computation and other additions are separate).
+; Assembly: prepare + seven retained loaders = eight Python crossings, down
+; from fourteen. Capability engine lookup adds one allowed crossing (nine
+; total here); this is NOT a full-turn count. Pins marker ownership is intact.
+(= (ctx:load $loaders $id)
+   (case $id
+     (("active-query-declaration" (sv:load $id)) ("commitment-state" (sv:load $id))
+      ("task-phase" (sv:load $id)) ("development-state" (sv:load $id))
+      ("project-capabilities" (sv:load $id)) ("project-evidence" (sv:load $id))
+      ($retained (ctx:decode (py-call (context_source_loaders.load $loaders $id)))))))
 (= (ctx:project $loaders $specs)
    (if (== $specs ()) ()
      (let* (((($key $limit $tail) $rest) (decons-atom $specs))
             ($id (str:symbol->string $key))
             ; Keep loader/str(value) conversion outside the decode catch: a
             ; conversion exception still fails the bundle, exactly as Python.
-            ($wire (py-call (context_source_loaders.load $loaders $id)))
-            ($outcome (ctx:decode $wire))
+            ($outcome (ctx:load $loaders $id))
             ($observation (ctx:observe $id $limit $tail $outcome))
             ($others (ctx:project $loaders $rest)))
        (cons-atom $observation $others))))

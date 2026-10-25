@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 
 _run = subprocess.run
+_directory = Path(os.environ["CONTEXT_BUNDLE_EVIDENCE"])
 
 
 def _text(value):
@@ -13,8 +14,7 @@ def _text(value):
 
 
 def _save(command, result):
-    directory = Path(os.environ["CONTEXT_BUNDLE_EVIDENCE"])
-    with tempfile.NamedTemporaryFile("w", dir=directory, prefix="subprocess-", suffix=".json",
+    with tempfile.NamedTemporaryFile("w", dir=_directory, prefix="subprocess-", suffix=".json",
                                      encoding="utf-8", delete=False) as stream:
         json.dump({"command": command, "returncode": result.returncode,
                    "stdout": _text(result.stdout), "stderr": _text(result.stderr)},

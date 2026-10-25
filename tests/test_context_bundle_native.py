@@ -22,6 +22,8 @@ from test_pins_context_native import guest_env, q
 ENGINE = os.environ.get("CETTA_BIN", "cetta")
 PETTA_ROOT = Path(os.environ.get("PETTA_ROOT", Path.home() / "repos/PeTTa"))
 VM_LIMIT = 25165824 * 1024
+NATIVE_SOURCES = {"active-query-declaration", "commitment-state", "task-phase",
+                  "development-state", "project-capabilities", "project-evidence"}
 
 
 def limit_engine():
@@ -38,14 +40,17 @@ def save_evidence(prefix, value):
             json.dump(value, stream, ensure_ascii=True)
 
 
-def guest(directory, lines, engine="cetta", swi=False, boot=False, **settings):
+def guest(directory, lines, engine="cetta", swi=False, boot=False, runtime_root=None, **settings):
+    root = Path(runtime_root) if runtime_root is not None else ROOT
     env = guest_env(directory, engine, OPENAI_API_KEY="test-only-unused", **settings)
+    if root != ROOT:
+        env["PYTHONPATH"] = os.pathsep.join(str(root / name) for name in ("tests", "src", "channels"))
     env.update(METTACLAW_SKIP_INITIALIZE="1", METTACLAW_REPOS_DIR=str(directory / "repos"),
                METTACLAW_CHROMA_DIR=str(directory / "chroma"))
     library = directory / "repos" / "petta_lib_chromadb"
     if library.is_dir():
         env["PYTHONPATH"] += os.pathsep + str(library)
-    with tempfile.NamedTemporaryFile("w", dir=ROOT, suffix=".metta", encoding="utf-8") as source:
+    with tempfile.NamedTemporaryFile("w", dir=root, suffix=".metta", encoding="utf-8") as source:
         source.write("\n".join(lines) + "\n")
         source.flush()
         if swi:
@@ -53,9 +58,9 @@ def guest(directory, lines, engine="cetta", swi=False, boot=False, **settings):
         else:
             command = [ENGINE, "--lang", "petta", "--import-mode", "ancestor-walk"]
             if boot:
-                command += [str(ROOT / "cetta_bootstrap.metta"), str(directory / "channel.metta")]
+                command += [str(root / "cetta_bootstrap.metta"), str(directory / "channel.metta")]
             command += [source.name]
-        result = subprocess.run(command, cwd=ROOT, env=env, capture_output=True,
+        result = subprocess.run(command, cwd=root, env=env, capture_output=True,
                                 text=True, timeout=900, preexec_fn=limit_engine)
     save_evidence("guest", {"command": command, "program": lines, "returncode": result.returncode,
                             "stdout": result.stdout, "stderr": result.stderr})
@@ -76,6 +81,17 @@ class NativeContextBundleTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.directory = Path(self.temp.name)
+        # Project 03 sources use actual native loaders, not the old per-source
+        # Python wire fixtures. Keep their stores empty and deterministic here;
+        # test_small_views_native owns their changing/failure fixture matrix.
+        registry = self.directory / "registry.json"
+        registry.write_text('{"schema":1,"projects":[]}')
+        patcher = mock.patch.dict(os.environ, {
+            "METTACLAW_PROJECT_REGISTRY_PATH": str(registry),
+            "METTACLAW_ITER_PROCESS_DIR": str(self.directory / "transformations"),
+            "CETTA_BIN": str(self.directory / "absent-cetta")})
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_smoke_native_projector(self):
         out = self.directory / "out"
@@ -88,6 +104,12 @@ class NativeContextBundleTest(unittest.TestCase):
 
     def compare(self, scenarios, prelude=(), engine="cetta", swi=False, trigger="idle", oracle_scenarios=None, **settings):
         import strategy_host
+        if engine == "cetta":
+            scenarios = [{key: value for key, value in fixture.items() if key not in NATIVE_SOURCES}
+                         for fixture in scenarios]
+            if oracle_scenarios is not None:
+                oracle_scenarios = [{key: value for key, value in fixture.items() if key not in NATIVE_SOURCES}
+                                    for fixture in oracle_scenarios]
         lines = HEADER + CALLER + list(prelude)
         lines += ["!(py-call (context_bundle_probe.trigger %s))" % q(trigger)]
         log = self.directory / "bundles"
@@ -114,7 +136,8 @@ class NativeContextBundleTest(unittest.TestCase):
         self.assertEqual([entry["text"] for entry in actual], expected)
         for entry in actual:
             self.assertEqual(entry["forbidden"], 0)
-            self.assertEqual(entry["calls"], {s.source_id: 1 for s in context_sources.SOURCE_SPECS})
+            self.assertEqual(entry["calls"], {s.source_id: 1 for s in context_sources.SOURCE_SPECS
+                                            if engine != "cetta" or s.source_id not in NATIVE_SOURCES})
         return actual
 
     def test_caller_all_statuses_and_multiturn(self):
@@ -144,6 +167,8 @@ class NativeContextBundleTest(unittest.TestCase):
         actual = self.compare(scenarios, oracle_scenarios=oracles)
         for raw, row in zip(values, actual):
             for spec in context_sources.SOURCE_SPECS:
+                if spec.source_id in NATIVE_SOURCES:
+                    continue
                 revision = context_sources.Projector._revision(raw if raw.strip() else "")
                 self.assertRegex(row["text"], r"SOURCE\[%s\] status=(?:known|absent) revision=%s" %
                                  (re.escape(spec.source_id), re.escape(revision)))
@@ -174,7 +199,7 @@ class NativeContextBundleTest(unittest.TestCase):
                                                 "known", "absent", "unavailable", "known"])
                     for row in rows:
                         self.assertEqual(row["text"].count("SOURCE["), 13)
-        print("Compared 192 real-caller decode-fault steps, with all 13 loaders called once per step")
+        print("Compared 192 real-caller decode-fault steps, with seven retained Python loaders called once per step")
 
     def test_all_python_whitespace_and_near_misses_at_real_caller(self):
         spaces = [chr(c) for c in range(0x110000) if chr(c).isspace()]
@@ -282,7 +307,7 @@ class NativeContextBundleTest(unittest.TestCase):
         self.compare([base])
         first = self.compare([{key: {"raises": True} for key in base}])[0]["text"]
         self.assertNotIn("stale-known", first)
-        self.assertEqual(first.count("status=unavailable"), 13)
+        self.assertEqual(first.count("status=unavailable"), 7)
 
     def test_text_conversion_failure_aborts_bundle_without_fallback(self):
         for failed_index in (0, 6, 12):
@@ -300,10 +325,13 @@ class NativeContextBundleTest(unittest.TestCase):
                 probe.fixture = values
                 probe.calls.clear()
                 expected = context_sources.bundle()
-                self.assertEqual(actual["calls"], probe.calls)
+                self.assertEqual(actual["calls"], {key: value for key, value in probe.calls.items()
+                                                  if key not in NATIVE_SOURCES})
             self.assertEqual(actual["text"], expected)
             self.assertEqual(expected, "SOURCE[context-bundle] status=unavailable")
-            self.assertEqual(len(actual["calls"]), failed_index + 1)
+            self.assertEqual(len(actual["calls"]), sum(
+                spec.source_id not in NATIVE_SOURCES
+                for spec in context_sources.SOURCE_SPECS[:failed_index + 1]))
             self.assertEqual(actual["forbidden"], 0)
 
     def test_swi_and_engine_selected_python_caller_unchanged(self):
@@ -327,7 +355,7 @@ class NativeContextBundleTest(unittest.TestCase):
             "queued": True, "chat_id": "7", "chat_title": "Fixture", "from": "fixture",
             "message_id": 1, "update_id": 1, "text": "hello from fixture 🙂", "note": ""}) + "\n")
         fixture = {s.source_id: "boot " + s.source_id for s in context_sources.SOURCE_SPECS
-                   if s.source_id not in {"pins", "recent-proposals", "relevant-files", "conversation"}}
+                   if s.source_id not in NATIVE_SOURCES | {"pins", "recent-proposals", "relevant-files", "conversation"}}
         scenarios = [fixture, dict(fixture, **{"work-state": {"raises": True}}),
                      dict(fixture, **{"work-state": " \t"}), fixture]
         lines = HEADER + ['!(tg:set reply-chat "7")']

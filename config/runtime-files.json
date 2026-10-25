@@ -263,6 +263,8 @@
   "src/skills.metta",
   "src/skills.pl",
   "src/skills_help.py",
+  "src/small_views_cetta.metta",
+  "src/small_views_unicode.metta",
   "src/start_telegram_service.py",
   "src/state_cetta.metta",
   "src/state_io.metta",
