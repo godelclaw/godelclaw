@@ -1,11 +1,13 @@
-"""Project 04b BLOCKED capability gate and bounded arithmetic qualification.
+"""Project 04b explicit JSON API gate and bounded arithmetic qualification.
 
 This is NOT writer/caller parity. No runtime goal writer was switched to native.
-The strict capability test is an ordinary failing assertion, not expectedFailure
-or a skip that could disguise an unqualified engine as a successful port.
+The historical default-emitter failure remains in the preserved report/receipts.
+The new explicit API gate keeps the same expected bytes. Strict gap tests remain
+ordinary failures, not expectedFailure or skips disguising incomplete parity.
 """
 import base64
 import json
+import math
 import os
 from pathlib import Path
 import random
@@ -51,6 +53,32 @@ HEADER = """!(import! &self (library lib_import))
 
 @unittest.skipUnless(os.environ.get("CETTA_BIN"), "set CETTA_BIN to reviewer TEST engine")
 class ArithmeticTests(unittest.TestCase):
+    def test_neumaier_signed_zero_boundaries_and_randomized_python312(self):
+        rng = random.Random(404204)
+        cases = [([], -0.0), ([-0.0], -0.0), ([0.0], -0.0),
+                 ([1.0, -1.0], -0.0), ([1e100, 1.0, -1e100], 0),
+                 ([1e308, -1e308, 5e-324], 0),
+                 ([5e-324, 5e-324, -5e-324], 0),
+                 ([1.7976931348623157e308, -1.7976931348623157e308], 0)]
+        for _ in range(1000):
+            values = [math.ldexp(rng.uniform(-1, 1), rng.randint(-1070, 950))
+                      for _ in range(rng.randrange(61))]
+            cases.append((values, rng.choice((0, 0.0, -0.0, 1.0, -1.0))))
+        expected = []
+        lines = [HEADER]
+        for index, (values, start) in enumerate(cases):
+            expected.append({"label": str(index), "bits": bits(sum(values, start))})
+            lines.append('!(py-call (goal_bookkeeping_probe.observe "%d" (gka:sum-values %s %s)))' %
+                         (index, atom(values), atom(start)))
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            result = engine(directory, "\n".join(lines))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            actual = [json.loads(line) for line in (directory / "observations.jsonl").read_text().splitlines()]
+            receipt("neumaier-bits", {"cases": cases, "expected": expected, "actual": actual,
+                "scope": "1008 locally executed finite lists; overflow is a strict separate gap, not removed from qualification"})
+            self.assertEqual(actual, expected)
+
     def test_compensated_sum_counterexample(self):
         rng = random.Random(4042)
         initial = [[0.9, 0.5], [0.8, 0.3], [0.00001, 0.0], [1.0, 0.0]]
@@ -190,6 +218,27 @@ class PrimitiveTests(unittest.TestCase):
 
 @unittest.skipUnless(os.environ.get("CETTA_BIN"), "set CETTA_BIN to reviewer TEST engine")
 class CapabilityTests(unittest.TestCase):
+    def test_nonfinite_ascii_controls_and_order_explicit_api(self):
+        expressions = ['(json:stringify-python (py-call (goal_bookkeeping_probe.nonfinite_fixture "%s")))' % name
+                       for name in ("inf", "-inf", "nan")]
+        value = {"z": "日🙂\u001c\n\"\\", "a": -0.0, "middle": [0.1, 2.5e-7]}
+        expressions += ["(json:stringify-python (json:parse %s))" % json.dumps(json.dumps(value))]
+        expected = [json.dumps(float("inf")), json.dumps(float("-inf")), json.dumps(float("nan")), json.dumps(value)]
+        program = '''!(import! &self (library json))
+!(import! &self (library lib_import))
+!(import! &self ./tests/goal_bookkeeping_probe.py)
+'''
+        program += "\n".join('!(py-call (goal_bookkeeping_probe.text "%d" %s))' % (i, expr)
+                             for i, expr in enumerate(expressions))
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            result = engine(directory, program)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            actual = [json.loads(line)["text"] for line in (directory / "observations.jsonl").read_text().splitlines()]
+            receipt("json-python-extensions", {"expressions": expressions, "expected": expected, "actual": actual,
+                "input_source": "explicit test-only Python DOUBLE fixture; emitter is native, no Python serializer; NOT arithmetic or writer input qualification"})
+            self.assertEqual(actual, expected)
+
     def test_python_json_bytes_required_before_writers(self):
         values = [0.1, 1e-05, 2.5e-07, 1.0, -0.0, 1e16, 1e-4, 1.2345678901234567]
         # Python records native STRINGS, never converts/serializes their numbers.
@@ -199,13 +248,13 @@ class CapabilityTests(unittest.TestCase):
 !(import! &self ./tests/goal_bookkeeping_probe.py)
 !(println! (json:capabilities))
 """
-        expressions = ["(json:stringify (JsonArray %s))" % atom(values),
+        expressions = ["(json:stringify-python (JsonArray %s))" % atom(values),
                        "(json:stringify-reference (JsonArray %s))" % atom(values)]
-        expressions += ["(json:stringify %s)" % atom(x) for x in values]
+        expressions += ["(json:stringify-python %s)" % atom(x) for x in values]
         expressions += ["(repr %s)" % atom(x) for x in values]
         state = {"streaks": {"日🙂": {"blocked": "待", "streak": 2}},
                  "log_offset": 0, "mood": {"Cn": 1e-05}, "last_human_wake": "abc"}
-        expressions += ["(json:stringify (json:parse %s))" % json.dumps(json.dumps(state)),
+        expressions += ["(json:stringify-python (json:parse %s))" % json.dumps(json.dumps(state)),
                         "(json:pretty (json:parse %s))" % json.dumps(json.dumps(state))]
         program += "\n".join('!(py-call (goal_bookkeeping_probe.text "%d" %s))' % (i, expression)
                              for i, expression in enumerate(expressions))
@@ -214,23 +263,42 @@ class CapabilityTests(unittest.TestCase):
             info = engine_info(directory)
             self.assertEqual(info["version_returncode"], 0)
             result = engine(directory, program)
+            after = engine_info(directory)
+            self.assertEqual(info["sha256"], after["sha256"])
+            self.assertEqual(info["version_stdout"], after["version_stdout"])
             self.assertEqual(result.returncode, 0, result.stderr)
             actual = [json.loads(line)["text"] for line in
                       (directory / "observations.jsonl").read_text().splitlines()]
             expected = [json.dumps(values), json.dumps(values)] + [json.dumps(x) for x in values]
             expected += [repr(x) for x in values] + [json.dumps(state), json.dumps(state)]
             # repr/reference/pretty are diagnostics, not mandatory APIs. The
-            # production candidate needs ordinary stringify of floats and an
-            # ordered kernel object. Do not fail solely because pretty indents.
+            # production candidate uses the checkpoint's explicit Python API.
+            # Old default/reference/pretty/repr outputs remain diagnostics.
             required = [0, *range(2, 2 + len(values)), len(expressions) - 2]
             qualified = len(actual) == len(expected) and all(actual[i] == expected[i] for i in required)
             receipt("capability", {"expressions": expressions, "expected": expected, "actual": actual,
                                     "required_indices": required,
-                                    "required": "Native Python json.dump float repr, separators, order; no serializer workaround",
+                                    "api": "json:stringify-python", "engine_before": info, "engine_after": after,
+                                    "required": "Unchanged Python json.dump bytes; explicit native API, no serializer workaround",
                                     "qualified": qualified})
             self.assertEqual(len(actual), len(expected))
             self.assertEqual([actual[i] for i in required], [expected[i] for i in required],
                 "BLOCKED: native JSON bytes are not Python-compatible; do not activate writers")
+
+
+@unittest.skipUnless(os.environ.get("CETTA_BIN"), "set checkpoint CETTA_BIN")
+class ArithmeticGapTests(unittest.TestCase):
+    def test_ieee_finite_add_overflow_must_return_double_not_raise(self):
+        values = [1e308, 1e308, -1e308]
+        expected = bits(sum(values, 0))
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            result = engine(directory, HEADER +
+                '!(py-call (goal_bookkeeping_probe.observe "overflow" (gka:sum-values %s 0)))' % atom(values))
+            receipt("arithmetic-overflow-gap", {"values": values, "expected_bits": expected,
+                "actual_exit": result.returncode, "stdout": result.stdout, "stderr": result.stderr})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads((directory / "observations.jsonl").read_text())["bits"], expected)
 
 
 if __name__ == "__main__":

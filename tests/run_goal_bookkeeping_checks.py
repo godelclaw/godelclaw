@@ -15,12 +15,16 @@ from goal_bookkeeping_support import run
 SUITES = {
     "arithmetic": ["-m", "unittest", "-v", "test_goal_bookkeeping_native.ArithmeticTests"],
     "capability": ["-m", "unittest", "-v", "test_goal_bookkeeping_native.CapabilityTests"],
+    "candidates": ["-m", "unittest", "-v", "test_goal_bookkeeping_candidates.CandidateTests"],
+    "gaps": ["-m", "unittest", "-v", "test_goal_bookkeeping_candidates.CandidateGapTests",
+             "test_goal_bookkeeping_native.ArithmeticGapTests"],
     "primitives": ["-m", "unittest", "-v", "test_goal_bookkeeping_native.PrimitiveTests"],
     "oracle": ["-m", "unittest", "-v", "test_goal_bookkeeping_oracle"],
     "replay": ["-m", "unittest", "-v", "test_goal_bookkeeping_replay"],
     "fallback": ["-m", "unittest", "-v", "test_goal_bookkeeping_fallback"],
     "regression": ["-m", "unittest", "-v", "test_goals_kernel", "test_work_state"],
     "bench": ["tests/goal_bookkeeping_bench.py"],
+    "candidate-bench": ["tests/goal_bookkeeping_candidate_bench.py"],
 }
 
 

@@ -301,15 +301,17 @@ def human_wake(wake_token, goals_path=None, log_path=None):
     global _runtime_human_wake
     token = str(wake_token or "")
     runtime_digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    with _LOCK:
+        if _runtime_human_wake == runtime_digest:
+            return {"fresh": 0, "maintenance_applied": 0,
+                    "message": "goal-kernel: human wake already applied"}
+        # Reserve before maintenance: even a partially committed failed pass
+        # must not be replayed by an in-process presentation of the same batch.
+        _runtime_human_wake = runtime_digest
     applied, message = kernel_pass(
         goals_path, log_path, wake_token=token, _with_status=True
     )
-    with _LOCK:
-        if message.startswith("goal-kernel error:"):
-            fresh = _runtime_human_wake != runtime_digest
-        else:
-            fresh = applied
-        _runtime_human_wake = runtime_digest
+    fresh = True if message.startswith("goal-kernel error:") else applied
     return {"fresh": int(fresh), "maintenance_applied": int(applied),
             "message": message}
 

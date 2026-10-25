@@ -217,7 +217,7 @@ class OracleTests(unittest.TestCase):
             for name in ("goals.metta.tmp", "goals_kernel.json.tmp"):
                 (self.directory / name).unlink(missing_ok=True)
 
-    def test_durable_failure_runtime_digest_blocks_freshness_not_write_attempt(self):
+    def test_partial_write_failure_same_token_never_replays_maintenance(self):
         real_open = open
         calls = []
         def fail(path, mode="r", *args, **kwargs):
@@ -231,13 +231,14 @@ class OracleTests(unittest.TestCase):
             repeated = goals.human_wake("durable-failure")
         self.assertEqual(first, {"fresh": 1, "maintenance_applied": 0,
                                 "message": "goal-kernel error: generated durable failure"})
-        self.assertEqual(repeated, dict(first, fresh=0))
-        self.assertEqual(len(calls), 2)
-        # Critical oracle fact: digest suppresses re-arming, NOT the kernel
-        # attempt, which occurs before the in-process digest test.
-        self.assertNotEqual(self.path.read_bytes(), after_first)
+        self.assertEqual(repeated, {"fresh": 0, "maintenance_applied": 0,
+                                  "message": "goal-kernel: human wake already applied"})
+        self.assertEqual(len(calls), 1)
+        # Authorized correction: the first pass can partially commit goals,
+        # but an in-process retry may neither decay nor attempt any write.
+        self.assertEqual(self.path.read_bytes(), after_first)
         self.assertFalse(self.kernel.exists())
-        self.snapshot("explicit-second-presented-wake-not-automatic-replay", [first, repeated])
+        self.snapshot("corrected-partial-write-repeat-no-maintenance", [first, repeated])
 
     def test_append_failure_and_append_success_followed_by_goal_rename_failure(self):
         before = self.path.read_bytes()

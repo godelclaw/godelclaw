@@ -1,4 +1,5 @@
 """Isolated project-04b subprocesses and full, generated-fixture receipts."""
+import base64
 import hashlib
 import json
 import os
@@ -92,9 +93,14 @@ def run(command, directory, **kwargs):
     env = environment(directory)
     env.update(kwargs.pop("extra_env", {}))
     result = subprocess.run(command, cwd=cwd, env=env,
-                            capture_output=True, text=True, timeout=180, preexec_fn=limit, **kwargs)
+                            capture_output=True, timeout=180, preexec_fn=limit, **kwargs)
+    raw_out, raw_err = result.stdout, result.stderr
+    result.stdout = raw_out.decode("utf-8", errors="backslashreplace")
+    result.stderr = raw_err.decode("utf-8", errors="backslashreplace")
     receipt("command", {"command": list(map(str, command)), "cwd": str(cwd),
                         "stdout": result.stdout, "stderr": result.stderr,
+                        "stdout_base64": base64.b64encode(raw_out).decode(),
+                        "stderr_base64": base64.b64encode(raw_err).decode(),
                         "returncode": result.returncode, "ulimit_v_kib": LIMIT_KIB})
     return result
 
@@ -102,7 +108,7 @@ def run(command, directory, **kwargs):
 def engine(directory, program):
     # Probe sources live outside the checkout. Resolve only our explicit local
     # imports; ancestor-walk otherwise silently leaves missing calls unevaluated.
-    for part in ("tests", "verification"):
+    for part in ("src", "tests", "verification"):
         program = program.replace("./" + part + "/", str(ROOT / part) + "/")
     path = directory / "probe.metta"
     path.write_text(program, encoding="utf-8")

@@ -1,0 +1,36 @@
+; INACTIVE project-04b runtime dependency. No production caller imports it.
+!(import! &self (library math))
+
+; Python 3.12 Neumaier accumulation, in precisely this double operation order.
+; Generic scalar entry point exists to qualify signed zero and cancellation,
+; even though kernel STI inputs are nonnegative. No FMA or reassociation.
+(= (gka:sum-values $values $start)
+   (gka:accumulate $values (* 1.0 $start) 0.0))
+(= (gka:accumulate $values $f $c)
+   (if (== $values ())
+     (if (and (!= $c 0.0) (not (or (math:isnan $c) (math:isinf $c)))) (+ $f $c) $f)
+     (let* (($x (car-atom $values)) ($t (+ $f $x))
+            ($next-c (if (>= (math:abs $f) (math:abs $x))
+                       (+ $c (+ (- $f $t) $x))
+                       (+ $c (+ (- $x $t) $f)))))
+       (gka:accumulate (cdr-atom $values) $t $next-c))))
+(= (gka:total $pairs $start)
+   (gka:sum-values (map-atom $pairs $pair (car-atom $pair)) $start))
+(= (gka:decay $pair)
+   (let* ((($sti $lti) $pair) ($next (* $sti 0.95)))
+     ($next (+ $lti (* 0.05 (math:max 0.0 (- $next $lti)))))))
+(= (gka:advance $pairs $budget)
+   (let* (($decayed (map-atom $pairs $pair (gka:decay $pair)))
+          ($total (gka:total $decayed 0)))
+     (if (and (> $total $budget) (> $budget 0))
+       (let $scale (/ $budget $total)
+         (map-atom $decayed $pair
+           (let ($sti $lti) $pair ((* $sti $scale) $lti)))) $decayed)))
+(= (gka:seed $sample)
+   (map-atom $sample $value (if (== $value GkaAbsent) 0.0 $value)))
+(= (gka:mood $old $sample)
+   (if (== $old ()) ()
+     (let* (($previous (car-atom $old)) ($value (car-atom $sample))
+            ($observed (if (== $value GkaAbsent) $previous $value)))
+       (cons-atom (+ (* 0.69 $previous) (* (- 1 0.69) $observed))
+         (gka:mood (cdr-atom $old) (cdr-atom $sample))))))

@@ -13,6 +13,37 @@ from goal_bookkeeping_support import ROOT, engine, receipt, run
 @unittest.skipUnless(all(os.environ.get(key) for key in ("CETTA_BIN", "LEAN_BIN", "LEAN_MODEL_ROOT")),
                      "set CETTA_BIN, LEAN_BIN and LEAN_MODEL_ROOT (pettaclaw models)")
 class ReplayTests(unittest.TestCase):
+    def test_corrected_partial_write_wake_replays_model_oracle_and_native(self):
+        from test_goal_bookkeeping_candidates import CandidateTests, encoded, op
+        from test_goal_bookkeeping_oracle import goal
+        models = Path(os.environ["LEAN_MODEL_ROOT"])
+        names = ("FuelPolicy.lean", "RetryWake.lean")
+        before = {name: hashlib.sha256((models / name).read_bytes()).hexdigest() for name in names}
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            for name in names:
+                shutil.copyfile(models / name, directory / name)
+                result = run([os.environ["LEAN_BIN"], "-o", name.replace(".lean", ".olean"), name],
+                             directory, cwd=directory, extra_env={"LEAN_PATH": str(directory)})
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            shutil.copyfile(ROOT / "verification/GoalWakeFailure.lean", directory / "Wake.lean")
+            result = run([os.environ["LEAN_BIN"], "--run", "Wake.lean"], directory,
+                         cwd=directory, extra_env={"LEAN_PATH": str(directory)})
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            expected = json.loads(result.stdout)
+        # CandidateTests.compare independently checks corrected Python messages
+        # and all file bytes first. No serializer or maintenance writer is stubbed.
+        case = CandidateTests()
+        _, _, rows = case.compare({"goals.metta": encoded(goal() + "\n")},
+            [op("wake", str(token)) for token in (1, 1, 2, 2, 1, 1, 3, 3)],
+            faults={"write": "goals_kernel.json.tmp"})
+        actual = [[row["value"][1], row["value"][2], row["calls"].get("goal_renames", 0),
+                   row["calls"].get("kernel_renames", 0)] for row in rows]
+        receipt("wake-lean-replay", {"model_hashes": before, "expected": expected, "actual": actual,
+            "scope": "bounded partial-write/repeat replay plus local Lean theorems; no crash-durability claim"})
+        self.assertEqual(actual, expected)
+        self.assertEqual(before, {name: hashlib.sha256((models / name).read_bytes()).hexdigest() for name in names})
+
     def test_bounded_nat_models_not_a_float_refinement(self):
         models = Path(os.environ["LEAN_MODEL_ROOT"])
         names = ("StiFloorDecay.lean", "StiMass.lean")
