@@ -21,6 +21,15 @@ def agent_name(value):
     return value
 
 
+def recipient_name(value):
+    parts = value.split('/')
+    if len(parts) not in (1, 2):
+        raise argparse.ArgumentTypeError('use AGENT or ACCOUNT/AGENT')
+    for part in parts:
+        agent_name(part)
+    return value
+
+
 def duration(value):
     number = float(value)
     if not math.isfinite(number) or number < 0:
@@ -112,7 +121,7 @@ def resolve_agent(parser, args, default):
             parser.error(f'{args.command} needs AGENT or a configured CLAW_MAIL_AGENT')
         if args.command == 'send':
             args.to, args.text = args.fields
-            agent_name(args.to)
+            recipient_name(args.to)
         else:
             args.id = args.fields[0]
     elif args.command != 'whoami':
@@ -136,8 +145,8 @@ def main(argv=None):
         parser.error(str(error))
     parser.add_argument('--socket', default=os.environ.get('CETTA_SHARED_MAIL_SOCKET', config.get('socket')))
     parser.add_argument('--cetta', default=os.environ.get('CETTA_BIN', config.get('cetta')))
-    parser.add_argument('--space', default=config.get('space', ''),
-                        help='send namespace; default is the authenticated owner inbox or member append space')
+    parser.add_argument('--space', default=config.get('space', 'agent-mail'),
+                        help='send namespace (default agent-mail); an explicit empty value selects the owner inbox')
     parser.add_argument('--json', action='store_true', help='JSON only, without delivery summaries')
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('whoami', help='show the identity authenticated by the service')

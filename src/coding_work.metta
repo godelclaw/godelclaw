@@ -220,8 +220,8 @@
           ($report (str:join "" ($why "\n\nLast progress:\n" (if (== $progress "") "none recorded" $progress)
                                  (if (== $saved "") "" (str:concat "\n\nSaved report:\n" $saved))
                                  "\n\nPlan:\n" $plan "\n\nResume without replaying uncertain effects:\n(work-resume \"" $id "\")")))
-          ($_ (fs:update-text (path:join $dir "report.txt") "replace" $report "" ""))
-          ($_ (py-call (coding_io.mark_state $dir $status $report))))
+          ($identity (delivery:identity $dir $state $status))
+          ($_ (py-call (coding_io.mark_state $dir $status $report $identity))))
      $status))
 ; The same announcement coding:notify (coding_session.metta) makes when a
 ; session ends by itself.

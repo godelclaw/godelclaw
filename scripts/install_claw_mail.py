@@ -2,6 +2,7 @@
 """Install the mail CLI and Claude skill for this account, using this checkout."""
 import argparse
 import json
+import hashlib
 import os
 from pathlib import Path
 
@@ -14,10 +15,33 @@ def install_link(source, destination, force):
     if destination.exists() or destination.is_symlink():
         if not force or not destination.is_symlink():
             raise ValueError(f'{destination} exists; keep it or choose another destination')
-        destination.unlink()
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.symlink_to(source.resolve(), target_is_directory=source.is_dir())
+    temporary = destination.with_name('.' + destination.name + '-' + str(os.getpid()))
+    try:
+        temporary.symlink_to(source.resolve(), target_is_directory=source.is_dir())
+        os.replace(temporary, destination)
+    finally:
+        if temporary.is_symlink():
+            temporary.unlink()
     print(destination)
+
+
+def install_cli(root, bin_dir, force):
+    files = {name: (root / 'scripts' / name).read_bytes() for name in ('shared_mail.py', 'shared_mail.metta')}
+    hashes = {name: hashlib.sha256(body).hexdigest() for name, body in files.items()}
+    identity = hashlib.sha256(json.dumps(hashes, sort_keys=True).encode()).hexdigest()
+    release = bin_dir.parent / 'share' / 'claw-mail' / identity
+    release.mkdir(parents=True, exist_ok=True)
+    for name, body in files.items():
+        path = release / name
+        if path.exists() and path.read_bytes() != body:
+            raise ValueError('installed mail snapshot has changed: ' + str(path))
+        if not path.exists():
+            path.write_bytes(body)
+    (release / 'shared_mail.py').chmod(0o755)
+    (release / 'manifest.json').write_text(json.dumps({'identity': identity, 'files': hashes}, indent=2) + '\n')
+    install_link(release / 'shared_mail.py', bin_dir / 'claw-mail', force)
+    return release
 
 
 def main():
@@ -36,7 +60,7 @@ def main():
         config = {key: value for key, value in vars(args).items() if key in ('socket', 'cetta', 'agent') and value}
         if config and args.config.expanduser().exists():
             raise ValueError(f'{args.config} already exists; edit it to update its settings')
-        install_link(ROOT / 'scripts/shared_mail.py', args.bin_dir.expanduser() / 'claw-mail', args.force_links)
+        install_cli(ROOT, args.bin_dir.expanduser(), args.force_links)
         if not args.no_skill:
             install_link(ROOT / '.claude/skills/claw-mail', args.skill_dir.expanduser() / 'claw-mail', args.force_links)
         if config:

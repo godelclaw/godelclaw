@@ -49,6 +49,10 @@ cp config/mail.example.toml "${XDG_CONFIG_HOME:-$HOME/.config}/godelclaw/mail.to
 ```
 
 Use `--no-skill` on the installer to install only the CLI.
+The CLI is installed as a content-addressed snapshot; later checkout edits do
+not change the running command. Reinstall with `--force-links` to select an
+updated snapshot. Bare recipients use `agent-mail`; `ACCOUNT/AGENT` addresses
+that account's reply inbox, matching the native agent's mail route syntax.
 
 Edit that private file for your socket and engine. It accepts `socket`, `cetta`,
 `space` and optional `agent` strings. Relative paths resolve beside the config;
@@ -943,8 +947,9 @@ one operator notice. Authentication and transient provider failures retain their
 own recovery and backoff.
 For a recognized context-size rejection, the native full-window path first
 tries a checkpoint compaction. Only a changed checkpoint permits another turn
-request. If that repair fails or the changed request is rejected again, the
-block remains visible; a successful turn allows repair of a future incident.
+request or another repair. Older segments may keep folding while that frontier
+advances. A failed compaction or a view with no older history leaves the actual
+blockage visible, without resending the unchanged request.
 
 Credential redaction, configured chat permissions, occurrence identities for
 message delivery, memory supervision, and the operator stop remain in place.

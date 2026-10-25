@@ -5,6 +5,7 @@ The provider is a local scripted fixture. No credentials or external models.
 import json
 import math
 import os
+import re
 from pathlib import Path
 import sqlite3
 import unittest
@@ -45,32 +46,48 @@ class ContextCompactionTests(unittest.TestCase):
         for n in range(count):
             self.fixture.call([["read-file", str(n)]], [("FINDING_%d λ " % n) * 200], request)
 
-    def test_provider_size_rejection_compacts_once_before_retrying_changed_context(self):
+    def test_provider_size_rejection_repairs_only_while_checkpoint_advances(self):
         self.populate(8)
         self.env['METTACLAW_OBSERVED_STRATEGY'] = '1'
         forms = f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'
-        call = '!(println! (RESULT (llm:command "fixture-model" 256 "default" "retained task input")))\n'
+        def send(text):
+            call = '!(println! (RESULT (llm:command "fixture-model" 256 "default" ' + json.dumps(text, ensure_ascii=False) + ')))\n'
+            return self.run_guest(forms + call)
+        initial = self.render('initial', capacity=200000)
+        def source_count():
+            out = self.run_guest(f'!(import! &self "{boundary.ROOT}/src/context_compaction.metta")\n'
+                '!(println! (SOURCE_COUNT (length (task:items (task:conversation-view "guide" "continuation-tick") "transcript"))))\n')
+            return int(re.search(r'\(SOURCE_COUNT (\d+)\)', out).group(1))
         error = {'error': {'code': 'context_length_exceeded', 'message': 'Context too long'}}
-        self.peer.status, self.peer.reply = 400, error
-        self.run_guest(forms + call)
-        self.assertEqual(len(self.peer.requests), 1)
-        self.assertEqual(json.loads(self.health.read_text())['provider_rejection']['repair'], 'requested')
-        self.peer.status = 200
-        self.peer.reply = {'id': 'summary', 'choices': [{'message': {
-            'role': 'assistant', 'content': 'HANDOFF: retained earlier findings.'}, 'finish_reason': 'stop'}],
-            'usage': {'prompt_tokens': 100, 'completion_tokens': 20}}
-        rendered = self.render('repair', capacity=200000)
-        self.assertIn('HANDOFF: retained earlier findings.', rendered)
-        self.assertGreater(self.checkpoint()['start'], 0)
-        self.assertEqual(len(self.peer.requests), 2)
-        # If the changed request is also rejected, do not pay for the same repair again.
-        self.peer.status, self.peer.reply = 400, error
-        self.run_guest(forms + call)
-        self.assertEqual(len(self.peer.requests), 3)
-        self.assertNotEqual(json.loads(self.health.read_text())['provider_rejection'].get('repair'), 'requested')
-        self.render('blocked', capacity=200000)
-        self.run_guest(forms + call)
-        self.assertEqual(len(self.peer.requests), 3)
+        rendered, count, bodies = initial, source_count(), []
+        initial_count = count
+        for turn in range(initial_count):
+            self.peer.status, self.peer.reply = 400, error
+            send(rendered)
+            bodies.append(json.dumps(self.peer.requests[-1][2], sort_keys=True))
+            self.assertEqual(json.loads(self.health.read_text())['provider_rejection']['repair'], 'requested')
+            before, calls = self.checkpoint()['start'], len(self.peer.requests)
+            self.peer.status = 200
+            self.peer.reply = {'choices': [{'message': {'role': 'assistant', 'content': 'HANDOFF retained findings'},
+                                           'finish_reason': 'stop'}]}
+            next_view = self.render('repair-%d' % turn, capacity=200000)
+            if count <= 1:
+                self.assertIn('no-older-history-to-fold', next_view)
+                send(rendered)
+                self.assertEqual(len(self.peer.requests), calls)
+                break
+            self.assertGreater(self.checkpoint()['start'], before)
+            self.assertEqual(len(self.peer.requests), calls + 1)
+            remaining = source_count()
+            self.assertLess(remaining, count)
+            count, rendered = remaining, next_view
+            # Preparing again without another rejection never repeats its repair.
+            self.render('same-checkpoint', capacity=200000)
+            self.assertEqual(len(self.peer.requests), calls + 1)
+        else:
+            self.fail('repair did not terminate over the frozen source backlog')
+        self.assertGreater(len(bodies), 2)
+        self.assertEqual(len(set(bodies)), len(bodies))
 
     def render(self, name="view", capacity=20000, focus="guide"):
         out = self.directory / (name + ".txt")

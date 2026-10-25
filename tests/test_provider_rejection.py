@@ -101,10 +101,30 @@ class RejectionTests(unittest.TestCase):
                 db.execute('UPDATE meta SET value=?', ('new checked handoff',))
             self.assertFalse(rejection.blocked())
 
+    def test_unreadable_inbox_does_not_look_like_the_known_input_was_removed(self):
+        self.facts.stop()
+        control = self.root / 'modes/control-status.json'
+        control.parent.mkdir()
+        control.write_text(json.dumps({'operator_inbox': {'pending': 1, 'newestMessageAt': 100}}))
+        rejection.record(400)
+        control.unlink()
+        self.assertNotIn('operator_input', rejection.context())
+        self.assertTrue(rejection.blocked())
+        control.write_text(json.dumps({'operator_inbox': {'pending': 2, 'newestMessageAt': 101}}))
+        self.assertFalse(rejection.blocked())
+
     def test_transient_and_auth_failures_keep_their_existing_recovery(self):
         for status in (401, 403, 408, 409, 425, 429, 500, 503):
             self.assertFalse(rejection.record(status))
         self.assertNotIn('provider_rejection', cognitive_health.snapshot())
+
+    def test_size_errors_are_classified_from_each_provider_shape(self):
+        for body in ({'error': {'type': 'invalid_request_error', 'message': 'prompt is too long: 50 tokens > 40 maximum'}},
+                     {'error': {'code': None, 'message': 'maximum context length is 40 tokens'}},
+                     {'detail': 'context window exceeded'}):
+            code, message = rejection.error_fields(json.dumps(body))
+            self.assertEqual(rejection.error_kind(400, code, message), 'context-size')
+        self.assertEqual(rejection.error_kind(400, 'invalid_input', 'bad field'), 'invalid-request')
 
     def test_blocked_wait_remains_interruptible_without_attempts(self):
         self.block()

@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import sqlite3
+from contextlib import closing
 
 import cognitive_health
 
@@ -52,7 +53,7 @@ def context():
     root = Path(__file__).resolve().parents[1]
     state = Path(cognitive_health._path()).parent
     import synthetic_llm
-    facts = {"model": synthetic_llm.current_model(), "operator_input": [0, None, None], "mode_input": ""}
+    facts = {"model": synthetic_llm.current_model()}
     release = _json(state / "runtime-release.json")
     if isinstance(release, dict):
         facts["release"] = release.get("release")
@@ -75,18 +76,21 @@ def context():
     mode_state = Path(os.environ.get("METTACLAW_MODE_STATE_ROOT", state / "modes"))
     control = _json(mode_state / "control-status.json")
     inbox = control.get("operator_inbox") if isinstance(control, dict) else None
-    if isinstance(inbox, dict) and type(inbox.get("pending")) is int and inbox['pending'] > 0:
-        facts["operator_input"] = [inbox.get(k) for k in
+    if isinstance(inbox, dict) and type(inbox.get("pending")) is int:
+        facts["operator_input"] = ([inbox.get(k) for k in
                                    ("pending", "newestMessageAt", "oldestMessageAt")]
+                                   if inbox['pending'] > 0 else [0, None, None])
     mode = os.environ.get("METTACLAW_MODE_RUNTIME")
     if mode:
         offered = _json(Path(mode) / "offered-input.json")
-        if offered:
-            facts["mode_input"] = hashlib.sha256(json.dumps(offered, sort_keys=True).encode()).hexdigest()
+        if offered is not None:
+            facts["mode_input"] = hashlib.sha256(json.dumps(offered, sort_keys=True).encode()).hexdigest() if offered else ''
+    else:
+        facts['mode_input'] = ''
     checkpoint = os.environ.get('METTACLAW_STRATEGY_PATH')
     if checkpoint:
         try:
-            with sqlite3.connect(Path(checkpoint).resolve().as_uri() + '?mode=ro', uri=True, timeout=.1) as db:
+            with closing(sqlite3.connect(Path(checkpoint).resolve().as_uri() + '?mode=ro', uri=True, timeout=.1)) as db:
                 rows = db.execute("SELECT key,value FROM meta WHERE key GLOB 'task_window:*' ORDER BY key").fetchall()
             facts['checkpoint'] = hashlib.sha256(json.dumps(rows).encode()).hexdigest()
         except (OSError, sqlite3.Error):
@@ -138,6 +142,23 @@ def error_fields(body):
         error.get("message") or value.get("detail") or "Provider rejected the request")
 
 
+def error_kind(status, code, message):
+    text = str(message).lower()
+    if (status == 413 or code in ('context_length_exceeded', 'string_above_max_length')
+            or status in (400, 422) and any(phrase in text for phrase in
+                ('prompt is too long', 'maximum context length', 'context window exceeded'))):
+        return 'context-size'
+    return 'invalid-request'
+
+
+def full_context():
+    path = Path(cognitive_health._path()).parent / 'context-policy.json'
+    policy = _json(path)
+    if isinstance(policy, dict):
+        return policy.get('mode') == 'full' or 'mode' not in policy and 'task_tokens' not in policy
+    return not os.environ.get('METTACLAW_TASK_CONTEXT_TOKENS')
+
+
 def record(status, code="", message="", captured=None):
     if status not in INVALID_REQUEST:
         return False
@@ -148,12 +169,12 @@ def record(status, code="", message="", captured=None):
         prior = health.get("provider_rejection", {})
         if prior.get("id") != identity:
             health["provider_rejection"] = dict(id=identity, status=status, code=safe_text(code, 64),
-                                               message=safe_text(message), context=snapshot)
-            external = {k: v for k, v in snapshot.items() if k != 'checkpoint'}
-            size_error = status == 413 or code in ('context_length_exceeded', 'string_above_max_length')
-            if (size_error and os.environ.get('METTACLAW_ACTIVE_ENGINE') == 'cetta'
+                                               message=safe_text(message), context=snapshot,
+                                               reason=error_kind(status, code, message))
+            if (health['provider_rejection']['reason'] == 'context-size'
+                    and os.environ.get('METTACLAW_ACTIVE_ENGINE') == 'cetta' and full_context()
                     and os.environ.get('METTACLAW_OBSERVED_STRATEGY') == '1'
-                    and health.get('provider_context_repair') != external):
+                    and health.get('provider_context_repair') != snapshot):
                 health['provider_rejection']['repair'] = 'requested'
         health["retry_at"] = 0
         _save(health)
@@ -174,7 +195,7 @@ def begin_context_repair():
         if block.get('repair') != 'requested':
             return 0
         block['repair'] = 'attempted'
-        health['provider_context_repair'] = {k: v for k, v in block['context'].items() if k != 'checkpoint'}
+        health['provider_context_repair'] = dict(block['context'])
         _save(health)
         return 0 if cognitive_health._path() in _unwritten else 1
 

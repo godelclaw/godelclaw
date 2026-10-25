@@ -55,16 +55,18 @@
    (if (== $messages ()) (coding:reverse $out ())
      (coding:record-all $dir (cdr-atom $messages) (cons-atom (coding:record $dir (car-atom $messages)) $out))))
 (= (coding:state $dir $status $steps $progress $inbox)
-   (fs:update-text (coding:file $dir "state.json") "replace"
-     (json-stringify (JsonObject ((JsonPair "status" (JsonString $status))
+   (let* (($pairs ((JsonPair "status" (JsonString $status))
                                   (JsonPair "steps" (JsonNumber (repr $steps)))
                                   (JsonPair "progress" (JsonString $progress))
                                   (JsonPair "delivery" (JsonString (if (== $status "running") "none" "pending")))
-                                  (JsonPair "delivery_version" (JsonNumber "1"))
+                                  (JsonPair "delivery_version" (JsonNumber "2"))
                                   (JsonPair "worker_owner" (JsonString (process:owner)))
                                   (JsonPair "inbox" (JsonNumber (repr $inbox)))
-                                  (JsonPair "updated" (JsonNumber (repr (coding:now)))))))
-     "" ""))
+                                  (JsonPair "updated" (JsonNumber (repr (coding:now))))))
+          ($value (JsonObject $pairs))
+          ($ending (if (== $status "running") $value
+                    (JsonObject (cons-atom (JsonPair "delivery_id" (JsonString (delivery:identity $dir $value $status))) $pairs)))))
+     (fs:update-text (coding:file $dir "state.json") "replace" (json-stringify $ending) "" "")))
 
 ; Codex keeps the beginning and the end of long output.
 (= (coding:cut $text)

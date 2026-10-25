@@ -6,6 +6,11 @@
 ; The owner can use the durable mailbox identity check. A restricted member
 ; must use the shaped append path, which does not require reading other mail.
 (= (shared-mail:post $socket $name $id $to $agent $body)
+   (case (str:split "/" $to)
+     ((($account $recipient)
+       (shared-mail:post-in $socket (str:concat "mail@" $account) $id $recipient $agent $body))
+      ($bare (shared-mail:post-in $socket $name $id $to $agent $body)))))
+(= (shared-mail:post-in $socket $name $id $to $agent $body)
    (case (space:whoami $socket)
      (((reply $rid ok (principal $account owner))
        (mailbox:send $socket (shared-mail:owner-space $name $account) $id $to (from $account $agent) $body))
@@ -13,8 +18,8 @@
        (mailbox:post $socket (if (== $name "") "agent-mail" $name) $id $to $agent $body))
       ($error $error))))
 
-; Owner sends and reads must use the same authenticated inbox. An explicit
-; namespace remains available for cross-account and legacy append workflows.
+; Bare recipients stay on the agent bus. Qualified recipients select an
+; account inbox, as native mail does; an explicit empty space selects self.
 (= (shared-mail:owner-space $name $account)
    (if (== $name "")
      (case $account

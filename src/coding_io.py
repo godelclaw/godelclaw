@@ -137,21 +137,34 @@ def engine_problem(directory):
     return ""
 
 
-def mark_state(directory, status, report=None):
-    """Set a session's recorded status, keeping the rest of its state."""
+def mark_state(directory, status, report=None, identity=None):
+    """Settle one ending; duplicate recovery observers keep its identity."""
+    import fcntl
     path = Path(str(directory)) / "state.json"
-    try:
-        state = json.loads(path.read_text())
-    except (OSError, ValueError):
-        state = {}
-    state["status"] = str(status)
-    if report is not None:
-        state['progress'] = str(report)
-        state['delivery_version'] = 1
-    state['delivery'] = 'pending'
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(state))
-    os.replace(temporary, path)
+    with (path.parent / '.ending.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            state = json.loads(path.read_text())
+        except (OSError, ValueError):
+            state = {}
+        if state.get('status') == str(status) and state.get('delivery_id'):
+            return 1
+        state.update(status=str(status), delivery='pending', updated=time.time())
+        if report is not None:
+            state.update(progress=str(report), delivery_version=2 if identity else 1)
+            (path.parent / 'report.txt').write_text(str(report))
+        if identity:
+            state['delivery_id'] = str(identity)
+        fd, temporary = tempfile.mkstemp(prefix='.ending-', dir=path.parent)
+        try:
+            with os.fdopen(fd, 'w') as stream:
+                json.dump(state, stream)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
     return 1
 
 

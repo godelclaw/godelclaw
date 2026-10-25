@@ -54,6 +54,36 @@ def runtime_current(config):
     return desired is not None and updater.sha(Path(shared['path'])) == desired
 
 
+def committed_source(source, names):
+    """Never label a selected dirty working file as a committed release."""
+    result = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=source, capture_output=True, text=True)
+    if result.returncode:
+        return None
+    tracked = subprocess.run(['git', 'ls-files', '-z', '--', *names], cwd=source,
+                             capture_output=True, text=True, check=True).stdout.split('\0')
+    dirty = subprocess.run(['git', 'diff', '--quiet', 'HEAD', '--', *names], cwd=source).returncode
+    if dirty or set(names) - set(tracked):
+        raise ValueError('selected runtime source is uncommitted; use a qualified commit in a clean checkout')
+    return result.stdout.strip()
+
+
+def verify_committed_files(source, revision, release, names):
+    if revision is None:
+        return
+    raw = subprocess.check_output(['git', 'ls-tree', '-rz', revision, '--', *names], cwd=source)
+    objects = {}
+    for record in raw.split(b'\0'):
+        if record:
+            metadata, name = record.split(b'\t', 1)
+            objects[name.decode()] = metadata.split()[2].decode()
+    algorithm = subprocess.check_output(['git', 'rev-parse', '--show-object-format'], cwd=source, text=True).strip()
+    for name in names:
+        data = (release / 'files' / name).read_bytes()
+        identity = hashlib.new(algorithm, b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
+        if objects.get(name) != identity:
+            raise ValueError('release file is not from the source commit: ' + name)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path,
@@ -70,6 +100,7 @@ def main():
     if args.status:
         print(json.dumps({'instances': status}, indent=2))
         return 0
+    revision = committed_source(source, names)
     if args.apply and not any(item['different'] for item in status) and runtime_current(config):
         print(json.dumps({'status': 'current', 'instances': status}))
         return 0
@@ -85,13 +116,17 @@ def main():
                         '--output', str(release)], check=True)
         manifest_path = release/'manifest.json'
         manifest = json.loads(manifest_path.read_text())
-        commit = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=source,
-                                capture_output=True, text=True)
-        if commit.returncode == 0:
-            manifest['source_commit'] = commit.stdout.strip()
+        if revision is not None:
+            manifest['source_commit'] = revision
         if (source/'CETTA_REF').is_file():
             manifest['engine_revision'] = (source/'CETTA_REF').read_text().strip()
         manifest_path.write_text(json.dumps(manifest, indent=2)+'\n')
+    # Verify the actual copy too: a concurrent edit between preflight and
+    # copying must never inherit the earlier commit's provenance.
+    verify_committed_files(source, revision, release, names)
+    manifest = json.loads((release / 'manifest.json').read_text())
+    if manifest.get('source_commit') and manifest['source_commit'] != revision:
+        verify_committed_files(source, manifest['source_commit'], release, names)
     receipt = base/('activation-'+str(time.time_ns()))
     command = [sys.executable, str(scripts/'update_instances.py'), '--plan', str(config_path),
                '--release', str(release), '--receipt-dir', str(receipt)]

@@ -1,6 +1,7 @@
 """Production-engine parity at addition-context-sources; no live fixtures."""
 import itertools
 import json
+import difflib
 import os
 from pathlib import Path
 import re
@@ -72,6 +73,19 @@ CALLER = ["!(import! &self ./src/memory)", "!(import! &self ./src/turn_additions
 
 class NativeContextBundleTest(unittest.TestCase):
     def setUp(self):
+        # Each native guest starts a fresh process. Its Python oracle needs
+        # the same initial loader-cache state, independent of test ordering.
+        import project_evidence
+        import project_capabilities
+        for module, empty in ((project_evidence, None), (project_capabilities, {})):
+            cache = mock.patch.object(module, '_cache', empty)
+            cache.start()
+            self.addCleanup(cache.stop)
+        import telegram
+        for name in ('_reply_chat_id', '_last_chat_id', '_primary_chat_id'):
+            route = mock.patch.object(telegram, name, '')
+            route.start()
+            self.addCleanup(route.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.directory = Path(self.temp.name)
@@ -127,7 +141,9 @@ class NativeContextBundleTest(unittest.TestCase):
                                        "trigger": trigger, "fixtures": scenarios,
                                        "oracle_fixtures": oracle_scenarios,
                                        "expected": expected, "actual": actual})
-        self.assertEqual([entry["text"] for entry in actual], expected)
+        diff = '\n'.join(difflib.unified_diff(actual[0]['text'].splitlines(), expected[0].splitlines(),
+                                             fromfile='native', tofile='python', n=1)) if actual else ''
+        self.assertEqual([entry["text"] for entry in actual], expected, diff)
         for entry in actual:
             self.assertEqual(entry["forbidden"], 0)
             self.assertEqual(entry["calls"], {s.source_id: 1 for s in context_sources.SOURCE_SPECS

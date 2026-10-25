@@ -104,7 +104,7 @@ class SharedMailTests(unittest.TestCase):
         self.stop()
         self.start()
         text = 'λ "quoted"\\text\nsecond line'
-        args = ('send', 'reviewer', 'fixture-agent', text, '--id', 'owned-one')
+        args = ('send', 'reviewer', LOGIN + '/fixture-agent', text, '--id', 'owned-one')
         self.assertEqual(self.run_cli(*args)['status'], 'accepted')
         self.assertEqual(self.run_cli('inbox', 'fixture-agent')['count'], 1)
         delivery = self.run_cli('next', 'fixture-agent')
@@ -118,6 +118,13 @@ class SharedMailTests(unittest.TestCase):
         self.stop()
         self.start()
         self.run_cli('--space', 'agent-mail', 'send', 'reviewer', 'fixture-agent', 'legacy')
+        self.assertIn('mailbox:delivery', self.raw('!(mailbox:next SOCKET "agent-mail" "fixture-agent")'))
+        self.assertEqual(self.run_cli('inbox', 'fixture-agent')['count'], 0)
+
+    def test_owner_bare_recipient_uses_the_native_agent_bus(self):
+        self.stop()
+        self.start()
+        self.run_cli('send', 'reviewer', 'fixture-agent', 'native peer')
         self.assertIn('mailbox:delivery', self.raw('!(mailbox:next SOCKET "agent-mail" "fixture-agent")'))
         self.assertEqual(self.run_cli('inbox', 'fixture-agent')['count'], 0)
 
@@ -303,7 +310,10 @@ class SharedMailTests(unittest.TestCase):
         installed = subprocess.run(command, capture_output=True, text=True, timeout=5)
         self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
         self.assertEqual(config.stat().st_mode & 0o777, 0o600)
-        self.assertEqual((destination / 'bin/claw-mail').resolve(), CLI)
+        installed = (destination / 'bin/claw-mail').resolve()
+        self.assertNotEqual(installed, CLI)
+        self.assertEqual(installed.read_bytes(), CLI.read_bytes())
+        self.assertEqual(installed.with_suffix('.metta').read_bytes(), CLI.with_suffix('.metta').read_bytes())
         self.assertTrue((destination / 'skills/claw-mail/SKILL.md').is_file())
         env = isolated_environ()
         for key in ('CETTA_BIN', 'CETTA_SHARED_MAIL_SOCKET', 'CLAW_MAIL_AGENT'):

@@ -64,6 +64,16 @@ class CodingContextTests(unittest.TestCase):
         (self.directory / "reply.json").write_text(json.dumps({"usage": usage}))
         return self.io.context_observe(self.directory, size)
 
+    def test_competing_recovery_observers_keep_one_ending_and_its_report(self):
+        from concurrent.futures import ThreadPoolExecutor
+        (self.directory / 'state.json').write_text('{"status":"running","steps":7}')
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            list(pool.map(lambda report: self.io.mark_state(self.directory, 'interrupted', report, 'same-ending'),
+                          ('report A', 'report B')))
+        state = json.loads((self.directory / 'state.json').read_text())
+        self.assertEqual(state['delivery_id'], 'same-ending')
+        self.assertEqual((self.directory / 'report.txt').read_text(), state['progress'])
+
     def test_without_a_count_four_bytes_make_a_token(self):
         self.assertEqual(self.io.context_tokens(self.directory, 4000), 1000)
         self.assertEqual(self.observe({"completion_tokens": 3}, 4000), 0)
@@ -828,6 +838,23 @@ class CodingSessionTests(unittest.TestCase):
                 self.assertEqual(receipt['delivery'], 'pending')
                 self.assertIn('matching acceptance receipt', receipt['delivery_error'])
         self.assertEqual(self.server.requests, [])
+
+    def test_ending_stores_its_identity_before_notification(self):
+        active, launches = self.fake_work_scope()
+        runner, dead, done, sent = self.dead_session_fixture()
+        active.write_text('')
+        self.run_probe('!(coding:state ' + json.dumps(str(done)) + ' "done" 7 "Stable ending." 0)\n', cwd=runner)
+        state = json.loads((done / 'state.json').read_text())
+        self.assertEqual(state['delivery_version'], 2)
+        self.assertRegex(state['delivery_id'], r'^[0-9a-f]{32}$')
+        self.run_report_watcher(runner)
+        self.assertEqual(self.delivery_receipt(done)['delivery_id'], state['delivery_id'])
+        state['steps'] = 8
+        state['updated'] += 1
+        (done / 'state.json').write_text(json.dumps(state))
+        result = self.run_probe('!(println! (Mail (delivery:status ' + json.dumps(str(done)) + ')))\n',
+                                module='coding_work.metta', cwd=runner)
+        self.assertIn('(Mail "accepted")', result.stdout)
 
     def test_resumed_session_keeps_pending_message_bytes_without_state_overwrite(self):
         active, launches = self.fake_work_scope()

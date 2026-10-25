@@ -197,8 +197,8 @@ class NativePinsContextTest(unittest.TestCase):
             source.write("\n".join(lines) + "\n")
             source.flush()
             if swi:
-                petta = Path(os.environ.get("PETTA_ROOT", ""))
-                if not (petta / "run.sh").is_file() or not shutil.which("swipl"):
+                petta = Path(os.environ.get("PETTA_ROOT") or Path.home() / "repos/PeTTa")
+                if not (petta / "src/main.pl").is_file() or not (petta / "run.sh").is_file() or not shutil.which("swipl"):
                     self.skipTest("set PETTA_ROOT to a SWI-PeTTa checkout")
                 command = ["bash", str(petta / "run.sh"), source.name, "default"]
             else:
