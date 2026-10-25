@@ -346,10 +346,16 @@ class NativeLifetimeTests(policy_tests.NativeLedgerFixture):
         ], dict(a=meta('a', activity='one', lane='interactive'),
                 bad=meta('bad', activity='one', lane='interactive', purpose='invalid')))
 
-    def test_bad_activity_refuses_before_invalid_capacity_or_purpose(self):
+    def test_bad_activity_reports_an_error_before_invalid_capacity_or_purpose(self):
         self.env['METTACLAW_ACTIVITY_CALL_CAPACITY'] = '0'
         self.replay_lifetime([('admit', 'bad', 1000), ('claim', 'bad', 1000)],
                              dict(bad=meta('bad', activity='non-ascii-試験', lane='interactive', purpose='invalid')))
+
+    def test_invalid_activity_and_lane_are_errors_even_with_no_other_owner(self):
+        data = dict(a=meta('a', activity='bad activity', lane='background'),
+                    b=meta('b', activity='x' * 65, lane='background'),
+                    c=meta('c', activity='valid', lane='sideways'))
+        self.replay_lifetime([(kind, key, 1000) for key in data for kind in ('admit', 'claim')], data)
 
     def test_fractional_timestamps_survive_the_recovery_compare_and_set(self):
         stamp = 1792850686.1234567

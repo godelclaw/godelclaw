@@ -125,7 +125,7 @@ def claim(plan):
                 return False
         else:
             if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", str(activity)) or lane not in ("interactive", "background"):
-                return False
+                raise ValueError("invalid native call activity")
             capacity = int(os.environ.get("METTACLAW_ACTIVITY_CALL_CAPACITY", "2"))
             reserve = int(os.environ.get("METTACLAW_ACTIVITY_INTERACTIVE_RESERVE", "1"))
             if not 1 <= reserve < capacity <= 16:

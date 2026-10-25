@@ -534,7 +534,14 @@ def claim(plan):
     with _claim_lock:
         if plan.claimed:
             return "false"
-        if not native_lifetime.claim(plan):
+        try:
+            owned = native_lifetime.claim(plan)
+        except (ValueError, TypeError) as error:
+            # Validation failed before this plan acquired any submission right.
+            llm_policy.fail(plan.correlation, sent=False)
+            plan.error, plan.ready = error, "false"
+            return "false"
+        if not owned:
             llm_policy.fail(plan.correlation, sent=False)
             return policy_rejected(plan, "native-call-capacity")
         plan.claimed = True

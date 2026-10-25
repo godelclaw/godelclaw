@@ -1,5 +1,5 @@
 """Compatibility error labels for provider adapters; no execution policy."""
-DENIAL_CODES = frozenset({"cognition-paused", "provider-cooldown"})
+DENIAL_CODES = frozenset({"cognition-paused", "provider-cooldown", "native-call-capacity"})
 
 class AdmissionDenied(RuntimeError):
     def __init__(self, code):

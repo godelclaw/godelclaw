@@ -101,7 +101,7 @@
    (let* (($activity (nl:field $metadata "activity" "")) ($lane (nl:field $metadata "lane" ""))
           ($purpose (nl:field $metadata "purpose" "turn")))
        (if (ue:equal $activity "") (nl:claim-insert $metadata $activity $lane 0 0 $now)
-         (if (not (nl:valid-activity $activity $lane)) (LedgerChanged False)
+         (if (not (nl:valid-activity $activity $lane)) (LedgerError "invalid native call activity")
            (case (nl:capacity)
              (((NativeCapacity $capacity $reserve) (nl:claim-insert $metadata $activity $lane $capacity $reserve $now))
               ($error $error)))))))

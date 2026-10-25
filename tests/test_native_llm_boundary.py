@@ -206,10 +206,38 @@ def error(plan):
                     '   (progn (println! (CAPACITY (py-call (capacity_fixture.error $other))))\n'
                     '          (println! (REPLAY (llm:begin $owner)))))\n')
                 self.assertIn('AdmissionDenied: native-call-capacity', out)
+                self.assertIn('; reason=native-call-capacity', self.last_stderr)
                 self.assertIn('(REPLAY (llm:v1:failed duplicate duplicate duplicate-plan not-started))', out)
                 with sqlite3.connect(dbpath) as db:
                     self.assertEqual(db.execute('SELECT activity,state FROM native_calls').fetchall(), [('holder', 'claimed')])
                     self.assertEqual(sorted(row[0] for row in db.execute('SELECT status FROM requests')), ['failed', 'pending'])
+        self.assertEqual(self.peer.requests, [])
+
+    def test_invalid_activity_is_not_capacity_and_settles_its_unsent_request(self):
+        module = self.directory / 'fixture_modules/invalid_activity_fixture.py'
+        module.write_text('''
+import native_llm_host as host
+def draft(kind, scope, lane):
+    make = host.native_command_plan if str(kind) == "native" else host.command_plan
+    plan = make("fixture-model", 42, "low", "input")
+    plan.activity, plan.lane = str(scope), str(lane)
+    return plan
+''')
+        cases = [('bad activity', 'background'), ('x' * 65, 'background'), ('valid', 'sideways')]
+        for kind in ('native', 'host'):
+            for index, (scope, lane) in enumerate(cases):
+                with self.subTest(kind=kind, scope=scope, lane=lane):
+                    dbpath = self.directory / ('invalid-' + kind + '-' + str(index) + '.db')
+                    self.env['METTACLAW_LLM_LEDGER_PATH'] = str(dbpath)
+                    out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n'
+                        f'!(import! &self "{module}")\n'
+                        f'!(let $plan (py-call (invalid_activity_fixture.draft "{kind}" {json.dumps(scope)} {json.dumps(lane)})) '
+                        '(println! (REFUSED (llm:run $plan))))\n')
+                    self.assertNotIn('native-call-capacity', out + self.last_stderr)
+                    self.assertNotIn('duplicate native plan', out + self.last_stderr)
+                    with sqlite3.connect(dbpath) as db:
+                        self.assertEqual(db.execute('SELECT status FROM requests').fetchall(), [('failed',)])
+                        self.assertEqual(db.execute('SELECT COUNT(*) FROM native_calls').fetchone()[0], 0)
         self.assertEqual(self.peer.requests, [])
 
     def test_native_owns_success_usage_and_duplicate_delivery_without_python(self):
