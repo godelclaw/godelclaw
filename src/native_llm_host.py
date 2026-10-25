@@ -353,7 +353,7 @@ def claim_effect(plan):
 
 def policy_rejected(plan, reason, retry=-1):
     code = str(reason)
-    if code == "provider-cooldown":
+    if code in ("provider-cooldown", "native-call-capacity"):
         plan.error = llm_policy.AdmissionDenied(code, float(retry))
     elif not getattr(plan, "error", None):
         plan.error = RuntimeError("native provider accounting failed")
@@ -536,7 +536,7 @@ def claim(plan):
             return "false"
         if not native_lifetime.claim(plan):
             llm_policy.fail(plan.correlation, sent=False)
-            return "false"
+            return policy_rejected(plan, "native-call-capacity")
         plan.claimed = True
         stream_sink.begin(plan)
         model_commentary.begin(plan)

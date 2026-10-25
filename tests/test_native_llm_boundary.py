@@ -179,6 +179,39 @@ def retained():
         self.assertEqual(body["messages"], [{"role": "system", "content": "system"},
             {"role": "user", "content": "user"}])
 
+    def test_capacity_refusal_is_distinct_from_replaying_a_claimed_plan(self):
+        module = self.directory / 'fixture_modules/capacity_fixture.py'
+        module.write_text('''
+import native_llm_host as host
+def draft(kind, scope):
+    make = host.native_command_plan if str(kind) == "native" else host.command_plan
+    plan = make("fixture-model", 42, "low", "input")
+    plan.activity, plan.lane = str(scope), "background"
+    return plan
+def error(plan):
+    error = getattr(plan, "error", None)
+    return type(error).__name__ + ": " + str(error)
+''')
+        self.env.update(METTACLAW_ACTIVITY_CALL_CAPACITY='2', METTACLAW_ACTIVITY_INTERACTIVE_RESERVE='1')
+        for kind in ('native', 'host'):
+            with self.subTest(kind=kind):
+                dbpath = self.directory / ('capacity-' + kind + '.db')
+                self.env['METTACLAW_LLM_LEDGER_PATH'] = str(dbpath)
+                out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n'
+                    f'!(import! &self "{module}")\n'
+                    f'!(let* (($owner (py-call (capacity_fixture.draft "{kind}" "holder")))\n'
+                    '        ($owned (llm:plan-claim $owner))\n'
+                    f'        ($other (py-call (capacity_fixture.draft "{kind}" "contender")))\n'
+                    '        ($refused (llm:run $other)))\n'
+                    '   (progn (println! (CAPACITY (py-call (capacity_fixture.error $other))))\n'
+                    '          (println! (REPLAY (llm:begin $owner)))))\n')
+                self.assertIn('AdmissionDenied: native-call-capacity', out)
+                self.assertIn('(REPLAY (llm:v1:failed duplicate duplicate duplicate-plan not-started))', out)
+                with sqlite3.connect(dbpath) as db:
+                    self.assertEqual(db.execute('SELECT activity,state FROM native_calls').fetchall(), [('holder', 'claimed')])
+                    self.assertEqual(sorted(row[0] for row in db.execute('SELECT status FROM requests')), ['failed', 'pending'])
+        self.assertEqual(self.peer.requests, [])
+
     def test_native_owns_success_usage_and_duplicate_delivery_without_python(self):
         self.peer.delay = .01
         self.peer.reply["usage"]["prompt_tokens_details"] = {"cached_tokens": 4}
