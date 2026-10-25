@@ -9,6 +9,7 @@
 !(import! &self (library str))
 !(import! &self (library json))
 !(import! &self ./src/coding_io.py)
+!(import! &self ./src/coding_delivery.metta)
 
 (= (work:root) (path:join (system:cwd) "memory/coding"))
 (= (work:dir $id) (path:join (work:root) $id))
@@ -190,7 +191,8 @@
        (work:reap-ids (cdr-atom $ids) (+ $count (if (== $id "") 0 (work:reap-one $id)))))))
 (= (work:reap-one $id)
    (let* (($dir (work:dir $id))
-          ($status (work:text (work:field (work:json (path:join $dir "state.json")) "status"))))
+          ($state (work:json (path:join $dir "state.json")))
+          ($status (work:text (work:field $state "status"))))
      (if (== $status "running")
        (if (fs:is-file (path:join $dir "report.txt")) 0
          (if (work:running? $id) 0
@@ -198,7 +200,11 @@
                         "The session ended without finishing: its process is gone (it was stopped, killed or crashed) and it wrote no report."))
                   ($_ (work:notify $id $dir "interrupted")))
              1)))
-       0)))
+       ; An ended session whose report mail could not be handed over yet.
+       (if (and (== (work:text (work:field $state "delivery")) "pending")
+                (or (== $status "done") (or (== $status "failed") (== $status "interrupted"))))
+         (let $_ (coding:deliver $dir $status) 0)
+         0))))
 (= (work:ended $id $dir $status $why)
    (let* (($state (work:json (path:join $dir "state.json")))
           ($progress (work:text (work:field $state "progress")))
@@ -208,20 +214,7 @@
           ($_ (fs:update-text (path:join $dir "report.txt") "replace" $report "" ""))
           ($_ (py-call (coding_io.mark_state $dir $status))))
      $status))
-; The same mail coding:notify (coding_session.metta) sends when a session ends
-; by itself.
+; The same announcement coding:notify (coding_session.metta) makes when a
+; session ends by itself.
 (= (work:notify $id $dir $status)
-   (let* (($task (work:json (path:join $dir "task.json")))
-          ($requester (work:text (work:field $task "requester")))
-          ($steps (work:text (work:field (work:json (path:join $dir "state.json")) "steps")))
-          ($report (fs:read-text (path:join $dir "report.txt")))
-          ($text (str:join "" ("Work " $id " " $status " after " (if (== $steps "") "0" $steps) " steps. Task: "
-                               (work:text (work:field $task "task")) "\n\nReport:\n" $report)))
-          ($mailer (system:getenv-or-default "METTACLAW_WORK_MAIL" "claw-mail"))
-          ($worklog (system:getenv-or-default "METTACLAW_WORKLOG_COMMAND" ""))
-          ($_ (if (== $requester "") ()
-                (proc:run ("env" (str:concat "CLAW_MAIL_AGENT=" $id) $mailer "send" $requester $text) $dir inherit 60000 0 "merged")))
-          ($_ (if (== $worklog "") ()
-                (proc:run ($worklog "add" (str:join "" ("Work " $id " " $status ": " (str:char-slice $report 0 900))))
-                          $dir inherit 60000 0 "merged"))))
-     $status))
+   (let $_ (coding:announce $dir $status) $status))

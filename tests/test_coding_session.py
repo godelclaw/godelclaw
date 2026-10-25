@@ -693,7 +693,8 @@ class CodingSessionTests(unittest.TestCase):
                                 module="coding_work.metta", cwd=runner)
         self.assertIn("(Reaped 1)", result.stdout)
         self.assertIn("(Again 0)", result.stdout)
-        self.assertEqual(json.loads((dead / "state.json").read_text())["status"], "interrupted")
+        dead_state = json.loads((dead / "state.json").read_text())
+        self.assertEqual((dead_state["status"], dead_state["delivery"]), ("interrupted", "delivered"))
         report = (dead / "report.txt").read_text()
         self.assertIn("ended without finishing", report)
         self.assertIn("$ make test", report)
@@ -707,6 +708,46 @@ class CodingSessionTests(unittest.TestCase):
         self.assertIn("WORK_RESUMING work-dead-fixture", result.stdout)
         self.assertFalse((dead / "report.txt").exists())
         self.assertIn("ended without finishing", (dead / "report.previous.txt").read_text())
+
+    def test_an_undelivered_report_is_retried_until_handed_over_once(self):
+        active, launches = self.fake_work_scope()
+        runner, dead, done, sent = self.dead_session_fixture()
+        (done / "report.txt").write_text("Finished the job.")
+        working = self.env["METTACLAW_WORK_MAIL"]
+        broken = self.directory / "broken-mailer"
+        broken.write_text('#!/bin/sh\necho "mail service down" >&2\nexit 75\n')
+        broken.chmod(0o755)
+        self.env["METTACLAW_WORK_MAIL"] = str(broken)
+        result = self.run_probe('!(println! (Ended (coding:announce ' + json.dumps(str(done)) + ' "done")))\n',
+                                module="coding_work.metta", cwd=runner)
+        self.assertIn("(Ended \"pending\")", result.stdout)
+        state = json.loads((done / "state.json").read_text())
+        self.assertEqual((state["status"], state["delivery"]), ("done", "pending"))
+        self.assertIn("mailer exited 75: mail service down", state["delivery_error"])
+        self.assertRegex(state["delivery_id"], r"^[0-9a-f]{32}$")
+        self.assertFalse(sent.exists())
+        # The next turn's reap hands it over, with the same occurrence id, once.
+        self.env["METTACLAW_WORK_MAIL"] = working
+        active.write_text("")  # the running fixture session is still alive
+        self.run_probe('!(println! (First (work:reap)))\n!(println! (Second (work:reap)))\n',
+                       module="coding_work.metta", cwd=runner)
+        retried = json.loads((done / "state.json").read_text())
+        self.assertEqual((retried["delivery"], retried["delivery_id"], retried["delivery_error"]),
+                         ("delivered", state["delivery_id"], ""))
+        mail = sent.read_text()
+        self.assertEqual(mail.count("work-done-fixture|requester-fixture|"), 1)
+        self.assertTrue(mail.startswith("work-done-fixture|requester-fixture|Work work-done-fixture done after 7 steps."))
+        self.assertIn("Report:\nFinished the job.", mail)
+
+    def test_sessions_without_a_delivery_record_are_not_mailed_again(self):
+        active, launches = self.fake_work_scope()
+        runner, dead, done, sent = self.dead_session_fixture()
+        (done / "report.txt").write_text("Finished long ago.")
+        active.write_text("")
+        result = self.run_probe('!(println! (Reaped (work:reap)))\n', module="coding_work.metta", cwd=runner)
+        self.assertIn("(Reaped 0)", result.stdout)
+        self.assertFalse(sent.exists())
+        self.assertNotIn("delivery", json.loads((done / "state.json").read_text()))
 
     def test_the_next_turn_reaps_a_dead_session(self):
         active, launches = self.fake_work_scope()
