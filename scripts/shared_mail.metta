@@ -8,10 +8,19 @@
 (= (shared-mail:post $socket $name $id $to $agent $body)
    (case (space:whoami $socket)
      (((reply $rid ok (principal $account owner))
-       (mailbox:send $socket $name $id $to (from $account $agent) $body))
+       (mailbox:send $socket (shared-mail:owner-space $name $account) $id $to (from $account $agent) $body))
       ((reply $rid ok (principal $account member))
-       (mailbox:post $socket $name $id $to $agent $body))
+       (mailbox:post $socket (if (== $name "") "agent-mail" $name) $id $to $agent $body))
       ($error $error))))
+
+; Owner sends and reads must use the same authenticated inbox. An explicit
+; namespace remains available for cross-account and legacy append workflows.
+(= (shared-mail:owner-space $name $account)
+   (if (== $name "")
+     (case $account
+       (((account $uid $login) (str:concat "mail@" (repr $login)))
+        ((account $uid) (str:concat "mail@" (repr $uid)))))
+     $name))
 
 (= (shared-mail:identity $socket)
    (case (space:whoami $socket)

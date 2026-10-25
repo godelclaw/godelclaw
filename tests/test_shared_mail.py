@@ -103,12 +103,23 @@ class SharedMailTests(unittest.TestCase):
     def test_owner_retry_after_pickup_does_not_requeue(self):
         self.stop()
         self.start()
-        args = ('send', 'reviewer', 'fixture-agent', 'hello', '--id', 'owned-one')
+        text = 'λ "quoted"\\text\nsecond line'
+        args = ('send', 'reviewer', 'fixture-agent', text, '--id', 'owned-one')
         self.assertEqual(self.run_cli(*args)['status'], 'accepted')
-        self.assertIn('mailbox:delivery', self.raw('!(mailbox:next SOCKET "agent-mail" "fixture-agent")'))
+        self.assertEqual(self.run_cli('inbox', 'fixture-agent')['count'], 1)
+        delivery = self.run_cli('next', 'fixture-agent')
+        self.assertEqual((delivery['id'], delivery['text']), ('owned-one', text))
         self.assertEqual(self.run_cli(*args)['status'], 'duplicate')
-        self.assertIn('settled', self.raw('!(mailbox:ack SOCKET "agent-mail" "fixture-agent" "owned-one")'))
-        self.assertIn('(mailbox:idle)', self.raw('!(mailbox:next SOCKET "agent-mail" "fixture-agent")'))
+        self.assertEqual(self.run_cli('ack', 'fixture-agent', 'owned-one')['status'], 'settled')
+        self.assertEqual(self.run_cli(*args)['status'], 'duplicate')
+        self.assertEqual(self.run_cli('next', 'fixture-agent'), {'status': 'idle'})
+
+    def test_owner_explicit_legacy_space_is_preserved(self):
+        self.stop()
+        self.start()
+        self.run_cli('--space', 'agent-mail', 'send', 'reviewer', 'fixture-agent', 'legacy')
+        self.assertIn('mailbox:delivery', self.raw('!(mailbox:next SOCKET "agent-mail" "fixture-agent")'))
+        self.assertEqual(self.run_cli('inbox', 'fixture-agent')['count'], 0)
 
     def test_delivery_survives_next_restart_and_requires_ack(self):
         text = 'λ "quotes"\n{"status":"accepted"}\n!(println! injected)'

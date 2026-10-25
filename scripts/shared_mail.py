@@ -136,7 +136,8 @@ def main(argv=None):
         parser.error(str(error))
     parser.add_argument('--socket', default=os.environ.get('CETTA_SHARED_MAIL_SOCKET', config.get('socket')))
     parser.add_argument('--cetta', default=os.environ.get('CETTA_BIN', config.get('cetta')))
-    parser.add_argument('--space', default=config.get('space', 'agent-mail'))
+    parser.add_argument('--space', default=config.get('space', ''),
+                        help='send namespace; default is the authenticated owner inbox or member append space')
     parser.add_argument('--json', action='store_true', help='JSON only, without delivery summaries')
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('whoami', help='show the identity authenticated by the service')
