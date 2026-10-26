@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
-"""Write src/nostr_mail_prime.metta, the Prime spelling of src/nostr_mail_cetta.metta.
+"""Write the Prime spellings of the native Nostr mail programs.
 
-The PeTTa source stays the one authored program. CeTTa's PeTTa-to-Prime
-guest compiler makes its sharing explicit under Prime's lexical-fresh scope;
-before it runs, the booleans are spelled as Prime spells them (PeTTa's true
-and false are HE's True and False), and the compiler is told which heads are
-library functions, since a head the file does not define is otherwise data.
-Its library imports are then written the way Prime imports a library.
+src/nostr_mail_cetta.metta, scripts/shared_mail.metta (claw-mail's own MeTTa)
+and scripts/nostr_gateway.metta stay the authored PeTTa programs; each gets a
+generated Prime spelling beside it (src/nostr_mail_prime.metta,
+scripts/shared_mail_prime.metta, scripts/nostr_gateway_prime.metta). CeTTa's
+PeTTa-to-Prime guest compiler makes their sharing explicit under Prime's
+lexical-fresh scope; before it runs, the booleans are spelled as Prime spells
+them (PeTTa's true and false are HE's True and False), and the compiler is
+told which heads are functions defined elsewhere, since a head a file does not
+define is otherwise data. Those are the heads a program calls that its
+libraries or the programs it imports define, and a few builtins the compiler
+does not know. Library imports are then written the way Prime imports a
+library, and an import of another of these programs names its Prime spelling.
 
     nostr_prime_spelling.py --cetta-root CETTA_CHECKOUT --binary CETTA_BIN [--check]
 """
@@ -19,64 +25,102 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "src/nostr_mail_cetta.metta"
-OUTPUT = ROOT / "src/nostr_mail_prime.metta"
-
-# Library functions the source calls.  Request and result constructors such
-# as ws:connect, io:pending and crypto:failed are data and stay off this list.
-LIBRARY_FUNCTIONS = (
-    "crypto:nip44-conversation-key", "crypto:nip44-decrypt", "crypto:nip44-encrypt", "crypto:random-hex",
-    "crypto:schnorr-sign", "crypto:schnorr-verify", "crypto:xonly-public-key",
-    "fs:read-text", "io:cancel", "io:submit", "io:wait",
-    "json:get-last", "json:parse", "json:stringify-python-with",
-    "str:byte-length", "str:is-all-in", "str:lower", "str:number->string", "str:sha256", "str:split",
-    "str:string->number",
-    "system:wall-time", "floor-math", "car-atom", "cdr-atom",
+# Each program, its spelling, and the programs it imports, as it names them.
+PROGRAMS = (
+    ("src/nostr_mail_cetta.metta", "src/nostr_mail_prime.metta", {}),
+    ("scripts/shared_mail.metta", "scripts/shared_mail_prime.metta", {}),
+    ("scripts/nostr_gateway.metta", "scripts/nostr_gateway_prime.metta",
+     {"../src/nostr_mail_cetta.metta": "src/nostr_mail_cetta.metta", "shared_mail.metta": "scripts/shared_mail.metta"}),
 )
+LIBRARIES = ("system", "fs", "json", "str", "io", "toml", "crypto", "mailbox", "space_service")
+# Builtins that are functions but not among the compiler's primitives.
+BUILTINS = frozenset({"car-atom", "cdr-atom", "min-atom", "max-atom", "floor-math", "repr", "json-stringify"})
 TOKEN = re.compile(r'"(?:\\.|[^"\\])*"|;[^\n]*|[^\s()"]+|[\s()]')
 GUEST_IMPORT = re.compile(r'!\(case &self \(\(\$__guest_pattern_\d+ \(case \(case (\w+) \(\(.*$')
+FILE_IMPORT = re.compile(r'!\(case &self \(\(\$__guest_pattern_\d+ \(case ("(?:\\.|[^"\\])*") \(\(.*$')
+BARE_IMPORT = re.compile(r'!\(case &self \(\(\$__guest_pattern_\d+ \(case ([\w-]+) \(\(.*$')
 
 
 def prime_booleans(text):
     return "".join({"true": "True", "false": "False"}.get(token, token) for token in TOKEN.findall(text))
 
 
-def spelling(cetta_root, binary):
-    source = SOURCE.read_text()
+def defined(text):
+    return set(re.findall(r'^\(= \(([^\s()]+)', text, re.M))
+
+
+def called(text):
+    heads, previous = set(), None
+    for token in TOKEN.findall(text):
+        if token.isspace() or token.startswith(";"):
+            continue
+        if previous == "(" and token not in "()" and not token.startswith(('"', "$")):
+            heads.add(token)
+        previous = token
+    return heads
+
+
+def external_heads(source, imports, cetta_root):
+    text = (ROOT / source).read_text()
+    known = set().union(*(defined((cetta_root / "lib" / (name + ".metta")).read_text()) for name in LIBRARIES),
+                        *(defined((ROOT / path).read_text()) for path in imports.values()))
+    heads = called(text)
+    return sorted(((heads & known) | (heads & BUILTINS)) - defined(text))
+
+
+def spelling(source, output, imports, cetta_root, binary):
+    text = (ROOT / source).read_text()
     with tempfile.TemporaryDirectory() as directory:
         work = Path(directory)
-        staged = work / "nostr_mail.metta"
-        staged.write_text(prime_booleans(source))
-        output = work / "prime.metta"
+        staged = work / "program.metta"
+        staged.write_text(prime_booleans(text))
+        translated = work / "prime.metta"
         command = [sys.executable, str(cetta_root / "tools/petta_prime_guest_v1.py"), str(staged),
-                   "--binary", str(binary), "--output", str(output), "--receipt", str(work / "receipt.json"),
+                   "--binary", str(binary), "--output", str(translated), "--receipt", str(work / "receipt.json"),
                    "--view-source", str(work / "view.metta")]
-        for head in LIBRARY_FUNCTIONS:
+        for head in external_heads(source, imports, cetta_root):
             command += ["--external-head", head]
         subprocess.run(command, check=True, capture_output=True, text=True)
-        lines = output.read_text().split("\n")
-    lines = ["!(import! &self %s)" % GUEST_IMPORT.match(line).group(1) if GUEST_IMPORT.match(line) else line
-             for line in lines]
-    digest = hashlib.sha256(source.encode()).hexdigest()
-    header = ("; Generated by scripts/nostr_prime_spelling.py from src/nostr_mail_cetta.metta\n"
-              "; (sha256 %s); do not edit.\n" % digest)
-    return header + "\n".join(lines)
+        lines = translated.read_text().split("\n")
+    spelled = {name: str(Path(name).parent / Path(dict(PROGRAMS_BY_SOURCE)[path]).name)
+               for name, path in imports.items()}
+
+    def rewrite(line):
+        library = GUEST_IMPORT.match(line) or BARE_IMPORT.match(line)
+        if library:
+            return "!(import! &self %s)" % library.group(1)
+        program = FILE_IMPORT.match(line)
+        if program and program.group(1)[1:-1] in spelled:
+            return '!(import! &self "%s")' % spelled[program.group(1)[1:-1]]
+        return line
+    digest = hashlib.sha256(text.encode()).hexdigest()
+    header = ("; Generated by scripts/nostr_prime_spelling.py from %s\n"
+              "; (sha256 %s); do not edit.\n" % (source, digest))
+    return header + "\n".join(rewrite(line) for line in lines)
+
+
+PROGRAMS_BY_SOURCE = tuple((source, output) for source, output, _ in PROGRAMS)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--cetta-root", type=Path, required=True)
     parser.add_argument("--binary", type=Path, required=True)
-    parser.add_argument("--check", action="store_true", help="fail when the spelling is out of date")
+    parser.add_argument("--check", action="store_true", help="fail when a spelling is out of date")
     arguments = parser.parse_args()
-    text = spelling(arguments.cetta_root.resolve(), arguments.binary.resolve())
+    stale = []
+    for source, output, imports in PROGRAMS:
+        text = spelling(source, output, imports, arguments.cetta_root.resolve(), arguments.binary.resolve())
+        if arguments.check:
+            if not (ROOT / output).exists() or (ROOT / output).read_text() != text:
+                stale.append(output)
+            continue
+        (ROOT / output).write_text(text)
+        print("wrote " + output)
+    if stale:
+        sys.exit("out of date: %s; run scripts/nostr_prime_spelling.py" % ", ".join(stale))
     if arguments.check:
-        if not OUTPUT.exists() or OUTPUT.read_text() != text:
-            sys.exit("src/nostr_mail_prime.metta is out of date; run scripts/nostr_prime_spelling.py")
-        print("src/nostr_mail_prime.metta is up to date")
-    else:
-        OUTPUT.write_text(text)
-        print("wrote src/nostr_mail_prime.metta")
+        print("the Prime spellings are up to date")
 
 
 if __name__ == "__main__":

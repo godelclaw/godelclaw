@@ -45,7 +45,11 @@
 (= (gw:log $line)
    (let $stamp (system:format-time "%Y-%m-%d %H:%M:%S " (system:wall-time) local)
      (system:write stderr (gw:cat ($stamp $line "\n")))))
-(= (gw:now) (floor-math (/ (system:monotonic-ns) 1000000)))
+; Monotonic milliseconds, an integer in every dialect: the nanosecond count
+; less its last six digits (floor-math and / give floats under HE and Prime).
+(= (gw:now)
+   (let $digits (str:number->string (system:monotonic-ns))
+     (str:string->number (str:byte-slice $digits 0 (- (str:byte-length $digits) 6)))))
 (= (gw:quoted $text) (gw:cat ("'" (gw:text $text) "'")))
 
 (= (gw:reverse $items) (gw:reverse-onto $items ()))
@@ -145,10 +149,11 @@
        (if (gw:before (car-atom $left) (car-atom $right))
          (gw:merge (cdr-atom $left) $right (cons-atom (car-atom $left) $done))
          (gw:merge $left (cdr-atom $right) (cons-atom (car-atom $right) $done))))))
+(= (gw:half $n $count) (if (< $n 2) $count (gw:half (- $n 2) (+ $count 1))))
 (= (gw:sort-keyed $items)
    (let $n (size-atom $items)
      (if (< $n 2) $items
-       (let $half (floor-math (/ $n 2))
+       (let $half (gw:half $n 0)
          (gw:merge (gw:sort-keyed (gw:take-n $items $half ())) (gw:sort-keyed (gw:drop-n $items $half)) ())))))
 (= (gw:unkey $items $done)
    (if (== $items ()) (gw:reverse $done)
@@ -298,7 +303,7 @@
                  (gw:field-or $config "state" "~/.local/state/godelclaw-nostr/gateway.json"))))
           ($s3 (gw:set space (gw:field-or $config "space" "agent-mail")))
           ($s4 (gw:set outbox (gw:field-or $config "outbox" "nostr")))
-          ($s5 (gw:set overlap (floor-math (gw:field-or $config "overlap" 600))))
+          ($s5 (gw:set overlap (gw:field-or $config "overlap" 600)))
           ($s6 (gw:set receipt-days (gw:field-or $config "receipt_days" 30)))
           ($s7 (gw:set socket (gw:mail-socket $config $directory)))
           ($s8 (gw:add-table (gw:pairs (gw:field-or $config "inbound" (JsonObject ()))) inbound))

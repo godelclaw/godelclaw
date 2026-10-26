@@ -1,9 +1,12 @@
 """The native gateway (scripts/nostr_gateway.metta) against a local gated relay
 and a real claw-mail service, and against the Python gateway on the same mail.
 
-Set CETTA_BIN to an engine with lib/crypto, lib/toml and WebSockets, and
-CETTA_SPACE_SERVICE to its space service (default: cetta-space-service beside
-the engine).
+The tests run the PeTTa program; a class's dialect selects the program, so
+the generated Prime spelling (scripts/nostr_gateway_prime.metta) gets the same
+classes once Prime matches a pattern holding a parameter bound to an
+expression (an engine defect, reported). Set CETTA_BIN to an engine with
+lib/crypto, lib/toml and WebSockets, and CETTA_SPACE_SERVICE to its space
+service (default: cetta-space-service beside the engine).
 """
 import asyncio
 import hashlib
@@ -25,7 +28,7 @@ for path in (ROOT / "src", ROOT / "scripts", Path(__file__).resolve().parent):
 HAVE_CRYPTO = all(importlib.util.find_spec(name) for name in ("coincurve", "cryptography", "websockets"))
 BINARY = Path(os.environ.get("CETTA_BIN", "/nonexistent/cetta")).resolve()
 SERVICE = Path(os.environ.get("CETTA_SPACE_SERVICE", BINARY.parent / "cetta-space-service")).resolve()
-GATEWAY = ROOT / "scripts/nostr_gateway.metta"
+GATEWAYS = {"petta": ROOT / "scripts/nostr_gateway.metta", "prime": ROOT / "scripts/nostr_gateway_prime.metta"}
 CLAW_MAIL = ROOT / "scripts/shared_mail.py"
 LOGIN = pwd.getpwuid(os.getuid()).pw_name
 
@@ -48,6 +51,7 @@ class Setup:
 
     def __init__(self, test, names=("alice", "godel", "eve"), inbound=("godel",), keys=("godel",)):
         self.test = test
+        self.dialect = test.dialect
         self.directory = Path(tempfile.mkdtemp(prefix="nostr-native-"))
         test.addCleanup(subprocess.run, ["rm", "-rf", str(self.directory)])
         self.secret = {name: secret(name) for name in names}
@@ -133,7 +137,7 @@ class Setup:
 
     # ── the gateways ────────────────────────────────────────────────────────
     def native(self, expect=0):
-        result = subprocess.run([str(BINARY), "--lang", "petta", "--quiet", str(GATEWAY), "--once", "--config",
+        result = subprocess.run([str(BINARY), "--lang", self.dialect, "--quiet", str(GATEWAYS[self.dialect]), "--once", "--config",
                                  str(self.config)], capture_output=True, text=True, timeout=240)
         self.test.assertEqual(result.returncode, expect, result.stderr[-3000:])
         return result.stderr
@@ -148,7 +152,8 @@ class Setup:
             os.environ.update(saved)
 
     def serve(self):
-        process = subprocess.Popen([str(BINARY), "--lang", "petta", "--quiet", str(GATEWAY), "--config", str(self.config)],
+        process = subprocess.Popen([str(BINARY), "--lang", self.dialect, "--quiet", str(GATEWAYS[self.dialect]), "--config",
+                                    str(self.config)],
                                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
 
         def stop():
@@ -174,6 +179,8 @@ class Setup:
 @unittest.skipUnless(HAVE_CRYPTO and BINARY.is_file() and SERVICE.is_file(),
                      "needs coincurve, cryptography, websockets, CETTA_BIN and its space service")
 class NativeGatewayTests(unittest.TestCase):
+    dialect = "petta"
+
     def setUp(self):
         self.s = Setup(self)
 
@@ -358,6 +365,7 @@ class NativeGatewayTests(unittest.TestCase):
                      "needs coincurve, cryptography, websockets, CETTA_BIN and its space service")
 class ParityTests(unittest.TestCase):
     """The same events through the Python gateway, with real claw-mail, and through the native one."""
+    dialect = "petta"
 
     def test_the_native_gateway_delivers_and_reports_as_the_python_one(self):
         native, python = Setup(self), Setup(self)
@@ -404,6 +412,7 @@ class ParityTests(unittest.TestCase):
                      "needs coincurve, cryptography, websockets, CETTA_BIN and its space service")
 class ServingTests(unittest.TestCase):
     """The long-running native service: live subscriptions, the outbox watch, resumption."""
+    dialect = "petta"
 
     def setUp(self):
         self.s = Setup(self, names=("alice", "godel", "lila", "eve"), inbound=("godel", "lila"), keys=("godel", "lila"))
