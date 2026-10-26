@@ -22,10 +22,11 @@ if HAVE_CRYPTO:
     from nostr_relay_fixture import GatedRelay
 
 # A claw-mail stand-in with the mailbox protocol's answers: a send identity is
-# accepted once, an identical resend is a duplicate and a changed one a
-# conflict; `next` presents the ready delivery again before taking a pending
-# one; `ack` settles only a ready delivery. As the service does, it records the
-# sender as `account/agent`.
+# accepted once, an identical resend is a duplicate and a changed one the
+# mailbox's identity conflict, reported as claw-mail reports it; `next`
+# presents the ready delivery again before taking a pending one; `ack` settles
+# only a ready delivery, and fails while FAKE_MAIL_ACK_FAILS is set. As the
+# service does, it records the sender as `account/agent`.
 MAILER = r'''
 import fcntl, json, os, sys, time
 args = sys.argv[1:]
@@ -55,7 +56,9 @@ if command == "send":
             ledger.append({"id": ident, "to": to, "from": sender, "text": text, "stage": "pending", "at": time.time()})
             return {"status": "accepted", "id": ident}
         same = (old[0]["to"], old[0]["from"], old[0]["text"]) == (to, sender, text)
-        return {"status": "duplicate" if same else "conflict", "id": ident}
+        if same:
+            return {"status": "duplicate", "id": ident}
+        return {"status": "error", "reason": "(MailboxFailure identity-conflict)", "id": ident}
     reply(locked(send))
 if command in ("next", "wait"):
     def take(ledger):
@@ -72,6 +75,8 @@ if command in ("next", "wait"):
             reply(result)
         time.sleep(0.05)
 if command == "ack":
+    if os.environ.get("FAKE_MAIL_ACK_FAILS"):
+        reply({"status": "error", "reason": "(space:unavailable ack-1 connect)"})
     def ack(ledger):
         for d in ledger:
             if d["id"] == fields[1] and d["to"] == fields[0] and d["stage"] == "ready":
@@ -202,6 +207,63 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual([e["id"] for e in events], [saved["id"]])
         self.assertEqual(self.deliveries("nostr")[0]["stage"], "settled")
         self.assertEqual(self.gateway.state["outbound"], {})
+
+    def test_a_failed_acknowledgement_republishes_the_same_event(self):
+        self.outbox("acct/godel", "To: alice\nSubject: Once\n\nonly once")
+        os.environ["FAKE_MAIL_ACK_FAILS"] = "1"
+        self.addCleanup(os.environ.pop, "FAKE_MAIL_ACK_FAILS", None)
+        self.gateway.tick()
+        self.assertEqual(list(self.gateway.state["outbound"]), ["d1"])
+        del os.environ["FAKE_MAIL_ACK_FAILS"]
+        self.gateway.tick()
+        events = self.as_member(self.alice, lambda relay: relay.query([{"kinds": [nm.KIND_MAIL]}]))
+        self.assertEqual(len(events), 1)
+        self.assertEqual(self.deliveries("nostr")[0]["stage"], "settled")
+        self.assertEqual(self.gateway.state["outbound"], {})
+
+    def test_a_changed_resend_is_a_conflict_and_not_retried(self):
+        mail = nm.seal(self.alice, self.pub["godel"], "Hello", "x")
+        self.publish(self.alice, mail)
+        self.gateway.tick()
+        # The same event rendered for another recipient is a conflict: kept as
+        # handled, never retried and never delivered a second time.
+        (self.directory / "state.json").unlink()
+        gateway = gw.Gateway(self.directory / "gateway.toml")
+        gateway.inbound = {"godel": "lila"}
+        gateway.tick()
+        self.assertIn(mail["id"], gateway.state["recent"])
+        self.assertEqual([d["to"] for d in self.deliveries()], ["godel"])
+
+    def test_malformed_relay_answers_do_not_stop_a_key(self):
+        mail = nm.seal(self.alice, self.pub["godel"], "Still here", "x")
+
+        class Relay:
+            def __init__(self, url, secret):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *error):
+                return False
+
+            async def subscribe(self, filters):
+                # A second end of stored events, an event without an id and
+                # one with a text created_at, then the mail.
+                for item in (("event", {"kind": 3838, "created_at": "soon"}), ("eose", None), ("eose", None),
+                             ("event", {"kind": 3838}), ("event", mail)):
+                    yield item
+                raise asyncio.CancelledError
+
+            async def publish(self, event):
+                return True, ""
+
+        original = gw.nm.Relay
+        gw.nm.Relay = Relay
+        self.addCleanup(setattr, gw.nm, "Relay", original)
+        with self.assertRaises(asyncio.CancelledError):
+            asyncio.run(self.gateway.receive("godel", "godel", live=True))
+        self.assertEqual([d["id"] for d in self.deliveries("godel")], [mail["id"]])
 
     def test_bad_requests_are_reported_and_settled(self):
         self.outbox("acct/lila", "To: alice\n\nx", ident="no-key")

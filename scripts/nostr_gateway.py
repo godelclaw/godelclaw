@@ -89,6 +89,20 @@ def render(event, letter, author, recipient):
     return "\n".join(lines) + "\n\n" + letter["body"]
 
 
+def stored_order(event):
+    """Oldest first: by created_at, then id; anything else sorts as 0 and ""."""
+    created = event.get("created_at") if isinstance(event, dict) else None
+    ident = event.get("id") if isinstance(event, dict) else None
+    number = isinstance(created, (int, float)) and not isinstance(created, bool)
+    return (created if number else 0, ident if isinstance(ident, str) else "")
+
+
+def conflicted(result):
+    """claw-mail's answer to a send whose identity was used for other text."""
+    return result.get("status") == "conflict" or (
+        result.get("status") == "error" and "identity-conflict" in str(result.get("reason", "")))
+
+
 def parse_outgoing(text):
     """(headers, body) of an outbound request; ValueError says what is wrong."""
     head, blank, body = text.partition("\n\n")
@@ -211,7 +225,9 @@ class Gateway:
                 stored = []
                 async for kind, event in stream:
                     if kind == "eose":
-                        for old in sorted(stored, key=lambda e: (e.get("created_at", 0), e.get("id", ""))):
+                        if stored is None:
+                            continue
+                        for old in sorted(stored, key=stored_order):
                             await self.take(key_name, recipient, secret, me, relay, old)
                         stored = None
                         self.prune()
@@ -224,7 +240,7 @@ class Gateway:
                         await self.take(key_name, recipient, secret, me, relay, event)
 
     async def take(self, key_name, recipient, secret, me, relay, event):
-        if not isinstance(event, dict) or event.get("id") in self.state["recent"]:
+        if not isinstance(event, dict) or not isinstance(event.get("id"), str) or event["id"] in self.state["recent"]:
             return
         if event.get("kind") == nm.KIND_RECEIPT:
             await self.note_receipt(event)
@@ -249,7 +265,7 @@ class Gateway:
         result = await self.mail(sender, "send", sender, recipient, render(event, letter, author, recipient),
                                  "--id", event["id"])
         status = result.get("status")
-        if status == "conflict":
+        if conflicted(result):
             log("conflict on %s: the same identifier was delivered with other text" % event["id"])
             return True
         if status not in ("accepted", "duplicate"):
@@ -316,7 +332,11 @@ class Gateway:
         else:
             await self.tell(sender, "nostr-outcome-" + ident,
                             "Not sent to %s: the relay refused it: %s" % (pending["to"], reason))
-        await self.mail(self.outbox, "ack", self.outbox, ident)
+        # Forget the saved event only once the request is settled, so a failed
+        # acknowledgement republishes the same event, never a new one.
+        acked = await self.mail(self.outbox, "ack", self.outbox, ident)
+        if acked.get("status") not in ("settled", "duplicate"):
+            raise RuntimeError("could not acknowledge %s: %s" % (ident, acked.get("reason", acked)))
         del self.state["outbound"][ident]
         self.save()
 
