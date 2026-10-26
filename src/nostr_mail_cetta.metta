@@ -66,7 +66,10 @@
 (= (nostr:event-id $pubkey $created $kind $tags $content)
    (str:sha256 (nostr:serialization $pubkey $created $kind $tags $content)))
 
-(= (nostr:now) (floor-math (system:wall-time)))
+; Whole seconds, an integer in every dialect: floor-math answers a float
+; for a float under HE and Prime.
+(= (nostr:now)
+   (str:string->number (car-atom (str:split "." (str:number->string (floor-math (system:wall-time)))))))
 
 (= (nostr:public-key $secret) (crypto:xonly-public-key $secret))
 

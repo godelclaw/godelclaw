@@ -1,13 +1,16 @@
-"""nostr_mail_cetta.metta against nostr_mail.py, byte for byte.
+"""nostr_mail_cetta.metta and its Prime spelling against nostr_mail.py, byte for byte.
 
-Both run the same inputs: the Python module with its randomness replaced by a
-fixed sequence, the PeTTa module on CETTA_BIN, an engine with lib/crypto.
+All run the same inputs: the Python module with its randomness replaced by a
+fixed sequence, the PeTTa module and nostr_mail_prime.metta on CETTA_BIN, an
+engine with lib/crypto.  Prime prints booleans as True and False; they are
+compared in PeTTa's spelling.
 Events are compared as their compact JSON, letters, receipt facts, tag values
 and registries as JSON, verification as a boolean.  Keys are test keys.
 """
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -85,7 +88,34 @@ class FixedRandom:
         return value
 
 
-class NativeNostrMail(unittest.TestCase):
+MODULES = {"petta": "src/nostr_mail_cetta.metta", "prime": "src/nostr_mail_prime.metta"}
+
+
+def petta_booleans(line):
+    return re.sub(r"(?<![\w:\"-])(True|False)(?![\w:-])", lambda m: m.group(1).lower(), line)
+
+
+def boolean(test, value):
+    """A boolean literal as the test's dialect spells it."""
+    return ("true" if value else "false") if test.dialect == "petta" else ("True" if value else "False")
+
+
+def run_program(test, body):
+    """The RESULT lines of a program in the test's dialect, booleans in PeTTa's spelling."""
+    with tempfile.TemporaryDirectory() as directory:
+        program = Path(directory) / "case.metta"
+        program.write_text("!(import! &self %s)\n" % json.dumps(str(ROOT / MODULES[test.dialect]))
+                           + HELPERS + body, encoding="utf-8")
+        result = subprocess.run([test.binary, "--lang", test.dialect, str(program)], cwd=ROOT,
+                                capture_output=True, encoding="utf-8", errors="replace", timeout=300)
+    test.assertEqual(result.returncode, 0, result.stderr[-2000:])
+    return [petta_booleans(line[len("(RESULT "):-1]) for line in result.stdout.split("\n")
+            if line.startswith("(RESULT ")]
+
+
+class NativeNostrMail:
+    dialect = "petta"
+
     @classmethod
     def setUpClass(cls):
         binary = os.environ.get("CETTA_BIN")
@@ -94,16 +124,8 @@ class NativeNostrMail(unittest.TestCase):
         cls.binary = binary
 
     def run_metta(self, expressions):
-        with tempfile.TemporaryDirectory() as directory:
-            program = Path(directory) / "case.metta"
-            program.write_text("!(import! &self %s)\n" % json.dumps(str(ROOT / "src/nostr_mail_cetta.metta"))
-                               + HELPERS + "".join("!(println! (RESULT %s))\n" % e for e in expressions),
-                               encoding="utf-8")
-            result = subprocess.run([self.binary, "--lang", "petta", str(program)], cwd=ROOT,
-                                    capture_output=True, encoding="utf-8", errors="replace", timeout=300)
-        self.assertEqual(result.returncode, 0, result.stderr[-2000:])
-        lines = [line[len("(RESULT "):-1] for line in result.stdout.split("\n") if line.startswith("(RESULT ")]
-        self.assertEqual(len(lines), len(expressions), result.stdout[-2000:] + result.stderr[-2000:])
+        lines = run_program(self, "".join("!(println! (RESULT %s))\n" % e for e in expressions))
+        self.assertEqual(len(lines), len(expressions), lines[-3:])
         return [json.loads(line) if line.startswith('"') else line for line in lines]
 
     def test_event_ids(self):
@@ -164,7 +186,7 @@ class NativeNostrMail(unittest.TestCase):
                     literal(options["kind"]) if "kind" in options else "()",
                     literal(options["task"]) if "task" in options else "()",
                     literal(options["reply_to"]) if "reply_to" in options else "()",
-                    "false" if options.get("ack") is False else "true",
+                    boolean(self, options.get("ack") is not False),
                     1761470400 + i, literal(nonce.hex()), literal(random.issued[-1])))
         got = self.run_metta(expressions)
         self.assertEqual(got, [compact(e) for e in sealed])
@@ -211,8 +233,26 @@ class NativeNostrMail(unittest.TestCase):
             self.assertEqual(got, [compact(nostr_mail.load_registry(path))])
 
 
-class NativeRelay(unittest.TestCase):
-    """The PeTTa relay client against the gated relay fixture, beside nostr_mail.Relay."""
+class PrimeSpelling(unittest.TestCase):
+    def test_prime_spelling_is_current(self):
+        root, binary = os.environ.get("CETTA_ROOT"), os.environ.get("CETTA_BIN")
+        if not root or not binary:
+            self.skipTest("set CETTA_ROOT to a CeTTa checkout and CETTA_BIN to its engine")
+        result = subprocess.run([sys.executable, str(ROOT / "scripts/nostr_prime_spelling.py"), "--cetta-root", root,
+                                 "--binary", binary, "--check"], capture_output=True, text=True, timeout=300)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+class NativeNostrMailPeTTa(NativeNostrMail, unittest.TestCase):
+    dialect = "petta"
+
+
+class NativeNostrMailPrime(NativeNostrMail, unittest.TestCase):
+    dialect = "prime"
+
+
+class NativeRelay:
+    """The native relay client against the gated relay fixture, beside nostr_mail.Relay."""
 
     @classmethod
     def setUpClass(cls):
@@ -226,14 +266,7 @@ class NativeRelay(unittest.TestCase):
         cls.binary = binary
 
     def run_metta(self, body):
-        with tempfile.TemporaryDirectory() as directory:
-            program = Path(directory) / "relay.metta"
-            program.write_text("!(import! &self %s)\n" % json.dumps(str(ROOT / "src/nostr_mail_cetta.metta"))
-                               + HELPERS + body + "\n", encoding="utf-8")
-            result = subprocess.run([self.binary, "--lang", "petta", str(program)], cwd=ROOT,
-                                    capture_output=True, encoding="utf-8", errors="replace", timeout=120)
-        self.assertEqual(result.returncode, 0, result.stderr[-2000:])
-        return [line[len("(RESULT "):-1] for line in result.stdout.split("\n") if line.startswith("(RESULT ")]
+        return run_program(self, body + "\n")
 
     def test_sign_in_publish_and_query(self):
         from nostr_relay_fixture import GatedRelay
@@ -243,13 +276,13 @@ class NativeRelay(unittest.TestCase):
         with GatedRelay({alice, bob}) as relay:
             got = self.run_metta(
                 "!(let* (($relay (nostr:relay-open %s %s 5000))"
-                " ($sealed (nostr:seal %s %s \"subject\" \"body\" \"task\" () () true))"
+                " ($sealed (nostr:seal %s %s \"subject\" \"body\" \"task\" () () %s))"
                 " ($ok (nostr:publish $relay $sealed 5000)) ($stolen (nostr:publish $relay %s 5000))"
                 " ($again (nostr:publish $relay $sealed 5000))"
                 " ($closed (nostr:relay-close $relay)))"
                 " (println! (RESULT $ok $stolen $again)))"
                 % (literal(relay.url), literal(SECRETS["alice"]), literal(SECRETS["alice"]), literal(bob),
-                   term(foreign)))
+                   boolean(self, True), term(foreign)))
             self.assertEqual(got, ['(nostr:ok true "") (nostr:ok false "restricted: only your own events")'
                                    ' (nostr:ok true "duplicate: already have it")'])
             query = [{"kinds": [3838], "#p": [bob]}]
@@ -270,6 +303,14 @@ class NativeRelay(unittest.TestCase):
             got = self.run_metta("!(println! (RESULT (nostr:relay-open %s %s 5000)))"
                                  % (literal(relay.url), literal(SECRETS["carol"])))
             self.assertEqual(got, ['(nostr:relay-failed refused "restricted: sign-in refused")'])
+
+
+class NativeRelayPeTTa(NativeRelay, unittest.TestCase):
+    dialect = "petta"
+
+
+class NativeRelayPrime(NativeRelay, unittest.TestCase):
+    dialect = "prime"
 
 
 if __name__ == "__main__":
