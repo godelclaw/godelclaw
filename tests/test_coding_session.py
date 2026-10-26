@@ -1162,11 +1162,14 @@ class CodingSessionTests(unittest.TestCase):
         self.assertIn("RuntimeError: provider said no: 429", result.stdout)
 
     def test_work_starts_a_scope_that_reports_by_mail(self):
-        import shutil, time
+        import shutil
         if not shutil.which("systemd-run"):
             self.skipTest("systemd-run is unavailable")
         workspace = self.directory / "workspace"
         workspace.mkdir()
+        # Sessions and runtime snapshots stay in the temporary runner, never in the checkout.
+        runner = self.directory / "runner"
+        runner.mkdir()
         sent = self.directory / "sent.txt"
         mailer = self.directory / "mailer"
         mailer.write_text('#!/bin/sh\nprintf "%s|%s|%s\\n" "$CLAW_MAIL_AGENT" "$2" "$3" >> ' + str(sent) +
@@ -1176,17 +1179,11 @@ class CodingSessionTests(unittest.TestCase):
                         CETTA_BIN=os.environ["CETTA_BIN"])
         self.server.replies = [reply("Writing.", [call("c1", "exec_command", {"cmd": "echo done > out.txt"})]),
                                reply("out.txt written.")]
-        probe = ROOT / ("work_probe_%d.metta" % os.getpid())
-        probe.write_text('!(import! &self (library lib_import))\n!(import! &self ./src/coding_work.metta)\n'
-                         '!(let $r (work "Write out.txt." ' + json.dumps(str(workspace)) + ') (println! $r))\n')
-        root = ROOT / "memory" / "coding"
-        before = set(root.iterdir()) if root.is_dir() else set()
+        result = self.run_probe('!(let $r (work "Write out.txt." ' + json.dumps(str(workspace)) + ') (println! $r))\n',
+                                module="coding_work.metta", cwd=runner)
+        self.assertIn("WORK_STARTED work-", result.stdout, result.stdout + result.stderr)
+        [session] = list((runner / "memory" / "coding").iterdir())
         try:
-            result = subprocess.run([os.environ["CETTA_BIN"], "--lang", "petta", "--import-mode", "ancestor-walk", str(probe)],
-                                    cwd=ROOT, env=self.env, capture_output=True, text=True, timeout=60)
-            self.assertIn("WORK_STARTED work-", result.stdout, result.stdout + result.stderr)
-            session = (set(root.iterdir()) - before).pop()
-            self.addCleanup(shutil.rmtree, session, True)
             for _ in range(120):
                 if sent.is_file():
                     break
@@ -1200,7 +1197,10 @@ class CodingSessionTests(unittest.TestCase):
             self.assertTrue((session / "completion.json").is_file())
             self.assertFalse((self.directory / "health.json").exists())
         finally:
-            probe.unlink()
+            # The scope is real and outlives this process: stop it before tearDown
+            # removes its session, its ledger and the provider it talks to.
+            unit = "%s-%s.scope" % (self.env.get("METTACLAW_INSTANCE", "mettaclaw"), session.name)
+            subprocess.run(["systemctl", "--user", "stop", unit], capture_output=True, timeout=120)
 
     def test_anthropic_sessions_cache_the_growing_conversation(self):
         workspace = self.directory / "workspace"
