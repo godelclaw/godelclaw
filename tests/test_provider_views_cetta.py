@@ -22,7 +22,7 @@ CETTA_ROOT = Path(os.environ.get("CETTA_CHANNEL_ROOT", ROOT.parent / "CeTTa-ours
 WORKER = os.environ.get("CETTA_VALUE_WORKER")
 if WORKER:
     sys.path.insert(0, str(CETTA_ROOT / "tools"))
-    from space_service_client import E, S
+    from space_service_client import E, S, BigInt
     from value_worker_client import Worker
 
 
@@ -113,6 +113,8 @@ class ProviderViewsTests(unittest.TestCase):
         visible = json.loads(self.worker.call(E("result", records, "r-5-turn", 0)))
         self.assertEqual(visible["result"], "visible λ🌱\x00\nnext")
         self.assertFalse(visible["action_authority"])
+        self.assertEqual(self.worker.call(E("result", records, "r-4-turn", BigInt(str(10**30)))),
+                         native_lifetime.result("r-4-turn", 10**30))
 
     def test_missing_identity_and_invalid_offset_are_explicit(self):
         self.assertEqual(self.worker.call(E("status", ())), "[]")

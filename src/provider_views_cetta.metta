@@ -102,7 +102,8 @@
             $full))
           ($count (if (== $text JsonNull) 0 (str:char-length $text)))
           ($digest (str:sha256 (if (== $text JsonNull) "" $text)))
-          ($chunk (if (== $text JsonNull) JsonNull (str:char-slice $text $offset (+ $offset 2400)))))
+          ($chunk (if (== $text JsonNull) JsonNull
+            (if (>= $offset $count) "" (str:char-slice $text $offset (+ $offset 2400))))))
      (provider-view:result-chunk $id $state $purpose $reason $representation
        (not (== $text JsonNull)) $digest $count $offset $chunk)))
 
