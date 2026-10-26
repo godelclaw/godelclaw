@@ -64,6 +64,15 @@ class NativeRelay:
         os.replace(temporary, self.directory / "allow.toml")
 
     def start(self):
+        # A start that fails halfway stops what it already started: the
+        # caller's __exit__ does not run when __enter__ raises.
+        try:
+            return self._start()
+        except BaseException:
+            self.stop()
+            raise
+
+    def _start(self):
         if self.port is None:
             probe = socket.socket()
             probe.bind(("127.0.0.1", 0))
@@ -100,10 +109,19 @@ class NativeRelay:
         for process in (self.process, self.service):
             if process and process.poll() is None:
                 process.terminate()
-                process.wait(10)
+                try:
+                    process.wait(10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
 
     def __enter__(self):
-        return self.start()
+        try:
+            return self.start()
+        except BaseException:
+            if self.owned:
+                shutil.rmtree(self.directory, ignore_errors=True)
+            raise
 
     def __exit__(self, *error):
         self.stop()
