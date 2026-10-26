@@ -26,7 +26,7 @@ from effect_receipts_bundle import ENGINE_PIN, MANIFEST_PIN, assert_same_bundle,
 
 
 LIMIT = 25165824 * 1024
-LIBRARIES = ("lib_import", "fs", "str", "json", "system", "path", "math", "re")
+LIBRARIES = ("lib_import", "fs", "str", "json", "system", "path", "math", "re", "list")
 
 
 def digest(path):

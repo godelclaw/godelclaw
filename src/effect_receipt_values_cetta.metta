@@ -1,0 +1,172 @@
+; Python values at the receipt boundary. No persistence, clock or Python calls.
+!(import! &self (library str))
+!(import! &self (library json))
+!(import! &self (library list))
+!(import! &self (library math))
+
+(= (erv:fail $class $message) (ErFailure $class $message ()))
+(= (erv:failed? $value)
+   (case $value (((ErFailure $_ $_ $_) True) ($other False))))
+(= (erv:points $text)
+   (let $points (str:python-codepoints $text) (list:to-expression $points)))
+(= (erv:from-points $points) (str:from-python-codepoints $points))
+(= (erv:take $items $n)
+   (if (or (<= $n 0) (== $items ())) ()
+     (cons-atom (car-atom $items) (erv:take (cdr-atom $items) (- $n 1)))))
+(= (erv:drop $items $n)
+   (if (or (<= $n 0) (== $items ())) $items (erv:drop (cdr-atom $items) (- $n 1))))
+(= (erv:slice $text $start $end)
+   (erv:from-points (erv:take (erv:drop (erv:points $text) $start) (- $end $start))))
+(= (erv:contains $items $value)
+   (if (== $items ()) False
+     (if (== (car-atom $items) $value) True (erv:contains (cdr-atom $items) $value))))
+(= (erv:space? $cp)
+   (or (or (and (>= $cp 9) (<= $cp 13)) (and (>= $cp 28) (<= $cp 32)))
+     (or (== $cp 133) (erv:contains ("Zs" "Zl" "Zp") (str:unicode-category $cp)))))
+(= (erv:lstrip-points $points)
+   (if (== $points ()) ()
+     (if (erv:space? (car-atom $points)) (erv:lstrip-points (cdr-atom $points)) $points)))
+(= (erv:strip $text)
+   (erv:from-points (list:reverse (erv:lstrip-points
+     (list:reverse (erv:lstrip-points (erv:points $text)))))))
+(= (erv:surrogate? $cp) (and (>= $cp 55296) (<= $cp 57343)))
+(= (erv:clean $text)
+   (erv:from-points (map-atom (erv:take (erv:points $text) 1200) $cp
+     (if (or (== $cp 10) (not (str:starts-with (str:unicode-category $cp) "C"))) $cp 32))))
+(= (erv:clip $text $limit)
+   (let $points (erv:points $text)
+     (if (> (size-atom $points) $limit)
+       (str:concat (erv:from-points (erv:take $points (- $limit 1))) "…") $text)))
+
+(= (erv:hex $number $digits)
+   (if (== $digits 0) ""
+     (str:concat (erv:hex (math:floor (/ $number 16)) (- $digits 1))
+       (str:byte-slice "0123456789abcdef" (% $number 16) (+ (% $number 16) 1)))))
+(= (erv:escaped-point $cp)
+   (if (< $cp 256) (str:concat "\\x" (erv:hex $cp 2))
+     (if (< $cp 65536) (str:concat "\\u" (erv:hex $cp 4))
+       (str:concat "\\U" (erv:hex $cp 8)))))
+(= (erv:printable? $cp)
+   (if (== $cp 32) True
+     (let $category (str:unicode-category $cp)
+       (not (or (str:starts-with $category "C") (str:starts-with $category "Z"))))))
+(= (erv:repr-point $cp $quote)
+   (if (or (== $cp $quote) (== $cp 92))
+     (str:concat "\\" (erv:from-points ($cp)))
+     (case $cp ((9 "\\t") (10 "\\n") (13 "\\r")
+       ($other (if (erv:printable? $other) (erv:from-points ($other)) (erv:escaped-point $other)))))))
+(= (erv:quote $text)
+   (let* (($points (erv:points $text))
+          ($quote (if (and (erv:contains $points 39) (not (erv:contains $points 34))) 34 39))
+          ($mark (erv:from-points ($quote)))
+          ($body (str:join "" (map-atom $points $cp (erv:repr-point $cp $quote)))))
+     (str:join "" ($mark $body $mark))))
+(= (erv:number-str $value)
+   (if (math:isnan $value) "nan"
+     (if (math:isinf $value) (if (< $value 0) "-inf" "inf") (json:stringify-python $value))))
+(= (erv:str $value)
+   (if (== (get-type $value) String) $value
+     (case $value
+       ((JsonNull "None") (True "True") (False "False")
+        ((JsonArray $items) (str:join "" ("[" (str:join ", " (map-atom $items $v (erv:repr $v))) "]")))
+        ((JsonObject $pairs) (str:join "" ("{" (str:join ", " (map-atom $pairs $pair
+          (let (JsonPair $key $v) $pair (str:join "" ((erv:quote $key) ": " (erv:repr $v)))))) "}")))
+        ($other (if (== (get-type $other) Number) (erv:number-str $other)
+          (erv:fail TypeError "unsupported native value at Python text boundary")))))))
+(= (erv:repr $value)
+   (if (== (get-type $value) String) (erv:quote $value) (erv:str $value)))
+; This is the py-call argument conversion actually observed at the dispatcher:
+; expressions/lists become Python lists, symbols/Bool become Python strings.
+; JsonArray syntax at this crossing is NOT already a decoded Python JSON list.
+(= (erv:cross $value)
+   (if (== (get-type $value) String) $value
+     (case $value
+       ((True "true") (False "false")
+        ($other (if (== (get-type $other) Number) $other
+          (if (or (== (get-metatype $other) Expression) (== (get-metatype $other) List))
+            (JsonArray (map-atom $other $item (erv:cross $item)))
+            (if (== (get-metatype $other) Symbol) (str:symbol->string $other)
+              (erv:fail TypeError "unsupported grounded value at receipt argument boundary")))))))))
+(= (erv:text $value $limit) (erv:clip (erv:str $value) $limit))
+(= (erv:truth $value)
+   (case $value
+     ((JsonNull False) (False False) ("" False)
+      ((JsonArray $items) (> (size-atom $items) 0))
+      ((JsonObject $items) (> (size-atom $items) 0))
+      ($other (if (== (get-type $other) Number) (not (== $other 0)) True)))))
+(= (erv:typename $value)
+   (case $value
+     ((JsonNull "NoneType") (True "bool") (False "bool")
+      ((JsonArray $_) "list") ((JsonObject $_) "dict")
+      ($other (if (== (get-type $other) String) "str"
+        (if (== (get-type $other) Number)
+          (let $rendered (json:stringify-python $other)
+            (if (or (math:isnan $other) (math:isinf $other)) "float"
+              (if (and (== (str:find $rendered ".") (TextNotFound "."))
+                       (== (str:find $rendered "e") (TextNotFound "e"))) "int" "float")))
+          "object"))))))
+(= (erv:get $object $key $default)
+   (let (JsonObject $pairs) $object (erv:lookup $pairs $key $default)))
+(= (erv:lookup $pairs $key $default)
+   (if (== $pairs ()) $default
+     (let (JsonPair $name $value) (car-atom $pairs)
+       (if (== $name $key) $value (erv:lookup (cdr-atom $pairs) $key $default)))))
+(= (erv:has $object $key) (not (== (erv:get $object $key ErMissing) ErMissing)))
+(= (erv:put-pairs $pairs $key $value)
+   (if (== $pairs ()) ((JsonPair $key $value))
+     (let (JsonPair $name $_) (car-atom $pairs)
+       (if (== $name $key) (cons-atom (JsonPair $key $value) (cdr-atom $pairs))
+         (cons-atom (car-atom $pairs) (erv:put-pairs (cdr-atom $pairs) $key $value))))))
+(= (erv:put $object $key $value)
+   (let (JsonObject $pairs) $object (JsonObject (erv:put-pairs $pairs $key $value))))
+(= (erv:setdefault $object $key $value)
+   (if (erv:has $object $key) $object (erv:put $object $key $value)))
+
+; int(str) includes Unicode Nd and underscores. Each Unicode 15 Nd run has
+; a multiple of ten points in digit order; category determines its run start.
+(= (erv:digit-offset $cp $offset)
+   (if (and (> $cp 0) (== (str:unicode-category (- $cp 1)) "Nd"))
+     (erv:digit-offset (- $cp 1) (+ $offset 1)) (% $offset 10)))
+(= (erv:int-digits $points $previous $digits)
+   (if (== $points ()) (if $previous (list:reverse $digits) ErNotInteger)
+     (let* (($cp (car-atom $points)) ($tail (cdr-atom $points)))
+       (if (== (str:unicode-category $cp) "Nd")
+         (erv:int-digits $tail True (cons-atom (erv:digit-offset $cp 0) $digits))
+         (if (and (== $cp 95) $previous) (erv:int-digits $tail False $digits) ErNotInteger)))))
+(= (erv:int-string $value)
+   (let* (($points (erv:points (erv:strip $value)))
+          ($sign (if (== $points ()) 0 (car-atom $points)))
+          ($digits (erv:int-digits (if (or (== $sign 43) (== $sign 45)) (cdr-atom $points) $points) False ())))
+     (if (== $digits ErNotInteger)
+       (erv:fail ValueError (str:concat "invalid literal for int() with base 10: " (erv:slice (erv:quote $value) 0 200)))
+       (if (> (size-atom $digits) 4300)
+         (erv:fail ValueError (str:join "" ("Exceeds the limit (4300 digits) for integer string conversion: value has "
+           (repr (size-atom $digits)) " digits; use sys.set_int_max_str_digits() to increase the limit")))
+         (* (if (== $sign 45) -1 1) (foldl-atom $digits 0 $n $digit (+ (* $n 10) $digit)))))))
+(= (erv:int $value)
+   (case $value
+     ((True 1) (False 0)
+      ($other (if (== (get-type $other) String) (erv:int-string $other)
+        (if (== (get-type $other) Number)
+          (if (math:isnan $other) (erv:fail ValueError "cannot convert float NaN to integer")
+            (if (math:isinf $other) (erv:fail OverflowError "cannot convert float infinity to integer") (math:trunc $other)))
+          (erv:fail TypeError (str:join "" ("int() argument must be a string, a bytes-like object or a real number, not '" (erv:typename $other) "'")))))))))
+
+; Validate the receipt payload's strict UTF-8 encode BEFORE descriptor open.
+; Preserve the first contiguous surrogate range and Python's singular/plural.
+(= (erv:surrogate-end $points $position)
+   (if (== $points ()) $position
+     (if (erv:surrogate? (car-atom $points)) (erv:surrogate-end (cdr-atom $points) (+ $position 1)) $position)))
+(= (erv:encoding $points $position)
+   (if (== $points ()) ErEncodable
+     (let $cp (car-atom $points)
+       (if (erv:surrogate? $cp)
+         (let* (($end (erv:surrogate-end $points $position))
+                ($description (if (== $end (+ $position 1))
+                  (str:join "" ("character '" (str:concat "\\u" (erv:hex $cp 4)) "' in position " (repr $position)))
+                  (str:join "" ("characters in position " (repr $position) "-" (repr (- $end 1)))))))
+           (ErFailure UnicodeEncodeError (str:join "" ("'utf-8' codec can't encode " $description ": surrogates not allowed")) (EncodingRange $position $end)))
+         (erv:encoding (cdr-atom $points) (+ $position 1))))))
+(= (erv:encode $text)
+   (case (erv:encoding (erv:points $text) 0)
+     ((ErEncodable $text) ($failure $failure))))
