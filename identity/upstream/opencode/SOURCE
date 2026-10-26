@@ -1,0 +1,46 @@
+Upstream: https://github.com/sst/opencode
+Tag: v1.18.18
+Commit: 31406ccc51b4bd2a4e1e086b2bcaa5f7f804f26d
+Licence: MIT (see LICENSE)
+Copied verbatim, unmodified, with upstream paths. Our own prompts live outside this folder.
+
+The max-steps reminder is the MAX_STEPS_PROMPT constant in
+packages/core/src/session/runner/max-steps.ts and is not copied here.
+
+SHA-256 of each copied file:
+625f0f619133f89bbbb2abe37369613dfa1885eba1e50d02170deb62bb42cb6b  LICENSE
+52e34e03857e80356f8e1c282a22d83223fa259f50cbb6c0746901afec50e328  packages/opencode/src/agent/generate.txt
+552db0de0af1873a8acd4a631e2548345d4c43192de1d9be69c8feab4b41f80c  packages/opencode/src/agent/prompt/compaction.txt
+97c4780dea390f347fed0879fb30aaa08c0fc65c8cad0f6c1aec02ca6fd91e13  packages/opencode/src/agent/prompt/explore.txt
+307314eb41cc38a90881ae9f26e0402ceeed04e71046014486a9908ad4520233  packages/opencode/src/agent/prompt/summary.txt
+e7a6848eba328f28c7e870874cf0591e4edbaf90d7602ad8fdfe90601c6e656f  packages/opencode/src/agent/prompt/title.txt
+8324e4cf58eb45d4d9d6fd120f5e8da59e0548de48e7e6aefcdfbf2923f40b4e  packages/opencode/src/session/prompt/anthropic.txt
+a384d7b485829c1fe43bd6deaae10466db2c16b8cba045764538974f737958ba  packages/opencode/src/session/prompt/beast.txt
+5e3db616a685a3dfaaf95fb86ae6e2acfbdf520bda60f7b27f727d2a88ba8a25  packages/opencode/src/session/prompt/build-switch.txt
+c30bca40693a47965e25ceac3f02d3709712af7abeab1278bba53a9efcffa928  packages/opencode/src/session/prompt/codex.txt
+0ef5261daf7a4ae72b3e874cabc7b06cf34d991376d1dcfa1874734b13031828  packages/opencode/src/session/prompt/copilot-gpt-5.txt
+962fbf3cb3ec659c9a5244425ee2e7bb141ad4428f489a630a7738566880dc6a  packages/opencode/src/session/prompt/default.txt
+921750803b0314b88b8adc996e2afcf1a61fd7d9dd6dfcf812baeadac1468cf3  packages/opencode/src/session/prompt/gemini.txt
+83a66a46a5febbc21454161d5f053638b22d25d95e09d77b8f6da33debc848ad  packages/opencode/src/session/prompt/gpt.txt
+ade9199b00df5aa3b51bb02b8e8c711f3e0de224345aef7df9f31d3ea08a5bc7  packages/opencode/src/session/prompt/kimi.txt
+9068607ce8bbb3f9b09531d8114fc16e1724de96cd1e364565c9f6f6b2b61df3  packages/opencode/src/session/prompt/meta.txt
+473381e8f20d054fa24ed3631a3b741a4fd432dadb8a0f0925f73d94a6e2866c  packages/opencode/src/session/prompt/plan-mode.txt
+8c4517ba847f753b2e25f7056ddc393f6728074fa6444d4070d121e75b1f91b5  packages/opencode/src/session/prompt/plan-reminder-anthropic.txt
+455db97e0d21e8097c2afb539d167b4b2483e99b585dbc4fff23cafd4a3029b8  packages/opencode/src/session/prompt/plan.txt
+0019dc1d018d08c1b5a065d10896e22d2615d33580088f44aefc3a042a46ebe2  packages/opencode/src/session/prompt/trinity.txt
+2e88f3a8fb30723c4fd6a084ef20716dec6b6ea66aa943dde675e81c5cb1cc4e  packages/opencode/src/tool/apply_patch.txt
+4426ccf60241fe41d01bbafc1e7450ea6538003f9fca863ab0210492a74647f8  packages/opencode/src/tool/edit.txt
+50b2d2c41d4b8d0286ab4542c6ec882421ac4ae5c0567ad213c3668ed973ed9a  packages/opencode/src/tool/glob.txt
+97fa2a9929353d20d3418041aae53ffea3aaf63e9a6e2fdc8cff6db61c3f4c5e  packages/opencode/src/tool/grep.txt
+8f25f3ea038c4fc7b5c37072eb2ccfe9c7abc8fc812bde6688bccb4d04ab454a  packages/opencode/src/tool/lsp.txt
+c03e1829d0e049c3c02ea4a04b9cad414194d75953dce9dc2167e3f2afc1abcb  packages/opencode/src/tool/plan-enter.txt
+00dba1a429590e46c1975bade1963eac331b5edd3610b680edd15ef124ff2c43  packages/opencode/src/tool/plan-exit.txt
+c0a5776acd585b62292c16839a5486b8b69e176b2d7da0cf206c82fcbd929584  packages/opencode/src/tool/question.txt
+98ee843341c2dab2227add0019e48d4b2f0f00f9b042b853d1ee52bb34e6363d  packages/opencode/src/tool/read.txt
+0db1a899b3c43a700a5d334ad2c5707a3ac63237a8e16115da16ff91ad68723c  packages/opencode/src/tool/shell/shell.txt
+226f63ce9fd51e51431205c90ef98e53a20ba5af690fdad241eba416db49c339  packages/opencode/src/tool/skill.txt
+220dcf4ad2582dbdaf2b0bbc8b7f5fa78172b1337539ac1c8912f45f2b9e5d46  packages/opencode/src/tool/task.txt
+f214ea20cd870a9837cb30dd993aefbe5abe6d9e3319b47672c529961ba0c3ad  packages/opencode/src/tool/todowrite.txt
+0da3ec7c3f6bc47706553c1c522dacb2042d66a4c2bf09368e43ce4a72f3b7dc  packages/opencode/src/tool/webfetch.txt
+f31c862691e3bb9a90e81766f376b24d69ae7f408eaa9f3bb5507dc75a00e692  packages/opencode/src/tool/websearch.txt
+8b7197b6e3a8ec1d129eeb6b82608e4cab759bfcc60ba890ecf36322a6e45180  packages/opencode/src/tool/write.txt

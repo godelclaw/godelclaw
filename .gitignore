@@ -36,6 +36,8 @@ repos/
 *.md
 !README.md
 !/identity/*.md
+# Verbatim upstream prompt baselines, kept with their licences.
+!/identity/upstream/**/*.md
 selfmodel/
 to-*.md
 *.sed
