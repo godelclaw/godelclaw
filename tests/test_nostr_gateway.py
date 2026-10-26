@@ -1,5 +1,6 @@
 """The Nostr gateway against a local gated relay and a claw-mail stand-in."""
 import asyncio
+import contextlib
 import hashlib
 import importlib.util
 import json
@@ -304,6 +305,173 @@ class GatewayTests(unittest.TestCase):
         (self.directory / "keys.json").chmod(0o640)
         with self.assertRaises(PermissionError):
             gw.Gateway(self.directory / "gateway.toml")
+
+
+@unittest.skipUnless(HAVE_CRYPTO, "needs coincurve, cryptography and websockets")
+class TwoRelayTests(unittest.TestCase):
+    """[[relays]] one and two, in that order of preference, as nostr-mailbox's
+    relays.json lists relays; the registry says which of them alice and carol read."""
+    deliveries, outbox = GatewayTests.deliveries, GatewayTests.outbox
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.directory = Path(self.temporary.name)
+        self.secret = {name: secret(name) for name in ("alice", "carol", "dora", "godel")}
+        self.pub = {name: nm.public_key(key) for name, key in self.secret.items()}
+        self.relays, self.stopped = [], set()
+        for index in range(2):
+            self.relays.append(chosen(self.pub.values()).__enter__())
+            self.addCleanup(self.stop, index)
+        self.urls = [relay.url for relay in self.relays]
+        self.write_registry({"alice": None, "carol": ["two"], "dora": ["elsewhere"], "godel": None})
+        keys = self.directory / "keys.json"
+        keys.write_text(json.dumps({"godel": {"seckey_hex": self.secret["godel"], "pubkey_hex": self.pub["godel"]}}))
+        keys.chmod(0o600)
+        mailer = self.directory / "claw-mail"
+        mailer.write_text("#!" + sys.executable + "\n" + MAILER)
+        mailer.chmod(0o755)
+        self.ledger = self.directory / "ledger.json"
+        os.environ["FAKE_MAIL_LEDGER"] = str(self.ledger)
+        os.environ["FAKE_MAIL_ACCOUNT"] = "acct"
+        self.addCleanup(os.environ.pop, "FAKE_MAIL_LEDGER", None)
+        self.addCleanup(os.environ.pop, "FAKE_MAIL_ACCOUNT", None)
+        (self.directory / "gateway.toml").write_text(
+            'registry = "registry.json"\nkeys = "keys.json"\nstate = "state.json"\nmailer = "%s"\n'
+            '[[relays]]\nname = "one"\nurl = "%s"\n[[relays]]\nname = "two"\nurl = "%s"\n'
+            '[inbound]\ngodel = "godel"\n[senders]\n"acct/godel" = "godel"\n[replies]\n"acct/godel" = "godel"\n'
+            % (mailer, self.urls[0], self.urls[1]))
+
+    def stop(self, index):
+        if index not in self.stopped:
+            self.stopped.add(index)
+            self.relays[index].__exit__(None, None, None)
+
+    def write_registry(self, reads):
+        (self.directory / "registry.json").write_text(json.dumps(
+            {name: dict({"pubkey_hex": self.pub[name]}, **({"relays": relays} if relays else {}))
+             for name, relays in reads.items()}))
+
+    def gateway(self):
+        return gw.Gateway(self.directory / "gateway.toml")
+
+    def on(self, index, key, action):
+        async def run():
+            async with nm.Relay(self.urls[index], key) as relay:
+                return await action(relay)
+        return asyncio.run(run())
+
+    def publish(self, index, name, event):
+        accepted, reason = self.on(index, self.secret[name], lambda relay: relay.publish(event))
+        self.assertTrue(accepted, reason)
+
+    def query(self, index, name, filters):
+        return self.on(index, self.secret[name], lambda relay: relay.query(filters))
+
+    def told(self):
+        return [d["text"] for d in self.deliveries("godel") if d["from"] == "acct/nostr"]
+
+    def test_mail_on_either_relay_arrives_once_with_a_position_per_relay(self):
+        first = nm.seal(self.secret["alice"], self.pub["godel"], "Via one", "x")
+        second = nm.seal(self.secret["alice"], self.pub["godel"], "Via two", "y")
+        self.publish(0, "alice", first)
+        self.publish(1, "alice", second)
+        self.gateway().tick()
+        self.gateway().tick()
+        self.assertEqual(sorted(d["id"] for d in self.deliveries("godel")), sorted([first["id"], second["id"]]))
+        state = json.loads((self.directory / "state.json").read_text())
+        self.assertEqual(state["since"], {"godel": {self.urls[0]: first["created_at"], self.urls[1]: second["created_at"]}})
+        # alice reads every relay, so both receipts go to the first, which takes them.
+        receipts = lambda index: sorted(nm.receipt_fact(r)[0] for r in self.query(index, "alice", [{"kinds": [7]}]))
+        self.assertEqual(receipts(0), sorted([first["id"], second["id"]]))
+        self.assertEqual(receipts(1), [])
+
+    def test_a_receipt_goes_to_a_relay_its_author_reads(self):
+        self.write_registry({"alice": ["two"], "carol": ["two"], "dora": ["elsewhere"], "godel": None})
+        mail = nm.seal(self.secret["alice"], self.pub["godel"], "Read on one", "x")
+        self.publish(0, "alice", mail)
+        self.gateway().tick()
+        self.assertEqual([d["id"] for d in self.deliveries("godel")], [mail["id"]])
+        self.assertEqual(self.query(0, "alice", [{"kinds": [7]}]), [])
+        [receipt] = self.query(1, "alice", [{"kinds": [7]}])
+        self.assertEqual(nm.receipt_fact(receipt), (mail["id"], "delivered"))
+
+    def test_mail_goes_to_the_first_relay_its_recipient_reads(self):
+        self.outbox("acct/godel", "To: alice\nSubject: To all\n\nx", ident="a1")
+        self.outbox("acct/godel", "To: carol\nSubject: To two\n\ny", ident="c1")
+        self.gateway().tick()
+        mine = lambda index, name: [e["id"] for e in self.query(index, name, [{"kinds": [nm.KIND_MAIL]}])]
+        self.assertEqual(len(mine(0, "alice")), 1)
+        self.assertEqual(mine(1, "alice"), [])
+        self.assertEqual(mine(0, "carol"), [])
+        self.assertEqual(len(mine(1, "carol")), 1)
+        self.assertEqual(sorted(t.split(":")[0] for t in self.told()), ["Sent to alice", "Sent to carol"])
+
+    def test_a_relay_that_refuses_the_key_hands_the_mail_to_the_next(self):
+        self.relays[0].shut_out(self.pub["godel"])
+        self.outbox("acct/godel", "To: alice\nSubject: Fallback\n\nx")
+        self.gateway().tick()
+        [event] = self.query(1, "alice", [{"kinds": [nm.KIND_MAIL]}])
+        self.assertEqual(self.told(), ["Sent to alice: Fallback (event %s)" % event["id"]])
+
+    def test_no_relay_in_common_is_reported_and_settled(self):
+        self.outbox("acct/godel", "To: dora\nSubject: Nowhere\n\nx")
+        self.gateway().tick()
+        self.assertEqual(self.told(), ["Not sent to dora: none of our relays is one dora reads"])
+        self.assertEqual([d["stage"] for d in self.deliveries() if d["to"] == "nostr"], ["settled"])
+
+    def test_a_relay_down_does_not_stop_the_other(self):
+        mail = nm.seal(self.secret["alice"], self.pub["godel"], "Via two", "y")
+        self.publish(1, "alice", mail)
+        self.stop(0)
+        self.outbox("acct/godel", "To: alice\nSubject: Around the gap\n\nx")
+        self.gateway().tick()
+        self.assertIn(mail["id"], [d["id"] for d in self.deliveries("godel")])
+        [event] = self.query(1, "alice", [{"kinds": [nm.KIND_MAIL], "authors": [self.pub["godel"]]}])
+        self.assertEqual(self.told(), ["Sent to alice: Around the gap (event %s)" % event["id"]])
+
+    def test_a_late_letter_on_another_relay_is_not_skipped(self):
+        now = int(time.time())
+        self.publish(0, "alice", nm.seal(self.secret["alice"], self.pub["godel"], "Recent", "x", created_at=now))
+        self.gateway().tick()
+        # Older than relay one's position by more than the overlap, but new on relay two.
+        late = nm.seal(self.secret["alice"], self.pub["godel"], "Late", "y", created_at=now - 3600)
+        self.publish(1, "alice", late)
+        self.gateway().tick()
+        self.assertIn(late["id"], [d["id"] for d in self.deliveries("godel")])
+
+    def test_live_mail_arrives_from_either_relay(self):
+        gateway = self.gateway()
+        loop = asyncio.new_event_loop()
+        holder, started = {}, threading.Event()
+
+        def runner():
+            asyncio.set_event_loop(loop)
+            holder["task"] = loop.create_task(gateway.serve())
+            started.set()
+            with contextlib.suppress(asyncio.CancelledError):
+                loop.run_until_complete(holder["task"])
+            loop.close()
+        thread = threading.Thread(target=runner, daemon=True)
+        thread.start()
+        started.wait(5)
+        self.addCleanup(lambda: (loop.call_soon_threadsafe(holder["task"].cancel), thread.join(15)))
+        eventually = ServingTests.eventually
+        eventually(self, lambda: all(relay.subscribers(self.pub["godel"]) for relay in self.relays))
+        mails = [nm.seal(self.secret["alice"], self.pub["godel"], "Live %d" % i, "z") for i in range(2)]
+        self.publish(1, "alice", mails[1])
+        self.publish(0, "alice", mails[0])
+        eventually(self, lambda: sorted(d["id"] for d in self.deliveries("godel")) == sorted(m["id"] for m in mails))
+
+    def test_with_every_relay_down_the_request_waits(self):
+        for index in range(2):
+            self.stop(index)
+        self.outbox("acct/godel", "To: alice\nSubject: Later\n\nx")
+        self.gateway().tick()
+        self.assertEqual(self.told(), [])
+        self.assertEqual([d["stage"] for d in self.deliveries() if d["to"] == "nostr"], ["ready"])
+        state = json.loads((self.directory / "state.json").read_text())
+        self.assertEqual(list(state["outbound"]), ["d1"])
 
 
 @unittest.skipUnless(HAVE_CRYPTO, "needs coincurve, cryptography and websockets")

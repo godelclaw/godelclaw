@@ -221,6 +221,18 @@ def load_registry(path):
     return names
 
 
+def registry_relays(path):
+    """The relays each member reads, by name, from the `relays` lists of a
+    registry file: names of relays, as the reader's own relay list names them.
+    A member whose entry lists none reads every relay and is left out."""
+    reads = {}
+    for name, entry in json.loads(Path(path).read_text()).items():
+        relays = entry.get("relays") if isinstance(entry, dict) else None
+        if isinstance(relays, list) and relays and all(isinstance(r, str) for r in relays):
+            reads[name] = relays
+    return reads
+
+
 # ── relay client (NIP-01, NIP-42) ───────────────────────────────────────────
 class Relay:
     """One connection to a relay, signed in with one key (NIP-42) before any

@@ -31,14 +31,25 @@ otherwise at its own inbox.
 Receipts: a delivered or read receipt for mail an agent sent is believed only
 from the key the mail was addressed to, and the sender is told.
 
-Running: each key holds one live subscription, so new mail arrives without
-polling, and it resumes from its read position after any disconnect. Keys and
-the outbox are served concurrently, and one slow channel never delays another;
-within a key, mail is delivered in the order it was written. `--once` reads what
-is stored, empties the outbox and exits.
+Relays: `relay = URL` is one relay for everything. `[[relays]]` tables (name,
+url) list several, in order of preference, as nostr-mailbox's relays.json does:
+each key reads all of them, since mail waits on whichever relay its author
+reached, and a registry entry's `relays` names the ones that member reads (none
+named: all). Mail goes to the first relay the recipient reads that takes it,
+and a receipt, like mail, to the first its author reads; a refusal moves on to
+the next, and a relay that cannot be reached leaves the mail to be tried again
+unless another takes it.
 
-The state is one small JSON file: per-key read positions, recently handled
-identifiers, signed events not yet confirmed, and sent mail awaiting receipts.
+Running: each key holds one live subscription on each relay, so new mail
+arrives without polling, and it resumes from its read position after any
+disconnect. Keys, relays and the outbox are served concurrently, and one slow
+channel never delays another; within a key and relay, mail is delivered in the
+order it was written. `--once` reads what is stored, empties the outbox and
+exits.
+
+The state is one small JSON file: per-key read positions (with several relays,
+per key and relay), recently handled identifiers, signed events not yet
+confirmed, and sent mail awaiting receipts.
 
 It needs coincurve, cryptography and websockets, which the agent runtime does not.
 """
@@ -132,8 +143,18 @@ class Gateway:
         config = tomllib.loads(path.read_text())
         relative = lambda value: (path.parent / Path(value).expanduser()) if not Path(value).expanduser().is_absolute() \
             else Path(value).expanduser()
-        self.relay = config["relay"]
+        if "relays" in config:
+            entries = config["relays"]
+            if not (isinstance(entries, list) and entries and all(
+                    isinstance(e, dict) and isinstance(e.get("name"), str) and isinstance(e.get("url"), str)
+                    and e["url"].startswith(("ws://", "wss://")) for e in entries)
+                    and len({e["name"] for e in entries}) == len(entries)):
+                raise ValueError("[[relays]] needs a name and a ws:// or wss:// url in each table, names distinct")
+            self.relays, self.single = [(e["name"], e["url"]) for e in entries], False
+        else:
+            self.relays, self.single = [("relay", config["relay"])], True
         self.names = nm.load_registry(relative(config["registry"]))
+        self.reads = nm.registry_relays(relative(config["registry"]))
         self.keys = self._load_keys(relative(config["keys"]))
         self.state_path = relative(config.get("state", "~/.local/state/godelclaw-nostr/gateway.json"))
         self.mailer = config.get("mailer", "claw-mail")
@@ -178,7 +199,9 @@ class Gateway:
 
     def prune(self):
         """Forget what no read position can reach again, and sent mail past its receipt period."""
-        horizon = min(self.state["since"].values(), default=0) - 2 * self.overlap
+        positions = [p for value in self.state["since"].values()
+                     for p in (value.values() if isinstance(value, dict) else [value])]
+        horizon = min(positions, default=0) - 2 * self.overlap
         for field in ("recent", "receipted"):
             self.state[field] = {i: t for i, t in self.state[field].items() if t >= horizon}
         oldest = time.time() - self.receipt_days * 86400
@@ -212,15 +235,74 @@ class Gateway:
         if result.get("status") not in ("accepted", "duplicate"):
             raise RuntimeError("could not tell %s: %s" % (sender, result.get("reason", result)))
 
+    # ── relays ───────────────────────────────────────────────────────────────
+    def routes(self, name):
+        """The relays a member reads, in our order: all of ours when its
+        registry entry names none, and the one relay when there is one."""
+        wanted = self.reads.get(name)
+        return [url for relay_name, url in self.relays if self.single or not wanted or relay_name in wanted]
+
+    async def publish_to(self, name, event, secret, current=None):
+        """Publish to the first relay `name` reads that takes it, reusing
+        `current`, a (url, connection) pair, for its relay: (url, None), or
+        (None, reason) when every relay refused or none is one `name` reads.
+        A relay that cannot be reached raises, once no other took the event,
+        so that it is tried again."""
+        routes = self.routes(name)
+        if not routes:
+            return None, "none of our relays is one %s reads" % name
+        reason, unreachable = None, None
+        for url in routes:
+            try:
+                if current is not None and url == current[0]:
+                    accepted, why = await current[1].publish(event)
+                else:
+                    async with nm.Relay(url, secret) as relay:
+                        accepted, why = await relay.publish(event)
+            except Exception as error:  # noqa: BLE001 - this relay is out of reach; try the next
+                unreachable = error
+                if self.single:
+                    raise
+                log("relay %s could not take %s: %s: %s" % (url, event["id"][:16], type(error).__name__, error))
+                continue
+            if accepted:
+                return url, None
+            reason = why
+        if unreachable is not None:
+            raise unreachable
+        return None, reason
+
+    def position(self, key_name, url):
+        """A key's read position on a relay: a number with one relay, else per relay."""
+        value = self.state["since"].get(key_name, 0)
+        if isinstance(value, dict):
+            return value.get(url, 0)
+        return value if self.single else 0
+
+    def advance(self, key_name, url, stamp):
+        if self.single:
+            self.state["since"][key_name] = max(self.position(key_name, url), stamp)
+        else:
+            value = self.state["since"].get(key_name)
+            positions = dict(value) if isinstance(value, dict) else {}
+            positions[url] = max(positions.get(url, 0), stamp)
+            self.state["since"][key_name] = positions
+
+    def inbound_name(self, key_name, url):
+        return "inbound for " + key_name + ("" if self.single else " at " + url)
+
     # ── inbound ──────────────────────────────────────────────────────────────
-    async def receive(self, key_name, recipient, live):
-        """Deliver the mail and receipts addressed to one key: what is stored,
-        oldest first, and when `live`, then whatever arrives."""
+    async def receive(self, key_name, recipient, live, url=None):
+        """Deliver the mail and receipts addressed to one key on one relay (the
+        first by default): what is stored, oldest first, and when `live`, then
+        whatever arrives."""
+        url = url or self.relays[0][1]
         secret = self.keys[key_name]
         me = nm.public_key(secret)
-        since = max(0, self.state["since"].get(key_name, 0) - self.overlap)
+        since = max(0, self.position(key_name, url) - self.overlap)
         query = [{"kinds": [nm.KIND_MAIL, nm.KIND_RECEIPT], "#p": [me], "since": since}]
-        async with nm.Relay(self.relay, secret) as relay:
+        async with nm.Relay(url, secret) as relay:
+            current = (url, relay)
             async with contextlib.aclosing(relay.subscribe(query)) as stream:
                 stored = []
                 async for kind, event in stream:
@@ -228,7 +310,7 @@ class Gateway:
                         if stored is None:
                             continue
                         for old in sorted(stored, key=stored_order):
-                            await self.take(key_name, recipient, secret, me, relay, old)
+                            await self.take(key_name, recipient, secret, me, current, old)
                         stored = None
                         self.prune()
                         self.save()
@@ -237,21 +319,21 @@ class Gateway:
                     elif stored is not None:
                         stored.append(event)
                     else:
-                        await self.take(key_name, recipient, secret, me, relay, event)
+                        await self.take(key_name, recipient, secret, me, current, event)
 
-    async def take(self, key_name, recipient, secret, me, relay, event):
+    async def take(self, key_name, recipient, secret, me, current, event):
         if not isinstance(event, dict) or not isinstance(event.get("id"), str) or event["id"] in self.state["recent"]:
             return
         if event.get("kind") == nm.KIND_RECEIPT:
             await self.note_receipt(event)
-        elif not await self.deliver(event, secret, me, recipient, relay):
+        elif not await self.deliver(event, secret, me, recipient, current):
             raise RuntimeError("claw-mail did not take %s; retrying from the read position" % event["id"][:16])
         stamp = event.get("created_at", 0) if isinstance(event.get("created_at"), int) else 0
         self.state["recent"][event["id"]] = stamp
-        self.state["since"][key_name] = max(self.state["since"].get(key_name, 0), stamp)
+        self.advance(key_name, current[0], stamp)
         self.save()
 
-    async def deliver(self, event, secret, me, recipient, relay):
+    async def deliver(self, event, secret, me, recipient, current):
         """Send one event into claw-mail if it is kept. False to retry it later."""
         author = self.names.get(event.get("pubkey"))
         letter = nm.open_letter(secret, event) if nm.verify(event) and author and event["pubkey"] != me else None
@@ -272,8 +354,8 @@ class Gateway:
             log("claw-mail refused %s: %s" % (event["id"], result.get("reason", result)))
             return False
         if ["ack", "request"] in event["tags"] and event["id"] not in self.state["receipted"]:
-            accepted, reason = await relay.publish(nm.receipt(secret, event, "delivered"))
-            if accepted:
+            took, reason = await self.publish_to(author, nm.receipt(secret, event, "delivered"), secret, current)
+            if took:
                 self.state["receipted"][event["id"]] = event["created_at"]
             else:
                 log("receipt for %s refused: %s" % (event["id"], reason))
@@ -319,10 +401,9 @@ class Gateway:
             pending = {"key": key_name, "to": fields["to"], "to_key": recipient, "event": event}
             self.state["outbound"][ident] = pending
             self.save()
-        async with nm.Relay(self.relay, self.keys[pending["key"]]) as relay:
-            accepted, reason = await relay.publish(pending["event"])
+        took, reason = await self.publish_to(pending["to"], pending["event"], self.keys[pending["key"]])
         subject = nm.open_letter(self.keys[pending["key"]], pending["event"])["subject"]
-        if accepted:
+        if took:
             self.state["sent"][pending["event"]["id"]] = {
                 "sender": sender, "to": pending["to"], "to_key": pending.get("to_key"),
                 "subject": subject, "at": time.time()}
@@ -330,8 +411,8 @@ class Gateway:
             await self.tell(sender, "nostr-outcome-" + ident,
                             "Sent to %s: %s (event %s)" % (pending["to"], subject, pending["event"]["id"]))
         else:
-            await self.tell(sender, "nostr-outcome-" + ident,
-                            "Not sent to %s: the relay refused it: %s" % (pending["to"], reason))
+            await self.tell(sender, "nostr-outcome-" + ident, "Not sent to %s: %s" % (
+                pending["to"], reason if reason.startswith("none of our relays") else "the relay refused it: " + reason))
         # Forget the saved event only once the request is settled, so a failed
         # acknowledgement republishes the same event, never a new one.
         acked = await self.mail(self.outbox, "ack", self.outbox, ident)
@@ -353,10 +434,11 @@ class Gateway:
     # ── running ──────────────────────────────────────────────────────────────
     async def once(self):
         for key_name, recipient in self.inbound.items():
-            try:
-                await self.receive(key_name, recipient, live=False)
-            except Exception as error:  # noqa: BLE001 - one key's failure must not stop the others
-                log("inbound for %s failed: %s: %s" % (key_name, type(error).__name__, error))
+            for relay_name, url in self.relays:
+                try:
+                    await self.receive(key_name, recipient, False, url)
+                except Exception as error:  # noqa: BLE001 - one key's or relay's failure must not stop the others
+                    log("%s failed: %s: %s" % (self.inbound_name(key_name, url), type(error).__name__, error))
         try:
             await self.drain()
         except Exception as error:  # noqa: BLE001
@@ -388,9 +470,9 @@ class Gateway:
                 if delivery.get("status") != "delivery":
                     raise RuntimeError("outbox unavailable: %s" % delivery.get("reason", delivery))
                 await self.handle(delivery)
-        tasks = [asyncio.create_task(self.forever("inbound for " + key_name,
-                                                  lambda k=key_name, r=recipient: self.receive(k, r, live=True)))
-                 for key_name, recipient in self.inbound.items()]
+        tasks = [asyncio.create_task(self.forever(self.inbound_name(key_name, url),
+                                                  lambda k=key_name, r=recipient, u=url: self.receive(k, r, True, u)))
+                 for key_name, recipient in self.inbound.items() for relay_name, url in self.relays]
         tasks.append(asyncio.create_task(self.forever("outbound", outbox)))
         try:
             await asyncio.gather(*tasks)
