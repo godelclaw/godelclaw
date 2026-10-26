@@ -1,9 +1,9 @@
 ; One presentation layer for native CeTTa and SWI-PeTTa file reads.
 ; Select I/O once at startup, never on the file-read hot path.
-!(import! &self ./src/engine_modes.py)
+!(import! &self ./src/engine_modes.metta)
 (= (file-io:cetta? $engine)
    (case $engine ((cetta True) ("cetta" True) ($other False))))
-!(if (file-io:cetta? (py-call (engine_modes.active_engine)))
+!(if (file-io:cetta? (engine:active))
      (import! &self ./src/file_io_cetta)
      (import! &self ./src/file_io_python))
 

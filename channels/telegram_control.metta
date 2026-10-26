@@ -18,6 +18,7 @@
 !(import! &self cwp)
 !(import! &self system)
 !(import! &self ./src/helper.py)
+!(import! &self ./src/mode_state.metta)
 !(import! &self ./src/fuel_io)
 !(import! &self ./src/mode_channel.py)
 !(import! &self ./src/input_ack.py)
@@ -133,11 +134,11 @@
 ; running.
 (= (tc:switch-engine $name)
    (let $adopted (py-call (helper.adopt_active_engine))
-     (let $reply (tc:text (py-call (engine_modes.set_engine $name)))
-       (let $selected (tc:text (py-call (engine_modes.selected_engine)))
-         (let $active (tc:text (py-call (engine_modes.active_engine)))
+     (let $reply (tc:text (engine:set $name))
+       (let $selected (tc:text (engine:selected))
+         (let $active (tc:text (engine:active))
            (if (and (not (str:starts-with $reply "engine-set failed:")) (not (== $selected $active)))
-             (let $recycle (py-call (engine_modes.request_recycle))
+             (let $recycle (engine:recycle)
                (let $woken (tc:wake "engine switch") $reply))
              $reply))))))
 
@@ -149,7 +150,7 @@
       ($at (let $kind (str:byte-slice $data 0 $at)
              (let $arg (str:byte-slice $data (+ $at 1) (str:byte-length $data))
                (case $kind
-                 (("mode" (let $reply (tc:text (py-call (loop_modes.set_mode $arg)))
+                 (("mode" (let $reply (tc:text (mode:set $arg))
                             (let $woken (tc:wake "mode switch") (tc:settings-menu "modes" "mode" $reply))))
                   ("fuel" (let $reply (tc:text (fuel:set $arg))
                             (tc:settings-menu "fuels" "fuel" $reply)))
@@ -165,19 +166,19 @@
 (= (tc:answer $name $args)
    (case $name
      (("/start"
-       (let $reply (py-call (lifecycle.start))
+       (let $reply (lifecycle:start)
          (let $resumed (py-call (sibling.resume_self))
-           (if (== (py-call (lifecycle.cognition_enabled)) 1)
+           (if (== (lifecycle:enabled) 1)
              (let $woken (tc:wake "operator start")
                (let $note (tc:text $resumed) (format-args "Started. Cognition is enabled; {}." ($note))))
-             (let $view (tc:text (py-call (lifecycle.view)))
+             (let $view (tc:text (lifecycle:view))
                (format-args "Start recorded, but cognition is still disabled: {}" ($view)))))))
       ("/stop"
-       (let $reply (py-call (lifecycle.stop))
+       (let $reply (lifecycle:stop)
          (let $woken (tc:wake "operator stop")
-           (if (== (py-call (lifecycle.cognition_enabled)) 0)
+           (if (== (lifecycle:enabled) 0)
              "Stopped. Cognition is paused and nothing is sent until /start."
-             (let $view (tc:text (py-call (lifecycle.view)))
+             (let $view (tc:text (lifecycle:view))
                (format-args "Stop recorded, but cognition still reads enabled: {}" ($view)))))))
       ("/wake" (let $woken (tc:wake "/wake") "Waking."))
       ("/claude_code_authorization" (tc:text (py-call (helper.claude_code_toggle))))
@@ -186,7 +187,7 @@
       ("/engine"
        (if (== $args "")
          (let $adopted (py-call (helper.adopt_active_engine))
-           (tc:with-hint (tc:text (py-call (engine_modes.engine_view))) "/engine <name> to switch, /engines to list"))
+           (tc:with-hint (tc:text (engine:view)) "/engine <name> to switch, /engines to list"))
          (tc:switch-engine $args)))
       ("/engines" (tc:settings-menu "engines" "engine" ""))
       ("/modes" (tc:settings-menu "modes" "mode" ""))
@@ -199,8 +200,8 @@
          (tc:text (fuel:set $args))))
       ("/mode"
        (if (== $args "")
-         (tc:with-hint (tc:text (py-call (loop_modes.mode_view))) "/mode <name> to switch, /modes to list")
-         (let $reply (tc:text (py-call (loop_modes.set_mode $args)))
+         (tc:with-hint (tc:text (mode:view)) "/mode <name> to switch, /modes to list")
+         (let $reply (tc:text (mode:set $args))
            (let $woken (tc:wake "mode switch") $reply))))
       ("/quota" (tc:text (py-call (synthetic_llm.quota))))
       ("/model"

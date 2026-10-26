@@ -12,7 +12,7 @@
 !(import! &self ./src/undelivered_prose_unicode)
 !(import! &self ./src/action_window_unicode)
 !(import! &self ./src/small_views_unicode)
-!(import! &self ./src/engine_modes.py)
+!(import! &self ./src/engine_modes.metta)
 
 ; Use Python's whitespace, not the host's narrower Unicode whitespace.
 !(bind! &sv-space (new-state (re:compile (str:join "" ("\\A" (prose:pattern space) "+|" (prose:pattern space) "+\\z")))))
@@ -304,8 +304,8 @@
        ($command (+ (* $seconds 1000000000) $nanoseconds) $size))
       ($other (Error sv:artifact-key missing-native-mtime)))))
 (= (sv:capabilities)
-   ; This is the explicitly retained engine_modes boundary (one per call).
-   (let $command (sv:command (py-call (engine_modes.engine_command "cetta")))
+   ; The command is native; retained Python capability execution is unchanged.
+   (let $command (sv:command (engine:command "cetta"))
      (if (or (== $command ()) (not (fs:is-file (car-atom $command)))) SvMissing
        (sv:capabilities-command $command))))
 (= (sv:command $parts)

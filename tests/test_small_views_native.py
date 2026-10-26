@@ -18,8 +18,16 @@ import helper
 import effect_receipts
 from receipt_context_fixture import receipt_bytes
 
+# Component tests deliberately supply arbitrary argv prefixes (not the real
+# one-executable engine_command API). Keep that explicit counted TEST control
+# boundary after project06 removes the runtime Python engine-command boundary.
+# Actual native engine commands are qualified separately by mode-state tests.
+NATIVE_COMMAND_FIXTURE = [
+    '!(match &self (= (engine-native:command $name) $body) '
+    '(remove-atom &self (= (engine-native:command $name) $body)))',
+    '(= (engine-native:command $name) (py-call (small_views_probe.engine_command $name)))']
 NATIVE_HEADER = HEADER + ["!(import! &self ./tests/small_views_probe.py)",
-                          "!(import! &self ./src/small_views_cetta.metta)"]
+                          "!(import! &self ./src/small_views_cetta.metta)"] + NATIVE_COMMAND_FIXTURE
 SOURCES = tuple(probe.MODULES)
 
 
@@ -94,6 +102,8 @@ class SmallViewsTest(unittest.TestCase):
         lines = (HEADER + ["!(import! &self ./tests/small_views_probe.py)"] + ([] if boot else CALLER)
                  if caller else list(NATIVE_HEADER))
         lines += ["!(py-call (small_views_probe.setup %d %d))" % (not swi, caller)]
+        if caller and not swi:
+            lines += NATIVE_COMMAND_FIXTURE
         for path in paths:
             lines += ["!(py-call (small_views_probe.apply %s))" % q(path)]
             expression = ("(addition-context-sources)" if caller else
@@ -117,7 +127,7 @@ class SmallViewsTest(unittest.TestCase):
             self.assertEqual(actual[-1]["calls"], {key: len(steps) for key in retained})
             self.assertEqual(actual[-1]["engine_calls"], len(steps))
             boundaries = {"prepare": len(steps), "retained-load": 4 * len(steps),
-                          "engine-command": len(steps), "pins-engine": len(steps),
+                          "engine-command": len(steps),
                           "action-strategy": 2 * len(steps)}
             if boot:
                 boundaries["conversation-mode"] = len(steps)
@@ -436,6 +446,7 @@ print(mode.get("version", "fixture 日 r1") if sys.argv[-1] == "--version" else 
         guest(self.directory, HEADER + CALLER + [
             '!(import! &self ./tests/small_views_probe.py)',
             '!(py-call (small_views_probe.setup 1 1))',
+            *NATIVE_COMMAND_FIXTURE,
             '!(py-call (small_views_probe.apply %s))' % q(step), record, remove,
             '(= (fs:metadata $path $links) (if (== $links follow-modified) '
             '(fs:failed fs:denied metadata $path 13 (fs:progress 0 known-position) "fixture") '

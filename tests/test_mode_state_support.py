@@ -118,7 +118,7 @@ class ModeStateSupportTest(unittest.TestCase):
         root = Path(__file__).resolve().parents[1] / "src"
         names = ("mode_runtime", "mode_text_cetta", "mode_values_cetta", "mode_io_cetta",
                  "mode_paths_cetta", "engine_active_cetta", "engine_modes_cetta", "attention_cetta",
-                 "fuel_cetta")
+                 "fuel_cetta", "loop_modes_cetta", "lifecycle_cetta", "mode_state")
         return [root / (name + ".metta") for name in names]
 
     def test_scoped_native_source_forms_are_balanced(self):

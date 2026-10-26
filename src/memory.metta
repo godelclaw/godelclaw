@@ -1,5 +1,5 @@
 ; Select engine-specific definitions here, independent of import order.
-!(import! &self ./src/engine_modes.py)
+!(import! &self ./src/engine_modes.metta)
 (= (memory:cetta? $engine)
    (case $engine ((cetta True) ("cetta" True) ($other False))))
 
@@ -20,7 +20,7 @@
 ;; The running proposal window: what the model requested over the last few
 ;; substantive turns. Broker receipts, not this transcript, say what ran.
 ;; No-op turns do not consume a slot.
-!(if (memory:cetta? (py-call (engine_modes.active_engine)))
+!(if (memory:cetta? (engine:active))
      (import! &self ./src/action_window_cetta)
      (import! &self ./src/action_window_python))
 
@@ -44,7 +44,7 @@
 
 ; The native path owns memory controls and durable write retries in MeTTa.
 ; The older SWI-PeTTa adapter remains available without a second new policy.
-!(if (memory:cetta? (py-call (engine_modes.active_engine)))
+!(if (memory:cetta? (engine:active))
      (import! &self ./src/semantic_memory_cetta)
      (import! &self ./src/semantic_memory_legacy))
 

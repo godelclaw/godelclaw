@@ -23,6 +23,7 @@
 !(import! &self cwp)
 !(import! &self system)
 !(import! &self ./src/helper.py)
+!(import! &self ./src/engine_modes.metta)
 !(import! &self ./src/process_supervision.py)
 !(import! &self ./channels/energy.metta)
 !(import! &self ./channels/telegram_control_input.metta)
@@ -31,7 +32,7 @@
 !(import! &self ./src/mail)
 ; The native idle provider initializes native memory. Keep it out of the
 ; separately selected SWI-PeTTa backend, which uses the existing Python client.
-!(if (case (py-call (engine_modes.active_engine))
+!(if (case (engine:active)
        ((cetta True) ("cetta" True) ($other False)))
      (import! &self ./src/idle_cetta) True)
 
@@ -193,7 +194,7 @@
 
 ; Clocks and keys are native on CeTTa; SWI-PeTTa keeps src/helper.py's.
 !(tg:set clock-engine
-   (case (py-call (engine_modes.active_engine))
+   (case (engine:active)
      ((cetta native) ("cetta" native) ($other python))))
 !(if (== (tg:get clock-engine python) native)
      (import! &self ./channels/telegram_clock.metta) True)

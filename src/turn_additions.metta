@@ -8,8 +8,8 @@
 ;; The native pins context view needs its own libraries, not whichever module
 ;; happened to load them first. On SWI-PeTTa it is never asked (see below).
 !(import! &self ./src/pins_context_cetta.metta)
-!(import! &self ./src/engine_modes.py)
-!(case (py-call (engine_modes.active_engine))
+!(import! &self ./src/engine_modes.metta)
+!(case (engine:active)
    (("cetta" (import! &self ./src/context_sources_cetta.metta))
     (cetta (import! &self ./src/context_sources_cetta.metta))
     ($other (import! &self ./src/context_sources_python.metta))))
@@ -30,7 +30,7 @@
 ;; pins loader answers exactly as it did before; the view is never invented
 ;; as empty. The action views above are unaffected either way.
 (= (addition-pins-views)
-   (case (py-call (engine_modes.active_engine))
+   (case (engine:active)
      (("cetta" (addition-pins-views-native)) (cetta (addition-pins-views-native)) ($other ()))))
 (= (addition-pins-views-native)
    (let $computed (collapse (catch (pinsctx:context-views)))
@@ -61,7 +61,7 @@
 ;; Coding sessions that ended without their report are recorded and their
 ;; requester told, at the next turn. Coding mode runs on CeTTa only.
 (= (addition-reap-work)
-   (case (py-call (engine_modes.active_engine)) (("cetta" (work:reap)) (cetta (work:reap)) ($other 0))))
+   (case (engine:active) (("cetta" (work:reap)) (cetta (work:reap)) ($other 0))))
 
 (= (addition-strategy-begin $turn $source $message)
    (let $receipt (py-call (strategy_host.begin $turn $source $message))

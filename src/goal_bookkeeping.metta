@@ -1,11 +1,11 @@
 ; Branch-only goal bookkeeping selection. No live installation is implied.
-; One import-time engine_modes boundary, as in goal_views. No failure fallback.
-!(import! &self ./src/engine_modes.py)
+; One environment-only engine switch, as in goal_views. No failure fallback.
+!(import! &self ./src/engine_modes.metta)
 ; Both loop and skills import this. SWI must not acquire duplicate effect rules.
 !(if (== (collapse (match &self (goal-bookkeeping:loaded) True)) ())
    (progn
      (add-atom &self (goal-bookkeeping:loaded))
-     (case (py-call (engine_modes.active_engine))
+     (case (engine:active)
        (("cetta" (import! &self ./src/goal_bookkeeping_cetta.metta))
         (cetta (import! &self ./src/goal_bookkeeping_cetta.metta))
         ($other (import! &self ./src/goal_bookkeeping_python.metta))))

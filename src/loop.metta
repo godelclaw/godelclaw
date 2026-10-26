@@ -1,4 +1,4 @@
-!(import! &self ./src/attention.py)
+!(import! &self ./src/mode_state.metta)
 !(import! &self ./src/fuel_io)
 !(import! &self ./src/goal_bookkeeping.metta)
 (= (sleepInterval) (empty))
@@ -10,7 +10,7 @@
    (py-call (helper.int_env "METTACLAW_HEARTBEAT_INTERVAL_SECONDS" 1800)))
 
 (= (initialPeriphery)
-   (let $selected (py-call (loop_modes.process_mode))
+   (let $selected (mode:process)
      (coordinate iteration 1
      (coordinate loops
        (py-call (helper.boot_int "loops" (policy-burst-budget $selected)))
@@ -60,7 +60,7 @@
      (py-str
        (" OUTPUT_FORMAT: "
         (py-call (strategy_host.batch_description (policy-command-batch-limit (loop-active-policy $periphery))))
-        (py-call (attention.description))
+        (attention:description)
         " Command results are not observed by you until the next model step, so never precommit a later command whose correctness depends on an earlier result. Double-check the parentheses: it must be (cmd1 ... cmdn). Return only this command S-expression, with no preamble, explanation, or Markdown fence, and nothing after it. Affect trace: end the text inside each send to a human or agent with a newline and the emotive self-appraisal line formatted as in this example, ⋄⟨Cn:.5 C:.7 Ct:.8 I:.2 J:.6 A:.4 S:.6 Co:-.42 Sp:.3⟩, values ∈ [-1,1]. Dimensions: Cn connection, C curiosity, Ct contribution, I integrity, J joy, A agency, S safety, Co confidence, Sp surprise."
         " each arg is an explicit string hence needs quotes, and variables are forbidden!"
         " " (py-call (strategy_host.description))
@@ -329,7 +329,7 @@
 (= (enabledTurnCandidate $periphery)
    (let* (($_ (semantic:maintain))
           ($iteration (loop-iteration $periphery))
-          ($selected (py-call (loop_modes.process_mode)))
+          ($selected (mode:process))
           ($selectedPeriphery
             (coordinate-set active-policy $selected
               (coordinate-set autonomous-ready 0 $periphery)))
@@ -380,7 +380,7 @@
 ;; the two-equation transformation kernel.  A stopped process keeps only its
 ;; Telegram control plane alive and cannot drain activity or call the model.
 (= (turnCandidate $periphery)
-   (if (== (py-call (lifecycle.cognition_enabled)) 1)
+   (if (== (lifecycle:enabled) 1)
        (enabledTurnCandidate $periphery)
        (candidate
          (coordinate-set autonomous-ready 0
@@ -441,7 +441,7 @@
 ;; adapter; only the resulting readiness bit enters the periphery.
 (= (waitCandidate $periphery)
    (let* (($policy (loop-active-policy $periphery))
-          ($enabled (== (py-call (lifecycle.cognition_enabled)) 1))
+          ($enabled (== (lifecycle:enabled) 1))
           ($loops (loop-budget $periphery))
           ($paused (loop-resting $periphery))
           ($policyWait
@@ -466,7 +466,7 @@
           ($waitResult (if (and $enabled (> $retryWait 0))
                          (py-call (cognitive_health.wait_for_retry $retryWait))
                          (channel:sleep-until-message $wait $enabled)))
-          ($timedOut (py-call (loop_modes.wait_timed_out $waitResult)))
+          ($timedOut (mode:wait-timed-out $waitResult))
           ($_ (py-call (strategy_host.wake (get_time))))
           ($continued
             (if $enabled

@@ -335,5 +335,19 @@
   "scripts/usage_report.py",
   "scripts/worklog_view.py",
   "scripts/worklog_control.py",
-  "ui/worklog/viewer.py"
+  "ui/worklog/viewer.py",
+  "src/engine_modes.metta",
+  "src/engine_modes_cetta.metta",
+  "src/engine_modes_python.metta",
+  "src/engine_active_cetta.metta",
+  "src/mode_runtime.metta",
+  "src/mode_text_cetta.metta",
+  "src/mode_values_cetta.metta",
+  "src/mode_io_cetta.metta",
+  "src/mode_paths_cetta.metta",
+  "src/mode_state.metta",
+  "src/mode_state_python.metta",
+  "src/loop_modes_cetta.metta",
+  "src/lifecycle_cetta.metta",
+  "src/attention_cetta.metta"
 ]

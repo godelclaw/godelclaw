@@ -1,4 +1,5 @@
 !(import! &self ./src/topic_jobs.py)
+!(import! &self ./src/mode_state.metta)
 (= (getLegacySkills)
    (;INTERNAL:
     "- Coding mode for real work: (work \"task\") or (work \"task\" \"workdir\") starts a session that keeps working (plan, commands, patches, tests) until done and mails you its report; meanwhile you stay free. (work-status) lists sessions, (work-status \"id\") shows plan and report, (work-steer \"id\" \"text\") adds guidance, (work-resume \"id\") continues the same finished or interrupted session, and (work-stop \"id\") stops it. CeTTa only."
@@ -176,8 +177,8 @@
           (loop-directive-set burst-end nop)
           (BURST_COMPLETE loops-left 0)))
 
-(= (mode) (py-call (loop_modes.mode_view)))
-(= (modes) (py-call (loop_modes.modes_view)))
+(= (mode) (mode:view))
+(= (modes) (mode:list-view))
 (= (requests) (py-call (strategy_host.view)))
 (= (request-status $request) (py-call (strategy_host.request_status $request)))
 (= (request-focus $request) (py-call (strategy_host.focus_request $request)))
@@ -185,7 +186,7 @@
 (= (request-read $request $offset) (py-call (strategy_host.request_read $request $offset)))
 (= (request-disposition $request $disposition $reason)
    (py-call (strategy_host.request_disposition $request $disposition $reason)))
-(= (mode-set $name) (py-call (loop_modes.set_mode $name)))
+(= (mode-set $name) (mode:set $name))
 
 ;; Telegram file/image delivery. The result string says what happened —
 ;; "sent <name> (<n> bytes) to chat <id>" or the actual failure reason.

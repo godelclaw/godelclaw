@@ -1,6 +1,6 @@
-!(import! &self ./src/engine_modes.py)
+!(import! &self ./src/engine_modes.metta)
 (= (iter:cetta? $engine)
    (case $engine ((cetta True) ("cetta" True) ($other False))))
-!(if (iter:cetta? (py-call (engine_modes.active_engine)))
+!(if (iter:cetta? (engine:active))
      (import! &self ./src/iter_process_cetta)
      (import! &self ./src/iter_process_swi))

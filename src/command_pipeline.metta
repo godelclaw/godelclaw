@@ -5,10 +5,10 @@
 ;; Undelivered prose and parenthesis balancing are native on CeTTa; SWI-PeTTa
 ;; keeps src/helper.py's oracle. The engine choice and command vocabulary are
 ;; captured once at boot.
-!(import! &self ./src/engine_modes.py)
+!(import! &self ./src/engine_modes.metta)
 (= (model-response:cetta? $engine)
    (case $engine ((cetta True) ("cetta" True) ($other False))))
-!(if (model-response:cetta? (py-call (engine_modes.active_engine)))
+!(if (model-response:cetta? (engine:active))
      (progn (import! &self ./src/undelivered_prose.metta)
             (import! &self ./src/balance_parentheses.metta))
      (progn (import! &self ./src/undelivered_prose_python.metta)

@@ -1,8 +1,8 @@
 ; The interpreter is shared; only its environment/string primitives differ.
-!(import! &self ./src/engine_modes.py)
+!(import! &self ./src/engine_modes.metta)
 (= (dispatch:cetta? $engine)
    (case $engine ((cetta True) ("cetta" True) ($other False))))
-!(if (dispatch:cetta? (py-call (engine_modes.active_engine)))
+!(if (dispatch:cetta? (engine:active))
      (progn (import! &self ./src/command_dispatch_cetta)
             (import! &self ./src/command_dispatch_hooks)
             (import! &self ./src/command_dispatch_core))

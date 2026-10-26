@@ -120,11 +120,19 @@
          (let (ErFailure $_ $message $_) $result
            (let $_ (system:write stdout (str:join "" ("[" $label "-mode] save failed: " $message "\n"))) False))
          (mv:raise $result)))))
+(= (mio:decode-error $start $end $byte $reason)
+   (ErFailure UnicodeDecodeError
+     (str:join "" ("'utf-8' codec can't decode "
+       (if (== $end (+ $start 1))
+         (str:join "" ("byte 0x" (erv:hex $byte 2) " in position " (repr $start)))
+         (str:join "" ("bytes in position " (repr $start) "-" (repr (- $end 1)))))
+       ": " (str:join " " (str:split "-" (str:symbol->string $reason)))))
+     (StrUtf8ErrorV1 $start $end $byte $reason)))
 (= (mio:strict $text)
    (case (str:utf8-error $text)
      ((StrUtf8WellFormedV1 (mode-text:universal $text))
       ((StrUtf8ErrorV1 $start $end $byte $reason)
-       (ErFailure UnicodeDecodeError "invalid strict UTF-8 state file" (StrUtf8ErrorV1 $start $end $byte $reason)))
+       (mio:decode-error $start $end $byte $reason))
       ($other (ErFailure NativeEvaluationError "missing UTF-8 validation outcome" $other)))))
 (= (mio:read $path)
    (if (mio:nul? $path) (erv:fail ValueError "embedded null byte")
@@ -169,10 +177,9 @@
       ((StrUtf8ErrorV1 $start $end $byte unexpected-end-of-data)
        (let $prefix (str:byte-slice $bytes 0 $start)
          (if (and (not $eof) (mio:line-ready? $prefix)) (mio:line-value $prefix False)
-           (if $eof (ErFailure UnicodeDecodeError "invalid strict UTF-8 state file"
-             (StrUtf8ErrorV1 $start $end $byte unexpected-end-of-data)) ModeNeedChunk))))
+           (if $eof (mio:decode-error $start $end $byte unexpected-end-of-data) ModeNeedChunk))))
       ((StrUtf8ErrorV1 $start $end $byte $reason)
-       (ErFailure UnicodeDecodeError "invalid strict UTF-8 state file" (StrUtf8ErrorV1 $start $end $byte $reason)))
+       (mio:decode-error $start $end $byte $reason))
       ($other (ErFailure NativeEvaluationError "missing UTF-8 validation outcome" $other)))))
 (= (mio:line-chunks $owner $bytes)
    (case (mio:once (collapse (catch (fs:read-chunk $owner 8192))))
