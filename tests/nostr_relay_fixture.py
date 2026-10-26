@@ -44,6 +44,7 @@ class GatedRelay:
         self.allow = set(allow)
         self.auth_window, self.reject_future, self.max_limit = auth_window, reject_future, max_limit
         self.events, self.clients, self.url = {}, [], None
+        self.refused = set()
         self.loop = asyncio.new_event_loop()
         self.thread = threading.Thread(target=self.loop.run_forever, daemon=True)
 
@@ -69,6 +70,22 @@ class GatedRelay:
 
     def stored(self):
         return list(self.events.values())
+
+    def subscribers(self, key):
+        """How many open subscriptions a key holds."""
+        return sum(len(c["subs"]) for c in list(self.clients) if c["key"] == key)
+
+    def shut_out(self, key):
+        """Refuse a key's sign-ins and close its connections."""
+        async def close():
+            self.refused.add(key)
+            for client in list(self.clients):
+                if client["key"] == key:
+                    await client["socket"].close()
+        asyncio.run_coroutine_threadsafe(close(), self.loop).result(10)
+
+    def let_in(self, key):
+        self.loop.call_soon_threadsafe(self.refused.discard, key)
 
     def signed_in(self, client):
         return client["key"] if client["key"] in self.allow else None
@@ -103,7 +120,8 @@ class GatedRelay:
         ok = (nm.verify(event) and event["kind"] == nm.KIND_AUTH
               and client["challenge"] in nm.tag_values(event, "challenge")
               and abs(event["created_at"] - time.time()) <= self.auth_window
-              and self.url in nm.tag_values(event, "relay") and event["pubkey"] in self.allow)
+              and self.url in nm.tag_values(event, "relay") and event["pubkey"] in self.allow
+              and event["pubkey"] not in self.refused)
         if ok:
             client["key"] = event["pubkey"]
         await self._send(client, ["OK", event.get("id", ""), ok, "" if ok else "restricted: sign-in refused"])

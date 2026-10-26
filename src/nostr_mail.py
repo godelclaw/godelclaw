@@ -223,11 +223,15 @@ def load_registry(path):
 
 # ── relay client (NIP-01, NIP-42) ───────────────────────────────────────────
 class Relay:
-    """A connection to a relay, signed in with one key (NIP-42) before any request."""
+    """One connection to a relay, signed in with one key (NIP-42) before any
+    request, and shared by concurrent requests: a reader task routes events and
+    end-of-stored markers to their subscriptions and OK answers to the publishes
+    that wait for them."""
 
     def __init__(self, url, secret_hex, timeout=30):
         self.url, self.secret, self.timeout = url, secret_hex, timeout
-        self.socket = None
+        self.socket = self.reader = None
+        self.subscriptions, self.pending = {}, {}
 
     async def __aenter__(self):
         from websockets.asyncio.client import connect
@@ -237,9 +241,12 @@ class Relay:
         except BaseException:
             await self.socket.close()
             raise
+        self.reader = asyncio.create_task(self._read())
         return self
 
     async def __aexit__(self, *error):
+        if self.reader:
+            self.reader.cancel()
         await self.socket.close()
 
     async def _receive(self):
@@ -248,38 +255,93 @@ class Relay:
             raise ValueError("relay sent a message that is not a JSON array")
         return message
 
-    async def _until(self, wanted):
+    async def _sign_in(self):
         while True:
             message = await self._receive()
-            if wanted(message):
-                return message
-
-    async def _sign_in(self):
-        challenge = (await self._until(lambda m: m[0] == "AUTH" and len(m) == 2))[1]
-        auth = sign(self.secret, KIND_AUTH, [["relay", self.url], ["challenge", challenge]], "")
+            if message[0] == "AUTH" and len(message) == 2:
+                break
+        auth = sign(self.secret, KIND_AUTH, [["relay", self.url], ["challenge", message[1]]], "")
         await self.socket.send(json.dumps(["AUTH", auth]))
-        answer = await self._until(lambda m: m[:2] == ["OK", auth["id"]] and len(m) >= 3)
+        while True:
+            answer = await self._receive()
+            if answer[:2] == ["OK", auth["id"]] and len(answer) >= 3:
+                break
         if answer[2] is not True:
             raise PermissionError("relay refused sign-in: " + str(answer[3] if len(answer) > 3 else ""))
 
+    async def _read(self):
+        error = ConnectionError("relay closed the connection")
+        try:
+            async for raw in self.socket:
+                try:
+                    message = json.loads(raw)
+                except ValueError:
+                    continue
+                if not isinstance(message, list) or len(message) < 2:
+                    continue
+                verb, key = message[0], message[1]
+                if verb == "EVENT" and len(message) == 3 and key in self.subscriptions:
+                    self.subscriptions[key].put_nowait(("event", message[2]))
+                elif verb == "EOSE" and key in self.subscriptions:
+                    self.subscriptions[key].put_nowait(("eose", None))
+                elif verb == "CLOSED" and key in self.subscriptions:
+                    self.subscriptions[key].put_nowait(("closed", str(message[2]) if len(message) > 2 else ""))
+                elif verb == "OK" and len(message) >= 3 and key in self.pending:
+                    future = self.pending.pop(key)
+                    if not future.done():
+                        future.set_result((message[2] is True, str(message[3]) if len(message) > 3 else ""))
+        except asyncio.CancelledError:
+            raise
+        except Exception as failure:  # noqa: BLE001 - the connection is over either way
+            error = ConnectionError(str(failure))
+        for queue in self.subscriptions.values():
+            queue.put_nowait(("lost", str(error)))
+        for future in self.pending.values():
+            if not future.done():
+                future.set_exception(error)
+        self.pending.clear()
+
+    async def subscribe(self, filters):
+        """("event", e) for the stored events matching any filter, then ("eose",
+        None), then ("event", e) for live ones. A refusal raises PermissionError and
+        a lost connection ConnectionError. Use with contextlib.aclosing."""
+        sub = secrets.token_hex(8)
+        queue = asyncio.Queue()
+        self.subscriptions[sub] = queue
+        try:
+            await self.socket.send(json.dumps(["REQ", sub, *filters]))
+            while True:
+                kind, value = await queue.get()
+                if kind == "closed":
+                    raise PermissionError("relay closed the subscription: " + value)
+                if kind == "lost":
+                    raise ConnectionError(value)
+                yield kind, value
+        finally:
+            self.subscriptions.pop(sub, None)
+            if self.reader and not self.reader.done():
+                try:
+                    await self.socket.send(json.dumps(["CLOSE", sub]))
+                except Exception:  # noqa: BLE001 - closing a dead connection's subscription
+                    pass
+
     async def query(self, filters):
         """Stored events matching any filter, up to the relay's end-of-stored marker."""
-        sub = secrets.token_hex(8)
-        await self.socket.send(json.dumps(["REQ", sub, *filters]))
+        import contextlib
         events = []
-        while True:
-            message = await self._until(lambda m: len(m) >= 2 and m[1] == sub)
-            if message[0] == "EVENT" and len(message) == 3:
-                events.append(message[2])
-            elif message[0] == "EOSE":
-                break
-            elif message[0] == "CLOSED":
-                raise PermissionError("relay closed the query: " + str(message[2] if len(message) > 2 else ""))
-        await self.socket.send(json.dumps(["CLOSE", sub]))
+        async with contextlib.aclosing(self.subscribe(filters)) as stream:
+            async for kind, value in stream:
+                if kind == "eose":
+                    break
+                events.append(value)
         return events
 
     async def publish(self, event):
         """(accepted, reason) as the relay answered."""
-        await self.socket.send(json.dumps(["EVENT", event]))
-        answer = await self._until(lambda m: m[:2] == ["OK", event["id"]] and len(m) >= 3)
-        return answer[2] is True, str(answer[3]) if len(answer) > 3 else ""
+        future = asyncio.get_running_loop().create_future()
+        self.pending[event["id"]] = future
+        try:
+            await self.socket.send(json.dumps(["EVENT", event]))
+            return await asyncio.wait_for(asyncio.shield(future), self.timeout)
+        finally:
+            self.pending.pop(event["id"], None)

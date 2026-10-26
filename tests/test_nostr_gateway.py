@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,41 +27,58 @@ if HAVE_CRYPTO:
 # one; `ack` settles only a ready delivery. As the service does, it records the
 # sender as `account/agent`.
 MAILER = r'''
-import json, os, sys
+import fcntl, json, os, sys, time
 args = sys.argv[1:]
 while args and args[0] in ("--json", "--space"):
     args = args[2:] if args[0] == "--space" else args[1:]
 path = os.environ["FAKE_MAIL_LEDGER"]
-ledger = json.load(open(path)) if os.path.exists(path) else []
 command, fields = args[0], args[1:]
+def locked(update):
+    with open(path + ".lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        ledger = json.load(open(path)) if os.path.exists(path) else []
+        value = update(ledger)
+        json.dump(ledger, open(path, "w"))
+        return value
 def reply(value):
-    json.dump(ledger, open(path, "w"))
     print(json.dumps(value))
     sys.exit(0)
 if command == "send":
     ident = fields[fields.index("--id") + 1]
     agent, to, text = [f for i, f in enumerate(fields) if f != "--id" and (i == 0 or fields[i - 1] != "--id")]
-    old = [d for d in ledger if d["id"] == ident]
-    if not old:
-        sender = os.environ["FAKE_MAIL_ACCOUNT"] + "/" + agent
-        ledger.append({"id": ident, "to": to, "from": sender, "text": text, "stage": "pending"})
-        reply({"status": "accepted", "id": ident})
-    same = (old[0]["to"], old[0]["from"], old[0]["text"]) == (to, os.environ["FAKE_MAIL_ACCOUNT"] + "/" + agent, text)
-    reply({"status": "duplicate" if same else "conflict", "id": ident})
-if command == "next":
-    mine = [d for d in ledger if d["to"] == fields[0]]
-    for stage in ("ready", "pending"):
-        for d in mine:
-            if d["stage"] == stage:
-                d["stage"] = "ready"
-                reply({"status": "delivery", "id": d["id"], "from": d["from"], "text": d["text"]})
-    reply({"status": "idle"})
+    if to in os.environ.get("FAKE_MAIL_SLOW", "").split(","):
+        time.sleep(2)
+    sender = os.environ["FAKE_MAIL_ACCOUNT"] + "/" + agent
+    def send(ledger):
+        old = [d for d in ledger if d["id"] == ident]
+        if not old:
+            ledger.append({"id": ident, "to": to, "from": sender, "text": text, "stage": "pending", "at": time.time()})
+            return {"status": "accepted", "id": ident}
+        same = (old[0]["to"], old[0]["from"], old[0]["text"]) == (to, sender, text)
+        return {"status": "duplicate" if same else "conflict", "id": ident}
+    reply(locked(send))
+if command in ("next", "wait"):
+    def take(ledger):
+        mine = [d for d in ledger if d["to"] == fields[0]]
+        for stage in ("ready", "pending"):
+            for d in mine:
+                if d["stage"] == stage:
+                    d["stage"] = "ready"
+                    return {"status": "delivery", "id": d["id"], "from": d["from"], "text": d["text"]}
+        return {"status": "idle"}
+    while True:
+        result = locked(take)
+        if result["status"] == "delivery" or command == "next":
+            reply(result)
+        time.sleep(0.05)
 if command == "ack":
-    for d in ledger:
-        if d["id"] == fields[1] and d["to"] == fields[0] and d["stage"] == "ready":
-            d["stage"] = "settled"
-            reply({"status": "settled", "id": d["id"]})
-    reply({"status": "duplicate", "id": fields[1]})
+    def ack(ledger):
+        for d in ledger:
+            if d["id"] == fields[1] and d["to"] == fields[0] and d["stage"] == "ready":
+                d["stage"] = "settled"
+                return {"status": "settled", "id": d["id"]}
+        return {"status": "duplicate", "id": fields[1]}
+    reply(locked(ack))
 '''
 
 
@@ -152,9 +171,12 @@ class GatewayTests(unittest.TestCase):
         self.assertIn("Subject: Hi From: godel <x@nostr>", head)
 
     def outbox(self, sender, text, ident="d1"):
-        ledger = self.deliveries()
-        ledger.append({"id": ident, "to": "nostr", "from": sender, "text": text, "stage": "pending"})
-        self.ledger.write_text(json.dumps(ledger))
+        import fcntl
+        with open(str(self.ledger) + ".lock", "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            ledger = self.deliveries()
+            ledger.append({"id": ident, "to": "nostr", "from": sender, "text": text, "stage": "pending"})
+            self.ledger.write_text(json.dumps(ledger))
 
     def test_outbound_mail_is_signed_by_the_senders_key_and_reported(self):
         self.outbox("acct/godel", "To: alice\nSubject: Report\nType: checkpoint\n\nAll done.")
@@ -217,6 +239,124 @@ class GatewayTests(unittest.TestCase):
         (self.directory / "keys.json").chmod(0o640)
         with self.assertRaises(PermissionError):
             gw.Gateway(self.directory / "gateway.toml")
+
+
+@unittest.skipUnless(HAVE_CRYPTO, "needs coincurve, cryptography and websockets")
+class ServingTests(GatewayTests):
+    """The long-running service: live subscriptions, concurrency, receipts, resumption."""
+
+    def setUp(self):
+        super().setUp()
+        self.lila = secret("lila")
+        self.pub["lila"] = nm.public_key(self.lila)
+        self.relay.allow.add(self.pub["lila"])
+        (self.directory / "registry.json").write_text(json.dumps(
+            {name: {"pubkey_hex": self.pub[name]} for name in ("alice", "godel", "lila")}))
+        keys = self.directory / "keys.json"
+        keys.write_text(json.dumps({name: {"seckey_hex": secret(name), "pubkey_hex": self.pub[name]}
+                                    for name in ("godel", "lila")}))
+        keys.chmod(0o600)
+        config = (self.directory / "gateway.toml").read_text().replace(
+            '[inbound]\ngodel = "godel"\n', '[inbound]\ngodel = "godel"\nlila = "lila"\n')
+        (self.directory / "gateway.toml").write_text(config)
+        self.gateway = gw.Gateway(self.directory / "gateway.toml")
+        self.stopper = None
+        self.addCleanup(self.stop)
+
+    def serve(self):
+        loop = asyncio.new_event_loop()
+        started = threading.Event()
+        holder = {}
+
+        def runner():
+            asyncio.set_event_loop(loop)
+            holder["task"] = loop.create_task(self.gateway.serve())
+            started.set()
+            try:
+                loop.run_until_complete(holder["task"])
+            except asyncio.CancelledError:
+                pass
+            finally:
+                loop.close()
+        thread = threading.Thread(target=runner, daemon=True)
+        thread.start()
+        started.wait(5)
+
+        def stop():
+            loop.call_soon_threadsafe(holder["task"].cancel)
+            thread.join(15)
+        self.stopper = stop
+        self.eventually(lambda: self.relay.subscribers(self.pub["godel"]) and self.relay.subscribers(self.pub["lila"]))
+
+    def stop(self):
+        if self.stopper:
+            stopper, self.stopper = self.stopper, None
+            stopper()
+
+    def eventually(self, condition, timeout=15):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            value = condition()
+            if value:
+                return value
+            time.sleep(0.05)
+        self.fail("condition not met within %ss" % timeout)
+
+    def test_live_mail_arrives_and_receipts_reach_the_sender(self):
+        self.serve()
+        mail = nm.seal(self.alice, self.pub["godel"], "Live", "arrives without polling")
+        self.publish(self.alice, mail)
+        delivery = self.eventually(lambda: [d for d in self.deliveries("godel") if d["id"] == mail["id"]])[0]
+        self.assertEqual(delivery["from"], "acct/nostr.alice")
+        # godel answers through the outbox; alice's receipt is believed, eve's forgery is not
+        self.outbox("acct/godel", "To: alice\nSubject: Re: Live\nIn-Reply-To: %s\n\nthanks" % mail["id"])
+        sent = self.eventually(lambda: self.as_member(self.alice, lambda r: r.query(
+            [{"kinds": [nm.KIND_MAIL], "authors": [self.pub["godel"]]}])))
+        reply = sent[0]
+        self.assertEqual(nm.tag_values(reply, "e"), [mail["id"]])
+        self.publish(self.eve, nm.sign(self.eve, nm.KIND_RECEIPT, [["e", reply["id"]], ["p", self.pub["godel"]],
+                                                                  ["k", "3838"], ["ack", "read"]], "+"))
+        self.publish(self.alice, nm.receipt(self.alice, reply, "delivered"))
+        told = self.eventually(lambda: [d for d in self.deliveries("godel") if d["text"].startswith("Delivered by")])
+        self.assertEqual(told[0]["text"], "Delivered by alice: Re: Live (event %s)" % reply["id"])
+        time.sleep(0.5)
+        self.assertEqual([d for d in self.deliveries("godel") if d["text"].startswith("Read by")], [])
+
+    def test_a_key_shut_out_catches_up_without_loss_or_duplicates(self):
+        self.serve()
+        self.relay.shut_out(self.pub["godel"])
+        mails = [nm.seal(self.alice, self.pub["godel"], "While away %d" % i, "x") for i in range(3)]
+        for mail in mails:
+            self.publish(self.alice, mail)
+        time.sleep(1.5)
+        self.assertEqual(self.deliveries("godel"), [])
+        self.relay.let_in(self.pub["godel"])
+        self.eventually(lambda: len(self.deliveries("godel")) == 3)
+        time.sleep(1.0)
+        self.assertEqual(sorted(d["id"] for d in self.deliveries("godel")), sorted(m["id"] for m in mails))
+
+    def test_a_slow_channel_never_delays_another(self):
+        os.environ["FAKE_MAIL_SLOW"] = "godel"
+        self.addCleanup(os.environ.pop, "FAKE_MAIL_SLOW", None)
+        self.serve()
+        self.publish(self.alice, nm.seal(self.alice, self.pub["godel"], "slow", "x"))
+        self.publish(self.alice, nm.seal(self.alice, self.pub["lila"], "fast", "y"))
+        lila = self.eventually(lambda: self.deliveries("lila"))[0]
+        godel = self.eventually(lambda: self.deliveries("godel"))[0]
+        self.assertLess(lila["at"], godel["at"])
+
+    def test_stopping_keeps_the_read_positions(self):
+        self.serve()
+        mail = nm.seal(self.alice, self.pub["lila"], "Before the stop", "x")
+        self.publish(self.alice, mail)
+        self.eventually(lambda: self.deliveries("lila"))
+        self.stop()
+        saved = json.loads((self.directory / "state.json").read_text())
+        self.assertGreaterEqual(saved["since"]["lila"], mail["created_at"])
+        self.gateway = gw.Gateway(self.directory / "gateway.toml")
+        self.serve()
+        time.sleep(1.0)
+        self.assertEqual(len(self.deliveries("lila")), 1)
 
 
 if __name__ == "__main__":
