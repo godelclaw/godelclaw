@@ -162,15 +162,22 @@ def check(c):
     deep_prefix = next(data for name, data in fixtures[2]['after'].items()
                        if name.startswith('state.tmp.'))
     deep_expected = fixtures[2]['result'] + [bytes.fromhex(deep_prefix).decode()]
-    deep_matches = actual[2] == deep_expected
+    # Reviewer mail236a8fc19ca9429bb51c659c2573b4bc adjudicates stack-dependent
+    # CPython resource failures outside exact parity. Do not emulate a depth or
+    # restrict deep input: native explicit-stack emission succeeds in full.
+    deep_native_expected = ['emitted', specs[2][1]]
+    deep_matches = actual[2] == deep_native_expected
     c.save('deep-state-comparison.json', {'expected': deep_expected, 'actual': actual[2],
-        'exact_match': deep_matches,
-        'limit': 'Python recursion boundary is call-stack-sensitive; these are captured effects, not a fixed depth rule'})
-    c.save('checkpoint.json', {'status': ('EMISSION_GATE_PASSED' if deep_matches else
-        'CAPABILITY_CHECKPOINT_RECURSION'), 'runtime_activated': False,
-        'integer_observations_matched': integer_count, 'deep_state_exact_match': deep_matches,
-        'required': ['json.dump RecursionError and exact incremental/error-prefix outcomes',
-                     'preserve no-fsync/no-rename, partial temporary and empty opened note effects'],
+        'native_expected': deep_native_expected, 'native_exact_match': deep_matches,
+        'native_utf8_bytes': len(actual[2][1].encode()) if actual[2][0] == 'emitted' else None,
+        'python_equality': actual[2] == deep_expected,
+        'adjudication': 'mail236a8fc19ca9429bb51c659c2573b4bc: deliberate resource-limit divergence',
+        'limit': 'Python recursion boundary is call-stack-sensitive; captured diagnostics, not a fixed depth rule'})
+    assert deep_matches and actual[2][1].encode() == specs[2][1].encode(), actual[2][0]
+    c.save('checkpoint.json', {'status': 'EMISSION_GATE_PASSED_WITH_ADJUDICATED_RECURSION_DIVERGENCE',
+        'runtime_activated': False, 'integer_observations_matched': integer_count,
+        'deep_native_exact_match': deep_matches, 'deep_python_equality': False,
+        'required': [],
         'not_claimed': ['writer/caller parity', 'full transaction durability', 'performance', 'Lean replay']})
 
 
@@ -185,6 +192,8 @@ def main():
     with tempfile.TemporaryDirectory(prefix='effect05-emission-checkpoint-') as temp:
         c = Qualification(args.evidence.resolve(), Path(temp))
         with c.phase('python-emission-checkpoint'):
+            c.snapshot_sources('src/effect_receipt_values_cetta.metta',
+                'src/public_worklog.py', 'tests/effect_receipts_support.py')
             check(c)
     print('Emission diagnostics complete: inspect checkpoint.json; no writer or caller activation')
 

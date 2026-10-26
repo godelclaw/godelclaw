@@ -1,5 +1,6 @@
 """Isolated, manifest-checked project05 qualification; optional pins come from env."""
 import base64
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -20,6 +21,18 @@ def q(text):
 
 
 class Qualification(Checkpoint):
+    def snapshot_sources(self, *names):
+        hashes = {}
+        for name in names:
+            path = ROOT / name
+            assert path.resolve().is_relative_to(ROOT) and path.is_file(), name
+            raw = path.read_bytes()
+            target = self.evidence / 'local-source' / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(raw)
+            hashes[name] = hashlib.sha256(raw).hexdigest()
+        self.save('local-source-hashes.json', hashes)
+
     def environment(self):
         env = super().environment()
         env.pop("METTACLAW_PUBLIC_WORK_LIB", None)
