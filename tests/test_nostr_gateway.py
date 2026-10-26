@@ -427,6 +427,9 @@ class TwoRelayTests(unittest.TestCase):
         self.outbox("acct/godel", "To: alice\nSubject: Around the gap\n\nx")
         self.gateway().tick()
         self.assertIn(mail["id"], [d["id"] for d in self.deliveries("godel")])
+        # Its receipt was for relay one, out of reach, so relay two took it.
+        [receipt] = self.query(1, "alice", [{"kinds": [7]}])
+        self.assertEqual(nm.receipt_fact(receipt), (mail["id"], "delivered"))
         [event] = self.query(1, "alice", [{"kinds": [nm.KIND_MAIL], "authors": [self.pub["godel"]]}])
         self.assertEqual(self.told(), ["Sent to alice: Around the gap (event %s)" % event["id"]])
 

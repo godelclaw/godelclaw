@@ -471,12 +471,191 @@ class ServingTests(unittest.TestCase):
         mail = nm.seal(s.secret["alice"], s.pub["lila"], "Before the stop", "x")
         s.publish("alice", mail)
         s.eventually(lambda: s.bus("lila"))
+        # The position moves once the relay has answered the delivered receipt.
+        position = lambda: (json.loads((s.directory / "state.json").read_text()) if (s.directory / "state.json").exists()
+                            else {}).get("since", {}).get("lila", 0)
+        s.eventually(lambda: position() >= mail["created_at"])
         stop()
         self.assertGreaterEqual(s.state()["since"]["lila"], mail["created_at"])
         process, stop = s.serve()
         s.eventually(lambda: self.subscribed("godel", "lila"))
         time.sleep(1.0)
         self.assertEqual(len(s.bus("lila")), 1)
+
+
+def two_relays(s, reads):
+    """A second relay for a Setup: [[relays]] one and two, in that order, and
+    the registry's `relays` lists from `reads`."""
+    s.relays, s.stopped = [s.relay, chosen(s.pub.values()).__enter__()], set()
+    s.test.addCleanup(lambda: [stop_relay(s, i) for i in (1,)])
+    s.urls = [relay.url for relay in s.relays]
+    registered = [name for name in s.pub if name != "eve"]
+    (s.directory / "registry.json").write_text(json.dumps(
+        {n: dict({"pubkey_hex": s.pub[n]}, **({"relays": reads[n]} if reads.get(n) else {})) for n in registered}))
+    text = s.config.read_text().replace('relay = "%s"\n' % s.urls[0], "")
+    s.config.write_text(text + '[[relays]]\nname = "one"\nurl = "%s"\n[[relays]]\nname = "two"\nurl = "%s"\n' % tuple(s.urls))
+
+
+def stop_relay(s, index):
+    if index not in s.stopped:
+        s.stopped.add(index)
+        s.relays[index].__exit__(None, None, None)
+
+
+@unittest.skipUnless(HAVE_CRYPTO and BINARY.is_file() and SERVICE.is_file(),
+                     "needs coincurve, cryptography, websockets, CETTA_BIN and its space service")
+class NativeTwoRelayTests(unittest.TestCase):
+    """The native gateway with [[relays]], as test_nostr_gateway's TwoRelayTests
+    drive the Python one, and both gateways on the same two relays."""
+    dialect = "petta"
+    names = ("alice", "carol", "dora", "godel", "eve")
+    reads = {"carol": ["two"], "dora": ["elsewhere"]}
+
+    def setUp(self):
+        self.s = Setup(self, names=self.names)
+        two_relays(self.s, self.reads)
+
+    def on(self, index, name, action):
+        async def run():
+            async with nm.Relay(self.s.urls[index], self.s.secret[name]) as relay:
+                return await action(relay)
+        return asyncio.run(run())
+
+    def publish(self, index, name, event):
+        accepted, reason = self.on(index, name, lambda relay: relay.publish(event))
+        self.assertTrue(accepted, reason)
+
+    def query(self, index, name, filters):
+        return self.on(index, name, lambda relay: relay.query(filters))
+
+    def told(self):
+        return [d["text"] for d in self.s.bus("godel") if d["id"].startswith("nostr-outcome-")]
+
+    def test_mail_on_either_relay_arrives_once_with_a_position_per_relay(self):
+        s = self.s
+        first = nm.seal(s.secret["alice"], s.pub["godel"], "Via one", "x")
+        second = nm.seal(s.secret["alice"], s.pub["godel"], "Via two", "y")
+        self.publish(0, "alice", first)
+        self.publish(1, "alice", second)
+        s.native()
+        s.native()
+        self.assertEqual(sorted(d["id"] for d in s.bus("godel")), sorted([first["id"], second["id"]]))
+        self.assertEqual(s.state()["since"], {"godel": {s.urls[0]: first["created_at"], s.urls[1]: second["created_at"]}})
+        receipts = lambda index: sorted(nm.receipt_fact(r)[0] for r in self.query(index, "alice", [{"kinds": [7]}]))
+        self.assertEqual(receipts(0), sorted([first["id"], second["id"]]))
+        self.assertEqual(receipts(1), [])
+
+    def test_a_receipt_goes_to_a_relay_its_author_reads(self):
+        s = self.s
+        two_relays_reads = dict(self.reads, alice=["two"])
+        (s.directory / "registry.json").write_text(json.dumps(
+            {n: dict({"pubkey_hex": s.pub[n]}, **({"relays": two_relays_reads[n]} if two_relays_reads.get(n) else {}))
+             for n in s.pub if n != "eve"}))
+        mail = nm.seal(s.secret["alice"], s.pub["godel"], "Read on one", "x")
+        self.publish(0, "alice", mail)
+        s.native()
+        self.assertEqual([d["id"] for d in s.bus("godel")], [mail["id"]])
+        self.assertEqual(self.query(0, "alice", [{"kinds": [7]}]), [])
+        [receipt] = self.query(1, "alice", [{"kinds": [7]}])
+        self.assertEqual(nm.receipt_fact(receipt), (mail["id"], "delivered"))
+        self.assertEqual(list(s.state()["receipted"]), [mail["id"]])
+
+    def test_mail_goes_to_the_first_relay_its_recipient_reads(self):
+        s = self.s
+        s.outbox("godel", "To: alice\nSubject: To all\n\nx", "a1")
+        s.outbox("godel", "To: carol\nSubject: To two\n\ny", "c1")
+        s.native()
+        mine = lambda index, name: [e["id"] for e in self.query(index, name, [{"kinds": [nm.KIND_MAIL]}])]
+        self.assertEqual((len(mine(0, "alice")), mine(1, "alice")), (1, []))
+        self.assertEqual((mine(0, "carol"), len(mine(1, "carol"))), ([], 1))
+        self.assertEqual(sorted(t.split(":")[0] for t in self.told()), ["Sent to alice", "Sent to carol"])
+
+    def test_a_relay_that_refuses_the_key_hands_the_mail_to_the_next(self):
+        s = self.s
+        s.relays[0].shut_out(s.pub["godel"])
+        s.outbox("godel", "To: alice\nSubject: Fallback\n\nx", "f1")
+        s.native()
+        [event] = self.query(1, "alice", [{"kinds": [nm.KIND_MAIL]}])
+        self.assertEqual(self.told(), ["Sent to alice: Fallback (event %s)" % event["id"]])
+
+    def test_no_relay_in_common_is_reported_and_settled(self):
+        s = self.s
+        s.outbox("godel", "To: dora\nSubject: Nowhere\n\nx", "n1")
+        s.native()
+        self.assertEqual(self.told(), ["Not sent to dora: none of our relays is one dora reads"])
+        self.assertEqual(s.state()["outbound"], {})
+
+    def test_a_relay_down_does_not_stop_the_other(self):
+        s = self.s
+        mail = nm.seal(s.secret["alice"], s.pub["godel"], "Via two", "y")
+        self.publish(1, "alice", mail)
+        stop_relay(s, 0)
+        s.outbox("godel", "To: alice\nSubject: Around the gap\n\nx", "g1")
+        s.native()
+        self.assertIn(mail["id"], [d["id"] for d in s.bus("godel")])
+        # Its receipt was for relay one, out of reach, so relay two took it.
+        [receipt] = self.query(1, "alice", [{"kinds": [7]}])
+        self.assertEqual(nm.receipt_fact(receipt), (mail["id"], "delivered"))
+        [event] = self.query(1, "alice", [{"kinds": [nm.KIND_MAIL], "authors": [s.pub["godel"]]}])
+        self.assertEqual(self.told(), ["Sent to alice: Around the gap (event %s)" % event["id"]])
+
+    def test_with_every_relay_down_the_request_waits(self):
+        s = self.s
+        for index in (0, 1):
+            stop_relay(s, index)
+        s.outbox("godel", "To: alice\nSubject: Later\n\nx", "w1")
+        s.native()
+        self.assertEqual(self.told(), [])
+        self.assertEqual(list(s.state()["outbound"]), ["w1"])
+
+    def test_a_late_letter_on_another_relay_is_not_skipped(self):
+        s = self.s
+        now = int(time.time())
+        self.publish(0, "alice", nm.seal(s.secret["alice"], s.pub["godel"], "Recent", "x", created_at=now))
+        s.native()
+        late = nm.seal(s.secret["alice"], s.pub["godel"], "Late", "y", created_at=now - 3600)
+        self.publish(1, "alice", late)
+        s.native()
+        self.assertIn(late["id"], [d["id"] for d in s.bus("godel")])
+
+    def test_live_mail_arrives_from_either_relay(self):
+        s = self.s
+        process, stop = s.serve()
+        s.eventually(lambda: all(relay.subscribers(s.pub["godel"]) for relay in s.relays))
+        mails = [nm.seal(s.secret["alice"], s.pub["godel"], "Live %d" % i, "z") for i in range(2)]
+        self.publish(1, "alice", mails[1])
+        self.publish(0, "alice", mails[0])
+        s.eventually(lambda: sorted(d["id"] for d in s.bus("godel")) == sorted(m["id"] for m in mails))
+        stop()
+
+    def test_both_gateways_agree_on_two_relays(self):
+        native, python = self.s, Setup(self, names=self.names)
+        two_relays(python, self.reads)
+        now = int(time.time())
+        events = [(0, nm.seal(native.secret["alice"], native.pub["godel"], "One", "x", created_at=now - 20)),
+                  (1, nm.seal(native.secret["alice"], native.pub["godel"], "Two", "y", created_at=now - 10)),
+                  (1, nm.seal(native.secret["carol"], native.pub["godel"], "Carol", "z", created_at=now - 5))]
+        requests = [("To: alice\nSubject: A\n\na", "r1"), ("To: carol\nSubject: C\n\nc", "r2"),
+                    ("To: dora\nSubject: D\n\nd", "r3")]
+        for setup, run in ((native, native.native), (python, python.python)):
+            for index, event in events:
+                accepted, reason = asyncio.run(self._publish(setup, index, event))
+                self.assertTrue(accepted, reason)
+            for text, ident in requests:
+                setup.outbox("godel", text, ident)
+            run()
+        strip = lambda setup: sorted((d["id"], d["from"], d["text"].split(" (event ")[0]) for d in setup.bus("godel"))
+        self.assertEqual(strip(native), strip(python))
+        a, b = native.state(), python.state()
+        for field in ("since", "recent", "receipted", "outbound"):
+            self.assertEqual(json.loads(json.dumps(a[field]).replace(native.urls[0], "ONE").replace(native.urls[1], "TWO")),
+                             json.loads(json.dumps(b[field]).replace(python.urls[0], "ONE").replace(python.urls[1], "TWO")),
+                             field)
+
+    async def _publish(self, setup, index, event):
+        name = next(n for n, k in setup.pub.items() if k == event["pubkey"])
+        async with nm.Relay(setup.urls[index], setup.secret[name]) as relay:
+            return await relay.publish(event)
 
 
 if __name__ == "__main__":

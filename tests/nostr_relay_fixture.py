@@ -54,6 +54,8 @@ class GatedRelay:
         return self
 
     def __exit__(self, *error):
+        if self.loop.is_closed():  # stopped already: a test may stop it before its cleanup does
+            return
         asyncio.run_coroutine_threadsafe(self._stop(), self.loop).result(10)
         self.loop.call_soon_threadsafe(self.loop.stop)
         self.thread.join(10)

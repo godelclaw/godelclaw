@@ -242,6 +242,27 @@
              (nostr:registry-entries (cdr-atom $pairs) $seen))))
         ($other (nostr:registry-entries (cdr-atom $pairs) $seen))))))
 
+; The relays each member reads, by name, from the registry's `relays` lists:
+; (nostr:reads NAME RELAYS) for every entry in order, RELAYS () when it lists
+; none (a member that reads every relay). Later entries for a name replace
+; earlier ones, as json.loads keeps the last.
+(= (nostr:registry-relays $path)
+   (case (json:parse (fs:read-text $path))
+     (((JsonObject $pairs) (nostr:reads-entries $pairs))
+      ($other ()))))
+(= (nostr:reads-entries $pairs)
+   (if (== $pairs ()) ()
+     (case (car-atom $pairs)
+       (((JsonPair $name $entry)
+         (let $relays (case $entry
+                        (((JsonObject $fields)
+                          (case (nostr:field $entry "relays")
+                            (((JsonArray $items) (if (nostr:all-text $items) $items ()))
+                             ($other ()))))
+                         ($other ())))
+           (cons-atom (nostr:reads $name $relays) (nostr:reads-entries (cdr-atom $pairs)))))
+        ($other (nostr:reads-entries (cdr-atom $pairs)))))))
+
 ; ── relay client (NIP-01, NIP-42) over the io runtime's WebSockets ─────────
 ; One connection, signed in with one key before any request, used by one
 ; request at a time: (nostr:relay CONN URL SECRET).  Failures are
