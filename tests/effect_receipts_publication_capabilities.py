@@ -1,4 +1,4 @@
-"""Probe publication guard capabilities; no runtime writer/caller activation."""
+"""Historical thread witness, outside the adjudicated serial runtime domain."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -38,8 +38,8 @@ def check(c):
         'limit': 'proposed public operations are probes, not definitions or an exhaustive naming proof'})
     assert '(MutexValue 7)' in raw and '(MutexAfter 9)' in raw, raw
     assert '(MutexFailure ((Error fixture failure)))' in raw, raw
-    for label, expression in proposed.items():
-        assert '(Probe%s %s)' % (label, expression.replace('False', 'false')) in raw, raw
+    # Proposed thread APIs remain historical diagnostics, not a requirement of
+    # the reviewer-adjudicated one-serial-evaluator runtime domain.
 
     entered, release = threading.Event(), threading.Event()
     calls, nested, thread_ids = [], [], []
@@ -87,15 +87,19 @@ def check(c):
                         'first': 1, 'same_thread_recursive': [0]}, outcomes
     assert len(set(thread_ids)) == 2 and len(oracle._published) == 2
     assert not oracle._in_flight
-    c.save('checkpoint.json', {'status': 'CAPABILITY_CHECKPOINT_PUBLICATION_THREAD_CONTEXT',
+    c.save('checkpoint.json', {'status': 'SERIAL_RUNTIME_DOMAIN_DIAGNOSTIC',
         'runtime_activated': False, 'mutex_values_observed': True,
-        'missing_public_contract': 'native current thread/context identity or thread-local guard storage',
-        'required': ['same-thread reentry drops before admission',
-                     'distinct-thread distinct-id publication proceeds while another sink is in flight',
-                     'process-shared capture/published/in-flight admission under mutex',
+        'ruling': 'mail2b51e0f80b544595b546a6effb97187b',
+        'domain': 'one serial evaluator per process reaches runtime receipt publication',
+        'missing_public_contract': None,
+        'native_requirements': ['same-evaluation reentry drops before admission',
+                     'sequential distinct receipts publish and repeated receipts dedupe',
+                     'one evaluator-local capture/published/in-flight owner',
                      'cleanup/reset on returned errors and exceptional exits'],
-        'not_implemented': ['process-global reporting flag', 'Python thread/guard implementation fallback'],
-        'limit': 'frozen-library inventory plus concrete unreduced probes; parent/reviewer should identify a supported contract if one exists'})
+        'outside_runtime_domain': ['arbitrary distinct-thread Python publication calls',
+                                  'thread-local state equivalence'],
+        'not_used': ['Python thread/guard implementation fallback'],
+        'limit': 'inventory/unreduced probes and retained multithreaded Python diagnostic; not native concurrency parity'})
 
 
 def main():
@@ -111,7 +115,7 @@ def main():
         with c.phase('publication-context-capabilities'):
             c.snapshot_sources('src/effect_receipts.py', 'tests/effect_receipts_support.py')
             check(c)
-    print('CAPABILITY_CHECKPOINT_PUBLICATION_THREAD_CONTEXT: inspect inventory/probes; no activation')
+    print('SERIAL_RUNTIME_DOMAIN_DIAGNOSTIC: multithreaded Python witness is outside runtime domain')
 
 
 if __name__ == '__main__':

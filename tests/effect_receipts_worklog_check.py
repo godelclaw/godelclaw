@@ -71,7 +71,8 @@ def check(c):
     operations = [('status', '', None), ('add', 'off', None), ('on', '', None),
         ('add', 'A\0🙂\n\t\ue000\u0378e\u0301', 1), ('read', '', None),
         ('add', 'old epoch', 0), ('off', '', None), ('on', '', None),
-        ('add', '🙂' * 1201, 3), ('read', '', None), ('bad', '', None)]
+        ('add', '🙂' * 1201, 3), ('read', '', None),
+        ('add', 'paragraph\u2028separator\u2029fixture',3), ('read','',None), ('bad', '', None)]
     comparisons = []
     for index, (action, note, epoch) in enumerate(operations):
         source = IMPORTS + '!(import! &self ./src/public_worklog_cetta.metta)\n' + WIRE
@@ -83,7 +84,7 @@ def check(c):
         actual = rows(raw)
         instant = None
         if action == 'add' and (native_root / 'notes.jsonl').exists():
-            entries = (native_root / 'notes.jsonl').read_text().splitlines()
+            entries = [line for line in (native_root / 'notes.jsonl').read_text().split('\n') if line]
             if entries:
                 instant = json.loads(entries[-1])['time']
         expected = oracle(c, oracle_root, action, note, epoch, instant)
@@ -103,6 +104,8 @@ def check(c):
         b'{"enabled":false,"extra":NaN}', b'[]', b'null', b'1', b'"x"',
         b'{"epoch":"x"}', b'{"epoch":[]}', b'{"epoch":null}',
         b'{"enabled":true,"seq":"x"}', b'{"enabled":true,"seq":{}}',
+        b'{"enabled":-0.0,"seq":0}', b'{"enabled":true,"seq":1.0,"epoch":7.0}',
+        b'{"enabled":true,"seq":false,"epoch":true}',
         ('{"enabled":false,"epoch":' + big + '}').encode(),
         ('{"enabled":true,"seq":' + big + '}').encode()]
     faults = []
@@ -118,7 +121,10 @@ def check(c):
         native_files = snapshot(nr)
         c.save('state-boundary-%02d-native-files.json' % index, native_files)
         actual = rows(raw)
-        expected = oracle(c, pr, action, 'fixture', None)
+        instant = None
+        if (nr/'notes.jsonl').exists() and (nr/'notes.jsonl').read_bytes():
+            instant = json.loads((nr/'notes.jsonl').read_text().splitlines()[-1])['time']
+        expected = oracle(c, pr, action, 'fixture', None, instant)
         expected_files = snapshot(pr)
         faults.append({'input_hex': state.hex(), 'actual': actual, 'expected': expected,
                        'native_files': native_files, 'oracle_files': expected_files})

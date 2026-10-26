@@ -10,7 +10,8 @@
 !(import! &self ./src/effect_receipt_io_cetta.metta)
 
 (= (pw:defaults) (JsonObject ((JsonPair "enabled" False) (JsonPair "seq" 0) (JsonPair "epoch" 0))))
-(= (pw:clean $value) (erv:clean (erv:str $value)))
+(= (pw:clean $value)
+   (let $text (erv:str $value) (if (erv:failed? $text) $text (erv:clean $text))))
 (= (pw:parsed $value)
    (case $value
      (((JsonPythonErrorV1 JSONDecodeError $message $msg $pos $line $column)
@@ -113,7 +114,7 @@
 (= (pw:reject $reason)
    (JsonObject ((JsonPair "accepted" False) (JsonPair "reason" $reason))))
 (= (pw:add $root $state $text $expected)
-   (if (and (not (== $expected JsonNull)) (not (== (erv:get $state "epoch" 0) $expected)))
+   (if (and (not (== $expected JsonNull)) (not (erv:equal (erv:get $state "epoch" 0) $expected)))
      (pw:reject "sharing epoch changed")
      (if (not (erv:truth (erv:get $state "enabled" False)))
        (pw:reject "display off; note not retained")
@@ -138,9 +139,11 @@
               ($failure $failure))))))))
 (= (pw:read $root $state)
    (let $log (erio:join $root "notes.jsonl")
-     (let $entries (if (and (erv:truth (erv:get $state "enabled" False)) (fs:exists $log))
-       (let $raw (pw:read-text $log)
-         (if (erv:failed? $raw) $raw (pw:parse-lines (erio:lines $raw)))) (JsonArray ()))
+     (let $entries (if (erv:truth (erv:get $state "enabled" False))
+       (let $exists (erio:exists $log)
+         (if (erv:failed? $exists) $exists
+           (if $exists (let $raw (pw:read-text $log)
+             (if (erv:failed? $raw) $raw (pw:parse-lines (erio:lines $raw)))) (JsonArray ())))) (JsonArray ()))
        (if (erv:failed? $entries) $entries (PublicWorkRead $state $entries)))))
 (= (pw:body $root $action $text $expected)
    (let $state (pw:state $root)
@@ -156,6 +159,10 @@
                   (pw:save $root $next $next))))
             (erv:fail ValueError "unknown public-work action"))))))))
 (= (pw:transact $root $action $text $expected)
+   (if (== (get-type $root) String) (pw:transact-path $root $action $text $expected)
+     (erv:fail TypeError (str:join "" ("argument should be a str or an os.PathLike object where __fspath__ returns a str, not '"
+       (erv:typename $root) "'")))))
+(= (pw:transact-path $root $action $text $expected)
    (let* (($path (erio:path $root)) ($made (erio:mkdir $path 448)))
      (if (erv:failed? $made) $made
        (let $owner (erio:open (erio:join $path "lock") ("append" "create") 438)

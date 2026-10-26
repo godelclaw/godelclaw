@@ -31,9 +31,26 @@
         ((ErFailure $_ $_ $_) $value)
         ($other (ErFailure NativeCapabilityError "missing writer owner" $other))))))
 (= (erio:mkdir $path $mode)
-   (let $value (erio:single (collapse (catch (fs:make-directories $path $mode))))
+   (let $value (if (erv:contains (erv:points $path) 0)
+       (erv:fail ValueError "mkdir: embedded null character in path")
+       (erio:single (collapse (catch (fs:make-directories $path $mode)))))
      (case $value ((() ()) ((ErFailure $_ $_ $_) $value)
        ($other (ErFailure NativeCapabilityError "missing mkdir outcome" $other))))))
+; pathlib 3.12 ignores these stat failures, but not EACCES/other OS failures.
+; Preserve the native errno/progress diagnostic instead of making denied paths
+; indistinguishable from a missing receipt/log.
+(= (erio:metadata $path)
+   (if (erv:contains (erv:points $path) 0) ErMissing
+     (let $value (erio:single (collapse (catch (fs:metadata $path follow))))
+       (case $value
+         (((ErFailure $_ $_ (fs:failed $_ $_ $_ $errno $_ $_))
+           (if (erv:contains (2 20 9 40) $errno) ErMissing $value))
+          ($other $other))))))
+(= (erio:exists $path)
+   (case (erio:metadata $path)
+     ((ErMissing False) ((fs:info $_ $_ $_) True)
+      ((ErFailure $class $message $detail) (ErFailure $class $message $detail))
+      ($other (ErFailure NativeCapabilityError "missing metadata outcome" $other)))))
 (= (erio:lock $owner)
    (let $value (erio:single (collapse (catch (fs:lock $owner exclusive))))
      (case $value ((fs:locked fs:locked) ((ErFailure $_ $_ $_) $value)
@@ -78,7 +95,7 @@
        (let* (($admitted (if $lock (erio:lock $owner) fs:locked))
               ($result (if (erv:failed? $admitted) $admitted
                 (erio:single (collapse (catch (erio:write-sync $owner $payload)))))))
-         (erio:finish $owner $lock $result)))))
+         (erio:finish $owner (and $lock (not (erv:failed? $admitted))) $result)))))
 (= (erio:write-state $temporary $path $payload)
    (let $owner (erio:open $temporary ("truncate" "create") 384)
      (if (erv:failed? $owner) $owner

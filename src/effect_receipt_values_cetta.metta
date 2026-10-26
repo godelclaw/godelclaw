@@ -27,8 +27,12 @@
    (if (== $points ()) ()
      (if (erv:space? (car-atom $points)) (erv:lstrip-points (cdr-atom $points)) $points)))
 (= (erv:strip $text)
-   (erv:from-points (list:reverse (erv:lstrip-points
-     (list:reverse (erv:lstrip-points (erv:points $text)))))))
+   (let $points (erv:points $text)
+     (if (== $points ()) ""
+       (if (and (not (erv:space? (car-atom $points)))
+                (not (erv:space? (index-atom $points (- (size-atom $points) 1))))) $text
+         (erv:from-points (list:reverse (erv:lstrip-points
+           (list:reverse (erv:lstrip-points $points)))))))))
 (= (erv:surrogate? $cp) (and (>= $cp 55296) (<= $cp 57343)))
 (= (erv:clean $text)
    (erv:from-points (map-atom (erv:take (erv:points $text) 1200) $cp
@@ -62,15 +66,25 @@
           ($body (str:join "" (map-atom $points $cp (erv:repr-point $cp $quote)))))
      (str:join "" ($mark $body $mark))))
 (= (erv:number-str $value)
-   (if (math:isnan $value) "nan"
-     (if (math:isinf $value) (if (< $value 0) "-inf" "inf") (json:stringify-python $value))))
+   ; Native float predicates convert arbitrarily large integers to infinity.
+   ; Classify the serializer's text/error, not a lossy float observation.
+   (case (json:stringify-python $value)
+     (((JsonPythonErrorV1 $class $message $prefix) (erv:fail $class $message))
+      ("NaN" "nan") ("Infinity" "inf") ("-Infinity" "-inf")
+      ($other $other))))
+(= (erv:first-failure $values)
+   (if (== $values ()) ErNoFailure
+     (if (erv:failed? (car-atom $values)) (car-atom $values) (erv:first-failure (cdr-atom $values)))))
+(= (erv:join $separator $values)
+   (let $failure (erv:first-failure $values)
+     (if (== $failure ErNoFailure) (str:join $separator $values) $failure)))
 (= (erv:str $value)
    (if (== (get-type $value) String) $value
      (case $value
        ((JsonNull "None") (True "True") (False "False")
-        ((JsonArray $items) (str:join "" ("[" (str:join ", " (map-atom $items $v (erv:repr $v))) "]")))
-        ((JsonObject $pairs) (str:join "" ("{" (str:join ", " (map-atom $pairs $pair
-          (let (JsonPair $key $v) $pair (str:join "" ((erv:quote $key) ": " (erv:repr $v)))))) "}")))
+        ((JsonArray $items) (erv:join "" ("[" (erv:join ", " (map-atom $items $v (erv:repr $v))) "]")))
+        ((JsonObject $pairs) (erv:join "" ("{" (erv:join ", " (map-atom $pairs $pair
+          (let (JsonPair $key $v) $pair (erv:join "" ((erv:quote $key) ": " (erv:repr $v)))))) "}")))
         ($other (if (== (get-type $other) Number) (erv:number-str $other)
           (erv:fail TypeError "unsupported native value at Python text boundary")))))))
 (= (erv:repr $value)
@@ -86,14 +100,36 @@
           (if (or (== (get-metatype $other) Expression) (== (get-metatype $other) List))
             (JsonArray (map-atom $other $item (erv:cross $item)))
             (if (== (get-metatype $other) Symbol) (str:symbol->string $other)
-              (erv:fail TypeError "unsupported grounded value at receipt argument boundary")))))))))
-(= (erv:text $value $limit) (erv:clip (erv:str $value) $limit))
+              ; Loaded callable heads are Grounded/%Undefined%, but the
+              ; existing py-call bridge passes their name as Python text.
+              ; Use the checked text operation, NOT a repr/render fallback.
+              (let $text (str:symbol->string $other)
+                (if (== (get-type $text) String) $text
+                  (erv:fail TypeError "unsupported grounded value at receipt argument boundary")))))))))))
+(= (erv:text $value $limit)
+   (let $text (erv:str $value) (if (erv:failed? $text) $text (erv:clip $text $limit))))
+; Restore arrays captured by erv:cross ONLY at an explicit retained host call.
+; Passing canonical JsonArray syntax itself to py-call would expose its tag.
+; Scalar arguments are already in their original bridge representation.
+(= (erv:host-array $value)
+   (case $value
+     (((JsonArray $items) (map-atom $items $item (erv:host-array $item)))
+      ($other $other))))
 (= (erv:truth $value)
    (case $value
      ((JsonNull False) (False False) ("" False)
       ((JsonArray $items) (> (size-atom $items) 0))
       ((JsonObject $items) (> (size-atom $items) 0))
-      ($other (if (== (get-type $other) Number) (not (== $other 0)) True)))))
+      ($other (if (== (get-type $other) Number)
+        (or (math:isnan $other) (or (< $other 0) (> $other 0))) True)))))
+(= (erv:numeric? $value)
+   (case $value ((True True) (False True) ($other (== (get-type $other) Number)))))
+(= (erv:numeric-value $value) (case $value ((True 1) (False 0) ($other $other))))
+(= (erv:equal $left $right)
+   (if (and (erv:numeric? $left) (erv:numeric? $right))
+     (let* (($a (erv:numeric-value $left)) ($b (erv:numeric-value $right)))
+       (and (not (or (math:isnan $a) (math:isnan $b))) (and (<= $a $b) (>= $a $b))))
+     (== $left $right)))
 (= (erv:typename $value)
    (case $value
      ((JsonNull "NoneType") (True "bool") (False "bool")
@@ -101,9 +137,11 @@
       ($other (if (== (get-type $other) String) "str"
         (if (== (get-type $other) Number)
           (let $rendered (json:stringify-python $other)
-            (if (or (math:isnan $other) (math:isinf $other)) "float"
-              (if (and (== (str:find $rendered ".") (TextNotFound "."))
-                       (== (str:find $rendered "e") (TextNotFound "e"))) "int" "float")))
+              (case $rendered
+                (((JsonPythonErrorV1 ValueError $_ $_) "int")
+                 ("NaN" "float") ("Infinity" "float") ("-Infinity" "float")
+                 ($text (if (and (== (str:find $text ".") (TextNotFound "."))
+                       (== (str:find $text "e") (TextNotFound "e"))) "int" "float")))))
           "object"))))))
 (= (erv:get $object $key $default)
    (let (JsonObject $pairs) $object (erv:lookup $pairs $key $default)))
@@ -148,8 +186,9 @@
      ((True 1) (False 0)
       ($other (if (== (get-type $other) String) (erv:int-string $other)
         (if (== (get-type $other) Number)
-          (if (math:isnan $other) (erv:fail ValueError "cannot convert float NaN to integer")
-            (if (math:isinf $other) (erv:fail OverflowError "cannot convert float infinity to integer") (math:trunc $other)))
+          (if (== (erv:typename $other) "int") $other
+            (if (math:isnan $other) (erv:fail ValueError "cannot convert float NaN to integer")
+              (if (math:isinf $other) (erv:fail OverflowError "cannot convert float infinity to integer") (math:trunc $other))))
           (erv:fail TypeError (str:join "" ("int() argument must be a string, a bytes-like object or a real number, not '" (erv:typename $other) "'")))))))))
 
 ; Validate the receipt payload's strict UTF-8 encode BEFORE descriptor open.

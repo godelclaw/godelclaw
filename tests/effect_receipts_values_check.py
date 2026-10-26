@@ -67,6 +67,16 @@ def check(c):
     for expr, value in [('shell', 'shell'), ('(quote (shell "arg" 3 True))', ['shell', 'arg', 3, 'true']),
                         ('True', 'true'), ('(json:parse-python "[1, 2]")', ['JsonArray', [1, 2]])]:
         cases.append(('(erv:str (erv:cross %s))' % expr, outcome(str, value)))
+    for negative in (False,True):
+        for overflow in (False,True):
+            base='(json:parse-python %s)'%text('9'*4300)
+            expression='(+ %s 1)'%base if overflow else base
+            if negative:expression='(- 0 %s)'%expression
+            number=(int('9'*4300)+overflow)*(-1 if negative else 1)
+            for name,fn in (('str',str),('repr',repr),('typename',lambda v:type(v).__name__)):
+                cases.append(('(erv:%s %s)'%(name,expression),outcome(fn,number)))
+            # int(integer) does not emit decimal text and must not lose bits.
+            cases.append(('(if (== (erv:int %s) %s) 1 0)'%(expression,expression),outcome(lambda _:1,None)))
     c.save('value-fixtures.json', [{'expression': expr, 'expected': expected} for expr, expected in cases])
     program = IMPORTS + '!(import! &self ./src/effect_receipt_values_cetta.metta)\n' + WIRE
     program += ''.join(emit('(val:wire %s)' % expr) for expr, _ in cases)

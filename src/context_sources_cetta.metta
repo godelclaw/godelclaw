@@ -7,6 +7,7 @@
 !(import! &self ./src/context_source_loaders.py)
 !(import! &self ./src/small_views_cetta.metta)
 !(import! &self ./src/goal_views_cetta.metta)
+!(import! &self ./src/effect_receipts_cetta.metta)
 
 !(bind! &ctx-known (new-state ()))
 !(bind! &ctx-blank (new-state
@@ -64,6 +65,7 @@
       ("task-phase" (sv:load $id)) ("development-state" (sv:load $id))
       ("project-capabilities" (sv:load $id)) ("project-evidence" (sv:load $id))
       ("work-state" (gv:load $id)) ("affect-gestalt" (gv:load $id))
+      ("effect-receipts" (er:context-load))
       ($retained (ctx:decode (py-call (context_source_loaders.load $loaders $id)))))))
 (= (ctx:project $loaders $specs)
    (if (== $specs ()) ()

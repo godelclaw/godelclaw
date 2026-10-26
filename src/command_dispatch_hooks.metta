@@ -1,5 +1,6 @@
 ; Existing host services, kept separate from the shared MeTTa interpreter.
 ; State/history ports can replace these without a second dispatcher.
+!(import! &self ./src/effect_receipts.metta)
 (= (dispatch:reserve $turn $command)
    (py-call (strategy_host.reserve_command $turn $command)))
 (= (dispatch:stopped) (py-call (strategy_host.stopped)))
@@ -14,7 +15,7 @@
         (format-args "{}: {}" ($type (py-call (str $object)))))
       ($other (format-args "{}" ($value))))))
 (= (dispatch:record $turn $status $command $result)
-   (catch (py-call (effect_receipts.record_command $turn $status $command $result))))
+   (catch (effect-receipts:record-command $turn $status $command $result)))
 ; Fixes the public-sharing epoch before the batch runs; never raises.
 (= (dispatch:capture $turn)
-   (catch (py-call (effect_receipts.capture_public_epoch $turn))))
+   (catch (effect-receipts:capture-public-epoch $turn)))
