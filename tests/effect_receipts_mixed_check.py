@@ -29,11 +29,14 @@ def encoded(value):
     return json.dumps(value,ensure_ascii=False,sort_keys=True).encode()+b'\n'
 
 
-def overlap(c,mode,count):
-    root=c.directory/('work-'+mode);root.mkdir()
+def overlap(c,mode,count,attempt=0):
+    # Each attempt is a fresh race on fresh files; whether a race interleaves is the
+    # scheduler's choice, so the caller repeats it until one does (see check).
+    tag=mode if attempt==0 else '%s-%d'%(mode,attempt)
+    root=c.directory/('work-'+tag);root.mkdir()
     (root/'state.json').write_text('{"enabled": true, "seq": 0, "epoch": 7}')
-    receipt=c.directory/('receipt-'+mode+'.jsonl');receipt.touch()
-    trace=c.directory/('trace-'+mode)
+    receipt=c.directory/('receipt-'+tag+'.jsonl');receipt.touch()
+    trace=c.directory/('trace-'+tag)
     lock_path=receipt if mode=='receipts' else root/'lock'
     settings={'METTACLAW_EFFECT_RECEIPT_PATH':str(receipt),'METTACLAW_PUBLIC_WORK_DIR':str(root)}
     source=HEADER+'''
@@ -61,7 +64,7 @@ def overlap(c,mode,count):
             expression='(pw:transact %s %s "" JsonNull)'%(q(root),q('on' if i%2==0 else 'off'))
         source+=emit('(JsonArray ("operation" %d %s))'%(i,expression))
     source=source.replace('./src/',str(ROOT/'src')+'/')
-    program=c.directory/('mixed-'+mode+'.metta');program.write_text(source)
+    program=c.directory/('mixed-'+tag+'.metta');program.write_text(source)
     (c.evidence/program.name).write_text(source)
     commands=[
         [str(c.binary),'--lang','petta','--import-mode','ancestor-walk',str(program)],
@@ -86,7 +89,7 @@ def overlap(c,mode,count):
             for i,(worker,command) in enumerate(zip(workers,commands)):
                 out,err=worker.communicate(timeout=90)
                 result=subprocess.CompletedProcess(command,worker.returncode,outputs[i]+out,err)
-                c.record_process('overlap-%s-%s'%(mode,('native','python')[i]),command,result,env)
+                c.record_process('overlap-%s-%s'%(tag,('native','python')[i]),command,result,env)
                 recorded.add(i)
                 assert result.returncode==0,err
                 if i==0:
@@ -107,18 +110,17 @@ def overlap(c,mode,count):
                     out,err=worker.communicate()
                     result=subprocess.CompletedProcess(commands[i],worker.returncode,
                         (outputs[i] if i<len(outputs) else b'')+out,err)
-                    c.record_process('overlap-%s-%s-aborted'%(mode,('native','python')[i]),commands[i],result,env)
+                    c.record_process('overlap-%s-%s-aborted'%(tag,('native','python')[i]),commands[i],result,env)
     order=trace.read_text().splitlines()
     files={'receipt':receipt.read_bytes().hex(),
            **{name:(root/name).read_bytes().hex() if (root/name).exists() else None
               for name in ('state.json','notes.jsonl','lock')}}
-    c.save('overlap-%s-effects.json'%mode,{'lock_acquisition_order':order,'files':files,
+    c.save('overlap-%s-effects.json'%tag,{'lock_acquisition_order':order,'files':files,
         'operation_results':operation_results,
         'pids':[w.pid for w in workers],'elapsed_seconds':time.monotonic()-started})
     assert len(order)==2*count and len(set(order))==2*count,order
     assert {s.split(':')[0] for s in order}=={'native','python'}
     transitions=sum(a.split(':')[0]!=b.split(':')[0] for a,b in zip(order,order[1:]))
-    assert transitions>=2,('no observed interleaving',order)
     for position,key in enumerate(order,1):
         writer,index=key.split(':');result=operation_results[writer][int(index)]
         if mode=='receipts':assert result==1
@@ -191,7 +193,17 @@ def check(c):
             work_steps.append({'route':route,'state_hex':(root/'state.json').read_bytes().hex(),
                                'notes_hex':expected.hex(),'lock_hex':(root/'lock').read_bytes().hex()})
     c.save('alternating-worklog.json',work_steps)
-    results=[overlap(c,'receipts',40),overlap(c,'worklog',40),overlap(c,'epochs',40)]
+    # Every race is checked in full; a race in which one writer took all its operations
+    # first is repeated, up to eight times, until the writers interleave.
+    results=[]
+    for mode in ('receipts','worklog','epochs'):
+        attempts=[]
+        for attempt in range(8):
+            attempts.append(overlap(c,mode,40,attempt))
+            if attempts[-1]['writer_transitions']>=2:
+                break
+        assert attempts[-1]['writer_transitions']>=2,('no observed interleaving in %d races'%len(attempts),mode)
+        results.append({'mode':mode,'races':attempts})
     c.save('result.json',{'alternating_receipt_operations':12,'alternating_worklog_operations':8,'overlap':results,
         'limit':'per-file durability primitives exercised; no directory fsync/multi-file atomicity/crash-exactly-once proof'})
 

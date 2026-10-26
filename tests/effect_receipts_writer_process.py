@@ -39,6 +39,9 @@ def main():
         else:
             result=public_worklog.transact(root,'on' if i%2==0 else 'off')
         print('RESULT '+json.dumps(result),flush=True)
+        # Pause outside the lock, so the native writer, which starts its loop later,
+        # gets the lock between Python's operations instead of after all of them.
+        time.sleep(0.03)
     print('DONE',flush=True)
 
 
