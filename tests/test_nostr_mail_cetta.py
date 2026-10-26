@@ -269,11 +269,11 @@ class NativeRelay:
         return run_program(self, body + "\n")
 
     def test_sign_in_publish_and_query(self):
-        from nostr_relay_fixture import GatedRelay
+        from nostr_relay_native import chosen
         import asyncio
         alice, bob = (nostr_mail.public_key(SECRETS[n]) for n in ("alice", "bob"))
         foreign = nostr_mail.sign(SECRETS["bob"], 1, [], "not alice's", None)
-        with GatedRelay({alice, bob}) as relay:
+        with chosen({alice, bob}) as relay:
             got = self.run_metta(
                 "!(let* (($relay (nostr:relay-open %s %s 5000))"
                 " ($sealed (nostr:seal %s %s \"subject\" \"body\" \"task\" () () %s))"

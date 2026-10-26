@@ -19,7 +19,7 @@ HAVE_CRYPTO = all(importlib.util.find_spec(name) for name in ("coincurve", "cryp
 if HAVE_CRYPTO:
     import nostr_gateway as gw
     import nostr_mail as nm
-    from nostr_relay_fixture import GatedRelay
+    from nostr_relay_native import chosen
 
 # A claw-mail stand-in with the mailbox protocol's answers: a send identity is
 # accepted once, an identical resend is a duplicate and a changed one the
@@ -39,7 +39,10 @@ def locked(update):
         fcntl.flock(lock, fcntl.LOCK_EX)
         ledger = json.load(open(path)) if os.path.exists(path) else []
         value = update(ledger)
-        json.dump(ledger, open(path, "w"))
+        # Replaced whole: the tests read the ledger without the lock.
+        with open(path + ".tmp", "w") as out:
+            json.dump(ledger, out)
+        os.replace(path + ".tmp", path)
         return value
 def reply(value):
     print(json.dumps(value))
@@ -99,7 +102,7 @@ class GatewayTests(unittest.TestCase):
         self.directory = Path(self.temporary.name)
         self.alice, self.godel, self.eve = secret("alice"), secret("godel"), secret("eve")
         self.pub = {name: nm.public_key(secret(name)) for name in ("alice", "godel", "eve")}
-        self.relay = GatedRelay(self.pub.values()).__enter__()
+        self.relay = chosen(self.pub.values()).__enter__()
         self.addCleanup(self.relay.__exit__, None, None, None)
         (self.directory / "registry.json").write_text(json.dumps(
             {"alice": {"pubkey_hex": self.pub["alice"]}, "godel": {"pubkey_hex": self.pub["godel"]}}))

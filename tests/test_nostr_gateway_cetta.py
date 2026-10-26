@@ -35,7 +35,7 @@ LOGIN = pwd.getpwuid(os.getuid()).pw_name
 if HAVE_CRYPTO:
     import nostr_gateway as gw
     import nostr_mail as nm
-    from nostr_relay_fixture import GatedRelay
+    from nostr_relay_native import chosen
 
 
 def secret(name):
@@ -56,7 +56,7 @@ class Setup:
         test.addCleanup(subprocess.run, ["rm", "-rf", str(self.directory)])
         self.secret = {name: secret(name) for name in names}
         self.pub = {name: nm.public_key(key) for name, key in self.secret.items()}
-        self.relay = GatedRelay(self.pub.values()).__enter__()
+        self.relay = chosen(self.pub.values()).__enter__()
         test.addCleanup(self.relay.__exit__, None, None, None)
         self.socket = self.directory / "mail.sock"
         self.service = subprocess.Popen([str(SERVICE), "--socket", str(self.socket), "--data", str(self.directory / "store")],
