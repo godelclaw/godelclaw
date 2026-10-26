@@ -10,8 +10,9 @@
    (py-call (helper.int_env "METTACLAW_HEARTBEAT_INTERVAL_SECONDS" 1800)))
 
 (= (initialPeriphery)
-   (let $selected (mode:process)
-     (coordinate iteration 1
+   (case (mode:process)
+     (((Error $call $why) (Error $call $why))
+      ($selected (coordinate iteration 1
      (coordinate loops
        (py-call (helper.boot_int "loops" (policy-burst-budget $selected)))
        (coordinate sleep-interval
@@ -25,7 +26,7 @@
                  (coordinate banked-loops
                    (py-call (helper.boot_int "banked_loops" 0))
                    (coordinate pending-continuation
-                     (py-call (helper.rest_pending)) coordinates-empty)))))))))))
+                     (py-call (helper.rest_pending)) coordinates-empty)))))))))))))
 
 (= (initLoop)
    (progn
@@ -328,9 +329,11 @@
 ;; to the kernel's success/failure vocabulary.
 (= (enabledTurnCandidate $periphery)
    (let* (($_ (semantic:maintain))
-          ($iteration (loop-iteration $periphery))
-          ($selected (mode:process))
-          ($selectedPeriphery
+          ($iteration (loop-iteration $periphery)))
+     (case (mode:process)
+       (((Error $call $why) (Error $call $why))
+        ($selected
+         (let* (($selectedPeriphery
             (coordinate-set active-policy $selected
               (coordinate-set autonomous-ready 0 $periphery)))
           ($decremented
@@ -374,17 +377,20 @@
                 $ready))
           ($next
             (coordinate-set iteration (+ 1 $iteration) $afterTurn)))
-     (candidate $next)))
+     (candidate $next)))))))
 
 ;; Operator authority is an outer lifecycle addition, not a policy encoded in
 ;; the two-equation transformation kernel.  A stopped process keeps only its
 ;; Telegram control plane alive and cannot drain activity or call the model.
 (= (turnCandidate $periphery)
-   (if (== (lifecycle:enabled) 1)
-       (enabledTurnCandidate $periphery)
-       (candidate
-         (coordinate-set autonomous-ready 0
-           (coordinate-set loops 0 $periphery)))))
+   (case (lifecycle:enabled)
+     (((Error $call $why) (Error $call $why))
+      ($enabled
+       (if (== $enabled 1)
+         (enabledTurnCandidate $periphery)
+         (candidate
+           (coordinate-set autonomous-ready 0
+             (coordinate-set loops 0 $periphery))))))))
 
 (= (protectedOutcome $trial)
    (case $trial
@@ -440,9 +446,13 @@
 ;; Waiting is another replaceable process.  Channel polling remains in its
 ;; adapter; only the resulting readiness bit enters the periphery.
 (= (waitCandidate $periphery)
-   (let* (($policy (loop-active-policy $periphery))
-          ($enabled (== (lifecycle:enabled) 1))
-          ($loops (loop-budget $periphery))
+   (let $policy (loop-active-policy $periphery)
+     (case (lifecycle:enabled)
+       (((Error $call $why) (Error $call $why))
+        ($enabled (waitAuthorizedCandidate $periphery $policy (== $enabled 1)))))))
+
+(= (waitAuthorizedCandidate $periphery $policy $enabled)
+   (let* (($loops (loop-budget $periphery))
           ($paused (loop-resting $periphery))
           ($policyWait
             (if $enabled

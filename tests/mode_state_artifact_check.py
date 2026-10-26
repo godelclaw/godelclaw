@@ -105,6 +105,47 @@ engine_modes.engine_command('swi'), engine_modes.engine_command('cetta'), engine
         c.save('path-results.json', {'records': records, 'expanduser_paths': inputs,
                'limits': 'strings only, no account-derived state accessed; native NSS failure injection not performed'})
 
+    with c.phase('eager-home-lookup-with-explicit-roots'):
+        # No account-derived path is opened. Both implementations compute
+        # strings only, with HOME absent and generated XDG/engine roots.
+        for explicit in (False, True):
+            unset=['HOME']
+            if not explicit:
+                unset += ['METTACLAW_ENGINE_STATE_PATH','METTACLAW_LIFECYCLE_PATH']
+            c.unset_environment=tuple(unset)
+            try:
+                settings={'PETTA_ROOT':str(c.directory/'petta-root'),
+                          'CETTA_ROOT':str(c.directory/'cetta-root')}
+                expected=python(c,'eager-oracle-'+str(explicit),'''import json,os,pwd
+import engine_modes,loop_modes,lifecycle
+calls=[];original=os.path.expanduser
+def expand(path):
+    calls.append(path);return original(path)
+os.path.expanduser=expand
+out=[engine_modes._state_path(),loop_modes._active_path(),str(lifecycle._path()),
+     list(engine_modes.engine_command('petta')),list(engine_modes.engine_command('cetta')),
+     list(engine_modes.engine_command('unknown'))]
+print(json.dumps([out,calls]))
+''',settings)
+                source=IMPORTS+'!(import! &self ./src/mode_paths_cetta.metta)\n'+'''
+!(bind! &path-test-expands (new-state ()))
+!(match &self (= (system:expanduser $path) $prior) (remove-atom &self (= (system:expanduser $path) $prior)))
+(= (system:expanduser $path)
+ (let $_ (change-state! &path-test-expands (cons-atom $path (get-state &path-test-expands)))
+   (__cetta_lib_system_host expanduser $path)))
+'''
+                source+=emit('(JsonArray ((mode-path:engine) (mode-path:active-loop) (mode-path:lifecycle) '
+                             '(JsonArray (mode-path:commands "petta")) (JsonArray (mode-path:commands "cetta")) '
+                             '(JsonArray (mode-path:commands "unknown"))))')
+                source+=emit('(JsonArray (get-state &path-test-expands))')
+                actual=rows(c.run('eager-native-'+str(explicit),source,settings))
+                actual[1].reverse()
+                assert actual==expected,(explicit,actual,expected)
+                assert len(actual[1])==(3 if explicit else 6)
+                c.save('eager-result-'+str(explicit)+'.json',{'actual':actual,'strings_only':True,'HOME':'absent'})
+            finally:
+                c.unset_environment=()
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)

@@ -1,4 +1,4 @@
-"""Final-source partial checkpoint checks; inspect blocked status, not exit alone."""
+"""Serial source-qualified project06 gates; retain every actual child outcome."""
 import argparse
 import json
 import os
@@ -51,7 +51,8 @@ def main():
                 env['PETTA_ROOT']=str(args.swi_root)
             if args.swipl:
                 env['PATH']=str(args.swipl.parent)+os.pathsep+env['PATH']
-            for key in ('MODE_STATE_ENGINE_SHA256','MODE_STATE_MANIFEST_SHA256'):
+            for key in ('MODE_STATE_ENGINE_SHA256','MODE_STATE_MANIFEST_SHA256',
+                        'MODE_STATE_LEAN_ROOT','MODE_STATE_LEAN_BIN'):
                 if key in os.environ: env[key]=os.environ[key]
             exits={}
             if args.phase=='final-source':
@@ -62,14 +63,25 @@ def main():
                         ('boundaries','mode_state_modules_check.py',['--phase','boundaries']),
                         ('sequences','mode_state_sequences_check.py',[]),
                         ('callers','mode_state_callers_check.py',[]),
-                        ('close-order-blocker','mode_state_close_order_check.py',[])]
+                        ('close-order','mode_state_close_order_check.py',[]),
+                        ('protocol','mode_state_protocol_check.py',[]),
+                        ('mixed','mode_state_mixed_check.py',[]),
+                        ('handler-errors','mode_state_handler_errors_check.py',[]),
+                        ('switches','mode_state_switches_check.py',[]),
+                        ('swi','mode_state_swi_check.py',['--swipl',args.swipl,'--swi-root',args.swi_root]),
+                        ('text-edges','mode_state_edges_check.py',['--phase','text']),
+                        ('value-edges','mode_state_edges_check.py',['--phase','values']),
+                        ('os-paths','mode_state_edges_check.py',['--phase','os-paths']),
+                        ('dispatch','mode_state_dispatch_check.py',[]),
+                        ('lean','mode_state_lean_check.py',[]),
+                        ('cold-cost','mode_state_cost_check.py',[])]
                 for name,script,extra in suites:
                     target=c.evidence/name
                     command=[sys.executable,ROOT/'tests'/script,'--evidence',target,*extra]
-                    exits[name]=run(c,'driver-'+name,command,env)
+                    exits[name]=run(c,'driver-'+name,command,env,timeout=600)
                     assert exits[name]==0,(name,exits[name])
-                blocker=json.loads((c.evidence/'close-order-blocker/result.json').read_text())
-                assert blocker['status']=='BLOCKED_ENGINE_CLOSE_CHMOD_EFFECT_ORDER'
+                ordering=json.loads((c.evidence/'close-order/result.json').read_text())
+                assert ordering['status']=='PASS_ENGINE_CLOSE_PATH_CHMOD_ORDER'
             else:
                 package=c.directory/'package';package.mkdir()
                 hashes={}
@@ -116,9 +128,9 @@ def main():
                             'r=unittest.TextTestRunner(verbosity=2).run(suite); '
                             'sys.exit(not r.wasSuccessful())']
                     exits[name]=run(c,name,command,env,cwd=package,timeout=300)
-            c.save('result.json',{'status':'BLOCKED_ENGINE_CLOSE_CHMOD_EFFECT_ORDER',
+            c.save('result.json',{'status':'PASS_CHECKED_SUBSET' if all(v==0 for v in exits.values()) else 'FAILED_CHECKED_SUBSET',
                    'full_project06_complete':False,'phase':args.phase,'actual_exits':exits,
-                   'limits':'source-qualified partial checkpoint only; suite durations are not turn costs; failures/skips retained verbatim'})
+                   'limits':'selected phase only; inspect child semantic results and separate regression/model limitations; suite durations are not turn costs; failures/skips retained verbatim'})
     return 0
 
 

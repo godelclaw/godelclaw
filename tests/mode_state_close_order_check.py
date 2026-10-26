@@ -1,4 +1,4 @@
-"""Exact reached engine-save close-failure witness, not full qualification.
+"""Regression for the retained reached engine-save close-failure witness.
 
 Faults are explicit post-close injections on both routes, NOT naturally
 observed OS close failures. The underlying descriptor really closes once.
@@ -95,19 +95,19 @@ print(json.dumps({'reply':reply,'printed':printed.getvalue().splitlines(),'event
         assert native[1]['target'] == expected['target']
         assert native[1]['temporary']['hex'] == expected['temporary']['hex'] == b'cetta\n'.hex()
         assert native[1]['counts'] == {'seed':1,'snapshot':1,'blocked':0}
-        assert native[1]['temporary']['mode'] == '0o600'
+        assert native[1]['temporary']['mode'] == '0o604'
         assert expected['temporary']['mode'] == '0o604'
         path = c.directory/'path-mode-probe'
         path.write_bytes(b'fixture\n'); path.chmod(0o604)
-        probe = c.run('path-mode-api-refusal', IMPORTS +
+        probe = c.run('path-mode-api-success', IMPORTS +
                       '!(println! (PathMode (catch (fs:set-mode %s 384))))\n' % q(path))
-        assert path.stat().st_mode & 0o777 == 0o604, probe
-        c.save('result.json', {'status':'BLOCKED_ENGINE_CLOSE_CHMOD_EFFECT_ORDER',
+        assert '(PathMode fs:mode-set)' in probe and path.stat().st_mode & 0o777 == 0o600, probe
+        c.save('result.json', {'status':'PASS_ENGINE_CLOSE_PATH_CHMOD_ORDER',
                'full_project06_complete':False, 'native':native,'python':expected,
                'path_mode_probe_stdout':probe,
                'injection':'explicit post-close EIO fixtures; each underlying descriptor actually closed once; not an organic OS failure',
-               'request':'native path-mode operation or reviewed exact protocol preserving Python write/flush/fsync/close/chmod(path)/rename order without reopen, permission-domain restriction, effect replay or foreign workaround',
-               'effects':'both failed, old target unchanged, temporary cetta+LF retained; native temp0600 versus Python temp0604'})
+               'protocol':'write/flush/fsync/close/chmod(path)/rename; no reopen, effect replay or foreign workaround',
+               'effects':'both failed, old target unchanged, temporary cetta+LF retained at0604; no chmod or rename after close failure'})
 
 
 def main():

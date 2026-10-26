@@ -43,7 +43,7 @@
 (= (engine-native:failure)
    (let $path (mode-path:failure)
      (if (mv:failed? $path) (if (mio:os-error? $path) JsonNull $path)
-       (let $text (mio:read $path)
+       (let $text (mio:read-iterated $path)
          (if (mv:failed? $text)
            (if (mio:os-error? $text) JsonNull $text)
            (let $fields (engine-native:failure-lines (str:split "\n" $text) (JsonObject ()))
@@ -63,8 +63,8 @@
 (= (engine-native:save $name)
    (let $path (mode-path:engine)
      (if (mv:failed? $path) $path
-       (let $result (mio:save $path
-         (str:join "" ($path ".tmp." (repr (system:pid)))) (str:concat $name "\n") True 384)
+       (let $result (mio:save-engine $path
+         (str:join "" ($path ".tmp." (repr (system:pid)))) (str:concat $name "\n"))
          (if (== $result 1) True
            (if (mio:os-error? $result)
              (let (ErFailure $class $_ $_) $result
@@ -99,8 +99,8 @@
                ; only AFTER the temporary has been successfully opened.
                (let* (($payload (str:join "" ("requested_at="
                          (str:format-fixed (system:wall-time) 6) " reason=engine-switch\n")))
-                      ($closed (mio:close $owner (mio:write-body $owner $payload True 384))))
-                 (if (== $closed 1) (mio:rename $temporary $path) $closed)))))))))
+                      ($closed (mio:close $owner (mio:write-body $owner $payload True ()))))
+                 (mio:engine-finish $temporary $path $closed)))))))))
 (= (engine-native:recycle)
    (let $result (engine-native:recycle-result)
      (if (== $result 1) True

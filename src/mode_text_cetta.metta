@@ -27,3 +27,15 @@
 (= (mode-text:name $text) (str:lower (mode-text:strip $text)))
 (= (mode-text:universal $text)
    (str:join "\n" (str:split "\r" (str:join "\n" (str:split "\r\n" $text)))))
+; Environment/path bytes use CPython's POSIX UTF-8 surrogateescape, NOT the
+; strict file-content decoder or surrogatepass JSON decoder. Use this only
+; when presenting an OS path as Python text; filesystem operations retain the
+; original bytes. Each undecodable byte >=128 maps to U+DC00 + byte.
+(= (mode-text:os-text $bytes)
+   (case (str:utf8-error $bytes)
+     ((StrUtf8WellFormedV1 $bytes)
+      ((StrUtf8ErrorV1 $start $_ $byte $_)
+       (str:join "" ((str:byte-slice $bytes 0 $start)
+         (str:from-python-codepoints ((+ 56320 $byte)))
+         (mode-text:os-text (str:byte-slice $bytes (+ $start 1) (str:byte-length $bytes))))))
+      ($other (Error mode-text:os-text $other)))))

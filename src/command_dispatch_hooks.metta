@@ -13,6 +13,8 @@
    (case $value
      (((Error (python_error $type $object) $_)
         (format-args "{}: {}" ($type (py-call (str $object)))))
+      ((Error mode-state (PythonException $type $message $_))
+        (format-args "{}: {}" ($type $message)))
       ($other (format-args "{}" ($value))))))
 (= (dispatch:record $turn $status $command $result)
    (catch (effect-receipts:record-command $turn $status $command $result)))

@@ -32,6 +32,7 @@ def seed_pid(root, case):
         else:
             path.write_bytes(b'stale\\n'); path.chmod(0o604)
             if case == 'unwritable-temporary': path.chmod(0o400)
+    if case == 'unwritable-directory': root.chmod(0o500)
     return 1
 '''
 
@@ -63,6 +64,17 @@ def state_snapshot(root):
                   ('(mode:set "coding")', 'loop_modes.set_mode("coding")'),
                   ('(mode:set "agent")', 'loop_modes.set_mode("agent")'),
                   ('(mode:set "unknown")', 'loop_modes.set_mode("unknown")'),
+                  ('(mode:set "default")', 'loop_modes.set_mode("default")'),
+                  ('(mode:set "generic")', 'loop_modes.set_mode("generic")'),
+                  ('(mode:set "claw23")', 'loop_modes.set_mode("claw23")'),
+                  ('(mode:set "omega")', 'loop_modes.set_mode("omega")'),
+                  ('(mode:set "iter")', 'loop_modes.set_mode("iter")'),
+                  ('(mode:set "ITER-CODING")', 'loop_modes.set_mode("ITER-CODING")'),
+                  ('(mode:set 0)', 'loop_modes.set_mode(0)'),
+                  ('(mode:set True)', 'loop_modes.set_mode("true")'),
+                  ('(mode:set ("coding"))', 'loop_modes.set_mode(["coding"])'),
+                  ('(engine:set "swi-petta")', 'engine_modes.set_engine("swi-petta")'),
+                  ('(engine:set 0)', 'engine_modes.set_engine(0)'),
                   ('(lifecycle:start)', 'lifecycle.start()'),
                   ('(lifecycle:stop)', 'lifecycle.stop()')]
 
@@ -93,12 +105,10 @@ def state_snapshot(root):
         elif case == 'unavailable':
             (root / 'petta/run.sh').chmod(0o600)
             (root / 'cetta').unlink()
-        elif case == 'unwritable-directory':
-            root.chmod(0o500)
 
     with c.phase('engine-loop-lifecycle-every-step-sequences'), umask(0o027):
         results = []
-        for case in ('normal', 'target-directory', 'temporary-directory', 'unwritable-temporary', 'unavailable'):
+        for case in ('normal', 'target-directory', 'temporary-directory', 'unwritable-temporary', 'unwritable-directory', 'unavailable'):
             seed(case)
             source = IMPORTS + fixture + '!(import! &self ./src/mode_state.metta)\n' + CAPTURE
             source += '(= (seq:text $v) (if (== (get-type $v) String) $v (str:symbol->string $v)))\n'

@@ -83,7 +83,55 @@
    (case $call
      (((python_error $type $exception)
        (py-call (helper.exception_text $exception)))
+      (mode-state
+       (case $why
+         (((PythonException $class $message $_)
+           (py-call (helper.exception_text
+             (str:join "" ((if (== (get-type $class) String) $class (str:symbol->string $class))
+                           ": " $message)))))
+          ($other $why))))
       ($other $why))))
+
+; Native structured errors are values, unlike a raised Python bridge error.
+; Propagate them before formatting or performing a later wake/resume effect.
+(= (tc:mode-view $value $hint)
+   (case $value
+     (((Error $call $why) (Error $call $why))
+      ($view (tc:with-hint (tc:text $view) $hint)))))
+(= (tc:mode-set $name)
+   (case (mode:set $name)
+     (((Error $call $why) (Error $call $why))
+      ($value (let $reply (tc:text $value) (let $woken (tc:wake "mode switch") $reply))))))
+(= (tc:mode-tap $name)
+   (case (mode:set $name)
+     (((Error $call $why) (Error $call $why))
+      ($value (let $reply (tc:text $value)
+        (let $woken (tc:wake "mode switch") (tc:settings-menu "modes" "mode" $reply)))))))
+(= (tc:lifecycle-start $value)
+   (case $value
+     (((Error $call $why) (Error $call $why))
+      ($reply
+       (let $resumed (py-call (sibling.resume_self))
+         (case (lifecycle:enabled)
+           (((Error $call $why) (Error $call $why))
+            (1 (let $woken (tc:wake "operator start")
+                 (let $note (tc:text $resumed) (format-args "Started. Cognition is enabled; {}." ($note)))))
+            ($disabled
+             (case (lifecycle:view)
+               (((Error $call $why) (Error $call $why))
+                ($view (format-args "Start recorded, but cognition is still disabled: {}" ((tc:text $view))))))))))))))
+(= (tc:lifecycle-stop $value)
+   (case $value
+     (((Error $call $why) (Error $call $why))
+      ($reply
+       (let $woken (tc:wake "operator stop")
+         (case (lifecycle:enabled)
+           (((Error $call $why) (Error $call $why))
+            (0 "Stopped. Cognition is paused and nothing is sent until /start.")
+            ($enabled
+             (case (lifecycle:view)
+               (((Error $call $why) (Error $call $why))
+                ($view (format-args "Stop recorded, but cognition still reads enabled: {}" ((tc:text $view))))))))))))))
 
 ;; ------------------------------------------------------------- menus
 
@@ -134,13 +182,20 @@
 ; running.
 (= (tc:switch-engine $name)
    (let $adopted (py-call (helper.adopt_active_engine))
-     (let $reply (tc:text (engine:set $name))
-       (let $selected (tc:text (engine:selected))
-         (let $active (tc:text (engine:active))
-           (if (and (not (str:starts-with $reply "engine-set failed:")) (not (== $selected $active)))
-             (let $recycle (engine:recycle)
-               (let $woken (tc:wake "engine switch") $reply))
-             $reply))))))
+     (case (engine:set $name)
+       (((Error $call $why) (Error $call $why))
+        ($value
+         (let $reply (tc:text $value)
+           (case (engine:selected)
+             (((Error $call $why) (Error $call $why))
+              ($selection
+               (let $selected (tc:text $selection)
+                 (let $active (tc:text (engine:active))
+                   (if (and (not (str:starts-with $reply "engine-set failed:")) (not (== $selected $active)))
+                     (case (engine:recycle)
+                       (((Error $call $why) (Error $call $why))
+                        ($recycled (let $woken (tc:wake "engine switch") $reply))))
+                     $reply))))))))))))
 
 ; A tap on a menu's button: PREFIX:ARGUMENT. The answer is the menu again,
 ; redrawn, with the outcome as the tap's toast.
@@ -150,8 +205,7 @@
       ($at (let $kind (str:byte-slice $data 0 $at)
              (let $arg (str:byte-slice $data (+ $at 1) (str:byte-length $data))
                (case $kind
-                 (("mode" (let $reply (tc:text (mode:set $arg))
-                            (let $woken (tc:wake "mode switch") (tc:settings-menu "modes" "mode" $reply))))
+                 (("mode" (tc:mode-tap $arg))
                   ("fuel" (let $reply (tc:text (fuel:set $arg))
                             (tc:settings-menu "fuels" "fuel" $reply)))
                   ("engine" (let $reply (tc:switch-engine $arg) (tc:settings-menu "engines" "engine" $reply)))
@@ -165,21 +219,8 @@
 
 (= (tc:answer $name $args)
    (case $name
-     (("/start"
-       (let $reply (lifecycle:start)
-         (let $resumed (py-call (sibling.resume_self))
-           (if (== (lifecycle:enabled) 1)
-             (let $woken (tc:wake "operator start")
-               (let $note (tc:text $resumed) (format-args "Started. Cognition is enabled; {}." ($note))))
-             (let $view (tc:text (lifecycle:view))
-               (format-args "Start recorded, but cognition is still disabled: {}" ($view)))))))
-      ("/stop"
-       (let $reply (lifecycle:stop)
-         (let $woken (tc:wake "operator stop")
-           (if (== (lifecycle:enabled) 0)
-             "Stopped. Cognition is paused and nothing is sent until /start."
-             (let $view (tc:text (lifecycle:view))
-               (format-args "Stop recorded, but cognition still reads enabled: {}" ($view)))))))
+     (("/start" (tc:lifecycle-start (lifecycle:start)))
+      ("/stop" (tc:lifecycle-stop (lifecycle:stop)))
       ("/wake" (let $woken (tc:wake "/wake") "Waking."))
       ("/claude_code_authorization" (tc:text (py-call (helper.claude_code_toggle))))
       ("/health" (tc:text (py-call (runtime_health.report))))
@@ -187,7 +228,7 @@
       ("/engine"
        (if (== $args "")
          (let $adopted (py-call (helper.adopt_active_engine))
-           (tc:with-hint (tc:text (engine:view)) "/engine <name> to switch, /engines to list"))
+           (tc:mode-view (engine:view) "/engine <name> to switch, /engines to list"))
          (tc:switch-engine $args)))
       ("/engines" (tc:settings-menu "engines" "engine" ""))
       ("/modes" (tc:settings-menu "modes" "mode" ""))
@@ -200,9 +241,8 @@
          (tc:text (fuel:set $args))))
       ("/mode"
        (if (== $args "")
-         (tc:with-hint (tc:text (mode:view)) "/mode <name> to switch, /modes to list")
-         (let $reply (tc:text (mode:set $args))
-           (let $woken (tc:wake "mode switch") $reply))))
+         (tc:mode-view (mode:view) "/mode <name> to switch, /modes to list")
+         (tc:mode-set $args)))
       ("/quota" (tc:text (py-call (synthetic_llm.quota))))
       ("/model"
        (if (== $args "")

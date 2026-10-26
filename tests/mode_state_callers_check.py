@@ -139,11 +139,24 @@ def check(c):
         source += '!(lifecycle:stop)\n' + emit('(caller:gate)')
         source += '!(lifecycle:start)\n' + emit('(caller:gate)')
         source += emit(captured('(loop-budget (applyAutonomousBurst (caller:periphery) True))'))
+        source += '''
+!(match &self (= (lifecycle-native:read) $prior) (remove-atom &self (= (lifecycle-native:read) $prior)))
+(= (lifecycle-native:read) (ErFailure RuntimeError "injected native latch failure" fixture))
+(= (caller:error-gate $value)
+ (case $value
+  (((Error $call (PythonException $class $message $detail))
+    (JsonObject ((JsonPair "error" (str:symbol->string $class)) (JsonPair "message" $message))))
+   ((candidate $p) (JsonArray ((loop-budget $p) (loop-autonomous-ready $p) (get-state &mode-test-enabled)))))))
+'''
+        source += emit('(caller:error-gate (turnCandidate (caller:periphery)))')
+        source += emit('(caller:error-gate (waitCandidate (caller:periphery)))')
         output = c.run('actual-loop-gate-and-renewal', source, settings, runtime_root=package)
         actual = rows(output)
         c.save('loop-results.json', {'actual': actual,
                'limits': 'actual outer cognition gate with counted inert inner candidate; actual autonomous renewal, no provider turn'})
-        assert actual == [50, [0,0,0], [20,1,1], 65], actual
+        assert actual == [50, [0,0,0], [20,1,1], 65,
+                          {'error':'RuntimeError','message':'injected native latch failure'},
+                          {'error':'RuntimeError','message':'injected native latch failure'}], actual
 
 
 def main():

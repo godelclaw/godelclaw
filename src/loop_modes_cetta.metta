@@ -29,8 +29,17 @@
            (if (mv:contains (loop-mode:names) $name) $name "godelclaw"))))))
 (= (loop-mode:current) (mv:raise (loop-mode:current-result)))
 (= (loop-mode:process)
-   (let $name (loop-mode:canonical (mio:env "METTACLAW_ACTIVE_LOOP_MODE" ""))
-     (if (mv:contains (loop-mode:names) $name) $name (loop-mode:current))))
+   (let $raw (mio:env "METTACLAW_ACTIVE_LOOP_MODE" "")
+     ; os.environ uses surrogateescape for malformed OS bytes. Such a value
+     ; cannot be a member of this finite ASCII name domain. Do not send the
+     ; malformed byte string to Unicode lower (active JSON names still use
+     ; full Python lower, without this membership shortcut).
+     (case (str:utf8-error $raw)
+       ((StrUtf8WellFormedV1
+         (let $name (loop-mode:canonical $raw)
+           (if (mv:contains (loop-mode:names) $name) $name (loop-mode:current))))
+        ((StrUtf8ErrorV1 $_ $_ $_ $_) (loop-mode:current))
+        ($other (Error loop-mode:process $other))))))
 ; The actual py-call result is a named atom, not a native String. Policy
 ; presets in loop_policy match that atom. Keep internal JSON names as text.
 (= (loop-mode:process-crossed)
