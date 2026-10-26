@@ -18,6 +18,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 import nostr_mail  # noqa: E402
 
+sys.path.insert(0, str(ROOT / "tests"))
+
 SECRETS = {name: "%064x" % value for name, value in
            (("alice", 0xa11ce), ("bob", 0xb0b), ("carol", 0xca401))}
 TEXTS = ["hello", "", "line\nbreak\ttab\rreturn", 'quote " and back\\slash', "πλάτων ✓ 🦄 ąčę",
@@ -207,6 +209,67 @@ class NativeNostrMail(unittest.TestCase):
             path.write_text(json.dumps(registry))
             got = self.run_metta(["(registry-json (nostr:load-registry %s))" % literal(str(path))])
             self.assertEqual(got, [compact(nostr_mail.load_registry(path))])
+
+
+class NativeRelay(unittest.TestCase):
+    """The PeTTa relay client against the gated relay fixture, beside nostr_mail.Relay."""
+
+    @classmethod
+    def setUpClass(cls):
+        binary = os.environ.get("CETTA_BIN")
+        if not binary or not Path(binary).is_file():
+            raise unittest.SkipTest("set CETTA_BIN to an engine with lib/crypto and WebSockets")
+        try:
+            import websockets  # noqa: F401
+        except ImportError:
+            raise unittest.SkipTest("the relay fixture needs the websockets package")
+        cls.binary = binary
+
+    def run_metta(self, body):
+        with tempfile.TemporaryDirectory() as directory:
+            program = Path(directory) / "relay.metta"
+            program.write_text("!(import! &self %s)\n" % json.dumps(str(ROOT / "src/nostr_mail_cetta.metta"))
+                               + HELPERS + body + "\n", encoding="utf-8")
+            result = subprocess.run([self.binary, "--lang", "petta", str(program)], cwd=ROOT,
+                                    capture_output=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(result.returncode, 0, result.stderr[-2000:])
+        return [line[len("(RESULT "):-1] for line in result.stdout.split("\n") if line.startswith("(RESULT ")]
+
+    def test_sign_in_publish_and_query(self):
+        from nostr_relay_fixture import GatedRelay
+        import asyncio
+        alice, bob = (nostr_mail.public_key(SECRETS[n]) for n in ("alice", "bob"))
+        foreign = nostr_mail.sign(SECRETS["bob"], 1, [], "not alice's", None)
+        with GatedRelay({alice, bob}) as relay:
+            got = self.run_metta(
+                "!(let* (($relay (nostr:relay-open %s %s 5000))"
+                " ($sealed (nostr:seal %s %s \"subject\" \"body\" \"task\" () () true))"
+                " ($ok (nostr:publish $relay $sealed 5000)) ($stolen (nostr:publish $relay %s 5000))"
+                " ($again (nostr:publish $relay $sealed 5000))"
+                " ($closed (nostr:relay-close $relay)))"
+                " (println! (RESULT $ok $stolen $again)))"
+                % (literal(relay.url), literal(SECRETS["alice"]), literal(SECRETS["alice"]), literal(bob),
+                   term(foreign)))
+            self.assertEqual(got, ['(nostr:ok true "") (nostr:ok false "restricted: only your own events")'
+                                   ' (nostr:ok true "duplicate: already have it")'])
+            query = [{"kinds": [3838], "#p": [bob]}]
+
+            async def python_query():
+                async with nostr_mail.Relay(relay.url, SECRETS["bob"]) as connection:
+                    return await connection.query(query)
+            want = asyncio.run(python_query())
+            self.assertEqual(len(want), 1)
+            got = self.run_metta(
+                "!(let* (($relay (nostr:relay-open %s %s 5000)) ($events (nostr:query $relay (%s) 5000))"
+                " ($closed (nostr:relay-close $relay)))"
+                " (println! (RESULT (compact (JsonArray $events)) (letter-json (nostr:open-letter %s (car-atom $events))))))"
+                % (literal(relay.url), literal(SECRETS["bob"]), " ".join(term(q) for q in query),
+                   literal(SECRETS["bob"])))
+            self.assertEqual(got, ["%s %s" % (json.dumps(compact(want)),
+                                              json.dumps(compact(nostr_mail.open_letter(SECRETS["bob"], want[0]))))])
+            got = self.run_metta("!(println! (RESULT (nostr:relay-open %s %s 5000)))"
+                                 % (literal(relay.url), literal(SECRETS["carol"])))
+            self.assertEqual(got, ['(nostr:relay-failed refused "restricted: sign-in refused")'])
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@
 ; answers with None is () here.
 !(import! &self (library crypto))
 !(import! &self (library fs))
+!(import! &self (library io))
 !(import! &self (library json))
 !(import! &self (library str))
 !(import! &self (library system))
@@ -237,3 +238,109 @@
                    (nostr:registry-entries (cdr-atom $pairs) (cons-atom $key $seen))))
              (nostr:registry-entries (cdr-atom $pairs) $seen))))
         ($other (nostr:registry-entries (cdr-atom $pairs) $seen))))))
+
+; ── relay client (NIP-01, NIP-42) over the io runtime's WebSockets ─────────
+; One connection, signed in with one key before any request, used by one
+; request at a time: (nostr:relay CONN URL SECRET).  Failures are
+; (nostr:relay-failed WHAT DETAIL).
+
+(= (nostr:compact $value)
+   (json:stringify-python-with $value ((ensure-ascii False) (separators "," ":"))))
+
+(= (nostr:relay-send $conn $message $timeout)
+   (case (io:submit (ws:send $conn (nostr:compact (JsonArray $message))))
+     (((io:pending $s)
+       (case (io:wait $s $timeout)
+         (((io:event $s (ws:sent $conn)) sent)
+          ($other (nostr:relay-failed lost $other)))))
+      ($refused (nostr:relay-failed lost $refused)))))
+
+; The items of the next message that is a JSON array, nostr:timeout, or a
+; failure once the connection is lost.
+(= (nostr:relay-next $conn $timeout)
+   (case (io:submit (ws:receive $conn))
+     (((io:pending $r)
+       (case (io:wait $r $timeout)
+         (((io:event $r (ws:message $c $text))
+           (case (json:parse $text)
+             (((JsonArray $items) (if (== $items ()) (nostr:relay-next $conn $timeout) $items))
+              ($other (nostr:relay-next $conn $timeout)))))
+          ((io:event $r $other) (nostr:relay-failed lost $other))
+          ($idle (let $cancelled (io:cancel $r) nostr:timeout)))))
+      ($refused (nostr:relay-failed lost $refused)))))
+
+(= (nostr:relay-open $url $secret $timeout)
+   (case (io:submit (ws:connect $url $timeout 4194304))
+     (((io:pending $conn)
+       (case (io:wait $conn $timeout)
+         (((io:event $conn (ws:connected $conn)) (nostr:sign-in (nostr:relay $conn $url $secret) $timeout))
+          ($other (nostr:relay-failed connect $other)))))
+      ($refused (nostr:relay-failed connect $refused)))))
+
+(= (nostr:relay-close (nostr:relay $conn $url $secret))
+   (case (io:submit (ws:close $conn 1000 ""))
+     (((io:pending $x) (let $closed (io:wait $x 5000) closed))
+      ($refused closed))))
+
+; NIP-42: answer the relay's challenge with a kind-22242 event naming the
+; relay and the challenge, and wait for the relay to accept it.
+(= (nostr:sign-in $relay $timeout)
+   (let (nostr:relay $conn $url $secret) $relay
+     (case (nostr:await-challenge $conn $timeout)
+       (((nostr:challenge $challenge)
+         (let $auth (nostr:sign $secret 22242
+                      (JsonArray ((JsonArray ("relay" $url)) (JsonArray ("challenge" $challenge)))) "" ())
+           (case (nostr:relay-send $conn ("AUTH" $auth) $timeout)
+             ((sent (case (nostr:await-ok $conn (nostr:field $auth "id") $timeout)
+                      (((nostr:ok true $reason) $relay)
+                       ((nostr:ok false $reason) (nostr:relay-failed refused $reason))
+                       ($failure $failure))))
+              ($failure $failure)))))
+        ($failure $failure)))))
+
+(= (nostr:await-challenge $conn $timeout)
+   (let $message (nostr:relay-next $conn $timeout)
+     (case $message
+       ((nostr:timeout (nostr:relay-failed timeout "no sign-in challenge"))
+        ((nostr:relay-failed $what $detail) $message)
+        (("AUTH" $challenge) (nostr:challenge $challenge))
+        ($other (nostr:await-challenge $conn $timeout))))))
+
+; (nostr:ok ACCEPTED REASON) of the OK answer naming this event.
+(= (nostr:await-ok $conn $id $timeout)
+   (let $message (nostr:relay-next $conn $timeout)
+     (case $message
+       ((nostr:timeout (nostr:relay-failed timeout "no answer to an event"))
+        ((nostr:relay-failed $what $detail) $message)
+        (("OK" $id $accepted) (nostr:ok (== $accepted true) ""))
+        (("OK" $id $accepted $reason) (nostr:ok (== $accepted true) $reason))
+        ($other (nostr:await-ok $conn $id $timeout))))))
+
+; (nostr:ok ACCEPTED REASON) as the relay answered a published event.
+(= (nostr:publish $relay $event $timeout)
+   (let (nostr:relay $conn $url $secret) $relay
+     (case (nostr:relay-send $conn ("EVENT" $event) $timeout)
+       ((sent (nostr:await-ok $conn (nostr:field $event "id") $timeout))
+        ($failure $failure)))))
+
+; The stored events matching any of the filters, up to the relay's
+; end-of-stored marker, in the order the relay sent them.
+(= (nostr:query $relay $filters $timeout)
+   (let* (((nostr:relay $conn $url $secret) $relay)
+          ($sub (crypto:random-hex 8)))
+     (case (nostr:relay-send $conn (cons-atom "REQ" (cons-atom $sub $filters)) $timeout)
+       ((sent (let $events (nostr:collect $conn $sub $timeout)
+                (let $closed (nostr:relay-send $conn ("CLOSE" $sub) $timeout) $events)))
+        ($failure $failure)))))
+
+(= (nostr:collect $conn $sub $timeout)
+   (let $message (nostr:relay-next $conn $timeout)
+     (case $message
+       ((nostr:timeout (nostr:relay-failed timeout "no end of stored events"))
+        ((nostr:relay-failed $what $detail) $message)
+        (("EVENT" $sub $event)
+         (let $rest (nostr:collect $conn $sub $timeout)
+           (case $rest (((nostr:relay-failed $what $detail) $rest) ($events (cons-atom $event $events))))))
+        (("EOSE" $sub) ())
+        (("CLOSED" $sub $reason) (nostr:relay-failed closed $reason))
+        ($other (nostr:collect $conn $sub $timeout))))))
