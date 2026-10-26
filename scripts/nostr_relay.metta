@@ -8,8 +8,9 @@
 ; it wrote or that name it in a `p` tag. A deletion request removes only its
 ; author's events. Ephemeral events are relayed, not stored. The allowlist
 ; file is watched: a change takes effect at once, and the connections of a
-; removed key are closed. Stored events live in SQLite, so they outlast a
-; restart; a stored answer is each filter's newest events, newest first.
+; removed key are closed. Stored events live in a named space of CeTTa's
+; space service, journaled there, so they outlast a restart; a stored answer is
+; each filter's newest events, newest first.
 ;
 ; One io:wait-ready loop serves the listener, every connection, the sends and
 ; the allowlist watch. Plain ws on the address given; TLS belongs in a proxy
@@ -22,9 +23,10 @@
 ;   port = 7447
 ;   urls = ["wss://relay.example"]  # an AUTH event must name one; [] accepts any
 ;   allowlist = "allow.toml"        # [members] NAME = "hex public key"
-;   database = "relay.sqlite"
-; and, optionally, max_message_bytes, max_connections, idle_ms, auth_window,
-; reject_future, max_limit, max_subscriptions and max_filters.
+;   store = "store.sock"            # the socket of a cetta-space-service
+; and, optionally, space (the store's name, default "nostr-relay"),
+; max_message_bytes, max_connections, idle_ms, auth_window, reject_future,
+; max_limit, max_subscriptions and max_filters.
 !(import! &self (library system))
 !(import! &self (library fs))
 !(import! &self (library json))
@@ -32,7 +34,7 @@
 !(import! &self (library io))
 !(import! &self (library toml))
 !(import! &self (library crypto))
-!(import! &self (library sqlite))
+!(import! &self (library space_service))
 !(import! &self "../src/nostr_mail_cetta.metta")
 
 ; ── text, lists and facts ───────────────────────────────────────────────────
@@ -104,18 +106,19 @@
        (if (nostr:is-text (car-atom $items)) (cons-atom (car-atom $items) $rest) $rest))))
 
 (= (rl:configure-from $config $directory)
-   (let* (($allow (rl:field-or $config "allowlist" ())) ($database (rl:field-or $config "database" ())))
+   (let* (($allow (rl:field-or $config "allowlist" ())) ($store (rl:field-or $config "store" ())))
      (if (not (nostr:is-text $allow)) (rl:failed "the configuration names no allowlist")
-       (if (not (nostr:is-text $database)) (rl:failed "the configuration names no database")
+       (if (not (nostr:is-text $store)) (rl:failed "the configuration names no store socket")
          (let* (($host (rl:field-or $config "host" "127.0.0.1"))
                 ($urls (rl:texts (nostr:items (rl:field-or $config "urls" (JsonArray ())))))
                 ($allow-path (rl:relative $directory $allow))
-                ($database-path (rl:relative $directory $database))
+                ($store-path (rl:relative $directory $store))
                 ($s1 (rl:set host $host))
                 ($s2 (rl:set port (rl:field-or $config "port" 7447)))
                 ($s3 (rl:set urls $urls))
                 ($s4 (rl:set allowlist $allow-path))
-                ($s5 (rl:set database $database-path))
+                ($s5 (rl:set store $store-path))
+                ($s5b (rl:set space-name (rl:field-or $config "space" "nostr-relay")))
                 ($s6 (rl:set max-message-bytes (rl:field-or $config "max_message_bytes" 131072)))
                 ($s7 (rl:set max-connections (rl:field-or $config "max_connections" 128)))
                 ($s8 (rl:set idle-ms (rl:field-or $config "idle_ms" 30000)))
@@ -167,55 +170,102 @@
       ((RlAllowed $count) (rl:log (rl:cat ("allowlist: " (rl:text $count) " keys")))))))
 
 ; ── the store ───────────────────────────────────────────────────────────────
-; events holds each stored event's JSON; tags holds the first value of each
-; single-letter tag, which is what a filter's #x condition reads.
+; A named space of the space service at `store`: each event as (RelayEvent ID
+; PUBKEY KIND CREATED JSON), and a copy (RelayCopy READER ID PUBKEY KIND
+; CREATED JSON) for each key that may read it, its author and every key a p
+; tag names, so that what a key may read is one query. Writes are batches
+; committed at the revision they were read at; one that finds the space
+; changed is done again.
+(= (rl:space)
+   (let* (($socket (rl:get store)) ($name (rl:get space-name)))
+     (case (space:open $socket $name native)
+       (((reply $rid ok (space $u $i $n $b $k $r $c)) (space $u $i $n $b $k $r $c))
+        ($error (rl:failed (rl:cat ("the store is unavailable: " (rl:text $error)))))))))
+
 (= (rl:open-store)
-   (sqlite:transaction (rl:get database) "immediate"
-     ((sqlite:statement "CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, pubkey TEXT NOT NULL, kind INTEGER NOT NULL, created_at INTEGER NOT NULL, json TEXT NOT NULL)" ())
-      (sqlite:statement "CREATE TABLE IF NOT EXISTS tags (id TEXT NOT NULL, name TEXT NOT NULL, value TEXT NOT NULL)" ())
-      (sqlite:statement "CREATE INDEX IF NOT EXISTS tags_by_value ON tags (name, value)" ())
-      (sqlite:statement "CREATE INDEX IF NOT EXISTS tags_by_event ON tags (id)" ())
-      (sqlite:statement "CREATE INDEX IF NOT EXISTS events_by_time ON events (created_at DESC, id)" ()))
-     5000))
+   (case (rl:space) (((rl:failed $why) (rl:failed $why)) ($space RlStoreOpen))))
 
 (= (rl:has $id)
-   (case (sqlite:query (rl:get database) "SELECT 1 FROM events WHERE id = ?" ($id) 5000)
-     (((sqlite:result $columns $rows $changes $rowid) (not (== $rows ())))
-      ($error false))))
+   (case (rl:space)
+     (((rl:failed $why) false)
+      ($space (case (space:count (rl:get store) $space (RelayEvent $id $p $k $c $j))
+                (((reply $rid ok $count) (> $count 0)) ($error false)))))))
 
-(= (rl:placeholders $count)
-   (if (== $count 0) "" (if (== $count 1) "?" (rl:cat ("?, " (rl:placeholders (- $count 1)))))))
+; Every row a query selects, page by page; a query the service cannot answer
+; whole is a failure, never a shorter answer.
+(= (rl:rows $space $pattern $template)
+   (let $socket (rl:get store)
+     (case (space:query $socket $space $pattern $template 65536 30000)
+       (((reply $rid ok (snapshot $boot $cursor $source $revision $total $lease))
+         (rl:pages $socket (snapshot $boot $cursor $source $revision $total $lease) 0 $total ()))
+        ($error (rl:failed (rl:cat ("the store could not answer: " (rl:text $error)))))))))
+(= (rl:pages $socket $snapshot $offset $total $done)
+   (if (>= $offset $total) (let $closed (space:close $socket $snapshot) (rl:reverse-onto $done ()))
+     (case (space:fetch $socket $snapshot $offset 1024)
+       (((reply $rid ok (page $a $b $rows $c $d))
+         (let $items (cdr-atom $rows)
+           (if (== $items ()) (let $closed (space:close $socket $snapshot) (rl:failed "the store sent an empty page"))
+             (rl:pages $socket $snapshot (+ $offset (size-atom $items)) $total (rl:reverse-onto $items $done)))))
+        ($error (let $closed (space:close $socket $snapshot) (rl:failed (rl:cat ("the store could not page: " (rl:text $error))))))))))
 
-(= (rl:indexed-name $name)
-   (if (nostr:is-text $name) (if (== (str:byte-length $name) 1) (str:is-all-in alpha $name) false) false))
+(= (rl:distinct $items $done)
+   (if (== $items ()) (rl:reverse-onto $done ())
+     (let $item (car-atom $items)
+       (rl:distinct (cdr-atom $items) (if (nostr:member $item $done) $done (cons-atom $item $done))))))
+(= (rl:keys-only $values)
+   (if (== $values ()) ()
+     (let $rest (rl:keys-only (cdr-atom $values))
+       (if (nostr:is-hex (car-atom $values) 64) (cons-atom (car-atom $values) $rest) $rest))))
+; The keys that may read an event: its author and each key a p tag names.
+(= (rl:readers $event)
+   (rl:distinct (cons-atom (nostr:field $event "pubkey") (rl:keys-only (nostr:tag-values $event "p"))) ()))
 
-(= (rl:tag-statements $id $tags)
-   (if (== $tags ()) ()
-     (let* (($items (nostr:items (car-atom $tags))) ($rest (rl:tag-statements $id (cdr-atom $tags))))
-       (if (< (size-atom $items) 2) $rest
-         (let* (($name (car-atom $items)) ($value (car-atom (cdr-atom $items))))
-           (if (rl:indexed-name $name)
-             (cons-atom (sqlite:statement "INSERT INTO tags (id, name, value) VALUES (?, ?, ?)" ($id $name $value)) $rest)
-             $rest))))))
+(= (rl:copy-ops $readers $id $pubkey $kind $created $json)
+   (if (== $readers ()) ()
+     (let $reader (car-atom $readers)
+       (cons-atom (add (RelayCopy $reader $id $pubkey $kind $created $json))
+         (rl:copy-ops (cdr-atom $readers) $id $pubkey $kind $created $json)))))
+(= (rl:removals $rows)
+   (if (== $rows ()) () (let $row (car-atom $rows) (cons-atom (remove $row) (rl:removals (cdr-atom $rows))))))
 
-; NIP-09: the deleter's own events among those its e tags name.
-(= (rl:deletions $me $ids)
+; NIP-09: the deleter's own events among those its e tags name, and their copies.
+(= (rl:deletion-ops $space $me $ids)
    (if (== $ids ()) ()
-     (let* (($marks (rl:placeholders (size-atom $ids))) ($parameters (cons-atom $me $ids)))
-       ((sqlite:statement (rl:cat ("DELETE FROM tags WHERE id IN (SELECT id FROM events WHERE pubkey = ? AND id IN (" $marks "))")) $parameters)
-        (sqlite:statement (rl:cat ("DELETE FROM events WHERE pubkey = ? AND id IN (" $marks ")")) $parameters)))))
+     (let $id (car-atom $ids)
+       (case (rl:rows $space (RelayEvent $id $me $k $c $j) (RelayEvent $id $me $k $c $j))
+         (((rl:failed $why) (rl:failed $why))
+          ($events
+           (case (rl:rows $space (RelayCopy $r $id $me $k2 $c2 $j2) (RelayCopy $r $id $me $k2 $c2 $j2))
+             (((rl:failed $why2) (rl:failed $why2))
+              ($copies
+               (case (rl:deletion-ops $space $me (cdr-atom $ids))
+                 (((rl:failed $why3) (rl:failed $why3))
+                  ($rest (rl:append (rl:removals $events) (rl:append (rl:removals $copies) $rest))))))))))))))
 
-(= (rl:store $event $id $me)
-   (let* (($pubkey (nostr:field $event "pubkey")) ($kind (nostr:field $event "kind"))
-          ($created (nostr:field $event "created_at")) ($json (nostr:compact $event))
-          ($deletions (if (== $kind 5) (rl:deletions $me (nostr:tag-values $event "e")) ()))
-          ($insert (sqlite:statement "INSERT OR IGNORE INTO events (id, pubkey, kind, created_at, json) VALUES (?, ?, ?, ?, ?)"
-                     ($id $pubkey $kind $created $json)))
-          ($tags (rl:tag-statements $id (nostr:items (nostr:field $event "tags"))))
-          ($statements (rl:append $deletions (cons-atom $insert $tags))))
-     (case (sqlite:transaction (rl:get database) "immediate" $statements 5000)
-       (((sqlite:committed $results) stored)
-        ($error (let $logged (rl:log (rl:cat ("cannot store " $id ": " (rl:text $error)))) failed))))))
+(= (rl:store $event $id $me) (rl:store-try $event $id $me 5))
+(= (rl:store-try $event $id $me $tries)
+   (case (rl:space)
+     (((rl:failed $why) (let $logged (rl:log (rl:cat ("cannot store " $id ": " $why))) failed))
+      ($space
+       (let* (($pubkey (nostr:field $event "pubkey")) ($kind (nostr:field $event "kind"))
+              ($created (nostr:field $event "created_at")) ($json (nostr:compact $event))
+              ($removals (if (== $kind 5) (rl:deletion-ops $space $me (rl:distinct (nostr:tag-values $event "e") ())) ())))
+         (case $removals
+           (((rl:failed $why2) (let $logged2 (rl:log (rl:cat ("cannot store " $id ": " $why2))) failed))
+            ($ops
+             (let* (($adds (cons-atom (add (RelayEvent $id $pubkey $kind $created $json))
+                             (rl:copy-ops (rl:readers $event) $id $pubkey $kind $created $json)))
+                    ($batch (cons-atom ops (rl:append $ops $adds))))
+               (case (space:batch (rl:get store) $space $batch)
+                 (((reply $rid ok $committed) stored)
+                  ((reply $rid2 error stale-revision)
+                   (if (> $tries 1) (rl:store-try $event $id $me (- $tries 1))
+                     (let $logged3 (rl:log (rl:cat ("cannot store " $id ": the store kept changing"))) failed)))
+                  ((space:uncertain $rid3 $reason)
+                   (case (space:receipt (rl:get store) $space $rid3)
+                     (((reply $rid4 ok (reply $original ok $answer)) stored)
+                      ($unknown (let $logged4 (rl:log (rl:cat ("cannot store " $id ": " (rl:text $reason)))) failed)))))
+                  ($error (let $logged5 (rl:log (rl:cat ("cannot store " $id ": " (rl:text $error)))) failed)))))))))))))
 
 ; ── filters (NIP-01) ────────────────────────────────────────────────────────
 ; A filter is an object; ids, authors and #x conditions list text, kinds lists
@@ -230,6 +280,9 @@
        (case $value (((JsonArray $items) (rl:all-integers $items)) ($other false))))))
 (= (rl:integer-field $filter $key)
    (let $value (nostr:field $filter $key) (if (== $value nostr:missing) true (nostr:is-integer $value))))
+; A single-letter tag name, which filters' #x conditions read (NIP-01).
+(= (rl:indexed-name $name)
+   (if (nostr:is-text $name) (if (== (str:byte-length $name) 1) (str:is-all-in alpha $name) false) false))
 (= (rl:tag-key $key) (if (str:starts-with $key "#") (rl:indexed-name (str:byte-slice $key 1 (str:byte-length $key))) false))
 (= (rl:tag-fields-valid $pairs)
    (if (== $pairs ()) true
@@ -285,58 +338,66 @@
 (= (rl:readable $event $key)
    (if (== (nostr:field $event "pubkey") $key) true (nostr:member $key (nostr:tag-values $event "p"))))
 
-; A stored answer: the SQL of one filter over what the key may read, as
-; (RlQuery SQL PARAMETERS).
-(= (rl:in-condition $column $filter $key $sql $parameters)
-   (let $values (nostr:field $filter $key)
-     (if (== $values nostr:missing) (RlQuery $sql $parameters)
-       (let $items (nostr:items $values)
-         (RlQuery (rl:cat ($sql " AND " $column " IN (" (rl:placeholders (size-atom $items)) ")"))
-                  (rl:append $parameters $items))))))
-(= (rl:bound-condition $condition $filter $key $sql $parameters)
-   (let $value (nostr:field $filter $key)
-     (if (== $value nostr:missing) (RlQuery $sql $parameters)
-       (RlQuery (rl:cat ($sql " AND " $condition)) (rl:append $parameters ($value))))))
-(= (rl:tag-conditions $filter $pairs $sql $parameters)
-   (if (== $pairs ()) (RlQuery $sql $parameters)
-     (case (car-atom $pairs)
-       (((JsonPair $key $values)
-         (if (rl:tag-key $key)
-           (let* (($items (nostr:items (nostr:field $filter $key))) ($name (str:byte-slice $key 1 2)))
-             (rl:tag-conditions $filter (cdr-atom $pairs)
-               (rl:cat ($sql " AND EXISTS (SELECT 1 FROM tags t WHERE t.id = e.id AND t.name = ? AND t.value IN ("
-                        (rl:placeholders (size-atom $items)) "))"))
-               (rl:append $parameters (cons-atom $name $items))))
-           (rl:tag-conditions $filter (cdr-atom $pairs) $sql $parameters)))))))
+; A stored answer: each filter's newest events among those the key may read,
+; newest first and ties by id, the filter's limit capped by max_limit; each
+; event once, in the order of the filters.
 (= (rl:limit-of $filter)
    (let* (($most (rl:get max-limit)) ($limit (nostr:field $filter "limit")))
      (if (== $limit nostr:missing) $most (if (< $limit $most) (if (< $limit 0) 0 $limit) $most))))
-(= (rl:query $me $filter)
-   (let* (((RlQuery $q1 $p1) (RlQuery "SELECT e.id, e.json FROM events e WHERE (e.pubkey = ? OR EXISTS (SELECT 1 FROM tags r WHERE r.id = e.id AND r.name = 'p' AND r.value = ?))" ($me $me)))
-          ((RlQuery $q2 $p2) (rl:in-condition "e.id" $filter "ids" $q1 $p1))
-          ((RlQuery $q3 $p3) (rl:in-condition "e.pubkey" $filter "authors" $q2 $p2))
-          ((RlQuery $q4 $p4) (rl:in-condition "e.kind" $filter "kinds" $q3 $p3))
-          ((RlQuery $q5 $p5) (rl:bound-condition "e.created_at >= ?" $filter "since" $q4 $p4))
-          ((RlQuery $q6 $p6) (rl:bound-condition "e.created_at <= ?" $filter "until" $q5 $p5))
-          ((RlQuery $q7 $p7) (rl:tag-conditions $filter (rl:pairs $filter) $q6 $p6))
-          ($limit (rl:limit-of $filter)))
-     (RlQuery (rl:cat ($q7 " ORDER BY e.created_at DESC, e.id ASC LIMIT ?")) (rl:append $p7 ($limit)))))
 
-; The rows of every filter, each event once, as (ID JSON) in answer order.
-(= (rl:answer $me $filters $seen $rows)
-   (if (== $filters ()) (rl:reverse-onto $rows ())
-     (let (RlQuery $sql $parameters) (rl:query $me (car-atom $filters))
-       (case (sqlite:query (rl:get database) $sql $parameters 5000)
-         (((sqlite:result $columns $found $changes $rowid)
-           (rl:answer-rows $me (cdr-atom $filters) $found $seen $rows))
-          ($error (let $logged (rl:log (rl:cat ("query failed: " (rl:text $error))))
-                    (rl:answer $me (cdr-atom $filters) $seen $rows))))))))
-(= (rl:answer-rows $me $filters $found $seen $rows)
-   (if (== $found ()) (rl:answer $me $filters $seen $rows)
-     (let ($id $json) (car-atom $found)
-       (if (nostr:member $id $seen)
-         (rl:answer-rows $me $filters (cdr-atom $found) $seen $rows)
-         (rl:answer-rows $me $filters (cdr-atom $found) (cons-atom $id $seen) (cons-atom ($id $json) $rows))))))
+; (RlStored ID CREATED EVENT JSON) for each row, the event parsed once.
+(= (rl:parsed $rows)
+   (if (== $rows ()) ()
+     (case (car-atom $rows)
+       (((RelayStored $id $created $json)
+         (let $event (json:parse $json) (cons-atom (RlStored $id $created $event $json) (rl:parsed (cdr-atom $rows)))))
+        ($other (rl:parsed (cdr-atom $rows)))))))
+
+(= (rl:newer (RlStored $id1 $created1 $e1 $j1) (RlStored $id2 $created2 $e2 $j2))
+   (if (> $created1 $created2) true (if (< $created1 $created2) false (< (str:compare $id1 $id2) 0))))
+(= (rl:take-n $items $n)
+   (if (== $n 0) () (if (== $items ()) () (cons-atom (car-atom $items) (rl:take-n (cdr-atom $items) (- $n 1))))))
+(= (rl:drop-n $items $n) (if (== $n 0) $items (if (== $items ()) () (rl:drop-n (cdr-atom $items) (- $n 1)))))
+(= (rl:merge $left $right)
+   (if (== $left ()) $right
+     (if (== $right ()) $left
+       (if (rl:newer (car-atom $left) (car-atom $right))
+         (cons-atom (car-atom $left) (rl:merge (cdr-atom $left) $right))
+         (cons-atom (car-atom $right) (rl:merge $left (cdr-atom $right)))))))
+(= (rl:halves $count $half) (if (< $count 2) $half (rl:halves (- $count 2) (+ $half 1))))
+(= (rl:sort $items)
+   (let $count (size-atom $items)
+     (if (< $count 2) $items
+       (let $half (rl:halves $count 0)
+         (rl:merge (rl:sort (rl:take-n $items $half)) (rl:sort (rl:drop-n $items $half)))))))
+
+(= (rl:selected $stored $filter)
+   (if (== $stored ()) ()
+     (let* (($item (car-atom $stored)) ($rest (rl:selected (cdr-atom $stored) $filter)))
+       (case $item
+         (((RlStored $id $created $event $json) (if (rl:accepts $event $filter) (cons-atom $item $rest) $rest)))))))
+
+; The rows of every filter, each event once, as (ID JSON) in answer order, or
+; a failure of the store.
+(= (rl:answer $me $filters)
+   (case (rl:space)
+     (((rl:failed $why) (rl:failed $why))
+      ($space
+       (case (rl:rows $space (RelayCopy $me $id $pk $kind $created $json) (RelayStored $id $created $json))
+         (((rl:failed $why2) (rl:failed $why2))
+          ($rows (rl:answer-filters (rl:parsed $rows) $filters () ()))))))))
+(= (rl:answer-filters $stored $filters $seen $done)
+   (if (== $filters ()) (rl:reverse-onto $done ())
+     (let* (($filter (car-atom $filters))
+            ($chosen (rl:take-n (rl:sort (rl:selected $stored $filter)) (rl:limit-of $filter))))
+       (rl:answer-chosen $stored (cdr-atom $filters) $chosen $seen $done))))
+(= (rl:answer-chosen $stored $filters $chosen $seen $done)
+   (if (== $chosen ()) (rl:answer-filters $stored $filters $seen $done)
+     (case (car-atom $chosen)
+       (((RlStored $id $created $event $json)
+         (if (nostr:member $id $seen)
+           (rl:answer-chosen $stored $filters (cdr-atom $chosen) $seen $done)
+           (rl:answer-chosen $stored $filters (cdr-atom $chosen) (cons-atom $id $seen) (cons-atom ($id $json) $done))))))))
 
 ; ── connections ─────────────────────────────────────────────────────────────
 ; (RlConn CONN CHALLENGE KEY), KEY () until a sign-in; (RlSub CONN SUB
@@ -505,11 +566,16 @@
                (rl:send $conn (JsonArray ("CLOSED" $sub "error: too many filters")))
                (if (and (not (rl:has-sub $conn $sub)) (>= (rl:subscription-count $conn) (rl:get max-subscriptions)))
                  (rl:send $conn (JsonArray ("CLOSED" $sub "error: too many subscriptions")))
-                 (let* (($dropped (rl:drop-sub $conn $sub))
-                        ($added (add-atom &self (RlSub $conn $sub $filters)))
-                        ($sent (rl:send-rows $conn $sub (rl:answer $me $filters () ())))
-                        ($ended (rl:send $conn (JsonArray ("EOSE" $sub)))))
-                   (rl:tell-subscriptions $me))))))))))
+                 (case (rl:answer $me $filters)
+                   (((rl:failed $why)
+                     (let $logged (rl:log (rl:cat ("cannot answer " $sub ": " $why)))
+                       (rl:send $conn (JsonArray ("CLOSED" $sub "error: the store could not answer")))))
+                    ($rows
+                     (let* (($dropped (rl:drop-sub $conn $sub))
+                            ($added (add-atom &self (RlSub $conn $sub $filters)))
+                            ($sent (rl:send-rows $conn $sub $rows))
+                            ($ended (rl:send $conn (JsonArray ("EOSE" $sub)))))
+                       (rl:tell-subscriptions $me)))))))))))))
 (= (rl:send-rows $conn $sub $rows)
    (if (== $rows ()) ()
      (let* ((($id $json) (car-atom $rows)) ($sent (rl:send-text $conn (rl:event-message $sub $json))))
@@ -586,7 +652,7 @@
    (case (rl:configure $config)
      ((RlConfigured
        (case (rl:open-store)
-         (((sqlite:committed $results)
+         ((RlStoreOpen
            (case (rl:load-allowlist)
              (((rl:failed $why) (rl:failed $why))
               ((RlAllowed $count)

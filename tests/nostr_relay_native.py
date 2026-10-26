@@ -3,18 +3,18 @@ nostr_relay_fixture.GatedRelay, so tests can run against either:
 `with NativeRelay(allow) as relay: ... relay.url ...`.
 
 The relay runs as a CeTTa process (CETTA_BIN) in a directory of its own, on a
-port chosen here so that its address can be the one AUTH events must name.
-What the fixture reads from its own memory is read from the relay's store and
-log: stored events from the SQLite file, a key's subscriptions from the counts
-the relay logs. shut_out and let_in rewrite the allowlist, which the relay
-watches, and wait until it has read it again.
+port chosen here so that its address can be the one AUTH events must name, with
+a space service (CETTA_SPACE_SERVICE, by default beside CETTA_BIN) holding its
+store. What the fixture reads from its own memory is read from the relay's
+store and log: stored events by a query of the store, a key's subscriptions
+from the counts the relay logs. shut_out and let_in rewrite the allowlist,
+which the relay watches, and wait until it has read it again.
 """
 import json
 import os
 import re
 import shutil
 import socket
-import sqlite3
 import subprocess
 import tempfile
 import threading
@@ -45,7 +45,9 @@ class NativeRelay:
     def __init__(self, allow, binary=None, idle_ms=30000, directory=None):
         self.allow = _Allowlist(allow, self._allow_changed)
         self.refused = set()
-        self.binary = binary or os.environ.get("CETTA_BIN", "cetta")
+        self.binary = Path(binary or os.environ.get("CETTA_BIN", "cetta"))
+        self.service_binary = Path(os.environ.get("CETTA_SPACE_SERVICE", self.binary.parent / "cetta-space-service"))
+        self.service = None
         self.idle_ms = idle_ms
         self.owned = directory is None
         self.directory = Path(directory or tempfile.mkdtemp(prefix="nostr-relay-"))
@@ -69,8 +71,20 @@ class NativeRelay:
             probe.close()
         self.url = "ws://127.0.0.1:%d" % self.port
         self._write_allowlist()
+        socket_path = self.directory / "store.sock"
+        if socket_path.exists():
+            socket_path.unlink()
+        self.service = subprocess.Popen([str(self.service_binary), "--socket", str(socket_path),
+                                         "--data", str(self.directory / "store")],
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for _ in range(500):
+            if socket_path.exists() or self.service.poll() is not None:
+                break
+            threading.Event().wait(0.01)
+        if not socket_path.exists():
+            raise RuntimeError("the space service did not start")
         (self.directory / "relay.toml").write_text(
-            'host = "127.0.0.1"\nport = %d\nurls = ["%s"]\nallowlist = "allow.toml"\ndatabase = "relay.sqlite"\n'
+            'host = "127.0.0.1"\nport = %d\nurls = ["%s"]\nallowlist = "allow.toml"\nstore = "store.sock"\n'
             'idle_ms = %d\n' % (self.port, self.url, self.idle_ms))
         self.process = subprocess.Popen(
             [str(self.binary), "--lang", "petta", "--quiet", str(RELAY), "--config", str(self.directory / "relay.toml")],
@@ -83,9 +97,10 @@ class NativeRelay:
         return self
 
     def stop(self):
-        if self.process and self.process.poll() is None:
-            self.process.terminate()
-            self.process.wait(10)
+        for process in (self.process, self.service):
+            if process and process.poll() is None:
+                process.terminate()
+                process.wait(10)
 
     def __enter__(self):
         return self.start()
@@ -111,8 +126,26 @@ class NativeRelay:
             return "".join(self.lines)
 
     def stored(self):
-        with sqlite3.connect(self.directory / "relay.sqlite") as database:
-            return [json.loads(row[0]) for row in database.execute("SELECT json FROM events")]
+        """Every stored event, read from the store as the relay keeps it."""
+        program = self.directory / "stored.metta"
+        program.write_text(
+            '!(import! &self (library space_service))\n'
+            '(= (pages $socket $snapshot $offset $total)\n'
+            '   (if (>= $offset $total) done\n'
+            '     (case (space:fetch $socket $snapshot $offset 1024)\n'
+            '       (((reply $r ok (page $a $b $items $c $d))\n'
+            '         (let $printed (println! (STORED (cdr-atom $items))) (pages $socket $snapshot (+ $offset 1024) $total)))))))\n'
+            '!(let* (($socket %s) ((reply $r1 ok $space) (space:open $socket "nostr-relay" native))\n'
+            '        ((reply $r2 ok (snapshot $b $c $s $v $total $l))\n'
+            '         (space:query $socket $space (RelayEvent $id $p $k $t $json) $json 65536 30000)))\n'
+            '   (pages $socket (snapshot $b $c $s $v $total $l) 0 $total))\n'
+            % json.dumps(str(self.directory / "store.sock")))
+        result = subprocess.run([str(self.binary), "--lang", "petta", "--quiet", str(program)],
+                                capture_output=True, text=True, timeout=60)
+        literals = [text for line in result.stdout.splitlines() if line.startswith("(STORED ")
+                    for text in re.findall(r'"((?:[^"\\]|\\.)*)"', line)]
+        # Each printed literal is a MeTTa string, escaped as JSON escapes its strings.
+        return [json.loads(json.loads('"%s"' % literal)) for literal in literals]
 
     def subscribers(self, key):
         """How many open subscriptions a key holds."""
