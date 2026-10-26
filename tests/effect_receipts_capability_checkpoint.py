@@ -22,10 +22,9 @@ import unicodedata
 from zoneinfo import ZoneInfo
 
 from isolated_env import isolated_environ
+from effect_receipts_bundle import ENGINE_PIN, MANIFEST_PIN, assert_same_bundle, bundle_identity
 
 
-EXE_SHA = "2c3a593f7482a60321e36b12a86e8fac788d0a690cda770af7b021a6df92fb7b"
-MANIFEST_SHA = "1b1648b95ab4428cffb00316c4e732b28621228318ceba824a860ce05b01a627"
 LIMIT = 25165824 * 1024
 LIBRARIES = ("lib_import", "fs", "str", "json", "system", "path", "math", "re")
 
@@ -42,39 +41,34 @@ class Checkpoint:
         assert self.binary.is_absolute() and not self.binary.is_symlink()
         self.bundle = self.binary.resolve().parent
         self.index = 0
+        self.pins = {key: os.environ.get(key, "") for key in (ENGINE_PIN, MANIFEST_PIN)}
+        self._phase_start = None
 
     def save(self, name, value):
         (self.evidence / name).write_text(
             json.dumps(value, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
 
     def identity(self, phase, edge):
-        manifest = self.bundle / "SHA256SUMS"
-        assert digest(manifest) == MANIFEST_SHA, "manifest mismatch"
-        assert digest(self.binary) == EXE_SHA, "executable mismatch"
-        rows = [line.split("  ", 1) for line in manifest.read_text().splitlines()]
-        assert len(rows) == len({name for _, name in rows}) == 341
-        files = {"cetta"} | {str(p.relative_to(self.bundle))
-                              for p in (self.bundle / "lib").rglob("*") if p.is_file()}
-        assert files == {name for _, name in rows}, "library membership mismatch"
-        # Reject directory symlinks too, including ones not followed by rglob.
-        assert not any(p.is_symlink() for p in (self.bundle / "lib").rglob("*"))
-        for expected, name in rows:
-            path = self.bundle / name
-            assert not path.is_symlink() and path.resolve().is_relative_to(self.bundle)
-            assert digest(path) == expected, name
-        self.save(phase + "-" + edge + ".json", {
-            "phase": phase, "edge": edge, "binary": str(self.binary),
-            "executable_sha256": EXE_SHA, "manifest_sha256": MANIFEST_SHA,
-            "files": rows, "python": sys.version, "python_executable": sys.executable,
+        try:
+            observed = bundle_identity(self.binary, self.pins)
+        except BaseException as exc:
+            self.save(phase + "-" + edge + "-rejected.json", {
+                "type": type(exc).__name__, "detail": str(exc), "expected_pins": self.pins})
+            raise
+        observed.update({"phase": phase, "edge": edge,
+            "expected_pins": self.pins, "python": sys.version, "python_executable": sys.executable,
             "rlimit_as": resource.getrlimit(resource.RLIMIT_AS),
-            "provenance": "clean build supplied by reviewer, not independently certified"})
-        print(phase, edge, "341 identities/membership match", flush=True)
+            "provenance": "bundle-under-test hashes/resolution are observations, not independent build certification"})
+        self.save(phase + "-" + edge + ".json", observed)
+        print(phase, edge, len(observed["files"]), "manifest identities/membership verified", flush=True)
+        return observed
 
     def environment(self):
         # isolated_environ first, then an allowlist, not an incomplete secrets
         # denylist. No inherited loader, CETTA, root or Python overrides survive.
         inherited = isolated_environ()
         env = {key: inherited[key] for key in ("LANG", "LC_ALL") if key in inherited}
+        env.update(self.pins)
         d = self.directory
         env.update(HOME=str(d / "home"), TMPDIR=str(d),
                    XDG_STATE_HOME=str(d / "xdg-state"), XDG_CONFIG_HOME=str(d / "xdg-config"),
@@ -134,19 +128,30 @@ class Checkpoint:
             resolved = Path(path + ".metta").resolve()
             assert resolved.is_relative_to(self.bundle / "lib") and resolved.is_file(), path
             assert resolved.stem == name, (name, path)
+            relative = resolved.relative_to(self.bundle).as_posix()
+            assert self._phase_start is not None, "resolution must be phase-bracketed"
+            assert relative in self._phase_start["library_files"], path
+            assert digest(resolved) == dict(self._phase_start["files"])[relative], path
         self.save(phase + "-resolution-" + edge + ".json", paths)
 
     @contextmanager
     def phase(self, name):
-        self.identity(name, "START")
+        start = self.identity(name, "START")
+        self._phase_start = start
         try:
             self.resolution(name, "START")
             yield
         finally:
             try:
+                # A coherent self-manifested replacement is still a mismatch.
+                # Check before launching even the final descriptor process.
+                before_resolution = self.identity(name, "PRE-END-RESOLUTION")
+                assert_same_bundle(start, before_resolution)
                 self.resolution(name, "END")
             finally:
-                self.identity(name, "END")
+                end = self.identity(name, "END")
+                self._phase_start = None
+                assert_same_bundle(start, end)
 
 
 def main():

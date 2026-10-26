@@ -1,6 +1,5 @@
-"""Isolated, identity-bracketed project05 qualification on reviewer bundle 42e89820."""
+"""Isolated, manifest-checked project05 qualification; optional pins come from env."""
 import base64
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -12,8 +11,6 @@ from effect_receipts_capability_checkpoint import Checkpoint, LIMIT
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EXE_SHA = "c8d9513628e102c90bf1043e177988332af6af1522c80af961abc8f153ff2ba1"
-MANIFEST_SHA = "504ead82db62dd2da78a8e69b4b17daad19bf9b5865826a3125b50fcd2bd71e9"
 
 
 def q(text):
@@ -23,30 +20,6 @@ def q(text):
 
 
 class Qualification(Checkpoint):
-    def identity(self, phase, edge):
-        sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
-        manifest = self.bundle / "SHA256SUMS"
-        assert sha(manifest) == MANIFEST_SHA, "new frozen manifest mismatch"
-        assert sha(self.binary) == EXE_SHA, "new frozen executable mismatch"
-        rows = [line.split("  ", 1) for line in manifest.read_text().splitlines()]
-        assert len(rows) == len({name for _, name in rows}) == 341
-        observed = {"cetta"} | {str(p.relative_to(self.bundle))
-                                for p in (self.bundle / "lib").rglob("*") if p.is_file()}
-        assert observed == {name for _, name in rows}, "frozen library membership mismatch"
-        assert not any(p.is_symlink() for p in (self.bundle / "lib").rglob("*"))
-        for expected, name in rows:
-            path = self.bundle / name
-            assert not path.is_symlink() and path.resolve().is_relative_to(self.bundle)
-            assert sha(path) == expected, name
-        self.save(phase + "-" + edge + ".json", {
-            "phase": phase, "edge": edge, "binary": str(self.binary),
-            "executable_sha256": EXE_SHA, "manifest_sha256": MANIFEST_SHA,
-            "files": rows, "python": sys.version, "python_executable": sys.executable,
-            "rlimit_as": resource.getrlimit(resource.RLIMIT_AS),
-            "provenance": "reviewer-supplied port-05-primitives bf79d674+42e89820 on 818d6360; "
-                          "source/build and reviewer strace are attributed, not independently certified"})
-        print(phase, edge, "341 new frozen identities/membership match", flush=True)
-
     def environment(self):
         env = super().environment()
         env.pop("METTACLAW_PUBLIC_WORK_LIB", None)
