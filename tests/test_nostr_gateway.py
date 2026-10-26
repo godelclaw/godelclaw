@@ -22,7 +22,8 @@ if HAVE_CRYPTO:
 # A claw-mail stand-in with the mailbox protocol's answers: a send identity is
 # accepted once, an identical resend is a duplicate and a changed one a
 # conflict; `next` presents the ready delivery again before taking a pending
-# one; `ack` settles only a ready delivery.
+# one; `ack` settles only a ready delivery. As the service does, it records the
+# sender as `account/agent`.
 MAILER = r'''
 import json, os, sys
 args = sys.argv[1:]
@@ -40,9 +41,10 @@ if command == "send":
     agent, to, text = [f for i, f in enumerate(fields) if f != "--id" and (i == 0 or fields[i - 1] != "--id")]
     old = [d for d in ledger if d["id"] == ident]
     if not old:
-        ledger.append({"id": ident, "to": to, "from": agent, "text": text, "stage": "pending"})
+        sender = os.environ["FAKE_MAIL_ACCOUNT"] + "/" + agent
+        ledger.append({"id": ident, "to": to, "from": sender, "text": text, "stage": "pending"})
         reply({"status": "accepted", "id": ident})
-    same = (old[0]["to"], old[0]["from"], old[0]["text"]) == (to, agent, text)
+    same = (old[0]["to"], old[0]["from"], old[0]["text"]) == (to, os.environ["FAKE_MAIL_ACCOUNT"] + "/" + agent, text)
     reply({"status": "duplicate" if same else "conflict", "id": ident})
 if command == "next":
     mine = [d for d in ledger if d["to"] == fields[0]]
@@ -85,10 +87,13 @@ class GatewayTests(unittest.TestCase):
         mailer.chmod(0o755)
         self.ledger = self.directory / "ledger.json"
         os.environ["FAKE_MAIL_LEDGER"] = str(self.ledger)
+        os.environ["FAKE_MAIL_ACCOUNT"] = "acct"
         self.addCleanup(os.environ.pop, "FAKE_MAIL_LEDGER", None)
+        self.addCleanup(os.environ.pop, "FAKE_MAIL_ACCOUNT", None)
         (self.directory / "gateway.toml").write_text(
             'relay = "%s"\nregistry = "registry.json"\nkeys = "keys.json"\nstate = "state.json"\n'
-            'mailer = "%s"\n[inbound]\ngodel = "godel"\n[senders]\ngodel = "godel"\n"aimama/*" = "godel"\n'
+            'mailer = "%s"\n[inbound]\ngodel = "godel"\n[senders]\n"acct/godel" = "godel"\n"aimama/*" = "godel"\n'
+            '[replies]\n"acct/godel" = "godel"\n'
             % (self.relay.url, mailer))
         self.gateway = gw.Gateway(self.directory / "gateway.toml")
 
@@ -111,7 +116,7 @@ class GatewayTests(unittest.TestCase):
         self.publish(self.alice, mail)
         self.gateway.tick()
         [delivery] = self.deliveries("godel")
-        self.assertEqual((delivery["id"], delivery["from"]), (mail["id"], "nostr.alice"))
+        self.assertEqual((delivery["id"], delivery["from"]), (mail["id"], "acct/nostr.alice"))
         head, body = delivery["text"].split("\n\n", 1)
         self.assertIn("From: alice <%s@nostr>" % self.pub["alice"], head)
         self.assertIn("Subject: Hello", head)
@@ -141,7 +146,7 @@ class GatewayTests(unittest.TestCase):
         self.gateway.tick()
         [delivery] = self.deliveries("godel")
         head = delivery["text"].split("\n\n", 1)[0].splitlines()
-        self.assertEqual(delivery["from"], "nostr.alice")
+        self.assertEqual(delivery["from"], "acct/nostr.alice")
         self.assertEqual([line for line in head if line.startswith("From:")],
                          ["From: alice <%s@nostr>" % self.pub["alice"]])
         self.assertIn("Subject: Hi From: godel <x@nostr>", head)
@@ -152,7 +157,7 @@ class GatewayTests(unittest.TestCase):
         self.ledger.write_text(json.dumps(ledger))
 
     def test_outbound_mail_is_signed_by_the_senders_key_and_reported(self):
-        self.outbox("godel", "To: alice\nSubject: Report\nType: checkpoint\n\nAll done.")
+        self.outbox("acct/godel", "To: alice\nSubject: Report\nType: checkpoint\n\nAll done.")
         self.gateway.tick()
         [event] = self.as_member(self.alice, lambda relay: relay.query([{"kinds": [nm.KIND_MAIL],
                                                                           "#p": [self.pub["alice"]]}]))
@@ -162,13 +167,13 @@ class GatewayTests(unittest.TestCase):
         [request] = [d for d in self.deliveries("nostr")]
         self.assertEqual(request["stage"], "settled")
         [told] = self.deliveries("godel")
-        self.assertEqual(told["from"], "nostr")
+        self.assertEqual(told["from"], "acct/nostr")
         self.assertTrue(told["text"].startswith("Sent to alice: Report (event %s)" % event["id"]))
 
     def test_a_saved_event_is_republished_after_a_crash_and_kept_once(self):
         saved = nm.seal(self.godel, self.pub["alice"], "Once", "only once")
         self.publish(self.godel, saved)        # published, then the gateway died before settling
-        self.outbox("godel", "To: alice\nSubject: Once\n\nonly once")
+        self.outbox("acct/godel", "To: alice\nSubject: Once\n\nonly once")
         self.gateway.state["outbound"]["d1"] = {"key": "godel", "to": "alice", "event": saved}
         self.gateway.tick()
         events = self.as_member(self.alice, lambda relay: relay.query([{"kinds": [nm.KIND_MAIL]}]))
@@ -177,17 +182,18 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(self.gateway.state["outbound"], {})
 
     def test_bad_requests_are_reported_and_settled(self):
-        self.outbox("lila", "To: alice\n\nx", ident="no-key")
-        self.outbox("godel", "To: nobody\n\nx", ident="no-recipient")
-        self.outbox("godel", "Subject: missing recipient\n\nx", ident="no-to")
+        self.outbox("acct/lila", "To: alice\n\nx", ident="no-key")
+        self.outbox("acct/godel", "To: nobody\n\nx", ident="no-recipient")
+        self.outbox("acct/godel", "Subject: missing recipient\n\nx", ident="no-to")
         self.gateway.tick()
         self.assertTrue(all(d["stage"] == "settled" for d in self.deliveries("nostr")))
-        told = {d["to"]: [] for d in self.deliveries() if d["from"] == "nostr"}
+        told = {d["to"]: [] for d in self.deliveries() if d["from"] == "acct/nostr"}
         for d in self.deliveries():
-            if d["from"] == "nostr":
+            if d["from"] == "acct/nostr":
                 told[d["to"]].append(d["text"])
-        self.assertEqual(sorted(told), ["godel", "lila"])
-        self.assertIn("Not sent: lila has no Nostr key at this gateway", told["lila"])
+        # Replies go to the address in [replies], else to the sender's own inbox.
+        self.assertEqual(sorted(told), ["acct/lila", "godel"])
+        self.assertIn("Not sent: acct/lila has no Nostr key at this gateway", told["acct/lila"])
         self.assertIn("Not sent: nobody is not in the registry", told["godel"])
         self.assertIn("Not sent: no To: header", told["godel"])
         self.assertEqual(self.as_member(self.alice, lambda relay: relay.query([{"kinds": [nm.KIND_MAIL]}])), [])

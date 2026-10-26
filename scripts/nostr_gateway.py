@@ -10,8 +10,9 @@ send identity is the event identifier, so a message read again is a duplicate
 send, never a second delivery. When the author asked for receipts, the agent's
 key publishes a delivered receipt.
 
-Outbound: a local agent sends mail to the claw-mail inbox `nostr`, as a header
-block, a blank line and the body:
+Outbound: a local agent sends mail to the gateway's claw-mail inbox, `nostr` of
+the gateway's account (for example `oruzi/nostr`), as a header block, a blank
+line and the body:
 
     To: <registry name>
     Subject: <subject>
@@ -19,10 +20,13 @@ block, a blank line and the body:
     Type: <team type>            (optional)
     Task: <task id>              (optional)
 
-The claw-mail sender, whose account the service authenticates, selects the key
-that signs. The signed event is saved before it is published, so a retry after
-a crash republishes the same event and the relay keeps one. The sender is told
-by claw-mail whether the message was sent.
+The claw-mail sender (`account/agent`, whose account the service authenticates)
+selects the key that signs, by the `[senders]` table, where `account/*` covers
+every agent of an account. The signed event is saved before it is published, so
+a retry after a crash republishes the same event and the relay keeps one. The
+sender is told whether the message was sent, at its address in `[replies]`
+(for an agent that reads the shared `agent-mail` bus, its bare name), and
+otherwise at its own inbox.
 
 The state is one small JSON file: per-key read positions, recently handled
 identifiers, and signed events not yet confirmed.
@@ -115,6 +119,7 @@ class Gateway:
         self.overlap = int(config.get("overlap", 600))
         self.inbound = dict(config.get("inbound", {}))
         self.senders = dict(config.get("senders", {}))
+        self.replies = dict(config.get("replies", {}))
         for name in list(self.inbound.values()) + [self.outbox]:
             if not AGENT.fullmatch(name.split("/")[-1]):
                 raise ValueError("not a claw-mail name: " + name)
@@ -160,7 +165,8 @@ class Gateway:
 
     def tell(self, sender, delivery, text):
         """Tell an outbound sender what became of its message, once per delivery."""
-        result = self.mail(self.outbox, "send", self.outbox, sender, text, "--id", "nostr-outcome-" + delivery)
+        result = self.mail(self.outbox, "send", self.outbox, self.replies.get(sender, sender), text,
+                           "--id", "nostr-outcome-" + delivery)
         if result.get("status") not in ("accepted", "duplicate"):
             raise RuntimeError("could not tell %s: %s" % (sender, result.get("reason", result)))
 
