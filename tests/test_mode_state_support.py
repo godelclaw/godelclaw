@@ -1,6 +1,7 @@
 """Static generated bundle fixtures only: mock descriptors, NEVER execute them."""
 import os
 from pathlib import Path
+import re
 import tempfile
 import unittest
 from unittest import mock
@@ -112,6 +113,28 @@ class ModeStateSupportTest(unittest.TestCase):
         self.assertIn("HOME", guard.environment())
         guard.unset_environment = ("HOME",)
         self.assertNotIn("HOME", guard.environment())
+
+    def mode_sources(self):
+        root = Path(__file__).resolve().parents[1] / "src"
+        names = ("mode_runtime", "mode_text_cetta", "mode_values_cetta", "mode_io_cetta",
+                 "mode_paths_cetta", "engine_active_cetta", "engine_modes_cetta", "attention_cetta",
+                 "fuel_cetta")
+        return [root / (name + ".metta") for name in names]
+
+    def test_scoped_native_source_forms_are_balanced(self):
+        # Shape check only; actual native return/effect gates remain required.
+        for path in self.mode_sources():
+            depth = 0
+            for token in re.findall(r';[^\n]*|"(?:\\.|[^"\\])*"|[()]', path.read_text()):
+                if token == "(": depth += 1
+                elif token == ")": depth -= 1
+                self.assertGreaterEqual(depth, 0, path.name)
+            self.assertEqual(depth, 0, path.name)
+
+    def test_scoped_native_sources_add_no_python_or_foreign_boundary(self):
+        for path in self.mode_sources():
+            source = re.sub(r';[^\n]*', "", path.read_text())
+            self.assertNotRegex(source, r'\(py-call\b|\(import_prolog_function\b', path.name)
 
 
 if __name__ == "__main__":

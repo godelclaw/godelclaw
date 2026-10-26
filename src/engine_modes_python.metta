@@ -1,0 +1,7 @@
+!(import! &self ./src/engine_modes.py)
+(= (engine-python:active) (py-call (engine_modes.active_engine)))
+(= (engine-python:selected) (py-call (engine_modes.selected_engine)))
+(= (engine-python:view) (py-call (engine_modes.engine_view)))
+(= (engine-python:set $name) (py-call (engine_modes.set_engine $name)))
+(= (engine-python:command $name) (py-call (engine_modes.engine_command $name)))
+(= (engine-python:recycle) (py-call (engine_modes.request_recycle)))

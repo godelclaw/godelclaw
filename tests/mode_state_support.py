@@ -41,20 +41,22 @@ class Qualification(ReceiptQualification):
             env.pop(key, None)
         return env
 
-    def run(self, name, program, settings=None, check=True):
+    def run(self, name, program, settings=None, check=True, runtime_root=None):
         self.index += 1
         stem = "%03d-%s" % (self.index, name)
+        runtime_root = ROOT if runtime_root is None else runtime_root
         for part in ("src", "tests", "verification"):
-            program = program.replace("./" + part + "/", str(ROOT / part) + "/")
+            base = runtime_root if part == "src" else ROOT
+            program = program.replace("./" + part + "/", str(base / part) + "/")
         source = self.directory / (stem + ".metta")
         source.write_text(program, encoding="utf-8")
         (self.evidence / source.name).write_bytes(source.read_bytes())
         command = [str(self.binary), "--lang", "petta", "--import-mode", "ancestor-walk", str(source)]
         env = self.environment()
         env.update(settings or {})
-        result = subprocess.run(command, cwd=ROOT, env=env, capture_output=True,
+        result = subprocess.run(command, cwd=runtime_root, env=env, capture_output=True,
                                 timeout=90, preexec_fn=limit)
-        self.record_process(stem, command, result, env, cwd=ROOT)
+        self.record_process(stem, command, result, env, cwd=runtime_root)
         if check:
             assert result.returncode == 0, result.stderr.decode(errors="backslashreplace")
         return result.stdout.decode("utf-8", errors="backslashreplace")
