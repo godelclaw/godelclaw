@@ -15,6 +15,8 @@ from test_context_bundle_native import CALLER, HEADER, ROOT, guest, guest_env, q
 import small_views_probe as probe
 import context_sources
 import helper
+import effect_receipts
+from receipt_context_fixture import receipt_bytes
 
 NATIVE_HEADER = HEADER + ["!(import! &self ./tests/small_views_probe.py)",
                           "!(import! &self ./src/small_views_cetta.metta)"]
@@ -52,6 +54,7 @@ class SmallViewsTest(unittest.TestCase):
         paths = []
         expected = []
         expected_probes = []
+        oracle_receipt_views = []
         # Oracle and guest must begin with the SAME bytes and artifact key.
         touched = {name for step in steps for field in ("files", "replace_files", "utime")
                    for name in step.get(field, {})}
@@ -62,7 +65,8 @@ class SmallViewsTest(unittest.TestCase):
         with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(
                 probe.engine_modes, "engine_command", probe.engine_command), mock.patch.object(
                 context_sources, "_loaders", probe.retained_loaders), mock.patch.object(
-                context_sources, "_PROJECTOR", context_sources.Projector()):
+                context_sources, "_PROJECTOR", context_sources.Projector()), mock.patch.object(
+                effect_receipts, "view", probe.receipts.oracle_view):
             probe.project_capabilities._cache.clear()
             probe.project_evidence._cache = None
             probe.command = None
@@ -73,8 +77,10 @@ class SmallViewsTest(unittest.TestCase):
                 path.write_text(json.dumps(step))
                 paths.append(path)
                 probe.apply(path)
+                probe.receipts.reset()
                 expected.append(context_sources.bundle() if caller else oracle(source))
                 expected_probes.append(probe.probe_events())
+                oracle_receipt_views.append(probe.receipts.calls.copy())
         for name, snapshot in initial.items():
             path = Path(name)
             if snapshot is None:
@@ -99,22 +105,26 @@ class SmallViewsTest(unittest.TestCase):
         texts = [row["text"] if caller else json.loads(row["text"]) for row in actual]
         save_evidence("small-view-parity", {"source": source, "steps": steps, "caller": caller,
                                            "swi": swi, "expected": expected, "actual": actual})
+        save_evidence("small-view-receipt-crossings", {"caller": caller, "swi": swi,
+                      "oracle": oracle_receipt_views, "guest": [row["receipt_views"] for row in actual]})
         self.assertEqual(texts, expected)
         self.assertTrue(all(row["forbidden"] == 0 for row in actual))
+        self.assertTrue(all(row["receipt_views"]["native"] == 0 for row in actual))
+        self.assertEqual(actual[-1]["receipt_views"]["python"], len(steps) if caller and swi else 0)
         self.assertEqual([row["probe_events"] for row in actual], expected_probes)
         if caller and not swi:
-            retained = {s.source_id for s in context_sources.SOURCE_SPECS} - set(SOURCES) - {"work-state", "affect-gestalt"}
+            retained = {s.source_id for s in context_sources.SOURCE_SPECS} - set(SOURCES) - {"work-state", "affect-gestalt", "effect-receipts"}
             self.assertEqual(actual[-1]["calls"], {key: len(steps) for key in retained})
             self.assertEqual(actual[-1]["engine_calls"], len(steps))
-            boundaries = {"prepare": len(steps), "retained-load": 5 * len(steps),
+            boundaries = {"prepare": len(steps), "retained-load": 4 * len(steps),
                           "engine-command": len(steps), "pins-engine": len(steps),
-                          "action-strategy": len(steps)}
+                          "action-strategy": 2 * len(steps)}
             if boot:
                 boundaries["conversation-mode"] = len(steps)
                 # Boot may retain a pre-instrumentation enabled_flag callable.
                 # These witnesses are NOT an engine-level full-turn census.
                 observed = actual[-1]["boundaries"].copy()
-                self.assertIn(observed.pop("action-strategy", 0), (0, len(steps)))
+                self.assertIn(observed.pop("action-strategy", 0), (0, len(steps), 2 * len(steps)))
                 boundaries.pop("action-strategy")
             else:
                 observed = actual[-1]["boundaries"]
@@ -368,6 +378,20 @@ print(mode.get("version", "fixture 日 r1") if sys.argv[-1] == "--version" else 
 
     def test_swi_caller_keeps_all_python_loaders(self):
         self.compare(None, [{}, {}], caller=True, swi=True)
+
+    def test_complete_caller_real_receipts_absent_and_populated(self):
+        path = str(self.directory / "receipts.jsonl")
+        entry = {"turn": 7, "disposition": "returned", "command": "generated command",
+                 "result": "generated 日🙂\0result"}
+        steps = [{"files": {path: None}}, {"files": {path: encoded(receipt_bytes([entry]))}},
+                 {"files": {path: encoded(b"")}}]
+        for swi in (False, True):
+            with self.subTest(swi=swi):
+                rows = self.compare(None, steps, caller=True, swi=swi)
+                self.assertIn("SOURCE[effect-receipts] status=absent", rows[0]["text"])
+                self.assertIn("AUTHORITATIVE BROKER RECEIPTS", rows[1]["text"])
+                self.assertIn("generated 日🙂\0result", rows[1]["text"])
+                self.assertIn("SOURCE[effect-receipts] status=absent", rows[2]["text"])
 
     def test_isolated_production_boot_all_six_python_loaders_disabled(self):
         library = Path(os.environ.get("PETTA_LIB_CHROMADB", ROOT / "repos" / "petta_lib_chromadb"))

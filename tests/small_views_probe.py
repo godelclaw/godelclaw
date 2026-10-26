@@ -15,6 +15,7 @@ import iter_authoring
 import project_capabilities
 import project_evidence
 import task_phase
+from receipt_context_fixture import ReceiptViewWitness
 
 MODULES = {
     "active-query-declaration": active_queries,
@@ -36,6 +37,7 @@ original_command = engine_modes.engine_command
 original_load = context_source_loaders.load
 original_prepare = context_source_loaders.prepare
 original_loaders = context_sources._loaders
+receipts = ReceiptViewWitness()
 
 
 def boundary(name):
@@ -113,7 +115,7 @@ def retained_loaders(conversation=None, views=None):
         # No unrelated live loaders. Keep real supplied action/pins views and
         # their sole marker owner; provide deterministic other-source text.
         if spec.source_id not in MODULES and spec.source_id not in {
-                "work-state", "affect-gestalt", "pins", "recent-proposals", "relevant-files"}:
+                "work-state", "affect-gestalt", "pins", "effect-receipts", "recent-proposals", "relevant-files"}:
             loader = lambda source=spec.source_id: "fixture " + source
         result.append((spec, loader))
     return result
@@ -133,6 +135,7 @@ def counted_load(loaders, source_id):
 def setup(disable=1, caller=0):
     import strategy_host
     engine_modes.engine_command = engine_command
+    receipts.install(disable, lambda: inside_python)
     if disable:
         for module in MODULES.values():
             module.view = forbidden
@@ -158,6 +161,7 @@ def record(path, text):
         stream.write(json.dumps({"text": str(text), "forbidden": forbidden_calls,
                                  "calls": calls.copy(), "engine_calls": engine_calls,
                                  "boundaries": boundary_calls.copy(),
+                                 "receipt_views": receipts.calls.copy(),
                                  "replacements": replacement_events.copy(),
                                  "probe_events": probe_events()}) + "\n")
     return 1

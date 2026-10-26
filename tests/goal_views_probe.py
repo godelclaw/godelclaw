@@ -22,10 +22,13 @@ retained_views = {}
 def loaders(conversation=None, views=None):
     result = []
     for spec, loader in base.original_loaders(conversation, views):
-        if spec.source_id in retained_views:
+        if spec.source_id == "effect-receipts":
+            # Receipt text is always read from the shared disposable file.
+            pass
+        elif spec.source_id in retained_views:
             loader = lambda source=spec.source_id: retained_views[source]
         elif spec.source_id not in base.MODULES and spec.source_id not in {
-                "work-state", "affect-gestalt", "pins", "recent-proposals", "relevant-files"}:
+                "work-state", "affect-gestalt", "pins", "effect-receipts", "recent-proposals", "relevant-files"}:
             loader = lambda source=spec.source_id: "fixture " + source
         result.append((spec, loader))
     return result
@@ -114,5 +117,6 @@ def record(path, text):
     with open(path, "a", encoding="utf-8") as stream:
         stream.write(json.dumps({"text": str(text), "forbidden": base.forbidden_calls,
                                  "calls": base.calls.copy(), "boundaries": base.boundary_calls.copy(),
+                                 "receipt_views": base.receipts.calls.copy(),
                                  "markers": marker_calls.copy(), "fair_calls": fair_calls}) + "\n")
     return 1

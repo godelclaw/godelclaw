@@ -17,13 +17,15 @@ sys.path[:0] = [str(ROOT / name) for name in ("tests", "src", "channels")]
 import context_sources
 import context_bundle_probe as probe
 import helper
+import effect_receipts
+from receipt_context_fixture import install_receipts
 from test_pins_context_native import guest_env, q
 
 ENGINE = os.environ.get("CETTA_BIN", "cetta")
 PETTA_ROOT = Path(os.environ.get("PETTA_ROOT", Path.home() / "repos/PeTTa"))
 NATIVE_SOURCES = {"active-query-declaration", "commitment-state", "task-phase",
                   "development-state", "project-capabilities", "project-evidence",
-                  "work-state", "affect-gestalt"}
+                  "work-state", "affect-gestalt", "effect-receipts"}
 
 
 def save_evidence(prefix, value):
@@ -111,8 +113,17 @@ class NativeContextBundleTest(unittest.TestCase):
         self.assertEqual(out.read_text(), "SOURCE[s] status=stale-known revision=" +
                          context_sources.Projector._revision("🙂é日本") + "\n🙂é…")
 
-    def compare(self, scenarios, prelude=(), engine="cetta", swi=False, trigger="idle", oracle_scenarios=None, **settings):
+    def compare(self, scenarios, prelude=(), engine="cetta", swi=False, trigger="idle", oracle_scenarios=None, receipt_states=None, **settings):
         import strategy_host
+        # Receipt loaders are now native too. Neither route may substitute
+        # synthetic Python receipt text; both consume identical file states.
+        scenarios = [{key: value for key, value in fixture.items() if key != "effect-receipts"}
+                     for fixture in scenarios]
+        if oracle_scenarios is not None:
+            oracle_scenarios = [{key: value for key, value in fixture.items() if key != "effect-receipts"}
+                                for fixture in oracle_scenarios]
+        receipt_states = [None] * len(scenarios) if receipt_states is None else receipt_states
+        self.assertEqual(len(receipt_states), len(scenarios))
         if engine == "cetta":
             scenarios = [{key: value for key, value in fixture.items() if key not in NATIVE_SOURCES}
                          for fixture in scenarios]
@@ -125,22 +136,29 @@ class NativeContextBundleTest(unittest.TestCase):
         log.unlink(missing_ok=True)
         projector = context_sources.Projector()
         expected = []
+        oracle_calls = []
         environment = guest_env(self.directory, engine, **settings)
-        with mock.patch.dict(os.environ, environment, clear=True), mock.patch.object(context_sources, "_PROJECTOR", projector), mock.patch.object(context_sources, "_loaders", probe.fixture_loaders), mock.patch.object(strategy_host, "_context_trigger", trigger):
+        receipt_path = Path(environment["METTACLAW_EFFECT_RECEIPT_PATH"])
+        with mock.patch.dict(os.environ, environment, clear=True), mock.patch.object(context_sources, "_PROJECTOR", projector), mock.patch.object(context_sources, "_loaders", probe.fixture_loaders), mock.patch.object(strategy_host, "_context_trigger", trigger), mock.patch.object(effect_receipts, "view", probe.receipts.oracle_view):
             helper._change_marks.clear()
             for index, fixture in enumerate(scenarios):
                 probe.fixture = fixture if oracle_scenarios is None else oracle_scenarios[index]
                 probe.calls.clear()
+                probe.receipts.reset()
+                install_receipts(receipt_path, receipt_states[index])
                 path = self.directory / ("fixture-%d.json" % index)
-                path.write_text(json.dumps(fixture, ensure_ascii=True), encoding="utf-8")
+                path.write_text(json.dumps(dict(fixture, _receipt=receipt_states[index],
+                                               _receipt_path=str(receipt_path)), ensure_ascii=True), encoding="utf-8")
                 lines += ["!(py-call (context_bundle_probe.configure %s %d))" % (q(path), 1 if engine == "cetta" else 0),
                           "!(py-call (context_bundle_probe.record %s (addition-context-sources)))" % q(log)]
                 expected.append(context_sources.bundle())
+                oracle_calls.append({"loaders": probe.calls.copy(), "receipt_views": probe.receipts.calls.copy()})
         guest(self.directory, lines, engine=engine, swi=swi, **settings)
         actual = [json.loads(line) for line in log.read_text().splitlines()]
         save_evidence("caller-parity", {"engine_route": engine, "swi": swi, "settings": settings,
                                        "trigger": trigger, "fixtures": scenarios,
                                        "oracle_fixtures": oracle_scenarios,
+                                       "receipt_states": receipt_states, "oracle_calls": oracle_calls,
                                        "expected": expected, "actual": actual})
         diff = '\n'.join(difflib.unified_diff(actual[0]['text'].splitlines(), expected[0].splitlines(),
                                              fromfile='native', tofile='python', n=1)) if actual else ''
@@ -149,6 +167,9 @@ class NativeContextBundleTest(unittest.TestCase):
             self.assertEqual(entry["forbidden"], 0)
             self.assertEqual(entry["calls"], {s.source_id: 1 for s in context_sources.SOURCE_SPECS
                                             if engine != "cetta" or s.source_id not in NATIVE_SOURCES})
+            self.assertEqual(entry["receipt_views"]["native"], 0)
+        self.assertEqual([entry["receipt_views"]["python"] for entry in actual],
+                         [0 if engine == "cetta" else row["receipt_views"]["python"] for row in oracle_calls])
         return actual
 
     def test_caller_all_statuses_and_multiturn(self):
@@ -159,6 +180,29 @@ class NativeContextBundleTest(unittest.TestCase):
                       {key: " \t\n\u001c\u3000" for key in base},
                       {key: {"raises": True} for key in base},
                       {key: None for key in base}, base])
+
+    def test_real_receipt_files_absent_populated_denied_blank_and_recovery(self):
+        entry = {"schema": 1, "turn": 7, "disposition": "returned",
+                 "command": "['read-file', 'generated fixture']", "result": "日🙂\0é"}
+        states = [None, {"entries": [entry]}, {"denied": True}, {"denied": True},
+                  {"entries": [dict(entry, result="recovered " + "漢🙂" * 7500)]},
+                  # ASCII escapes make this ONE line larger than the tail
+                  # window: both real readers drop the first partial line.
+                  {"entries": [dict(entry, result="oversized " + "🙂" * 16000)]},
+                  {"raw": " \t\nnot JSON\n"}, {"denied": True}, {"entries": [entry]}]
+        fixture = {"conversation": "generated neighbor"}
+        for engine in ("cetta", "petta"):
+            with self.subTest(engine=engine):
+                actual = self.compare([fixture] * len(states), engine=engine, receipt_states=states)
+                statuses = [re.search(r"SOURCE\[effect-receipts\] status=([^ ]+)", row["text"]).group(1)
+                            for row in actual]
+                self.assertEqual(statuses, ["absent", "known", "stale-known", "stale-known",
+                                            "known", "absent", "absent", "unavailable", "known"])
+                self.assertIn("AUTHORITATIVE BROKER RECEIPTS", actual[1]["text"])
+                self.assertIn("result=日🙂\0é", actual[1]["text"])
+                self.assertIn("\n…\n", actual[4]["text"])
+                self.assertTrue(all(row["receipt_views"] == {"native": 0, "python": 0 if engine == "cetta" else 1}
+                                    for row in actual))
 
     def test_surrogate_replacement_preserves_revisions_at_real_caller(self):
         # fx045 in the read-only review reproduction is "lone\ud800surrogate".
@@ -188,7 +232,7 @@ class NativeContextBundleTest(unittest.TestCase):
     def test_decode_failures_are_source_local_stale_and_recoverable(self):
         faults = [(2, '"\\ud800"'), (2, '"unterminated'), (2, '{"not":"text"}'),
                   (2, 'null'), (2, 7), (9,), (2,), ()]
-        for source_id in ("pins", "effect-receipts", "conversation"):
+        for source_id in ("pins", "recent-proposals", "conversation"):
             for fault in faults:
                 with self.subTest(source=source_id, wire=fault):
                     scenarios, oracles = [], []
@@ -210,7 +254,7 @@ class NativeContextBundleTest(unittest.TestCase):
                                                 "known", "absent", "unavailable", "known"])
                     for row in rows:
                         self.assertEqual(row["text"].count("SOURCE["), 13)
-        print("Compared 192 real-caller decode-fault steps, with five retained Python loaders called once per step")
+        print("Compared 192 real-caller decode-fault steps, with four retained Python loaders called once per step")
 
     def test_all_python_whitespace_and_near_misses_at_real_caller(self):
         spaces = [chr(c) for c in range(0x110000) if chr(c).isspace()]
@@ -284,7 +328,7 @@ class NativeContextBundleTest(unittest.TestCase):
                               '!(py-call (context_bundle_probe.record %s (addition-context-sources)))' % q(log)]
             guest(self.directory, lines, METTACLAW_OBSERVED_STRATEGY="1")
             got = json.loads(log.read_text())["text"]
-            with mock.patch.dict(os.environ, guest_env(self.directory), clear=True), mock.patch.object(context_sources, "_loaders", probe.fixture_loaders), mock.patch.object(context_sources, "_PROJECTOR", context_sources.Projector()):
+            with mock.patch.dict(os.environ, guest_env(self.directory, METTACLAW_OBSERVED_STRATEGY="1"), clear=True), mock.patch.object(context_sources, "_loaders", probe.fixture_loaders), mock.patch.object(context_sources, "_PROJECTOR", context_sources.Projector()):
                 probe.fixture = json.loads(path.read_text())
                 want = context_sources.bundle(conversation="native " + ("chat 🙂" if mode == "chat" else "route 漢字"))
             self.assertEqual(got, want)
@@ -319,10 +363,13 @@ class NativeContextBundleTest(unittest.TestCase):
         self.compare([base])
         first = self.compare([{key: {"raises": True} for key in base}])[0]["text"]
         self.assertNotIn("stale-known", first)
-        self.assertEqual(first.count("status=unavailable"), 5)
+        statuses = dict(re.findall(r"^SOURCE\[([^]]+)\] status=([^ ]+)", first, re.M))
+        retained = {"pins", "recent-proposals", "relevant-files", "conversation"}
+        self.assertEqual({key for key in retained if statuses[key] == "unavailable"}, retained)
+        self.assertEqual(statuses["effect-receipts"], "absent")
 
     def test_text_conversion_failure_aborts_bundle_without_fallback(self):
-        for failed_index in (5, 6, 12):
+        for failed_index in (5, 8, 12):
             values = {s.source_id: "known" for s in context_sources.SOURCE_SPECS
                       if s.source_id not in NATIVE_SOURCES}
             values[context_sources.SOURCE_SPECS[failed_index].source_id] = {"broken_text": True}
@@ -369,8 +416,8 @@ class NativeContextBundleTest(unittest.TestCase):
             "message_id": 1, "update_id": 1, "text": "hello from fixture 🙂", "note": ""}) + "\n")
         fixture = {s.source_id: "boot " + s.source_id for s in context_sources.SOURCE_SPECS
                    if s.source_id not in NATIVE_SOURCES | {"pins", "recent-proposals", "relevant-files", "conversation"}}
-        scenarios = [fixture, dict(fixture, **{"effect-receipts": {"raises": True}}),
-                     dict(fixture, **{"effect-receipts": " \t"}), fixture]
+        scenarios = [fixture, dict(fixture, **{"recent-proposals": {"raises": True}}),
+                     dict(fixture, **{"recent-proposals": " \t"}), fixture]
         lines = HEADER + ['!(tg:set reply-chat "7")']
         log = self.directory / "boot-bundles"
         conversations = []

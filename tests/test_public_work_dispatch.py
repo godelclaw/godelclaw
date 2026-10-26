@@ -19,6 +19,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
 
 import test_command_dispatch_engine as engine_fixture  # noqa: E402
+from test_pins_context_native import guest_env  # noqa: E402
 
 
 def harness():
@@ -99,14 +100,14 @@ class Fixture:
             lifecycle.write_text('{"schema":1,"state":"running"}\n',
                                  encoding="utf-8")
             env = harness()._cetta_env()
+            env.update(guest_env(d))
             env.update({
                 "METTACLAW_SKIP_INITIALIZE": "1",
                 "METTACLAW_SKIP_CONFIG": "1",
                 "METTACLAW_OBSERVED_STRATEGY": "0",
                 "METTACLAW_LIFECYCLE_PATH": str(lifecycle),
-                "PETTA_ROOT": str(pathlib.Path.home() / "repos" / "PeTTa"),
-                "PETTA_PY_ENV": str(pathlib.Path.home() / "miniforge3" /
-                                     "envs" / "petta"),
+                "PETTA_ROOT": str(harness()._petta_root()),
+                "PETTA_PY_ENV": os.environ.get("PETTA_PY_ENV", sys.prefix),
                 "METTACLAW_ENGINE_STATE_PATH": str(d / "engine-selection"),
                 "METTACLAW_PUBLIC_TOOL_RECEIPTS": "1",
                 "METTACLAW_EFFECT_RECEIPT_PATH": str(d / "receipts.jsonl"),
@@ -121,14 +122,20 @@ class Fixture:
                 shadow = d / "shadow"
                 shadow.mkdir()
                 fixture = shadow / "capture_fixture.py"
-                fixture.write_text('import effect_receipts\n'
-                    'def broken(turn):\n    raise RuntimeError("capture exploded")\n'
+                fixture.write_text('import effect_receipts, os\n'
+                    'def broken(turn):\n'
+                    '    with open(os.environ["STUB_TRACE"],"a") as stream: stream.write("python-capture\\n")\n'
+                    '    raise RuntimeError("capture exploded")\n'
                     'def install():\n    effect_receipts.capture_public_epoch = broken\n    return 1\n')
-                # Patch the loaded module explicitly. Importing additional native
-                # helpers may change Python search order; that is not the failure
-                # boundary this test intends to exercise.
+                # The Python patch is a counted no-fallback witness. Inject the
+                # failure at the selected native facade, leaving the real hook's
+                # catch and dispatcher intact.
                 probe.write_text('!(import! &self '+json.dumps(str(fixture))+')\n'
-                    '!(py-call (capture_fixture.install))\n'+probe.read_text())
+                    '!(py-call (capture_fixture.install))\n'
+                    '!(match &self (= (effect-receipts:capture-public-epoch $turn) $body) '
+                    '(remove-atom &self (= (effect-receipts:capture-public-epoch $turn) $body)))\n'
+                    '(= (effect-receipts:capture-public-epoch $turn) (Error fixture "capture exploded"))\n'
+                    +probe.read_text())
             result = self.launch(probe, env)
             self.assertEqual(result.returncode, 0, result.stderr[-2000:])
             self.assertEqual(
@@ -140,6 +147,7 @@ class Fixture:
                 if notes_file.exists() else []
             receipts = [json.loads(line) for line in
                         (d / "receipts.jsonl").read_text().splitlines()]
+            self.last_directory = str(d)
             return (result.stdout, trace.read_text().split(), notes, receipts)
 
     def check_receipt(self, receipts):
@@ -188,7 +196,7 @@ class PettaPrologDispatch(Fixture, unittest.TestCase):
         env = dict(env, METTACLAW_ENGINE="petta")
         env.pop("METTACLAW_ACTIVE_ENGINE", None)
         return subprocess.run(
-            ["./run.sh", str(probe)], cwd=ROOT, env=env,
+            ["bash", str(harness()._petta_root() / "run.sh"), str(probe), "default"], cwd=ROOT, env=env,
             stdin=subprocess.DEVNULL, capture_output=True, text=True,
             timeout=60)
 
@@ -212,17 +220,19 @@ class CettaMettaDispatch(Fixture, unittest.TestCase):
     # test_command_dispatch.pl instead.
     def test_raising_capture_leaves_command_and_receipt_unchanged(self):
         reference = self.run_batch(enabled=False)
+        reference_directory = self.last_directory
         out, trace, notes, receipts = self.run_batch(raising_capture=True)
+        actual_directory = self.last_directory
         self.assertEqual(trace, ["command"])      # capture never reached the sink
         self.assertEqual(notes, [])
         self.assertIn("COMMAND_RETURN:", out)
         self.check_receipt(receipts)
         keep = ("turn", "disposition", "command", "result")
 
-        def same(rows):     # the temporary directory differs per run
-            return [{k: re.sub(r"/tmp/tmp\w+", "<D>", str(r[k])) for k in keep}
+        def same(rows, directory):     # TMPDIR need not be /tmp
+            return [{k: str(r[k]).replace(directory, "<D>") for k in keep}
                     for r in rows]
-        self.assertEqual(same(receipts), same(reference[3]))
+        self.assertEqual(same(receipts, actual_directory), same(reference[3], reference_directory))
 
 
 if __name__ == "__main__":

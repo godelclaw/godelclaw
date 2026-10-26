@@ -1,13 +1,16 @@
 """Isolated fixture loaders and witnesses, never a runtime implementation."""
 import json
+import os
 from pathlib import Path
 
 import context_sources
+from receipt_context_fixture import ReceiptViewWitness, install_receipts
 
 _original_loaders = context_sources._loaders
 calls = {}
 forbidden_calls = 0
 fixture = {}
+receipts = ReceiptViewWitness()
 
 
 class BrokenText:
@@ -18,7 +21,16 @@ class BrokenText:
 def configure(path, disable=1):
     global fixture
     fixture = json.loads(Path(path).read_text(encoding="utf-8"))
+    assert "effect-receipts" not in fixture, "receipt fixtures must use real files, not Python loader text"
+    state = fixture.pop("_receipt", None)
+    if "_receipt_path" in fixture:
+        target = Path(fixture.pop("_receipt_path"))
+        assert target.resolve().is_relative_to(Path(path).parent.resolve())
+        assert str(target) == os.environ["METTACLAW_EFFECT_RECEIPT_PATH"]
+        install_receipts(target, state)
     calls.clear()
+    receipts.reset()
+    receipts.install(disable)
     context_sources._loaders = fixture_loaders
     if disable:
         context_sources.bundle = context_sources.bundle_with_views = forbidden
@@ -40,6 +52,7 @@ def fixture_loaders(conversation=None, views=None):
     for spec, loader in sources:
         def counted(spec=spec, loader=loader):
             calls[spec.source_id] = calls.get(spec.source_id, 0) + 1
+            assert spec.source_id != "effect-receipts" or spec.source_id not in fixture
             if spec.source_id not in fixture:
                 return loader()
             value = fixture[spec.source_id]
@@ -59,6 +72,7 @@ def fixture_loaders(conversation=None, views=None):
 def record(path, text):
     with open(path, "a", encoding="utf-8") as stream:
         stream.write(json.dumps({"text": str(text), "calls": calls.copy(),
+                                 "receipt_views": receipts.calls.copy(),
                                  "forbidden": forbidden_calls}, ensure_ascii=True) + "\n")
     return 1
 

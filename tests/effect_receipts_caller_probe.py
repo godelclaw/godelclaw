@@ -66,11 +66,9 @@ def setup():
     strategy_host.reserve_command = reserve
     strategy_host.stopped = lambda: 0
     strategy_host.enabled_flag = enabled
-    # Exercise the actual bundle caller with just the scoped source. The
-    # all-source fixture attempt is retained separately; unrelated native
-    # loaders are not replaced or reported green by this receipt qualification.
-    context_sources._loaders = lambda *a, **k: tuple((spec,effect_receipts.view)
-        for spec in context_sources.SOURCE_SPECS if spec.source_id == 'effect-receipts')
+    # Keep the full registry: Qualification provides generated paths for every
+    # native source. Receipt view remains forbidden on Python, so the complete
+    # context caller cannot hide a receipt fallback behind a scoped registry.
     return 1
 
 

@@ -59,6 +59,11 @@ def guest_env(directory, engine="cetta", **overrides):
     # Project-04 direct-boot qualification must never depend on live/default
     # ledgers, settings, lifecycle/control files, or channel queues.
     for name, filename in {
+        "METTACLAW_GOALS_PATH": "goals.metta", "METTACLAW_CONTROL_PATH": "control.json",
+        "METTACLAW_CHANNEL_PATH": "channel.metta", "METTACLAW_FUEL_PATH": "fuel",
+        "METTACLAW_LOG_PATH": "runtime.log", "METTACLAW_PUBLIC_WORK_DIR": "public-work",
+        "METTACLAW_STREAM_DIR": "observer", "METTACLAW_ACTIVE_QUERIES_PATH": "queries.json",
+        "METTACLAW_COMMITMENT_STATE_PATH": "commitment.json", "METTACLAW_TASK_PHASE_PATH": "task-phase.json",
         "METTACLAW_LLM_LEDGER_PATH": "ledger.db", "METTACLAW_STRATEGY_PATH": "strategy.sqlite3",
         "METTACLAW_LLM_POLICY_PATH": "llm-policy.json", "METTACLAW_MODEL_STATE_PATH": "model",
         "METTACLAW_COGNITIVE_HEALTH_PATH": "health.json", "METTACLAW_RECYCLE_REQUEST_PATH": "recycle",
@@ -70,6 +75,8 @@ def guest_env(directory, engine="cetta", **overrides):
         "METTACLAW_TELEGRAM_ATTACHMENTS_DIR": "attachments", "METTACLAW_ENERGY_PATH": "energy.json",
     }.items():
         env[name] = str(directory / filename)
+    env.update(HOME=str(directory / "home"), XDG_CONFIG_HOME=str(directory / "config"),
+               XDG_CACHE_HOME=str(directory / "cache"), METTACLAW_PUBLIC_TOOL_RECEIPTS="0")
     if PYTHON.is_dir():
         env.update(PYTHONHOME=str(PYTHON), PYTHONNOUSERSITE="1",
                    LD_LIBRARY_PATH=str(PYTHON / "lib") + os.pathsep + env.get("LD_LIBRARY_PATH", ""))
@@ -681,7 +688,8 @@ class NativePinsContextTest(unittest.TestCase):
         """The launch's own program (cetta_bootstrap.metta, then a channel
         config), not a hand-picked list of imports: the turn's context
         addition must still be served natively, with the Python reader off."""
-        library = next((path for path in (ROOT / "repos/petta_lib_chromadb",
+        library = next((path for path in (Path(os.environ.get("PETTA_LIB_CHROMADB", ROOT / "repos/petta_lib_chromadb")),
+                                          ROOT / "repos/petta_lib_chromadb",
                                           Path.home() / "repos/petta_lib_chromadb")
                         if (path / "lib_chromadb.metta").is_file()), None)
         if library is None:

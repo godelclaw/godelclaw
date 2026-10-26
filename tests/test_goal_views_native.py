@@ -16,6 +16,8 @@ from test_small_views_native import encoded
 import context_sources
 import goals
 import helper
+import effect_receipts
+from receipt_context_fixture import receipt_bytes
 import goal_views_probe as probe
 
 
@@ -40,10 +42,11 @@ class GoalViewsTest(unittest.TestCase):
                          "METTACLAW_OBSERVED_STRATEGY": "0"}
         self.index = 0
 
-    def step(self, text=None, mood=None, compost=None):
+    def step(self, text=None, mood=None, compost=None, receipts=None):
         files = {str(self.path): None if text is None else encoded(text.encode() if isinstance(text, str) else text),
                  str(self.kernel): None if mood is None else encoded(mood),
-                 str(self.compost): None if compost is None else encoded(compost.encode())}
+                 str(self.compost): None if compost is None else encoded(compost.encode()),
+                 str(self.directory / "receipts.jsonl"): None if receipts is None else encoded(receipt_bytes(receipts))}
         return {"files": files}
 
     def test_runtime_manifest_includes_explicit_imports(self):
@@ -66,16 +69,19 @@ class GoalViewsTest(unittest.TestCase):
     def compare(self, name, steps, caller=False, skill=False, swi=False, boot=False, mixed=False, prelude=()):
         self.index += 1
         expected, paths = [], []
+        oracle_receipt_views = []
         env = guest_env(self.directory, "petta" if swi else "cetta", **self.settings)
         with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(
                 context_sources, "_loaders", probe.loaders), mock.patch.object(
-                context_sources, "_PROJECTOR", context_sources.Projector()):
+                context_sources, "_PROJECTOR", context_sources.Projector()), mock.patch.object(
+                effect_receipts, "view", probe.base.receipts.oracle_view):
             helper._change_marks.clear()
             for i, step in enumerate(steps):
                 path = self.directory / ("step-%d-%d.json" % (self.index, i))
                 path.write_text(json.dumps(step))
                 paths.append(path)
                 probe.base.apply(path)
+                probe.base.receipts.reset()
                 if caller:
                     expected.append(context_sources.bundle())
                 else:
@@ -83,6 +89,7 @@ class GoalViewsTest(unittest.TestCase):
                         expected.append(["value", probe.ORIGINAL[name]()])
                     except Exception:
                         expected.append(["unavailable"])
+                oracle_receipt_views.append(probe.base.receipts.calls.copy())
         # The first step always installs/removes all three files, so the guest
         # starts from identical bytes without borrowing oracle process state.
         log = self.directory / ("output-%d" % self.index)
@@ -114,9 +121,13 @@ class GoalViewsTest(unittest.TestCase):
         actual = [row["text"] if caller else json.loads(row["text"]) for row in rows]
         save_evidence("goal-views-parity", {"view": name, "caller": caller, "skill": skill,
                       "swi": swi, "boot": boot, "mixed": mixed, "steps": steps,
+                      "oracle_receipt_views": oracle_receipt_views,
                       "expected": expected, "actual": rows})
         self.assertEqual(actual, expected)
         self.assertTrue(all(row["forbidden"] == 0 for row in rows))
+        self.assertTrue(all(row["receipt_views"]["native"] == 0 for row in rows))
+        self.assertEqual(rows[-1]["receipt_views"]["python"],
+                         len(steps) if caller and swi else len(steps) // 2 if caller and mixed else 0)
         return rows
 
     def test_work_present_absent_empty_error_duplicates_order_notes_flags_compost(self):
@@ -248,9 +259,22 @@ class GoalViewsTest(unittest.TestCase):
                  self.step(""), self.step(goal(note="changed")), self.step(goal(note="changed"))]
         rows = self.compare("work_state_view", steps, caller=True)
         self.assertEqual(rows[-1]["calls"], {name: len(steps) for name in
-                         ("pins", "effect-receipts", "recent-proposals", "relevant-files", "conversation")})
+                         ("pins", "recent-proposals", "relevant-files", "conversation")})
         self.assertIn("work state unavailable", rows[2]["text"])
         self.assertIn("SOURCE[work-state] status=stale-known", rows[3]["text"])
+
+    def test_complete_caller_real_receipts_absent_and_populated(self):
+        entry = {"turn": 7, "disposition": "returned", "command": "generated command",
+                 "result": "generated 日🙂\0result"}
+        for swi in (False, True):
+            with self.subTest(swi=swi):
+                rows = self.compare("work_state_view", [self.step(goal()),
+                    self.step(goal(), receipts=[entry]), self.step(goal(), receipts=[])],
+                    caller=True, swi=swi)
+                self.assertIn("SOURCE[effect-receipts] status=absent", rows[0]["text"])
+                self.assertIn("AUTHORITATIVE BROKER RECEIPTS", rows[1]["text"])
+                self.assertIn("generated 日🙂\0result", rows[1]["text"])
+                self.assertIn("SOURCE[effect-receipts] status=absent", rows[2]["text"])
 
     def test_mixed_complete_callers_share_work_and_pins_markers(self):
         steps = [self.step(text) for text in [goal(), goal(), goal(), goal(note="changed"),

@@ -40,12 +40,19 @@ class Qualification(Checkpoint):
                    GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
         for key in ("HOME", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"):
             Path(env[key]).mkdir(exist_ok=True)
+        registry = self.directory / 'fixture-project-registry.json'
+        if not registry.exists():
+            registry.write_text('{"schema":1,"projects":[]}\n')
+        env.update(METTACLAW_PROJECT_REGISTRY_PATH=str(registry),
+                   METTACLAW_ITER_PROCESS_DIR=str(self.directory / 'transformations'),
+                   METTACLAW_REPORTS_ROOT=str(self.directory / 'reports'),
+                   METTACLAW_REPOS_DIR=str(self.directory / 'repos'))
         return env
 
-    def record_process(self, stem, command, result, env):
+    def record_process(self, stem, command, result, env, cwd=None):
         (self.evidence / (stem + ".stdout")).write_bytes(result.stdout)
         (self.evidence / (stem + ".stderr")).write_bytes(result.stderr)
-        self.save(stem + ".json", {"command": list(map(str, command)), "cwd": str(self.directory),
+        self.save(stem + ".json", {"command": list(map(str, command)), "cwd": str(self.directory if cwd is None else cwd),
                                   "environment": env, "returncode": result.returncode,
                                   "stdout_base64": base64.b64encode(result.stdout).decode(),
                                   "stderr_base64": base64.b64encode(result.stderr).decode()})
@@ -62,9 +69,11 @@ class Qualification(Checkpoint):
         command = [str(self.binary), "--lang", "petta", "--import-mode", "ancestor-walk", str(source)]
         env = self.environment()
         env.update(settings or {})
-        result = subprocess.run(command, cwd=self.directory, env=env,
+        # Runtime modules use ./src imports. Fixtures remain absolute paths in
+        # the disposable directory, but resolution must use the package root.
+        result = subprocess.run(command, cwd=ROOT, env=env,
                                 capture_output=True, timeout=90)
-        self.record_process(stem, command, result, env)
+        self.record_process(stem, command, result, env, cwd=ROOT)
         if check:
             assert result.returncode == 0, result.stderr.decode(errors="backslashreplace")
         return result.stdout.decode("utf-8", errors="backslashreplace")
