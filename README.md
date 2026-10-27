@@ -1182,18 +1182,25 @@ MeTTa callers can import `src/usage_history.metta` and call
 `(usage:events ledger since until)` to read the same identified events through
 native `sqlite:observe`.
 
-The inactive SQLite-free provider-store modules are a migration prerequisite,
+The native storage target is an application-level knowledge store: typed MeTTa
+facts and queries, captured views, atomic changes with durable receipts, and
+explicit recovery outcomes. Ownership, accounting and execution invariants
+define its behavior. SQLite's formatting, column affinity and row-number
+allocation are not requirements for new native operations. Preserve historical
+identities and payloads through migration mappings and offline source evidence.
+
+The inactive SQLite-free provider-store modules are migration experiments,
 not a selected runtime backend. `provider_store_cetta.metta` preserves typed
 records and insertion identities. `provider_index_store_cetta.metta` commits
 primary records and their derived indexes atomically; its checkpoint entry
 requires the captured epoch and revision. The record-only checkpoint writer
 refuses an indexed store, preventing mixed writers from leaving stale indexes.
-These record operations assume already decoded column values; they do not
-perform SQL assignment coercions or enforce the provider's unique constraints.
-A provider transaction gateway must check those constraints against its
-captured view and preceding mutations in the same plan before activation.
+These record operations use the old checkpoint's decoded column values. They
+do not define the new provider API or authorize a live migration. The native
+application must check its ownership, identity and accounting invariants
+against a captured view and preceding changes before atomic publication.
 
-`provider_constraint_store_cetta.metta` implements the constraint part for
+`provider_constraint_store_cetta.metta` is an inactive compatibility study for
 already-bound records. It preserves nullable unique identities, checks required
 fields, and sees the latest same-plan replacement or tombstone. Its bounded
 candidate pages keep negative bucket reads and every inspected primary row;
@@ -1233,12 +1240,12 @@ the C implementation or filesystem. Complete transition/read-path migration,
 large-record streaming beyond the CAV1 convenience frame and live cutover
 remain separate qualification gates.
 
-`sql_value_cetta.metta` supplies the retained binary64-to-text conversion in
-MeTTa, pinned to SQLite 3.53.2's default numeric text rules. Its native inputs
+`sql_value_cetta.metta` is a retained compatibility experiment for binary64-to-text
+conversion in MeTTa, pinned to SQLite 3.53.2's default numeric text rules. Its native inputs
 are exact binary64 parts and integer divmod; it calls neither SQLite nor
 Python. The conversion preserves signed infinities, binds NaN as null and
 renders either sign of zero as `0.0`. This is an inactive compatibility helper,
-not a complete assignment-affinity or provider transaction boundary.
+not a requirement for the new provider application or a selected runtime path.
 `tests/test_sql_value_cetta.py` compares real MeTTa results against the SQLite
 oracle. `tests/check_sql_value_contract.py` replays the checked Lean integer
 power trace; full binary64/parser/C refinement remains a separate obligation.
