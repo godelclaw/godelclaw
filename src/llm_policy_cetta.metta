@@ -70,7 +70,7 @@
 (: lp:values (-> %Undefined% %Undefined%))
 (= (lp:values $items)
    (if (ue:equal $items ()) ()
-     (let* (($value (eval (car-atom $items))) ($rest (lp:values (cdr-atom $items))))
+     (let* (($value (lp:bind (eval (car-atom $items)))) ($rest (lp:values (cdr-atom $items))))
        (cons-atom $value $rest))))
 (: lp:statements (-> %Undefined% %Undefined%))
 (= (lp:statements $items)
@@ -204,6 +204,14 @@
 ; Policy configuration remains an explicit choice, with unchanged defaults.
 ; Where the Python source raises, the reference answers
 ; (PythonException CLASS MESSAGE), the message formatted as Python formats it.
+; Python's sqlite3 raises IntegrityError, with SQLite's own message, for every
+; constraint failure, a trigger's RAISE(ABORT) included. Other failures keep
+; their sqlite:error payload.
+(: lp:failure (-> %Undefined% %Undefined%))
+(= (lp:failure $error)
+   (case $error
+     (((sqlite:error constraint $code $message $outcome) (PythonException IntegrityError $message))
+      ($other $other))))
 (: lp:python-error (-> %Undefined% %Undefined% %Undefined%))
 (= (lp:python-error $class $message) (LedgerError (PythonException $class $message)))
 ; Native float predicates read an arbitrarily large integer as infinite, so a
@@ -372,6 +380,32 @@
    (if (ue:equal $digits ()) 0
      (+ (car-atom $digits) (* 10 (lp:digits-value (cdr-atom $digits))))))
 ; lp:python-float is CPython 3.12's float(value), or its exception.
+; A caller's value bound as Python's sqlite3 binds it: a Boolean is the integer
+; 0 or 1 (it can arrive as the dialect's truth symbol, which would bind as its
+; name), None is NULL, and (SqlBlobV1 PAYLOAD) is a BLOB.
+(: lp:bind (-> %Undefined% %Undefined%))
+(= (lp:bind $value)
+   (case $value
+     ((True 1) (False 0) (JsonNull sqlite:null)
+      ((SqlBlobV1 $payload) (sqlite:blob $payload))
+      ($other $other))))
+; bool(value) as Python reads it.
+(: lp:python-truthy (-> %Undefined% %Undefined%))
+(= (lp:python-truthy $value)
+   (case $value
+     ((JsonNull False) (False False) (True True) ("" False)
+      ((JsonArray ()) False) ((JsonObject ()) False)
+      ($other (if (ue:equal (get-type $other) Number) (not (== $other 0)) True)))))
+; str(value) as Python writes it, for the scalar kinds a caller can pass.
+(: lp:python-str (-> %Undefined% %Undefined%))
+(= (lp:python-str $value)
+   (if (ue:equal (get-type $value) String) $value
+     (case $value
+       ((True "True") (False "False") (JsonNull "None")
+        ($other
+          (case (json:stringify-python $other)
+            (("NaN" "nan") ("Infinity" "inf") ("-Infinity" "-inf")
+             ($text $text))))))))
 (: lp:python-float (-> %Undefined% %Undefined%))
 (= (lp:python-float $value)
    (if (ue:equal (get-type $value) Bool) (if $value 1.0 0.0)
@@ -632,7 +666,7 @@
        (case (lp:last $results)
          (((sqlite:result $columns $rows $changes $row-id) (LedgerChanged (> $changes 0)))
           ($error (LedgerError $error)))))
-      ($error (LedgerError $error)))))
+      ($error (LedgerError (lp:failure $error))))))
 
 ; Call transitions use a connection-local flag. It captures UPDATE's change
 ; count before any history INSERT can replace SQLite's changes() observation.
@@ -643,7 +677,7 @@
       ((sqlite:committed $results)
        (case (lp:rows (lp:last $results))
          ((((1)) (LedgerChanged True)) (((0)) (LedgerChanged False)) ($error (LedgerError $error)))))
-      ($error (LedgerError $error)))))
+      ($error (LedgerError (lp:failure $error))))))
 (: lp:complete-with (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (lp:complete-with $ticket $evidence $finish $output $now $extra)
    (lp:complete-owned $ticket $evidence $finish $output JsonNull $now $extra))

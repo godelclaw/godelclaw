@@ -108,6 +108,9 @@ class NativeLifetimeTests(policy_tests.NativeLedgerFixture):
                             native_lifetime.recover(); expected.append(['ok'])
                         else:
                             self.fail('unknown lifetime operation ' + kind)
+                    except sqlite3.IntegrityError as error:
+                        # A constraint answer is exact; storage faults stay coarse.
+                        expected.append(policy_tests.python_error(error))
                     except sqlite3.Error:
                         expected.append(['error'])
                     except (ValueError, TypeError, OverflowError) as error:
@@ -191,7 +194,7 @@ class NativeLifetimeTests(policy_tests.NativeLedgerFixture):
         self.assertEqual(self.native([
             '(nl:complete %s (json:parse "{\\\"output_tokens\\\":4}") "stop" "receipt" 0 1001)' % metadata,
             '(nl:fail %s "http-status" 429 10 0 1002)' % metadata,
-        ], module='native_lifetime_cetta.metta'), [['error'], ['error']])
+        ], module='native_lifetime_cetta.metta'), [['error', 'IntegrityError', 'fixture fault']] * 2)
         self.assertEqual(policy_tests.snapshot(self.native_db), before)
 
     def test_wrong_epoch_cannot_add_usage_or_fail_someone_elses_request(self):
@@ -377,6 +380,41 @@ class NativeLifetimeTests(policy_tests.NativeLedgerFixture):
                     b=meta('b', activity='x' * 65, lane='background'),
                     c=meta('c', activity='valid', lane='sideways'))
         self.replay_lifetime([(kind, key, 1000) for key in data for kind in ('admit', 'claim')], data)
+
+    def test_text_timestamps_recover_as_python_reads_them(self):
+        # Recovery computes now - float(updated) only for a terminal request;
+        # NaN and infinities compare as Python's floats do.
+        values = ['NaN', 'Infinity', '-Infinity', ' +١_٢.٥ ', 'invalid']
+        rows = [dict(id='pending-%d' % i, updated=value) for i, value in enumerate(values)]
+        rows += [dict(id='done-%d' % i, request='completed', updated=value)
+                 for i, value in enumerate(values[:-1])]
+        self.seed(rows)
+        self.replay_lifetime([('recover', 1001)], {})
+
+    def test_an_unreadable_timestamp_rolls_the_whole_recovery_back(self):
+        # float('invalid') raises inside the transaction: no row changes,
+        # including a row the same recovery would otherwise reconcile.
+        self.seed([dict(id='due', request='completed', updated=' +١_٢.٥ '),
+                   dict(id='bad', request='completed', updated='invalid')])
+        self.replay_lifetime([('recover', 1001)], {})
+
+    def test_activity_values_claim_as_python_sees_them(self):
+        # `not activity` decides the unscoped path; the regex reads
+        # str(activity); TEXT affinity stores what the binding gives.
+        data, steps = {}, []
+        for i, activity in enumerate([False, 0, None, True, 7, 7.5, -1.5, 1e30]):
+            key = 'activity-%d' % i
+            data[key] = meta(key, activity=activity, lane='interactive')
+            now = 1000 + 3 * i
+            steps += [('admit', key, now), ('claim', key, now + 1),
+                      ('settle', key, 'completed', 'receipt', None, 0, now + 2)]
+        self.replay_lifetime(steps, data)
+
+    def test_a_boolean_identity_binds_as_an_integer(self):
+        # True binds as 1, and TEXT affinity matches the stored id '1'.
+        self.replay_lifetime([('admit', 'one', 1000), ('claim', 'one', 1001),
+                              ('submitted', 'flag', 7, 1002)],
+                             dict(one=meta('1'), flag=meta(True)))
 
     def test_fractional_timestamps_survive_the_recovery_compare_and_set(self):
         stamp = 1792850686.1234567
