@@ -122,6 +122,12 @@ def main():
     for name in ("lib", "tools"):
         shutil.copytree(source / name, prefix / name, dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    for directory, notice in (("secp256k1", "COPYING"), ("tomlc17", "LICENSE")):
+        license_file = source / "vendor" / directory / notice
+        if license_file.is_file():
+            destination = prefix / "licenses" / directory
+            destination.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(license_file, destination / notice)
     if args.chatgpt:
         shutil.copytree(source / "docs/siwc/licenses", prefix / "licenses/siwc", dirs_exist_ok=True)
     python_prefix = run([args.python_config, "--prefix"], capture=True).strip()
