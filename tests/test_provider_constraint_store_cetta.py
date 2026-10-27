@@ -280,5 +280,15 @@ class ProviderConstraintTests(unittest.TestCase):
                          E('ProviderConstraintRefusedV1',S('transition-reads')))
         self.assertEqual(self.audit(),before)
 
+    def test_production_import_policy_reaches_the_checked_boundary(self):
+        with patch.dict(os.environ,{'HOME':self.temp.name,'PATH':os.environ.get('PATH','/usr/bin:/bin')},clear=True):
+            worker=Worker(WORKER,ROOT/'tests/support/provider_constraint_probe.metta',
+                          'provider-constraint-probe:call',language='petta',import_mode='ancestor-walk')
+        self.addCleanup(worker.close)
+        row=self.request(1,'production-import')
+        result=worker.call(E('Apply',str(self.path),(E('add',row),),1,E('reads')))
+        self.assertEqual(result[0],S('ProviderConstraintCommittedV1'))
+        self.assertTrue(self.reference([E('add',row)]));self.assert_rows()
+
 
 if __name__=='__main__':unittest.main()
