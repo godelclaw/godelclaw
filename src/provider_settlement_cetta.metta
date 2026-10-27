@@ -1,4 +1,4 @@
-; Local settlement and process-death recovery of resource claims.
+; Local settlement, observed transport closure and process-death recovery.
 ; Result, usage, terminal lease, released capacity and receipt publish once.
 ; Observations come from the trusted transport/process boundary. These pure
 ; transitions never send, retry, signal a process or interpret PID liveness.
@@ -7,6 +7,16 @@
 (= (ps:observation? $value)
   (case $value ((ProviderProcessLiveV3 True) (ProviderProcessExitedV3 True)
                (ProviderProcessUnavailableV3 True) ($other False))))
+(= (ps:closed-observation? $value)
+  (case $value
+    (((ProviderTransportClosedV3 $transport $outcome)
+      (if (kb:ground-identity? $transport)
+        (case $outcome ((ProviderFailureKnownV3 True) (ProviderFailureUnknownV3 True) ($other False)))
+        False))
+     ($other False))))
+(= (ps:claim-keys $call $owner)
+  ((ProviderCallKeyV2 $call) (ProviderLeaseKeyV2 $call) (ProviderAnswerKeyV2 $call)
+   (ProviderClaimKeyV3 $call) (ProviderDispatchKeyV3 $call) (ProviderAttemptKeyV2 $call $owner)))
 (= (ps:recovery-decision $stage $observation)
   (case ($stage $observation)
     (((ProviderClaimReservedV3 ProviderProcessExitedV3) ProviderReleaseUnsentV3)
@@ -21,6 +31,16 @@
             (ProviderFinishV2 $call $owner $reference $usage $source))
           (ProviderSettlementRefusedV3 transport-identity))
         (ProviderSettlementRefusedV3 process-identity)))
+     ((ProviderAbandonClaimV3 $call $owner $process $source)
+      (if (pc:entry? (ProviderActiveClaimV3 $call $owner $process ProviderExclusiveActivityV3))
+        (ProviderEndKeysV3 $call (ps:claim-keys $call $owner))
+        (ProviderSettlementRefusedV3 claim-identity)))
+     ((ProviderEndTransportV3 $call $owner $process $observation $usage $source)
+      (if (pc:entry? (ProviderActiveClaimV3 $call $owner $process ProviderExclusiveActivityV3))
+        (if (ps:closed-observation? $observation)
+          (ProviderClosedKeysV3 $call $owner $usage $source)
+          (ProviderSettlementRefusedV3 closed-transport-observation))
+        (ProviderSettlementRefusedV3 claim-identity)))
      ((ProviderRecoverClaimV3 $call $owner $process $observation $source)
       (if (pc:entry? (ProviderActiveClaimV3 $call $owner $process ProviderExclusiveActivityV3))
         (if (ps:observation? $observation)
@@ -49,6 +69,14 @@
      ((ProviderRecoveryKeysV3 $identities)
       (let (ProviderRecoverClaimV3 $call $owner $process $observation $source) $command
         (ps:observe-frontier $view $call (kb:observe $view $identities $budget) $budget)))
+     ((ProviderEndKeysV3 $call $identities)
+      (ps:observe-frontier $view $call (kb:observe $view $identities $budget) $budget))
+     ((ProviderClosedKeysV3 $call $owner $usage $source)
+      (ps:observe-frontier $view $call
+        (ps:extend $view
+          (provider-domain:observe $view (ProviderRecordUsageV2 $call $owner $usage $source) $budget)
+          ((ProviderLeaseKeyV2 $call) (ProviderAnswerKeyV2 $call)
+           (ProviderClaimKeyV3 $call) (ProviderDispatchKeyV3 $call)) $budget) $budget))
      ($error $error))))
 (= (ps:observe-frontier $view $call $observation $budget)
   (case $observation
@@ -81,6 +109,105 @@
                  (ProviderClaimV3 $scope $owner $process $activity (ProviderClaimEndedV3 $outcome))))))
            ($other (ProviderSettlementRefusedV3 active-claim-index))))))
      ($other (ProviderSettlementRefusedV3 frontier-format)))))
+
+; Physical closure releases the resource even after logical ownership moves.
+; A closure is a trusted observation, not a request to cancel live I/O. Only
+; this owner's active, unanswered lease is changed; later ownership, answers
+; and terminal decisions remain intact.
+(= (ps:lease-end-changes $points $call $owner $phase)
+  (case ((kb:lookup $points (ProviderLeaseKeyV2 $call))
+         (kb:lookup $points (ProviderAnswerKeyV2 $call)))
+    ((((KnowledgePresentV1 (ProviderLeaseV2 $who ProviderLeaseActiveV2)) KnowledgeAbsentV1)
+      (if (== $who $owner)
+        ((KnowledgePutV1 (ProviderLeaseKeyV2 $call) (ProviderLeaseV2 $owner $phase))) ()))
+     ($other ()))))
+(= (ps:end-plan $points $scope $call $owner $process $activity $outcome $phase $answer $extra)
+  (case (ps:release $points $scope $call $owner $process $activity $outcome)
+    (((ProviderReleaseChangesV3 $changes)
+      (ProviderSettlementPlanV3 $answer
+        (kb:append $extra (kb:append (ps:lease-end-changes $points $call $owner $phase) $changes))))
+     ((ProviderSettlementRefusedV3 $why) (ps:refuse $why))
+     ($error $error))))
+(= (ps:ended? $points $scope $call)
+  (case (pc:frontier $points $scope)
+    (((ProviderFrontierV3 $entries)
+      (case (kb:same ((pc:find-call $entries $call)
+                     (kb:lookup $points (ProviderActiveClaimKeyV3 $scope $call)))
+                    (KnowledgeAbsentV1 KnowledgeAbsentV1))
+        (((KnowledgeEqualV1 True) True) ($other False))))
+     ($other False))))
+(= (ps:plan (ProviderAbandonClaimV3 $call $owner $process $source) $points)
+  (case (kb:lookup $points (ProviderClaimKeyV3 $call))
+    (((KnowledgePresentV1 (ProviderClaimV3 $scope $who $birth $activity $stage))
+      (case (kb:same ($who $birth) ($owner $process))
+        (((KnowledgeEqualV1 True)
+          (case ((kb:lookup $points (ProviderDispatchKeyV3 $call))
+                 (kb:lookup $points (ProviderAttemptKeyV2 $call $owner))
+                 (kb:lookup $points (ProviderAnswerKeyV2 $call)))
+            (((KnowledgeAbsentV1 KnowledgeAbsentV1 KnowledgeAbsentV1)
+              (case $stage
+                ((ProviderClaimReservedV3
+                  (ps:end-plan $points $scope $call $owner $process $activity
+                    ProviderClaimUnsentV3 ProviderLeaseFailedV2 (ProviderClaimReleasedUnsentV3 $call) ()))
+                 ((ProviderClaimEndedV3 ProviderClaimUnsentV3)
+                  (if (ps:ended? $points $scope $call)
+                    (ProviderSettlementPlanV3 (ProviderClaimAlreadyEndedV3 $call ProviderClaimUnsentV3 ProviderUsageUnreportedV3) ())
+                    (ps:refuse active-claim-index)))
+                 ($other (ps:refuse reserved-claim-required)))))
+             ($other (ps:refuse unsent-claim-required)))))
+         ($other (ps:refuse not-owned)))))
+     ($other (ps:refuse claim-required)))))
+(= (ps:terminal-usage $call $owner $usage $source $points)
+  (case $usage
+    ((ProviderNoUsageV3 (ProviderTerminalUsageV3 ProviderUsageUnreportedV3 ()))
+     ($reported
+      (case (provider-domain:plan (ProviderRecordUsageV2 $call $owner $reported $source) $points)
+        (((ProviderDomainPlanV2 (ProviderUsageRecordedV2 $status) $changes)
+          (ProviderTerminalUsageV3 $status $changes))
+         ((ProviderDomainRefusedV2 $why) (ProviderSettlementRefusedV3 $why))
+         ($error $error)))))))
+(= (ps:plan (ProviderEndTransportV3 $call $owner $process
+             (ProviderTransportClosedV3 $transport $outcome) $usage $source) $points)
+  (case (kb:same ((kb:lookup $points (ProviderDispatchKeyV3 $call))
+                 (kb:lookup $points (ProviderAttemptKeyV2 $call $owner)))
+                ((KnowledgePresentV1 (ProviderDispatchIntentV3 $call $owner $process $transport))
+                 (KnowledgePresentV1 (ProviderSubmittedAttemptV2 $transport))))
+    (((KnowledgeEqualV1 True)
+      (case (kb:lookup $points (ProviderClaimKeyV3 $call))
+        (((KnowledgePresentV1 (ProviderClaimV3 $scope $who $birth $activity $stage))
+          (case (kb:same ($who $birth) ($owner $process))
+            (((KnowledgeEqualV1 True)
+              (case (ps:terminal-usage $call $owner $usage $source $points)
+                (((ProviderTerminalUsageV3 $status $changes)
+                  (ps:closed-plan $points $scope $call $owner $process $activity
+                    $stage $transport $outcome $status $changes))
+                 ((ProviderSettlementRefusedV3 $why) (ps:refuse $why))
+                 ($error $error))))
+             ($other (ps:refuse not-owned)))))
+         ($other (ps:refuse claim-required)))))
+     ($other (ps:refuse registered-dispatch-required)))))
+(= (ps:closed-plan $points $scope $call $owner $process $activity
+      $stage $transport $outcome $status $changes)
+  (case $stage
+    (((ProviderClaimDispatchV3 $physical)
+      (case (kb:same $physical $transport)
+        (((KnowledgeEqualV1 True)
+          (case $outcome
+            ((ProviderFailureKnownV3
+              (ps:end-plan $points $scope $call $owner $process $activity
+                ProviderClaimFailedV3 ProviderLeaseFailedV2
+                (ProviderClaimEndedTransportV3 $call $transport ProviderClaimFailedV3 $status) $changes))
+             (ProviderFailureUnknownV3
+              (ps:end-plan $points $scope $call $owner $process $activity
+                ProviderClaimUnknownV3 ProviderLeaseUnknownV2
+                (ProviderClaimEndedTransportV3 $call $transport ProviderClaimUnknownV3 $status) $changes))
+             ($other (ps:refuse closed-transport-observation)))))
+         ($other (ps:refuse dispatch-identity-conflict)))))
+     ((ProviderClaimEndedV3 $ended)
+      (if (ps:ended? $points $scope $call)
+        (ProviderSettlementPlanV3 (ProviderClaimAlreadyEndedV3 $call $ended $status) $changes)
+        (ps:refuse active-claim-index)))
+     ($other (ps:refuse dispatched-claim-required)))))
 
 (= (ps:plan (ProviderSettleV3 $call $owner $process $transport $reference $usage $source) $points)
   (case (kb:same ((kb:lookup $points (ProviderDispatchKeyV3 $call))

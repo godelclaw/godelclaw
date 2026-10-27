@@ -26,6 +26,8 @@ def main():
     for name in ("worker", "cetta-root", "lean", "model"):
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--model-output", type=Path,
+                        help="retain the audited compiler output for additional trace checks")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     names = ["src/knowledge_store_cetta.metta", "src/provider_domain_cetta.metta",
@@ -49,6 +51,8 @@ def main():
                                 timeout=120, env=dict(os.environ, LEAN_NUM_THREADS="1"))
     if result.returncode or "warning:" in result.stdout or "error:" in result.stdout:
         raise AssertionError(result.stdout + result.stderr)
+    if args.model_output:
+        args.model_output.write_text(result.stdout + result.stderr)
     axioms = re.findall(r"depends on axioms: \[([^\]]*)\]", result.stdout)
     free = re.findall(r"does not depend on any axioms", result.stdout)
     if len(axioms) + len(free) != len(declarations):
