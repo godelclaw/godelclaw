@@ -3,7 +3,8 @@
 !(import! &self json)
 !(import! &self str)
 
-; The owner can use the durable mailbox identity check. A restricted member
+; The owner can use the durable mailbox identity check, and so can a member
+; on its own inbox, which it may read and write. A member writing elsewhere
 ; must use the shaped append path, which does not require reading other mail.
 (= (shared-mail:post $socket $name $id $to $agent $body)
    (case (str:split "/" $to)
@@ -15,8 +16,57 @@
      (((reply $rid ok (principal $account owner))
        (mailbox:send $socket (shared-mail:owner-space $name $account) $id $to (from $account $agent) $body))
       ((reply $rid ok (principal $account member))
-       (mailbox:post $socket (if (== $name "") "agent-mail" $name) $id $to $agent $body))
+       (if (== $name (shared-mail:owner-space "" $account))
+         (mailbox:send $socket $name $id $to (from $account $agent) $body)
+         (mailbox:post $socket (if (== $name "") "agent-mail" $name) $id $to $agent $body)))
       ($error $error))))
+
+; Foreign domains. A gateway relays between this service and agents outside
+; it: mail for DOMAIN/NAME waits in the owner's space mail@DOMAIN, and mail
+; arriving from outside carries the plain sender DOMAIN/NAME, so a reply goes
+; back the same way. Only the service owner relays; a member's sender is
+; always bound to its own account.
+(= (shared-mail:relay-in $socket $space $id $to $sender $body)
+   (case (space:whoami $socket)
+     (((reply $rid ok (principal $account owner))
+       (case (str:split "/" $to)
+         ((($login $recipient) (mailbox:send $socket (str:concat "mail@" $login) $id $recipient $sender $body))
+          ($bare (mailbox:send $socket $space $id $to $sender $body)))))
+      ((reply $rid ok (principal $account $role)) (shared-mail:refused "relaying needs the service owner"))
+      ($error $error))))
+
+; The next mail waiting in mail@DOMAIN for any of NAMES (comma separated);
+; NAMES "*" stands for every name that has mail waiting.
+(= (shared-mail:relay-names $socket $space $names)
+   (if (== $names "*")
+     (case (shared-mail:select $socket $space (MailboxReady 1 $id $who 0 () $id) $who 64)
+       (((shared-mail:rows $r1 $t1 $ready)
+         (case (shared-mail:select $socket $space (MailboxPending 1 $who $q $s $id) $who 64)
+           (((shared-mail:rows $r2 $t2 $pending) (mailbox:append $ready $pending))
+            ($error ()))))
+        ($error ())))
+     (str:split "," $names)))
+(= (shared-mail:relay-scan $socket $space $names)
+   (if (== $names ()) (mailbox:idle)
+     (case (mailbox:next-in $socket $space (car-atom $names))
+       (((mailbox:idle) (shared-mail:relay-scan $socket $space (cdr-atom $names)))
+        ((mailbox:delivery $id $sender $body) (shared-mail:relayed (car-atom $names) $id $sender $body))
+        ($error $error)))))
+(= (shared-mail:relay-next $socket $domain $names $milliseconds)
+   (let* (($name (str:concat "mail@" $domain))
+          ($space (mailbox:open $socket $name)))
+     (case (shared-mail:relay-scan $socket $space (shared-mail:relay-names $socket $space $names))
+       (((mailbox:idle)
+         (if (> $milliseconds 0)
+           (case (mailbox:watch $socket $space $milliseconds)
+             (((reply $rid ok $changed)
+               (let $again (mailbox:open $socket $name)
+                 (shared-mail:relay-scan $socket $again (shared-mail:relay-names $socket $again $names))))
+              ($error $error)))
+           (mailbox:idle)))
+        ($result $result)))))
+(= (shared-mail:relay-ack $socket $domain $name $id)
+   (mailbox:ack $socket (str:concat "mail@" $domain) $name $id))
 
 ; Bare recipients stay on the agent bus. Qualified recipients select an
 ; account inbox, as native mail does; an explicit empty space selects self.
@@ -78,6 +128,15 @@
       ((mailbox:acked $id $status)
        (JsonObject ((JsonPair "status" (JsonString (repr $status)))
                     (JsonPair "id" (JsonString $id)))))
+      ((shared-mail:relayed $to $id $sender $body)
+       (JsonObject ((JsonPair "status" (JsonString "delivery"))
+                    (JsonPair "id" (JsonString $id))
+                    (JsonPair "from" (JsonString (shared-mail:sender $sender)))
+                    (JsonPair "to" (JsonString $to))
+                    (JsonPair "text" (JsonString $body)))))
+      ((shared-mail:refused $why)
+       (JsonObject ((JsonPair "status" (JsonString "refused"))
+                    (JsonPair "reason" (JsonString $why)))))
       ((mailbox:idle) (JsonObject ((JsonPair "status" (JsonString "idle")))))
       ((shared-mail:account $uid $login $role)
        (JsonObject ((JsonPair "status" (JsonString "identity"))

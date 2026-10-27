@@ -137,6 +137,31 @@ def parse_outgoing(text):
     return fields, body
 
 
+RELAYED_HEADERS = {"subject", "in-reply-to", "type", "task"}
+
+
+def parse_relayed(to, text):
+    """(headers, body) of mail written to DOMAIN/to: optional Subject,
+    In-Reply-To, Type and Task lines and a blank line, then the body; text
+    that does not open with such lines is all body."""
+    head, blank, body = text.partition("\n\n")
+    fields = {}
+    for line in head.splitlines() if blank else []:
+        name, colon, value = line.partition(":")
+        if not colon or name.strip().lower() not in RELAYED_HEADERS:
+            fields = {}
+            break
+        fields[name.strip().lower()] = value.strip()
+    if not fields:
+        body = text
+    parent = fields.get("in-reply-to", "").strip("<>").removesuffix("@nostr")
+    if parent and not EVENT_ID.fullmatch(parent):
+        raise ValueError("In-Reply-To must name an event identifier")
+    fields["in-reply-to"] = parent
+    fields["to"] = to
+    return fields, body
+
+
 class Gateway:
     def __init__(self, config_path):
         path = Path(config_path).expanduser()
@@ -160,6 +185,11 @@ class Gateway:
         self.mailer = config.get("mailer", "claw-mail")
         self.space = config.get("space", "agent-mail")
         self.outbox = config.get("outbox", "nostr")
+        # With a domain, outside agents are DOMAIN/NAME in claw-mail: their mail
+        # arrives from that address, and mail to it waits in mail@DOMAIN.
+        self.domain = config.get("domain")
+        if self.domain is not None and not AGENT.fullmatch(self.domain):
+            raise ValueError("not a claw-mail domain name: %r" % self.domain)
         self.overlap = int(config.get("overlap", 600))
         self.receipt_days = float(config.get("receipt_days", 30))
         self.inbound = dict(config.get("inbound", {}))
@@ -340,12 +370,15 @@ class Gateway:
         if letter is None:
             log("not kept: %s (unsigned, unregistered or does not open)" % str(event.get("id"))[:16])
             return True
-        sender = "nostr." + author
-        if not AGENT.fullmatch(sender):
+        sender = (self.domain + "/" if self.domain else "nostr.") + author
+        if not AGENT.fullmatch(sender.split("/")[-1]):
             log("not kept: registry name %r is not a claw-mail name" % author)
             return True
-        result = await self.mail(sender, "send", sender, recipient, render(event, letter, author, recipient),
-                                 "--id", event["id"])
+        text = render(event, letter, author, recipient)
+        if self.domain:
+            result = await self.mail(self.outbox, "relay-in", sender, recipient, text, "--id", event["id"])
+        else:
+            result = await self.mail(sender, "send", sender, recipient, text, "--id", event["id"])
         status = result.get("status")
         if conflicted(result):
             log("conflict on %s: the same identifier was delivered with other text" % event["id"])
@@ -388,13 +421,14 @@ class Gateway:
             try:
                 if key_name is None:
                     raise ValueError("%s has no Nostr key at this gateway" % sender)
-                fields, body = parse_outgoing(delivery["text"])
+                fields, body = parse_relayed(delivery["to"], delivery["text"]) if self.domain \
+                    else parse_outgoing(delivery["text"])
                 recipient = by_name.get(fields["to"])
                 if recipient is None:
                     raise ValueError("%s is not in the registry" % fields["to"])
             except ValueError as problem:
                 await self.tell(sender, "nostr-outcome-" + ident, "Not sent: %s" % problem)
-                await self.mail(self.outbox, "ack", self.outbox, ident)
+                await self.settle(delivery)
                 return
             event = nm.seal(self.keys[key_name], recipient, fields.get("subject", ""), body,
                             kind=fields.get("type"), task=fields.get("task"), reply_to=fields.get("in-reply-to"))
@@ -415,16 +449,30 @@ class Gateway:
                 pending["to"], reason if reason.startswith("none of our relays") else "the relay refused it: " + reason))
         # Forget the saved event only once the request is settled, so a failed
         # acknowledgement republishes the same event, never a new one.
-        acked = await self.mail(self.outbox, "ack", self.outbox, ident)
+        acked = await self.settle(delivery)
         if acked.get("status") not in ("settled", "duplicate"):
             raise RuntimeError("could not acknowledge %s: %s" % (ident, acked.get("reason", acked)))
         del self.state["outbound"][ident]
         self.save()
 
+    async def settle(self, delivery):
+        """Acknowledge one outbound request."""
+        if self.domain:
+            return await self.mail(self.outbox, "relay-ack", self.domain, delivery["to"], delivery["id"])
+        return await self.mail(self.outbox, "ack", self.outbox, delivery["id"])
+
+    async def next_outbound(self, wait):
+        """The next outbound request: mail to any DOMAIN/NAME, or the outbox's."""
+        if self.domain:
+            return await self.mail(self.outbox, "relay-next", self.domain, "*", "--timeout", "30" if wait else "0")
+        if wait:
+            return await self.mail(self.outbox, "wait", self.outbox, "--forever")
+        return await self.mail(self.outbox, "next", self.outbox)
+
     async def drain(self):
         """Handle the outbox until it is empty."""
         while True:
-            delivery = await self.mail(self.outbox, "next", self.outbox)
+            delivery = await self.next_outbound(False)
             if delivery.get("status") != "delivery":
                 if delivery.get("status") != "idle":
                     log("outbox unavailable: %s" % delivery.get("reason", delivery))
@@ -466,7 +514,9 @@ class Gateway:
     async def serve(self):
         async def outbox():
             while True:
-                delivery = await self.mail(self.outbox, "wait", self.outbox, "--forever")
+                delivery = await self.next_outbound(True)
+                if self.domain and delivery.get("status") == "idle":
+                    continue
                 if delivery.get("status") != "delivery":
                     raise RuntimeError("outbox unavailable: %s" % delivery.get("reason", delivery))
                 await self.handle(delivery)

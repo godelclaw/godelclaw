@@ -363,6 +363,76 @@ class NativeGatewayTests(unittest.TestCase):
 
 @unittest.skipUnless(HAVE_CRYPTO and BINARY.is_file() and SERVICE.is_file(),
                      "needs coincurve, cryptography, websockets, CETTA_BIN and its space service")
+class DomainTests(unittest.TestCase):
+    """Outside agents as asi/NAME: their mail arrives from that address, and
+    mail written to it is sent to them, natively as in the Python gateway."""
+    dialect = "petta"
+
+    def setUp(self):
+        self.s = Setup(self)
+        self.s.config.write_text('domain = "asi"\n' + self.s.config.read_text())
+
+    def claw_mail(self, s, *arguments):
+        result = subprocess.run([sys.executable, str(CLAW_MAIL), "--json", *arguments],
+                                capture_output=True, text=True, env=s.environment(), timeout=60)
+        return json.loads(result.stdout.splitlines()[-1])
+
+    def written(self, s, agent, to, text, ident):
+        self.assertEqual(self.claw_mail(s, "send", agent, to, text, "--id", ident)["status"], "accepted")
+
+    def test_inbound_mail_comes_from_the_domain_address(self):
+        s = self.s
+        mail = nm.seal(s.secret["alice"], s.pub["godel"], "Hello", "First line.")
+        s.publish("alice", mail)
+        s.native()
+        [delivery] = s.bus("godel")
+        self.assertEqual((delivery["id"], delivery["from"]), (mail["id"], "asi/alice"))
+        self.assertEqual(delivery["text"], gw.render(mail, nm.open_letter(s.secret["godel"], mail), "alice", "godel"))
+
+    def test_mail_to_a_domain_address_is_sent_and_settled(self):
+        s = self.s
+        self.written(s, "godel", "asi/alice", "Subject: Report\nType: checkpoint\n\nAll done.", "d1")
+        s.native()
+        [event] = s.query("alice", [{"kinds": [nm.KIND_MAIL], "#p": [s.pub["alice"]]}])
+        self.assertEqual(event["pubkey"], s.pub["godel"])
+        self.assertEqual(nm.open_letter(s.secret["alice"], event),
+                         {"subject": "Report", "body": "All done.", "type": "checkpoint"})
+        [told] = s.bus("godel")
+        self.assertEqual(told["text"], "Sent to alice: Report (event %s)" % event["id"])
+        self.assertEqual(self.claw_mail(s, "relay-next", "asi", "*")["status"], "idle")
+        self.assertEqual(s.state()["outbound"], {})
+
+    def test_both_gateways_agree_in_a_domain(self):
+        native, python = self.s, Setup(self)
+        python.config.write_text('domain = "asi"\n' + python.config.read_text())
+        alice, godel = native.secret["alice"], native.pub["godel"]
+        first = nm.seal(alice, godel, "First", "x", created_at=int(time.time()) - 10)
+        requests = [("godel", "asi/alice", "Subject: Report\nType: checkpoint\n\nAll done.", "r1"),
+                    ("godel", "asi/nobody", "x", "r2"),
+                    ("godel", "asi/alice", "Note: not a header\n\njust text", "r3"),
+                    ("godel", "asi/alice", "Subject: Re: First\nIn-Reply-To: <%s@nostr>\n\nyes" % first["id"], "r4"),
+                    ("godel", "asi/alice", "In-Reply-To: <abc@nostr>\n\nx", "r5"),
+                    ("lila", "asi/alice", "x", "r6")]
+        for setup, run in ((native, native.native), (python, python.python)):
+            setup.publish("alice", first)
+            for agent, to, text, ident in requests:
+                self.written(setup, agent, to, text, ident)
+            run()
+        sent = lambda setup: {("sent", json.dumps(nm.open_letter(alice, e), sort_keys=True), json.dumps(e["tags"]))
+                              for e in setup.query("alice", [{"kinds": [nm.KIND_MAIL], "authors": [godel]}])}
+        self.assertEqual(sent(native), sent(python))
+        self.assertEqual(len(sent(native)), 3)
+        strip = lambda deliveries: [(d["id"], d["from"], d["text"].split(" (event ")[0]) for d in deliveries]
+        native_bus, python_bus = native.bus("godel"), python.bus("godel")
+        self.assertEqual(sorted(strip(native_bus)), sorted(strip(python_bus)))
+        self.assertIn((first["id"], "asi/alice"), [(d[0], d[1]) for d in strip(native_bus)])
+        self.assertEqual(strip(native.inbox("lila")), strip(python.inbox("lila")))
+        for setup in (native, python):
+            self.assertEqual(self.claw_mail(setup, "relay-next", "asi", "*")["status"], "idle")
+
+
+@unittest.skipUnless(HAVE_CRYPTO and BINARY.is_file() and SERVICE.is_file(),
+                     "needs coincurve, cryptography, websockets, CETTA_BIN and its space service")
 class ParityTests(unittest.TestCase):
     """The same events through the Python gateway, with real claw-mail, and through the native one."""
     dialect = "petta"

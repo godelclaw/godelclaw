@@ -373,8 +373,11 @@
           ($s7 (gw:set socket (gw:mail-socket $config $directory)))
           ($s8 (gw:add-table (gw:pairs (gw:field-or $config "inbound" (JsonObject ()))) inbound))
           ($s9 (gw:add-table (gw:pairs (gw:field-or $config "senders" (JsonObject ()))) senders))
-          ($s10 (gw:add-table (gw:pairs (gw:field-or $config "replies" (JsonObject ()))) replies)))
-     (gw:check-config)))
+          ($s10 (gw:add-table (gw:pairs (gw:field-or $config "replies" (JsonObject ()))) replies))
+          ($s11 (gw:set domain (gw:field-or $config "domain" ""))))
+     (if (or (== (gw:get domain) "") (gw:agent-name (gw:get domain)))
+       (gw:check-config)
+       (gw:failed value (gw:cat ("not a claw-mail domain name: " (gw:quoted (gw:get domain))))))))
 
 (= (gw:add-table $pairs $table)
    (if (== $pairs ()) ()
@@ -875,8 +878,8 @@
        (let $logged (gw:log (gw:cat ("not kept: " (str:char-slice (gw:text (nostr:field $event "id")) 0 16)
                                      " (unsigned, unregistered or does not open)")))
          GwKept)
-       (let $sender (gw:cat ("nostr." $author))
-         (if (gw:agent-name $sender)
+       (let $sender (if (== (gw:get domain) "") (gw:cat ("nostr." $author)) (gw:cat ((gw:get domain) "/" $author)))
+         (if (gw:agent-name (gw:last (str:split "/" $sender) ""))
            (gw:deliver-letter $name $key $event $letter $author $sender)
            (let $logged2 (gw:log (gw:cat ("not kept: registry name " (gw:quoted $author) " is not a claw-mail name")))
              GwKept))))))
@@ -885,7 +888,9 @@
    (let* (($id (nostr:field $event "id"))
           ($recipient (gw:recipient-of $key))
           ($text (gw:render $event $letter $author $recipient)))
-     (case (shared-mail:post (gw:get socket) (gw:get space) $id $recipient $sender $text)
+     (case (if (== (gw:get domain) "")
+             (shared-mail:post (gw:get socket) (gw:get space) $id $recipient $sender $text)
+             (shared-mail:relay-in (gw:get socket) (gw:get space) $id $recipient $sender $text))
        (((mailbox:sent $sent $status) (gw:after-delivery $key $event $id))
         ((MailboxFailure identity-conflict)
          (let $logged (gw:log (gw:cat ("conflict on " $id ": the same identifier was delivered with other text")))
@@ -1073,24 +1078,54 @@
      (add-atom &self (GwOutbox $state))))
 
 ; One round: open the account's inbox, handle deliveries to the outbox until
-; it is idle, then watch the inbox for the next one.
+; it is idle, then watch the inbox for the next one. With a domain, the
+; outbox is mail@DOMAIN, where mail to every DOMAIN/NAME waits.
 (= (gw:outbox-round)
    (let $socket (gw:get socket)
+     (if (not (== (gw:get domain) ""))
+       (case (mailbox:open $socket (gw:cat ("mail@" (gw:get domain))))
+         (((space $u $i $n $b $k $r $c) (gw:outbox-next (space $u $i $n $b $k $r $c)))
+          ($error (gw:outbox-failed (gw:failed runtime (gw:cat ("outbox unavailable: " (gw:text $error))))))))
      (case (shared-mail:identity $socket)
        (((shared-mail:account $uid $login $role)
          (case (mailbox:open $socket (gw:cat ("mail@" $login)))
            (((space $u $i $n $b $k $r $c) (gw:outbox-next (space $u $i $n $b $k $r $c)))
             ($error (gw:outbox-failed (gw:failed runtime (gw:cat ("outbox unavailable: " (gw:text $error)))))))))
-        ($error2 (gw:outbox-failed (gw:failed runtime (gw:cat ("outbox unavailable: " (gw:text $error2))))))))))
+        ($error2 (gw:outbox-failed (gw:failed runtime (gw:cat ("outbox unavailable: " (gw:text $error2)))))))))))
+
+; The name a request was written to, when it came from a domain's space.
+(= (gw:relayed-to $ident)
+   (let $names (collapse (match &self (GwRelayedTo $ident $to) $to)) (if (== $names ()) () (car-atom $names))))
+(= (gw:note-relayed $ident $to)
+   (if (== (gw:relayed-to $ident) ()) (add-atom &self (GwRelayedTo $ident $to)) ()))
+(= (gw:forget-relayed $ident)
+   (gw:remove-all (collapse (match &self (GwRelayedTo $ident $to) (GwRelayedTo $ident $to)))))
+(= (gw:next-request $space)
+   (if (== (gw:get domain) "")
+     (mailbox:next-in (gw:get socket) $space (gw:get outbox))
+     (shared-mail:relay-scan (gw:get socket) $space (shared-mail:relay-names (gw:get socket) $space "*"))))
+(= (gw:ack-request $ident)
+   (let $to (gw:relayed-to $ident)
+     (if (== $to ())
+       (shared-mail:ack (gw:get socket) (gw:get outbox) $ident)
+       (case (shared-mail:relay-ack (gw:get socket) (gw:get domain) $to $ident)
+         (((mailbox:acked $id $status) (let $gone (gw:forget-relayed $ident) (mailbox:acked $id $status)))
+          ($refused $refused))))))
 
 (= (gw:outbox-next $space)
    (let $set (gw:set-outbox draining)
-     (case (mailbox:next-in (gw:get socket) $space (gw:get outbox))
+     (case (gw:next-request $space)
        (((mailbox:delivery $id $from $text)
          (case (gw:handle $id (shared-mail:sender $from) $text)
            ((GwHandled (gw:outbox-next $space))
             (GwPublishing ())
             ($failure (gw:outbox-failed $failure)))))
+        ((shared-mail:relayed $to $id $from $text)
+         (let $noted (gw:note-relayed $id $to)
+           (case (gw:handle $id (shared-mail:sender $from) $text)
+             ((GwHandled (gw:outbox-next $space))
+              (GwPublishing ())
+              ($failure (gw:outbox-failed $failure))))))
         ((mailbox:idle) (gw:outbox-idle $space))
         ($error (gw:outbox-failed (gw:failed runtime (gw:cat ("outbox unavailable: " (gw:text $error))))))))))
 
@@ -1166,16 +1201,39 @@
              (GwNotSent "In-Reply-To must name an event identifier")
              (GwFields (gw:append $fields ((GwField "in-reply-to" $parent))) $body)))))))
 
+; Mail written to DOMAIN/NAME: optional Subject, In-Reply-To, Type and Task
+; lines and a blank line, then the body; text that does not open with such
+; lines is all body. As parse_relayed of the Python gateway.
+(= (gw:relayed-header $line)
+   (let $colon (gw:find $line ":")
+     (if (< $colon 0) ()
+       (let $name (gw:lower (gw:strip (str:byte-slice $line 0 $colon)))
+         (if (nostr:member $name ("subject" "in-reply-to" "type" "task"))
+           (GwField $name (gw:strip (str:byte-slice $line (+ $colon 1) (str:byte-length $line))))
+           ())))))
+(= (gw:relayed-fields $lines $fields)
+   (if (== $lines ()) (gw:reverse $fields)
+     (let $field (gw:relayed-header (car-atom $lines))
+       (if (== $field ()) () (gw:relayed-fields (cdr-atom $lines) (cons-atom $field $fields))))))
+(= (gw:parse-relayed $to $text)
+   (let* (($at (gw:find $text "\n\n"))
+          ($fields (if (< $at 0) () (gw:relayed-fields (gw:splitlines (str:byte-slice $text 0 $at)) ())))
+          ($body (if (== $fields ()) $text (str:byte-slice $text (+ $at 2) (str:byte-length $text))))
+          ($parent (gw:remove-suffix (gw:strip-angles (gw:field-of $fields "in-reply-to" "")) "@nostr")))
+     (if (and (not (== $parent "")) (not (nostr:is-hex $parent 64)))
+       (GwNotSent "In-Reply-To must name an event identifier")
+       (GwFields (gw:append $fields ((GwField "in-reply-to" $parent) (GwField "to" $to))) $body))))
+
 ; Publish one outbound request, tell its sender, settle it. The signed event
 ; is saved before it is published, so a retry publishes the same event.
 (= (gw:handle $ident $sender $text)
    (let $pending (gw:outbound-of $ident)
      (if (== $pending ()) (gw:handle-new $ident $sender $text) (gw:start-publication $ident $sender $pending))))
 
-(= (gw:outgoing $sender $text)
+(= (gw:outgoing $ident $sender $text)
    (let $key (gw:sender-key $sender)
      (if (== $key ()) (GwNotSent (gw:cat ($sender " has no Nostr key at this gateway")))
-       (case (gw:parse-outgoing $text)
+       (case (let $relayed (gw:relayed-to $ident) (if (== $relayed ()) (gw:parse-outgoing $text) (gw:parse-relayed $relayed $text)))
          (((GwFields $fields $body)
            (let* (($to (gw:field-of $fields "to" "")) ($recipient (gw:key-of-name $to)))
              (if (== $recipient ()) (GwNotSent (gw:cat ($to " is not in the registry")))
@@ -1183,7 +1241,7 @@
           ($refusal $refusal))))))
 
 (= (gw:handle-new $ident $sender $text)
-   (case (gw:outgoing $sender $text)
+   (case (gw:outgoing $ident $sender $text)
      (((GwOutgoing $key $recipient $to $fields $body)
        (let* (($event (nostr:seal (gw:secret $key) $recipient (gw:field-of $fields "subject" "") $body
                         (gw:field-of $fields "type" ()) (gw:field-of $fields "task" ())
@@ -1196,7 +1254,7 @@
             ($saved (gw:start-publication $ident $sender $pending))))))
       ((GwNotSent $why)
        (case (gw:tell $sender (gw:cat ("nostr-outcome-" $ident)) (gw:cat ("Not sent: " $why)))
-         ((GwTold (let $acked (shared-mail:ack (gw:get socket) (gw:get outbox) $ident) GwHandled))
+         ((GwTold (let $acked (gw:ack-request $ident) GwHandled))
           ($failure $failure)))))))
 
 ; To the first relay the recipient reads that takes it; with none in common,
@@ -1276,7 +1334,7 @@
 ; The outbox delivery is acknowledged before the saved event is forgotten, so
 ; a failed acknowledgement publishes the same event again, never a new one.
 (= (gw:settle $ident)
-   (case (shared-mail:ack (gw:get socket) (gw:get outbox) $ident)
+   (case (gw:ack-request $ident)
      (((mailbox:acked $id $status)
        (let $gone (gw:drop-outbound $ident) (case (gw:save) (((gw:failed $k $d) (gw:failed $k $d)) ($saved GwHandled)))))
       ($refused (gw:failed runtime (gw:cat ("could not acknowledge " $ident ": " (gw:text $refused))))))))

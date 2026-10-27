@@ -27,7 +27,9 @@ if HAVE_CRYPTO:
 # mailbox's identity conflict, reported as claw-mail reports it; `next`
 # presents the ready delivery again before taking a pending one; `ack` settles
 # only a ready delivery, and fails while FAKE_MAIL_ACK_FAILS is set. As the
-# service does, it records the sender as `account/agent`.
+# service does, it records the sender as `account/agent`. The relay commands
+# serve a foreign domain: `relay-in` keeps the given DOMAIN/NAME sender, and
+# `relay-next`/`relay-ack` work on mail written to DOMAIN/NAME.
 MAILER = r'''
 import fcntl, json, os, sys, time
 args = sys.argv[1:]
@@ -78,6 +80,46 @@ if command in ("next", "wait"):
         if result["status"] == "delivery" or command == "next":
             reply(result)
         time.sleep(0.05)
+if command == "relay-in":
+    ident = fields[fields.index("--id") + 1]
+    sender, to, text = [f for i, f in enumerate(fields) if f != "--id" and (i == 0 or fields[i - 1] != "--id")]
+    def relay(ledger):
+        old = [d for d in ledger if d["id"] == ident]
+        if not old:
+            ledger.append({"id": ident, "to": to, "from": sender, "text": text, "stage": "pending", "at": time.time()})
+            return {"status": "accepted", "id": ident}
+        if (old[0]["to"], old[0]["from"], old[0]["text"]) == (to, sender, text):
+            return {"status": "duplicate", "id": ident}
+        return {"status": "error", "reason": "(MailboxFailure identity-conflict)", "id": ident}
+    reply(locked(relay))
+if command == "relay-next":
+    domain, rest = fields[0], fields[1:]
+    timeout = float(rest[rest.index("--timeout") + 1]) if "--timeout" in rest else 0
+    names = [f for i, f in enumerate(rest) if f != "--timeout" and (i == 0 or rest[i - 1] != "--timeout")]
+    def take(ledger):
+        for stage in ("ready", "pending"):
+            for d in ledger:
+                domain_of, slash, name = d["to"].partition("/")
+                if d["stage"] == stage and slash and domain_of == domain and (names == ["*"] or name in names):
+                    d["stage"] = "ready"
+                    return {"status": "delivery", "id": d["id"], "from": d["from"], "to": name, "text": d["text"]}
+        return {"status": "idle"}
+    deadline = time.time() + timeout
+    while True:
+        result = locked(take)
+        if result["status"] == "delivery" or time.time() >= deadline:
+            reply(result)
+        time.sleep(0.05)
+if command == "relay-ack":
+    if os.environ.get("FAKE_MAIL_ACK_FAILS"):
+        reply({"status": "error", "reason": "(space:unavailable ack-1 connect)"})
+    def relay_ack(ledger):
+        for d in ledger:
+            if d["id"] == fields[2] and d["to"] == fields[0] + "/" + fields[1] and d["stage"] == "ready":
+                d["stage"] = "settled"
+                return {"status": "settled", "id": d["id"]}
+        return {"status": "duplicate", "id": fields[2]}
+    reply(locked(relay_ack))
 if command == "ack":
     if os.environ.get("FAKE_MAIL_ACK_FAILS"):
         reply({"status": "error", "reason": "(space:unavailable ack-1 connect)"})
@@ -308,6 +350,72 @@ class GatewayTests(unittest.TestCase):
 
 
 @unittest.skipUnless(HAVE_CRYPTO, "needs coincurve, cryptography and websockets")
+@unittest.skipUnless(HAVE_CRYPTO, "needs coincurve, cryptography and websockets")
+class DomainTests(unittest.TestCase):
+    """Outside agents as asi/NAME: their mail arrives from that address, and
+    mail written to it is sent to them."""
+    as_member, publish, deliveries = GatewayTests.as_member, GatewayTests.publish, GatewayTests.deliveries
+
+    def setUp(self):
+        GatewayTests.setUp(self)
+        config = self.directory / "gateway.toml"
+        config.write_text('domain = "asi"\n' + config.read_text())
+        self.gateway = gw.Gateway(config)
+
+    def written(self, sender, to, text, ident="d1"):
+        import fcntl
+        with open(str(self.ledger) + ".lock", "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            ledger = self.deliveries()
+            ledger.append({"id": ident, "to": to, "from": sender, "text": text, "stage": "pending"})
+            self.ledger.write_text(json.dumps(ledger))
+
+    def mail_to(self, name):
+        return self.as_member(secret(name), lambda relay: relay.query([{"kinds": [nm.KIND_MAIL], "#p": [self.pub[name]]}]))
+
+    def test_inbound_mail_comes_from_the_domain_address(self):
+        mail = nm.seal(self.alice, self.pub["godel"], "Hello", "First line.")
+        self.publish(self.alice, mail)
+        self.gateway.tick()
+        [delivery] = self.deliveries("godel")
+        self.assertEqual((delivery["id"], delivery["from"]), (mail["id"], "asi/alice"))
+        self.assertIn("Subject: Hello", delivery["text"].split("\n\n", 1)[0])
+        self.gateway.tick()
+        self.assertEqual(len(self.deliveries("godel")), 1)
+
+    def test_mail_to_a_domain_address_is_sent_with_its_headers(self):
+        self.written("acct/godel", "asi/alice", "Subject: Report\nType: checkpoint\n\nAll done.")
+        self.gateway.tick()
+        [event] = self.mail_to("alice")
+        self.assertEqual(event["pubkey"], self.pub["godel"])
+        self.assertEqual(nm.open_letter(self.alice, event),
+                         {"subject": "Report", "body": "All done.", "type": "checkpoint"})
+        self.assertEqual(self.deliveries("asi/alice")[0]["stage"], "settled")
+        [told] = self.deliveries("godel")
+        self.assertTrue(told["text"].startswith("Sent to alice: Report (event %s)" % event["id"]))
+
+    def test_text_without_headers_is_all_body(self):
+        self.written("acct/godel", "asi/alice", "Note: no headers here\n\njust text")
+        self.gateway.tick()
+        [event] = self.mail_to("alice")
+        self.assertEqual(nm.open_letter(self.alice, event), {"subject": "", "body": "Note: no headers here\n\njust text"})
+
+    def test_a_reply_names_its_parent(self):
+        parent = "ab" * 32
+        self.written("acct/godel", "asi/alice", "Subject: Re: Hello\nIn-Reply-To: <%s@nostr>\n\nYes." % parent)
+        self.gateway.tick()
+        [event] = self.mail_to("alice")
+        self.assertIn(["e", parent, "", "reply"], event["tags"])
+
+    def test_an_unknown_name_is_refused_back_to_the_sender(self):
+        self.written("acct/godel", "asi/nobody", "hello?")
+        self.gateway.tick()
+        self.assertEqual(self.deliveries("asi/nobody")[0]["stage"], "settled")
+        [told] = self.deliveries("godel")
+        self.assertEqual(told["text"], "Not sent: nobody is not in the registry")
+        self.assertEqual(self.mail_to("alice"), [])
+
+
 class TwoRelayTests(unittest.TestCase):
     """[[relays]] one and two, in that order of preference, as nostr-mailbox's
     relays.json lists relays; the registry says which of them alice and carol read."""

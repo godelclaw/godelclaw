@@ -124,11 +124,11 @@ def resolve_agent(parser, args, default):
             recipient_name(args.to)
         else:
             args.id = args.fields[0]
-    elif args.command != 'whoami':
+    elif args.command not in ('whoami',) + ('relay-in', 'relay-next', 'relay-ack'):
         args.agent = args.agent or default
         if not args.agent:
             parser.error('choose AGENT or set CLAW_MAIL_AGENT')
-    if args.command != 'whoami':
+    if args.command not in ('whoami',) + ('relay-in', 'relay-next', 'relay-ack'):
         agent_name(args.agent)
 
 
@@ -168,6 +168,20 @@ def main(argv=None):
     wait.add_argument('--retry-limit', type=int, default=8, help='consecutive transient failures before exit (default 8)')
     ack = commands.add_parser('ack', help='ack [AGENT] ID after handling a delivery')
     ack.add_argument('fields', nargs='+', metavar='ARG')
+    # A gateway, run by the service owner, relays a foreign domain.
+    relay_in = commands.add_parser('relay-in', help='gateway: deliver TEXT to TO from DOMAIN/NAME')
+    relay_in.add_argument('sender', metavar='DOMAIN/NAME')
+    relay_in.add_argument('to')
+    relay_in.add_argument('text')
+    relay_in.add_argument('--id', help='the occurrence identifier; retries reuse it')
+    relay_next = commands.add_parser('relay-next', help='gateway: take the next mail for DOMAIN/NAME, any of NAMES (* for all)')
+    relay_next.add_argument('domain')
+    relay_next.add_argument('names', nargs='+', metavar='NAME')
+    relay_next.add_argument('--timeout', type=duration, default=0, help='seconds to wait, at most 30 (default 0)')
+    relay_ack = commands.add_parser('relay-ack', help='gateway: ack DOMAIN NAME ID after sending it out')
+    relay_ack.add_argument('domain')
+    relay_ack.add_argument('name')
+    relay_ack.add_argument('id')
     for command in commands.choices.values():
         command.add_argument('--json', action='store_true', default=argparse.SUPPRESS,
                              help=argparse.SUPPRESS)
@@ -181,6 +195,20 @@ def main(argv=None):
         parser.error(str(error))
     if args.command == 'wait' and args.retry_limit < 0:
         parser.error('--retry-limit must be nonnegative')
+    try:
+        if args.command == 'relay-in':
+            if len(args.sender.split('/')) != 2:
+                raise argparse.ArgumentTypeError('the sender is DOMAIN/NAME')
+            recipient_name(args.sender)
+            recipient_name(args.to)
+        elif args.command in ('relay-next', 'relay-ack'):
+            names = args.names if args.command == 'relay-next' else [args.name]
+            if names != ['*']:
+                for name in names:
+                    agent_name(name)
+            agent_name(args.domain)
+    except argparse.ArgumentTypeError as error:
+        parser.error(str(error))
     q = metta_text
     message_id = None
     try:
@@ -195,6 +223,18 @@ def main(argv=None):
                                   f'{q(args.to)} {q(args.agent)} {q(args.text)})')
         elif args.command == 'ack':
             result = invoke(args, f'(shared-mail:ack {q(args.socket)} {q(args.agent)} {q(args.id)})')
+        elif args.command == 'relay-in':
+            message_id = args.id if args.id is not None else uuid.uuid4().hex
+            if not message_id or '\0' in message_id:
+                parser.error('message ID must be nonempty and contain no NUL')
+            result = invoke(args, f'(shared-mail:relay-in {q(args.socket)} {q(args.space)} {q(message_id)} '
+                                  f'{q(args.to)} {q(args.sender)} {q(args.text)})')
+        elif args.command == 'relay-next':
+            milliseconds = int(min(30, args.timeout) * 1000)
+            result = invoke(args, f'(shared-mail:relay-next {q(args.socket)} {q(args.domain)} '
+                                  f'{q(",".join(args.names))} {milliseconds})', timeout=milliseconds / 1000 + 30)
+        elif args.command == 'relay-ack':
+            result = invoke(args, f'(shared-mail:relay-ack {q(args.socket)} {q(args.domain)} {q(args.name)} {q(args.id)})')
         elif args.command == 'inbox':
             limit = 0 if args.count or args.notice else args.limit
             for _ in range(3):
@@ -229,7 +269,9 @@ def main(argv=None):
         result.setdefault('id', message_id)
     emit(args, result)
     expected = {'whoami': {'identity'}, 'send': {'accepted', 'duplicate'}, 'inbox': {'inbox'},
-                'ack': {'settled', 'duplicate'}, 'next': {'delivery', 'idle'}, 'wait': {'delivery'}}
+                'ack': {'settled', 'duplicate'}, 'next': {'delivery', 'idle'}, 'wait': {'delivery'},
+                'relay-in': {'accepted', 'duplicate'}, 'relay-next': {'delivery', 'idle'},
+                'relay-ack': {'settled', 'duplicate'}}
     if result['status'] in expected[args.command]:
         return 0
     return 3 if args.command == 'wait' and result['status'] == 'idle' else 1
