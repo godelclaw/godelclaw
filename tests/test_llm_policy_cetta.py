@@ -135,6 +135,15 @@ class NativeLedgerFixture(unittest.TestCase):
                             ticket, model, protocol, purpose, transport = args
                             expected.append(['changed', llm_policy.describe(ticket, model=model, protocol=protocol,
                                                                            purpose=purpose, transport=transport)])
+                        elif kind == 'describe-origin':
+                            # The origin is JSON text, so duplicate keys reach both sides as written.
+                            ticket, model, protocol, purpose, transport, origin = args
+                            forms.append('(lp:describe-origin %s (json:parse %s) %s)' % (
+                                ' '.join(map(literal, (ticket, model, protocol, purpose, transport))),
+                                quoted(origin), now))
+                            expected.append(['changed', llm_policy.describe(ticket, model=model, protocol=protocol,
+                                                                           purpose=purpose, transport=transport,
+                                                                           origin=json.loads(origin))])
                         elif kind == 'complete':
                             ticket, usage, finish = args
                             forms.append('(lp:complete %s (json:parse %s) %s %s)' %
@@ -200,6 +209,26 @@ class NativePolicyTests(NativeLedgerFixture):
             ('admit', 'c', 'synthetic', 100, '', 1013),
             ('fail', 'c', False, None, None, 1014),
         ])
+
+    def test_request_origin_omitted_empty_and_null_layout_agree(self):
+        # Omitted and empty origins differ, as do an absent and a null cache_layout.
+        origins = ['null', '{}', '{"cache_layout": null}', '{"trigger": null, "turn_id": null}',
+                   '{"trigger": "user", "turn_id": "t-1", "cache_layout": {"prefix": 3}}',
+                   '{"cache_layout": "x", "cache_layout": "y"}']
+        tickets = ['omitted'] + ['origin-%d' % i for i in range(len(origins))]
+        steps = [('admit', ticket, 'synthetic', 100, '', 1000 + i) for i, ticket in enumerate(tickets)]
+        steps.append(('describe', 'omitted', 'model', 'responses', 'turn', 'native', 1010))
+        steps += [('describe-origin', 'origin-%d' % i, 'model', 'responses', 'turn', 'native', origin, 1011 + i)
+                  for i, origin in enumerate(origins)]
+        self.replay(steps)
+
+    def test_native_caller_omits_an_empty_origin_as_the_host_does(self):
+        # native_llm_host's Python route describes with `request_origin(plan) or None`.
+        cases = [{}, {'origin': None}, {'origin': {}}, {'origin': {'trigger': 'user'}},
+                 {'origin': {'cache_layout': None}}]
+        forms = ['(account:request-origin (json:parse %s))' % quoted(json.dumps(case)) for case in cases]
+        self.assertEqual(self.native(forms, raw=True, module='llm_accounting_cetta.metta'),
+                         [case.get('origin') or None for case in cases])
 
     def test_late_usage_records_cost_without_committing_the_failed_turn(self):
         self.replay([

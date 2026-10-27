@@ -300,17 +300,20 @@
 
 (: lp:describe (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (lp:describe $ticket $model $protocol $purpose $transport $now)
-   (lp:describe-origin $ticket $model $protocol $purpose $transport (JsonObject ()) $now))
+   (lp:describe-origin $ticket $model $protocol $purpose $transport JsonNull $now))
+; As Python's describe: JsonNull is an omitted origin and adds nothing; any
+; origin object, {} included, adds trigger and turn_id; cache_layout is copied
+; whenever the key is present, an explicit null included.
 (: lp:request-detail (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (lp:request-detail $model $protocol $purpose $transport $origin)
    (let* (($base ((JsonPair "model" $model) (JsonPair "protocol" $protocol)
                  (JsonPair "purpose" $purpose) (JsonPair "transport" $transport)))
           ($trigger (lp:field $origin "trigger" "unspecified"))
           ($turn (lp:field $origin "turn_id" ""))
-          ($fields (if (ue:equal $origin (JsonObject ())) $base
+          ($fields (if (ue:equal $origin JsonNull) $base
                      (lp:append $base ((JsonPair "trigger" $trigger) (JsonPair "turn_id" $turn))))))
-     (let $layout (lp:field $origin "cache_layout" JsonNull)
-       (JsonObject (if (ue:equal $layout JsonNull) $fields
+     (let $layout (lp:field $origin "cache_layout" LpFieldAbsent)
+       (JsonObject (if (ue:equal $layout LpFieldAbsent) $fields
                      (lp:append $fields ((JsonPair "cache_layout" $layout))))))))
 (: lp:describe-origin (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (lp:describe-origin $ticket $model $protocol $purpose $transport $origin $now)

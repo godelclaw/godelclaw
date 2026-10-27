@@ -46,12 +46,18 @@
        (account:admitted $plan $metadata
          (lp:admit (lp:field $metadata "id" "") (lp:field $metadata "provider" "")
                    (lp:field $metadata "maximum" 0) (lp:field $metadata "fingerprint" "") (system:wall-time))))))
+; The host's Python route passes `request_origin(plan) or None` to describe,
+; so an empty origin is omitted there; mirror that falsiness here.
+(: account:request-origin (-> %Undefined% %Undefined%))
+(= (account:request-origin $metadata)
+   (let $origin (lp:field $metadata "origin" JsonNull)
+     (if (ue:truthy $origin) $origin JsonNull)))
 (: account:describe (-> %Undefined% %Undefined%))
 (= (account:describe $plan)
    (let $metadata (json:parse (lp:text (py-call (native_llm_host.request_metadata $plan))))
      (case (lp:describe-origin (lp:field $metadata "id" "") (lp:field $metadata "model" "")
                         (lp:field $metadata "protocol" "") (lp:field $metadata "purpose" "turn")
-                        "native" (lp:field $metadata "origin" (JsonObject ())) (system:wall-time))
+                        "native" (account:request-origin $metadata) (system:wall-time))
        (((LedgerChanged $ignored4) True)
         ($error (let $ignored5 (py-call (native_llm_host.accounting_observation_error $plan "metadata")) False))))))
 (: account:submitted (-> %Undefined% %Undefined% %Undefined%))
