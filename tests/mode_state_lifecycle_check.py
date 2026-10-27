@@ -136,7 +136,7 @@ def projection(value):
 
 
 def check(c,threshold=False):
-    with c.phase('lifecycle-mkstemp-paths-and-collisions' if not threshold else 'actual-tempfile-retry-threshold-counterexample'),umask(0o027):
+    with c.phase('lifecycle-mkstemp-paths-and-collisions' if not threshold else 'actual-tempfile-retry-threshold-parity'),umask(0o027):
         package=stage(c,'lifecycle-package');root=package/'fixture'
         fixture=poison(c)
         cases=['threshold-conflict'] if threshold else ['relative-ok','relative-rename','relative-dotdot','absolute-ok',
@@ -197,22 +197,84 @@ def check(c,threshold=False):
                   'projections':[projection(o) for o in observed],
                   'fixture':'actual RNG/candidate semantics unchanged; collision seeding and EACCES/threshold errors explicitly injected'}
             c.save('mkstemp-'+case+'.json',pair)
+            assert pair['projections'][0]==pair['projections'][1],pair
             if threshold:
                 assert observed[0]['python_tmp_max']>10000
-                assert observed[0]['attempts']==10001 and observed[0]['reply']['error']=='PermissionError'
-                assert observed[1]['attempts']==10000 and observed[1]['reply']=={
-                    'error':'FileExistsError','message':'[Errno %d] No usable temporary file name found'%errno.EEXIST}
-                assert all(op in ('mkdir','candidate','open') for op,_ in observed[1]['trace'])
+                for result in observed:
+                    assert result['attempts']==10001 and result['reply']['error']=='PermissionError'
+                    assert all(op in ('mkdir','candidate','open') for op,_ in result['trace'])
             else:
-                assert pair['projections'][0]==pair['projections'][1],pair
                 assert observed[1]['attempts']==(2 if case=='collision-success' else 0 if case=='cwd-error' else 1),pair
                 if case=='collision-success':
                     files=[v for k,v in observed[1]['files'].items() if Path(k).name.startswith('.lifecycle-')]
                     assert files==[{'mode':'0o604','kind':'file','hex':b'collision fixture\n'.hex()}],files
             records.append(pair)
-        c.save('mkstemp-result.json',{'status':'BLOCKED_TMP_MAX_CONTRACT_CONFLICT' if threshold else 'PASS_LIFECYCLE_MKSTEMP_CASES',
-               'cases':len(records),'threshold':'native10000 per requested contract, actual unmodified Python limit recorded, never patched',
+        c.save('mkstemp-result.json',{'status':'PASS_ACTUAL_TMP_MAX_THRESHOLD_PARITY' if threshold else 'PASS_LIFECYCLE_MKSTEMP_CASES',
+               'cases':len(records),'threshold':'first10000 exclusive opens EEXIST then EACCES; runtime platform limit and Python oracle never patched',
                'traces':'public mkdir operation (not recursive internal syscalls), cwd/candidate/exclusive open and owned I/O order; raw names retained'})
+    if not threshold:budget_boundaries(c)
+
+
+def budget_boundaries(c):
+    """Bounded remaining-budget control, not full platform-count exhaustion."""
+    with c.phase('bounded-tempfile-budget-control-and-actual-initialization'):
+        base=c.directory/'budget-controls';base.mkdir()
+        records=[]
+        for label,budget,collisions,denied,attempts,error in (
+            ('zero',0,0,False,0,'FileExistsError'),
+            ('one-collision',1,1,False,1,'FileExistsError'),
+            ('three-collisions',3,3,False,3,'FileExistsError'),
+            ('last-allowed-success',3,2,False,3,None),
+            ('immediate-noncollision',3,1,True,2,'PermissionError')):
+            root=base/label;root.mkdir();target=root/'lifecycle.json'
+            source=IMPORTS+'!(import! &self ./src/lifecycle_cetta.metta)\n'+CAPTURE+native_trace('none')+'''
+!(match &self (= (fs:open-write $path $flags $mode) $prior) (remove-atom &self (= (fs:open-write $path $flags $mode) $prior)))
+(= (fs:open-write $path $flags $mode)
+ (let* (($_ (protocol:record "open" $path))
+        ($n (+ (get-state &mk-attempts) 1)) ($_ (change-state! &mk-attempts $n)))
+  (if (<= $n COLLISIONS)
+   (fs:failed fs:exists open-write $path (system:errno-value "EEXIST") (fs:progress 0 known-position) "File exists")
+   (if DENIED
+    (fs:failed fs:denied open-write $path (system:errno-value "EACCES") (fs:progress 0 known-position) "Permission denied")
+    (let $owner (__cetta_lib_fs_open_write $path $flags $mode)
+     (case $owner (((NativeHandle "file-writer" $_)
+       (let $_ (add-atom &self (protocol-owner $owner $path)) $owner)) ($other $other))))))))
+'''.replace('COLLISIONS',str(collisions)).replace('DENIED','True' if denied else 'False')
+            source+=emit(captured('(mv:raise (lifecycle-native:create %s %s "running" %d))'%(q(target),q(root),budget)))
+            source+=emit('(JsonArray (get-state &protocol-trace))')+emit('(get-state &mk-attempts)')
+            output=c.run('bounded-budget-'+label,source)
+            actual=rows(output);assert len(actual)==3,output
+            reply,trace,count=actual;trace=list(reversed(trace))
+            namespace={};exec(SNAPSHOT,namespace)
+            record={'label':label,'supplied_remaining_budget':budget,'reply':reply,'trace':trace,
+                    'attempts':count,'files':namespace['snapshot'](root)}
+            c.save('bounded-budget-'+label+'.json',record)
+            assert count==attempts
+            assert len([v for op,v in trace if op=='candidate'])==count
+            if error=='FileExistsError':
+                assert reply=={'error':error,'message':str(FileExistsError(errno.EEXIST,'No usable temporary file name found'))}
+            elif error:
+                opened=[v for op,v in trace if op=='open'][-1]
+                assert reply=={'error':error,'message':str(PermissionError(errno.EACCES,os.strerror(errno.EACCES),opened))}
+            else:
+                assert reply==1 and target.read_bytes()==b'{"schema": 1, "state": "running"}\n'
+                assert target.stat().st_mode&0o777==0o600
+            if error:
+                assert record['files']=={} and all(op in ('candidate','open') for op,_ in trace)
+            records.append(record)
+        target=base/'initialization/lifecycle.json'
+        source=IMPORTS+'!(import! &self ./src/lifecycle_cetta.metta)\n'+'''
+!(match &self (= (lifecycle-native:create $path $directory $state $remaining) $prior)
+  (remove-atom &self (= (lifecycle-native:create $path $directory $state $remaining) $prior)))
+(= (lifecycle-native:create $path $directory $state $remaining)
+ (JsonArray ($remaining $directory $path)))
+'''+emit('(lifecycle-native:write "running")')
+        actual=rows(c.run('actual-writer-budget-initialization',source,{'METTACLAW_LIFECYCLE_PATH':str(target)}))
+        assert actual==[[tempfile.TMP_MAX,str(target.parent),str(target)]],actual
+        assert not target.exists() and target.parent.is_dir()
+        c.save('budget-control-result.json',{'status':'PASS_BOUNDED_BUDGET_CONTROL_AND_PLATFORM_INITIALIZATION',
+               'cases':records,'actual_initialization':actual,
+               'limits':'direct create helper budgets0/1/3 exercise bounded control only; actual writer create is intercepted to observe unchanged platform initialization. No Python constant patch, runtime budget override, or full platform-count exhaustion enumeration.'})
 
 
 def main():

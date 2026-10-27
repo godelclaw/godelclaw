@@ -157,6 +157,11 @@ class ModeStateSupportTest(unittest.TestCase):
             source = re.sub(r';[^\n]*', "", path.read_text())
             self.assertNotRegex(source, r'\(py-call\b|\(import_prolog_function\b', path.name)
 
+    def test_lifecycle_initializes_retry_budget_from_platform_primitive(self):
+        source=next(p for p in self.mode_sources() if p.stem=='lifecycle_cetta').read_text()
+        self.assertIn('(lifecycle-native:create $path $directory $state (system:tmp-max))',source)
+        self.assertNotRegex(source,r'\$state\s+(?:10000|238328)\)')
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

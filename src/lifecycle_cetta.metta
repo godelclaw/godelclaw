@@ -78,7 +78,7 @@
          (if (!= $parent ()) $parent
            (let $directory (lifecycle-native:abspath (mode-path:parent $path))
              (if (mv:failed? $directory) $directory
-               (lifecycle-native:create $path $directory $state 10000))))))))
+               (lifecycle-native:create $path $directory $state (system:tmp-max)))))))))
 (= (lifecycle-native:start)
    (let $result (lifecycle-native:write "running")
      (if (== $result 1) "started: cognition enabled by operator latch" (mv:raise $result))))

@@ -15,6 +15,14 @@ from mode_state_support import Qualification
 
 
 def dependencies(c):
+    with c.phase('platform-tempfile-attempt-bound'):
+        output=c.run('actual-platform-tmp-max',
+                     '!(import! &self (library system))\n!(import! &self (library json))\n'+emit('(system:tmp-max)'))
+        actual=rows(output)
+        assert actual==[tempfile.TMP_MAX] and type(actual[0]) is int and actual[0]>0,actual
+        assert tempfile.TMP_MAX==getattr(os,'TMP_MAX',10000)
+        c.save('tmp-max-results.json',{'native':actual[0],'os_TMP_MAX':getattr(os,'TMP_MAX',None),
+               'tempfile_TMP_MAX':tempfile.TMP_MAX,'scope':'actual primitive equality; bounded retry control checked separately'})
     with c.phase("relied-on-native-apis"):
         temporary, target = c.directory / 'temporary', c.directory / 'published'
         source = IMPORTS + f'''
