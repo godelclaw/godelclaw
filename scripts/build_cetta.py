@@ -12,6 +12,23 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = "https://github.com/godelclaw/CeTTa.git"
+RUNTIME_NAMES = ("cetta", "cetta-space-service", "cetta-value-worker", "cetta-telegram-service")
+
+
+def install_runtime_artifacts(source, prefix, artifacts):
+    """Install the resolved executables and each executable's process helper."""
+    if len(artifacts) != len(RUNTIME_NAMES) + 1:
+        raise RuntimeError("Make must report four executables and their process-scope helper")
+    paths = [source / artifact for artifact in artifacts]
+    for path in paths:
+        if not path.is_file() or not os.access(path, os.X_OK):
+            raise RuntimeError("release artifact is missing or not executable: " + str(path))
+    prefix.mkdir(parents=True, exist_ok=True)
+    for name, artifact in zip(RUNTIME_NAMES, paths[:-1]):
+        shutil.copy2(artifact, prefix / name)
+        # The runtime resolves /proc/self/exe + '.proc-scope'. Services can
+        # execute MeTTa too, so their relocated names need companions as well.
+        shutil.copy2(paths[-1], prefix / (name + ".proc-scope"))
 
 
 def python_config():
@@ -96,17 +113,12 @@ def main():
          "cetta", "space-service", "value-worker", "telegram-service"], source)
     # Ask Make for its resolved tagged paths; do not guess which older binary
     # in runtime/ belongs to this feature configuration.
-    recipe = 'godelclaw-release-paths:;@printf "GODELCLAW_ARTIFACT=%s\\n" "$(BIN)" "$(SPACE_SERVICE_BIN)" "$(VALUE_WORKER_BIN)" "$(TELEGRAM_SERVICE_BIN)"'
+    recipe = 'godelclaw-release-paths:;@printf "GODELCLAW_ARTIFACT=%s\\n" "$(BIN)" "$(SPACE_SERVICE_BIN)" "$(VALUE_WORKER_BIN)" "$(TELEGRAM_SERVICE_BIN)" "$(BIN).proc-scope"'
     output = run(["make", "--no-print-directory", "-s", *flags,
                   "--eval", recipe, "godelclaw-release-paths"], source, capture=True)
     artifacts = [line.split("=", 1)[1] for line in output.splitlines()
                  if line.startswith("GODELCLAW_ARTIFACT=")]
-    if len(artifacts) != 4:
-        raise RuntimeError("Make did not report the four release artifacts")
-    prefix.mkdir(parents=True, exist_ok=True)
-    names = ["cetta", "cetta-space-service", "cetta-value-worker", "cetta-telegram-service"]
-    for name, artifact in zip(names, artifacts):
-        shutil.copy2(source / artifact, prefix / name)
+    install_runtime_artifacts(source, prefix, artifacts)
     for name in ("lib", "tools"):
         shutil.copytree(source / name, prefix / name, dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
