@@ -48,6 +48,13 @@
 (= (getContextPrefix)
    (string-safe (utils:py-str ("PROMPT: " (getPrompt)))))
 
+;; One item a line, as the structured request advertises the skills.
+(= (loop:lines $items)
+   (if (== $items ()) ()
+     (let $rest (cdr-atom $items)
+       (if (== $rest ()) $items
+         (cons-atom (car-atom $items) (cons-atom "\n" (loop:lines $rest)))))))
+
 ; In the whole-window task view the last results are already the newest steps
 ; of TASK_RECENT, so repeating them here would only double their cost.
 (= (loop:last-results-view $results)
@@ -195,7 +202,7 @@
        (let* (($structuredSystem
                 (string-safe
                   (utils:py-str ((getContextPrefix) (getContextSuffix $periphery)))))
-              ($advertised (string-safe (utils:py-str (getSkills)))))
+              ($advertised (string-safe (utils:py-str (loop:lines (getSkills))))))
          (addition-prepare-request $policy ""
            $structuredSystem (string-safe (utils:py-str $lastmessage)) $advertised))
        (let* (($prompt (getContext $periphery))

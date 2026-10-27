@@ -45,7 +45,7 @@
     "- Read a numbered window of a file: (read-lines \"filename\" start count)"
     "- Replace a string that occurs exactly once in a file: (edit-file \"filename\" \"old-string\" \"new-string\")"
     "- Compact directory tree, dirs first with file sizes: (ls-tree \"dir\" depth)"
-    "- Search text across files under a dir, bounded output: (grep-files \"pattern\" \"dir\")",
+    "- Search text across files under a dir, bounded output: (grep-files \"pattern\" \"dir\")"
 	    ;COMMUNICATION CHANNELS:
 	    "- Send message to user: (send \"string\")"
 	    "- Send Telegram message to a specific chat id: (send-telegram-chat \"chat_id\" \"string\")"
