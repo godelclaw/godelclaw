@@ -61,13 +61,28 @@ class ProviderDomainReferenceTests(unittest.TestCase):
                  {"input_tokens": 10, "output_tokens": 7, "cache_read_input_tokens": 80, "cache_creation_input_tokens": 12},
                  {"input_tokens": 10, "output_tokens": 7, "cache_read_input_tokens": None},
                  {"input_tokens": 10, "prompt_tokens_details": {"cached_tokens": 11}},
-                 {"input_tokens": 1 << 100, "output_tokens": 1 << 80}]
+                 {"input_tokens": 1 << 100, "output_tokens": 1 << 80},
+                 {"input_tokens": float("nan"), "output_tokens": 7},
+                 {"input_tokens": float("inf"), "output_tokens": 7},
+                 {"input_tokens": -float("inf"), "output_tokens": 7}]
         for field in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
             for invalid in (None, True, -1, 1.5, "10"):
                 cases.append({"input_tokens": 10, "output_tokens": 7, field: invalid})
         for raw in cases:
             with self.subTest(raw=raw):
                 self.fixture.same(self.normalize(raw), self.expected_usage(raw))
+
+    def test_malformed_counter_values_do_not_strand_a_received_answer(self):
+        f = self.fixture
+        for number, invalid in enumerate((float("nan"), float("inf"), True, -1, "not-a-count")):
+            call = "malformed-" + str(number)
+            f.register(call=call)
+            normalized = self.normalize({"input_tokens": invalid, "output_tokens": 7})
+            f.same(normalized, f.usage(None, 7))
+            result = f.answer(f.finish(normalized, call=call, source=E("EvidenceRef", call)))
+            f.same(result, E("ProviderCompletedV2", S("ProviderUsageAcceptedV2")))
+            f.same(f.value(E("ProviderAnswerKeyV2", call)), E("KnowledgePresentV1",
+                   E("ProviderAnswerV2", f.submission(call=call), E("AnswerRef", "answer"))))
 
     def reference(self, raw_usage, *, uncertain=False):
         f = self.fixture

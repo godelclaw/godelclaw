@@ -1211,7 +1211,9 @@ command receipts for reconciliation. A usage conflict does not discard a
 received answer. A new delivery for an already completed call reports
 `ProviderAlreadyCompletedV2`, separately from a first completion and a receipt
 replay. Its pure usage boundary reuses `usage_evidence_cetta.metta` and preserves
-the normalized evidence alongside typed counters. The submitted-attempt fact
+the normalized evidence alongside typed counters. Invalid counts, including
+nonfinite floats, become explicit unknowns before JSON normalization; they do
+not strand a received answer. The submitted-attempt fact
 must originate with the trusted
 transport owner. Admission, transport integration, complete readers and migration
 are still required before this inactive application slice can be selected.

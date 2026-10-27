@@ -11,13 +11,31 @@
 (= (provider-domain:from-count $count)
   (case $count ((JsonNull ProviderCountUnknownV2) ($known (ProviderCountV2 $known)))))
 (= (provider-domain:usage-evidence $raw)
-  (let* (($evidence (ue:evidence $raw)) ($counts (ue:field $evidence "counts" (JsonObject ())))
+  (let* (($safe (provider-domain:safe-usage $raw))
+         ($evidence (ue:evidence $safe)) ($counts (ue:field $evidence "counts" (JsonObject ())))
          ($reported (ue:field $evidence "reported_usage" (JsonObject ())))
          ($input (provider-domain:from-count (ue:field $counts "input_tokens" JsonNull)))
          ($output (provider-domain:from-count (ue:field $counts "output_tokens" JsonNull)))
          ($cached (provider-domain:from-count (ue:field $counts "cached_tokens" JsonNull)))
          ($written (provider-domain:from-count (ue:field $reported "cache_creation_input_tokens" JsonNull))))
     (ProviderUsageObservationV2 (ProviderUsageV2 $input $output $cached $written) $evidence)))
+
+; Counter normalization never serializes invalid numeric values. In
+; particular, strict JSON emission of NaN/Infinity must not strand an answer.
+; Keep field presence (important for cache counters); retain the original
+; provider observation through the caller's evidence reference.
+(= (provider-domain:safe-usage $raw)
+  (case $raw
+    (((JsonObject $pairs) (JsonObject (provider-domain:safe-pairs $pairs)))
+     ($other (JsonObject ())))))
+(= (provider-domain:safe-pairs $pairs)
+  (if (== $pairs ()) ()
+    (let* (((JsonPair $name $value) (car-atom $pairs))
+           ($safe (case $value
+                    (((JsonObject $children) (JsonObject (provider-domain:safe-pairs $children)))
+                     ($scalar (if (provider-domain:counter? (ProviderCountV2 $scalar)) $scalar JsonNull)))))
+           ($tail (provider-domain:safe-pairs (cdr-atom $pairs))))
+      (cons-atom (JsonPair $name $safe) $tail))))
 
 (= (provider-domain:id? $identity)
   (if (== (get-type $identity) String) (> (str:byte-length $identity) 0) False))
