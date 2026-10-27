@@ -103,21 +103,43 @@
           (pa:plan-fresh $call $token $info $terms $points))
          ($other (pa:refuse inconsistent-call)))))
      ((KnowledgePresentV1 $record)
-      (case (kb:same $record (ProviderAdmissionV2 $token $info $terms))
-        (((KnowledgeEqualV1 True)
-          (case (kb:lookup $points (ProviderCallKeyV2 $call))
-            (((KnowledgePresentV1 $current)
-              (case (kb:same $info $current)
-                (((KnowledgeEqualV1 True)
-                  (if (pa:lease? (kb:lookup $points (ProviderLeaseKeyV2 $call)))
-                    (ProviderAdmissionPlanV2 (ProviderAlreadyAdmittedV2 $call) ())
-                    (pa:refuse inconsistent-call)))
-                 ((KnowledgeEqualV1 False) (pa:refuse inconsistent-call))
-                 ($error $error))))
-             ($other (pa:refuse inconsistent-call)))))
-         ((KnowledgeEqualV1 False) (pa:refuse call-identity-conflict))
-         ($error $error))))
+      (pa:plan-existing $call $info $terms $record $points))
      ($other (pa:refuse admission-observation-format)))))
+
+; A fresh observation time/process (or claimant) is not a different request.
+; Preserve the original admission and return its terms/current lease as
+; evidence. A new owner must still follow the separate claim protocol.
+(= (pa:logical-request $info
+      (ProviderAdmissionTermsV2 $profile $mode $now $maximum $request $process))
+  (case (math:integer-divmod $maximum 1)
+    (((IntegerDivmodV1 $normalized 0) (ProviderLogicalRequestV2 $info $profile $mode $normalized $request))
+     ($error $error))))
+(= (pa:plan-existing $call $info $terms $record $points)
+  (case $record
+    (((ProviderAdmissionV2 $original-owner $original-info $original-terms)
+      (if (pa:admit? $call $original-owner $original-info $original-terms)
+        (case (kb:same (pa:logical-request $info $terms)
+                      (pa:logical-request $original-info $original-terms))
+          (((KnowledgeEqualV1 True)
+            (case (kb:lookup $points (ProviderCallKeyV2 $call))
+              (((KnowledgePresentV1 $current)
+                (case (kb:same $original-info $current)
+                  (((KnowledgeEqualV1 True)
+                    (let $lease (kb:lookup $points (ProviderLeaseKeyV2 $call))
+                      (if (pa:lease? $lease)
+                        (case $lease
+                          (((KnowledgePresentV1 $value)
+                            (ProviderAdmissionPlanV2
+                              (ProviderAlreadyAdmittedV2 $call $original-owner $original-terms $value) ()))
+                           ($other (pa:refuse inconsistent-call))))
+                        (pa:refuse inconsistent-call))))
+                   ((KnowledgeEqualV1 False) (pa:refuse inconsistent-call))
+                   ($error $error))))
+               ($other (pa:refuse inconsistent-call)))))
+           ((KnowledgeEqualV1 False) (pa:refuse call-identity-conflict))
+           ($error $error)))
+        (pa:refuse stored-admission-format)))
+     ($other (pa:refuse stored-admission-format)))))
 
 (= (pa:plan-fresh $call $token (ProviderCallInfoV2 $provider $model $purpose $origin)
       (ProviderAdmissionTermsV2 $profile $mode $now $maximum $request $process) $points)
@@ -157,11 +179,20 @@
   (ProviderAdmissionPlanV2 (ProviderCooldownRecordedV2 $until)
     ((KnowledgePutV1 (ProviderCooldownKeyV2 $provider) (ProviderCooldownV2 $until $source)))))
 
-; A broker may add complete authority dependencies obtained from this SAME
-; captured view. This low-level function does not authenticate or check them.
+; A broker supplies an intact bound observation from this captured view.
+; Bare keys or another view's observation are refused before any publication.
+; This low-level function does not authenticate the broker or decide its rights.
 (= (pa:execute $owner $view $receipt $command $budget)
-  (pa:execute-scoped $owner $view (reads) $receipt $command $budget))
-(= (pa:execute-scoped $owner $view $extra-reads $receipt $command $budget)
+  (case (kb:observe-bound $view () $budget)
+    (((KnowledgeObservedOnV2 $captured $points $reads)
+      (pa:execute-scoped $owner $view (KnowledgeObservedOnV2 $captured $points $reads) $receipt $command $budget))
+     ($error $error))))
+(= (pa:execute-scoped $owner $view $observation $receipt $command $budget)
+  (case (kb:scopes-on $view $observation)
+    (((KnowledgeReadScopesV2 $extra-reads)
+      (pa:execute-ready $owner $view $extra-reads $receipt $command $budget))
+     ($error $error))))
+(= (pa:execute-ready $owner $view $extra-reads $receipt $command $budget)
   (case (kb:receipt $view $receipt $command $budget)
     ((KnowledgeReceiptAbsentV1
       (case (pa:observe $view $command $budget)

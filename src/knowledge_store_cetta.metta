@@ -82,6 +82,21 @@
          ($error $error))))
      ($error $error))))
 
+; Keep a composable observation tied to its actual captured native view.
+; The view is an opaque in-process handle, not a serializable capability.
+; Consumers must keep this observation intact rather than copying read keys
+; onto another view. Authentication and the decision still belong to a broker.
+(= (kb:observe-bound $view $identities $maximum-bytes)
+  (case (kb:observe $view $identities $maximum-bytes)
+    (((KnowledgeObservedV1 $points $reads) (KnowledgeObservedOnV2 $view $points $reads))
+     ($error $error))))
+(= (kb:scopes-on $view $observation)
+  (case $observation
+    (((KnowledgeObservedOnV2 $captured $points $reads)
+      (if (== $view $captured) (KnowledgeReadScopesV2 $reads)
+        (KnowledgeRefusedV1 observation-view)))
+     ($other (KnowledgeRefusedV1 bound-observation-required)))))
+
 ; Prepare every edit before publication. Ordered edits use the last value for
 ; an identity; removing an absent identity is a harmless local no-op.
 (= (kb:prepare $changes)

@@ -1205,6 +1205,9 @@ right and include its complete authorization dependencies in the same scoped
 commit as application data. A captured snapshot or a receipt does not confer
 authority. Revocation invalidates a prepared write when its grant changes;
 already submitted work still needs a narrow evidence-only settlement path.
+`kb:observe-bound` retains the actual opaque captured view with its points
+and dependencies. `kb:scopes-on` refuses a different view or unbound read
+keys. This in-process observation is not a serialized access capability.
 
 `provider_domain_cetta.metta` implements typed attempt ownership, usage and
 completion over those facts. Completion observes five facts; a late usage
@@ -1237,9 +1240,12 @@ observe the provider's transport deadline; upstream requests bypass it.
 Explicit integer wall-clock nanoseconds preserve exact deadline boundaries.
 There are no work quotas. Admission creates no transport-submission fact;
 replay, readback and already-admitted outcomes cannot grant a first admission
-again. An authenticated broker can supply additional dependencies from the
-same captured view through `pa:execute-scoped`; this function does not itself
-authenticate a caller. Real transport integration, migration and complete
+again. A repeated logical request with refreshed clock/process observations
+returns its original admission terms and current lease without changing them;
+a different request still conflicts. An authenticated broker can supply an
+intact bound observation through `pa:execute-scoped`; the API checks its view
+before using the dependencies, and does not itself authenticate a caller.
+Real transport integration, migration and complete
 reporting remain required before selecting this inactive application.
 `tests/check_provider_admission_contract.py` audits the pure deadline laws and
 compares their decisions and cooldown updates with the native program.

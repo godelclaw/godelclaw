@@ -45,11 +45,12 @@ class ProviderAdmissionTests(unittest.TestCase):
         return value if -(1 << 63) <= value < (1 << 63) else BigInt(str(value))
 
     def admit(self, *, call="call", token="owner", profile="ProviderManagedV2", now=10,
-              maximum=100, provider="provider", request=None, origin=None):
+              maximum=100, provider="provider", request=None, origin=None, process=None):
         info = E("ProviderCallInfoV2", provider, "model", "coding",
                  E("Origin", "operator", "session") if origin is None else origin)
         terms = E("ProviderAdmissionTermsV2", S(profile), "godelclaw", self.integer(now), maximum,
-                  E("RequestRef", "request") if request is None else request, E("ProcessRef", "process"))
+                  E("RequestRef", "request") if request is None else request,
+                  E("ProcessRef", "process") if process is None else process)
         return E("ProviderAdmitV2", call, token, info, terms)
 
     def defer(self, until, *, provider="provider", source="retry-after"):
@@ -133,9 +134,24 @@ class ProviderAdmissionTests(unittest.TestCase):
         self.assertEqual(encode(self.audit()), before)
         self.same(self.worker.call(E("FirstAdmission", result)), S("ProviderNoNewAdmissionV2"))
         result = self.execute(command, "another-receipt")
-        self.same(result[1], E("ProviderAlreadyAdmittedV2", "call"))
+        self.same(result[1], E("ProviderAlreadyAdmittedV2", "call", "owner", command[4], later))
         self.same(self.worker.call(E("FirstAdmission", result)), S("ProviderNoNewAdmissionV2"))
         self.same(self.value(E("ProviderLeaseKeyV2", "call")), E("KnowledgePresentV1", later))
+
+    def test_refreshed_clock_process_and_owner_return_the_existing_admission_without_new_authority(self):
+        original = self.admit()
+        self.answer(original, "original")
+        current = E("ProviderLeaseV2", "transferred", S("ProviderLeaseActiveV2"))
+        self.put([(E("ProviderLeaseKeyV2", "call"), current)])
+        refreshed = self.admit(token="restarted", now=50, process=E("ProcessRef", "new-incarnation"),
+                               maximum=BigInt("100"))
+        result = self.execute(refreshed, "refresh")
+        self.same(result[1], E("ProviderAlreadyAdmittedV2", "call", "owner", original[4], current))
+        self.same(self.worker.call(E("FirstAdmission", result)), S("ProviderNoNewAdmissionV2"))
+        self.same(self.value(E("ProviderAdmissionKeyV2", "call")),
+                  E("KnowledgePresentV1", E("ProviderAdmissionV2", "owner", original[3], original[4])))
+        self.same(self.value(E("ProviderLeaseKeyV2", "call")), E("KnowledgePresentV1", current))
+        self.same(self.answer(self.admit(maximum=101)), E("ProviderAdmissionRefusedV2", S("call-identity-conflict")))
 
     def test_call_identity_and_receipt_collisions_are_distinct_and_do_not_overwrite(self):
         self.answer(self.admit(), "same")
@@ -197,6 +213,23 @@ class ProviderAdmissionTests(unittest.TestCase):
         result = self.race(self.admit(), changed)
         self.same(result[2][1], E("ProviderAdmittedV2", "call", "owner"))
 
+    def test_authority_observation_cannot_be_moved_onto_a_later_view(self):
+        grant = E("GrantKey", "owner", "dispatch")
+        self.put([(grant, E("Grant", 1, True))])
+        changed = self.application([(grant, E("Grant", 2, False))])
+        command = self.admit()
+        result = self.worker.call(E("StaleAuthority", str(self.path), "stale-view", command, (grant,), changed))
+        self.assertEqual(result[1][0], S("KnowledgeCommittedV1"), result)
+        self.same(result[2], E("KnowledgeRefusedV1", S("observation-view")))
+        self.same(self.value(E("ProviderCallKeyV2", "call")), S("KnowledgeAbsentV1"))
+        resolved = self.knowledge(E("KnowledgeResolveV1", "stale-view", command, 1048576))
+        self.assertEqual(resolved[0], S("KnowledgeUnrecordedV1"), resolved)
+
+    def test_bare_read_keys_are_not_accepted_as_a_bound_authority_observation(self):
+        result = self.execute(E("ProbeUnboundV1", self.admit()))
+        self.same(result, E("KnowledgeRefusedV1", S("bound-observation-required")))
+        self.assertEqual(self.audit(), ())
+
     def test_cooldown_extension_is_monotone_with_each_observation_retained(self):
         self.same(self.answer(self.defer(100, source="first")), E("ProviderCooldownRecordedV2", 100))
         self.same(self.answer(self.defer(50, source="shorter"), "shorter"), E("ProviderCooldownRecordedV2", 100))
@@ -222,7 +255,8 @@ class ProviderAdmissionTests(unittest.TestCase):
         self.put([(E("ProviderAttemptKeyV2", "call", "owner"), E("ProviderSubmittedAttemptV2", "physical-submission"))])
         result = self.worker.call(E("Finish", str(self.path), "finish", finish))
         self.same(result[1], E("ProviderCompletedV2", S("ProviderUsageAcceptedV2")))
-        self.same(self.answer(command), E("ProviderAlreadyAdmittedV2", "call"))
+        self.same(self.answer(command), E("ProviderAlreadyAdmittedV2", "call", "owner", command[4],
+                                         E("ProviderLeaseV2", "owner", S("ProviderLeaseCompletedV2"))))
 
     def test_missing_decision_dependencies_are_not_interpreted_as_absent(self):
         result = self.worker.call(E("PurePlan", self.admit(), ()))
