@@ -152,6 +152,13 @@ class ProviderClaimsTests(unittest.TestCase):
         self.same(self.answer(self.intent()), E("ProviderClaimRefusedV3", S("active-claim-index")))
         self.same(self.value(E("ProviderDispatchKeyV3", "call")), S("KnowledgeAbsentV1"))
 
+    def test_existing_attempt_is_not_claimed_as_unsent_work(self):
+        self.register()
+        self.put([(E("ProviderAttemptKeyV2", "call", "owner"), E("ProviderSubmittedAttemptV2", "earlier"))])
+        self.same(self.answer(self.claim()), E("ProviderClaimRefusedV3", S("inconsistent-claim")))
+        self.same(self.value(E("ProviderClaimKeyV3", "call")), S("KnowledgeAbsentV1"))
+        self.same(self.value(E("ProviderActiveClaimsKeyV3", "pool")), S("KnowledgeAbsentV1"))
+
     def test_dispatch_registration_for_different_calls_has_no_global_false_conflict(self):
         self.register("a")
         self.register("b")

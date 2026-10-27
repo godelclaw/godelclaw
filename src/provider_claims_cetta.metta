@@ -67,6 +67,7 @@
           (ProviderClaimKeysV3
             ((ProviderCallKeyV2 $call) (ProviderLeaseKeyV2 $call) (ProviderAdmissionKeyV2 $call)
              (ProviderClaimKeyV3 $call) (ProviderAnswerKeyV2 $call) (ProviderDispatchKeyV3 $call)
+             (ProviderAttemptKeyV2 $call $owner)
              (ProviderSchedulerPolicyKeyV3 $scope) (ProviderActiveClaimsKeyV3 $scope)
              (ProviderActiveClaimKeyV3 $scope $call)))
           (ProviderClaimRefusedV3 claim-format))
@@ -150,9 +151,10 @@
       ((KnowledgeAbsentV1
         (case ((kb:lookup $points (ProviderAnswerKeyV2 $call))
                (kb:lookup $points (ProviderDispatchKeyV3 $call))
+               (kb:lookup $points (ProviderAttemptKeyV2 $call $owner))
                (kb:lookup $points (ProviderActiveClaimKeyV3 $scope $call))
                (pc:find-call $entries $call))
-          (((KnowledgeAbsentV1 KnowledgeAbsentV1 KnowledgeAbsentV1 KnowledgeAbsentV1)
+          (((KnowledgeAbsentV1 KnowledgeAbsentV1 KnowledgeAbsentV1 KnowledgeAbsentV1 KnowledgeAbsentV1)
             (if (pc:eligible $policy $entries $entry)
               (ProviderClaimPlanV3 (ProviderClaimAcquiredV3 $call)
                 ((KnowledgePutV1 (ProviderClaimKeyV3 $call)

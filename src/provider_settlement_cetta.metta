@@ -83,8 +83,10 @@
      ($other (ProviderSettlementRefusedV3 frontier-format)))))
 
 (= (ps:plan (ProviderSettleV3 $call $owner $process $transport $reference $usage $source) $points)
-  (case (kb:same (kb:lookup $points (ProviderDispatchKeyV3 $call))
-                (KnowledgePresentV1 (ProviderDispatchIntentV3 $call $owner $process $transport)))
+  (case (kb:same ((kb:lookup $points (ProviderDispatchKeyV3 $call))
+                 (kb:lookup $points (ProviderAttemptKeyV2 $call $owner)))
+                ((KnowledgePresentV1 (ProviderDispatchIntentV3 $call $owner $process $transport))
+                 (KnowledgePresentV1 (ProviderSubmittedAttemptV2 $transport))))
     (((KnowledgeEqualV1 True)
       (case (provider-domain:plan (ProviderFinishV2 $call $owner $reference $usage $source) $points)
         (((ProviderDomainPlanV2 $answer $changes)

@@ -127,6 +127,14 @@ class ProviderSettlementTests(SettlementFixture):
         for key in (E("ProviderAnswerKeyV2", "call"), E("ProviderUsageKeyV2", "call", "transport")):
             self.same(self.value(key), S("KnowledgeAbsentV1"))
 
+    def test_intent_and_attempt_must_identify_the_same_physical_submission(self):
+        self.ready()
+        self.put([(E("ProviderAttemptKeyV2", "call", "owner"), E("ProviderSubmittedAttemptV2", "different"))])
+        self.same(self.result(self.settle()), E("ProviderSettlementRefusedV3", S("registered-dispatch-required")))
+        for key in (E("ProviderAnswerKeyV2", "call"), E("ProviderUsageKeyV2", "call", "different")):
+            self.same(self.value(key), S("KnowledgeAbsentV1"))
+        self.assertEqual(len(self.active()[1][1]), 1)
+
 
 @unittest.skipUnless(claims.WORKER and shutil.which("cc"), "native worker and C compiler required")
 class ProviderSettlementFailureTests(SettlementFixture):
