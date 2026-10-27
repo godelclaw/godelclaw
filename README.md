@@ -1264,6 +1264,24 @@ Run `python3 -B tests/test_provider_policy_cetta.py` with explicit
 and offline configuration-reference checks. The model-case fixture is included;
 `PROVIDER_POLICY_CASES` can select a different pinned fixture.
 
+`provider_claims_cetta.metta` adds transport resource claims: activity exclusion,
+declared capacity and an interactive reserve over a compact active frontier.
+Claim, frontier, point index and receipt publish atomically. A dispatch intent
+registers the physical submission before external I/O; it is not evidence of
+provider acceptance or a reusable send capability. Independent dispatches do
+not observe an unrelated call's frontier. `provider_settlement_cetta.metta`
+publishes answer, usage, terminal ownership, released capacity and receipt in
+one commit. Known process exit before intent releases unsent work; after intent
+it preserves an unknown external outcome. Unavailable process observations
+never establish death. The trusted process boundary must supply incarnation
+identities, not bare reused PIDs. Late evidence can be recorded without a new
+completion or send. Fault tests exercise failed writes, lost acknowledgements
+and worker death; `tests/check_provider_claims_contract.py` audits scheduling
+and recovery laws and replays their cases through the native definitions.
+These remain inactive application modules. Real clock/process acquisition,
+one-send transport execution, complete readers and migration are separate
+qualification gates. The pure kernels themselves perform no external effect.
+
 The inactive SQLite-free provider-store modules are migration experiments,
 not a selected runtime backend. `provider_store_cetta.metta` preserves typed
 records and insertion identities. `provider_index_store_cetta.metta` commits
