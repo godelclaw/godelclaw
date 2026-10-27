@@ -170,6 +170,30 @@ class KnowledgeStoreTests(unittest.TestCase):
         answer = self.at(E("KnowledgeRaceV1", first, weak))
         self.assertEqual(answer[2][0], S("KnowledgeCommittedV1"), answer)
 
+    def test_revocation_invalidates_a_prepared_write_without_conflicting_with_other_grants(self):
+        # The trusted caller supplies the principal and checks the grant.
+        # This tests the storage obligation: validation must cover that
+        # authority fact as well as application data, on the same view.
+        alice = E("StorageGrantKeyV1", "alice", "archive", S("Write"))
+        bob = E("StorageGrantKeyV1", "bob", "archive", S("Write"))
+        active = E("StorageGrantV1", "grant", 1, S("Active"))
+        revoked = E("StorageGrantV1", "grant", 2, S("Revoked"))
+        self.apply([E("KnowledgePutV1", alice, active), E("KnowledgePutV1", bob, active)])
+        other = self.application([E("KnowledgePutV1", bob, revoked)])
+        prepared = self.application([E("KnowledgePutV1", "first", "value")], [alice, "first"])
+        answer = self.at(E("KnowledgeRaceV1", other, prepared))
+        self.assertEqual([value[0] for value in answer[1:]], [S("KnowledgeCommittedV1")] * 2, answer)
+
+        revoke = self.application([E("KnowledgePutV1", alice, revoked)])
+        stale = self.application([E("KnowledgePutV1", "second", "value")], [alice, "second"],
+                                 receipt="stale-authority", command="prepared", answer="accepted")
+        answer = self.at(E("KnowledgeRaceV1", revoke, stale))
+        self.assertEqual(answer[1][0], S("KnowledgeCommittedV1"), answer)
+        self.same(answer[2], E("StoreRefused", S("conflict")))
+        self.same(self.values(["second"]), (S("KnowledgeAbsentV1"),))
+        resolved = self.at(E("KnowledgeResolveV1", "stale-authority", "prepared", 1048576))
+        self.assertEqual(resolved[0], S("KnowledgeUnrecordedV1"), resolved)
+
     def test_captured_view_is_repeatable_across_publication(self):
         first = self.application([E("KnowledgePutV1", "x", "new")])
         answer = self.at(E("KnowledgeHeldReadV1", first, ("x",), 1048576))

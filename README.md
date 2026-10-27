@@ -1199,6 +1199,13 @@ distinct from missing facts or receipts. Recovery synchronizes a fresh view
 before resolving a receipt. Matching queries and disk-backed secondary indexes
 remain separate additions to this initial point interface.
 
+The point interface runs inside a trusted storage owner; it is not an agent
+access-control boundary. An authenticated broker must check the requested
+right and include its complete authorization dependencies in the same scoped
+commit as application data. A captured snapshot or a receipt does not confer
+authority. Revocation invalidates a prepared write when its grant changes;
+already submitted work still needs a narrow evidence-only settlement path.
+
 `provider_domain_cetta.metta` implements typed attempt ownership, usage and
 completion over those facts. Completion observes five facts; a late usage
 update observes three and does not depend on the changing active lease. It
