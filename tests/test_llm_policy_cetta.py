@@ -57,6 +57,11 @@ def snapshot(path):
 
 
 @unittest.skipUnless(CETTA, 'set CETTA_BIN to a SQLite-enabled CeTTa build')
+def python_error(error):
+    """An exception as the reference reports it: its class and its message."""
+    return ['error', type(error).__name__, str(error)]
+
+
 class NativeLedgerFixture(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -87,7 +92,9 @@ class NativeLedgerFixture(unittest.TestCase):
             ' ((LedgerDenied $code $delay) (JsonArray ("denied" $code $delay))) '
             ' ((LedgerChanged $changed) (JsonArray ("changed" $changed))) '
             ' ((sqlite:committed $results) (JsonArray ("ok"))) '
+            ' ((LedgerError (PythonException $class $message)) (JsonArray ("error" (str:symbol->string $class) $message))) '
             ' ((LedgerError $error) (JsonArray ("error"))) '
+            ' ((LedgerInvalid (PythonException $class $message)) (JsonArray ("error" (str:symbol->string $class) $message))) '
             ' ((LedgerInvalid $error) (JsonArray ("error"))) '
             ' ($other (JsonArray ("unexpected" (repr $other)))))))',
             '(= (probe:emit $value) (fs:append-text ' + quoted(str(output)) +
@@ -159,8 +166,8 @@ class NativeLedgerFixture(unittest.TestCase):
                             self.fail('unknown replay operation ' + kind)
                     except llm_policy.AdmissionDenied as error:
                         expected.append(['denied', error.reason, error.retry_after])
-                    except (ValueError, TypeError, OverflowError):
-                        expected.append(['error'])
+                    except (ValueError, TypeError, OverflowError) as error:
+                        expected.append(python_error(error))
         self.assertEqual(self.native(forms), expected)
         self.assertEqual(snapshot(self.native_db), snapshot(self.python_db))
 
@@ -189,10 +196,11 @@ class NativePolicyTests(NativeLedgerFixture):
                 try:
                     result = llm_policy.configuration()
                     expected.append(['config', result['profile'], result['quota_cooldown_seconds']])
-                except (ValueError, TypeError, AttributeError):
-                    expected.append(['error'])
+                except (ValueError, TypeError, AttributeError) as error:
+                    expected.append(python_error(error))
             forms.append('(let $written (fs:write %s %s) '
                 '(case (lp:configuration) (((LedgerConfig $profile $delay) (JsonArray ("config" $profile $delay))) '
+                '((LedgerError (PythonException $class $message)) (JsonArray ("error" (str:symbol->string $class) $message))) '
                 '($error (JsonArray ("error"))))))' % (quoted(str(path)), quoted(text)))
         self.assertEqual(self.native(forms, raw=True), expected)
 
@@ -237,6 +245,67 @@ class NativePolicyTests(NativeLedgerFixture):
             except (ValueError, TypeError, OverflowError):
                 expected.append(['error'])
         self.assertEqual(self.native(forms, raw=True), expected)
+
+    def test_integer_and_float_exceptions_are_pythons(self):
+        # Where int() or float() raises, the reference reports the class and
+        # the message exactly as CPython 3.12 formats them.
+        nan, inf = float('nan'), float('inf')
+        ints = [True, 7.75, -0.0, 1e30, nan, inf, -inf, 2 ** 63, '7', ' +١_٢ ', '1__2', '\x1c7', '7\x1f',
+                '\U0001d7ce\U0001d7ed', 'é' * 300, "it's", '"q"', '', None, [], {}, '9' * 4301,
+                '9_' * 4300 + '9', '9' * 4301 + 'x']
+        floats = [True, False, 0, -7, 2 ** 53 + 1, 10 ** 30, 2 ** 1024 - 2 ** 970 - 1, 2 ** 1024 - 2 ** 970,
+                  -2 ** 1024, 7.75, -0.0, nan, inf, -inf, '7', ' 7.5 ', '+.5', '5.', '.', '', ' ',
+                  '1_000.5', '1__0', '_1', '1_', '1_.5', '1._5', '1e1_0', '1_e5', '1e_5', '1E5', '1e+5',
+                  '1e-5', '1e', 'e5', '-', 'inf', '-Infinity', 'iNfInItY', 'nan', '-nan', 'nan(1)', 'infinit',
+                  '0x1p3', '1e400', '-1e-400', '00012.50', '٣.٥', '１_２', ' +١_٢.٥e-1 ', '\x1c7', '7\x1f',
+                  ' 7', '\xa07　', '7\x85', 'é', None, [], {}]
+        forms, expected = [], []
+        report = ('(((PythonException $class $message) (JsonArray ("error" (str:symbol->string $class) $message))) '
+                  '($value (JsonArray ("ok" (json:stringify-python $value)))))')
+        for name, convert, values in (('int', int, ints), ('float', float, floats)):
+            for value in values:
+                forms.append('(case (lp:python-%s (json:parse-python %s)) %s)'
+                             % (name, quoted(json.dumps(value)), report))
+                try:
+                    expected.append(['ok', json.dumps(convert(value))])
+                except (ValueError, TypeError, OverflowError) as error:
+                    expected.append(python_error(error))
+        self.assertEqual(self.native(forms, raw=True), expected)
+
+    def test_retry_after_is_read_only_where_python_reads_it(self):
+        # max(0, float(retry_after)) runs only for a managed 402 or 429, after
+        # the pending check; its exception rolls the whole failure back.
+        nan, inf = float('nan'), float('inf')
+        cases = [(429, True), (429, False), (429, ' +١_٢.٥e-1 '), (429, 'inf'), (429, 'nan'), (429, {}),
+                 (429, 'bad'), (429, '\x1c7'), (429, -5), (429, 0), (429, None), (429, 2.5), (429, '1e400'),
+                 (429, []), (402, 7), (429.0, '3'), (500, {}), (True, {}), (None, 'bad'), (429, nan), (429, -inf)]
+        forms, expected = [], []
+        with patch.dict(os.environ, self.env, clear=True):
+            for i, (status, retry) in enumerate(cases):
+                ticket, provider, now = 'retry-%d' % i, 'provider-%d' % i, 1000 + 2 * i
+                forms.append('(lp:admit %s %s 10 "" %s)' % (quoted(ticket), quoted(provider), now))
+                with patch.object(llm_policy.time, 'time', return_value=now), \
+                        patch.object(llm_policy.uuid, 'uuid4') as uuid:
+                    uuid.return_value.hex = ticket
+                    expected.append(['admitted', llm_policy.admit(provider, 10, now=now)])
+                forms.append('(lp:fail %s True (json:parse-python %s) (json:parse-python %s) %s)'
+                             % (quoted(ticket), quoted(json.dumps(status)), quoted(json.dumps(retry)), now + 1))
+                try:
+                    expected.append(['changed', llm_policy.fail(ticket, sent=True, status=status,
+                                                                retry_after=retry, now=now + 1)])
+                except (ValueError, TypeError, OverflowError) as error:
+                    expected.append(python_error(error))
+        self.assertEqual(self.native(forms), expected)
+        self.assertEqual(snapshot(self.native_db), snapshot(self.python_db))
+
+    def test_history_details_are_pythons_json(self):
+        # json.dumps(detail, sort_keys=True, separators=(",", ":")) escapes
+        # non-ASCII text and sorts keys; the stored detail is those bytes.
+        self.replay([
+            ('admit', 'a', 'synthetic', 100, '', 1000),
+            ('describe', 'a', 'modèle ✓', 'chat-completions', 'coding', 'native', 1001),
+            ('complete', 'a', dict(prompt_tokens=2, completion_tokens=1), 'é' * 70 + '\U0001f600', 1002),
+        ])
 
     def test_native_caller_omits_an_empty_origin_as_the_host_does(self):
         # native_llm_host's Python route describes with `request_origin(plan) or None`.

@@ -25,11 +25,15 @@
        (and (or (ue:equal $lane "interactive") (ue:equal $lane "background")) (nl:ascii-id $activity)))))
 (: nl:capacity (-> %Undefined%))
 (= (nl:capacity)
-   (let* (($capacity (lp:integer (lp:env "METTACLAW_ACTIVITY_CALL_CAPACITY" "2")))
-          ($reserve (lp:integer (lp:env "METTACLAW_ACTIVITY_INTERACTIVE_RESERVE" "1"))))
-     (if (or (ue:equal $capacity InvalidInteger) (ue:equal $reserve InvalidInteger)) (LedgerError "invalid activity capacity")
-       (if (and (>= $reserve 1) (and (< $reserve $capacity) (<= $capacity 16)))
-         (NativeCapacity $capacity $reserve) (LedgerError "invalid activity capacity")))))
+   (case (lp:python-int (lp:env "METTACLAW_ACTIVITY_CALL_CAPACITY" "2"))
+     (((PythonException $class $message) (lp:python-error $class $message))
+      ($capacity
+        (case (lp:python-int (lp:env "METTACLAW_ACTIVITY_INTERACTIVE_RESERVE" "1"))
+          (((PythonException $class $message) (lp:python-error $class $message))
+           ($reserve
+             (if (and (>= $reserve 1) (and (< $reserve $capacity) (<= $capacity 16)))
+               (NativeCapacity $capacity $reserve)
+               (lp:python-error ValueError "invalid activity call capacity")))))))))
 
 ; The flag survives later UPDATEs whose own changes() value may be zero.
 (: nl:recover-one (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
@@ -43,7 +47,7 @@
          (if (ue:equal $outcome "uncertain")
            ((sqlite:statement "UPDATE requests SET status='unknown',output=NULL,finish='transport-unknown' WHERE id=? AND (SELECT changed FROM nl_recovery)=1" ($identity))
             (sqlite:statement "INSERT OR IGNORE INTO llm_call_history(call_id,event,observed,detail) SELECT ?,'unknown',?,? WHERE (SELECT changed FROM nl_recovery)=1"
-              ($identity $now (json:stringify (JsonObject ((JsonPair "reason" $reason))))))) ())
+              ($identity $now (lp:detail (JsonObject ((JsonPair "reason" $reason))))))) ())
          ((sqlite:statement "UPDATE requests SET status='unknown',output=NULL,finish='interrupted-unknown' WHERE id=? AND status='pending' AND (SELECT changed FROM nl_recovery)=1" ($identity))
           (sqlite:statement "INSERT OR IGNORE INTO llm_call_history(call_id,event,observed,detail) SELECT ?,'unknown',?,? WHERE (SELECT changed FROM nl_recovery)=1"
             ($identity $now "{\"reason\":\"process-interrupted\"}")))))))
@@ -84,9 +88,10 @@
    (let* (($identity (nl:field $metadata "id" "")) ($epoch (nl:field $metadata "epoch" ""))
           ($purpose (nl:field $metadata "purpose" "turn")) ($guard (nl:field $metadata "guard" JsonNull))
           ($pid (system:pid)) ($start (lp:sql-null (lp:process-start $pid))))
-     (lp:changed-result (nl:transaction
+     (case (lp:changed-result (nl:transaction
        ; Validate purpose only after the refusal checks, under the same lock.
-       ; The constraint rolls the transaction back on an eligible bad purpose.
+       ; The constraint rolls the transaction back on an eligible bad purpose,
+       ; where Python raises ValueError("invalid native call purpose").
        ((sqlite:statement "CREATE TEMP TABLE nl_claim(eligible INTEGER NOT NULL,valid INTEGER NOT NULL,changed INTEGER NOT NULL DEFAULT 0,CHECK(eligible=0 OR valid=1))" ())
         (sqlite:statement "INSERT INTO nl_claim(eligible,valid) SELECT (?='' AND NOT EXISTS(SELECT 1 FROM native_calls WHERE state IN ('claimed','submitted'))) OR (?<>'' AND NOT EXISTS(SELECT 1 FROM native_calls WHERE state IN ('claimed','submitted') AND (activity='' OR activity=?)) AND (SELECT COUNT(*) FROM native_calls WHERE state IN ('claimed','submitted'))<? AND (?<>'background' OR (SELECT COUNT(*) FROM native_calls WHERE state IN ('claimed','submitted') AND lane='background')<?)),? IN ('turn','coding','compaction')"
           ($activity $activity $activity $capacity $lane (- $capacity $reserve) $purpose))
@@ -94,14 +99,17 @@
           ($identity $epoch $pid $start $now $now (lp:sql-null $guard) $activity $lane $purpose))
         (sqlite:statement "UPDATE nl_claim SET changed=changes()" ())
         (sqlite:statement "INSERT OR IGNORE INTO llm_call_history(call_id,event,observed,detail) SELECT ?,'claimed',?,? WHERE (SELECT changed FROM nl_claim)=1"
-          ($identity $now (json:stringify (JsonObject ((JsonPair "epoch" $epoch))))))
-        (sqlite:statement "SELECT changed FROM nl_claim" ())) $now))))
+          ($identity $now (lp:detail (JsonObject ((JsonPair "epoch" $epoch))))))
+        (sqlite:statement "SELECT changed FROM nl_claim" ())) $now))
+       (((LedgerError (sqlite:error constraint 275 $message $outcome))
+         (lp:python-error ValueError "invalid native call purpose"))
+        ($answer $answer)))))
 (: nl:claim-ready (-> %Undefined% %Undefined% %Undefined%))
 (= (nl:claim-ready $metadata $now)
    (let* (($activity (nl:field $metadata "activity" "")) ($lane (nl:field $metadata "lane" ""))
           ($purpose (nl:field $metadata "purpose" "turn")))
        (if (ue:equal $activity "") (nl:claim-insert $metadata $activity $lane 0 0 $now)
-         (if (not (nl:valid-activity $activity $lane)) (LedgerError "invalid native call activity")
+         (if (not (nl:valid-activity $activity $lane)) (lp:python-error ValueError "invalid native call activity")
            (case (nl:capacity)
              (((NativeCapacity $capacity $reserve) (nl:claim-insert $metadata $activity $lane $capacity $reserve $now))
               ($error $error)))))))
@@ -110,31 +118,50 @@
    (case (nl:recover $now)
      (((sqlite:committed $ignored2) (nl:claim-ready $metadata $now)) ($error $error))))
 
-; Python's submitted and progress store int(value) in these columns. A value
-; int() refuses, or one beyond SQLite's 64-bit integers, raises there before
+; Python's submitted and progress store int(value) in these columns. It
+; converts the arguments in order, and the first exception is the answer;
+; then binding refuses any integer beyond SQLite's 64 bits. Both raise before
 ; any statement runs.
-(: nl:stored-integer (-> %Undefined% %Undefined%))
-(= (nl:stored-integer $value)
-   (let $integer (lp:integer $value)
-     (if (ue:equal $integer InvalidInteger) InvalidInteger
-       (if (or (< $integer -9223372036854775808) (> $integer 9223372036854775807)) InvalidInteger $integer))))
+(: nl:python-ints (-> %Undefined% %Undefined%))
+(= (nl:python-ints $values)
+   (if (ue:equal $values ()) ()
+     (case (lp:python-int (car-atom $values))
+       (((PythonException $class $message) (PythonException $class $message))
+        ($integer
+          (case (nl:python-ints (cdr-atom $values))
+            (((PythonException $class $message) (PythonException $class $message))
+             ($rest (cons-atom $integer $rest)))))))))
+(: nl:bindable (-> %Undefined% %Undefined%))
+(= (nl:bindable $integers)
+   (if (ue:equal $integers ()) True
+     (let $first (car-atom $integers)
+       (if (or (< $first -9223372036854775808) (> $first 9223372036854775807)) False
+         (nl:bindable (cdr-atom $integers))))))
+(: nl:stored-integers (-> %Undefined% %Undefined%))
+(= (nl:stored-integers $values)
+   (case (nl:python-ints $values)
+     (((PythonException $class $message) (lp:python-error $class $message))
+      ($integers
+        (if (nl:bindable $integers) $integers
+          (lp:python-error OverflowError "Python int too large to convert to SQLite INTEGER"))))))
 (: nl:submitted (-> %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (nl:submitted $metadata $transport $now)
-   (let $stored (nl:stored-integer $transport)
-     (if (ue:equal $stored InvalidInteger) (LedgerError (InvalidInteger $transport))
-       (let* (($id (nl:field $metadata "id" "")) ($epoch (nl:field $metadata "epoch" "")))
-         (nl:transaction
-           ((sqlite:statement "UPDATE native_calls SET state='submitted',transport=?,updated=? WHERE id=? AND epoch=? AND state='claimed'"
-                               ($stored $now $id $epoch))
-            (sqlite:statement "INSERT OR IGNORE INTO llm_call_history(call_id,event,observed,detail) SELECT ?,'submitted',?,'{}' WHERE changes()=1" ($id $now))) $now)))))
+   (case (nl:stored-integers ($transport))
+     (((LedgerError $error) (LedgerError $error))
+      (($stored)
+        (let* (($id (nl:field $metadata "id" "")) ($epoch (nl:field $metadata "epoch" "")))
+          (nl:transaction
+            ((sqlite:statement "UPDATE native_calls SET state='submitted',transport=?,updated=? WHERE id=? AND epoch=? AND state='claimed'"
+                                ($stored $now $id $epoch))
+             (sqlite:statement "INSERT OR IGNORE INTO llm_call_history(call_id,event,observed,detail) SELECT ?,'submitted',?,'{}' WHERE changes()=1" ($id $now))) $now))))))
 (: nl:progress (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (nl:progress $metadata $bytes $quiet $soft $now)
-   (let* (($count (nl:stored-integer $bytes)) ($wait (nl:stored-integer $quiet)) ($elapsed (nl:stored-integer $soft)))
-     (if (or (ue:equal $count InvalidInteger) (or (ue:equal $wait InvalidInteger) (ue:equal $elapsed InvalidInteger)))
-       (LedgerError (InvalidInteger ($bytes $quiet $soft)))
-       (nl:transaction
-         ((sqlite:statement "UPDATE native_calls SET bytes=?,quiet_ms=?,soft_elapsed=?,updated=? WHERE id=? AND epoch=? AND state='submitted'"
-           ($count $wait $elapsed $now (nl:field $metadata "id" "") (nl:field $metadata "epoch" "")))) $now))))
+   (case (nl:stored-integers ($bytes $quiet $soft))
+     (((LedgerError $error) (LedgerError $error))
+      (($count $wait $elapsed)
+        (nl:transaction
+          ((sqlite:statement "UPDATE native_calls SET bytes=?,quiet_ms=?,soft_elapsed=?,updated=? WHERE id=? AND epoch=? AND state='submitted'"
+            ($count $wait $elapsed $now (nl:field $metadata "id" "") (nl:field $metadata "epoch" "")))) $now)))))
 
 (: nl:settle-statements (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (nl:settle-statements $metadata $state $result $reason $soft $now $require-completion)
@@ -155,10 +182,10 @@
 (: nl:valid-settlement (-> %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (nl:valid-settlement $metadata $state $result)
    (if (not (or (ue:equal $state "completed") (or (ue:equal $state "late") (or (ue:equal $state "failed") (ue:equal $state "uncertain")))))
-     (LedgerInvalid "invalid native call outcome")
+     (LedgerInvalid (PythonException ValueError "invalid native call outcome"))
      (if (ue:equal $result JsonNull) True
        (if (> (str:byte-length $result) (* (nl:field $metadata "cap" 0) 4))
-         (LedgerInvalid "native evidence exceeds its bound") True))))
+         (LedgerInvalid (PythonException ValueError "native evidence exceeds its bound")) True))))
 (: nl:settle (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (nl:settle $metadata $state $result $reason $soft $now)
    (case (nl:valid-settlement $metadata $state $result)
@@ -215,7 +242,7 @@
    (if (not (or (ue:equal $code "invalid-envelope")
                (or (ue:equal $code "invalid-native-tool")
                    (or (ue:equal $code "incomplete-output") (ue:equal $code "refused-or-structured-output")))))
-     (LedgerError "invalid command rejection code")
+     (lp:python-error ValueError "invalid command rejection code")
      (lp:statement-changed (nl:transaction
        ((sqlite:statement "UPDATE native_calls SET reason=? WHERE id=? AND epoch=? AND state='completed' AND purpose='turn'"
           ((str:concat "command-output:" $code) (nl:field $metadata "id" "") (nl:field $metadata "epoch" "")))) $now))))

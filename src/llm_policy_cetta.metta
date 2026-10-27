@@ -108,10 +108,15 @@
 (= (lp:owner-live $owner)
    (process:alive? $owner))
 
+; Python stores each history detail as json.dumps(detail, sort_keys=True,
+; separators=(",", ":")): sorted keys, no spaces, non-ASCII escaped.
+(: lp:detail (-> %Undefined% %Undefined%))
+(= (lp:detail $detail)
+   (json:stringify-python-with $detail ((sort-keys True) (separators "," ":"))))
 (: lp:event (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (lp:event $ticket $event $detail $now)
    (sqlite:statement "INSERT OR IGNORE INTO llm_call_history(call_id,event,observed,detail) VALUES(?,?,?,?)"
-                     ($ticket $event $now (json:stringify $detail))))
+                     ($ticket $event $now (lp:detail $detail))))
 (: lp:columns (-> %Undefined% %Undefined% %Undefined%))
 (= (lp:columns $db $table)
    (case (sqlite:observe $db (str:concat "PRAGMA table_info(" (str:concat $table ")")) () 5000)
@@ -197,16 +202,115 @@
                  ($error (LedgerError $error)))))
 
 ; Policy configuration remains an explicit choice, with unchanged defaults.
-; lp:integer is CPython 3.12's int(value): booleans are 1 and 0, numbers
-; truncate toward zero, and a string is read as int(str) reads it. Anything
-; else is InvalidInteger, where Python raises.
+; Where the Python source raises, the reference answers
+; (PythonException CLASS MESSAGE), the message formatted as Python formats it.
+(: lp:python-error (-> %Undefined% %Undefined% %Undefined%))
+(= (lp:python-error $class $message) (LedgerError (PythonException $class $message)))
+; Native float predicates read an arbitrarily large integer as infinite, so a
+; number's kind comes from Python's own text for it.
+(: lp:number-kind (-> %Undefined% %Undefined%))
+(= (lp:number-kind $value)
+   (case (json:stringify-python $value)
+     (((JsonPythonErrorV1 $class $message $prefix) NumberInt)
+      ("NaN" NumberNaN) ("Infinity" NumberInf) ("-Infinity" NumberInf)
+      ($text (if (and (lp:absent $text ".") (lp:absent $text "e")) NumberInt NumberFloat)))))
+(: lp:absent (-> %Undefined% %Undefined% %Undefined%))
+(= (lp:absent $text $needle)
+   (case (str:find $text $needle) (((TextNotFound $ignored) True) ($found False))))
+; repr(str) as CPython 3.12 writes it: double quotes only for a text with a
+; single quote and no double quote; a backslash before the quote and the
+; backslash; \t, \n and \r; and \x, \u or \U for each character that
+; str.isprintable() refuses (categories C and Z, but not the space). With a
+; nonnegative $limit it is cut to that many characters, as %.200R cuts it.
+(: lp:repr-text (-> %Undefined% %Undefined% %Undefined%))
+(= (lp:repr-text $text $limit)
+   (let* (($codes (str:python-codepoints $text))
+          ($quote (if (and (lp:has-code $codes 39) (not (lp:has-code $codes 34))) 34 39))
+          ($mark (str:from-python-codepoints ($quote)))
+          ; Each character writes at least one, so $limit characters suffice.
+          ($shown (if (< $limit 0) $codes (lp:take $codes $limit)))
+          ($body (lp:repr-codes $shown $quote))
+          ($whole (str:concat $mark (if (ue:equal $shown $codes) (str:concat $body $mark) $body))))
+     (if (< $limit 0) $whole
+       (str:from-python-codepoints (lp:take (str:python-codepoints $whole) $limit)))))
+(: lp:has-code (-> %Undefined% %Undefined% %Undefined%))
+(= (lp:has-code $codes $code)
+   (if (ue:equal $codes ()) False
+     (if (ue:equal (car-atom $codes) $code) True (lp:has-code (cdr-atom $codes) $code))))
+(: lp:take (-> %Undefined% %Undefined% %Undefined%))
+(= (lp:take $codes $count)
+   (if (or (ue:equal $codes ()) (<= $count 0)) ()
+     (cons-atom (car-atom $codes) (lp:take (cdr-atom $codes) (- $count 1)))))
+(: lp:repr-codes (-> %Undefined% %Undefined% %Undefined%))
+(= (lp:repr-codes $codes $quote)
+   (if (ue:equal $codes ()) ""
+     (let* (($head (lp:repr-code (car-atom $codes) $quote)) ($rest (lp:repr-codes (cdr-atom $codes) $quote)))
+       (str:concat $head $rest))))
+(: lp:repr-code (-> %Undefined% %Undefined% %Undefined%))
+(= (lp:repr-code $code $quote)
+   (if (or (ue:equal $code $quote) (ue:equal $code 92)) (str:concat "\\" (str:from-python-codepoints ($code)))
+    (if (ue:equal $code 9) "\\t"
+     (if (ue:equal $code 10) "\\n"
+      (if (ue:equal $code 13) "\\r"
+       (if (lp:printable $code) (str:from-python-codepoints ($code)) (lp:escaped $code)))))))
+(: lp:printable (-> %Undefined% %Undefined%))
+(= (lp:printable $code)
+   (if (ue:equal $code 32) True
+     (let $category (str:unicode-category $code)
+       (not (or (str:starts-with $category "C") (str:starts-with $category "Z"))))))
+(: lp:escaped (-> %Undefined% %Undefined%))
+(= (lp:escaped $code)
+   (if (< $code 256) (str:concat "\\x" (lp:hex $code 2))
+     (if (< $code 65536) (str:concat "\\u" (lp:hex $code 4))
+       (str:concat "\\U" (lp:hex $code 8)))))
+(: lp:hex (-> %Undefined% %Undefined% %Undefined%))
+(= (lp:hex $number $digits)
+   (if (ue:equal $digits 0) ""
+     (let* (($digit (% $number 16)) ($rest (lp:hex (math:floor (/ $number 16)) (- $digits 1))))
+       (str:concat $rest (str:byte-slice "0123456789abcdef" $digit (+ $digit 1))))))
+(: lp:python-type (-> %Undefined% %Undefined%))
+(= (lp:python-type $value)
+   (case $value
+     ((JsonNull "NoneType")
+      ((JsonObject $fields) "dict")
+      ((JsonArray $items) "list")
+      ($other
+        (if (ue:equal (get-type $other) String) "str"
+          (if (ue:equal (get-type $other) Bool) "bool"
+            (if (ue:equal (get-type $other) Number)
+              (if (ue:equal (lp:number-kind $other) NumberInt) "int" "float")
+              "object")))))))
+; lp:python-int is CPython 3.12's int(value): booleans are 1 and 0, numbers
+; truncate toward zero, and a string is read as int(str) reads it.
+; lp:integer is the same with each exception as InvalidInteger.
+(: lp:python-int (-> %Undefined% %Undefined%))
+(= (lp:python-int $value)
+   (if (ue:equal (get-type $value) Bool) (if $value 1 0)
+    (if (ue:equal (get-type $value) Number)
+      (case (lp:number-kind $value)
+        ((NumberNaN (PythonException ValueError "cannot convert float NaN to integer"))
+         (NumberInf (PythonException OverflowError "cannot convert float infinity to integer"))
+         (NumberInt $value)
+         (NumberFloat (math:trunc $value))))
+     (if (ue:equal (get-type $value) String)
+       (case (lp:integer-lead (lp:integer-tokens (str:python-codepoints $value)))
+         ((InvalidInteger
+            (let $shown (lp:repr-text $value 200)
+              (PythonException ValueError (str:concat "invalid literal for int() with base 10: " $shown))))
+          ((IntDigitLimit $count)
+            (let $digits (repr $count)
+              (PythonException ValueError
+                (str:join "" ("Exceeds the limit (4300 digits) for integer string conversion: value has "
+                              $digits " digits; use sys.set_int_max_str_digits() to increase the limit")))))
+          ($integer $integer)))
+       (let $type (lp:python-type $value)
+         (PythonException TypeError
+           (str:join "" ("int() argument must be a string, a bytes-like object or a real number, not '" $type "'"))))))))
 (: lp:integer (-> %Undefined% %Undefined%))
 (= (lp:integer $value)
-   (if (ue:equal (get-type $value) Bool) (if $value 1 0)
-    (if (ue:equal (get-type $value) Number) (math:trunc $value)
-     (if (ue:equal (get-type $value) String)
-       (lp:integer-lead (lp:integer-tokens (str:python-codepoints $value)))
-       InvalidInteger))))
+   (case (lp:python-int $value)
+     (((PythonException $class $message) InvalidInteger)
+      ($integer $integer))))
 ; int(str): Python whitespace around an optional sign and decimal digits,
 ; single underscores only between digits, at most 4300 digits. A digit may be
 ; any Unicode Nd character; Nd runs are 0 to 9 in order, so a digit's value is
@@ -260,12 +364,139 @@
        InvalidInteger)))
 (: lp:integer-finish (-> %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (lp:integer-finish $sign $digits $under)
-   (if (or $under (or (ue:equal $digits ()) (> (size-atom $digits) 4300))) InvalidInteger
-     (* $sign (lp:digits-value $digits))))
+   (if (or $under (ue:equal $digits ())) InvalidInteger
+     (let $count (size-atom $digits)
+       (if (> $count 4300) (IntDigitLimit $count) (* $sign (lp:digits-value $digits))))))
 (: lp:digits-value (-> %Undefined% %Undefined%))
 (= (lp:digits-value $digits)
    (if (ue:equal $digits ()) 0
      (+ (car-atom $digits) (* 10 (lp:digits-value (cdr-atom $digits))))))
+; lp:python-float is CPython 3.12's float(value), or its exception.
+(: lp:python-float (-> %Undefined% %Undefined%))
+(= (lp:python-float $value)
+   (if (ue:equal (get-type $value) Bool) (if $value 1.0 0.0)
+    (if (ue:equal (get-type $value) Number)
+      (if (ue:equal (lp:number-kind $value) NumberInt) (lp:int-float $value) $value)
+     (if (ue:equal (get-type $value) String)
+       (case (lp:float-text (lp:float-codes (str:python-codepoints $value)))
+         ((FloatBad
+            (let $quoted (lp:repr-text $value -1)
+              (PythonException ValueError (str:concat "could not convert string to float: " $quoted))))
+          ($float $float)))
+       (let $type (lp:python-type $value)
+         (PythonException TypeError
+           (str:join "" ("float() argument must be a string or a real number, not '" $type "'"))))))))
+; float(int) rounds to the nearest double, ties to even, which Python's own
+; decimal reading also does. From 2**1024 - 2**970 on, it would round past
+; the largest finite double, and Python raises.
+(: lp:int-float (-> %Undefined% %Undefined%))
+(= (lp:int-float $n)
+   (if (or (>= $n 179769313486231580793728971405303415079934132710037826936173778980444968292764750946649017977587207096330286416692887910946555547851940402630657488671505820681908902000708383676273854845817711531764475730270069855571366959622842914819860834936475292719074168444365510704342711559699508093042880177904174497792) (<= $n -179769313486231580793728971405303415079934132710037826936173778980444968292764750946649017977587207096330286416692887910946555547851940402630657488671505820681908902000708383676273854845817711531764475730270069855571366959622842914819860834936475292719074168444365510704342711559699508093042880177904174497792))
+     (PythonException OverflowError "int too large to convert to float")
+     (let $digits (json:stringify-python $n) (json:parse-python (str:concat $digits ".0")))))
+; float(str) maps non-ASCII decimal digits to ASCII and non-ASCII whitespace
+; to a space, and refuses any other non-ASCII character. Single underscores
+; may stand only between digits. C whitespace is stripped, then a decimal, or
+; inf, infinity or nan in any case, is read with an optional sign.
+(: lp:float-codes (-> %Undefined% %Undefined%))
+(= (lp:float-codes $codes)
+   (if (ue:equal $codes ()) ()
+     (let* (($code (car-atom $codes)) ($rest (lp:float-codes (cdr-atom $codes))))
+       (if (ue:equal $rest FloatBad) FloatBad
+         (if (< $code 128) (cons-atom $code $rest)
+           (if (ue:equal (str:unicode-category $code) "Nd")
+             (cons-atom (+ 48 (% (lp:nd-offset $code 0) 10)) $rest)
+             (if (lp:python-space $code) (cons-atom 32 $rest) FloatBad)))))))
+(: lp:ascii-digit (-> %Undefined% %Undefined%))
+(= (lp:ascii-digit $code) (and (>= $code 48) (<= $code 57)))
+(: lp:c-space (-> %Undefined% %Undefined%))
+(= (lp:c-space $code) (or (and (>= $code 9) (<= $code 13)) (ue:equal $code 32)))
+(: lp:float-underscores (-> %Undefined% %Undefined% %Undefined%))
+(= (lp:float-underscores $codes $previous)
+   (if (ue:equal $codes ()) (if (ue:equal $previous 95) FloatBad ())
+     (let $code (car-atom $codes)
+       (if (ue:equal $code 95)
+         (if (lp:ascii-digit $previous) (lp:float-underscores (cdr-atom $codes) 95) FloatBad)
+         (if (and (ue:equal $previous 95) (not (lp:ascii-digit $code))) FloatBad
+           (let $rest (lp:float-underscores (cdr-atom $codes) $code)
+             (if (ue:equal $rest FloatBad) FloatBad (cons-atom $code $rest))))))))
+(: lp:strip-lead (-> %Undefined% %Undefined%))
+(= (lp:strip-lead $codes)
+   (if (ue:equal $codes ()) ()
+     (if (lp:c-space (car-atom $codes)) (lp:strip-lead (cdr-atom $codes)) $codes)))
+(: lp:reverse (-> %Undefined% %Undefined% %Undefined%))
+(= (lp:reverse $codes $done)
+   (if (ue:equal $codes ()) $done (lp:reverse (cdr-atom $codes) (cons-atom (car-atom $codes) $done))))
+(: lp:float-text (-> %Undefined% %Undefined%))
+(= (lp:float-text $codes)
+   (if (ue:equal $codes FloatBad) FloatBad
+     (let $plain (lp:float-underscores $codes 0)
+       (if (ue:equal $plain FloatBad) FloatBad
+         (let $core (lp:reverse (lp:strip-lead (lp:reverse (lp:strip-lead $plain) ())) ())
+           (if (ue:equal $core ()) FloatBad
+             (case (car-atom $core)
+               ((45 (lp:float-body (cdr-atom $core) "-"))
+                (43 (lp:float-body (cdr-atom $core) ""))
+                ($other (lp:float-body $core ""))))))))))
+(: lp:lower-codes (-> %Undefined% %Undefined%))
+(= (lp:lower-codes $codes)
+   (if (ue:equal $codes ()) ()
+     (let* (($code (car-atom $codes)) ($rest (lp:lower-codes (cdr-atom $codes))))
+       (cons-atom (if (and (>= $code 65) (<= $code 90)) (+ $code 32) $code) $rest))))
+(: lp:float-body (-> %Undefined% %Undefined% %Undefined%))
+(= (lp:float-body $codes $sign)
+   (if (ue:equal $codes ()) FloatBad
+     (let $word (str:from-python-codepoints (lp:lower-codes $codes))
+       (if (or (ue:equal $word "inf") (ue:equal $word "infinity"))
+         (json:parse-python (str:concat $sign "Infinity"))
+         (if (ue:equal $word "nan") (json:parse-python "NaN")
+           (lp:float-decimal $codes $sign))))))
+(: lp:span-digits (-> %Undefined% %Undefined% %Undefined%))
+(= (lp:span-digits $codes $taken)
+   ; `and` evaluates both sides, so an empty list is tested first.
+   (if (ue:equal $codes ()) (Span (lp:reverse $taken ()) ())
+     (if (lp:ascii-digit (car-atom $codes))
+       (lp:span-digits (cdr-atom $codes) (cons-atom (car-atom $codes) $taken))
+       (Span (lp:reverse $taken ()) $codes))))
+(: lp:float-decimal (-> %Undefined% %Undefined% %Undefined%))
+(= (lp:float-decimal $codes $sign)
+   (case (lp:span-digits $codes ())
+     (((Span $whole $after)
+       (let ($fraction $rest)
+            (if (ue:equal $after ()) (() ())
+              (if (ue:equal (car-atom $after) 46)
+                (case (lp:span-digits (cdr-atom $after) ()) (((Span $digits $tail) ($digits $tail))))
+                (() $after)))
+         (if (and (ue:equal $whole ()) (ue:equal $fraction ())) FloatBad
+           (case (lp:float-exponent $rest)
+             ((FloatBad FloatBad)
+              ((Exponent $exponent) (lp:float-json $sign $whole $fraction $exponent))))))))))
+(: lp:float-exponent (-> %Undefined% %Undefined%))
+(= (lp:float-exponent $codes)
+   (if (ue:equal $codes ()) (Exponent ())
+     (if (or (ue:equal (car-atom $codes) 101) (ue:equal (car-atom $codes) 69))
+       (let* (($after (cdr-atom $codes))
+              ($signed (if (ue:equal $after ()) False
+                         (or (ue:equal (car-atom $after) 43) (ue:equal (car-atom $after) 45))))
+              ($unsigned (if $signed (cdr-atom $after) $after)))
+         (case (lp:span-digits $unsigned ())
+           (((Span $digits $tail)
+             (if (or (ue:equal $digits ()) (not (ue:equal $tail ()))) FloatBad
+               (Exponent (if $signed (cons-atom (car-atom $after) $digits) $digits)))))))
+       FloatBad)))
+(: lp:strip-zeros (-> %Undefined% %Undefined%))
+(= (lp:strip-zeros $codes)
+   (if (ue:equal $codes ()) ()
+     (if (ue:equal (car-atom $codes) 48) (lp:strip-zeros (cdr-atom $codes)) $codes)))
+; JSON's number grammar wants a leading digit, a digit after the point and no
+; leading zero; json:parse-python then rounds as Python's float() does.
+(: lp:float-json (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
+(= (lp:float-json $sign $whole $fraction $exponent)
+   (let* (($significant (lp:strip-zeros $whole))
+          ($integral (if (ue:equal $significant ()) "0" (str:from-python-codepoints $significant)))
+          ($decimals (if (ue:equal $fraction ()) "0" (str:from-python-codepoints $fraction)))
+          ($power (if (ue:equal $exponent ()) "" (str:concat "e" (str:from-python-codepoints $exponent)))))
+     (json:parse-python (str:join "" ($sign $integral "." $decimals $power)))))
 (: lp:config-file (-> %Undefined%))
 (= (lp:config-file)
    (let $path (lp:env "METTACLAW_LLM_POLICY_PATH" "")
@@ -284,15 +515,25 @@
               ($default (if (or (ue:equal $mode "iter") (ue:equal $mode "omega")) "upstream" "managed"))
               ($file-profile (lp:field $config "profile" $default))
               ($profile (lp:field $overrides "profile" (lp:env "METTACLAW_LLM_POLICY" $file-profile)))
-              ($file-delay (lp:field $overrides "quota_cooldown_seconds" (lp:field $config "quota_cooldown_seconds" 300)))
-              ($delay (lp:integer (lp:env "METTACLAW_LLM_QUOTA_COOLDOWN_SECONDS" $file-delay))))
-         (if (not (and (ue:object? $modes) (ue:object? $overrides)))
-           (LedgerError "invalid provider policy overrides")
-          (if (or (ue:equal $profile "managed") (ue:equal $profile "upstream"))
-           (if (ue:equal $delay InvalidInteger) (LedgerError "invalid quota cooldown")
-             (if (< $delay 0) (LedgerError "negative quota cooldown") (LedgerConfig $profile $delay)))
-           (LedgerError "invalid provider policy profile")))))
-      ($error (LedgerError "invalid provider policy configuration")))))
+              ($file-delay (lp:field $overrides "quota_cooldown_seconds" (lp:field $config "quota_cooldown_seconds" 300))))
+         ; config.get("modes", {}).get(mode, {}) and overrides.get(...)
+         ; raise AttributeError on a value that is not a dict.
+         (if (not (ue:object? $modes)) (lp:no-get $modes)
+          (if (not (ue:object? $overrides)) (lp:no-get $overrides)
+           (if (not (or (ue:equal $profile "managed") (ue:equal $profile "upstream")))
+             (lp:python-error ValueError "LLM profile must be upstream or managed")
+             (case (lp:python-int (lp:env "METTACLAW_LLM_QUOTA_COOLDOWN_SECONDS" $file-delay))
+               (((PythonException $class $message) (lp:python-error $class $message))
+                ($delay (if (< $delay 0) (lp:python-error ValueError "LLM policy limits must be nonnegative")
+                          (LedgerConfig $profile $delay))))))))))
+      ((LedgerError $error) (LedgerError $error))
+      ; Python's class; the message is CeTTa's reader's, not json.loads's.
+      ((JsonFailureV1 $operation $kind $call $message) (lp:python-error JSONDecodeError $message))
+      ($other (lp:python-error ValueError "LLM policy must be an object")))))
+(: lp:no-get (-> %Undefined% %Undefined%))
+(= (lp:no-get $value)
+   (let $type (lp:python-type $value)
+     (lp:python-error AttributeError (str:join "" ("'" $type "' object has no attribute 'get'")))))
 
 ; Recovery carries an owner test into the UPDATE, so another writer cannot
 ; change the owner/state between the observation and this transaction.
@@ -320,7 +561,7 @@
    ((sqlite:statement "INSERT INTO requests(id,started,reserved,status,output,provider,mode,finish,owner,fingerprint) SELECT ?,?,?,'pending',NULL,?,?,NULL,?,? WHERE ?='upstream' OR NOT EXISTS(SELECT 1 FROM cooldowns WHERE provider=? AND until>?)"
                        ($ticket $now $maximum $provider (lp:mode) $owner $fingerprint $profile $provider $now))
     (sqlite:statement "INSERT OR IGNORE INTO llm_call_history(call_id,event,observed,detail) SELECT ?,'admitted',?,? WHERE EXISTS(SELECT 1 FROM requests WHERE id=?)"
-                      ($ticket $now (json:stringify (JsonObject
+                      ($ticket $now (lp:detail (JsonObject
                         ((JsonPair "provider" $provider) (JsonPair "mode" (lp:mode))
                          (JsonPair "instance" (lp:env "METTACLAW_INSTANCE" "default"))
                          (JsonPair "session" (lp:env "METTACLAW_ACTIVITY_CALL_SCOPE" ""))))) $ticket))
@@ -329,12 +570,16 @@
                       ($ticket $provider $now $now))))
 (: lp:admit (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (lp:admit $ticket $provider $offered $fingerprint $now)
-   (let $maximum (lp:integer $offered)
-     (if (ue:equal $maximum InvalidInteger) (LedgerError "invalid max output tokens")
-       (lp:admit-integer $ticket $provider $maximum $fingerprint $now))))
+   ; Python reads the configuration before it converts max_output.
+   (case (lp:configuration)
+     (((LedgerConfig $profile $configured-delay)
+       (case (lp:python-int $offered)
+         (((PythonException $class $message) (lp:python-error $class $message))
+          ($maximum (lp:admit-integer $ticket $provider $maximum $fingerprint $now)))))
+      ($error $error))))
 (: lp:admit-integer (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (lp:admit-integer $ticket $provider $maximum $fingerprint $now)
-   (if (<= $maximum 0) (LedgerError "max output tokens must be positive")
+   (if (<= $maximum 0) (lp:python-error ValueError "max output tokens must be positive")
      (case (lp:configuration)
        (((LedgerConfig $profile $configured-delay)
          (lp:admit-configured $ticket $provider $maximum $fingerprint $profile $now))
@@ -378,7 +623,7 @@
 (= (lp:describe-origin $ticket $model $protocol $purpose $transport $origin $now)
    (lp:statement-changed (lp:transaction
      ((sqlite:statement "INSERT OR IGNORE INTO llm_call_history(call_id,event,observed,detail) SELECT ?,'request',?,? WHERE EXISTS(SELECT 1 FROM requests WHERE id=?)"
-       ($ticket $now (json:stringify (lp:request-detail $model $protocol $purpose $transport $origin)) $ticket))))))
+       ($ticket $now (lp:detail (lp:request-detail $model $protocol $purpose $transport $origin)) $ticket))))))
 (: lp:statement-changed (-> %Undefined% %Undefined%))
 (= (lp:statement-changed $answer)
    (case $answer
@@ -407,12 +652,12 @@
    (lp:changed-result (lp:transaction (lp:append
      ((sqlite:statement "CREATE TEMP TABLE lp_transition(changed INTEGER NOT NULL)" ())
       (sqlite:statement "INSERT OR IGNORE INTO llm_call_history(call_id,event,observed,detail) SELECT ?,'usage',?,? WHERE EXISTS(SELECT 1 FROM llm_call_history WHERE call_id=? AND event='admitted') AND (? IS NULL OR EXISTS(SELECT 1 FROM native_calls WHERE id=? AND epoch=?) OR EXISTS(SELECT 1 FROM llm_call_history WHERE call_id=? AND event='claimed' AND json_extract(detail,'$.epoch')=?))"
-                        ($ticket $now (json:stringify $evidence) $ticket (lp:sql-null $epoch) $ticket (lp:sql-null $epoch) $ticket (lp:sql-null $epoch)))
+                        ($ticket $now (lp:detail $evidence) $ticket (lp:sql-null $epoch) $ticket (lp:sql-null $epoch) $ticket (lp:sql-null $epoch)))
       (sqlite:statement "UPDATE requests SET status='completed',output=?,finish=? WHERE id=? AND status='pending' AND (? IS NULL OR EXISTS(SELECT 1 FROM native_calls WHERE id=? AND epoch=? AND state IN ('claimed','submitted')))"
                         ((lp:sql-null $output) $finish $ticket (lp:sql-null $epoch) $ticket (lp:sql-null $epoch)))
       (sqlite:statement "INSERT INTO lp_transition VALUES(changes())" ())
       (sqlite:statement "INSERT OR IGNORE INTO llm_call_history(call_id,event,observed,detail) SELECT ?,'completed',?,? WHERE (SELECT changed FROM lp_transition)=1"
-                        ($ticket $now (json:stringify (JsonObject ((JsonPair "finish" $finish)))))))
+                        ($ticket $now (lp:detail (JsonObject ((JsonPair "finish" $finish)))))))
       (lp:append $extra ((sqlite:statement "SELECT changed FROM lp_transition" ())))))))
 (: lp:sql-null (-> %Undefined% %Undefined%))
 (= (lp:sql-null $value) (if (ue:equal $value JsonNull) sqlite:null $value))
@@ -432,25 +677,47 @@
           ($output (lp:field $counts "output_tokens" JsonNull)))
      (if (ue:equal $output JsonNull) JsonNull
        (if (> $output 9223372036854775807) JsonNull $output))))
+; Python records {"sent": bool(sent), "http_status": status if type(status)
+; is int else None}: a bool or a float status is null.
+; CeTTa's arithmetic raises where a float overflows; Python's now + inf is inf.
+(: lp:after (-> %Undefined% %Undefined% %Undefined%))
+(= (lp:after $now $delay)
+   (if (ue:equal (lp:number-kind $delay) NumberInf) $delay (+ $now $delay)))
+(: lp:exact-int (-> %Undefined% %Undefined%))
+(= (lp:exact-int $value)
+   (and (ue:equal (get-type $value) Number) (ue:equal (lp:number-kind $value) NumberInt)))
 (: lp:fail-statements (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (lp:fail-statements $ticket $sent $status $profile $delay $epoch $now)
    ((sqlite:statement "CREATE TEMP TABLE lp_transition(changed INTEGER NOT NULL)" ())
     (sqlite:statement "UPDATE requests SET status='failed',output=? WHERE id=? AND status='pending' AND (? IS NULL OR NOT EXISTS(SELECT 1 FROM native_calls WHERE id=?) OR EXISTS(SELECT 1 FROM native_calls WHERE id=? AND epoch=?))"
-                      ((if $sent sqlite:null 0) $ticket (lp:sql-null $epoch) $ticket $ticket (lp:sql-null $epoch)))
+                      ((if (ue:truthy $sent) sqlite:null 0) $ticket (lp:sql-null $epoch) $ticket $ticket (lp:sql-null $epoch)))
     (sqlite:statement "INSERT INTO lp_transition VALUES(changes())" ())
     (sqlite:statement "INSERT OR IGNORE INTO llm_call_history(call_id,event,observed,detail) SELECT ?,'failed',?,? WHERE (SELECT changed FROM lp_transition)=1"
-                      ($ticket $now (json:stringify (JsonObject ((JsonPair "http_status" $status) (JsonPair "sent" $sent))))))
+                      ($ticket $now (lp:detail (JsonObject ((JsonPair "http_status" (if (lp:exact-int $status) $status JsonNull))
+                                                           (JsonPair "sent" (ue:truthy $sent)))))))
     (sqlite:statement "INSERT INTO cooldowns(provider,until) SELECT provider,? FROM requests WHERE id=? AND ?='managed' AND ? IN (402,429) AND (SELECT changed FROM lp_transition)=1 ON CONFLICT(provider) DO UPDATE SET until=MAX(until,excluded.until)"
-                      ((+ $now $delay) $ticket $profile (lp:sql-null $status)))))
+                      ((lp:after $now $delay) $ticket $profile (lp:sql-null $status)))))
 (: lp:fail-ready (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (lp:fail-ready $ticket $sent $status $retry $mode $epoch $now $extra)
    (case (lp:configuration-for $mode)
      (((LedgerConfig $profile $configured)
-       (let $delay (if (ue:equal $retry JsonNull) $configured (math:max 0 $retry))
-         (lp:changed-result (lp:transaction
-           (lp:append (lp:fail-statements $ticket $sent $status $profile $delay $epoch $now)
-             (lp:append $extra ((sqlite:statement "SELECT changed FROM lp_transition" ()))))))))
+       (case (lp:fail-delay $profile $status $retry $configured)
+         (((PythonException $class $message) (lp:python-error $class $message))
+          ($delay (lp:changed-result (lp:transaction
+            (lp:append (lp:fail-statements $ticket $sent $status $profile $delay $epoch $now)
+              (lp:append $extra ((sqlite:statement "SELECT changed FROM lp_transition" ()))))))))))
       ($error $error))))
+; Python evaluates max(0, float(retry_after)) only for a managed provider
+; answering 402 or 429 (by value, so 429.0 counts). max keeps the 0 for a NaN.
+(: lp:fail-delay (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
+(= (lp:fail-delay $profile $status $retry $configured)
+   (if (and (ue:equal $profile "managed")
+            (and (ue:equal (get-type $status) Number) (or (== $status 402) (== $status 429))))
+     (if (ue:equal $retry JsonNull) $configured
+       (case (lp:python-float $retry)
+         (((PythonException $class $message) (PythonException $class $message))
+          ($float (if (> $float 0) $float 0)))))
+     $configured))
 (: lp:fail-with (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (lp:fail-with $ticket $sent $status $retry $now $extra)
    (lp:fail-owned $ticket $sent $status $retry JsonNull $now $extra))

@@ -108,8 +108,10 @@ class NativeLifetimeTests(policy_tests.NativeLedgerFixture):
                             native_lifetime.recover(); expected.append(['ok'])
                         else:
                             self.fail('unknown lifetime operation ' + kind)
-                    except (ValueError, TypeError, OverflowError, sqlite3.Error):
+                    except sqlite3.Error:
                         expected.append(['error'])
+                    except (ValueError, TypeError, OverflowError) as error:
+                        expected.append(policy_tests.python_error(error))
         actual = self.native(forms, module='native_lifetime_cetta.metta')
         self.assertEqual(actual, expected)
         self.assertEqual(policy_tests.snapshot(self.native_db), policy_tests.snapshot(self.python_db))
