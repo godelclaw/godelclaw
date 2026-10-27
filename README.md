@@ -1193,6 +1193,21 @@ perform SQL assignment coercions or enforce the provider's unique constraints.
 A provider transaction gateway must check those constraints against its
 captured view and preceding mutations in the same plan before activation.
 
+`provider_constraint_store_cetta.metta` implements the constraint part for
+already-bound records. It preserves nullable unique identities, checks required
+fields, and sees the latest same-plan replacement or tombstone. Its bounded
+candidate pages keep negative bucket reads and every inspected primary row;
+publication combines those reads with the caller's complete transition reads.
+The module retains the original view through planning and scoped commit.
+It does not apply input affinity, implement SQL conflict clauses such as
+`OR IGNORE`, or supply missing caller observations. Derived sequence metadata
+does not replace a captured table-maximum observation. This remains an inactive
+building block; complete kernel, receipt and migration qualification is pending.
+`tests/check_provider_constraint_contract.py` compares an audited Lean model's
+constraint witness with actual MeTTa commits and SQLite observations. Separate
+negative controls remove absence or primary-body dependencies and expose the
+duplicates those weaker checks permit.
+
 `provider_index_query_cetta.metta` provides bounded candidate pages in signed
 ordinal order. Its predicates compare complete CAV1 values, including kind;
 they are not SQLite affinity or NULL comparison rules. Hashes locate candidates
