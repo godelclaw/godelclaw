@@ -5,6 +5,8 @@
 (= (provider-claims-probe:run (Create $path)) (knowledge-probe:run (Create $path)))
 (= (provider-claims-probe:run (Knowledge $path $operation)) (knowledge-probe:run (At $path $operation)))
 (= (provider-claims-probe:run (Admit $path $receipt $command)) (provider-admission-probe:run (At $path $receipt $command)))
+(= (provider-claims-probe:run (LegacyFinish $path $receipt $command))
+  (provider-domain-probe:run (At $path $receipt $command)))
 (= (provider-claims-probe:run (Eligible $policy $active $incoming))
   (if (pc:eligible $policy $active $incoming) ProviderClaimEligibleV3 ProviderClaimBusyV3))
 (= (provider-claims-probe:run (RecoverDecision $stage $observation))

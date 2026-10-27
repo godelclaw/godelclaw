@@ -238,12 +238,33 @@
 ; Check replay before planning: a completed command remains replayable after
 ; its lease or other facts change. A new command retains the captured view
 ; through its complete point observations and one scoped publication.
+(= (provider-domain:observe-entry $view $command $maximum-bytes)
+  (case (provider-domain:observe $view $command $maximum-bytes)
+    (((KnowledgeObservedV1 $points $reads)
+      (case $command
+        (((ProviderFinishV2 $call $attempt $reference $usage $source)
+          (case (kb:observe $view ((ProviderClaimKeyV3 $call)) $maximum-bytes)
+            (((KnowledgeObservedV1 $more $extra)
+              (KnowledgeObservedV1 (kb:append $points $more)
+                (cons-atom reads (kb:append (cdr-atom $reads) (cdr-atom $extra)))))
+             ($error $error))))
+         ($other (KnowledgeObservedV1 $points $reads)))))
+     ($error $error))))
+(= (provider-domain:entry-plan $command $points)
+  (case $command
+    (((ProviderFinishV2 $call $attempt $reference $usage $source)
+      (case (kb:lookup $points (ProviderClaimKeyV3 $call))
+        ((KnowledgeAbsentV1 (provider-domain:plan $command $points))
+         ((KnowledgePresentV1 $claim) (ProviderDomainRefusedV2 lifecycle-settlement-required))
+         ($other (ProviderDomainRefusedV2 lifecycle-not-observed)))))
+     ($other (provider-domain:plan $command $points)))))
+
 (= (provider-domain:execute $owner $view $receipt $command $maximum-bytes)
   (case (kb:receipt $view $receipt $command $maximum-bytes)
     ((KnowledgeReceiptAbsentV1
-      (case (provider-domain:observe $view $command $maximum-bytes)
+      (case (provider-domain:observe-entry $view $command $maximum-bytes)
         (((KnowledgeObservedV1 $points $reads)
-          (case (provider-domain:plan $command $points)
+          (case (provider-domain:entry-plan $command $points)
             (((ProviderDomainPlanV2 $answer $changes)
               (kb:publish $owner $view $reads $receipt $command $answer $changes $maximum-bytes))
              ((ProviderDomainRefusedV2 $why)

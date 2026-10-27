@@ -135,6 +135,17 @@ class ProviderSettlementTests(SettlementFixture):
             self.same(self.value(key), S("KnowledgeAbsentV1"))
         self.assertEqual(len(self.active()[1][1]), 1)
 
+    def test_older_completion_entry_cannot_bypass_claim_release(self):
+        self.ready()
+        command = E("ProviderFinishV2", "call", "owner", E("AnswerRef", "answer"), self.usage(100, 7), "evidence")
+        result = self.worker.call(E("LegacyFinish", str(self.path), "legacy-finish", command))
+        self.same(result[1], E("ProviderDomainRefusedV2", S("lifecycle-settlement-required")))
+        self.same(self.value(E("ProviderAnswerKeyV2", "call")), S("KnowledgeAbsentV1"))
+        self.same(self.value(E("ProviderLeaseKeyV2", "call")),
+                  E("KnowledgePresentV1", E("ProviderLeaseV2", "owner", S("ProviderLeaseActiveV2"))))
+        self.same(self.result(self.settle()), E("ProviderSettlementV3", E("ProviderCompletedV2", S("ProviderUsageAcceptedV2"))))
+        self.assert_released("ProviderLeaseCompletedV2")
+
 
 @unittest.skipUnless(claims.WORKER and shutil.which("cc"), "native worker and C compiler required")
 class ProviderSettlementFailureTests(SettlementFixture):
