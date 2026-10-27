@@ -402,9 +402,12 @@ class NativeLifetimeTests(policy_tests.NativeLedgerFixture):
         # `not activity` decides the unscoped path; the regex reads
         # str(activity); TEXT affinity stores what the binding gives.
         data, steps = {}, []
-        for i, activity in enumerate([False, 0, None, True, 7, 7.5, -1.5, 1e30]):
+        cases = [(activity, 'interactive') for activity in (False, 0, None, True, 7, 7.5, -1.5, 1e30)]
+        # The unscoped path never reads the lane.
+        cases += [(activity, '') for activity in (False, 0, '')]
+        for i, (activity, lane) in enumerate(cases):
             key = 'activity-%d' % i
-            data[key] = meta(key, activity=activity, lane='interactive')
+            data[key] = meta(key, activity=activity, lane=lane)
             now = 1000 + 3 * i
             steps += [('admit', key, now), ('claim', key, now + 1),
                       ('settle', key, 'completed', 'receipt', None, 0, now + 2)]
