@@ -1250,6 +1250,20 @@ reporting remain required before selecting this inactive application.
 `tests/check_provider_admission_contract.py` audits the pure deadline laws and
 compares their decisions and cooldown updates with the native program.
 
+`provider_policy_cetta.metta` is an additive, storage-independent policy reader:
+`provider-policy:resolve` consumes decoded native JSON and explicit
+`ProviderPolicyAbsentV2` / `(ProviderPolicyValueV2 text)` environment values;
+`provider-policy:load` reads only the policy path, profile and cooldown
+environment variables. It preserves profile/cooldown precedence, refuses
+selected invalid values and malformed selected objects, and returns exact
+integer nanosecond cooldowns without work quotas. No caller is wired to it.
+Mode names must be native strings; a symbol is explicitly refused instead of
+silently selecting a different default.
+Run `python3 -B tests/test_provider_policy_cetta.py` with explicit
+`CETTA_CHANNEL_ROOT` and `CETTA_VALUE_WORKER` paths for isolated native/model-case
+and offline configuration-reference checks. The model-case fixture is included;
+`PROVIDER_POLICY_CASES` can select a different pinned fixture.
+
 The inactive SQLite-free provider-store modules are migration experiments,
 not a selected runtime backend. `provider_store_cetta.metta` preserves typed
 records and insertion identities. `provider_index_store_cetta.metta` commits

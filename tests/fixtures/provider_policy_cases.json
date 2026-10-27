@@ -1,0 +1,101 @@
+[
+  {
+    "mode": "godelclaw",
+    "case": 1,
+    "expected": "managed:300000000000"
+  },
+  {
+    "mode": "iter",
+    "case": 2,
+    "expected": "upstream:300000000000"
+  },
+  {
+    "mode": "omega",
+    "case": 3,
+    "expected": "upstream:300000000000"
+  },
+  {
+    "config": {
+      "profile": "upstream",
+      "quota_cooldown_seconds": 7
+    },
+    "case": 4,
+    "expected": "upstream:7000000000"
+  },
+  {
+    "config": {
+      "profile": "upstream"
+    },
+    "env_profile": "managed",
+    "case": 5,
+    "expected": "managed:300000000000"
+  },
+  {
+    "config": {
+      "modes": {
+        "godelclaw": {
+          "profile": "upstream",
+          "quota_cooldown_seconds": 3
+        }
+      }
+    },
+    "env_profile": "managed",
+    "case": 6,
+    "expected": "upstream:3000000000"
+  },
+  {
+    "config": {
+      "quota_cooldown_seconds": 4,
+      "modes": {
+        "godelclaw": {
+          "quota_cooldown_seconds": 3
+        }
+      }
+    },
+    "env_delay": "2",
+    "case": 7,
+    "expected": "managed:2000000000"
+  },
+  {
+    "env_delay": "0",
+    "case": 8,
+    "expected": "managed:0"
+  },
+  {
+    "env_delay": "-1",
+    "case": 9,
+    "expected": "refused"
+  },
+  {
+    "config": {
+      "modes": {
+        "godelclaw": {
+          "profile": null
+        }
+      }
+    },
+    "env_profile": "managed",
+    "case": 10,
+    "expected": "refused"
+  },
+  {
+    "config": {
+      "profile": "managed"
+    },
+    "env_profile": "",
+    "case": 11,
+    "expected": "refused"
+  },
+  {
+    "config": {
+      "modes": []
+    },
+    "case": 12,
+    "expected": "refused"
+  },
+  {
+    "env_delay": "100000000000000000000",
+    "case": 13,
+    "expected": "managed:100000000000000000000000000000"
+  }
+]

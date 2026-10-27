@@ -1,0 +1,15 @@
+!(import! &self ../../src/provider_policy_cetta.metta)
+
+; Collapse preserves the entire bag, including duplicates and unreduced terms.
+(= (provider-policy-probe:run (Resolve $mode $config $profile $delay))
+  (collapse (provider-policy:resolve $mode $config $profile $delay)))
+(= (provider-policy-probe:run (Load $mode))
+  (collapse (provider-policy:load $mode)))
+(= (provider-policy-probe:run (Parse $text)) (collapse (json:parse $text)))
+(= (provider-policy-probe:run (Integer $value)) (collapse (math:integer-divmod $value 1)))
+(= (provider-policy-probe:run (Environment $key))
+  (collapse (system:getenv-or-default $key ProviderPolicyAbsentV2)))
+(= (provider-policy-probe:run DuplicateControl)
+  (collapse (superpose ((ProviderPolicyV2 ProviderManagedV2 0) (ProviderPolicyV2 ProviderManagedV2 0)))))
+(= (provider-policy-probe:run UnreducedControl)
+  (collapse (provider-policy:no-such-operation "inert")))
