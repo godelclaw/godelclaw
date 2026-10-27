@@ -19,7 +19,8 @@ class ReleasePermissionsTest(unittest.TestCase):
         selected = set(json.loads((root / "config/runtime-files.json").read_text()))
         for required in (
             "modes/launch.py", "modes/runtime_host.py",
-            "modes/iter/iter_host.py", "modes/conformance/verify.py",
+            "modes/iter/supervised/godelclaw_host.metta", "modes/iter/supervised/provider.metta",
+            "modes/terminal.py", "modes/conformance/verify.py",
             "modes/tool_protocol.py", "modes/protocol/ToolCalls.module",
             "src/native_llm.metta", "src/native_llm_host.py",
             "src/native_lifetime.py", "src/llm_policy.py",

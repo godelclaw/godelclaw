@@ -129,25 +129,28 @@ Prolog through `lib_prolog` while ordinary agent tools use the native path.
 Core upstream modes remain available through the separate SWI-PeTTa backend;
 full native settings and ECAN features require CeTTa.
 
-These launch paths need a Python-enabled [CeTTa](https://github.com/godelclaw/CeTTa)
-bundle and the selected mode's small dependency file. They do not require
-Telegram, a service installation, or the framework's full `requirements.txt`.
-Use a Python environment matching the Python version linked into CeTTa
-(`BUILD=python`); virtual environments are supported.
+These launch paths do not require Telegram, a service installation, or the
+framework's full `requirements.txt`. ITER runs the upstream MeTTa Iter loop
+on a [CeTTa](https://github.com/godelclaw/CeTTa) build with HTTP and the
+SWI-Prolog library, and needs no Python package:
 
 ```sh
 git clone https://github.com/godelclaw/godelclaw.git
 cd godelclaw
 python3 scripts/build_cetta.py
 export CETTA_BIN="$PWD/.runtime/cetta/cetta"
-python3 -m pip install -r modes/iter/requirements.txt
 ./run.sh --mode iter
 ```
 
 ITER uses upstream's `LLM_MODEL`, `BASE_URL`, and `AI_API_KEY` variables and
-their pinned defaults. Set them to your model endpoint before starting. It
-keeps upstream's prompt, tools, transformations and context policy. Input and
-replies use the terminal; worker sends are forwarded to the foreground.
+their defaults. Set them to your model endpoint before starting. It keeps
+upstream's prompt, tools, transformations and context policy. Input comes from
+the terminal; as upstream, tool workers discard their output, so a reply shows
+in the loop's `Output>` line.
+
+Omega's core needs a Python-enabled CeTTa bundle (`BUILD=python`) and its small
+dependency file, in a Python environment matching the Python version linked into
+CeTTa; virtual environments are supported.
 
 Omega's standalone **core** uses upstream's provider SDK and `OMEGA_*`
 configuration, with terminal I/O, history and text recall. Its embedding,
@@ -198,7 +201,7 @@ selects the MeTTa evaluator. These are independent choices.
 |---|---|
 | `godelclaw` | The framework loop: event-armed activity, persistent lifecycle state and renewal through Iter-inspired transformations. |
 | `coding` | The framework loop with a coding-oriented, high-reasoning preset. |
-| `iter` | A MeTTa port of the pinned [Iter](https://github.com/patham9/iter) core, with native tool calls, transformations and autonomous renewal. |
+| `iter` | The MeTTa [Iter](https://github.com/patham9/iter) loop, vendored unchanged, with native tool calls, transformations and autonomous renewal. |
 | `omega` | The pinned [Omega](https://github.com/singnet/Omega) core, with command-text dispatch and explicit adapters for its evaluator and services. |
 
 Use `/modes` and `/mode iter`, `/mode omega` or `/mode godelclaw` through the

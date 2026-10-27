@@ -119,6 +119,12 @@ class ChannelServer:
         self.server.close()
 
 
+def boundaries(trace):
+    if not trace.exists():
+        return 0
+    return sum(json.loads(line).get('kind') == 'boundary' for line in trace.read_text().splitlines() if line.strip())
+
+
 class ModeRuntimeTests(unittest.TestCase):
     @unittest.skipUnless(os.environ.get('MODE_TEST_CETTA_BIN'), 'set MODE_TEST_CETTA_BIN for real CeTTa checks')
     def test_cetta_modes_checkpoint_restart_and_switch(self):
@@ -145,8 +151,8 @@ class ModeRuntimeTests(unittest.TestCase):
             (agent/'channels').symlink_to(ROOT/'channels', target_is_directory=True)
             (state/'identity.txt').write_text('You are Fixture, a separate test identity.')
             (state/'lifecycle.json').write_text('{"schema":1,"state":"running"}')
-            # Upstream imports the SDK before install_iter replaces its client
-            # with our fixture provider. Neither transport may call that SDK.
+            # Omega's upstream modules import the SDK before the host replaces
+            # its provider. No loop may call that SDK.
             (agent/'src/openai.py').write_text('class OpenAI:\n'
                 '    def __init__(self, *args, **kwargs):\n'
                 '        raise AssertionError("process fixture invoked provider SDK")\n')
@@ -159,7 +165,11 @@ class ModeRuntimeTests(unittest.TestCase):
             try:
                 fixture_environment = isolated_environ()
                 accelerated_engine(state, engine, fixture_environment)
-                for mode in ('iter', 'omega'):
+                # Iter runs on CeTTa only.
+                for mode in ('iter', 'omega') if engine == 'cetta' else ('omega',):
+                    if mode == 'omega':
+                        channel.pending['omega-input'] = json.dumps(['input','1.0','message','operator',
+                            {'message': {'chat': {'id':1},'text':'omega checkpoint fixture'}}])
                     (agent/'memory/loop_mode.json').write_text(json.dumps({'mode': mode}))
                     environment = fixture_environment.copy()
                     environment.update({
@@ -189,7 +199,7 @@ class ModeRuntimeTests(unittest.TestCase):
                                '--mode', mode, '--engine', engine]
                     for restart in range(2):
                         trace = state/'modes'/mode/'runtime.jsonl'
-                        count_before = trace.read_text().count('"kind": "boundary"') if trace.exists() else 0
+                        count_before = boundaries(trace)
                         with (state/f'{mode}-{restart}.log').open('w') as log:
                             process = subprocess.Popen(command, env=environment, stdout=log, stderr=log)
                             try:
@@ -197,13 +207,15 @@ class ModeRuntimeTests(unittest.TestCase):
                                 while time.monotonic() < deadline:
                                     self.assertIsNone(process.poll(), (state/f'{mode}-{restart}.log').read_text())
                                     required = 100 if mode == 'omega' else 2
-                                    if trace.exists() and trace.read_text().count('"kind": "boundary"') >= count_before+required:
+                                    if boundaries(trace) >= count_before+required:
                                         break
                                     time.sleep(.1)
                                 else:
                                     self.fail((state/f'{mode}-{restart}.log').read_text()+'\n'+(trace.read_text() if trace.exists() else 'no trace'))
                                 (state/'recycle').touch()
-                                self.assertEqual(process.wait(timeout=8), 0)
+                                # Iter takes a recycle before its next provider
+                                # request, after at most one idle wait.
+                                self.assertEqual(process.wait(timeout=30 if mode == 'iter' else 8), 0)
                             finally:
                                 if process.poll() is None:
                                     process.terminate()
@@ -222,14 +234,17 @@ class ModeRuntimeTests(unittest.TestCase):
                         self.assertTrue(all(m.endswith(': SUCCESS') for m in tools), tools)
                         self.assertTrue(any('remember this fixture' in m.get('content','') for m in history))
                         self.assertIn('fixture-input', channel.acks)
-                        channel.pending['omega-input'] = json.dumps(['input','1.0','message','operator',
-                            {'message': {'chat': {'id':1},'text':'omega checkpoint fixture'}}])
                     else:
                         history = (state/'modes/omega/repos/Omega/memory/history.metta').read_text()
                         self.assertIn('omega checkpoint fixture', history)
                         self.assertIn('omega-input', channel.acks)
                 native = next(r for r in Provider.requests if r.get('tools'))
                 self.assertEqual(native['tool_choice'], 'required')
+                if engine == 'cetta':
+                    # Iter ran first: the host's routes precede its own prompt.
+                    self.assertTrue(native['messages'][0]['content'].startswith('CHANNEL ROUTES'))
+                    self.assertTrue(native['messages'][1]['content'].startswith('prompt.txt:'))
+                    self.assertEqual(native['max_tokens'], 2524)
                 self.assertTrue(any('Fixture' in m['content'] for m in native['messages']))
                 self.assertTrue(all(r.get('tools') for r in Provider.requests))
                 omega = next(r for r in Provider.requests

@@ -1,12 +1,18 @@
 {
-  "repository": "https://github.com/patham9/iter",
-  "commit": "f4064d97849ecaccac7939315a3f1a68de15c3ef",
+  "repository": "https://github.com/godelclaw/iter",
+  "branch": "metta-native",
+  "commit": "a58e2ebbba8db237e4126e13bdfe9f7cb90a3aaa",
+  "base": {
+    "repository": "https://github.com/patham9/iter",
+    "branch": "metta",
+    "commit": "dc456de33c7ac18d1969b74186870d1834432603"
+  },
   "files": [
     {
       "path": ".gitignore",
       "classification": "deployment-addon",
       "vendored": false,
-      "reason": "Outside isolated core qualification; retained by the pinned upstream reference."
+      "reason": "Checkout ignore rules; the launcher keeps loop state outside the repository."
     },
     {
       "path": "LICENSE",
@@ -15,58 +21,124 @@
       "sha256": "10c448e805927ecb41ed847154db2fd154506cf54f62802b1434cbef9efde463"
     },
     {
-      "path": "channels/_example.py",
-      "classification": "core",
-      "vendored": true,
-      "sha256": "4da50a1260e076ebc6cd3e2a7ac1638a2f47de13255ca6e42690f9095ee72be0"
+      "path": "README.md",
+      "classification": "documentation",
+      "vendored": false,
+      "reason": "Instructions for running a checkout directly; modes/README.md documents this launcher."
     },
     {
-      "path": "channels/terminal.py",
+      "path": "channels/_example.metta",
       "classification": "core",
       "vendored": true,
-      "sha256": "7be809f8131b844ddc1ad75186167b86d5f039037629d6d896778ccd22f289c7"
+      "sha256": "02e0d552f0741dafd0a36553ff267143176fb4ff57f44f0d199cefdecefb38ac"
     },
     {
-      "path": "iter.py",
+      "path": "channels/terminal.metta",
       "classification": "core",
       "vendored": true,
-      "sha256": "281597213d59fc0bc4a352c5d245914db30c1055f78dc6348267633d5696bc4c"
+      "sha256": "ed29686acbbf167705ad08caeb9d92b21d5cfdcc3873ce9d952b39a32f062c38"
+    },
+    {
+      "path": "iter.metta",
+      "classification": "core",
+      "vendored": true,
+      "sha256": "f075df400e80dfa263bf7abba2674578aa4a6b507e645a9e410308bfae4bcb05"
+    },
+    {
+      "path": "iter_llm.metta",
+      "classification": "core",
+      "vendored": true,
+      "sha256": "5a3d42c366e47f9078d7eb9e45bb8f2247ac787407bdb2f3c1e6e33f29b17859"
+    },
+    {
+      "path": "iter_worker.metta",
+      "classification": "core",
+      "vendored": true,
+      "sha256": "4c7a8fd40604ebf2af5ed100905926bc5f419e02b1bdd316cee0d0a526ef00db"
+    },
+    {
+      "path": "lib_nal.metta",
+      "classification": "core",
+      "vendored": true,
+      "sha256": "604e2608a5938e36e428bce257fc3806dd9ef6be99102c5e973909e0a8f9c10e"
     },
     {
       "path": "prompt.txt",
       "classification": "core",
       "vendored": true,
-      "sha256": "baa4c8bc77ad3683810608a688a967873e3058771cc269f07d1b49675b18a9b8"
+      "sha256": "53ff8f2428ccfaf3542a6a7eddb7d5239e00323fe095afb8eeb4c02888115e87"
     },
     {
       "path": "reprogramming.txt",
       "classification": "core",
       "vendored": true,
-      "sha256": "53b367ea1a40d0cb0185858dededde9c7b434eac6ec9dd1a23bcb90c85a80f8a"
+      "sha256": "45a7c8113e13c8b14002205b3799feaee9d26fb0e79f2df5bf99d6c36f1c333b"
     },
     {
-      "path": "tools/nop.py",
-      "classification": "core",
+      "path": "tests/fixtures/broken.metta",
+      "classification": "test",
       "vendored": true,
-      "sha256": "ca79cca46193bd726326df3e43a3680bb314364af92df5e2b3cb46b37bf09c58"
+      "sha256": "43b7a59a32a8778a0b4365aded7a697bb6bddeb9ed3c0c5f28e34d5f68f71fcf"
     },
     {
-      "path": "tools/python.py",
-      "classification": "core",
+      "path": "tests/fixtures/error.metta",
+      "classification": "test",
       "vendored": true,
-      "sha256": "cefd54978b57ae5f90722dca29c510c4062b7a249ae81949ddd7d5bccd1c5572"
+      "sha256": "b589f4c5385fff7ebc647925e1d3ba97a8d5ec23c8386ed8e476a3b5bc0c1772"
     },
     {
-      "path": "tools/send.py",
-      "classification": "core",
+      "path": "tests/fixtures/number.metta",
+      "classification": "test",
       "vendored": true,
-      "sha256": "da4dd1a414babdcef6cea95f65e20aa6d2c9428d4afbb7629cabfff82ac6acc5"
+      "sha256": "04042c2f4aad5a911ef89394e06de232706281d10409e077d31c1e0b4037bd6d"
     },
     {
-      "path": "tools/shell.py",
+      "path": "tests/fixtures/refuse.metta",
+      "classification": "test",
+      "vendored": true,
+      "sha256": "e31891ffc11714012bf11ae7afc8e4acacf5bb155d1378165ad846c20514ef9b"
+    },
+    {
+      "path": "tests/fixtures/stamp.metta",
+      "classification": "test",
+      "vendored": true,
+      "sha256": "bf69d639ffcfa91b7d1373e8ec66dd1f9231175c7525333edc3563fdffba8a8e"
+    },
+    {
+      "path": "tests/worker.metta",
+      "classification": "test",
+      "vendored": true,
+      "sha256": "c1afb84466182cecc016754f334fe02c3d67e1764b9d6835359340e59c6dfe35"
+    },
+    {
+      "path": "tools/metta.metta",
       "classification": "core",
       "vendored": true,
-      "sha256": "a7bc41169e7edd3268b480ce0b7a81f143b9bbcb68427bb531d4e9cb1a33ea2d"
+      "sha256": "722e3edb46df67f47b0deca7f2383d3626cfde98fd2e4a664e4546a9d34ab4a8"
+    },
+    {
+      "path": "tools/nop.metta",
+      "classification": "core",
+      "vendored": true,
+      "sha256": "56714c835ce0646ca9c898a7e27f12cd53300f200dfe709f48141413a6b339d3"
+    },
+    {
+      "path": "tools/send.metta",
+      "classification": "core",
+      "vendored": true,
+      "sha256": "f6101be274ad26deb3bf7dc78ef18ac35d5f22eaf7f55eff67cff0264122f68b"
+    },
+    {
+      "path": "tools/shell.metta",
+      "classification": "core",
+      "vendored": true,
+      "sha256": "6de787c798909a37463e03df20f407107932ee5fe623ea3d1bef5a725e15da92"
+    },
+    {
+      "path": "utils.metta",
+      "classification": "core",
+      "vendored": true,
+      "sha256": "9b7d4f10c4aeae577d7e2625322a19067a2fe3acf82d87830011babdc748c80c"
     }
   ]
 }

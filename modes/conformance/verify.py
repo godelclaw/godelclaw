@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline reference/CeTTa comparison for the fixed upstream core matrix."""
+"""Offline reference/CeTTa comparison for Omega's fixed upstream core matrix."""
 import argparse
 import difflib
 import hashlib
@@ -11,7 +11,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from fixtures import iter_cases, omega_cases
+from fixtures import omega_cases
 
 MODES = Path(__file__).resolve().parents[1]
 
@@ -38,31 +38,19 @@ def run(args, mode, name, scenario, evaluator, mutant=None):
     # normalizing a semantic numeric field derived from an absolute path.
     root = Path(tempfile.mkdtemp(prefix=f"{mode}-case-", dir=args.output))
     prepare = module(f"{mode}_offline", MODES / mode / "offline.py").prepare
-    entry = prepare(root, scenario, native_fs=evaluator == "cetta") if mode == "omega" else prepare(root, scenario)
+    entry = prepare(root, scenario, native_fs=evaluator == "cetta")
     (root / "identity.json").write_text(json.dumps({"mode": mode, "scenario": name, "evaluator": evaluator}))
     if mutant:
-        if mode == "omega":
-            path = root / "repos/Omega/src/loop.metta"
-            path.write_text(mutant(path.read_text()))
-        else:
-            text = (MODES / "iter/core.metta").read_text()
-            text = text.replace("./iter_host.py", str(MODES / "iter/iter_host.py"))
-            text = text.replace("../../src/native_llm.metta", str(MODES.parent / "src/native_llm.metta"))
-            (root / "mutant.metta").write_text(mutant(text))
-            entry.write_text(f'!(import! &self "{root}/mutant.metta")\n!(iter:start)\n')
+        path = root / "repos/Omega/src/loop.metta"
+        path.write_text(mutant(path.read_text()))
     env = {"PATH": os.pathsep.join([str(args.python.parent), os.environ.get("PATH", "/usr/bin:/bin")]),
            "LC_ALL": "C.UTF-8", "LANG": "C.UTF-8",
            "PYTHONNOUSERSITE": "1",
            "LD_LIBRARY_PATH": str(args.python.resolve().parent.parent / "lib"),
-           "PYTHONPATH": str(MODES / "iter") if mode == "iter" else
-                         os.pathsep.join((str(root), str(MODES))),
-           f"{mode.upper()}_FIXTURE_ROOT": str(root),
-           "ITER_PYTHON": str(args.python), "LLM_MODEL": "fixture-model",
-           "BASE_URL": "http://offline.invalid", "AI_API_KEY": "offline"}
+           "PYTHONPATH": os.pathsep.join((str(root), str(MODES))),
+           f"{mode.upper()}_FIXTURE_ROOT": str(root)}
     if evaluator == "cetta":
         cmd = [str(args.cetta), "--lang", "petta", str(entry)]
-    elif mode == "iter":
-        cmd = [str(args.python), str(MODES / "iter/iter_fixture.py"), str(MODES / "iter/upstream/iter.py")]
     else:
         cmd = ["sh", str(args.petta / "run.sh"), str(entry), "--silent"]
     result = subprocess.run(cmd, cwd=root, env=env, capture_output=True, text=True, timeout=120)
@@ -75,7 +63,7 @@ def run(args, mode, name, scenario, evaluator, mutant=None):
     if scenario.get("expect_failure") and not result.returncode:
         raise AssertionError(f"{mode}/{name}/{evaluator} swallowed provider failure")
     completed = sum(row["kind"] == "boundary" for row in rows)
-    expected = 0 if scenario.get("expect_failure") else scenario["iterations"] + (1 if mode == "iter" else 0)
+    expected = 0 if scenario.get("expect_failure") else scenario["iterations"]
     if completed != expected:
         raise AssertionError(f"{mode}/{name}/{evaluator}: {completed} boundaries, expected {expected}; {root}")
     if not any(row["kind"] == "request" for row in rows):
@@ -113,20 +101,17 @@ def main():
     parser.add_argument("--petta", type=Path, required=True)
     parser.add_argument("--python", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--mode", choices=["iter", "omega", "both"], default="both")
+    parser.add_argument("--mode", choices=["omega"], default="omega")
     parser.add_argument("--case")
     parser.add_argument("--mutants", action="store_true")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     matrix = json.loads((MODES / "conformance/scenarios.json").read_text())
-    if args.case and not any(row["id"] == args.case for mode in ("iter", "omega")
-                            if args.mode in (mode, "both") for row in matrix[mode]):
+    if args.case and not any(row["id"] == args.case for row in matrix["omega"]):
         parser.error("unknown scenario for the selected mode")
     summary = {"cases": [], "failures": [], "mutants": []}
     references = {}
-    for mode, cases in [("iter", iter_cases()), ("omega", omega_cases())]:
-        if args.mode not in (mode, "both"):
-            continue
+    for mode, cases in [("omega", omega_cases())]:
         verify_manifest(mode)
         assert set(cases) == {row["id"] for row in matrix[mode]} and len(cases) <= 12
         for name, scenario in cases.items():
@@ -140,10 +125,9 @@ def main():
                     compare(reference, candidate)
                     references[mode, name] = reference
                     if scenario.get("restart"):
-                        state_path = "experience.json" if mode == "iter" else "repos/Omega/memory/history.metta"
-                        persisted = (rroot / state_path).read_text()
+                        persisted = (rroot / "repos/Omega/memory/history.metta").read_text()
                         restart = {**fixture, "iterations": 1, "events": [], "replies": fixture["replies"][-1:]}
-                        restart["experience" if mode == "iter" else "history"] = json.loads(persisted) if mode == "iter" else persisted
+                        restart["history"] = persisted
                         compare(run(args, mode, name + "-restart", restart, "reference")[0],
                                 run(args, mode, name + "-restart", restart, "cetta")[0])
                     summary["cases"].append([mode, name, variant])
@@ -153,16 +137,13 @@ def main():
                     print(f"FAIL {mode}/{name}/{variant}: {error}", flush=True)
     if args.mutants:
         mutants = [
-            ("iter", "nop-in-batch", "last-nop-only", '(or $nop (py-call (iter_host.equal $name "nop")))', '(py-call (iter_host.equal $name "nop"))'),
-            ("iter", "fast-budget", "budget-49", '(>= $used 50)', '(>= $used 49)'),
-            ("iter", "tool-caps", "nine-call-cap", '(iter_host.take $calls 10)', '(iter_host.take $calls 9)'),
             ("omega", "duplicate-input", "duplicate-rearms", '(!= $msgrcv (get-state &prevmsg))', 'True'),
             ("omega", "wake-boundary", "inclusive-wake", '(> (get_time) (get-state &nextWakeAt))', '(>= (get_time) (get-state &nextWakeAt))'),
             ("omega", "budget-exhaustion", "no-decrement", '(- (get-state &loops) 1)', '(- (get-state &loops) 0)')]
         for mode, name, ident, before, after in mutants:
             if (mode, name) not in references:
                 continue
-            fixture = (iter_cases() if mode == "iter" else omega_cases())[name]
+            fixture = omega_cases()[name]
             def mutate(text):
                 if text.count(before) != 1:
                     raise ValueError(f"{ident}: mutation target not unique")

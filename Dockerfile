@@ -10,7 +10,7 @@ COPY . .
 RUN python3 scripts/build_cetta.py --prefix /opt/cetta \
     && python3 -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir \
-       -r modes/iter/requirements.txt -r modes/omega/requirements.txt \
+       -r modes/omega/requirements.txt \
     && rm -rf .build \
     && useradd --create-home --uid 10001 agent \
     && mkdir -p /state && chown agent:agent /state

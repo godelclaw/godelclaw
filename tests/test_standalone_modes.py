@@ -55,7 +55,13 @@ class StandaloneModesTests(unittest.TestCase):
             launcher.prepare_iter(runtime, agent, standalone=True)
             self.assertEqual((runtime / "prompt.txt").read_bytes(),
                              (ROOT / "modes/iter/upstream/prompt.txt").read_bytes())
-            self.assertFalse((runtime / "channels/telegram.py").exists())
+            # The checkout as upstream runs it: vendored code and modules only.
+            for name in ("iter.metta", "utils.metta", "iter_llm.metta", "iter_worker.metta",
+                         "tools/send.metta", "channels/terminal.metta"):
+                self.assertEqual((runtime / name).read_bytes(),
+                                 (ROOT / "modes/iter/upstream" / name).read_bytes(), name)
+            self.assertFalse((runtime / "channels/telegram.metta").exists())
+            self.assertFalse((runtime / "godelclaw_host.metta").exists())
             (runtime / "prompt.txt").write_text("self-authored prompt")
             launcher.prepare_iter(runtime, agent, standalone=True)
             self.assertEqual((runtime / "prompt.txt").read_text(), "self-authored prompt")
@@ -89,7 +95,7 @@ class StandaloneModesTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "different launch profile"):
                 launcher.prepare_iter(runtime, ROOT, standalone=False)
             self.assertEqual((runtime / "prompt.txt").read_bytes(), previous)
-            self.assertFalse((runtime / "channels/telegram.py").exists())
+            self.assertFalse((runtime / "channels/telegram.metta").exists())
 
     def test_supervised_launch_requires_its_channel_before_seeding(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -108,9 +114,17 @@ class StandaloneModesTests(unittest.TestCase):
 
     @unittest.skipUnless(os.environ.get("MODE_TEST_PETTA_ROOT"), "set MODE_TEST_PETTA_ROOT")
     def test_real_petta_terminal_modes(self):
-        for mode in ("iter", "omega"):
-            with self.subTest(mode=mode):
-                self.check_process(mode, "petta")
+        # Iter runs on CeTTa only.
+        self.check_process("omega", "petta")
+
+    def test_iter_refuses_another_engine_before_seeding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.object(sys, "argv", ["launch.py", "--mode", "iter", "--engine", "petta",
+                                                 "--profile", "standalone", "--state-dir", directory]):
+                with self.assertRaises(SystemExit) as error:
+                    launcher.main()
+            self.assertEqual(error.exception.code, 2)
+            self.assertFalse((Path(directory) / "iter").exists())
 
     def check_process(self, mode, engine):
         python = os.environ.get("MODE_TEST_STANDALONE_PYTHON", sys.executable)

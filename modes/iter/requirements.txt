@@ -1,2 +1,0 @@
-# Standalone ITER: the upstream loop uses the OpenAI-compatible SDK.
-openai==2.38.0

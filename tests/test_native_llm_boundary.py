@@ -571,10 +571,11 @@ def draft(kind, scope, lane):
             {"role": "tool", "tool_call_id": "c1", "content": "done"}], "max_tokens": 42,
             "reasoning": {"effort": "low"}, "extra_body": {"enable_thinking": True}}
         fixture = self.directory / "request_fixture.py"
-        fixture.write_text('from iter_host import Box\nimport json\ndef request(): return Box(json.loads(' +
-                           repr(json.dumps(payload)) + '))\n')
+        # A structured request is any holder of the request value.
+        fixture.write_text('class Box:\n    def __init__(self, value): self.value = value\nimport json\ndef request(): return Box(json.loads(' +
+                           repr(json.dumps(payload)) + '))\ndef finish(box): return box.value["finish"]\n')
         forms = f'!(import! &self "{ROOT}/src/native_llm.metta")\n!(import! &self "{fixture}")\n'
-        forms += '!(let $r (llm:structured (py-call (request_fixture.request))) (println! (FINISH (py-call (iter_host.get $r "finish")))))\n'
+        forms += '!(let $r (llm:structured (py-call (request_fixture.request))) (println! (FINISH (py-call (request_fixture.finish $r)))))\n'
         out = self.run_guest(forms)
         self.assertIn("(FINISH tool_calls)", out)
         self.assertEqual(len(self.peer.requests), 1)
@@ -598,7 +599,7 @@ def draft(kind, scope, lane):
             "tool_calls": [{"id": "partial", "type": "function", "function": {"name": "nop", "arguments": "{}"}}]})
         fixture = self.directory / "request_fixture.py"
         request = {"messages": [{"role": "user", "content": "input"}], "max_tokens": 42}
-        fixture.write_text('from iter_host import Box\nimport json\ndef request(): return Box(json.loads(' +
+        fixture.write_text('class Box:\n    def __init__(self, value): self.value = value\nimport json\ndef request(): return Box(json.loads(' +
                            repr(json.dumps(request)) + '))\ndef check(box):\n    value=box.value\n    assert value["finish"] == "length"\n    assert value["message"]["tool_calls"][0]["id"] == "partial"\n    return "COMPLETE_CALL_KEPT"\n')
         out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n!(import! &self "{fixture}")\n'
             '!(let $box (llm:structured (py-call (request_fixture.request))) (println! (py-call (request_fixture.check $box))))\n')

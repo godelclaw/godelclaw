@@ -46,42 +46,6 @@ def sexpr(text):
     return read(0)[0]
 
 
-def pace(row):
-    return f"(IterArchitecture.Pace.mk {row['steps']} {lit(row['burst'])} {lit(row['post'])})"
-
-
-def iter_replay(rows):
-    checks = []
-    starts = [i for i, row in enumerate(rows) if row["kind"] == "boundary"]
-    for begin, end in zip(starts, starts[1:]):
-        initial, expected = rows[begin], rows[end]
-        segment = rows[begin + 1:end]
-        event = initial["pending"] or next((r["event"] for r in segment if r["kind"] == "receive"), "")
-        failed = any(r["kind"] == "provider_error" for r in segment)
-        outcome = ".failure"
-        wait = False
-        if not failed:
-            history = next(r["experience"] for r in reversed(segment) if r["kind"] == "save")
-            assistant = next(r for r in reversed(history) if r["role"] == "assistant")
-            names = [r["function"]["name"] for r in assistant["tool_calls"]]
-            outcome = f"(.calls {lit(names)})"
-            wait = "nop" in names or (0 if event else initial["steps"] + 1) >= 50
-        origin = "(some .human)" if event else "none"
-        predicted = f"(IterArchitecture.observedCycle {pace(initial)} {origin} {outcome})"
-        checks.append(f"example : {predicted}.pace = {pace(expected)} := by decide")
-        # Ordered dispatch prefix and presence of save/recovery/wait are observable.
-        kind = ".external" if event else ".selectTask" if initial["burst"] else ".autonomous" if initial["post"] else ".continueTask"
-        actions = [f".request {kind}"]
-        if failed:
-            actions.append(".recover")
-        else:
-            actions += [".dispatch " + lit(name) for name in names] + [".save"]
-            if wait:
-                actions.append(".slowWait")
-        checks.append(f"example : {predicted}.actions = [{', '.join(actions)}] := by decide")
-    return checks
-
-
 def omega_state(row, history):
     wake = "none" if row.get("wake") is None else f"(some {lit(row['wake'])})"
     return f"(OmegaArchitecture.State.mk {lit(row['loops'])} {lit(row['previous'])} {lit(row['last_results'])} {lit(history)} {wake})"
@@ -156,7 +120,7 @@ def main():
     parser.add_argument("--traces", type=Path, action="append", required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    source = ["import IterArchitecture", "import OmegaArchitecture", "set_option maxRecDepth 10000"]
+    source = ["import OmegaArchitecture", "set_option maxRecDepth 10000"]
     count = 0
     for base in args.traces:
         for root in sorted(base.iterdir()):
@@ -166,11 +130,11 @@ def main():
             info = json.loads(identity.read_text())
             # Semantic mutants are checked by the differential harness, not replayed
             # as if they were traces of the intended implementation.
-            if info["scenario"] in {"last-nop-only", "budget-49", "nine-call-cap", "duplicate-rearms", "inclusive-wake", "no-decrement"}:
+            if info["scenario"] in {"duplicate-rearms", "inclusive-wake", "no-decrement"}:
                 continue
             rows = [json.loads(line) for line in (root / "trace.jsonl").read_text().splitlines()]
             source.append("-- " + json.dumps(info))
-            checks = iter_replay(rows) if info["mode"] == "iter" else omega_replay(rows, json.loads((root / "scenario.json").read_text()))
+            checks = omega_replay(rows, json.loads((root / "scenario.json").read_text()))
             source.extend(checks)
             count += len(checks)
     args.output.write_text("\n\n".join(source) + "\n")

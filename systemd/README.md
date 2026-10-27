@@ -112,7 +112,8 @@ systemctl --user enable --now pettaclaw@research.service
 Check each unit's status and journal separately. `/modes` should answer through
 the independent responder, including while cognition is stopped. `/mode iter`
 or `/mode omega` selects the loop for the next supervised cognition process.
-Both require the durable channel; the responder always executes on CeTTa.
+Both require the durable channel; the responder always executes on CeTTa. Iter
+also needs the `cetta` engine: with `petta` selected, its launch refuses.
 
 ## Start at boot and check recovery
 

@@ -47,11 +47,13 @@ def adapter_ledger(mode, durable_channel):
         "delivery": "durable keyed intent queue submitted by control responder; acceptance is not delivery",
         "lifecycle": "independent command responder; operator latch and supervised cognition recycle"}
     if mode == "iter":
-        return {**common, "loop": "qualified pinned Iter control port",
-            "tool_process": "CeTTa lib/proc; pinned upstream subprocess helper on PeTTa",
-            "booleans": "explicit MeTTa atoms at Python predicate boundaries",
-            "provider": "existing owned HTTP transport; native OpenAI or Anthropic tool calls",
-            "anthropic_policy": "auto tool choice; core retries no-tool replies; default thinking; opaque signed reasoning preserved",
+        return {**common,
+            "loop": "vendored MeTTa Iter: iter.metta and utils.metta unchanged",
+            "channel_module": "channels/telegram.metta over the durable CWP service; input acknowledged when a provider turn starts whose saved history holds it",
+            "gate": "operator latch and recycle checked before each provider request; a stop is waited out and the iteration restarts",
+            "tool_process": "iter_worker.metta, one CeTTa process per tool, channel or transformation call",
+            "provider": "godelclaw native provider in a CeTTa process per request; agent model selection and credential aliases",
+            "anthropic_policy": "auto tool choice; loop retries no-tool replies; adaptive thinking; opaque signed reasoning preserved",
             "memory": "mode-private upstream experience, files and transformations"}
     return {**common,
         "input_annotations": "migrated to current PeTTa annotations",
@@ -66,46 +68,50 @@ def adapter_ledger(mode, durable_channel):
         "tools": "advertise only connected tools; nop added"}
 
 
+# Iter resolves its worker, utils.metta and lib_nal.metta in its working
+# directory, as a checkout of the repository runs. These are code: they are
+# replaced at every launch. Tools, channels, prompt and memory belong to the
+# agent and are only seeded.
+ITER_CODE = ("iter.metta", "utils.metta", "iter_worker.metta", "lib_nal.metta", "reprogramming.txt")
+ITER_SUPERVISED_CODE = ("iter_llm.metta", "godelclaw_host.metta", "godelclaw_pause.metta")
+
+
 def prepare_iter(runtime, repo, standalone=False, prompt_path=None):
     check_runtime_profile(runtime, standalone)
     runtime.mkdir(parents=True, exist_ok=True)
     for directory in ("tools", "channels", "memory", "transformations"):
         (runtime / directory).mkdir(exist_ok=True)
-    for path in (HERE / "iter/upstream/tools").glob("*.py"):
-        seed(path, runtime / "tools" / path.name)
-    seed(HERE / "iter/upstream/reprogramming.txt", runtime / "reprogramming.txt")
+    vendor, host = HERE / "iter/upstream", HERE / "iter/supervised"
+    for name in ITER_CODE:
+        shutil.copyfile(vendor / name, runtime / name)
+    if standalone:
+        shutil.copyfile(vendor / "iter_llm.metta", runtime / "iter_llm.metta")
+    else:
+        # The supervised iter_llm.metta keeps the fork's interface and adds
+        # the agent's provider, gate and channel acknowledgement.
+        for name in ITER_SUPERVISED_CODE:
+            shutil.copyfile(host / name, runtime / name)
+        shutil.copyfile(host / "telegram.metta", runtime / "channels/telegram.metta")
+    for path in sorted((vendor / "tools").glob("*.metta")):
+        source = host / path.name if not standalone and (host / path.name).exists() else path
+        seed(source, runtime / "tools" / path.name)
+    if standalone:
+        for path in sorted((vendor / "channels").glob("*.metta")):
+            seed(path, runtime / "channels" / path.name)
     prompt = runtime / "prompt.txt"
     if not prompt.exists():
-        text = (HERE / "iter/upstream/prompt.txt").read_text()
+        text = (vendor / "prompt.txt").read_text()
         if prompt_path:
             text += "\n\n" + prompt_path.read_text()
         elif not standalone:
             text += "\n\nAgent identity and standing instructions:\n" + identity(repo)
             text += "\nThis mode's Telegram channel is named telegram. Keep your own identity.\n"
         prompt.write_text(text)
-    if standalone:
-        for path in (HERE / "iter/upstream/channels").glob("*.py"):
-            seed(path, runtime / "channels" / path.name)
-        # Upstream tool workers suppress stdout. Forward terminal sends to
-        # the foreground process without changing their SUCCESS result.
-        terminal = runtime / "channels/terminal.py"
-        upstream_terminal = (HERE / "iter/upstream/channels/terminal.py").read_text()
-        if terminal.read_text() == upstream_terminal:
-            terminal.write_text(upstream_terminal.replace(
-                "    print(content)",
-                "    import runtime_host\n    runtime_host.terminal_enqueue(content)"))
-    else:
-        (runtime / "channels/telegram.py").write_text(
-            'import runtime_host\ndef receive(): return runtime_host.receive()\n'
-            'def send(content): return runtime_host.send(content)\n')
-    entry = runtime / "run.metta"
-    entry.write_text(f'!(import! &self "{HERE}/iter/core.metta")\n' +
-                     ("" if standalone else f'!(import! &self "{HERE}/runtime_host.py")\n'
-                      '!(py-call (runtime_host.install_iter))\n') + '!(iter:start)\n')
-    (runtime / "adapter-ledger.json").write_text(json.dumps(
-        standalone_ledger("iter", prompt_path) if standalone else
-        adapter_ledger("iter", bool(os.environ.get("METTACLAW_TELEGRAM_SERVICE_SOCKET"))), indent=2))
-    return entry, [str(HERE), str(HERE / "iter")]
+    ledger = (standalone_ledger("iter", prompt_path) if standalone else
+              adapter_ledger("iter", bool(os.environ.get("METTACLAW_TELEGRAM_SERVICE_SOCKET"))))
+    ledger["upstream"] = json.loads((HERE / "iter/upstream-manifest.json").read_text())["commit"]
+    (runtime / "adapter-ledger.json").write_text(json.dumps(ledger, indent=2))
+    return runtime / "iter.metta", [str(HERE)]
 
 
 def prepare_omega(runtime, repo, standalone=False, prompt_path=None):
@@ -140,7 +146,7 @@ def prepare_omega(runtime, repo, standalone=False, prompt_path=None):
             prompt.write_text(prompt.read_text() + "\n\nAgent identity and standing instructions:\n" + identity(repo))
         (runtime / "identity-seeded").touch()
     if standalone:
-        seed(HERE / "iter/upstream/channels/terminal.py", runtime / "terminal.py")
+        seed(HERE / "terminal.py", runtime / "terminal.py")
     for relative, (before, after) in LEGACY_INPUT_DECLARATIONS.items():
         path = checkout / relative
         path.write_text(path.read_text().replace(before, after))
@@ -276,12 +282,13 @@ def engine_command(engine, entry, environment):
 def standalone_ledger(mode, prompt_path):
     ledger = {"profile": "standalone", "channel": "terminal",
         "identity": "explicit prompt addition" if prompt_path else "pinned upstream prompt only",
-        "provider": "pinned upstream SDK and environment variables",
+        "provider": ("vendored iter_llm.metta over CeTTa HTTP with LLM_MODEL, BASE_URL and AI_API_KEY"
+                     if mode == "iter" else "pinned upstream SDK and environment variables"),
         "lifecycle": "foreground process; Ctrl-C stops the launch",
-        "loop": "pinned Iter control port" if mode == "iter" else "pinned Omega core loop",
+        "loop": "vendored MeTTa Iter, run as a checkout runs" if mode == "iter" else "pinned Omega core loop",
         "memory": "upstream experience/files" if mode == "iter" else "mode-private text recall"}
     if mode == "iter":
-        ledger["terminal_output"] = "isolated worker sends forwarded at the foreground checkpoint"
+        ledger["terminal_output"] = "workers discard output, as upstream: a send shows in the loop's Output> line"
     if mode == "omega":
         ledger["reasoning"] = "upstream NAL and PLN libraries loaded"
         ledger["startup"] = "core only; upstream Chroma and optional plugins are not loaded"
@@ -379,8 +386,10 @@ def main():
         parser.error("--prompt is for standalone launches; supervised instances use their configured prompt")
     if not standalone and not os.environ.get("METTACLAW_TELEGRAM_SERVICE_SOCKET"):
         parser.error("supervised mode requires an independent Telegram channel service")
-    if standalone:
-        needed = ("openai",) if args.mode == "iter" else ("openai", "yaml")
+    if args.mode == "iter" and args.engine != "cetta":
+        parser.error("iter mode runs on CeTTa: select the cetta engine")
+    if standalone and args.mode == "omega":
+        needed = ("openai", "yaml")
         if any(importlib.util.find_spec(module) is None for module in needed):
             parser.error(f"install the selected mode's dependencies: python3 -m pip install -r modes/{args.mode}/requirements.txt")
     if args.state_dir:
@@ -406,15 +415,22 @@ def main():
                        PYTHONDONTWRITEBYTECODE="1")
     if not standalone:
         environment["METTACLAW_MODE_RUNTIME"] = str(runtime)
+        if args.mode == "iter":
+            # The agent's provider settings apply; the standalone client's
+            # endpoint and key never enter the loop.
+            for name in ("LLM_MODEL", "BASE_URL", "AI_API_KEY"):
+                environment.pop(name, None)
+            environment["ITER_PROVIDER_ENTRY"] = str(HERE / "iter/supervised/provider.metta")
     # Diagnose engine setup before writing a runtime or seeding its prompt.
     command = engine_command(args.engine, runtime / "run.metta", environment)
-    if standalone and args.engine == "cetta":
+    if standalone and args.engine == "cetta" and args.mode == "omega":
         version = subprocess.run([command[0], "--version"], env=environment,
                                  capture_output=True, text=True, timeout=10)
         if version.returncode or not any(f"({build})" in version.stdout for build in ("python", "main", "full")):
-            parser.error("standalone modes need a CeTTa build with Python support (BUILD=python)")
+            parser.error("standalone Omega needs a CeTTa build with Python support (BUILD=python)")
     entry, paths = (prepare_iter if args.mode == "iter" else prepare_omega)(
         runtime, args.repo, standalone=standalone, prompt_path=args.prompt)
+    command = engine_command(args.engine, entry, environment)
     # The loop's CWD is mode-private; selection remains agent-wide.
     environment["METTACLAW_LOOP_MODE_PATH"] = os.path.abspath(
         environment.get("METTACLAW_LOOP_MODE_PATH", str(args.repo / "memory/loop_mode.json")))

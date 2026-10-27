@@ -35,8 +35,8 @@ def main():
     matrix_ok = run("matrix", [sys.executable, str(HERE / "verify.py"), *common, "--output", str(matrix), "--mutants"])
     if matrix_ok:
         summary = json.loads((matrix / "summary.json").read_text())
-        assert len({(m, n) for m, n, _ in summary["cases"]}) == 24
-        assert len(summary["mutants"]) == 6 and all(row[2] for row in summary["mutants"])
+        assert len({(m, n) for m, n, _ in summary["cases"]}) == 12
+        assert len(summary["mutants"]) == 3 and all(row[2] for row in summary["mutants"])
     run("upstream-tests", [sys.executable, str(HERE / "upstream_tests.py"), *common,
                             "--output", str(args.output / "upstream-tests")])
     protocol_env = os.environ.copy()
@@ -50,14 +50,15 @@ def main():
     build.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env.update(LEAN_PATH=str(build))
-    for name in ("ClawArchitectures", "PresentMoment", "IterArchitecture", "OmegaArchitecture"):
+    for name in ("ClawArchitectures", "PresentMoment", "OmegaArchitecture"):
         if not run("lean-" + name, ["lean", "-o", str(build / (name + ".olean")), str(lean_root / (name + ".lean"))], env=env, cwd=args.formal_root):
             break
     if matrix_ok:
         replay = build / "TraceReplay.lean"
         if run("generate-replay", [sys.executable, str(HERE / "replay.py"), "--traces", str(matrix), "--output", str(replay)]):
             run("lean-replay", ["lean", str(replay)], env=env, cwd=args.formal_root)
-    # Small focused runtime check for the lib/proc text boundary used by Iter.
+    # Small focused runtime check for the lib/proc text boundary used by
+    # Iter's shell and metta tools.
     source = args.cetta_source or args.cetta.parent
     proc = source / "tests/petta/proc_text_boundary.metta"
     if not proc.is_file():

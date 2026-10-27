@@ -1,55 +1,5 @@
 {
   "frozen": true,
-  "iter": [
-    {
-      "id": "human-roundtrip",
-      "contract": "New channel input, tool result and durable experience"
-    },
-    {
-      "id": "autonomous-continuation",
-      "contract": "Initial task-selection prompt followed by autonomous work"
-    },
-    {
-      "id": "nop-in-batch",
-      "contract": "nop before another call still starts a new burst after slow polling"
-    },
-    {
-      "id": "fast-budget",
-      "contract": "50 autonomous turns slow down without declaring task completion"
-    },
-    {
-      "id": "plain-text-retry",
-      "contract": "Text-only reply is quoted back with undelivered annotation"
-    },
-    {
-      "id": "length-retry",
-      "contract": "Token limit without calls yields the concise-tool retry"
-    },
-    {
-      "id": "bad-tools",
-      "contract": "Unknown name, malformed JSON, non-object arguments and a raising tool"
-    },
-    {
-      "id": "tool-caps",
-      "contract": "At most ten calls, results clipped at 5000 characters"
-    },
-    {
-      "id": "transforms-and-reload",
-      "contract": "Sorted transforms, failed transform preserves input, next-capture reload"
-    },
-    {
-      "id": "memory-surface",
-      "contract": "3000-character threshold, private paths omitted, overflow directive"
-    },
-    {
-      "id": "compaction",
-      "contract": "Twenty-message cleanup buckets, reasoning stripping, 100-to-80 retention, leading-tool removal"
-    },
-    {
-      "id": "failure-and-restart",
-      "contract": "Provider exception rolls back after input checkpoint; restart retains experience but resets control"
-    }
-  ],
   "omega": [
     {
       "id": "human-roundtrip",
