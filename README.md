@@ -1218,6 +1218,16 @@ the C implementation or filesystem. Complete transition/read-path migration,
 large-record streaming beyond the CAV1 convenience frame and live cutover
 remain separate qualification gates.
 
+`sql_value_cetta.metta` supplies the retained binary64-to-text conversion in
+MeTTa, pinned to SQLite 3.53.2's default numeric text rules. Its native inputs
+are exact binary64 parts and integer divmod; it calls neither SQLite nor
+Python. The conversion preserves signed infinities, binds NaN as null and
+renders either sign of zero as `0.0`. This is an inactive compatibility helper,
+not a complete assignment-affinity or provider transaction boundary.
+`tests/test_sql_value_cetta.py` compares real MeTTa results against the SQLite
+oracle. `tests/check_sql_value_contract.py` replays the checked Lean integer
+power trace; full binary64/parser/C refinement remains a separate obligation.
+
 ## Illustrations
 
 The upstream examples show memory recall, tool use and learning in a grid-world
