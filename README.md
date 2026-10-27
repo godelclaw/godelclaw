@@ -1189,6 +1189,28 @@ define its behavior. SQLite's formatting, column affinity and row-number
 allocation are not requirements for new native operations. Preserve historical
 identities and payloads through migration mappings and offline source evidence.
 
+`knowledge_store_cetta.metta` supplies the first application-neutral interface:
+typed facts with ground occurrence identities, explicit point observations,
+ordered edits and durable command receipts. A receipt commits with its edits;
+repeating its identical command returns the original answer. Present and absent
+facts both contribute read dependencies. Payloads, including expression syntax
+and variables, remain inert. Native storage errors and uncertain outcomes remain
+distinct from missing facts or receipts. Recovery synchronizes a fresh view
+before resolving a receipt. Matching queries and disk-backed secondary indexes
+remain separate additions to this initial point interface.
+
+`provider_domain_cetta.metta` implements typed attempt ownership, usage and
+completion over those facts. Completion observes five facts; a late usage
+update observes three and does not depend on the changing active lease.
+Unknown counters can be enriched without becoming zero, and each submitted
+attempt has one current usage tally. Conflicting reports remain in immutable
+command receipts for reconciliation. A usage conflict does not discard a
+received answer. The submitted-attempt fact must originate with the trusted
+transport owner. Admission, transport integration, complete readers and migration
+are still required before this inactive application slice can be selected.
+The native tests exercise stale decisions, concurrent independent changes,
+inert data, actual write/synchronization failures, worker death and readback.
+
 The inactive SQLite-free provider-store modules are migration experiments,
 not a selected runtime backend. `provider_store_cetta.metta` preserves typed
 records and insertion identities. `provider_index_store_cetta.metta` commits
