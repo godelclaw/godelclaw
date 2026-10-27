@@ -163,6 +163,8 @@ def main():
         if args.phase == 'dependencies':
             dependencies(c)
             paths(c)
+            from mode_state_cwd_check import check as cwd_check
+            cwd_check(c)
         else:
             active(c, args)
             fuel_reads(c)

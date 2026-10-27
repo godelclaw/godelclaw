@@ -37,11 +37,14 @@ class Qualification(ReceiptQualification):
         env.update(GOAL_BOOKKEEPING_KERNEL_PATH=str(self.directory / "goals_kernel.json"),
                    GOAL_BOOKKEEPING_COMPOST_PATH=str(self.directory / "goals_compost.log"),
                    GOAL_BOOKKEEPING_OBSERVATIONS=str(self.directory / "observations.jsonl"))
+        for key in ("MODE_STATE_BASELINE_COMMIT", "MODE_STATE_REQUIRE_LONG_REPLY"):
+            if key in os.environ:
+                env[key] = os.environ[key]
         for key in self.unset_environment:
             env.pop(key, None)
         return env
 
-    def run(self, name, program, settings=None, check=True, runtime_root=None):
+    def run(self, name, program, settings=None, check=True, runtime_root=None, timeout=90):
         self.index += 1
         stem = "%03d-%s" % (self.index, name)
         runtime_root = ROOT if runtime_root is None else runtime_root
@@ -55,7 +58,7 @@ class Qualification(ReceiptQualification):
         env = self.environment()
         env.update(settings or {})
         result = subprocess.run(command, cwd=runtime_root, env=env, capture_output=True,
-                                timeout=90, preexec_fn=limit)
+                                timeout=timeout, preexec_fn=limit)
         self.record_process(stem, command, result, env, cwd=runtime_root)
         if check:
             assert result.returncode == 0, result.stderr.decode(errors="backslashreplace")

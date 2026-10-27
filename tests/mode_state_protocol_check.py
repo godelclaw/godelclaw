@@ -242,6 +242,12 @@ def main():
         c=Qualification(args.evidence.resolve(),Path(directory))
         c.snapshot_sources('tests/mode_state_protocol_check.py','src/mode_io_cetta.metta','src/engine_modes_cetta.metta','src/lifecycle_cetta.metta')
         check(c)
+        from mode_state_lifecycle_check import check as lifecycle_mkstemp
+        directory=c.directory/'lifecycle-mkstemp';directory.mkdir()
+        evidence=c.evidence/'lifecycle-mkstemp';evidence.mkdir()
+        sub=Qualification(evidence,directory)
+        sub.snapshot_sources('tests/mode_state_lifecycle_check.py','src/lifecycle_cetta.metta')
+        lifecycle_mkstemp(sub)
 
 
 if __name__=='__main__':main()

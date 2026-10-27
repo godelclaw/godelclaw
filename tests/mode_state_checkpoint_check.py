@@ -52,7 +52,8 @@ def main():
             if args.swipl:
                 env['PATH']=str(args.swipl.parent)+os.pathsep+env['PATH']
             for key in ('MODE_STATE_ENGINE_SHA256','MODE_STATE_MANIFEST_SHA256',
-                        'MODE_STATE_LEAN_ROOT','MODE_STATE_LEAN_BIN'):
+                        'MODE_STATE_LEAN_ROOT','MODE_STATE_LEAN_BIN',
+                        'MODE_STATE_BASELINE_COMMIT','MODE_STATE_REQUIRE_LONG_REPLY'):
                 if key in os.environ: env[key]=os.environ[key]
             exits={}
             if args.phase=='final-source':

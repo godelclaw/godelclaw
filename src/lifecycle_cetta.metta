@@ -3,6 +3,7 @@
 !(import! &self (library str))
 !(import! &self (library system))
 !(import! &self (library json))
+!(import! &self (library path))
 !(import! &self ./src/mode_paths_cetta.metta)
 !(import! &self ./src/mode_io_cetta.metta)
 !(import! &self ./src/mode_values_cetta.metta)
@@ -30,10 +31,8 @@
        (mio:write-body $owner
          (str:concat (json:stringify-python-with
            (JsonObject ((JsonPair "schema" 1) (JsonPair "state" $state))) ((sort-keys True))) "\n") True ()) $mode)))
-(= (lifecycle-native:publish $path $temporary $state)
-   (let $owner (mio:open $temporary ("create" "exclusive") 384)
-     (if (mv:failed? $owner) $owner
-       (let* (($closed (mio:close $owner (lifecycle-native:body $owner $state)))
+(= (lifecycle-native:publish $path $temporary $state $owner)
+   (let* (($closed (mio:close $owner (lifecycle-native:body $owner $state)))
               ($result (if (== $closed 1) (mio:rename $temporary $path) $closed)))
          (if (== $result 1) 1
            ; Only remove a temporary that THIS invocation exclusively created.
@@ -42,15 +41,44 @@
              (case $result
                (((ErFailure $class $message $detail)
                  (ErFailure $class $message (LifecycleCleanup $detail $removed)))
-                ($other (ErFailure NativeEvaluationError "missing lifecycle write outcome" ($result $removed)))))))))))
+                ($other (ErFailure NativeEvaluationError "missing lifecycle write outcome" ($result $removed)))))))))
+; tempfile.mkstemp abspaths ONLY its directory. mkdir and rename target retain
+; pathlib semantics, including symlink/.. traversal. This normalization is
+; lexical: path:parts collapses dot/dotdot, mode-path:build preserves //.
+(= (lifecycle-native:normpath $directory)
+   (mode-path:build (mode-path:prefix $directory) (path:parts $directory)))
+(= (lifecycle-native:abspath $directory)
+   (if (str:starts-with $directory "/") (lifecycle-native:normpath $directory)
+     (let $cwd (catch (system:getcwd))
+       (if (== (get-type $cwd) String)
+         (lifecycle-native:normpath (mio:join $cwd $directory))
+         (case $cwd
+           (((system:os-error $errno $message)
+             (ErFailure (mio:errno-class $errno)
+               (str:join "" ("[Errno " (repr $errno) "] " $message)) $cwd))
+            ($other (ErFailure NativeEvaluationError "native getcwd did not return a directory" $other))))))))
+(= (lifecycle-native:create $path $directory $state $remaining)
+   (if (== $remaining 0)
+     (erv:fail FileExistsError (str:join "" ("[Errno " (repr (system:errno-value "EEXIST"))
+       "] No usable temporary file name found")))
+     (let* (($temporary (mio:join $directory
+               (str:concat ".lifecycle-" (str:byte-slice (system:uuid4-hex) 0 8))))
+            ($owner (mio:open $temporary ("create" "exclusive") 384)))
+       (case $owner
+         (((ErFailure FileExistsError $_ $_)
+           ; Only a known, unowned exclusive-open collision may be retried.
+           (lifecycle-native:create $path $directory $state (- $remaining 1)))
+          ((ErFailure $_ $_ $_) $owner)
+          ((NativeHandle "file-writer" $_) (lifecycle-native:publish $path $temporary $state $owner))
+          ($other (ErFailure NativeEvaluationError "missing exclusive writer outcome" $other)))))))
 (= (lifecycle-native:write $state)
    (let $path (mode-path:lifecycle)
      (if (mv:failed? $path) $path
        (let $parent (mio:mkdir (mode-path:parent $path))
          (if (!= $parent ()) $parent
-           (let $temporary (mio:join (mode-path:parent $path)
-             (str:concat ".lifecycle-" (system:uuid4-hex)))
-             (lifecycle-native:publish $path $temporary $state)))))))
+           (let $directory (lifecycle-native:abspath (mode-path:parent $path))
+             (if (mv:failed? $directory) $directory
+               (lifecycle-native:create $path $directory $state 10000))))))))
 (= (lifecycle-native:start)
    (let $result (lifecycle-native:write "running")
      (if (== $result 1) "started: cognition enabled by operator latch" (mv:raise $result))))

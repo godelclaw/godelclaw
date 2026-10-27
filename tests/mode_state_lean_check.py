@@ -1,5 +1,6 @@
 """Disposable exact-source Lean compilation/replay; existing caches read only."""
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -19,6 +20,36 @@ def sha(path):
     return h.hexdigest()
 
 
+def compile_model(c,binary,source,target,env,name,compiled):
+    command=[str(binary),'-j1','-o',str(target),str(source)]
+    child=subprocess.run(command,cwd=c.directory,env=env,capture_output=True,
+                         timeout=180,preexec_fn=limit)
+    c.record_process('compile-'+name,command,child,env)
+    compiled.append({'name':name,'exit':child.returncode,
+                     'olean_sha256':sha(target) if target.is_file() else None})
+    c.save('compilation-results.json',compiled)
+    assert child.returncode==0,('exact model compilation failed',name,child.returncode)
+
+
+@contextmanager
+def external_identities(c,inventory,sources,models,binary,toolchain):
+    before=inventory();tool_sha=sha(binary)
+    c.save('external-identities-START.json',{'sources':sources,'cache_files':before,
+           'lean':str(binary),'lean_sha256':tool_sha,'toolchain':toolchain,
+           'scope':'all files in external LEAN_PATH package-library roots; unrelated project build cache excluded'})
+    try:
+        yield
+    finally:
+        after=inventory()
+        after_sources={name:sha(models/(name+'.lean')) for name in sources}
+        after_tool=sha(binary)
+        c.save('external-identities-END.json',{'sources':after_sources,'cache_files':after,
+               'lean_sha256':after_tool,'external_build_invoked':False})
+        assert before==after,'external dependency cache identities changed; no repair/rebuild permitted'
+        assert sources==after_sources,'external model sources changed'
+        assert tool_sha==after_tool,'external Lean executable changed'
+
+
 def check(c):
     root = Path(os.environ.get('MODE_STATE_LEAN_ROOT', str(ROOT.parent/'MeTTapedia/lean/mettapedia')))
     models = root.parent/'pettaclaw'
@@ -36,11 +67,7 @@ def check(c):
         # No external project build/cache root is supplied or written.
         return {str(p): sha(p) for lib in libraries for p in sorted(lib.rglob('*')) if p.is_file()}
 
-    with c.phase('disposable-lean-models-and-fuel-replay'):
-        before = inventory()
-        c.save('external-identities-START.json', {'sources': sources, 'cache_files': before,
-               'lean': str(binary), 'lean_sha256': sha(binary), 'toolchain': toolchain,
-               'scope': 'all files in external LEAN_PATH package-library roots; unrelated project build cache excluded'})
+    with c.phase('disposable-lean-models-and-fuel-replay'), external_identities(c,inventory,sources,models,binary,toolchain):
         env = c.environment()
         env['LEAN_PATH'] = os.pathsep.join(map(str,libraries))
         compiled = []
@@ -49,12 +76,7 @@ def check(c):
             source.write_bytes((models/(name+'.lean')).read_bytes())
             (c.evidence/source.name).write_bytes(source.read_bytes())
             target = c.directory/(name+'.olean')
-            command = [str(binary), '-j1', '-o', str(target), str(source)]
-            child = subprocess.run(command, cwd=c.directory, env=env, capture_output=True,
-                                   timeout=180, preexec_fn=limit)
-            c.record_process('compile-'+name, command, child, env)
-            compiled.append({'name':name,'exit':child.returncode,'olean_sha256':sha(target) if target.is_file() else None})
-        c.save('compilation-results.json', compiled)
+            compile_model(c,binary,source,target,env,name,compiled)
         fuel = (models/'FuelPolicy.lean').read_text()
         replay = c.directory/'Replay.lean'
         held = [0,1,2,3,4,49,50,51,199,200,201,1000]
@@ -98,15 +120,11 @@ def main : IO Unit := do
                                    % (q(name), h,g,h,g,h,g))
             actual.extend(rows(c.run('fuel-native-grid-'+name, source)))
         assert actual == expected
-        after = inventory()
-        assert before == after, 'external dependency cache identities changed; no repair/rebuild permitted'
-        assert sources == {name:sha(models/(name+'.lean')) for name in names}
-        c.save('external-identities-END.json', {'sources':sources, 'cache_files':after,
-                                               'lean_sha256':sha(binary), 'external_build_invoked':False})
         c.save('result.json', {'compilations':compiled,'native_replay_rows':len(actual),'actual':actual,
                'all_compilations_passed':all(x['exit']==0 for x in compiled),
                'ceiling': 'explicit correspondence wrapper, not an existing model function',
-               'lifecycle': 'runtime latch-only; watcher model does not refine current runtime',
+               'lifecycle': {'runtime':'operator latch only','model_source_sha256':sources['LifecycleAuthority'],
+                   'correspondence':'exact compiled model source preserved; compilation alone is not a runtime/filesystem crash proof'},
                'RestEnergy': 'stale autonomy_paused mapping; no oracle/model source changed'})
 
 
@@ -118,8 +136,10 @@ def main():
     args.evidence.mkdir(parents=True, exist_ok=False)
     with tempfile.TemporaryDirectory(prefix='mode06-lean-') as directory:
         c = Qualification(args.evidence.resolve(),Path(directory))
-        c.snapshot_sources('tests/mode_state_lean_check.py','src/fuel_cetta.metta')
+        c.snapshot_sources('tests/mode_state_lean_check.py','tests/mode_state_corrections_check.py','src/fuel_cetta.metta')
         check(c)
+        from mode_state_corrections_check import compiler
+        compiler(c)
 
 
 if __name__ == '__main__': main()

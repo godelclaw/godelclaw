@@ -114,6 +114,27 @@ class ModeStateSupportTest(unittest.TestCase):
         guard.unset_environment = ("HOME",)
         self.assertNotIn("HOME", guard.environment())
 
+    def test_only_explicit_control_pins_are_forwarded(self):
+        guard=self.guard()
+        with mock.patch.dict(os.environ,{"MODE_STATE_BASELINE_COMMIT":"fixture-full-identity",
+                                         "MODE_STATE_REQUIRE_LONG_REPLY":"1",
+                                         "MODE_STATE_UNRELATED_SECRET":"do-not-forward"}):
+            env=guard.environment()
+        self.assertEqual(env["MODE_STATE_BASELINE_COMMIT"],"fixture-full-identity")
+        self.assertEqual(env["MODE_STATE_REQUIRE_LONG_REPLY"],"1")
+        self.assertNotIn("MODE_STATE_UNRELATED_SECRET",env)
+
+    def test_handler_baseline_pin_has_no_ref_or_hash_default(self):
+        from mode_state_handler_errors_check import baseline_source
+        guard=self.guard()
+        for value in (None,"","main","HEAD","1234567","z"*40):
+            with mock.patch.dict(os.environ,{},clear=True):
+                if value is not None:os.environ["MODE_STATE_BASELINE_COMMIT"]=value
+                with mock.patch("mode_state_handler_errors_check.subprocess.run") as run:
+                    with self.assertRaisesRegex(AssertionError,"MODE_STATE_BASELINE_COMMIT"):
+                        baseline_source(guard)
+                    run.assert_not_called()
+
     def mode_sources(self):
         root = Path(__file__).resolve().parents[1] / "src"
         names = ("mode_runtime", "mode_text_cetta", "mode_values_cetta", "mode_io_cetta",

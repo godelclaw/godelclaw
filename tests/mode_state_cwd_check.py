@@ -1,8 +1,4 @@
-"""Bounded capability checkpoint: actual cwd, no state call or cwd deletion.
-
-Uses only generated directories. A reproduced missing capability is recorded
-as BLOCKED, never claimed a semantic pass because the outer process exits 0.
-"""
+"""Actual long cwd with minimal pure-native imports; safe-root phase guards."""
 import argparse
 import json
 import os
@@ -11,7 +7,7 @@ import subprocess
 import sys
 import tempfile
 
-from effect_receipts_support import limit
+from effect_receipts_support import emit, limit, rows
 from mode_state_support import Qualification
 
 
@@ -45,8 +41,10 @@ def check(c):
             oracle=[sys.executable,'-c','import json,os; print(json.dumps({"cwd":os.getcwd()}))']
             native=c.directory/'cwd.metta'
             native.write_text('!(println! BeforeCwd)\n!(import! &self (library system))\n'
-                '!(println! (NativeCwd (catch (system:cwd))))\n'
+                '!(import! &self (library json))\n'+
+                emit('(JsonArray ((system:getcwd) (system:cwd)))')+
                 '!(println! (Descriptor (library system)))\n'
+                '!(println! (JsonDescriptor (library json)))\n'
                 '!(println! (Literal (Error fixture literal-value)))\n')
             (c.evidence/'cwd.metta').write_bytes(native.read_bytes())
             command=[str(c.binary),'--lang','petta','--import-mode','ancestor-walk',str(native)]
@@ -61,14 +59,22 @@ def check(c):
             assert json.loads(outputs['python']['stdout'])['cwd']==expected
             assert len(expected)>os.pathconf(root,'PC_PATH_MAX')
             after=inventory();c.save('tree-END.json',after)
-            refused='(NativeCwd (Error (__cetta_lib_system_cwd ()) cannot determine current directory))'
-            c.save('result.json',{'status':'BLOCKED_NATIVE_CWD' if refused in outputs['native']['stdout'] else 'UNEXPECTED_NATIVE_OUTCOME',
+            actual=rows(outputs['native']['stdout'])
+            assert outputs['native']['exit']==0 and actual==[[expected,expected]],outputs
+            for label in ('Descriptor','JsonDescriptor'):
+                import re
+                match=re.search(r'\('+label+r' ([^\n]+)\)',outputs['native']['stdout']);assert match,outputs
+                path=Path(match[1].strip('"')+'.metta').resolve()
+                relative=path.relative_to(c.bundle).as_posix()
+                assert relative in c._phase_start['library_files']
+                import hashlib
+                assert hashlib.sha256(path.read_bytes()).hexdigest()==dict(c._phase_start['files'])[relative]
+            c.save('cwd-result.json',{'status':'PASS_NATIVE_GETCWD_LONG_SUCCESS',
                    'full_project06_complete':False,'cwd_characters':len(expected),'cwd':expected,
                    'child_chdir_components':parts,'process_initial_cwd':str(root),'outputs':outputs,
                    'tree_unchanged':before==after,
-                   'limits':'string-only probe; no lifecycle/state calls, cwd deletion, parent chdir, syscall injection or process control. Raw Error is not CPython errno information; outer0 means reproduced checkpoint only.'})
+                   'limits':'minimal system/json native imports only in deep cwd, no lib_import/embedded SWI/Python fixture/bootstrap. Normal all-library guards run at safe package ROOT. No state call, cwd deletion, parent chdir, injection or process control.'})
             assert before==after,(before,after)
-            assert outputs['native']['exit']==0 and refused in outputs['native']['stdout'],outputs
         finally:
             for n in range(len(parts)-1,-1,-1):
                 os.close(descriptors[n+1]);os.rmdir(parts[n],dir_fd=descriptors[n])
