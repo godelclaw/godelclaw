@@ -197,16 +197,75 @@
                  ($error (LedgerError $error)))))
 
 ; Policy configuration remains an explicit choice, with unchanged defaults.
+; lp:integer is CPython 3.12's int(value): booleans are 1 and 0, numbers
+; truncate toward zero, and a string is read as int(str) reads it. Anything
+; else is InvalidInteger, where Python raises.
 (: lp:integer (-> %Undefined% %Undefined%))
 (= (lp:integer $value)
    (if (ue:equal (get-type $value) Bool) (if $value 1 0)
     (if (ue:equal (get-type $value) Number) (math:trunc $value)
      (if (ue:equal (get-type $value) String)
-       (let* (($text (str:trim $value))
-              ($digits (if (or (str:starts-with $text "+") (str:starts-with $text "-"))
-                           (str:byte-slice $text 1 (str:byte-length $text)) $text)))
-         (if (and (not (ue:equal $digits "")) (str:is-all-in digit $digits)) (str:string->number $text) InvalidInteger))
+       (lp:integer-lead (lp:integer-tokens (str:python-codepoints $value)))
        InvalidInteger))))
+; int(str): Python whitespace around an optional sign and decimal digits,
+; single underscores only between digits, at most 4300 digits. A digit may be
+; any Unicode Nd character; Nd runs are 0 to 9 in order, so a digit's value is
+; its offset in its run, modulo 10. Other non-ASCII characters are invalid.
+(: lp:integer-tokens (-> %Undefined% %Undefined%))
+(= (lp:integer-tokens $codes)
+   (if (ue:equal $codes ()) ()
+     (cons-atom (lp:integer-token (car-atom $codes)) (lp:integer-tokens (cdr-atom $codes)))))
+(: lp:integer-token (-> %Undefined% %Undefined%))
+(= (lp:integer-token $code)
+   (if (and (>= $code 48) (<= $code 57)) (IntDigit (- $code 48))
+    (if (ue:equal $code 43) IntPlus
+     (if (ue:equal $code 45) IntMinus
+      (if (ue:equal $code 95) IntUnderscore
+       (if (lp:python-space $code) IntSpace
+        (if (and (> $code 127) (ue:equal (str:unicode-category $code) "Nd"))
+          (IntDigit (% (lp:nd-offset $code 0) 10))
+          IntBad)))))))
+; int(str) copies ASCII through and then skips only C whitespace there; beyond
+; ASCII it reads str.isspace(): Zs, U+0085, U+2028 and U+2029.
+(: lp:python-space (-> %Undefined% %Undefined%))
+(= (lp:python-space $code)
+   (if (or (and (>= $code 9) (<= $code 13)) (ue:equal $code 32)) True
+    (if (or (ue:equal $code 133) (or (ue:equal $code 8232) (ue:equal $code 8233))) True
+      (and (> $code 127) (ue:equal (str:unicode-category $code) "Zs")))))
+(: lp:nd-offset (-> %Undefined% %Undefined% %Undefined%))
+(= (lp:nd-offset $code $offset)
+   (if (ue:equal (str:unicode-category (- $code 1)) "Nd") (lp:nd-offset (- $code 1) (+ $offset 1)) $offset))
+(: lp:integer-lead (-> %Undefined% %Undefined%))
+(= (lp:integer-lead $tokens)
+   (if (ue:equal $tokens ()) InvalidInteger
+     (case (car-atom $tokens)
+       ((IntSpace (lp:integer-lead (cdr-atom $tokens)))
+        (IntPlus (lp:integer-digits (cdr-atom $tokens) 1 () False))
+        (IntMinus (lp:integer-digits (cdr-atom $tokens) -1 () False))
+        ($other (lp:integer-digits $tokens 1 () False))))))
+; $digits holds the digits read so far, latest first; $under follows an underscore.
+(: lp:integer-digits (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
+(= (lp:integer-digits $tokens $sign $digits $under)
+   (if (ue:equal $tokens ()) (lp:integer-finish $sign $digits $under)
+     (case (car-atom $tokens)
+       (((IntDigit $digit) (lp:integer-digits (cdr-atom $tokens) $sign (cons-atom $digit $digits) False))
+        (IntUnderscore (if (or $under (ue:equal $digits ())) InvalidInteger
+                         (lp:integer-digits (cdr-atom $tokens) $sign $digits True)))
+        (IntSpace (if $under InvalidInteger (lp:integer-trail (cdr-atom $tokens) $sign $digits)))
+        ($other InvalidInteger)))))
+(: lp:integer-trail (-> %Undefined% %Undefined% %Undefined% %Undefined%))
+(= (lp:integer-trail $tokens $sign $digits)
+   (if (ue:equal $tokens ()) (lp:integer-finish $sign $digits False)
+     (if (ue:equal (car-atom $tokens) IntSpace) (lp:integer-trail (cdr-atom $tokens) $sign $digits)
+       InvalidInteger)))
+(: lp:integer-finish (-> %Undefined% %Undefined% %Undefined% %Undefined%))
+(= (lp:integer-finish $sign $digits $under)
+   (if (or $under (or (ue:equal $digits ()) (> (size-atom $digits) 4300))) InvalidInteger
+     (* $sign (lp:digits-value $digits))))
+(: lp:digits-value (-> %Undefined% %Undefined%))
+(= (lp:digits-value $digits)
+   (if (ue:equal $digits ()) 0
+     (+ (car-atom $digits) (* 10 (lp:digits-value (cdr-atom $digits))))))
 (: lp:config-file (-> %Undefined%))
 (= (lp:config-file)
    (let $path (lp:env "METTACLAW_LLM_POLICY_PATH" "")

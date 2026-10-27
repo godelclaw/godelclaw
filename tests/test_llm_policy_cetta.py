@@ -222,6 +222,22 @@ class NativePolicyTests(NativeLedgerFixture):
                   for i, origin in enumerate(origins)]
         self.replay(steps)
 
+    def test_integer_coercion_is_cpythons_int(self):
+        values = [True, False, 0, 7, -7, 7.75, -7.75, -0.5, 1e30, 2.0 ** 63, '7', ' 7 ', '+7', '-7', '-0',
+                  '007', '1_000', '1__0', '_1', '1_', '+_1', '1_2_3', '٣', '７', '１_２',
+                  '\U0001d7ce\U0001d7ed', ' 7 ', '\x1c7\x1f', ' 7 ', '᠎7', '7.0',
+                  '', ' ', '+', '- 5', '1 2', '0x10', '1e3', 'abc', '7\x00', None, [], {}, '9' * 4300, '9' * 4301]
+        forms, expected = [], []
+        for value in values:
+            forms.append('(let $integer (lp:integer (json:parse %s)) (if (== $integer InvalidInteger) '
+                         '(JsonArray ("error")) (JsonArray ("ok" (str:number->string $integer)))))'
+                         % quoted(json.dumps(value)))
+            try:
+                expected.append(['ok', str(int(value))])
+            except (ValueError, TypeError, OverflowError):
+                expected.append(['error'])
+        self.assertEqual(self.native(forms, raw=True), expected)
+
     def test_native_caller_omits_an_empty_origin_as_the_host_does(self):
         # native_llm_host's Python route describes with `request_origin(plan) or None`.
         cases = [{}, {'origin': None}, {'origin': {}}, {'origin': {'trigger': 'user'}},

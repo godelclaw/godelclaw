@@ -110,18 +110,31 @@
    (case (nl:recover $now)
      (((sqlite:committed $ignored2) (nl:claim-ready $metadata $now)) ($error $error))))
 
+; Python's submitted and progress store int(value) in these columns. A value
+; int() refuses, or one beyond SQLite's 64-bit integers, raises there before
+; any statement runs.
+(: nl:stored-integer (-> %Undefined% %Undefined%))
+(= (nl:stored-integer $value)
+   (let $integer (lp:integer $value)
+     (if (ue:equal $integer InvalidInteger) InvalidInteger
+       (if (or (< $integer -9223372036854775808) (> $integer 9223372036854775807)) InvalidInteger $integer))))
 (: nl:submitted (-> %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (nl:submitted $metadata $transport $now)
-   (let* (($id (nl:field $metadata "id" "")) ($epoch (nl:field $metadata "epoch" "")))
-     (nl:transaction
-       ((sqlite:statement "UPDATE native_calls SET state='submitted',transport=?,updated=? WHERE id=? AND epoch=? AND state='claimed'"
-                           ($transport $now $id $epoch))
-        (sqlite:statement "INSERT OR IGNORE INTO llm_call_history(call_id,event,observed,detail) SELECT ?,'submitted',?,'{}' WHERE changes()=1" ($id $now))) $now)))
+   (let $stored (nl:stored-integer $transport)
+     (if (ue:equal $stored InvalidInteger) (LedgerError (InvalidInteger $transport))
+       (let* (($id (nl:field $metadata "id" "")) ($epoch (nl:field $metadata "epoch" "")))
+         (nl:transaction
+           ((sqlite:statement "UPDATE native_calls SET state='submitted',transport=?,updated=? WHERE id=? AND epoch=? AND state='claimed'"
+                               ($stored $now $id $epoch))
+            (sqlite:statement "INSERT OR IGNORE INTO llm_call_history(call_id,event,observed,detail) SELECT ?,'submitted',?,'{}' WHERE changes()=1" ($id $now))) $now)))))
 (: nl:progress (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (nl:progress $metadata $bytes $quiet $soft $now)
-   (nl:transaction
-     ((sqlite:statement "UPDATE native_calls SET bytes=?,quiet_ms=?,soft_elapsed=?,updated=? WHERE id=? AND epoch=? AND state='submitted'"
-       ($bytes $quiet $soft $now (nl:field $metadata "id" "") (nl:field $metadata "epoch" "")))) $now))
+   (let* (($count (nl:stored-integer $bytes)) ($wait (nl:stored-integer $quiet)) ($elapsed (nl:stored-integer $soft)))
+     (if (or (ue:equal $count InvalidInteger) (or (ue:equal $wait InvalidInteger) (ue:equal $elapsed InvalidInteger)))
+       (LedgerError (InvalidInteger ($bytes $quiet $soft)))
+       (nl:transaction
+         ((sqlite:statement "UPDATE native_calls SET bytes=?,quiet_ms=?,soft_elapsed=?,updated=? WHERE id=? AND epoch=? AND state='submitted'"
+           ($count $wait $elapsed $now (nl:field $metadata "id" "") (nl:field $metadata "epoch" "")))) $now))))
 
 (: nl:settle-statements (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (nl:settle-statements $metadata $state $result $reason $soft $now $require-completion)

@@ -48,10 +48,12 @@ class NativeLifetimeTests(policy_tests.NativeLedgerFixture):
                             forms.append('(nl:claim %s %s)' % (native, now))
                             expected.append(['changed', native_lifetime.claim(plans[key])])
                         elif kind == 'submitted':
-                            forms.append('(nl:submitted %s %s %s)' % (native, args[0], now))
+                            forms.append('(nl:submitted %s (json:parse %s) %s)'
+                                         % (native, policy_tests.quoted(json.dumps(args[0])), now))
                             native_lifetime.submitted(plans[key], args[0]); expected.append(['ok'])
                         elif kind == 'progress':
-                            forms.append('(nl:progress %s %s)' % (native, ' '.join(map(policy_tests.literal, (*args, now)))))
+                            forms.append('(nl:progress %s %s %s)' % (native, ' '.join(
+                                '(json:parse %s)' % policy_tests.quoted(json.dumps(value)) for value in args), now))
                             native_lifetime.progress(plans[key], *args); expected.append(['ok'])
                         elif kind == 'settle':
                             state, result, reason, soft = args
@@ -106,7 +108,7 @@ class NativeLifetimeTests(policy_tests.NativeLedgerFixture):
                             native_lifetime.recover(); expected.append(['ok'])
                         else:
                             self.fail('unknown lifetime operation ' + kind)
-                    except (ValueError, TypeError, sqlite3.Error):
+                    except (ValueError, TypeError, OverflowError, sqlite3.Error):
                         expected.append(['error'])
         actual = self.native(forms, module='native_lifetime_cetta.metta')
         self.assertEqual(actual, expected)
@@ -141,6 +143,20 @@ class NativeLifetimeTests(policy_tests.NativeLedgerFixture):
             ('settle', 'a', 'completed', 'late', None, 1, 1005),
         ], dict(a=meta('a', activity='one', lane='interactive'),
                 wrong=meta('a', activity='one', lane='interactive', epoch='wrong')))
+
+    def test_submitted_and_progress_store_pythons_int(self):
+        # Python stores int(value); an int() refusal or a value past SQLite's
+        # 64-bit integers raises before any statement runs.
+        transports = [7.75, True, ' 7 ', '７', '7.5', 1e30, 2 ** 63, -2 ** 63, None]
+        steps, metadata = [], {}
+        for i, transport in enumerate(transports):
+            key = 'call-%d' % i
+            metadata[key] = meta(key)
+            steps += [('admit', key, 1000 + 4 * i), ('claim', key, 1000 + 4 * i),
+                      ('submitted', key, transport, 1001 + 4 * i)]
+        steps += [('progress', 'call-0', 30.9, True, False, 1100), ('progress', 'call-0', '1_024', '-3', 0.5, 1101),
+                  ('progress', 'call-0', 12, 'x', 1, 1102), ('progress', 'call-0', 12, 4, 2 ** 64, 1103)]
+        self.replay_lifetime(steps, metadata)
 
     def test_combined_completion_commits_usage_request_and_receipt_together(self):
         usage = dict(input_tokens=10, cache_read_input_tokens=20,
