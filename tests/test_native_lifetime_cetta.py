@@ -115,6 +115,7 @@ class NativeLifetimeTests(policy_tests.NativeLedgerFixture):
         actual = self.native(forms, module='native_lifetime_cetta.metta')
         self.assertEqual(actual, expected)
         self.assertEqual(policy_tests.snapshot(self.native_db), policy_tests.snapshot(self.python_db))
+        self.assertEqual(policy_tests.stored_details(self.native_db), policy_tests.stored_details(self.python_db))
 
     def seed(self, rows):
         """Seed identical preexisting rows; these are never live agent ledgers."""

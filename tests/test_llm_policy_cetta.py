@@ -56,12 +56,18 @@ def snapshot(path):
     return result
 
 
-@unittest.skipUnless(CETTA, 'set CETTA_BIN to a SQLite-enabled CeTTa build')
 def python_error(error):
     """An exception as the reference reports it: its class and its message."""
     return ['error', type(error).__name__, str(error)]
 
 
+def stored_details(path):
+    """The history details exactly as stored: snapshot() compares them parsed."""
+    with closing(sqlite3.connect(Path(path).as_uri() + '?mode=ro', uri=True)) as conn:
+        return conn.execute('SELECT call_id,event,detail FROM llm_call_history ORDER BY sequence').fetchall()
+
+
+@unittest.skipUnless(CETTA, 'set CETTA_BIN to a SQLite-enabled CeTTa build')
 class NativeLedgerFixture(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -170,6 +176,7 @@ class NativeLedgerFixture(unittest.TestCase):
                         expected.append(python_error(error))
         self.assertEqual(self.native(forms), expected)
         self.assertEqual(snapshot(self.native_db), snapshot(self.python_db))
+        self.assertEqual(stored_details(self.native_db), stored_details(self.python_db))
 
 class NativePolicyTests(NativeLedgerFixture):
     def test_invalid_accounting_counters_are_unknown_without_blocking_completion(self):
@@ -306,6 +313,7 @@ class NativePolicyTests(NativeLedgerFixture):
             ('describe', 'a', 'modèle ✓', 'chat-completions', 'coding', 'native', 1001),
             ('complete', 'a', dict(prompt_tokens=2, completion_tokens=1), 'é' * 70 + '\U0001f600', 1002),
         ])
+        self.assertEqual(stored_details(self.native_db), stored_details(self.python_db))
 
     def test_native_caller_omits_an_empty_origin_as_the_host_does(self):
         # native_llm_host's Python route describes with `request_origin(plan) or None`.
