@@ -2,6 +2,10 @@
 ; Apply uses an explicit epoch/revision and conservative commit validation.
 ; A transition adapter may instead retain its original view and combine the
 ; returned mutation footprint with its complete query dependencies.
+; These are decoded record/checkpoint operations, not SQL assignments. They
+; do not coerce columns or enforce domain uniqueness. The transaction gateway
+; must validate those constraints against its view and same-plan mutations
+; before publication; no live provider gateway selects this module yet.
 !(import! &self ./provider_indexes_cetta.metta)
 
 (= (provider-index:layout-key) (provider-store:index-layout-key))

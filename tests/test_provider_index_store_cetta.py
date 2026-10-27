@@ -149,6 +149,19 @@ class ProviderIndexStoreTests(unittest.TestCase):
                          E("ProviderStoreRefused", S("indexed-store")))
         self.assertEqual(self.all("id-2"), ())
 
+    def test_raw_checkpoint_is_not_a_schema_transaction_gateway(self):
+        # Keep the unimplemented domain guard visible. Ordinal uniqueness
+        # alone does not enforce the source table's nullable TEXT primary key.
+        first, second = self.request(1, "same-id"), self.request(2, "same-id")
+        self.apply([E("add", first), E("add", second)])
+        self.assertEqual(encode(self.all("same-id")), encode((first, second)))
+        reference = sqlite3.connect(":memory:")
+        self.addCleanup(reference.close)
+        reference.execute("CREATE TABLE requests(id TEXT PRIMARY KEY)")
+        reference.execute("INSERT INTO requests VALUES('same-id')")
+        with self.assertRaises(sqlite3.IntegrityError):
+            reference.execute("INSERT INTO requests VALUES('same-id')")
+
     def test_pages_keep_signed_order_and_reconnect_without_recounting(self):
         ordinals = [-(1 << 63), -7, 0, 1, 2, 19, (1 << 63) - 1]
         records = [self.request(ordinal, S("JsonNull")) for ordinal in ordinals]

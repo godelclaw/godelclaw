@@ -1,0 +1,70 @@
+; Maximum primary ordinals without fetching record bodies or scanning history.
+; Capture the original view through planning and commit. The returned suffix
+; range includes the retained maximum and every key that could supersede it.
+!(import! &self ./provider_index_store_cetta.metta)
+
+(= (provider-order:bounds $kind)
+  (if (== (provider-index:positions $kind) ()) (ProviderIndexRefusedV1 unknown-table)
+    (let $prefix (provider-store:prefix $kind)
+      (case (store:key-i64 9223372036854775807)
+        (((StoreKeyBytes $last)
+          (case (store:key-i64 -9223372036854775808)
+            (((StoreKeyBytes $first)
+              (let* (($zero (str:byte-slice $first 0 1))
+                     ($upper (str:join "" ($prefix $last $zero))))
+                (ProviderTableRangeV1 $prefix $upper)))
+             ($error $error))))
+         ($error $error))))))
+
+(= (provider-order:found $key $prefix $upper)
+  (let* (($size (str:byte-length $key)) ($start (str:byte-length $prefix)))
+    (if (== $size (+ $start 8))
+      (if (str:starts-with $key $prefix)
+        (case (store:key->i64 (str:byte-slice $key $start $size))
+          (((StoreKeyInteger $ordinal)
+            (let $layout (provider-index:layout-key)
+              (ProviderTableMaximumV1 (ProviderMaximumOrdinalV1 $ordinal $key)
+                (reads (point $layout) (range $key $upper)))))
+           ($error $error)))
+        (ProviderIndexRefusedV1 foreign-primary-key))
+      (ProviderIndexRefusedV1 primary-key-shape))))
+
+(= (provider-order:maximum-ready $view $kind)
+  (case (provider-order:bounds $kind)
+    (((ProviderTableRangeV1 $prefix $upper)
+      (case (store:scan-reverse-open $view $prefix $upper)
+        (((StoreScan $scan)
+          (let* (($first (store:scan-next $scan 0)) ($closed (store:close $scan)))
+            (case $first
+              ((StoreEnd
+                (let $layout (provider-index:layout-key)
+                  (ProviderTableMaximumV1 ProviderNoRowsV1
+                    (reads (point $layout) (range $prefix $upper)))))
+               ((StoreKey $key $size $next) (provider-order:found $key $prefix $upper))
+               ($error $error)))))
+         ($error $error))))
+     ($error $error))))
+
+(= (provider-order:maximum $view $kind)
+  (case (provider-index:layout $view)
+    ((ProviderIndexLayoutReadyV1 (provider-order:maximum-ready $view $kind))
+     ($error $error))))
+
+(= (provider-order:query $path $expected-epoch $expected-revision $kind)
+  (case (store:open $path "existing")
+    (((StoreOpened $owner)
+      (let $answer
+        (case (store:snapshot $owner)
+          (((StoreSnapshot $view $epoch $revision)
+            (let* (($answer (if (== $epoch $expected-epoch)
+                               (if (== $revision $expected-revision)
+                                 (provider-order:maximum $view $kind)
+                                 (ProviderStoreChanged $epoch $revision))
+                               (ProviderStoreChanged $epoch $revision)))
+                   ($closed (store:close $view))) $answer))
+           ($error $error)))
+        (let $closed (store:close $owner) $answer)))
+     ($error $error))))
+
+(= (provider-order:call (Maximum $path $epoch $revision $kind))
+   (provider-order:query $path $epoch $revision $kind))

@@ -1188,6 +1188,10 @@ records and insertion identities. `provider_index_store_cetta.metta` commits
 primary records and their derived indexes atomically; its checkpoint entry
 requires the captured epoch and revision. The record-only checkpoint writer
 refuses an indexed store, preventing mixed writers from leaving stale indexes.
+These record operations assume already decoded column values; they do not
+perform SQL assignment coercions or enforce the provider's unique constraints.
+A provider transaction gateway must check those constraints against its
+captured view and preceding mutations in the same plan before activation.
 
 `provider_index_query_cetta.metta` provides bounded candidate pages in signed
 ordinal order. Its predicates compare complete CAV1 values, including kind;
@@ -1196,6 +1200,14 @@ only. Every inspected primary row, even a filtered-out candidate, joins the
 query's read dependencies. Continuations bind the query and captured revision;
 an empty page can still have a continuation. Mutation planning for a transition
 must retain that original view and include all of its query dependencies.
+
+`provider_order_cetta.metta` observes a table's maximum signed ordinal through a
+backward range seek, without loading its record body. Its read scope includes
+that key and all possible later keys. Changes below the maximum can therefore
+proceed independently; inserting a higher key or deleting the retained maximum
+invalidates the observation. An empty table records the whole negative range.
+`tests/check_provider_order_contract.py` compares the actual commit witness
+with the corresponding Lean maximum model.
 
 The provider store/index/view tests use `CETTA_VALUE_WORKER` and, optionally,
 `CETTA_CHANNEL_ROOT` to select a SQLite-free CeTTa build with the native store
