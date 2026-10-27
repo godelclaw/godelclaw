@@ -402,6 +402,21 @@ class DomainTests(unittest.TestCase):
         self.assertEqual(self.claw_mail(s, "relay-next", "asi", "*")["status"], "idle")
         self.assertEqual(s.state()["outbound"], {})
 
+    def test_every_waiting_name_is_found_however_much_mail_waits(self):
+        s = self.s
+        program = s.directory / "fill.metta"
+        program.write_text(
+            '!(import! &self mailbox)\n!(import! &self %s)\n'
+            '(= (fill $n) (if (== $n 0) done (let $sent (mailbox:send %s "mail@asi" (format-args "a{}" (cons-atom $n ()))'
+            ' "alice" "godel" "x") (fill (- $n 1)))))\n'
+            '!(fill 300)\n!(mailbox:send %s "mail@asi" "b1" "bob" "godel" "x")\n'
+            '!(println! (shared-mail:relay-names %s (mailbox:open %s "mail@asi") "*"))\n'
+            % (quoted(ROOT / "scripts/shared_mail.metta"), quoted(s.socket), quoted(s.socket), quoted(s.socket),
+               quoted(s.socket)))
+        result = subprocess.run([str(BINARY), "--lang", "petta", "--quiet", str(program)],
+                                capture_output=True, text=True, timeout=600)
+        self.assertIn('(shared-mail:names ("alice" "bob"))', result.stdout, result.stderr[-2000:])
+
     def test_both_gateways_agree_in_a_domain(self):
         native, python = self.s, Setup(self)
         python.config.write_text('domain = "asi"\n' + python.config.read_text())
