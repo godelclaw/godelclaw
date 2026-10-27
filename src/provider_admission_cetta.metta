@@ -1,0 +1,183 @@
+; Local provider admission and transport cooldowns over typed native facts.
+; Explicit integer wall-clock nanoseconds; no provider, clock or retry effect.
+; The trusted caller supplies request metadata and authenticated authority.
+!(import! &self ./provider_domain_cetta.metta)
+
+(= (pa:integer? $value)
+  (if (== (get-metatype $value) Expression) False
+    (case (math:integer-divmod $value 1)
+      (((IntegerDivmodV1 $integer 0) True) ($other False)))))
+(= (pa:positive-integer? $value)
+  (if (pa:integer? $value) (> $value 0) False))
+(= (pa:profile? $profile)
+  (case $profile ((ProviderManagedV2 True) (ProviderUpstreamV2 True) ($other False))))
+(= (pa:terms? $terms)
+  (case $terms
+    (((ProviderAdmissionTermsV2 $profile $mode $now $maximum $request $process)
+      (if (pa:profile? $profile)
+        (if (provider-domain:id? $mode)
+          (if (pa:integer? $now) (pa:positive-integer? $maximum) False) False) False))
+     ($other False))))
+(= (pa:info? $info)
+  (case $info
+    (((ProviderCallInfoV2 $provider $model $purpose $origin)
+      (if (provider-domain:id? $provider)
+        (if (== (get-type $model) String) (== (get-type $purpose) String) False) False))
+     ($other False))))
+(= (pa:admit? $call $token $info $terms)
+  (if (provider-domain:id? $call)
+    (if (provider-domain:id? $token)
+      (if (pa:info? $info) (pa:terms? $terms) False) False) False))
+
+; A missing deadline is an explicit variant, not an invented zero timestamp.
+(= (pa:deadline $profile $now $cooldown $maximum)
+  (if (pa:positive-integer? $maximum)
+    (if (pa:integer? $now)
+      (case $profile
+        ((ProviderUpstreamV2 ProviderAdmissionEligibleV2)
+         (ProviderManagedV2
+          (case $cooldown
+            ((ProviderNoCooldownV2 ProviderAdmissionEligibleV2)
+             ((ProviderCooldownV2 $until $source)
+              (if (pa:integer? $until)
+                (if (< $now $until) (ProviderAdmissionDeferredV2 (- $until $now)) ProviderAdmissionEligibleV2)
+                (ProviderAdmissionRefusedV2 stored-cooldown-format)))
+             ($other (ProviderAdmissionRefusedV2 stored-cooldown-format)))))
+         ($other (ProviderAdmissionRefusedV2 profile))))
+      (ProviderAdmissionRefusedV2 clock-format))
+    (ProviderAdmissionRefusedV2 invalid-maximum)))
+
+(= (pa:keys $command)
+  (case $command
+    (((ProviderAdmitV2 $call $token $info $terms)
+      (if (pa:admit? $call $token $info $terms)
+        (let* (((ProviderCallInfoV2 $provider $model $purpose $origin) $info)
+               ((ProviderAdmissionTermsV2 $profile $mode $now $maximum $request $process) $terms)
+               ($common ((ProviderCallKeyV2 $call) (ProviderLeaseKeyV2 $call)
+                         (ProviderAdmissionKeyV2 $call) (ProviderAnswerKeyV2 $call))))
+          (ProviderAdmissionKeysV2
+            (if (== $profile ProviderManagedV2)
+              (cons-atom (ProviderCooldownKeyV2 $provider) $common) $common)))
+        (ProviderAdmissionRefusedV2 admission-format)))
+     ((ProviderDeferV2 $provider $until $source)
+      (if (provider-domain:id? $provider)
+        (if (pa:integer? $until)
+          (ProviderAdmissionKeysV2 ((ProviderCooldownKeyV2 $provider)))
+          (ProviderAdmissionRefusedV2 deadline-format))
+        (ProviderAdmissionRefusedV2 provider-identity)))
+     ($other (ProviderAdmissionRefusedV2 command-format)))))
+(= (pa:observe $view $command $budget)
+  (case (pa:keys $command)
+    (((ProviderAdmissionKeysV2 $identities) (kb:observe $view $identities $budget))
+     ($error $error))))
+(= (pa:observed? $points $identities)
+  (if (== $identities ()) True
+    (case (kb:lookup $points (car-atom $identities))
+      ((KnowledgeAbsentV1 (pa:observed? $points (cdr-atom $identities)))
+       ((KnowledgePresentV1 $value) (pa:observed? $points (cdr-atom $identities)))
+       ($other False)))))
+
+(= (pa:refuse $why) (ProviderAdmissionPlanV2 (ProviderAdmissionRefusedV2 $why) ()))
+(= (pa:lease? $value)
+  (case $value
+    (((KnowledgePresentV1 (ProviderLeaseV2 $owner $phase))
+      (if (provider-domain:id? $owner)
+        (case $phase
+          ((ProviderLeaseActiveV2 True) (ProviderLeaseCompletedV2 True)
+           (ProviderLeaseFailedV2 True) (ProviderLeaseUnknownV2 True) ($other False))) False))
+     ($other False))))
+
+(= (pa:plan $command $points)
+  (case (pa:keys $command)
+    (((ProviderAdmissionKeysV2 $identities)
+      (if (pa:observed? $points $identities) (pa:plan-ready $command $points)
+        (pa:refuse incomplete-observation)))
+     ($error $error))))
+(= (pa:plan-ready (ProviderAdmitV2 $call $token $info $terms) $points)
+  (case (kb:lookup $points (ProviderAdmissionKeyV2 $call))
+    ((KnowledgeAbsentV1
+      (case ((kb:lookup $points (ProviderCallKeyV2 $call))
+             (kb:lookup $points (ProviderLeaseKeyV2 $call))
+             (kb:lookup $points (ProviderAnswerKeyV2 $call)))
+        (((KnowledgeAbsentV1 KnowledgeAbsentV1 KnowledgeAbsentV1)
+          (pa:plan-fresh $call $token $info $terms $points))
+         ($other (pa:refuse inconsistent-call)))))
+     ((KnowledgePresentV1 $record)
+      (case (kb:same $record (ProviderAdmissionV2 $token $info $terms))
+        (((KnowledgeEqualV1 True)
+          (case (kb:lookup $points (ProviderCallKeyV2 $call))
+            (((KnowledgePresentV1 $current)
+              (case (kb:same $info $current)
+                (((KnowledgeEqualV1 True)
+                  (if (pa:lease? (kb:lookup $points (ProviderLeaseKeyV2 $call)))
+                    (ProviderAdmissionPlanV2 (ProviderAlreadyAdmittedV2 $call) ())
+                    (pa:refuse inconsistent-call)))
+                 ((KnowledgeEqualV1 False) (pa:refuse inconsistent-call))
+                 ($error $error))))
+             ($other (pa:refuse inconsistent-call)))))
+         ((KnowledgeEqualV1 False) (pa:refuse call-identity-conflict))
+         ($error $error))))
+     ($other (pa:refuse admission-observation-format)))))
+
+(= (pa:plan-fresh $call $token (ProviderCallInfoV2 $provider $model $purpose $origin)
+      (ProviderAdmissionTermsV2 $profile $mode $now $maximum $request $process) $points)
+  (let $cooldown
+    (if (== $profile ProviderManagedV2)
+      (case (kb:lookup $points (ProviderCooldownKeyV2 $provider))
+        ((KnowledgeAbsentV1 ProviderNoCooldownV2)
+         ((KnowledgePresentV1 $value) $value)
+         ($other ProviderInvalidCooldownV2)))
+      ProviderNoCooldownV2)
+    (case (pa:deadline $profile $now $cooldown $maximum)
+      ((ProviderAdmissionEligibleV2
+        (let* (($info (ProviderCallInfoV2 $provider $model $purpose $origin))
+               ($terms (ProviderAdmissionTermsV2 $profile $mode $now $maximum $request $process)))
+          (ProviderAdmissionPlanV2 (ProviderAdmittedV2 $call $token)
+            ((KnowledgePutV1 (ProviderCallKeyV2 $call) $info)
+             (KnowledgePutV1 (ProviderLeaseKeyV2 $call) (ProviderLeaseV2 $token ProviderLeaseActiveV2))
+             (KnowledgePutV1 (ProviderAdmissionKeyV2 $call) (ProviderAdmissionV2 $token $info $terms))))))
+       ((ProviderAdmissionDeferredV2 $remaining)
+        (case $cooldown
+          (((ProviderCooldownV2 $until $source)
+            (ProviderAdmissionPlanV2 (ProviderAdmissionWaitingV2 $call $until $remaining $source) ()))
+           ($other (pa:refuse stored-cooldown-format)))))
+       ((ProviderAdmissionRefusedV2 $why) (pa:refuse $why))
+       ($other (pa:refuse deadline-decision))))))
+
+(= (pa:plan-ready (ProviderDeferV2 $provider $until $source) $points)
+  (case (kb:lookup $points (ProviderCooldownKeyV2 $provider))
+    ((KnowledgeAbsentV1 (pa:cooldown-plan $provider $until $source))
+     ((KnowledgePresentV1 (ProviderCooldownV2 $before $original))
+      (if (pa:integer? $before)
+        (if (> $until $before) (pa:cooldown-plan $provider $until $source)
+          (ProviderAdmissionPlanV2 (ProviderCooldownRecordedV2 $before) ()))
+        (pa:refuse stored-cooldown-format)))
+     ($other (pa:refuse stored-cooldown-format)))))
+(= (pa:cooldown-plan $provider $until $source)
+  (ProviderAdmissionPlanV2 (ProviderCooldownRecordedV2 $until)
+    ((KnowledgePutV1 (ProviderCooldownKeyV2 $provider) (ProviderCooldownV2 $until $source)))))
+
+; A broker may add complete authority dependencies obtained from this SAME
+; captured view. This low-level function does not authenticate or check them.
+(= (pa:execute $owner $view $receipt $command $budget)
+  (pa:execute-scoped $owner $view (reads) $receipt $command $budget))
+(= (pa:execute-scoped $owner $view $extra-reads $receipt $command $budget)
+  (case (kb:receipt $view $receipt $command $budget)
+    ((KnowledgeReceiptAbsentV1
+      (case (pa:observe $view $command $budget)
+        (((KnowledgeObservedV1 $points $reads)
+          (case (pa:plan $command $points)
+            (((ProviderAdmissionPlanV2 $answer $changes)
+              (kb:publish $owner $view
+                (cons-atom reads (kb:append (cdr-atom $reads) (cdr-atom $extra-reads)))
+                $receipt $command $answer $changes $budget))
+             ($error $error))))
+         ($error $error))))
+     ($replay-or-error $replay-or-error))))
+
+; Admission is local evidence. Even a first admission still needs a separate
+; trusted transport claim/submission, never a replay of an uncertain effect.
+(= (pa:first-admission? $answer)
+  (case $answer
+    (((KnowledgeCommittedV1 (ProviderAdmittedV2 $call $token) $epoch $revision) True)
+     ($other False))))

@@ -1230,6 +1230,20 @@ inert data, actual write/synchronization failures, worker death and readback.
 and replays their focused trace through the actual MeTTa/store boundary. This
 is finite conformance evidence, with interpreter and I/O assumptions explicit.
 
+`provider_admission_cetta.metta` adds local admission and monotone provider
+cooldowns. It records call metadata, initial ownership, requested output and
+admission evidence atomically with its command receipt. Managed requests
+observe the provider's transport deadline; upstream requests bypass it.
+Explicit integer wall-clock nanoseconds preserve exact deadline boundaries.
+There are no work quotas. Admission creates no transport-submission fact;
+replay, readback and already-admitted outcomes cannot grant a first admission
+again. An authenticated broker can supply additional dependencies from the
+same captured view through `pa:execute-scoped`; this function does not itself
+authenticate a caller. Real transport integration, migration and complete
+reporting remain required before selecting this inactive application.
+`tests/check_provider_admission_contract.py` audits the pure deadline laws and
+compares their decisions and cooldown updates with the native program.
+
 The inactive SQLite-free provider-store modules are migration experiments,
 not a selected runtime backend. `provider_store_cetta.metta` preserves typed
 records and insertion identities. `provider_index_store_cetta.metta` commits
