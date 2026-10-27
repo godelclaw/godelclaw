@@ -157,7 +157,9 @@ class NativeLifetimeTests(policy_tests.NativeLedgerFixture):
             steps += [('admit', key, 1000 + 4 * i), ('claim', key, 1000 + 4 * i),
                       ('submitted', key, transport, 1001 + 4 * i)]
         steps += [('progress', 'call-0', 30.9, True, False, 1100), ('progress', 'call-0', '1_024', '-3', 0.5, 1101),
-                  ('progress', 'call-0', 12, 'x', 1, 1102), ('progress', 'call-0', 12, 4, 2 ** 64, 1103)]
+                  ('progress', 'call-0', 12, 'x', 1, 1102), ('progress', 'call-0', 12, 4, 2 ** 64, 1103),
+                  # Every argument converts before any is bound: int('x') wins over 2**64.
+                  ('progress', 'call-0', 2 ** 64, 'x', 1, 1104), ('progress', 'call-0', 1e30, 4, None, 1105)]
         self.replay_lifetime(steps, metadata)
 
     def test_combined_completion_commits_usage_request_and_receipt_together(self):
