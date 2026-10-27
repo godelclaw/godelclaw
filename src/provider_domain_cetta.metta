@@ -31,14 +31,39 @@
 (= (provider-domain:keys-ready $call $attempt $completion)
   (if (provider-domain:id? $call)
     (if (provider-domain:id? $attempt)
-      (let $common ((ProviderCallKeyV2 $call) (ProviderAttemptKeyV2 $call $attempt)
-                    (ProviderUsageKeyV2 $call $attempt))
+      (let $common ((ProviderCallKeyV2 $call) (ProviderAttemptKeyV2 $call $attempt))
         (if $completion
           (ProviderDomainKeysV2 (cons-atom (ProviderLeaseKeyV2 $call)
             (cons-atom (ProviderAnswerKeyV2 $call) $common)))
           (ProviderDomainKeysV2 $common)))
       (ProviderDomainRefusedV2 attempt-identity))
     (ProviderDomainRefusedV2 call-identity)))
+
+; Ownership epochs and billed submissions are different identities. Resolve
+; the registered transport first, then read its usage on the SAME view. An
+; ownership handoff must not create another charge for the same submission.
+(= (provider-domain:observe $view $command $maximum-bytes)
+  (case (provider-domain:keys $command)
+    (((ProviderDomainKeysV2 $identities)
+      (case (kb:observe $view $identities $maximum-bytes)
+        (((KnowledgeObservedV1 $points $reads)
+          (case $command
+            (((ProviderFinishV2 $call $attempt $reference $usage $source)
+              (provider-domain:observe-usage $view $call $attempt $points $reads $maximum-bytes))
+             ((ProviderRecordUsageV2 $call $attempt $usage $source)
+              (provider-domain:observe-usage $view $call $attempt $points $reads $maximum-bytes))
+             ($error (ProviderDomainRefusedV2 command-format)))))
+         ($error $error))))
+     ($error $error))))
+(= (provider-domain:observe-usage $view $call $attempt $points $reads $maximum-bytes)
+  (case (kb:lookup $points (ProviderAttemptKeyV2 $call $attempt))
+    (((KnowledgePresentV1 (ProviderSubmittedAttemptV2 $transport))
+      (case (kb:observe $view ((ProviderUsageKeyV2 $call $transport)) $maximum-bytes)
+        (((KnowledgeObservedV1 $more $extra)
+          (KnowledgeObservedV1 (kb:append $points $more)
+            (cons-atom reads (kb:append (cdr-atom $reads) (cdr-atom $extra)))))
+         ($error $error))))
+     ($other (KnowledgeObservedV1 $points $reads)))))
 
 ; Normalized counts are nonnegative integers or explicit unknowns. There is
 ; no float/text affinity, missing-as-zero conversion or signed64 restriction.
@@ -78,11 +103,11 @@
         (ProviderUsageMergedV2 (ProviderUsageV2 $i $o $r $s)))
        ($other ProviderUsageConflictV2)))))
 
-(= (provider-domain:usage-plan $call $attempt $old $incoming)
+(= (provider-domain:usage-plan $call $transport $old $incoming)
   (case $old
     ((KnowledgeAbsentV1
       (ProviderUsagePlanV2 ProviderUsageAcceptedV2
-        ((KnowledgePutV1 (ProviderUsageKeyV2 $call $attempt) $incoming))))
+        ((KnowledgePutV1 (ProviderUsageKeyV2 $call $transport) $incoming))))
      ((KnowledgePresentV1 $before)
       (if (provider-domain:usage? $before)
         (case (provider-domain:merge-usage $before $incoming)
@@ -91,7 +116,7 @@
               (((KnowledgeEqualV1 True) (ProviderUsagePlanV2 ProviderUsageAcceptedV2 ()))
                ((KnowledgeEqualV1 False)
                 (ProviderUsagePlanV2 ProviderUsageAcceptedV2
-                  ((KnowledgePutV1 (ProviderUsageKeyV2 $call $attempt) $merged))))
+                  ((KnowledgePutV1 (ProviderUsageKeyV2 $call $transport) $merged))))
                ($error $error))))
            (ProviderUsageConflictV2 (ProviderUsagePlanV2 ProviderUsageConflictV2 ()))))
         (ProviderDomainRefusedV2 stored-usage-format)))
@@ -124,8 +149,8 @@
 (= (provider-domain:plan-attempt $call $attempt $usage $points $command $registered)
   (case $registered
     (((KnowledgePresentV1 (ProviderSubmittedAttemptV2 $transport))
-      (case (provider-domain:usage-plan $call $attempt
-              (kb:lookup $points (ProviderUsageKeyV2 $call $attempt)) $usage)
+      (case (provider-domain:usage-plan $call $transport
+              (kb:lookup $points (ProviderUsageKeyV2 $call $transport)) $usage)
         (((ProviderUsagePlanV2 $status $changes)
           (provider-domain:decide $command $points $status $changes))
          ($error $error))))
@@ -138,16 +163,18 @@
   (ProviderDomainPlanV2 (ProviderUsageRecordedV2 $status) $changes))
 (= (provider-domain:decide (ProviderFinishV2 $call $attempt $reference $usage $source)
       $points $status $changes)
-  (let* (($lease (kb:lookup $points (ProviderLeaseKeyV2 $call)))
+  (let* (((KnowledgePresentV1 (ProviderSubmittedAttemptV2 $transport))
+           (kb:lookup $points (ProviderAttemptKeyV2 $call $attempt)))
+         ($lease (kb:lookup $points (ProviderLeaseKeyV2 $call)))
          ($answer (kb:lookup $points (ProviderAnswerKeyV2 $call))))
     (case $lease
       (((KnowledgePresentV1 (ProviderLeaseV2 $owner $phase))
         (if (== $attempt $owner)
           (case $phase
             ((ProviderLeaseActiveV2
-              (provider-domain:finish-owned $call $attempt $reference $answer $status $changes False))
+              (provider-domain:finish-owned $call $attempt $transport $reference $answer $status $changes False))
              (ProviderLeaseCompletedV2
-              (provider-domain:finish-owned $call $attempt $reference $answer $status $changes True))
+              (provider-domain:finish-owned $call $attempt $transport $reference $answer $status $changes True))
              (ProviderLeaseUnknownV2 (ProviderDomainPlanV2 (ProviderNotOwnedV2 $status) $changes))
              (ProviderLeaseFailedV2 (ProviderDomainPlanV2 (ProviderNotOwnedV2 $status) $changes))
              ($other (ProviderDomainRefusedV2 stored-lease-format))))
@@ -158,27 +185,30 @@
 
 ; Conflicting usage remains in the immutable command receipt for reconciliation.
 ; It does not throw away a received answer or overwrite an established count.
-(= (provider-domain:finish-owned $call $attempt $reference $before $status $changes $completed)
+(= (provider-domain:finish-owned $call $attempt $transport $reference $before $status $changes $completed)
   (case $before
     ((KnowledgeAbsentV1
       (if $completed (ProviderDomainRefusedV2 completed-answer-missing)
-        (provider-domain:completion-plan $call $attempt $reference $status $changes)))
-     ((KnowledgePresentV1 (ProviderAnswerV2 $owner $original))
-      (if (== $owner $attempt)
-        (case (kb:same $reference $original)
-          (((KnowledgeEqualV1 True)
-            (if $completed (ProviderDomainPlanV2 (ProviderAlreadyCompletedV2 $status) $changes)
-              (provider-domain:completion-plan $call $attempt $reference $status $changes)))
-           ((KnowledgeEqualV1 False) (ProviderDomainPlanV2 (ProviderAnswerConflictV2 $status) $changes))
-           ($error $error)))
-        (ProviderDomainPlanV2 (ProviderAnswerConflictV2 $status) $changes)))
+        (provider-domain:completion-plan $call $attempt $transport $reference $status $changes True)))
+     ((KnowledgePresentV1 (ProviderAnswerV2 $submission $original))
+      (case (kb:same $submission $transport)
+        (((KnowledgeEqualV1 True)
+          (case (kb:same $reference $original)
+            (((KnowledgeEqualV1 True)
+              (if $completed (ProviderDomainPlanV2 (ProviderAlreadyCompletedV2 $status) $changes)
+                (provider-domain:completion-plan $call $attempt $transport $reference $status $changes False)))
+             ((KnowledgeEqualV1 False) (ProviderDomainPlanV2 (ProviderAnswerConflictV2 $status) $changes))
+             ($error $error))))
+         ((KnowledgeEqualV1 False) (ProviderDomainPlanV2 (ProviderAnswerConflictV2 $status) $changes))
+         ($error $error))))
      (KnowledgeUnobservedV1 (ProviderDomainRefusedV2 answer-not-observed))
      ($other (ProviderDomainRefusedV2 stored-answer-format)))))
-(= (provider-domain:completion-plan $call $attempt $reference $status $changes)
+(= (provider-domain:completion-plan $call $attempt $transport $reference $status $changes $first)
   (let $all (cons-atom (KnowledgePutV1 (ProviderLeaseKeyV2 $call)
                          (ProviderLeaseV2 $attempt ProviderLeaseCompletedV2))
-              (cons-atom (KnowledgePutV1 (ProviderAnswerKeyV2 $call) (ProviderAnswerV2 $attempt $reference)) $changes))
-    (ProviderDomainPlanV2 (ProviderCompletedV2 $status) $all)))
+              (cons-atom (KnowledgePutV1 (ProviderAnswerKeyV2 $call) (ProviderAnswerV2 $transport $reference)) $changes))
+    (ProviderDomainPlanV2
+      (if $first (ProviderCompletedV2 $status) (ProviderAlreadyCompletedV2 $status)) $all)))
 
 ; A newly committed observation is not necessarily a new completion. The
 ; transport continuation must also own its publication/effect receipt.
@@ -193,16 +223,13 @@
 (= (provider-domain:execute $owner $view $receipt $command $maximum-bytes)
   (case (kb:receipt $view $receipt $command $maximum-bytes)
     ((KnowledgeReceiptAbsentV1
-      (case (provider-domain:keys $command)
-        (((ProviderDomainKeysV2 $identities)
-          (case (kb:observe $view $identities $maximum-bytes)
-            (((KnowledgeObservedV1 $points $reads)
-              (case (provider-domain:plan $command $points)
-                (((ProviderDomainPlanV2 $answer $changes)
-                  (kb:publish $owner $view $reads $receipt $command $answer $changes $maximum-bytes))
-                 ((ProviderDomainRefusedV2 $why)
-                  (kb:publish $owner $view $reads $receipt $command (ProviderDomainRefusedV2 $why) () $maximum-bytes))
-                 ($error $error))))
+      (case (provider-domain:observe $view $command $maximum-bytes)
+        (((KnowledgeObservedV1 $points $reads)
+          (case (provider-domain:plan $command $points)
+            (((ProviderDomainPlanV2 $answer $changes)
+              (kb:publish $owner $view $reads $receipt $command $answer $changes $maximum-bytes))
+             ((ProviderDomainRefusedV2 $why)
+              (kb:publish $owner $view $reads $receipt $command (ProviderDomainRefusedV2 $why) () $maximum-bytes))
              ($error $error))))
          ($error $error))))
      ($replay-or-error $replay-or-error))))

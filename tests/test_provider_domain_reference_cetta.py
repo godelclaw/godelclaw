@@ -28,7 +28,7 @@ class ProviderDomainReferenceTests(unittest.TestCase):
     def setUp(self):
         self.fixture = domain_fixture.ProviderDomainTests()
         self.fixture.setUp()
-        self.addCleanup(self.fixture.doCleanups)
+        self.addCleanup(lambda: self.assertTrue(self.fixture.doCleanups()))
 
     @staticmethod
     def atom(value):
@@ -118,7 +118,7 @@ class ProviderDomainReferenceTests(unittest.TestCase):
         # explicit resolver maps that identity to the existing result value.
         body = f.value(E("ProviderAnswerKeyV2", "call"))[1]
         self.assertEqual({E("AnswerRef", "answer"): "canonical result"}[body[2]], reference["answer"])
-        f.same(f.value(E("ProviderUsageKeyV2", "call", "attempt")), E("KnowledgePresentV1", usage))
+        f.same(f.value(f.usage_key()), E("KnowledgePresentV1", usage))
 
     def test_late_usage_is_preserved_without_completing_an_uncertain_call(self):
         raw = {"prompt_tokens": 100, "completion_tokens": 7}
@@ -133,7 +133,7 @@ class ProviderDomainReferenceTests(unittest.TestCase):
         self.assertEqual(reference["state"], "uncertain")
         self.assertIsNone(reference["answer"])
         f.same(f.value(E("ProviderAnswerKeyV2", "call")), S("KnowledgeAbsentV1"))
-        f.same(f.value(E("ProviderUsageKeyV2", "call", "attempt")), E("KnowledgePresentV1", usage))
+        f.same(f.value(f.usage_key()), E("KnowledgePresentV1", usage))
 
 
 if __name__ == "__main__":

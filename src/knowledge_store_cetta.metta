@@ -23,6 +23,10 @@
 (= (kb:fact-address $identity) (kb:address "knowledge/fact/v1/" $identity))
 (= (kb:receipt-address $identity) (kb:address "knowledge/receipt/v1/" $identity))
 
+(= (kb:append $left $right)
+  (if (== $left ()) $right
+    (cons-atom (car-atom $left) (kb:append (cdr-atom $left) $right))))
+
 (= (kb:same $left $right)
   (case (store:encode $left)
     (((StoreEncoded $a)

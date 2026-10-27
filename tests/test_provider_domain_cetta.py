@@ -53,10 +53,19 @@ class ProviderDomainTests(unittest.TestCase):
         result = self.knowledge(self.application([E("KnowledgePutV1", key, value) for key, value in facts]))
         self.assertEqual(result[0], S("KnowledgeCommittedV1"), result)
 
-    def register(self, call="call", attempt="attempt", *, lease=True, submitted=True):
+    @staticmethod
+    def submission(call="call", attempt="attempt"):
+        return E("Transport", call, attempt)
+
+    @staticmethod
+    def usage_key(call="call", attempt="attempt", *, transport=None):
+        return E("ProviderUsageKeyV2", call, ProviderDomainTests.submission(call, attempt) if transport is None else transport)
+
+    def register(self, call="call", attempt="attempt", *, lease=True, submitted=True, transport=None):
         facts = [(E("ProviderCallKeyV2", call), E("ProviderCallInfoV2", "provider", "model", "coding", E("Origin", "user"))),
                  (E("ProviderAttemptKeyV2", call, attempt),
-                  E("ProviderSubmittedAttemptV2", E("Transport", call, attempt)) if submitted else S("ProviderUnsubmittedAttemptV2"))]
+                  E("ProviderSubmittedAttemptV2", self.submission(call, attempt) if transport is None else transport)
+                  if submitted else S("ProviderUnsubmittedAttemptV2"))]
         if lease:
             facts.append((E("ProviderLeaseKeyV2", call), E("ProviderLeaseV2", attempt, S("ProviderLeaseActiveV2"))))
         self.put(facts)
@@ -102,9 +111,9 @@ class ProviderDomainTests(unittest.TestCase):
         command = self.finish(usage)
         self.same(self.answer(command, "complete"), E("ProviderCompletedV2", S("ProviderUsageAcceptedV2")))
         self.same(self.values([E("ProviderLeaseKeyV2", "call"), E("ProviderAnswerKeyV2", "call"),
-                               E("ProviderUsageKeyV2", "call", "attempt")]),
+                               self.usage_key()]),
                   (E("KnowledgePresentV1", E("ProviderLeaseV2", "attempt", S("ProviderLeaseCompletedV2"))),
-                   E("KnowledgePresentV1", E("ProviderAnswerV2", "attempt", E("AnswerRef", "answer"))),
+                   E("KnowledgePresentV1", E("ProviderAnswerV2", E("Transport", "call", "attempt"), E("AnswerRef", "answer"))),
                    E("KnowledgePresentV1", usage)))
         self.assertIn(E("KnowledgeReceiptV1", "complete", command,
                         E("ProviderCompletedV2", S("ProviderUsageAcceptedV2"))), self.audit())
@@ -123,19 +132,44 @@ class ProviderDomainTests(unittest.TestCase):
         self.register(attempt="new-owner")
         usage = self.usage(51, 6)
         self.same(self.answer(self.finish(usage)), E("ProviderNotOwnedV2", S("ProviderUsageAcceptedV2")))
-        self.same(self.value(E("ProviderUsageKeyV2", "call", "attempt")), E("KnowledgePresentV1", usage))
+        self.same(self.value(self.usage_key()), E("KnowledgePresentV1", usage))
         self.same(self.value(E("ProviderLeaseKeyV2", "call")),
                   E("KnowledgePresentV1", E("ProviderLeaseV2", "new-owner", S("ProviderLeaseActiveV2"))))
         self.same(self.value(E("ProviderAnswerKeyV2", "call")), S("KnowledgeAbsentV1"))
 
+    def test_ownership_handoffs_do_not_count_the_same_submission_twice(self):
+        transport = self.submission()
+        self.answer(self.record(self.usage(100, 7)))
+        self.register(attempt="second-owner", transport=transport)
+        self.same(self.answer(self.finish(self.usage(100, 7))), E("ProviderNotOwnedV2", S("ProviderUsageAcceptedV2")))
+        self.same(self.answer(self.finish(self.usage(100, 7, 80), attempt="second-owner")),
+                  E("ProviderCompletedV2", S("ProviderUsageAcceptedV2")))
+        self.same(self.value(E("ProviderAnswerKeyV2", "call")),
+                  E("KnowledgePresentV1", E("ProviderAnswerV2", transport, E("AnswerRef", "answer"))))
+        self.register(attempt="third-owner", transport=transport)
+        result = self.execute(self.finish(self.usage(100, 7), attempt="third-owner"))
+        self.same(result[1], E("ProviderAlreadyCompletedV2", S("ProviderUsageAcceptedV2")))
+        self.same(self.worker.call(E("FirstCompletion", result)), S("ProviderNoNewCompletionV2"))
+        self.same(self.value(self.usage_key()), E("KnowledgePresentV1", self.usage(100, 7, 80)))
+        tallies = [fact for fact in self.audit() if fact[0] == S("KnowledgeFactV1")
+                   and fact[1][0] == S("ProviderUsageKeyV2")]
+        self.assertEqual(len(tallies), 1)
+
+    def test_distinct_submissions_can_retain_distinct_usage_without_sharing_authority(self):
+        self.answer(self.record(self.usage(100, 7)))
+        self.register(attempt="another-submission")
+        self.answer(self.finish(self.usage(50, 3), attempt="another-submission"))
+        self.same(self.value(self.usage_key()), E("KnowledgePresentV1", self.usage(100, 7)))
+        self.same(self.value(self.usage_key(attempt="another-submission")), E("KnowledgePresentV1", self.usage(50, 3)))
+
     def test_unknown_counters_are_not_zero_and_late_usage_enriches_one_tally(self):
         self.answer(self.finish())
-        self.same(self.value(E("ProviderUsageKeyV2", "call", "attempt")), E("KnowledgePresentV1", self.usage()))
+        self.same(self.value(self.usage_key()), E("KnowledgePresentV1", self.usage()))
         for incoming in (self.usage(0, 7), self.usage(None, None, 0, 0), self.usage()):
             self.same(self.answer(self.record(incoming)), E("ProviderUsageRecordedV2", S("ProviderUsageAcceptedV2")))
-        self.same(self.value(E("ProviderUsageKeyV2", "call", "attempt")), E("KnowledgePresentV1", self.usage(0, 7, 0, 0)))
+        self.same(self.value(self.usage_key()), E("KnowledgePresentV1", self.usage(0, 7, 0, 0)))
         usage_facts = [fact for fact in self.audit()
-                       if fact[0] == S("KnowledgeFactV1") and fact[1] == E("ProviderUsageKeyV2", "call", "attempt")]
+                       if fact[0] == S("KnowledgeFactV1") and fact[1] == self.usage_key()]
         self.assertEqual(len(usage_facts), 1)
 
     def test_duplicate_usage_with_new_delivery_identity_does_not_add_another_tally(self):
@@ -143,8 +177,8 @@ class ProviderDomainTests(unittest.TestCase):
         for _ in range(8):
             self.same(self.answer(self.record(usage)), E("ProviderUsageRecordedV2", S("ProviderUsageAcceptedV2")))
         usage_facts = [fact for fact in self.audit() if fact[0] == S("KnowledgeFactV1")
-                       and fact[1] == E("ProviderUsageKeyV2", "call", "attempt")]
-        self.same(tuple(usage_facts), (E("KnowledgeFactV1", E("ProviderUsageKeyV2", "call", "attempt"), usage),))
+                       and fact[1] == self.usage_key()]
+        self.same(tuple(usage_facts), (E("KnowledgeFactV1", self.usage_key(), usage),))
 
     def test_a_new_delivery_does_not_grant_first_completion_twice(self):
         command = self.finish(self.usage(100, 7))
@@ -161,7 +195,7 @@ class ProviderDomainTests(unittest.TestCase):
         command = self.record(self.usage(101, 7), source=E("EvidenceRef", "conflicting-report"))
         result = self.answer(command, "conflict")
         self.same(result, E("ProviderUsageRecordedV2", S("ProviderUsageConflictV2")))
-        self.same(self.value(E("ProviderUsageKeyV2", "call", "attempt")), E("KnowledgePresentV1", self.usage(100, 7)))
+        self.same(self.value(self.usage_key()), E("KnowledgePresentV1", self.usage(100, 7)))
         self.assertIn(E("KnowledgeReceiptV1", "conflict", command, result), self.audit())
 
     def test_usage_conflict_does_not_discard_a_received_answer(self):
@@ -169,8 +203,8 @@ class ProviderDomainTests(unittest.TestCase):
         command = self.finish(self.usage(101, 7))
         self.same(self.answer(command), E("ProviderCompletedV2", S("ProviderUsageConflictV2")))
         self.same(self.value(E("ProviderAnswerKeyV2", "call")),
-                  E("KnowledgePresentV1", E("ProviderAnswerV2", "attempt", E("AnswerRef", "answer"))))
-        self.same(self.value(E("ProviderUsageKeyV2", "call", "attempt")), E("KnowledgePresentV1", self.usage(100, 7)))
+                  E("KnowledgePresentV1", E("ProviderAnswerV2", E("Transport", "call", "attempt"), E("AnswerRef", "answer"))))
+        self.same(self.value(self.usage_key()), E("KnowledgePresentV1", self.usage(100, 7)))
 
     def test_another_answer_cannot_replace_an_established_result(self):
         self.answer(self.finish(self.usage(100, 7)))
@@ -178,7 +212,7 @@ class ProviderDomainTests(unittest.TestCase):
         result = self.answer(command, "different")
         self.same(result, E("ProviderAnswerConflictV2", S("ProviderUsageAcceptedV2")))
         self.same(self.value(E("ProviderAnswerKeyV2", "call")),
-                  E("KnowledgePresentV1", E("ProviderAnswerV2", "attempt", E("AnswerRef", "answer"))))
+                  E("KnowledgePresentV1", E("ProviderAnswerV2", E("Transport", "call", "attempt"), E("AnswerRef", "answer"))))
         self.assertIn(E("KnowledgeReceiptV1", "different", command, result), self.audit())
 
     def test_unknown_failed_and_absent_leases_do_not_rearm_completion(self):
@@ -198,17 +232,17 @@ class ProviderDomainTests(unittest.TestCase):
             with self.subTest(call=call, attempt=attempt):
                 command = self.finish(self.usage(9, 2), call=call, attempt=attempt)
                 self.same(self.answer(command), E("ProviderDomainRefusedV2", S(reason)))
-                self.same(self.value(E("ProviderUsageKeyV2", call, attempt)), S("KnowledgeAbsentV1"))
+                self.same(self.value(self.usage_key(call, attempt)), S("KnowledgeAbsentV1"))
 
     def test_count_types_are_explicit_and_large_integers_are_supported(self):
         wide = BigInt(str(1 << 100))
         self.same(self.answer(self.record(self.usage(wide, 0))), E("ProviderUsageRecordedV2", S("ProviderUsageAcceptedV2")))
-        self.same(self.value(E("ProviderUsageKeyV2", "call", "attempt")), E("KnowledgePresentV1", self.usage(wide, 0)))
+        self.same(self.value(self.usage_key()), E("KnowledgePresentV1", self.usage(wide, 0)))
         for invalid in (-1, True, 1.0, "1", S("one"), E("+", 1, 2)):
             with self.subTest(invalid=invalid):
                 command = self.record(self.usage(invalid, 0))
                 self.same(self.answer(command), E("ProviderDomainRefusedV2", S("usage-format")))
-                self.same(self.value(E("ProviderUsageKeyV2", "call", "attempt")), E("KnowledgePresentV1", self.usage(wide, 0)))
+                self.same(self.value(self.usage_key()), E("KnowledgePresentV1", self.usage(wide, 0)))
 
     def test_opaque_sources_and_result_references_are_inert(self):
         sentinel = self.directory / "never-created"
@@ -216,7 +250,7 @@ class ProviderDomainTests(unittest.TestCase):
         source = E("+", 2, 3)
         command = self.finish(self.usage(1, 0), reference=reference, source=source)
         self.same(self.answer(command, "inert"), E("ProviderCompletedV2", S("ProviderUsageAcceptedV2")))
-        self.same(self.value(E("ProviderAnswerKeyV2", "call")), E("KnowledgePresentV1", E("ProviderAnswerV2", "attempt", reference)))
+        self.same(self.value(E("ProviderAnswerKeyV2", "call")), E("KnowledgePresentV1", E("ProviderAnswerV2", E("Transport", "call", "attempt"), reference)))
         self.assertFalse(sentinel.exists())
         self.assertIn(E("KnowledgeReceiptV1", "inert", command,
                         E("ProviderCompletedV2", S("ProviderUsageAcceptedV2"))), self.audit())
@@ -224,7 +258,7 @@ class ProviderDomainTests(unittest.TestCase):
     def test_missing_observations_are_not_assumed_absent(self):
         command = self.finish(self.usage(1, 0))
         keys = [E("ProviderCallKeyV2", "call"), E("ProviderAttemptKeyV2", "call", "attempt"),
-                E("ProviderUsageKeyV2", "call", "attempt"), E("ProviderLeaseKeyV2", "call"), E("ProviderAnswerKeyV2", "call")]
+                self.usage_key(), E("ProviderLeaseKeyV2", "call"), E("ProviderAnswerKeyV2", "call")]
         observed = self.knowledge(E("KnowledgeReadV1", tuple(keys), 1048576))[1]
         reasons = ["call-not-observed", "attempt-not-observed", "usage-not-observed", "lease-not-observed", "answer-not-observed"]
         for position, reason in enumerate(reasons):
@@ -240,7 +274,7 @@ class ProviderDomainTests(unittest.TestCase):
         result = self.worker.call(E("Race", str(self.path), "stale", command, other))
         self.assertEqual(result[1][0], S("KnowledgeCommittedV1"), result)
         self.same(result[2], E("StoreRefused", S("conflict")))
-        self.same(self.values([E("ProviderAnswerKeyV2", "call"), E("ProviderUsageKeyV2", "call", "attempt")]),
+        self.same(self.values([E("ProviderAnswerKeyV2", "call"), self.usage_key()]),
                   (S("KnowledgeAbsentV1"), S("KnowledgeAbsentV1")))
         self.same(self.knowledge(E("KnowledgeResolveV1", "stale", command, 1048576)),
                   E("KnowledgeUnrecordedV1", self.epoch, 2))
@@ -267,7 +301,7 @@ class ProviderDomainTests(unittest.TestCase):
     def test_an_unchanged_usage_tally_is_still_an_influencing_read(self):
         self.answer(self.record(self.usage(100, 7)))
         command = self.finish(self.usage(100, 7))
-        other = self.application([E("KnowledgePutV1", E("ProviderUsageKeyV2", "call", "attempt"), self.usage(101, 7))])
+        other = self.application([E("KnowledgePutV1", self.usage_key(), self.usage(101, 7))])
         result = self.worker.call(E("Race", str(self.path), "counts-changed", command, other))
         self.same(result[2], E("StoreRefused", S("conflict")))
         self.same(self.answer(command), E("ProviderCompletedV2", S("ProviderUsageConflictV2")))
@@ -282,11 +316,11 @@ class ProviderDomainTests(unittest.TestCase):
 
     def test_current_counts_invalidate_a_stale_usage_merge(self):
         command = self.record(self.usage(100, 7))
-        other = self.application([E("KnowledgePutV1", E("ProviderUsageKeyV2", "call", "attempt"), self.usage(100, None, 80))])
+        other = self.application([E("KnowledgePutV1", self.usage_key(), self.usage(100, None, 80))])
         result = self.worker.call(E("Race", str(self.path), "usage", command, other))
         self.same(result[2], E("StoreRefused", S("conflict")))
         self.answer(command)
-        self.same(self.value(E("ProviderUsageKeyV2", "call", "attempt")), E("KnowledgePresentV1", self.usage(100, 7, 80)))
+        self.same(self.value(self.usage_key()), E("KnowledgePresentV1", self.usage(100, 7, 80)))
 
     def test_result_and_receipt_survive_restart_with_the_production_import_policy(self):
         command = self.finish(self.usage(100, 7))

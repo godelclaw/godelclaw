@@ -32,7 +32,7 @@ class ProviderDomainFailureTests(unittest.TestCase):
     def setUp(self):
         self.fixture = domain_fixture.ProviderDomainTests()
         self.fixture.setUp()
-        self.addCleanup(self.fixture.doCleanups)
+        self.addCleanup(lambda: self.assertTrue(self.fixture.doCleanups()))
         self.assertEqual(self.fixture.worker.close(), 0)
         self.flag = self.fixture.directory / "fault"
         self.restart()
@@ -46,7 +46,7 @@ class ProviderDomainFailureTests(unittest.TestCase):
 
     def state(self):
         return self.fixture.values([E("ProviderLeaseKeyV2", "call"), E("ProviderAnswerKeyV2", "call"),
-                                    E("ProviderUsageKeyV2", "call", "attempt")])
+                                    self.fixture.usage_key()])
 
     def test_failed_prepublication_write_leaves_all_facts_and_receipt_unpublished(self):
         f = self.fixture
@@ -91,7 +91,7 @@ class ProviderDomainFailureTests(unittest.TestCase):
         expected = E("ProviderCompletedV2", S("ProviderUsageAcceptedV2"))
         self.assertEqual(self.resolve(command), E("KnowledgeResolvedV1", expected, f.epoch, 2))
         self.assertEqual(f.execute(command, "completion"), E("KnowledgeReplayedV1", expected))
-        self.assertEqual(self.state()[1], E("KnowledgePresentV1", E("ProviderAnswerV2", "attempt", E("AnswerRef", "answer"))))
+        self.assertEqual(self.state()[1], E("KnowledgePresentV1", E("ProviderAnswerV2", E("Transport", "call", "attempt"), E("AnswerRef", "answer"))))
 
     def test_crash_before_publication_exposes_no_partial_completion(self):
         f = self.fixture
