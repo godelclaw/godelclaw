@@ -146,6 +146,16 @@ class ProviderDomainTests(unittest.TestCase):
                        and fact[1] == E("ProviderUsageKeyV2", "call", "attempt")]
         self.same(tuple(usage_facts), (E("KnowledgeFactV1", E("ProviderUsageKeyV2", "call", "attempt"), usage),))
 
+    def test_a_new_delivery_does_not_grant_first_completion_twice(self):
+        command = self.finish(self.usage(100, 7))
+        first = self.execute(command, "first")
+        replay = self.execute(command, "first")
+        another_delivery = self.execute(command, "second")
+        self.same(another_delivery[1], E("ProviderAlreadyCompletedV2", S("ProviderUsageAcceptedV2")))
+        for result, expected in ((first, "ProviderFirstCompletionV2"), (replay, "ProviderNoNewCompletionV2"),
+                                 (another_delivery, "ProviderNoNewCompletionV2")):
+            self.same(self.worker.call(E("FirstCompletion", result)), S(expected))
+
     def test_conflicting_usage_is_retained_as_evidence_and_does_not_overwrite_counts(self):
         self.answer(self.record(self.usage(100, 7)))
         command = self.record(self.usage(101, 7), source=E("EvidenceRef", "conflicting-report"))

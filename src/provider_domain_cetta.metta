@@ -3,7 +3,21 @@
 ; retry effects occur here. Submitted-attempt facts come from the trusted
 ; transport owner. Opaque diagnostic JSON never grants ownership.
 !(import! &self ./knowledge_store_cetta.metta)
+!(import! &self ./usage_evidence_cetta.metta)
 !(import! &self (library math))
+
+; Reuse the existing pure provider-counter normalization at the boundary.
+; Its complete normalized evidence is returned for the command's provenance.
+(= (provider-domain:from-count $count)
+  (case $count ((JsonNull ProviderCountUnknownV2) ($known (ProviderCountV2 $known)))))
+(= (provider-domain:usage-evidence $raw)
+  (let* (($evidence (ue:evidence $raw)) ($counts (ue:field $evidence "counts" (JsonObject ())))
+         ($reported (ue:field $evidence "reported_usage" (JsonObject ())))
+         ($input (provider-domain:from-count (ue:field $counts "input_tokens" JsonNull)))
+         ($output (provider-domain:from-count (ue:field $counts "output_tokens" JsonNull)))
+         ($cached (provider-domain:from-count (ue:field $counts "cached_tokens" JsonNull)))
+         ($written (provider-domain:from-count (ue:field $reported "cache_creation_input_tokens" JsonNull))))
+    (ProviderUsageObservationV2 (ProviderUsageV2 $input $output $cached $written) $evidence)))
 
 (= (provider-domain:id? $identity)
   (if (== (get-type $identity) String) (> (str:byte-length $identity) 0) False))
@@ -153,7 +167,7 @@
       (if (== $owner $attempt)
         (case (kb:same $reference $original)
           (((KnowledgeEqualV1 True)
-            (if $completed (ProviderDomainPlanV2 (ProviderCompletedV2 $status) $changes)
+            (if $completed (ProviderDomainPlanV2 (ProviderAlreadyCompletedV2 $status) $changes)
               (provider-domain:completion-plan $call $attempt $reference $status $changes)))
            ((KnowledgeEqualV1 False) (ProviderDomainPlanV2 (ProviderAnswerConflictV2 $status) $changes))
            ($error $error)))
@@ -165,6 +179,13 @@
                          (ProviderLeaseV2 $attempt ProviderLeaseCompletedV2))
               (cons-atom (KnowledgePutV1 (ProviderAnswerKeyV2 $call) (ProviderAnswerV2 $attempt $reference)) $changes))
     (ProviderDomainPlanV2 (ProviderCompletedV2 $status) $all)))
+
+; A newly committed observation is not necessarily a new completion. The
+; transport continuation must also own its publication/effect receipt.
+(= (provider-domain:first-completion? $reply)
+  (case $reply
+    (((KnowledgeCommittedV1 (ProviderCompletedV2 $status) $epoch $revision) True)
+     ($other False))))
 
 ; Check replay before planning: a completed command remains replayable after
 ; its lease or other facts change. A new command retains the captured view

@@ -1205,11 +1205,17 @@ update observes three and does not depend on the changing active lease.
 Unknown counters can be enriched without becoming zero, and each submitted
 attempt has one current usage tally. Conflicting reports remain in immutable
 command receipts for reconciliation. A usage conflict does not discard a
-received answer. The submitted-attempt fact must originate with the trusted
+received answer. A new delivery for an already completed call reports
+`ProviderAlreadyCompletedV2`, separately from a first completion and a receipt
+replay. Its pure usage boundary reuses `usage_evidence_cetta.metta` and preserves
+the normalized evidence alongside typed counters. The submitted-attempt fact must originate with the trusted
 transport owner. Admission, transport integration, complete readers and migration
 are still required before this inactive application slice can be selected.
 The native tests exercise stale decisions, concurrent independent changes,
 inert data, actual write/synchronization failures, worker death and readback.
+`tests/check_provider_domain_contract.py` audits the corresponding Lean laws
+and replays their focused trace through the actual MeTTa/store boundary. This
+is finite conformance evidence, with interpreter and I/O assumptions explicit.
 
 The inactive SQLite-free provider-store modules are migration experiments,
 not a selected runtime backend. `provider_store_cetta.metta` preserves typed
