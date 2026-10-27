@@ -51,6 +51,7 @@ class FullShadow:
         )
         self.directory = Path(self.temporary.name)
         self.state_path = self.directory / "state.json"
+        self.lifecycle_path = self.directory / "lifecycle.json"
         self.task_phase_path = self.directory / "task-phase.json"
         self.channel_config_path = self.directory / "channel.metta"
         self.socket_name = "godel-full-shadow-%s" % uuid.uuid4().hex[:12]
@@ -89,6 +90,12 @@ class FullShadow:
             "auto_stop_after_first_effect": self.auto_stop,
             "prompt_timeout": self.prompt_timeout,
         })
+        # The shadow's own operator latch grants cognition, so no host latch
+        # decides whether its commands run.
+        self.lifecycle_path.write_text(
+            json.dumps({"schema": 1, "state": "running"}) + "\n",
+            encoding="utf-8",
+        )
         # Qualify the same literal specialization renderer as initialize.sh,
         # while keeping the disposable shadow independent of operator config.
         rendered_channel = subprocess.run(
@@ -130,13 +137,21 @@ class FullShadow:
         return json.loads(self.state_path.read_text(encoding="utf-8"))
 
     def environment(self) -> dict[str, str]:
-        environment = dict(os.environ)
+        # No METTACLAW_* setting of the caller reaches the shadow (a run from
+        # an agent's shell would otherwise act on that agent's latch, ledger
+        # and stores), and every default state path falls inside the shadow.
+        environment = {
+            name: value for name, value in os.environ.items()
+            if not name.startswith("METTACLAW_")
+        }
         python_paths = [str(ROOT / "src"), str(ROOT / "channels")]
         library = ROOT / "repos" / "petta_lib_chromadb"
         if library.is_dir():
             python_paths.append(str(library))
         environment.update({
             "PYTHONPATH": os.pathsep.join(python_paths),
+            "XDG_STATE_HOME": str(self.directory / "state"),
+            "METTACLAW_LIFECYCLE_PATH": str(self.lifecycle_path),
             "METTACLAW_SKIP_INITIALIZE": "1",
             "METTACLAW_ENGINE": self.engine,
             "METTACLAW_EFFECT_BACKEND_STATE": str(self.state_path),

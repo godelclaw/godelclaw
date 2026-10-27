@@ -108,11 +108,14 @@ class NativeLifetimeTests(policy_tests.NativeLedgerFixture):
                             native_lifetime.recover(); expected.append(['ok'])
                         else:
                             self.fail('unknown lifetime operation ' + kind)
-                    except (ValueError, TypeError, OverflowError, sqlite3.Error):
+                    except sqlite3.Error:
                         expected.append(['error'])
+                    except (ValueError, TypeError, OverflowError) as error:
+                        expected.append(policy_tests.python_error(error))
         actual = self.native(forms, module='native_lifetime_cetta.metta')
         self.assertEqual(actual, expected)
         self.assertEqual(policy_tests.snapshot(self.native_db), policy_tests.snapshot(self.python_db))
+        self.assertEqual(policy_tests.stored_details(self.native_db), policy_tests.stored_details(self.python_db))
 
     def seed(self, rows):
         """Seed identical preexisting rows; these are never live agent ledgers."""
@@ -155,7 +158,9 @@ class NativeLifetimeTests(policy_tests.NativeLedgerFixture):
             steps += [('admit', key, 1000 + 4 * i), ('claim', key, 1000 + 4 * i),
                       ('submitted', key, transport, 1001 + 4 * i)]
         steps += [('progress', 'call-0', 30.9, True, False, 1100), ('progress', 'call-0', '1_024', '-3', 0.5, 1101),
-                  ('progress', 'call-0', 12, 'x', 1, 1102), ('progress', 'call-0', 12, 4, 2 ** 64, 1103)]
+                  ('progress', 'call-0', 12, 'x', 1, 1102), ('progress', 'call-0', 12, 4, 2 ** 64, 1103),
+                  # Every argument converts before any is bound: int('x') wins over 2**64.
+                  ('progress', 'call-0', 2 ** 64, 'x', 1, 1104), ('progress', 'call-0', 1e30, 4, None, 1105)]
         self.replay_lifetime(steps, metadata)
 
     def test_combined_completion_commits_usage_request_and_receipt_together(self):

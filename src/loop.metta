@@ -186,18 +186,21 @@
 
 ;; The request one model turn sends, from the periphery and the turn's activity
 ;; line.  The loop and the prompt-layout probe share it, so the probe checks the
-;; layout that is actually sent.
+;; layout that is actually sent.  Only the active policy's request is built:
+;; assembling the context advances its change markers, so building both would
+;; count every turn twice and leave a structured request its markers consumed.
 (= (turnRequest $periphery $lastmessage)
-   (let* (($prompt (getContext $periphery))
-          ($structuredSystem
-            (string-safe
-              (py-str ((getContextPrefix) (getContextSuffix $periphery)))))
-          ($advertised (string-safe (py-str (getSkills))))
-          ($legacySend (py-str ($prompt $lastmessage))))
-     (addition-prepare-request
-       (loop-active-policy $periphery) $legacySend
-       $structuredSystem (string-safe (py-str $lastmessage))
-       $advertised)))
+   (let $policy (loop-active-policy $periphery)
+     (if (== (policy-structured-request $policy) 1)
+       (let* (($structuredSystem
+                (string-safe
+                  (py-str ((getContextPrefix) (getContextSuffix $periphery)))))
+              ($advertised (string-safe (py-str (getSkills)))))
+         (addition-prepare-request $policy ""
+           $structuredSystem (string-safe (py-str $lastmessage)) $advertised))
+       (let* (($prompt (getContext $periphery))
+              ($legacySend (py-str ($prompt $lastmessage))))
+         (addition-prepare-request $policy $legacySend "" "" "")))))
 
 ;; One model-and-tools episode.  It returns a candidate periphery; rest and nop
 ;; contribute ordinary policy directives rather than mutating the runner.
