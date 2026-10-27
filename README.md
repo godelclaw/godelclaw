@@ -1182,6 +1182,30 @@ MeTTa callers can import `src/usage_history.metta` and call
 `(usage:events ledger since until)` to read the same identified events through
 native `sqlite:observe`.
 
+The inactive SQLite-free provider-store modules are a migration prerequisite,
+not a selected runtime backend. `provider_store_cetta.metta` preserves typed
+records and insertion identities. `provider_index_store_cetta.metta` commits
+primary records and their derived indexes atomically; its checkpoint entry
+requires the captured epoch and revision. The record-only checkpoint writer
+refuses an indexed store, preventing mixed writers from leaving stale indexes.
+
+`provider_index_query_cetta.metta` provides bounded candidate pages in signed
+ordinal order. Its predicates compare complete CAV1 values, including kind;
+they are not SQLite affinity or NULL comparison rules. Hashes locate candidates
+only. Every inspected primary row, even a filtered-out candidate, joins the
+query's read dependencies. Continuations bind the query and captured revision;
+an empty page can still have a continuation. Mutation planning for a transition
+must retain that original view and include all of its query dependencies.
+
+The provider store/index/view tests use `CETTA_VALUE_WORKER` and, optionally,
+`CETTA_CHANNEL_ROOT` to select a SQLite-free CeTTa build with the native store
+library and value-worker import-mode support. The Lean correspondence check in
+`tests/check_provider_index_contract.py` replays the actual collision/conflict
+witness. It establishes finite conformance to a checked model, not a proof of
+the C implementation or filesystem. Complete transition/read-path migration,
+large-record streaming beyond the CAV1 convenience frame and live cutover
+remain separate qualification gates.
+
 ## Illustrations
 
 The upstream examples show memory recall, tool use and learning in a grid-world

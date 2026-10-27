@@ -6,6 +6,8 @@
 !(import! &self (library store))
 !(import! &self (library str))
 
+(= (provider-store:index-layout-key) "layout/provider-index/v1")
+
 (= (provider-store:width $kind)
   (case $kind ((ProviderRequestV1 12) (ProviderCooldownV1 4) (ProviderCallV1 20)
                (ProviderEventV1 6) (ProviderAdmissionRecoveryV1 6) (ProviderSequenceV1 3)
@@ -76,10 +78,16 @@
             (case (store:snapshot $owner)
               (((StoreSnapshot $view $epoch $revision)
                 (let* (($ops (cons-atom ops $operations)) ($writes (cons-atom writes $scopes))
-                       ($answer (case (store:commit-scoped $owner $view (reads) $writes $ops)
-                         (((StoreSnapshot $updated $same-epoch $after)
-                           (let $closed (store:close $updated) (ProviderStoreWritten $same-epoch $after)))
-                          ($error $error))))
+                       ($layout-key (provider-store:index-layout-key))
+                       ($answer
+                         (case (store:get $view $layout-key 256)
+                           ((StoreAbsent
+                             (case (store:commit-scoped $owner $view (reads (point $layout-key)) $writes $ops)
+                               (((StoreSnapshot $updated $same-epoch $after)
+                                 (let $closed (store:close $updated) (ProviderStoreWritten $same-epoch $after)))
+                                ($error $error))))
+                            ((StoreValue $layout) (ProviderStoreRefused indexed-store))
+                            ($error $error))))
                        ($closed (store:close $view))) $answer))
                ($error $error)))
             (let $closed (store:close $owner) $answer)))
