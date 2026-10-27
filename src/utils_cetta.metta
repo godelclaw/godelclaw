@@ -2,6 +2,7 @@
 !(import! &self (library system))
 !(import! &self (library io))
 !(import! &self (library math))
+!(import! &self (library json))
 !(import! &self ./src/text_cetta)
 
 (= (get_time) (system:wall-time))
@@ -19,6 +20,31 @@
 (= (last_chars $text $count)
    (let $length (str:char-length $text)
      (str:char-slice $text (max 0 (- $length $count)) $length)))
+
+; py-str's text: Python's str() of each part as the bridge converts it,
+; concatenated.  Strings, symbols, Booleans and numbers convert here, without
+; py-str's two Python calls a part; any other atom still converts in Python.
+(= (utils:py-str $parts) (str:join "" (utils:py-texts $parts)))
+(= (utils:py-texts $parts)
+   (if (== $parts ()) ()
+     (cons-atom (utils:py-text (car-atom $parts)) (utils:py-texts (cdr-atom $parts)))))
+(= (utils:py-text $part)
+   (case (get-metatype $part)
+     ((Symbol (str:symbol->string $part))
+      (Grounded
+        (case (get-type $part)
+          ((String $part)
+           (Bool (if $part "true" "false"))
+           (Number (utils:py-number-text $part))
+           ($other (py-call (str $part))))))
+      ($other (py-call (str $part))))))
+; A number's str() is its JSON text but for the non-finite floats.  An integer
+; past Python's digit limit still raises in Python, as it did.
+(= (utils:py-number-text $number)
+   (case (json:stringify-python $number)
+     (("Infinity" "inf") ("-Infinity" "-inf") ("NaN" "nan")
+      ((JsonPythonErrorV1 $class $message $prefix) (py-call (str $number)))
+      ($text $text))))
 
 ; An owned timer keeps other clients' completions available to them.
 (= (sleep $seconds)

@@ -46,7 +46,7 @@
 ;; transform them without receiving the command dispatcher's executable
 ;; authority.
 (= (getContextPrefix)
-   (string-safe (py-str ("PROMPT: " (getPrompt)))))
+   (string-safe (utils:py-str ("PROMPT: " (getPrompt)))))
 
 ; In the whole-window task view the last results are already the newest steps
 ; of TASK_RECENT, so repeating them here would only double their cost.
@@ -58,7 +58,7 @@
 
 (= (getContextSuffix $periphery)
    (string-safe
-     (py-str
+     (utils:py-str
        (" OUTPUT_FORMAT: "
         (py-call (strategy_host.batch_description (policy-command-batch-limit (loop-active-policy $periphery))))
         (attention:description)
@@ -83,7 +83,7 @@
 
 (= (getContext $periphery)
    (string-safe
-     (py-str
+     (utils:py-str
        ((getContextPrefix) " SKILLS: " (getSkills)
         (getContextSuffix $periphery)))))
 
@@ -194,12 +194,12 @@
      (if (== (policy-structured-request $policy) 1)
        (let* (($structuredSystem
                 (string-safe
-                  (py-str ((getContextPrefix) (getContextSuffix $periphery)))))
-              ($advertised (string-safe (py-str (getSkills)))))
+                  (utils:py-str ((getContextPrefix) (getContextSuffix $periphery)))))
+              ($advertised (string-safe (utils:py-str (getSkills)))))
          (addition-prepare-request $policy ""
-           $structuredSystem (string-safe (py-str $lastmessage)) $advertised))
+           $structuredSystem (string-safe (utils:py-str $lastmessage)) $advertised))
        (let* (($prompt (getContext $periphery))
-              ($legacySend (py-str ($prompt $lastmessage))))
+              ($legacySend (utils:py-str ($prompt $lastmessage))))
          (addition-prepare-request $policy $legacySend "" "" "")))))
 
 ;; One model-and-tools episode.  It returns a candidate periphery; rest and nop
@@ -308,10 +308,10 @@
             (if (== $requestObservations "")
                 (string-safe (repr $results))
                 (string-safe
-                  (py-str ($requestObservations " " (repr $results))))))
+                  (utils:py-str ($requestObservations " " (repr $results))))))
           ($feedback
             (if (== $undelivered "") $turnFeedback
-                (string-safe (py-str ($undelivered " " $turnFeedback)))))
+                (string-safe (utils:py-str ($undelivered " " $turnFeedback)))))
           ($withResults
             (coordinate-set last-results $feedback $paced))
           ($directed (loop-directives-apply $withResults))

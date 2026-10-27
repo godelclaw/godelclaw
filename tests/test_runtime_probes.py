@@ -46,6 +46,7 @@ class RuntimeProbeTest(unittest.TestCase):
          "PROMPT_CACHE_LAYOUT_OK"),
         ("tests/change_marker_turn_probe.metta",
          "CHANGE_MARKER_TURN_OK"),
+        ("tests/py_str_native_probe.metta", "PY_STR_NATIVE_OK"),
         ("tests/background_jobs_probe.metta", "BACKGROUND_JOBS_OK"),
         ("tests/command_error_labels_probe.metta",
          "COMMAND_ERROR_LABELS_OK"),
