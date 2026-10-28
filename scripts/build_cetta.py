@@ -50,6 +50,17 @@ def run(args, cwd=None, capture=False):
                           stdout=subprocess.PIPE if capture else None).stdout
 
 
+def verify_sqlite_feature(binary):
+    """Check the installed API, including the disabled-but-unreduced case."""
+    result = subprocess.run([str(binary), "--lang", "petta",
+        "-e", "!(import! &self (library sqlite))",
+        "-e", '!(sqlite:query ":memory:" "SELECT 7 AS value" () 0)'],
+        text=True, capture_output=True, timeout=30,
+        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8"})
+    if result.returncode or result.stdout.splitlines() != ["true", '(sqlite:result ("value") ((7)) 0 0)']:
+        raise RuntimeError("installed engine lacks the required native SQLite query API")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, help="existing checkout at the selected revision")
@@ -101,7 +112,7 @@ def main():
         args.sqlite_cflags = "-I" + str(sdk / "include")
     if args.sqlite_libs is None and (sdk / "lib/libsqlite3.so").is_file():
         args.sqlite_libs = "-L" + str(sdk / "lib") + " -lsqlite3"
-    flags = ["BUILD=python", "ENABLE_HTTP=1", "ENABLE_DURABLE=1", "SQLITE_PROVIDER=system",
+    flags = ["BUILD=python", "ENABLE_HTTP=1", "ENABLE_DURABLE=1", "ENABLE_SQLITE=1", "SQLITE_PROVIDER=system",
              "ENABLE_MANAGED_SYMBOLS=1", "ENABLE_LIB_PROLOG=" + args.prolog,
              "ENABLE_JSON_GSLT=1", "ENABLE_SIWC=" + str(int(args.chatgpt)),
              "PYTHON_CONFIG=" + args.python_config]
@@ -122,6 +133,7 @@ def main():
     for name in ("lib", "tools"):
         shutil.copytree(source / name, prefix / name, dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    verify_sqlite_feature(prefix / "cetta")
     for directory, notice in (("secp256k1", "COPYING"), ("tomlc17", "LICENSE")):
         license_file = source / "vendor" / directory / notice
         if license_file.is_file():
