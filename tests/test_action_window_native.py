@@ -38,6 +38,18 @@ PYTHON = Path(os.environ.get("PETTA_PY_ENV", Path.home() / "miniforge3/envs/pett
 CALLER_HEADER = ["!(import! &self (library lib_import))",
                  "!(import! &self ./src/helper.py)",
                  "!(import! &self ./tests/action_window_probe.py)"]
+# The native views keep the atom the earlier bridge made of Python text: the
+# Symbol it spells, up to any NUL. Since CeTTa b8d3580b py-call hands the text
+# back as a String; such an oracle is spelled as that Symbol before comparing.
+BRIDGE_ATOM = ("(= (probe:bridge-atom $value) (if (== (get-type $value) String) "
+               "(case (str:find $value (str:from-codepoints (0))) "
+               "(((TextNotFound $missing) (str:string->symbol $value)) "
+               "($at (str:string->symbol (str:byte-slice $value 0 $at))))) $value))")
+STRING_BRIDGE = '!(println! (StringBridge (== (get-type (py-call (builtins.str "x"))) String)))'
+
+
+def string_bridge(stdout):
+    return re.findall(r"\(StringBridge (true|false)\)", stdout) == ["true"]
 
 
 def q(value):
@@ -252,14 +264,14 @@ class NativeActionWindowTest(unittest.TestCase):
         oracle = self.directory / "expected.json"
         oracle.write_text(json.dumps(expected), encoding="utf-8")
         lines = ["!(import! &self ./src/helper.py)", "!(import! &self ./tests/action_window_probe.py)",
-                 "!(import! &self ./src/action_window_cetta)",
+                 "!(import! &self ./src/action_window_cetta)", BRIDGE_ATOM,
                  "!(py-call (action_window_probe.load %s))" % q(oracle),
-                 "!(py-call (action_window_probe.forbid))"]
+                 "!(py-call (action_window_probe.forbid))", STRING_BRIDGE]
         for index, expression in enumerate(calls):
             lines.append(
                 "!(let* (($answers (collapse %s)) ($text (car-atom $answers)) "
                 "($atom (aw:legacy-atom $text)) "
-                "($oracle (py-call (action_window_probe.expected %d)))) "
+                "($oracle (probe:bridge-atom (py-call (action_window_probe.expected %d))))) "
                 "(progn (fs:update-text %s \"replace\" $text \"\" \"\") "
                 "(println! (Check %d (size-atom $answers) "
                 "(== (get-type $text) String) (== $atom $oracle) "
@@ -271,10 +283,12 @@ class NativeActionWindowTest(unittest.TestCase):
             with self.subTest(index=index, case=case[:2]):
                 self.assertEqual((self.directory / ("output-%d" % index)).read_bytes(),
                                  expected[index].encode("utf-8"))
-        # The bridge's Symbol keeps a hidden Python payload after NUL that no
-        # native Symbol can hold: identity is checked separately below.
+        # The earlier bridge's Symbol keeps a hidden Python payload after NUL
+        # that no native Symbol can hold: identity is checked separately below.
+        # A String from the bridge carries no such payload.
+        hidden = not string_bridge(stdout)
         self.assertEqual(re.findall(r"\(Check (\d+) (\d+) (true|false) (true|false) (true|false) (true|false)\)", stdout),
-                         [(str(i), "1", "true", "false" if "\0" in expected[i] else "true", "true", "true")
+                         [(str(i), "1", "true", "false" if hidden and "\0" in expected[i] else "true", "true", "true")
                           for i in range(len(cases))], stdout[-8000:])
         print("Compared %d full-text results and legacy atoms (%d NUL identity gaps)" %
               (len(cases), sum("\0" in text for text in expected)))
@@ -414,24 +428,29 @@ class NativeActionWindowTest(unittest.TestCase):
                                 cwd=ROOT, env=guest_env(self.directory), capture_output=True, text=True, timeout=120)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def caller_lines(self, table, file_io=True, forbid=False):
+    def caller_lines(self, table, file_io=True, forbid=False, native=True):
+        """native: the CeTTa views, compared with the earlier bridge's atom;
+        otherwise helper's own views, which return what the bridge returns."""
         lines = CALLER_HEADER + (["!(import! &self ./src/file_io)"] if file_io else []) + [
-            "!(import! &self ./src/memory)",
+            "!(import! &self ./src/memory)", BRIDGE_ATOM, STRING_BRIDGE,
             "!(remove-atom &self (= (maxRecentTurns) (empty)))",
             "!(add-atom &self (= (maxRecentTurns) 8))",
             "!(py-call (action_window_probe.load %s))" % q(table)]
         if forbid:
             lines.append("!(py-call (action_window_probe.forbid))")
         for i, name in enumerate(["recentActions", "relevantFiles"]):
+            oracle = "(py-call (action_window_probe.expected %d))" % i
             lines.append("!(let* (($answers (collapse (%s))) ($actual (car-atom $answers)) "
-                         "($expected (py-call (action_window_probe.expected %d)))) "
+                         "($expected %s)) "
                          "(println! (Caller %d (size-atom $answers) (get-metatype $actual) "
-                         "(== $actual $expected) (== (repr $actual) (repr $expected)))))" % (name, i, i))
+                         "(== $actual $expected) (== (repr $actual) (repr $expected)))))" %
+                         (name, "(probe:bridge-atom %s)" % oracle if native else oracle, i))
         return lines
 
-    def assert_callers(self, stdout):
+    def assert_callers(self, stdout, native=True):
+        kind = "symbol" if native or not string_bridge(stdout) else "grounded"
         self.assertEqual(re.findall(r"\(caller (\d+) (\d+) (\w+) (true|false) (true|false)\)", stdout.lower()),
-                         [(str(i), "1", "symbol", "true", "true") for i in range(2)], stdout[-8000:])
+                         [(str(i), "1", kind, "true", "true") for i in range(2)], stdout[-8000:])
 
     def test_memory_callers_and_engine_selection(self):
         path = self.history("history.metta", journal_block("t1", '((shell "src/old.py"))', message="hi")
@@ -442,8 +461,10 @@ class NativeActionWindowTest(unittest.TestCase):
         for engine, swi, file_io in (("cetta", False, True), ("cetta", False, False),
                                      ("petta", False, True), ("petta", True, True)):
             with self.subTest(engine=engine, swi=swi, file_io=file_io):
-                stdout = self.run_guest(self.caller_lines(table, file_io, forbid=engine == "cetta"), engine, swi)
-                self.assert_callers(stdout)
+                native = engine == "cetta"
+                stdout = self.run_guest(self.caller_lines(table, file_io, forbid=native, native=native),
+                                        engine, swi)
+                self.assert_callers(stdout, native)
 
     def test_caller_history_path_spellings(self):
         """The native history-path lookup opens what the old bridge opened.

@@ -106,7 +106,7 @@ class GoalViewsTest(unittest.TestCase):
         for i, path in enumerate(paths):
             lines += ["!(py-call (small_views_probe.apply %s))" % q(path)]
             if caller:
-                expr = ('(json:parse (str:symbol->string (py-call (goal_views_probe.python_bundle))))'
+                expr = ('(json:parse (ctx:text (py-call (goal_views_probe.python_bundle))))'
                         if mixed and i % 2 else "(addition-context-sources)")
             elif mixed and i % 2:
                 expr = '(py-call (goal_views_probe.python_view %s))' % q(name)

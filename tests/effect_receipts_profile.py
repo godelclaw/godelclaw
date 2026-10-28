@@ -64,7 +64,7 @@ def check(c,count):
         source+='!(run-command-batch-once 999 5 (quote (%s)))\n'%commands
         source+=emit('(JsonObject (%s))'%' '.join('(JsonPair "%s" (JsonArray (list:reverse (get-state &bp-%s))))'%(k,k)
             for k in ('hook','append','projection','fsync','open','write','strip')))
-        source+=emit('(json:parse-python (str:symbol->string (py-call (effect_receipts_caller_probe.summary))))')
+        source+=emit('(json:parse-python (format-args "{}" ((py-call (effect_receipts_caller_probe.summary)))))')
         raw=c.run('hook-profile-'+stem,source,{'METTACLAW_PUBLIC_TOOL_RECEIPTS':sharing,
             'METTACLAW_OBSERVED_STRATEGY':strategy,'METTACLAW_EFFECT_RECEIPT_PATH':str(receipt),
             'METTACLAW_PUBLIC_WORK_DIR':str(root),'EFFECT_TEST_STREAM_COUNTER_ONLY':'1'})

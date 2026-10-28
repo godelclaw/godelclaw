@@ -56,7 +56,18 @@
            ($other (prose:python $response)))))
       ($other (prose:python $response)))))
 
-(= (prose:python $response) (py-call (helper.undelivered_prose $response)))
+(= (prose:python $response) (prose:loop-value (py-call (helper.undelivered_prose $response))))
+
+; The loop's (repr (UNDELIVERED: $prose ...)) writes the symbol the earlier
+; bridge made of Python's str. Since CeTTa b8d3580b py-call hands that text
+; back as a String; keep the symbol, and &prose-none for "".
+(= (prose:loop-value $value)
+   (if (== (get-type $value) String)
+     (if (== $value "") (get-state &prose-none)
+       (case (str:string->symbol $value)
+         (((Error $call $why) $value)
+          ($symbol $symbol))))
+     $value))
 
 (= (prose:text $text $response)
    (case (str:codepoint-count $text)

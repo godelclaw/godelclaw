@@ -1,6 +1,7 @@
 !(import! &self ./src/mode_state.metta)
 !(import! &self ./src/fuel_io)
 !(import! &self ./src/goal_bookkeeping.metta)
+!(import! &self ./src/interop_flags_cetta.metta)
 (= (sleepInterval) (empty))
 (= (LLM) (empty))
 (= (maxOutputToken) (empty))
@@ -28,7 +29,17 @@
                  (coordinate banked-loops
                    (py-call (helper.boot_int "banked_loops" 0))
                    (coordinate pending-continuation
-                     (py-call (helper.rest_pending)) coordinates-empty))))))))))))))
+                     (loop:host-continuation (py-call (helper.rest_pending))) coordinates-empty))))))))))))))
+
+;; helper.rest_pending answers in Python text, which py-call made symbols
+;; before CeTTa b8d3580b (and Janus still does on SWI-PeTTa): no-continuation,
+;; or (continuation-value COMMAND) with the restored command's words. Since
+;; then the words are Strings; make them the symbols the loop runs.
+(= (loop:host-continuation $value)
+   (case $value
+     (("no-continuation" no-continuation)
+      (("continuation-value" $command) (continuation-value (host:legacy-atoms $command)))
+      ($other $other))))
 
 (= (initLoop)
    (progn

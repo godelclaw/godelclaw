@@ -3,6 +3,7 @@
 import json
 import os
 from isolated_env import isolated_environ  # noqa: E402
+import bridge_text
 import pathlib
 import shlex
 import subprocess
@@ -183,7 +184,8 @@ class CommandDispatchEngineTest(unittest.TestCase):
                 capture_output=True, text=True, timeout=30,
             )
         self.assertEqual(result.returncode, 0, result.stderr[-2000:])
-        self.assertIn("(NESTED_PYTHON_OK agent — bridge)", result.stdout)
+        self.assertIn("(NESTED_PYTHON_OK agent — bridge)",
+                      bridge_text.bare(result.stdout, ("NESTED_PYTHON_OK",)))
         self.assertNotIn("PettaSearchHostError", result.stdout + result.stderr)
 
     def test_petta_executes_quoted_batch_once(self):

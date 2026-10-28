@@ -223,6 +223,10 @@
        (str:concat (str:char-slice $text 0 (gv:slice-end (str:char-length $text) (- $max-chars 1))) "…") $text)))
 (= (gv:slice-end $length $end) (if (< $end 0) (math:max 0 (+ $length $end)) $end))
 (= (gv:work $path) (gv:work $path 6000 180))
+; Python text crosses py-call as a String on CeTTa (a symbol on older
+; bridges); anything else still fails as str:symbol->string fails.
+(= (gv:text $value)
+   (if (== (get-type $value) String) $value (str:symbol->string $value)))
 (= (gv:work $path $max-chars $note-chars)
    (case (gv:read $path)
      ((GvMissing (gv:empty))
@@ -232,7 +236,7 @@
             (((GvMalformed $number) (str:concat "work state unavailable: malformed goal record at line " (repr $number)))
              ((GvParsed $goals $flags)
                (let $body (gv:work-body $path $goals $flags $max-chars $note-chars)
-                 (str:join "\n" ((str:symbol->string (py-call (helper.change_mark "work-state" $body))) $body))))))))))))
+                 (str:join "\n" ((gv:text (py-call (helper.change_mark "work-state" $body))) $body))))))))))))
 (= (gv:kernel $path)
    (case (gv:read (gv:neighbor $path "goals_kernel.json"))
      ((GvMissing (JsonObject ()))
@@ -289,7 +293,7 @@
       ($text (let $lines (gv:lines $text)
         (if (== $lines ()) (gv:empty)
           (let $body (str:join "\n" $lines)
-            (if $fair (str:concat $body (json:parse (str:symbol->string (py-call (goal_views_boundary.fair_suffix))))) $body))))))))
+            (if $fair (str:concat $body (json:parse (gv:text (py-call (goal_views_boundary.fair_suffix))))) $body))))))))
 (= (gv:load $id)
    (sv:outcome (collapse (catch
      (case $id

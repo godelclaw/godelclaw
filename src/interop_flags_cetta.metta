@@ -11,3 +11,17 @@
    (if (== (get-type $value) String) $value
      (if (== (get-metatype $value) Symbol) (format-args "{}" ($value))
        (Error host:text expected-text))))
+
+; Python text crossed py-call as the symbol it spells before CeTTa b8d3580b,
+; as SWI-PeTTa's Janus still hands it over; on CeTTa it is a String since.
+; Where the runtime reads such a value as before, make the symbol again. Text
+; holding NUL, and "", make no symbol and stay text.
+(= (host:legacy-atom $value)
+   (if (== (get-type $value) String)
+     (case (str:string->symbol $value) (((Error $call $why) $value) ($symbol $symbol)))
+     $value))
+(= (host:legacy-atoms $value)
+   (if (== (get-metatype $value) Expression)
+     (if (== $value ()) ()
+       (cons-atom (host:legacy-atoms (car-atom $value)) (host:legacy-atoms (cdr-atom $value))))
+     (host:legacy-atom $value)))

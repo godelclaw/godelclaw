@@ -2,7 +2,11 @@
 ; Host values are boxed JSON; the provider/tools retain their upstream protocol.
 !(import! &self ./iter_host.py)
 !(import! &self ../../src/native_llm.metta)
-!(if (py-call (iter_host.native_processes)) (import! &self (library proc)) True)
+; Host Booleans cross py-call as the text "true"/"false" (Janus would hand
+; SWI-PeTTa's `if` a non-Boolean (@ true)); on CeTTa that text is a String,
+; which `if` reads as false. Conditions read it as a Boolean on both hosts.
+(= (iter:true $value) (case $value ((True True) (true True) ("true" True) ($other False))))
+!(if (iter:true (py-call (iter_host.native_processes))) (import! &self (library proc)) True)
 
 (= (iter:prune $history $i $limit)
    (if (< $i $limit)
@@ -10,7 +14,7 @@
               (iter:prune $history (+ $i 1) $limit)) True))
 (= (iter:drop-leading-tools $history)
    (if (> (py-call (iter_host.size $history)) 0)
-       (if (py-call (iter_host.equal (py-call (iter_host.get (py-call (iter_host.get $history 0)) "role")) "tool"))
+       (if (iter:true (py-call (iter_host.equal (py-call (iter_host.get (py-call (iter_host.get $history 0)) "role")) "tool")))
            (iter:drop-leading-tools (py-call (iter_host.drop_head $history))) $history)
        $history))
 (= (iter:clean $history $bucket)
@@ -27,10 +31,10 @@
    (if (== $seconds 0) ""
        (progn (py-call (iter_host.sleep 1))
               (let $event (py-call (iter_host.receive))
-                (if (py-call (iter_host.not_equal $event "")) $event (iter:slow (- $seconds 1)))))))
+                (if (iter:true (py-call (iter_host.not_equal $event ""))) $event (iter:slow (- $seconds 1)))))))
 
 (= (iter:temporary $event $new $post)
-   (if (py-call (iter_host.not_equal $event "")) (py-call (iter_host.empty_list))
+   (if (iter:true (py-call (iter_host.not_equal $event ""))) (py-call (iter_host.empty_list))
        (let $message
          (if $new
              "[TASK COMPLETED. DO NOT RE-SEND THE COMPLETED RESPONSE BUT SEND IN CASE YOU FORGOT. NOW QUERY FOR AND PICK A TASK BASED ON YOUR GOALS, PREFERABLY MEMORY CONSOLIDATION: FINDING EPISODES WHICH SUPPORT / CONTRADICT LTM ITEMS, LINKING EPISODES, PROMOTING USEFUL MEMORIES]"
@@ -42,11 +46,11 @@
 
 (= (iter:request $history $base $retry)
    (let* (($temporary (py-call (iter_host.take $base (py-call (iter_host.size $base)))))
-          ($_ (if (py-call (iter_host.not_equal $retry ""))
+          ($_ (if (iter:true (py-call (iter_host.not_equal $retry "")))
                   (py-call (iter_host.append $temporary (py-call (iter_host.message "user" $retry)))) True))
           ($tools (py-call (iter_host.tools)))
           ($errors (py-call (iter_host.get $tools "errors")))
-          ($_ (if (py-call (iter_host.not_equal $errors ""))
+          ($_ (if (iter:true (py-call (iter_host.not_equal $errors "")))
                   (py-call (iter_host.append $temporary (py-call (iter_host.message "user" $errors)))) True))
           ($omitted (py-call (iter_host.get $tools "omitted")))
           ($_ (if (> $omitted 0)
@@ -61,19 +65,19 @@
                        (py-call (iter_host.request $history $temporary $tools $surface))))
           ($message (py-call (iter_host.get $response "message")))
           ($content (py-call (iter_host.optional $message "content")))
-          ($_ (if (py-call (iter_host.truth $content))
+          ($_ (if (iter:true (py-call (iter_host.truth $content)))
                   (py-call (iter_host.put $message "content" (py-call (iter_host.concat $content "\n[NOT DELIVERED TO ANY CHANNEL. IF THIS WAS INTENDED AS COMMUNICATION, USE send.]")))) True))
           ($calls (py-call (iter_host.optional $message "tool_calls"))))
-     (if (py-call (iter_host.truth $calls))
+     (if (iter:true (py-call (iter_host.truth $calls)))
          (progn (py-call (iter_host.put $message "tool_calls" (py-call (iter_host.take $calls 10))))
                 (iter:response $message $tools))
          (iter:request $history $base
-            (if (py-call (iter_host.equal (py-call (iter_host.get $response "finish")) "length"))
+            (if (iter:true (py-call (iter_host.equal (py-call (iter_host.get $response "finish")) "length")))
                 "[OUTPUT TOKEN LIMIT REACHED. CALL THE REQUIRED TOOL CONCISELY.]"
                 (py-call (iter_host.retry_no_tool (py-call (iter_host.optional $message "content")))))))))
 
 (= (iter:dynamic $tools $name $arguments)
-   (if (py-call (iter_host.native_processes))
+   (if (iter:true (py-call (iter_host.native_processes)))
      (let* (($job (py-call (iter_host.prepare_dynamic $tools $name $arguments)))
           ($argv (py-call (iter_host.expression_field $job "argv")))
           ($cwd (py-call (iter_host.get $job "cwd")))
@@ -85,9 +89,9 @@
    (let* (($function (py-call (iter_host.get $call "function")))
           ($name (py-call (iter_host.get $function "name")))
           ($decoded (py-call (iter_host.decode (py-call (iter_host.get $function "arguments"))))))
-     (if (py-call (iter_host.flag $decoded "ok"))
-         (if (py-call (iter_host.has_tool $tools $name))
-             (if (py-call (iter_host.flag $decoded "object"))
+     (if (iter:true (py-call (iter_host.flag $decoded "ok")))
+         (if (iter:true (py-call (iter_host.has_tool $tools $name)))
+             (if (iter:true (py-call (iter_host.flag $decoded "object")))
                  (iter:dynamic $tools $name (py-call (iter_host.get $decoded "value")))
                  "Tool arguments must be a JSON object")
              (py-call (iter_host.unknown $name)))
@@ -98,7 +102,7 @@
               ($name (py-call (iter_host.get (py-call (iter_host.get $call "function")) "name")))
               ($output (py-call (iter_host.clip (py-call (iter_host.stringify (iter:dispatch $tools $call))))))
               ($_ (py-call (iter_host.append $history (py-call (iter_host.tool_message $call $output))))))
-         (iter:dispatch-all $history $tools $calls (+ $i 1) (or $nop (py-call (iter_host.equal $name "nop")))))))
+         (iter:dispatch-all $history $tools $calls (+ $i 1) (or $nop (iter:true (py-call (iter_host.equal $name "nop"))))))))
 
 (= (iter:act $history $base $event $post $steps $bucket)
    (let* (((iter:response $message $tools) (iter:request $history $base ""))
@@ -106,7 +110,7 @@
           ($nop (iter:dispatch-all $history $tools (py-call (iter_host.get $message "tool_calls")) 0 False))
           ($_ (change-state! &iter-checkpoint (py-call (iter_host.size $history))))
           ($_ (py-call (iter_host.save $history)))
-          ($used (if (py-call (iter_host.not_equal $event "")) 0 (+ $steps 1)))
+          ($used (if (iter:true (py-call (iter_host.not_equal $event ""))) 0 (+ $steps 1)))
           ($_ (change-state! &iter-control ($post $used False ""))))
      (if $nop (progn (change-state! &iter-control ($post 0 True ""))
                      (iter:state $history $post 0 True (iter:slow 10) $bucket))
@@ -116,12 +120,12 @@
 
 (= (iter:cycle $history $post $steps $new $pending $bucket)
    (let* (($_ (py-call (iter_host.sleep 0)))
-          ($event (if (py-call (iter_host.not_equal $pending "")) $pending (py-call (iter_host.receive))))
-          ($post-next (if (py-call (iter_host.not_equal $event "")) False (if $new True $post)))
-          ($steps-next (if (py-call (iter_host.not_equal $event "")) 0 $steps))
+          ($event (if (iter:true (py-call (iter_host.not_equal $pending ""))) $pending (py-call (iter_host.receive))))
+          ($post-next (if (iter:true (py-call (iter_host.not_equal $event ""))) False (if $new True $post)))
+          ($steps-next (if (iter:true (py-call (iter_host.not_equal $event ""))) 0 $steps))
           ($_ (change-state! &iter-control ($post-next $steps-next False $pending)))
           ($base (iter:temporary $event $new $post))
-          ($_ (if (py-call (iter_host.not_equal $event ""))
+          ($_ (if (iter:true (py-call (iter_host.not_equal $event "")))
                   (progn (py-call (iter_host.append $history (py-call (iter_host.message "user" (py-call (iter_host.step $event))))))
                          (py-call (iter_host.save $history))) True))
           ($_ (change-state! &iter-checkpoint (py-call (iter_host.size $history))))

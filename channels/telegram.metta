@@ -1332,17 +1332,21 @@
 (= (tg:recent-candidate? $line $needle)
    (or (tg:contains? $line "\\") (tg:contains? (str:lower $line) $needle)))
 
+; The cursor's tags are Python text: Strings on CeTTa, symbols on SWI-PeTTa.
 (= (tg:recent-backward $reader $remaining $needle $snippet $chosen)
    (if (<= $remaining 0) $chosen
      (case (py-call (helper.reverse_lines_next $reader))
        (((end) $chosen)
-        ((line $line)
-          (let $entry (tg:recent-entry $line $needle $snippet)
-            (if (== $entry "")
-              (tg:recent-backward $reader $remaining $needle $snippet $chosen)
-              (tg:recent-backward $reader (- $remaining 1) $needle $snippet
-                (cons-atom $entry $chosen)))))
+        (("end") $chosen)
+        ((line $line) (tg:recent-line $reader $remaining $needle $snippet $chosen $line))
+        (("line" $text) (tg:recent-line $reader $remaining $needle $snippet $chosen $text))
         ($bad (Error tg:recent-activity "invalid line cursor result"))))))
+(= (tg:recent-line $reader $remaining $needle $snippet $chosen $line)
+   (let $entry (tg:recent-entry $line $needle $snippet)
+     (if (== $entry "")
+       (tg:recent-backward $reader $remaining $needle $snippet $chosen)
+       (tg:recent-backward $reader (- $remaining 1) $needle $snippet
+         (cons-atom $entry $chosen)))))
 
 (= (tg:recent-entries $lines $needle $snippet)
    (tg:recent-entries-acc $lines $needle $snippet ()))

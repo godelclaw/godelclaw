@@ -153,7 +153,7 @@ def main():
                     print(f"FAIL {mode}/{name}/{variant}: {error}", flush=True)
     if args.mutants:
         mutants = [
-            ("iter", "nop-in-batch", "last-nop-only", '(or $nop (py-call (iter_host.equal $name "nop")))', '(py-call (iter_host.equal $name "nop"))'),
+            ("iter", "nop-in-batch", "last-nop-only", '(or $nop (iter:true (py-call (iter_host.equal $name "nop"))))', '(iter:true (py-call (iter_host.equal $name "nop")))'),
             ("iter", "fast-budget", "budget-49", '(>= $used 50)', '(>= $used 49)'),
             ("iter", "tool-caps", "nine-call-cap", '(iter_host.take $calls 10)', '(iter_host.take $calls 9)'),
             ("omega", "duplicate-input", "duplicate-rearms", '(!= $msgrcv (get-state &prevmsg))', 'True'),

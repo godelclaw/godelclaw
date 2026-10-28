@@ -88,6 +88,8 @@ class ModeLauncherTests(unittest.TestCase):
                     launcher.OMEGA_HOST + '\n' +
                     '!(println! (COUNT (size-atom (collapse (py-str ("a" "b"))))))\n' +
                     '!(println! (TEXT (py-str ("a" "b"))))\n' +
+                    '!(println! (EMPTY (== (omega-host:receive-text "") "")))\n' +
+                    '!(println! (RAW (== (omega-host:receive-text "λ\\\"quoted") "λ\\\"quoted")))\n' +
                     '!(println! (EXISTS (if (exists-file ' + json.dumps(str(present)) + ') yes no)))\n' +
                     '!(println! (MISSING (if (exists-file ' + json.dumps(str(root / "absent")) + ') yes no)))\n' +
                     '!(println! (DIRECTORY (if (exists-directory ' + json.dumps(directory) + ') yes no)))\n')
@@ -104,7 +106,7 @@ class ModeLauncherTests(unittest.TestCase):
                         os.killpg(process.pid, signal.SIGKILL)
                         process.communicate()
                 self.assertEqual(process.returncode, 0, err)
-                for expected in ("(COUNT 1)", "(TEXT ab)", "(EXISTS yes)", "(MISSING no)", "(DIRECTORY yes)"):
+                for expected in ("(COUNT 1)", "(TEXT ab)", "(EMPTY true)", "(RAW true)", "(EXISTS yes)", "(MISSING no)", "(DIRECTORY yes)"):
                     self.assertIn(expected, out.replace('"', ''))
 
     def test_real_engines_keep_framework_startup_and_new_switch_separate(self):

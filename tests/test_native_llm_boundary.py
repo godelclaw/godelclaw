@@ -15,6 +15,11 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 import provider_protocol
+import bridge_text
+
+# Values the probes print that Python returned (a model answer, a flag). Only
+# the PeTTa lane's printing changed; HE has always printed them quoted.
+ANSWER_TAGS = ("RESULT", "FIRST", "SECOND", "FINISH", "READY")
 
 
 class Peer(http.server.BaseHTTPRequestHandler):
@@ -88,7 +93,7 @@ class NativeBoundaryTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr[-2000:])
         self.assertNotIn("fixture-secret", result.stdout + result.stderr)
         self.last_stderr = result.stderr
-        return result.stdout
+        return bridge_text.bare(result.stdout, ANSWER_TAGS) if lang == "petta" else result.stdout
 
     def disable_python_accounting(self):
         """A native call must succeed with every Python ledger owner disabled."""

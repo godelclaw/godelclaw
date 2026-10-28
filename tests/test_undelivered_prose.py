@@ -180,7 +180,7 @@ PROBE = r'''
    (let* (($_ (py-call (prose_record.begin $key)))
           ($n (probe:show (catch (prose:undelivered $x))))
           ($_ (py-call (prose_record.begin none)))
-          ($p (probe:show (catch (py-call (prose_record.oracle $x))))))
+          ($p (probe:show (catch (prose:loop-value (py-call (prose_record.oracle $x)))))))
      (py-call (prose_record.put $key $n $p (== $n $p)
                 (== (repr (UNDELIVERED: $n NOT_DELIVERED)) (repr (UNDELIVERED: $p NOT_DELIVERED)))
                 (get-metatype $x) (get-type $x)))))
@@ -243,7 +243,9 @@ class UndeliveredProseParity(unittest.TestCase):
     def header(self):
         return ["!(import! &self ./src/helper.py)", "!(import! &self prose_record.py)",
                 "!(import! &self ./src/undelivered_prose.metta)",
-                "!(py-call (prose_record.watch))", PROBE]
+                "!(py-call (prose_record.watch))", PROBE,
+                '!(py-call (prose_record.value "string-bridge" '
+                '(== (get-type (py-call (builtins.str "x"))) String)))']
 
     def compare(self, texts):
         lines = self.header()
@@ -255,6 +257,8 @@ class UndeliveredProseParity(unittest.TestCase):
         rows, _, detail = self.run_cetta(lines, texts)
         cases = {row[1]: row[2:] for row in rows if row[0] == "case"}
         reached = {row[1] for row in rows if row[0] == "python"}
+        # py-call hands the Bool to Python as the text "true" or "false".
+        strings = str({row[1]: row[2] for row in rows if row[0] == "value"}.get("string-bridge")) == "true"
         compared = 0
         for i, text in enumerate(texts):
             expected = as_returned(helper.undelivered_prose(text))
@@ -271,9 +275,14 @@ class UndeliveredProseParity(unittest.TestCase):
                 # holding NUL, which makes no symbol.
                 self.assertEqual(key in reached,
                                  not native_kind(meta, kind) or "\x00" in expected
-                                 or (key.startswith("p") and text in BOUND_TOKENS),
+                                 or (key.startswith("p") and text in BOUND_TOKENS
+                                     and kind != "String"),
                                  "%s (%s %s)" % (label, meta, kind))
-                self.assertEqual(key.startswith("n"), (meta, kind) == ("Grounded", "String"), label)
+                # The native text is a String; Python text is one only on a
+                # bridge that hands Python text back as a String (CeTTa since
+                # b8d3580b), and otherwise whatever atom its spelling makes.
+                self.assertEqual(key.startswith("n") or strings,
+                                 (meta, kind) == ("Grounded", "String"), label)
                 compared += 1
         return compared, len(reached)
 

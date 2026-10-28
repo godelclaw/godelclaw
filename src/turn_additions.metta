@@ -113,7 +113,8 @@
           ($admitted (py-call (strategy_host.broker_begin $broker-turn (quote $commands) $effective))))
      (if (== $admitted 1)
        (let $records (run-command-batch-once $broker-turn $effective (quote $commands))
-         (py-call (strategy_host.broker_end $broker-turn (quote $records))))
+         (let $reported (py-call (strategy_host.broker_end $broker-turn (quote $records)))
+           $records))
        ((COMMAND_BATCH_WITHHELD: (py-call (strategy_host.broker_feedback)))))))
 
 (= (addition-command-errors $turn)

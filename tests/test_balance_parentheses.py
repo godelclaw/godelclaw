@@ -216,7 +216,7 @@ PROBE = r'''
    (let* (($_ (py-call (balance_record.begin $key)))
           ($n (probe:show (catch (balance:parentheses $x))))
           ($_ (py-call (balance_record.begin none)))
-          ($p (probe:show (catch (py-call (balance_record.oracle $x))))))
+          ($p (probe:show (catch (balance:loop-value (py-call (balance_record.oracle $x)))))))
      (py-call (balance_record.put $key $n $p (== $n $p)
                 (== (repr $n) (repr $p))
                 (get-metatype $x) (get-type $x) (get-metatype $n) (get-type $n)))))
@@ -354,12 +354,18 @@ class BalanceParity(CettaCase):
                     self.assertTrue(is_true(same) and is_true(same_repr), label)
                 # Python answers only what is not text to CeTTa and answers
                 # whose NUL py-call cuts.
+                # A bound token is text to CeTTa once py-call hands it back
+                # as a String (b8d3580b); a symbol evaluated to the space.
                 self.assertEqual(key in reached,
                                  not native_kind(meta, kind) or "\x00" in expected
-                                 or (key.startswith("p") and text in BOUND_TOKENS),
+                                 or (key.startswith("p") and text in BOUND_TOKENS
+                                     and kind != "String"),
                                  "%s (%s %s)" % (label, meta, kind))
-                # The answer is the symbol py-call makes of Python's str.
-                self.assertEqual((out_meta, out_kind), ("Symbol", "%Undefined%"), label)
+                # The answer is the symbol of Python's str (balance:loop-value);
+                # text holding NUL makes no symbol and stays a String.
+                self.assertIn((out_meta, out_kind),
+                              [("Symbol", "%Undefined%")]
+                              + ([("Grounded", "String")] if "\x00" in expected else []), label)
                 compared += 1
         self.beyond_python = beyond
         return compared, len(reached)
@@ -533,7 +539,7 @@ class LiveCaller(CettaCase):
           ($_ (live:stage $key input $input $input))
           ($new (addition-balance-response $raw))
           ($_ (py-call (balance_record.begin old)))
-          ($old (py-call (helper.balance_parentheses (py-call (strategy_host.normalize_response $raw)))))
+          ($old (balance:loop-value (py-call (helper.balance_parentheses (py-call (strategy_host.normalize_response $raw))))))
           ($_ (live:stage $key balanced $new $old))
           ($newEnvelope (addition-envelope-response $new))
           ($oldEnvelope (model-response-envelope $old))
@@ -578,7 +584,7 @@ class LiveCaller(CettaCase):
             meta, kind = got["input"][4:6]
             text = texts[int(key[1:])]
             self.assertEqual(key in reached, not native_kind(meta, kind) or "\x00" in got["balanced"][1]
-                             or text in BOUND_TOKENS,
+                             or (text in BOUND_TOKENS and kind != "String"),
                              "%s %r (%s %s)" % (key, texts[int(key[1:])][:200], meta, kind))
         return stages, reached, compared, detail
 

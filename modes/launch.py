@@ -56,7 +56,7 @@ def adapter_ledger(mode, durable_channel):
     return {**common,
         "input_annotations": "migrated to current PeTTa annotations",
         "case": "current engine semantics; no duplicate-evaluation compatibility shim",
-        "host_values": "explicit Boolean atoms and file predicates; deterministic text concatenation",
+        "host_values": "explicit Boolean atoms and file predicates; input text preserved without repr quoting",
         "helper_module": "runtime alias omega_helper avoids host helper name collisions",
         "loop": "current pinned Omega native-tool loop with explicit host adapters",
         "provider": "ToolCalls.module canonical calls over the existing configured transport",
@@ -108,7 +108,7 @@ def prepare_iter(runtime, repo, standalone=False, prompt_path=None):
     return entry, [str(HERE), str(HERE / "iter")]
 
 
-def prepare_omega(runtime, repo, standalone=False, prompt_path=None):
+def prepare_omega(runtime, repo, standalone=False, prompt_path=None, engine="cetta"):
     check_runtime_profile(runtime, standalone)
     # Runtime modules can be regenerated; memory is never replaced at boot.
     sys.path.insert(0, str(HERE / "omega"))
@@ -132,6 +132,10 @@ def prepare_omega(runtime, repo, standalone=False, prompt_path=None):
     for relative in ("src/utils.metta", "src/memory.metta", "src/skills.metta", "src/loop.metta"):
         path = checkout / relative
         path.write_text(path.read_text().replace("helper.", "omega_helper."))
+    if engine == "cetta":
+        loop = checkout / "src/loop.metta"
+        loop.write_text(loop.read_text().replace(
+            '(string-safe (repr (receive)))', '(omega-host:receive-text (receive))'))
     prompt = checkout / "memory/prompt.txt"
     if not (runtime / "identity-seeded").exists():
         if prompt_path:
@@ -158,8 +162,8 @@ def prepare_omega(runtime, repo, standalone=False, prompt_path=None):
     memory += ['(= (getPrompt $p) (py-call (runtime_host.get_prompt $p)))',
                '(= (getHistory) (py-call (runtime_host.get_history (maxHistory))))',
                '(= (appendToHistory $addition) (py-call (runtime_host.append_history (swrite $addition))))',
-               '(= (remember $text) (if (py-call (runtime_host.native_memory_flag)) (semantic:remember $text) (py-call (runtime_host.remember $text))))',
-               '(= (query $text) (if (py-call (runtime_host.native_memory_flag)) (semantic:query $text 20) (py-call (runtime_host.query $text))))']
+               '(= (remember $text) (if (omega-host:true (py-call (runtime_host.native_memory_flag))) (semantic:remember $text) (py-call (runtime_host.remember $text))))',
+               '(= (query $text) (if (omega-host:true (py-call (runtime_host.native_memory_flag))) (semantic:query $text 20) (py-call (runtime_host.query $text))))']
     (runtime / "memory.metta").write_text("\n".join(memory) + "\n")
     removed_skills = ("getSkillRules", "read-file", "write-file", "append-file",
                       "delete-file", "get-io-policy", "write-file-b64", "nop")
@@ -191,11 +195,13 @@ def prepare_omega(runtime, repo, standalone=False, prompt_path=None):
     (runtime / "channels.py").write_text('import runtime_host\ndef commChannelStart(channel): return True\ndef commChannelReceive(): return runtime_host.receive()\ndef commChannelSend(message): return runtime_host.send(message)\n')
     (runtime / "host.metta").write_text(OMEGA_HOST)
     entry = runtime / "run.metta"
+    # omega-host:atom needs CeTTa's str library; SWI-PeTTa has none and needs none.
+    text_library = "!(import! &self (library str))\n" if engine == "cetta" else ""
     entry.write_text(f'''!(import! &self (library lib_import))
-!(git-import! "https://github.com/singnet/Omega.git" "" "{runtime}/repos")
+{text_library}!(git-import! "https://github.com/singnet/Omega.git" "" "{runtime}/repos")
 !(import! &self "{HERE}/runtime_host.py")
 !(import! &self "{HERE.parent}/src/native_llm.metta")
-!(if (py-call (runtime_host.native_memory_flag))
+!(if (case (py-call (runtime_host.native_memory_flag)) ((True True) (true True) ("true" True) ($other False)))
      (import! &self {json.dumps(str(repo / "src/semantic_memory_cetta.metta"))})
      True)
 !(import! &self "{runtime}/rag.py")
@@ -231,14 +237,26 @@ def prepare_omega(runtime, repo, standalone=False, prompt_path=None):
 
 
 OMEGA_HOST = r'''
+; Python text is already text; repr would quote user input and make an empty
+; poll appear nonempty. The symbol path retains the SWI carrier's behavior.
+(= (omega-host:receive-text $value)
+   (if (== (get-type $value) String) $value (string-safe (repr $value))))
 (= (py-str-helper $L $outp)
    (if (== $L ()) $outp
        (let* (($head (car-atom $L)) ($tail (cdr-atom $L))
               ($outp2 (py-call (operator.add $outp (py-call (str $head))))))
          (py-str-helper $tail $outp2))))
 (= (py-str $L) (py-str-helper $L ""))
+; Upstream Omega reads configuration as SWI-PeTTa's Janus hands it over, text
+; as symbols: it compares (commchannel) with telegram and (embeddingprovider)
+; with Local. On CeTTa py-call hands Python text back as a String; make the
+; symbol again (str:string->symbol, from the str library the CeTTa entry loads).
+(= (omega-host:atom $value)
+   (if (== (get-type $value) String)
+     (case (str:string->symbol $value) (((Error $call $why) $value) ($symbol $symbol)))
+     $value))
 (= (configure $key $default)
-   (let $value (py-call (runtime_host.config $key $default))
+   (let $value (omega-host:atom (py-call (runtime_host.config $key $default)))
      (add-atom &self (= ($key) $value))))
 (= (initConfig) (py-call (runtime_host.init_config)))
 (= (initLogger) ())
@@ -250,8 +268,11 @@ OMEGA_HOST = r'''
 (= (joinPath $parts) (py-call (runtime_host.join_path $parts)))
 (= (sleep $seconds) (py-call (runtime_host.omega_sleep $seconds)))
 (= (string-replace $text $separators $replacement) (py-call (runtime_host.string_replace $text $separators $replacement)))
-(= (exists-file $path) (py-call (runtime_host.path_exists $path "file")))
-(= (exists-directory $path) (py-call (runtime_host.path_exists $path "directory")))
+; Host Booleans cross py-call as the text "true"/"false"; on CeTTa that text
+; is a String, which `if` reads as false. Read it as a Boolean on both hosts.
+(= (omega-host:true $value) (case $value ((True True) (true True) ("true" True) ($other False))))
+(= (exists-file $path) (omega-host:true (py-call (runtime_host.path_exists $path "file"))))
+(= (exists-directory $path) (omega-host:true (py-call (runtime_host.path_exists $path "directory"))))
 '''
 
 
@@ -413,8 +434,11 @@ def main():
                                  capture_output=True, text=True, timeout=10)
         if version.returncode or not any(f"({build})" in version.stdout for build in ("python", "main", "full")):
             parser.error("standalone modes need a CeTTa build with Python support (BUILD=python)")
-    entry, paths = (prepare_iter if args.mode == "iter" else prepare_omega)(
-        runtime, args.repo, standalone=standalone, prompt_path=args.prompt)
+    if args.mode == "iter":
+        entry, paths = prepare_iter(runtime, args.repo, standalone=standalone, prompt_path=args.prompt)
+    else:
+        entry, paths = prepare_omega(runtime, args.repo, standalone=standalone,
+                                     prompt_path=args.prompt, engine=args.engine)
     # The loop's CWD is mode-private; selection remains agent-wide.
     environment["METTACLAW_LOOP_MODE_PATH"] = os.path.abspath(
         environment.get("METTACLAW_LOOP_MODE_PATH", str(args.repo / "memory/loop_mode.json")))

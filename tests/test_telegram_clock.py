@@ -8,6 +8,7 @@ that zone. Set CETTA_BIN to a Python-enabled cetta.
 """
 import json
 from isolated_env import isolated_environ  # noqa: E402
+import bridge_text
 import os
 import pathlib
 import re
@@ -169,7 +170,7 @@ class TelegramClockParity(unittest.TestCase):
         _, stdout, detail = self.run_cetta(lines, "UTC")
         self.assertEqual(re.findall(r"\(Raised (\d+) (\d)\)", stdout),
                          [(str(i), "1") for i in range(len(values))], detail)
-        self.assertIn("(Text 00000000000000000012)", stdout, detail)
+        self.assertIn("(Text 00000000000000000012)", bridge_text.bare(stdout, ("Text",)), detail)
         for value in ("x", "1.5", float("nan"), float("inf")):
             with self.assertRaises((ValueError, OverflowError)):
                 helper.pad20(value)

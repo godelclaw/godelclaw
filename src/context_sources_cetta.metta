@@ -74,10 +74,13 @@
       ("work-state" (gv:load $id)) ("affect-gestalt" (gv:load $id))
       ("effect-receipts" (er:context-load))
       ($retained (ctx:decode (py-call (context_source_loaders.load $loaders $id)))))))
+; Python text is String on the native bridge and Symbol on older bridges.
+(= (ctx:text $value)
+   (if (== (get-type $value) String) $value (str:symbol->string $value)))
 (= (ctx:project $loaders $specs $epoch)
    (if (== $specs ()) ()
      (let* (((($key $limit $tail) $rest) (decons-atom $specs))
-            ($id (str:symbol->string $key))
+            ($id (ctx:text $key))
             ; Keep loader/str(value) conversion outside the decode catch: a
             ; conversion exception still fails the bundle, exactly as Python.
             ($outcome (ctx:load $loaders $id))
@@ -88,7 +91,7 @@
    (case $wire
      (((0) ("unavailable")) ((1) ("missing"))
       ((2 $encoded)
-       (ctx:decoded (collapse (catch (json:parse (str:symbol->string $encoded))))))
+       (ctx:decoded (collapse (catch (json:parse (ctx:text $encoded))))))
       ($other ("unavailable")))))
 ; Residual transport failures cost only their source. Never invent absence or
 ; install non-text data: admission retains the prior value as stale-known.

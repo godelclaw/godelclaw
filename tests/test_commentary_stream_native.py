@@ -10,6 +10,7 @@ import time
 import unittest
 
 import test_native_llm_boundary as boundary
+import bridge_text
 from test_provider_stream import frame
 from test_responses_stream_engine import event, response
 import public_worklog
@@ -143,6 +144,8 @@ class NativeCommentaryStreamingTests(unittest.TestCase):
         self.peer.release.set()
         _, stderr = self.process.communicate(timeout=10)
         output = self.output.read_text()
+        if self.lang == 'petta':
+            output = bridge_text.bare(output, boundary.ANSWER_TAGS)
         self.assertEqual(self.process.returncode, 0, stderr)
         self.assertNotIn('(Error ', output)
         self.assertNotIn('fixture-secret', output+stderr)

@@ -58,7 +58,17 @@
                       ($name (balance:text $name $raw))))))))
       ($other (balance:python $raw)))))
 
-(= (balance:python $raw) (py-call (helper.balance_parentheses $raw)))
+(= (balance:python $raw) (balance:loop-value (py-call (helper.balance_parentheses $raw))))
+
+; The loop reads the balanced response as the symbol the earlier bridge made
+; of Python's str (history and the action window read it unquoted). Since
+; CeTTa b8d3580b py-call hands that text back as a String; keep the symbol.
+(= (balance:loop-value $value)
+   (if (== (get-type $value) String)
+     (case (str:string->symbol $value)
+       (((Error $call $why) $value)
+        ($symbol $symbol)))
+     $value))
 
 (= (balance:text $text $raw)
    (case (str:codepoint-count $text)

@@ -49,7 +49,7 @@ def check(c):
         source += '!(println! (ImportOwner (size-atom (get-state &er-published)) (get-state &er-captured)))\n'
         source += emit('(context-bundle:with-views ())')
         source += '!(println! (ContextRaw (collapse (catch (ctx:build (py-call (context_source_loaders.prepare ())))))))\n'
-        source += '!(println! (ProbeSummary (json:stringify-python (json:parse-python (str:symbol->string (py-call (effect_receipts_caller_probe.summary)))))))\n'
+        source += '!(println! (ProbeSummary (json:stringify-python (json:parse-python (format-args "{}" ((py-call (effect_receipts_caller_probe.summary))))))))\n'
         before=time.time()
         raw = c.run('actual-dispatcher-strategy-'+strategy, source,
             {'METTACLAW_OBSERVED_STRATEGY':strategy,'METTACLAW_PUBLIC_TOOL_RECEIPTS':'1',
