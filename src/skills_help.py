@@ -89,11 +89,13 @@ PAGES = {
     "memory-window": 'usage: (memory-window characters)\nSet the prompt excerpt size, default 8000 characters, 0 unlimited. This does not limit stored memory or memory-open.',
     "mail-send": ('usage: (mail-send "name" "text" ["stable-id"])\n'
                   'Native CeTTa mail, delivered automatically as peer input.\n'
-                  'Reply with mail-send. Reusing an ID with the same content is a duplicate;\n'
-                  'different content is a conflict. IDs are optional; no filing commands.'),
+                  'Mail labelled [automatic mail from ...] is information; answer it only when\n'
+                  'an answer is useful. Reply with mail-send. Reusing an ID with the same content\n'
+                  'is a duplicate; different content is a conflict. IDs are optional; no filing commands.'),
     "mail-receive": ('usage: (mail-receive)\n'
-                     'Check native mail now. Arrivals also enter turns automatically;\n'
-                     'acknowledgement follows a committed turn. CeTTa only.'),
+                     'Check native mail now. Arrivals also enter turns automatically, labelled\n'
+                     '[automatic mail from ...] when marked Auto-Submitted; acknowledgement follows\n'
+                     'a committed turn. CeTTa only.'),
     "task-read": 'usage: (task-read "record-id" offset [page-bytes])\nRead an exact retained input or call/result pair, including archived evidence. Offsets count characters; next=null ends it.',
     "task-history": 'usage: (task-history "request-id|conversation:owner" offset [count]); count=0 reads all entries\nA request gives its task-family call index. The conversation root shown in TASK_CONTEXT indexes all input and call occurrences across frames, including compacted history.',
     "task-note": 'usage: (task-note "findings, uncertainties, next steps" "JSON list of call IDs")\nAppend a task note with evidence references. A note is an interpretation, not certified truth.',
