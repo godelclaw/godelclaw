@@ -139,7 +139,26 @@
 (= (gw:pairs $value) (case $value (((JsonObject $pairs) $pairs) ($other ()))))
 (= (gw:max $a $b) (if (> $a $b) $a $b))
 (= (gw:min $a $b) (if (< $a $b) $a $b))
+(= (gw:min-rest $nums $best)
+   (if (== $nums ()) $best (gw:min-rest (cdr-atom $nums) (gw:min $best (car-atom $nums)))))
+(= (gw:min-list $nums) (gw:min-rest (cdr-atom $nums) (car-atom $nums)))
 (= (gw:find $text $needle) (case (str:find $text $needle) (((TextNotFound $n) -1) ($at $at))))
+(= (gw:contains-any $text $needles)
+   (if (== $needles ()) false
+     (if (>= (gw:find $text (car-atom $needles)) 0) true
+       (gw:contains-any $text (cdr-atom $needles)))))
+(= (gw:temporary-refusal $reason)
+   (let $low (gw:strip (str:lower (gw:text $reason)))
+     (or (str:starts-with $low "rate-limited:")
+       (or (str:starts-with $low "error:")
+         (gw:contains-any $low
+           ("rate-limit" "rate limit" "temporary" "temporarily" "try again"
+            "unavailable" "overload" "too many" "timeout" "timed out" "busy"))))))
+(= (gw:unique-texts $items $done)
+   (if (== $items ()) (gw:reverse $done)
+     (let $item (car-atom $items)
+       (gw:unique-texts (cdr-atom $items)
+         (if (nostr:member $item $done) $done (cons-atom $item $done))))))
 
 ; ── ordering ────────────────────────────────────────────────────────────────
 ; Stable merge sort of (GwKeyed NUMBER TEXT ITEM) by NUMBER, then TEXT in
@@ -275,6 +294,12 @@
 (= (gw:set-sent $id $record)
    (let $gone (gw:remove-all (collapse (match &self (GwSent $id $old) (GwSent $id $old))))
      (add-atom &self (GwSent $id $record))))
+(= (gw:notice-at $sender $reason)
+   (let $stamps (collapse (match &self (GwNotice $sender $reason $at) $at))
+     (if (== $stamps ()) () (car-atom $stamps))))
+(= (gw:set-notice $sender $reason $at)
+   (let $gone (gw:remove-all (collapse (match &self (GwNotice $sender $reason $old) (GwNotice $sender $reason $old))))
+     (add-atom &self (GwNotice $sender $reason $at))))
 
 ; ── paths ───────────────────────────────────────────────────────────────────
 ; Path.expanduser for "~" and "~/...".
@@ -361,6 +386,9 @@
                      (((gw:failed $kind2 $detail2) $loaded)
                       ($ok (gw:configure-rest $config $directory $single $list))))))))))))))))
 
+(= (gw:positive-integer $value)
+   (if (nostr:is-integer $value) (>= $value 1) false))
+
 (= (gw:configure-rest $config $directory $single $relays)
    (let* (($s0 (gw:set single $single))
           ($s1 (gw:set relays $relays))
@@ -374,10 +402,19 @@
           ($s8 (gw:add-table (gw:pairs (gw:field-or $config "inbound" (JsonObject ()))) inbound))
           ($s9 (gw:add-table (gw:pairs (gw:field-or $config "senders" (JsonObject ()))) senders))
           ($s10 (gw:add-table (gw:pairs (gw:field-or $config "replies" (JsonObject ()))) replies))
-          ($s11 (gw:set domain (gw:field-or $config "domain" ""))))
-     (if (or (== (gw:get domain) "") (gw:agent-name (gw:get domain)))
-       (gw:check-config)
-       (gw:failed value (gw:cat ("not a claw-mail domain name: " (gw:quoted (gw:get domain))))))))
+          ($s11 (gw:set domain (gw:field-or $config "domain" "")))
+          ($s12 (gw:set notice-period (gw:field-or $config "notice-period" (gw:field-or $config "notice_period" 86400))))
+          ($s13 (gw:set fetch-page (gw:field-or $config "fetch-page" (gw:field-or $config "fetch_page" 5000))))
+          ($s14 (gw:set ack-overdue (gw:field-or $config "ack-overdue" (gw:field-or $config "ack_overdue" 600)))))
+     (if (not (gw:positive-integer (gw:get notice-period)))
+       (gw:failed value "notice-period must be at least 1")
+       (if (not (gw:positive-integer (gw:get fetch-page)))
+         (gw:failed value "fetch-page must be at least 1")
+         (if (not (gw:positive-integer (gw:get ack-overdue)))
+           (gw:failed value "ack-overdue must be at least 1")
+           (if (or (== (gw:get domain) "") (gw:agent-name (gw:get domain)))
+             (gw:check-config)
+             (gw:failed value (gw:cat ("not a claw-mail domain name: " (gw:quoted (gw:get domain)))))))))))
 
 (= (gw:add-table $pairs $table)
    (if (== $pairs ()) ()
@@ -461,7 +498,7 @@
 
 ; ── state ───────────────────────────────────────────────────────────────────
 (= (gw:known-field $name)
-   (nostr:member $name ("since" "recent" "receipted" "outbound" "sent")))
+   (nostr:member $name ("since" "recent" "receipted" "outbound" "sent" "notices")))
 (= (gw:load-state)
    (let $path (gw:get state)
      (case (fs:read-text-result $path 0 "raw")
@@ -474,7 +511,7 @@
    (case $value
      (((JsonObject $pairs)
        (let* (($order (gw:state-fields $pairs ()))
-              ($missing (gw:absent-fields ("since" "recent" "receipted" "outbound" "sent") $order ())))
+              ($missing (gw:absent-fields ("since" "recent" "receipted" "outbound" "sent" "notices") $order ())))
          (gw:set state-order (gw:append $order $missing))))
       ($other (gw:failed value (gw:cat ($path ": not a JSON object")))))))
 (= (gw:absent-fields $fields $present $missing)
@@ -483,7 +520,7 @@
        (gw:absent-fields (cdr-atom $fields) $present
          (if (nostr:member $field $present) $missing (cons-atom $field $missing))))))
 ; Each top-level field once, in the file's order; a field that is not one of
-; the five is kept as it was.
+; the known state fields is kept as it was.
 (= (gw:state-fields $pairs $order)
    (if (== $pairs ()) (gw:reverse $order)
      (let* (((JsonPair $name $value) (car-atom $pairs))
@@ -491,6 +528,11 @@
             ($loaded (if (gw:known-field $name) (gw:load-field $name (gw:pairs $value))
                        (gw:set (GwStateExtra $name) $value))))
        (gw:state-fields (cdr-atom $pairs) (if $seen $order (cons-atom $name $order))))))
+(= (gw:load-notices $sender $pairs)
+   (if (== $pairs ()) ()
+     (let* (((JsonPair $reason $at) (car-atom $pairs))
+            ($set (gw:set-notice $sender $reason $at)))
+       (gw:load-notices $sender (cdr-atom $pairs)))))
 (= (gw:load-field $name $pairs)
    (if (== $pairs ()) ()
      (let* (((JsonPair $key $value) (car-atom $pairs))
@@ -499,9 +541,16 @@
                        ("recent" (gw:set-recent $key $value))
                        ("receipted" (gw:set-receipted $key $value))
                        ("outbound" (gw:set-outbound $key $value))
-                       ("sent" (gw:set-sent $key $value))))))
+                       ("sent" (gw:set-sent $key $value))
+                       ("notices" (gw:load-notices $key (gw:pairs $value)))))))
        (gw:load-field $name (cdr-atom $pairs)))))
 
+(= (gw:notices-pairs $senders $done)
+   (if (== $senders ()) (gw:reverse $done)
+     (let* (($sender (car-atom $senders))
+            ($reasons (collapse (match &self (GwNotice $sender $r $at) (JsonPair $r $at)))))
+       (gw:notices-pairs (cdr-atom $senders)
+         (if (== $reasons ()) $done (cons-atom (JsonPair $sender (JsonObject $reasons)) $done))))))
 (= (gw:field-json $name)
    (case $name
      (("since" (JsonObject (collapse (match &self (GwSince $k1 $v1) (JsonPair $k1 $v1)))))
@@ -509,17 +558,28 @@
       ("receipted" (JsonObject (collapse (match &self (GwReceipted $k3 $v3) (JsonPair $k3 $v3)))))
       ("outbound" (JsonObject (collapse (match &self (GwOutbound $k4 $v4) (JsonPair $k4 $v4)))))
       ("sent" (JsonObject (collapse (match &self (GwSent $k5 $v5) (JsonPair $k5 $v5)))))
+      ("notices" (JsonObject (gw:notices-pairs (gw:unique-texts (collapse (match &self (GwNotice $s $r $at) $s)) ()) ())))
       ($other (gw:get (GwStateExtra $name))))))
 (= (gw:state-pairs $names $done)
    (if (== $names ()) (gw:reverse $done)
      (let $name (car-atom $names)
        (gw:state-pairs (cdr-atom $names) (cons-atom (JsonPair $name (gw:field-json $name)) $done)))))
 
-; json.dump of the state to a 0600 temporary file, fsync, then rename.
+; json.dump of the state to a 0600 temporary file, fsync, rename, then sync parent directory.
+(= (gw:sync-dir $dir)
+   (case (fs:open-read $dir)
+     (((fs:failed $a $b $c $d $e $f) (gw:failed os (gw:cat ($dir ": " $f))))
+      ($dfd
+       (let* (($synced (fs:sync $dfd))
+              ($closed (fs:close $dfd))
+              ($failures (gw:fs-failures ($synced $closed) ())))
+         (if (== $failures ()) GwSaved
+           (gw:failed os (gw:cat ($dir ": " (gw:text (car-atom $failures)))))))))))
 (= (gw:save)
    (let* (($path (gw:get state))
+          ($parent (gw:parent $path))
           ($temporary (gw:with-tmp $path))
-          ($directory (fs:make-directories (gw:parent $path) 511))
+          ($directory (fs:make-directories $parent 511))
           ($text (json:stringify-python (JsonObject (gw:state-pairs (gw:get state-order) ())))))
      (case (fs:open-write $temporary ("create" "truncate") 384)
        (((fs:failed $a $b $c $d $e $f) (gw:failed os (gw:cat ($temporary ": " $f))))
@@ -531,23 +591,24 @@
            (if (not (== $failures ())) (gw:failed os (gw:cat ($temporary ": " (gw:text (car-atom $failures)))))
              (case (fs:rename $temporary $path)
                (((fs:failed $a2 $b2 $c3 $d2 $e2 $f2) (gw:failed os (gw:cat ($path ": " $f2))))
-                ($renamed GwSaved))))))))))
+                ($renamed (gw:sync-dir $parent)))))))))))
 (= (gw:fs-failures $results $failures)
    (if (== $results ()) $failures
      (gw:fs-failures (cdr-atom $results)
        (case (car-atom $results) (((fs:failed $a $b $c $d $e $f) (cons-atom $f $failures)) ($ok $failures))))))
 
-; Forget what no read position can reach again, and sent mail past its
-; receipt period.
+; Forget sent mail past its receipt period and expired failure-notice windows.
 (= (gw:prune)
-   (let* (($stamps (gw:position-stamps (collapse (match &self (GwSince $key $value) $value)) ()))
-          ($horizon (- (if (== $stamps ()) 0 (min-atom $stamps)) (* 2 (gw:get overlap))))
-          ($oldest (- (system:wall-time) (* (gw:get receipt-days) 86400)))
-          ($r1 (gw:remove-all (collapse (match &self (GwRecent $i1 $t1) (if (gw:before-stamp $t1 $horizon) (GwRecent $i1 $t1) GwKeep)))))
-          ($r2 (gw:remove-all (collapse (match &self (GwReceipted $i2 $t2) (if (gw:before-stamp $t2 $horizon) (GwReceipted $i2 $t2) GwKeep)))))
-          ($r3 (gw:remove-all (collapse (match &self (GwSent $i3 $record) (if (gw:before-stamp (nostr:field $record "at") $oldest) (GwSent $i3 $record) GwKeep))))))
+   (let* (($now (system:wall-time))
+          ($oldest (- $now (* (gw:get receipt-days) 86400)))
+          ($notice-cutoff (- $now (gw:get notice-period)))
+          ($r1 (gw:remove-all (collapse (match &self (GwSent $i3 $record)
+                 (if (gw:before-stamp (nostr:field $record "at") $oldest) (GwSent $i3 $record) GwKeep)))))
+          ($r2 (gw:remove-all (collapse (match &self (GwNotice $s $reason $at)
+                 (if (gw:expired-notice $at $notice-cutoff) (GwNotice $s $reason $at) GwKeep))))))
      GwPruned))
 (= (gw:before-stamp $stamp $limit) (if (== (get-type $stamp) Number) (< $stamp $limit) true))
+(= (gw:expired-notice $stamp $cutoff) (if (== (get-type $stamp) Number) (<= $stamp $cutoff) true))
 
 ; ── links ───────────────────────────────────────────────────────────────────
 ; A relay connection: (GwLink NAME ROLE CONN PHASE DEADLINE). ROLE is
@@ -555,9 +616,9 @@
 ; UNREACHABLE REASON) or (receipt LINK EVENT RECEIPT KEY ROUTES UNREACHABLE
 ; REASON): ROUTES are the relays still to try, the first being this link's,
 ; UNREACHABLE whether one tried was out of reach, REASON the last refusal.
-; PHASE is connecting, challenge, (auth ID), (stored SUB), (live SUB), (publish
-; ID), (backoff TIMER) or done; DEADLINE is a monotonic millisecond or 0.
-; Outstanding io requests are (GwReq ID NAME CONN WHAT).
+; PHASE is connecting, challenge, (auth ID), (paging LIVE-SUB PAGE-SUB PREV-UNTIL),
+; (live SUB), (publish ID), (backoff TIMER) or done; DEADLINE is a monotonic
+; millisecond or 0. Outstanding io requests are (GwReq ID NAME CONN WHAT).
 (= (gw:link $name)
    (let $links (collapse (match &self (GwLink $name $r $c $p $d) (GwLink $name $r $c $p $d)))
      (if (== $links ()) () (car-atom $links))))
@@ -581,29 +642,43 @@
 (= (gw:set-stored $name $items)
    (let $gone (gw:remove-all (collapse (match &self (GwStored $name $old) (GwStored $name $old))))
      (add-atom &self (GwStored $name $items))))
+(= (gw:page-of $name)
+   (let $pages (collapse (match &self (GwPage $name $items) $items)) (if (== $pages ()) () (car-atom $pages))))
+(= (gw:set-page $name $items)
+   (let $gone (gw:remove-all (collapse (match &self (GwPage $name $old) (GwPage $name $old))))
+     (add-atom &self (GwPage $name $items))))
+(= (gw:live-buf-of $name)
+   (let $bufs (collapse (match &self (GwLiveBuf $name $items) $items)) (if (== $bufs ()) () (car-atom $bufs))))
+(= (gw:set-live-buf $name $items)
+   (let $gone (gw:remove-all (collapse (match &self (GwLiveBuf $name $old) (GwLiveBuf $name $old))))
+     (add-atom &self (GwLiveBuf $name $items))))
+(= (gw:page-seen-has $name $id)
+   (not (== (collapse (match &self (GwPageSeen $name $id) true)) ())))
+(= (gw:mark-page-seen $name $id)
+   (if (gw:page-seen-has $name $id) false (let $a (add-atom &self (GwPageSeen $name $id)) true)))
+(= (gw:clear-page-seen $name)
+   (gw:remove-all (collapse (match &self (GwPageSeen $name $id) (GwPageSeen $name $id)))))
 (= (gw:awaiting $name) (not (== (collapse (match &self (GwAwait $name $r $e) $r)) ())))
 (= (gw:clear-link $name)
    (let* (($q (gw:remove-all (collapse (match &self (GwQueue $name $a) (GwQueue $name $a)))))
           ($s (gw:remove-all (collapse (match &self (GwStored $name $b) (GwStored $name $b)))))
+          ($p (gw:remove-all (collapse (match &self (GwPage $name $p1) (GwPage $name $p1)))))
+          ($ps (gw:clear-page-seen $name))
+          ($l (gw:remove-all (collapse (match &self (GwLiveBuf $name $l1) (GwLiveBuf $name $l1)))))
           ($w (gw:remove-all (collapse (match &self (GwAwait $name $c $d) (GwAwait $name $c $d)))))
           ($r (gw:remove-all (collapse (match &self (GwAwaitRoutes $name $e $f $g) (GwAwaitRoutes $name $e $f $g))))))
      ()))
 
-; Backoff as the Python gateway's forever(): 1 s, doubling to 60 s, back to
-; 1 s after a run that lasted over a minute.
-(= (gw:started-of $name)
-   (let $values (collapse (match &self (GwStarted $name $at) $at)) (if (== $values ()) 0 (car-atom $values))))
-; add-atom keeps its atom as written, so every value is computed first.
-(= (gw:mark-started $name)
-   (let* (($gone (gw:remove-all (collapse (match &self (GwStarted $name $old) (GwStarted $name $old)))))
-          ($now (gw:now)))
-     (add-atom &self (GwStarted $name $now))))
+; Doubling backoff up to 300 s (5 minutes), reset to 1 s only on healthy completion.
 (= (gw:backoff-of $name)
    (let $values (collapse (match &self (GwBackoff $name $seconds) $seconds)) (if (== $values ()) 1 (car-atom $values))))
+(= (gw:reset-backoff $name)
+   (let $gone (gw:remove-all (collapse (match &self (GwBackoff $name $old) (GwBackoff $name $old))))
+     ()))
 (= (gw:next-backoff $name)
-   (let* (($current (if (> (- (gw:now) (gw:started-of $name)) 60000) 1 (gw:backoff-of $name)))
+   (let* (($current (gw:backoff-of $name))
           ($gone (gw:remove-all (collapse (match &self (GwBackoff $name $old) (GwBackoff $name $old)))))
-          ($next (gw:min 60 (* $current 2)))
+          ($next (gw:min 300 (* $current 2)))
           ($stored (add-atom &self (GwBackoff $name $next))))
      $current))
 
@@ -699,7 +774,7 @@
         ($none ())))))
 (= (gw:reading $phase)
    (case $phase
-     ((challenge true) ((auth $a) true) ((stored $s) true) ((live $l) true) ((publish $p) true) ($other false))))
+     ((challenge true) ((auth $a) true) ((paging $ls $ps $u) true) ((live $l) true) ((publish $p) true) ($other false))))
 
 ; Before sign-in every message must be a JSON array, and each resets the
 ; 30-second wait; after it, anything else is ignored, as the Python reader does.
@@ -758,8 +833,7 @@
 (= (gw:inbound-name $key $url) (if (gw:get single) $key (gw:cat ($key " at " $url))))
 (= (gw:start-inbound $key $url)
    (let* (($name (gw:inbound-name $key $url))
-          ($recipient (gw:recipient-of $key))
-          ($started (gw:mark-started $name)))
+          ($recipient (gw:recipient-of $key)))
      (gw:open-link $name (inbound $key $recipient $url))))
 (= (gw:inbound-key $name)
    (case (gw:link $name) (((GwLink $n (inbound $key $r $u) $c $p $d) $key) ($other $name))))
@@ -771,53 +845,117 @@
      (((inbound $key $recipient $url) (gw:start-inbound $key $url))
       ($other ()))))
 
-; The mail and receipts addressed to the key from its read position less the
-; overlap: stored ones, oldest first, then live ones in arrival order.
+; The mail and receipts addressed to the key, paged backwards to the relay's
+; end on connect: stored ones oldest first, then live ones in arrival order.
 (= (gw:subscribe $name $role $conn $key $url)
    (let* (($me (crypto:xonly-public-key (gw:secret $key)))
-          ($since (gw:max 0 (- (gw:position $key $url) (gw:get overlap))))
           ($sub (crypto:random-hex 8))
           ($filter (JsonObject ((JsonPair "kinds" (JsonArray (3838 7))) (JsonPair "#p" (JsonArray ($me)))
-                                (JsonPair "since" $since)))))
+                                (JsonPair "limit" (gw:get fetch-page))))))
      (case (gw:send $name $conn ("REQ" $sub $filter))
        (((GwPending $s)
-         (let $cleared (gw:set-stored $name ()) (gw:put-link $name $role $conn (stored $sub) 0)))
+         (let* (($c1 (gw:set-stored $name ()))
+                ($c2 (gw:set-page $name ()))
+                ($c3 (gw:clear-page-seen $name))
+                ($c4 (gw:set-live-buf $name ())))
+           (gw:put-link $name $role $conn (paging $sub $sub ()) 0)))
         ($failure (gw:link-failed $name $failure))))))
 
 (= (gw:reader-step $name $role $conn $phase $items)
    (let* (($verb (car-atom $items)) ($key (car-atom (cdr-atom $items))))
      (case $phase
-       (((stored $sub) (gw:subscription-message $name $role $conn $phase $sub $verb $key $items))
+       (((paging $live-sub $page-sub $prev-until)
+         (gw:paging-message $name $role $conn $live-sub $page-sub $prev-until $verb $key $items))
         ((live $sub2) (gw:subscription-message $name $role $conn $phase $sub2 $verb $key $items))
         ((publish $event-id) (gw:publication-message $name $role $conn $event-id $items))
         ($other ())))))
 
+(= (gw:paging-message $name $role $conn $live-sub $page-sub $prev-until $verb $key $items)
+   (if (== $key $page-sub)
+     (if (and (== $verb "EVENT") (== (size-atom $items) 3))
+       (gw:set-page $name (cons-atom (car-atom (cdr-atom (cdr-atom $items))) (gw:page-of $name)))
+       (if (== $verb "EOSE")
+         (gw:on-page-eose $name $role $conn $live-sub $page-sub $prev-until)
+         (if (== $verb "CLOSED")
+           (let $reason (if (> (size-atom $items) 2) (gw:text (car-atom (cdr-atom (cdr-atom $items)))) "")
+             (gw:link-failed $name (gw:failed permission (gw:cat ("relay closed the subscription: " $reason)))))
+           ())))
+     (if (== $key $live-sub)
+       (if (and (== $verb "EVENT") (== (size-atom $items) 3))
+         (gw:set-live-buf $name (cons-atom (car-atom (cdr-atom (cdr-atom $items))) (gw:live-buf-of $name)))
+         (if (== $verb "CLOSED")
+           (let $reason2 (if (> (size-atom $items) 2) (gw:text (car-atom (cdr-atom (cdr-atom $items)))) "")
+             (gw:link-failed $name (gw:failed permission (gw:cat ("relay closed the subscription: " $reason2)))))
+           ()))
+       (if (== $verb "OK") (gw:receipt-ok $name $items) ()))))
+
+(= (gw:consume-page-events $name $events $prev-until $added $oldest $newer $fresh)
+   (if (== $events ())
+     (GwPageScan (gw:reverse $added) $oldest $newer $fresh)
+     (let* (($ev (car-atom $events))
+            ($obj (gw:is-object $ev))
+            ($created (if $obj (nostr:field $ev "created_at") ()))
+            ($has-ts (nostr:is-integer $created))
+            ($oldest2 (if $has-ts (if (== $oldest ()) $created (gw:min $oldest $created)) $oldest))
+            ($newer2 (if $newer true (if $has-ts (if (== $prev-until ()) false (> $created $prev-until)) false)))
+            ($id (if $obj (nostr:field $ev "id") ())))
+       (if (nostr:is-text $id)
+         (if (gw:mark-page-seen $name $id)
+           (gw:consume-page-events $name (cdr-atom $events) $prev-until (cons-atom $ev $added) $oldest2 $newer2 true)
+           (gw:consume-page-events $name (cdr-atom $events) $prev-until $added $oldest2 $newer2 $fresh))
+         (gw:consume-page-events $name (cdr-atom $events) $prev-until (cons-atom $ev $added) $oldest2 $newer2 $fresh)))))
+
+(= (gw:page-next-until $url $prev-until $oldest $newer $fresh)
+   (if (== $oldest ()) ()
+     (if $newer
+       (let $logged (gw:log (gw:cat ("relay " (gw:text $url) " sent events newer than until " (repr $prev-until) "; reading no further")))
+         ())
+       (let $cand (if (not $fresh)
+                    (if (== $prev-until ()) -1 (- $prev-until 1))
+                    (if (== $prev-until ()) $oldest
+                      (if (>= $oldest $prev-until) (- $prev-until 1) $oldest)))
+         (if (>= $cand 0) $cand ())))))
+
+(= (gw:on-page-eose $name $role $conn $live-sub $page-sub $prev-until)
+   (let* (($closed (if (== $page-sub $live-sub) ()
+                     (case (gw:send $name $conn ("CLOSE" $page-sub)) (((GwPending $cs) ()) ($cf ())))))
+          ($page (gw:reverse (gw:page-of $name)))
+          ($url (gw:role-url $role)))
+     (case (gw:consume-page-events $name $page $prev-until () () false false)
+       (((GwPageScan $fresh-events $oldest $newer $fresh)
+         (let* (($accum (gw:set-stored $name (gw:append (gw:stored-of $name) $fresh-events)))
+                ($next-until (gw:page-next-until $url $prev-until $oldest $newer $fresh)))
+           (if (not (== $next-until ()))
+             (let* (($key (case $role (((inbound $k $r $u) $k) ($other (gw:inbound-key $name)))))
+                    ($me (crypto:xonly-public-key (gw:secret $key)))
+                    ($next-sub (crypto:random-hex 8))
+                    ($filter (JsonObject ((JsonPair "kinds" (JsonArray (3838 7))) (JsonPair "#p" (JsonArray ($me)))
+                                          (JsonPair "limit" (gw:get fetch-page)) (JsonPair "until" $next-until)))))
+               (case (gw:send $name $conn ("REQ" $next-sub $filter))
+                 (((GwPending $s)
+                   (let $cleared (gw:set-page $name ())
+                     (gw:put-link $name $role $conn (paging $live-sub $next-sub $next-until) 0)))
+                  ($failure (gw:link-failed $name $failure)))))
+             (let* (($sorted (gw:sort-events (gw:stored-of $name)))
+                    ($live-events (gw:reverse (gw:live-buf-of $name)))
+                    ($c1 (gw:set-stored $name ()))
+                    ($c2 (gw:set-page $name ()))
+                    ($c3 (gw:clear-page-seen $name))
+                    ($c4 (gw:set-live-buf $name ()))
+                    ($put (gw:put-link $name $role $conn (live $live-sub) 0))
+                    ($queued (gw:enqueue $name (gw:append $sorted (cons-atom GwEndOfStored $live-events)))))
+               (gw:pump $name)))))))))
+
 (= (gw:subscription-message $name $role $conn $phase $sub $verb $key $items)
    (if (and (== $verb "EVENT") (and (== $key $sub) (== (size-atom $items) 3)))
      (gw:on-event $name $phase (car-atom (cdr-atom (cdr-atom $items))))
-     (if (and (== $verb "EOSE") (== $key $sub))
-       (gw:on-eose $name $role $conn $phase)
-       (if (and (== $verb "CLOSED") (== $key $sub))
-         (let $reason (if (> (size-atom $items) 2) (gw:text (car-atom (cdr-atom (cdr-atom $items)))) "")
-           (gw:link-failed $name (gw:failed permission (gw:cat ("relay closed the subscription: " $reason)))))
-         (if (== $verb "OK") (gw:receipt-ok $name $items) ())))))
+     (if (and (== $verb "CLOSED") (== $key $sub))
+       (let $reason (if (> (size-atom $items) 2) (gw:text (car-atom (cdr-atom (cdr-atom $items)))) "")
+         (gw:link-failed $name (gw:failed permission (gw:cat ("relay closed the subscription: " $reason)))))
+       (if (== $verb "OK") (gw:receipt-ok $name $items) ()))))
 
 (= (gw:on-event $name $phase $event)
-   (case $phase
-     (((stored $sub) (gw:set-stored $name (cons-atom $event (gw:stored-of $name))))
-      ($live (let $queued (gw:enqueue $name ($event)) (gw:pump $name))))))
-
-; The end of stored events: they are taken oldest first; then the read
-; positions are pruned and saved. A second end is ignored.
-(= (gw:on-eose $name $role $conn $phase)
-   (case $phase
-     (((stored $sub)
-       (let* (($sorted (gw:sort-events (gw:reverse (gw:stored-of $name))))
-              ($cleared (gw:set-stored $name ()))
-              ($put (gw:put-link $name $role $conn (live $sub) 0))
-              ($queued (gw:enqueue $name (gw:append $sorted (GwEndOfStored)))))
-         (gw:pump $name)))
-      ($other ()))))
+   (let $queued (gw:enqueue $name ($event)) (gw:pump $name)))
 
 ; Take queued items in order; a receipt waiting for the relay's answer holds
 ; the rest.
@@ -836,7 +974,8 @@
    (let $pruned (gw:prune)
      (case (gw:save)
        (((gw:failed $kind $detail) (gw:link-failed $name (gw:failed $kind $detail)))
-        ($saved (if (gw:once) (gw:finish-key $name) (gw:pump $name)))))))
+        ($saved (let $reset (gw:reset-backoff $name)
+                  (if (gw:once) (gw:finish-key $name) (gw:pump $name))))))))
 
 (= (gw:take $name $event)
    (if (not (gw:is-object $event)) GwSkipped
@@ -951,14 +1090,16 @@
 ; The relay's answer to a receipt sent on the link's own connection. A
 ; refusal moves on to the author's next relay.
 (= (gw:receipt-answered $name $receipt-id $event $accepted $reason)
-   (let* (($gone (remove-atom &self (GwAwait $name $receipt-id $event)))
+   (let* (($gone (gw:remove-all (collapse (match &self (GwAwait $name $r0 $e0) (GwAwait $name $r0 $e0)))))
           ($cleared (gw:set-deadline $name 0))
           ($left (collapse (match &self (GwAwaitRoutes $name $r $routes $u) (GwAwaitRoutes $name $r $routes $u))))
-          ($dropped (gw:remove-all $left)))
+          ($dropped (gw:remove-all $left))
+          ($temp (gw:temporary-refusal $reason)))
      (case (if $accepted (gw:receipt-taken $name $event)
              (case $left
-               ((((GwAwaitRoutes $n $receipt $routes $unreachable)) (gw:receipt-route $name $event $receipt $routes $unreachable $reason))
-                ($none (gw:receipt-route $name $event () () false $reason)))))
+               ((((GwAwaitRoutes $n $receipt $routes $unreachable))
+                 (gw:receipt-route $name $event $receipt $routes (or $unreachable $temp) $reason))
+                ($none (gw:receipt-route $name $event () () $temp $reason)))))
        (((gw:failed $kind $detail) (gw:link-failed $name (gw:failed $kind $detail)))
         (GwAwaiting ())
         ($recorded (gw:pump $name))))))
@@ -970,9 +1111,10 @@
    (case $role
      (((receipt $name $event $receipt $key $routes $unreachable $old)
        (let* (($gone (gw:remove-all (collapse (match &self (GwAwait $name $r $e) (GwAwait $name $r $e)))))
-              ($dropped (gw:drop-link $link-name)))
+              ($dropped (gw:drop-link $link-name))
+              ($retryable (or $unreachable (gw:temporary-refusal $reason))))
          (case (if $accepted (gw:receipt-taken $name $event)
-                 (gw:receipt-route $name $event $receipt (cdr-atom $routes) $unreachable $reason))
+                 (gw:receipt-route $name $event $receipt (cdr-atom $routes) $retryable $reason))
            (((gw:failed $kind $detail) (gw:link-failed $name (gw:failed $kind $detail)))
             (GwAwaiting ())
             ($recorded (gw:pump $name)))))))))
@@ -1028,6 +1170,22 @@
    (case (shared-mail:post (gw:get socket) (gw:get space) $ident (gw:reply-to $sender) (gw:get outbox) $text)
      (((mailbox:sent $sent $status) GwTold)
       ($refused (gw:failed runtime (gw:cat ("could not tell " (gw:text $sender) ": " (gw:text $refused))))))))
+
+; Tell an outbound sender a failure reason at most once per notice-period.
+(= (gw:within-notice-period $last $now)
+   (if (== (get-type $last) Number) (< $now (+ $last (gw:get notice-period))) false))
+(= (gw:report-failure $sender $ident $text)
+   (let* (($now (nostr:now))
+          ($last (gw:notice-at $sender $text)))
+     (if (gw:within-notice-period $last $now)
+       GwTold
+       (case (gw:tell $sender $ident $text)
+         ((GwTold
+           (let $noted (gw:set-notice $sender $text $now)
+             (case (gw:save)
+               (((gw:failed $kind $detail) (gw:failed $kind $detail))
+                ($saved GwTold)))))
+          ($failure $failure))))))
 
 ; ── failures ────────────────────────────────────────────────────────────────
 (= (gw:link-failed $name $failure)
@@ -1117,42 +1275,50 @@
      (case (gw:next-request $space)
        (((mailbox:delivery $id $from $text)
          (case (gw:handle $id (shared-mail:sender $from) $text)
-           ((GwHandled (gw:outbox-next $space))
+           ((GwHandled (let $reset (gw:reset-backoff outbox) (gw:outbox-next $space)))
             (GwPublishing ())
             ($failure (gw:outbox-failed $failure)))))
         ((shared-mail:relayed $to $id $from $text)
          (let $noted (gw:note-relayed $id $to)
            (case (gw:handle $id (shared-mail:sender $from) $text)
-             ((GwHandled (gw:outbox-next $space))
+             ((GwHandled (let $reset (gw:reset-backoff outbox) (gw:outbox-next $space)))
               (GwPublishing ())
               ($failure (gw:outbox-failed $failure))))))
         ((mailbox:idle) (gw:outbox-idle $space))
         ($error (gw:outbox-failed (gw:failed runtime (gw:cat ("outbox unavailable: " (gw:text $error))))))))))
 
+(= (gw:finish-outbox-once)
+   (let $checked (case (gw:check-overdue)
+                   (((gw:failed $kind $detail)
+                     (gw:log (gw:cat ("overdue notice failed: " (gw:failure-text (gw:failed $kind $detail))))))
+                    ($ok ())))
+     (gw:set-outbox done)))
+
 (= (gw:outbox-idle $space)
-   (if (gw:once) (gw:set-outbox done)
-     (case $space
-       (((space $uuid $id $name $backend $kind $revision $count)
-         (let* (($socket (gw:get socket)) ($rid (space:request-id)))
-           (case (gw:submit outbox 0 watch (space:request $socket (request $rid watch $uuid $id $revision 30000) 31000))
-             (((GwPending $watch) (gw:set-outbox (watching $watch)))
-              ($failure (gw:outbox-failed $failure))))))))))
+   (let $reset (gw:reset-backoff outbox)
+     (if (gw:once) (gw:finish-outbox-once)
+       (case $space
+         (((space $uuid $id $name $backend $kind $revision $count)
+           (let* (($socket (gw:get socket)) ($rid (space:request-id)))
+             (case (gw:submit outbox 0 watch (space:request $socket (request $rid watch $uuid $id $revision 30000) 40000))
+               (((GwPending $watch) (gw:set-outbox (watching $watch)))
+                ($failure (gw:outbox-failed $failure)))))))))))
 
 (= (gw:outbox-event $id $what $value)
    (let $state (gw:outbox-state)
      (if (== $what watch)
        (if (== $state (watching $id))
          (case $value
-           (((reply $rid ok $changed) (gw:outbox-round))
+           (((reply $rid ok $changed) (let $reset (gw:reset-backoff outbox) (gw:outbox-round)))
             ($error (gw:outbox-failed (gw:failed runtime (gw:cat ("outbox unavailable: " (gw:text $error))))))))
          ())
        (if (== $what retry)
-         (if (== $state (backoff $id)) (let $started (gw:mark-started outbox) (gw:outbox-round)) ())
+         (if (== $state (backoff $id)) (gw:outbox-round) ())
          ()))))
 
 (= (gw:outbox-failed $failure)
    (if (gw:once)
-     (let $logged (gw:log (gw:cat ("outbound failed: " (gw:failure-text $failure)))) (gw:set-outbox done))
+     (let $logged (gw:log (gw:cat ("outbound failed: " (gw:failure-text $failure)))) (gw:finish-outbox-once))
      (let* (($backoff (gw:next-backoff outbox))
             ($logged2 (gw:log (gw:cat ("outbound: " (gw:failure-text $failure) "; again in " (repr $backoff) "s")))))
        (case (gw:submit outbox 0 retry (timer:after (* $backoff 1000)))
@@ -1226,9 +1392,29 @@
 
 ; Publish one outbound request, tell its sender, settle it. The signed event
 ; is saved before it is published, so a retry publishes the same event.
+(= (gw:ensure-outbound-meta $ident $sender $pending)
+   (let* (($missing-sender (== (nostr:field $pending "sender") nostr:missing))
+          ($missing-queued (== (nostr:field $pending "queued_at") nostr:missing))
+          ($missing-warned (== (nostr:field $pending "warned") nostr:missing)))
+     (if (not (or $missing-sender (or $missing-queued $missing-warned)))
+       $pending
+       (let* (($p0 (gw:pairs $pending))
+              ($p1 (if $missing-sender (gw:put-pair $p0 "sender" $sender false ()) $p0))
+              ($p2 (if $missing-queued (gw:put-pair $p1 "queued_at" (nostr:now) false ()) $p1))
+              ($p3 (if $missing-warned (gw:put-pair $p2 "warned" false false ()) $p2))
+              ($updated (JsonObject $p3))
+              ($kept (gw:set-outbound $ident $updated)))
+         (case (gw:save)
+           (((gw:failed $kind $detail) (gw:failed $kind $detail))
+            ($saved $updated)))))))
+
 (= (gw:handle $ident $sender $text)
    (let $pending (gw:outbound-of $ident)
-     (if (== $pending ()) (gw:handle-new $ident $sender $text) (gw:start-publication $ident $sender $pending))))
+     (if (== $pending ())
+       (gw:handle-new $ident $sender $text)
+       (case (gw:ensure-outbound-meta $ident $sender $pending)
+         (((gw:failed $kind $detail) (gw:failed $kind $detail))
+          ($ready (gw:start-publication $ident $sender $ready)))))))
 
 (= (gw:outgoing $ident $sender $text)
    (let $key (gw:sender-key $sender)
@@ -1247,13 +1433,14 @@
                         (gw:field-of $fields "type" ()) (gw:field-of $fields "task" ())
                         (gw:field-of $fields "in-reply-to" "") true))
               ($pending (JsonObject ((JsonPair "key" $key) (JsonPair "to" $to) (JsonPair "to_key" $recipient)
-                                     (JsonPair "event" $event))))
+                                     (JsonPair "event" $event) (JsonPair "sender" $sender)
+                                     (JsonPair "queued_at" (nostr:now)) (JsonPair "warned" false))))
               ($kept (gw:set-outbound $ident $pending)))
          (case (gw:save)
            (((gw:failed $kind $detail) (gw:failed $kind $detail))
             ($saved (gw:start-publication $ident $sender $pending))))))
       ((GwNotSent $why)
-       (case (gw:tell $sender (gw:cat ("nostr-outcome-" $ident)) (gw:cat ("Not sent: " $why)))
+       (case (gw:report-failure $sender (gw:cat ("nostr-outcome-" $ident)) (gw:cat ("Not sent: " $why)))
          ((GwTold (let $acked (gw:ack-request $ident) GwHandled))
           ($failure $failure)))))))
 
@@ -1262,7 +1449,7 @@
 (= (gw:start-publication $ident $sender $pending)
    (let* (($to (gw:text (nostr:field $pending "to"))) ($routes (gw:routes $to)))
      (if (== $routes ())
-       (case (gw:tell $sender (gw:cat ("nostr-outcome-" $ident)) (gw:cat ("Not sent to " $to ": " (gw:no-route $to))))
+       (case (gw:report-failure $sender (gw:cat ("nostr-outcome-" $ident)) (gw:cat ("Not sent to " $to ": " (gw:no-route $to))))
          ((GwTold (gw:settle $ident))
           ($failure $failure)))
        (gw:publish-on $ident $sender $pending $routes false ""))))
@@ -1297,15 +1484,25 @@
            (((receipt $link $delivered $receipt $key $routes $unreachable $old)
              (gw:receipt-link-answered $name $role $accepted $reason))
             ((outbound $ident $sender $key2 $event $routes2 $unreachable2 $old2)
-             (let $gone (gw:drop-link outbound)
+             (let* (($gone (gw:drop-link outbound))
+                    ($temp (and (not $accepted) (gw:temporary-refusal $reason)))
+                    ($retryable (or $unreachable2 $temp))
+                    ($next-reason (if $temp $old2 $reason)))
                (if (and (not $accepted) (not (== (cdr-atom $routes2) ())))
-                 (case (gw:publish-on $ident $sender (gw:outbound-of $ident) (cdr-atom $routes2) $unreachable2 $reason)
-                   ((GwPublishing ())
-                    ($failure0 (gw:outbox-failed $failure0))))
-                 (if (and (not $accepted) $unreachable2)
-                   (gw:outbox-failed (gw:failed connection "a relay could not be reached"))
-                   (case (gw:published $role $accepted $reason)
-                     ((GwHandled (gw:outbox-round))
+                 (let $logged (if $temp
+                                (gw:log (gw:cat ("relay " (car-atom $routes2) " temporarily refused "
+                                                 (str:char-slice (nostr:field $event "id") 0 16) ": " $reason)))
+                                ())
+                   (case (gw:publish-on $ident $sender (gw:outbound-of $ident) (cdr-atom $routes2) $retryable $next-reason)
+                     ((GwPublishing ())
+                      ($failure0 (gw:outbox-failed $failure0)))))
+                 (if (and (not $accepted) $retryable)
+                   (gw:outbox-failed
+                     (if $temp
+                       (gw:failed runtime (gw:cat ("relay temporarily refused it: " $reason)))
+                       (gw:failed connection "a relay could not be reached")))
+                   (case (gw:published $role $accepted (if (== $next-reason "") $reason $next-reason))
+                     ((GwHandled (let $reset (gw:reset-backoff outbox) (gw:outbox-round)))
                       ($failure (gw:outbox-failed $failure))))))))))))
       ($other ()))))
 
@@ -1319,7 +1516,7 @@
               ($outcome (gw:cat ("nostr-outcome-" $ident))))
          (case (if $accepted
                  (gw:sent $ident $sender $pending $to $subject $id $outcome)
-                 (gw:tell $sender $outcome (gw:cat ("Not sent to " $to ": the relay refused it: " $reason))))
+                 (gw:report-failure $sender $outcome (gw:cat ("Not sent to " $to ": the relay refused it: " $reason))))
            ((GwTold (gw:settle $ident))
             ($failure $failure))))))))
 
@@ -1338,6 +1535,53 @@
      (((mailbox:acked $id $status)
        (let $gone (gw:drop-outbound $ident) (case (gw:save) (((gw:failed $k $d) (gw:failed $k $d)) ($saved GwHandled)))))
       ($refused (gw:failed runtime (gw:cat ("could not acknowledge " $ident ": " (gw:text $refused))))))))
+
+; Tell a sender once when a queued outbound message waits past ack-overdue.
+(= (gw:outbound-unwarned $pending)
+   (if (== (gw:field-or $pending "warned" false) true) false
+     (if (== (get-type (gw:field-or $pending "queued_at" ())) Number)
+       (nostr:given (gw:field-or $pending "sender" ""))
+       false)))
+(= (gw:any-unwarned $pendings)
+   (if (== $pendings ()) false
+     (if (gw:outbound-unwarned (car-atom $pendings)) true
+       (gw:any-unwarned (cdr-atom $pendings)))))
+(= (gw:has-unwarned-outbound)
+   (gw:any-unwarned (collapse (match &self (GwOutbound $ident $pending) $pending))))
+(= (gw:mark-warned $ident $pending)
+   (let* (($pairs (gw:put-pair (gw:pairs $pending) "warned" true false ()))
+          ($set (gw:set-outbound $ident (JsonObject $pairs))))
+     (gw:save)))
+(= (gw:check-overdue-one $ident $pending $now)
+   (if (not (gw:outbound-unwarned $pending)) GwCheckedOverdue
+     (let $queued (nostr:field $pending "queued_at")
+       (if (< $now (+ $queued (gw:get ack-overdue))) GwCheckedOverdue
+         (let* (($sender (gw:text (nostr:field $pending "sender")))
+                ($to (gw:text (nostr:field $pending "to")))
+                ($key (nostr:field $pending "key"))
+                ($event (nostr:field $pending "event"))
+                ($subject (case (nostr:open-letter (gw:secret $key) $event)
+                            (((nostr:letter $s $b $t $k) $s) ($none ""))))
+                ($eid (gw:text (nostr:field $event "id")))
+                ($text (gw:cat ("Delayed to " $to ": " $subject " (event " $eid "; still retrying)"))))
+           (case (gw:tell $sender (gw:cat ("nostr-delayed-" $ident)) $text)
+             ((GwTold
+               (if (== (gw:outbound-of $ident) ()) GwCheckedOverdue
+                 (case (gw:mark-warned $ident (gw:outbound-of $ident))
+                   (((gw:failed $k $d) (gw:failed $k $d))
+                    ($saved GwCheckedOverdue)))))
+              ($failure $failure))))))))
+(= (gw:check-overdue-items $items $now)
+   (if (== $items ()) GwCheckedOverdue
+     (case (car-atom $items)
+       (((GwOutboundEntry $ident $pending)
+         (case (gw:check-overdue-one $ident $pending $now)
+           (((gw:failed $kind $detail) (gw:failed $kind $detail))
+            ($ok (gw:check-overdue-items (cdr-atom $items) $now)))))))))
+(= (gw:check-overdue)
+   (gw:check-overdue-items
+     (collapse (match &self (GwOutbound $ident $pending) (GwOutboundEntry $ident $pending)))
+     (system:wall-time)))
 
 ; ── running ─────────────────────────────────────────────────────────────────
 ; Once: each key in turn reads what is stored, then the outbox is emptied.
@@ -1367,9 +1611,10 @@
        (gw:dispatch (cdr-atom $ids)))))
 
 (= (gw:wait-timeout $now)
-   (let $deadlines (collapse (match &self (GwLink $name $role $conn $phase $deadline)
-                               (if (> $deadline 0) $deadline GwKeep)))
-     (gw:nearest $deadlines $now 60000)))
+   (let* (($base (if (gw:has-unwarned-outbound) 1000 60000))
+          ($deadlines (collapse (match &self (GwLink $name $role $conn $phase $deadline)
+                                  (if (> $deadline 0) $deadline GwKeep)))))
+     (gw:nearest $deadlines $now $base)))
 (= (gw:nearest $deadlines $now $best)
    (if (== $deadlines ()) $best
      (let $deadline (car-atom $deadlines)
@@ -1385,7 +1630,11 @@
    (let* (($timeout (gw:wait-timeout (gw:now)))
           ($ready (io:wait-ready $timeout))
           ($handled (case $ready (((io:ready $ids) (gw:dispatch $ids)) ($idle ()))))
-          ($expired (gw:expire (gw:now))))
+          ($expired (gw:expire (gw:now)))
+          ($overdue (case (gw:check-overdue)
+                      (((gw:failed $kind $detail)
+                        (gw:log (gw:cat ("overdue notice failed: " (gw:failure-text (gw:failed $kind $detail))))))
+                       ($ok ())))))
      GwCycled))
 
 (= (gw:loop)
@@ -1415,7 +1664,7 @@
                (if (== $links ()) (gw:outbox-round)
                  (let* (($set (gw:set pending-keys (cdr-atom $links))) (($key $url) (car-atom $links)))
                    (gw:start-inbound $key $url)))
-               (let* (($inbound (gw:start-all $links)) ($started (gw:mark-started outbox)))
+               (let $inbound (gw:start-all $links)
                  (gw:outbox-round))))))))
       ($failure $failure))))
 ; Each key on each relay, key by key, as the Python gateway reads them.

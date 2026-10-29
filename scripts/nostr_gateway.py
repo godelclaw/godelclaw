@@ -108,10 +108,22 @@ def stored_order(event):
     return (created if number else 0, ident if isinstance(ident, str) else "")
 
 
+TEMPORARY_REFUSAL_TERMS = (
+    "rate-limit", "rate limit", "temporary", "temporarily", "try again",
+    "unavailable", "overload", "too many", "timeout", "timed out", "busy",
+)
+
+
 def conflicted(result):
     """claw-mail's answer to a send whose identity was used for other text."""
     return result.get("status") == "conflict" or (
         result.get("status") == "error" and "identity-conflict" in str(result.get("reason", "")))
+
+
+def is_temporary_refusal(reason):
+    """True when an OK false reason is rate-limited or transient rather than permanent."""
+    low = str(reason or "").strip().lower()
+    return low.startswith(("rate-limited:", "error:")) or any(term in low for term in TEMPORARY_REFUSAL_TERMS)
 
 
 def parse_outgoing(text):
@@ -192,6 +204,15 @@ class Gateway:
             raise ValueError("not a claw-mail domain name: %r" % self.domain)
         self.overlap = int(config.get("overlap", 600))
         self.receipt_days = float(config.get("receipt_days", 30))
+        self.notice_period = int(config.get("notice-period", config.get("notice_period", 86400)))
+        self.fetch_page = int(config.get("fetch-page", config.get("fetch_page", 5000)))
+        self.ack_overdue = int(config.get("ack-overdue", config.get("ack_overdue", 600)))
+        if self.notice_period < 1:
+            raise ValueError("notice-period must be at least 1")
+        if self.fetch_page < 1:
+            raise ValueError("fetch-page must be at least 1")
+        if self.ack_overdue < 1:
+            raise ValueError("ack-overdue must be at least 1")
         self.inbound = dict(config.get("inbound", {}))
         self.senders = dict(config.get("senders", {}))
         self.replies = dict(config.get("replies", {}))
@@ -214,28 +235,42 @@ class Gateway:
             state = json.loads(self.state_path.read_text())
         except FileNotFoundError:
             state = {}
-        for field in ("since", "recent", "receipted", "outbound", "sent"):
+        for field in ("since", "recent", "receipted", "outbound", "sent", "notices"):
             state.setdefault(field, {})
         return state
 
     def save(self):
-        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        parent = self.state_path.parent
+        parent.mkdir(parents=True, exist_ok=True)
         temporary = self.state_path.with_suffix(".tmp")
         with open(os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as stream:
             json.dump(self.state, stream)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, self.state_path)
+        dir_fd = os.open(parent, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
 
     def prune(self):
-        """Forget what no read position can reach again, and sent mail past its receipt period."""
-        positions = [p for value in self.state["since"].values()
-                     for p in (value.values() if isinstance(value, dict) else [value])]
-        horizon = min(positions, default=0) - 2 * self.overlap
-        for field in ("recent", "receipted"):
-            self.state[field] = {i: t for i, t in self.state[field].items() if t >= horizon}
-        oldest = time.time() - self.receipt_days * 86400
+        """Forget sent mail past its receipt period and expired failure-notice windows."""
+        now = time.time()
+        oldest = now - self.receipt_days * 86400
         self.state["sent"] = {i: r for i, r in self.state["sent"].items() if r["at"] >= oldest}
+        notice_cutoff = now - self.notice_period
+        kept_notices = {}
+        for sender, reasons in self.state["notices"].items():
+            if not isinstance(reasons, dict):
+                continue
+            live = {
+                reason: stamp for reason, stamp in reasons.items()
+                if isinstance(stamp, (int, float)) and not isinstance(stamp, bool) and stamp > notice_cutoff
+            }
+            if live:
+                kept_notices[sender] = live
+        self.state["notices"] = kept_notices
 
     async def mail(self, agent, *arguments):
         """One claw-mail call as `agent`; its JSON result. Calls run concurrently."""
@@ -265,6 +300,20 @@ class Gateway:
         if result.get("status") not in ("accepted", "duplicate"):
             raise RuntimeError("could not tell %s: %s" % (sender, result.get("reason", result)))
 
+    async def report_failure(self, sender, ident, text):
+        """Tell an outbound sender a failure reason at most once per notice_period."""
+        now = int(time.time())
+        reasons = self.state["notices"].get(sender)
+        last = reasons.get(text) if isinstance(reasons, dict) else None
+        if isinstance(last, (int, float)) and not isinstance(last, bool) and now < last + self.notice_period:
+            return
+        await self.tell(sender, ident, text)
+        if not isinstance(reasons, dict):
+            reasons = {}
+            self.state["notices"][sender] = reasons
+        reasons[text] = now
+        self.save()
+
     # ── relays ───────────────────────────────────────────────────────────────
     def routes(self, name):
         """The relays a member reads, in our order: all of ours when its
@@ -275,13 +324,13 @@ class Gateway:
     async def publish_to(self, name, event, secret, current=None):
         """Publish to the first relay `name` reads that takes it, reusing
         `current`, a (url, connection) pair, for its relay: (url, None), or
-        (None, reason) when every relay refused or none is one `name` reads.
-        A relay that cannot be reached raises, once no other took the event,
-        so that it is tried again."""
+        (None, reason) when every relay permanently refused or none is one
+        `name` reads. A relay that cannot be reached or refuses temporarily
+        raises once no other took the event, so that it is tried again."""
         routes = self.routes(name)
         if not routes:
             return None, "none of our relays is one %s reads" % name
-        reason, unreachable = None, None
+        reason, transient = None, None
         for url in routes:
             try:
                 if current is not None and url == current[0]:
@@ -290,16 +339,22 @@ class Gateway:
                     async with nm.Relay(url, secret) as relay:
                         accepted, why = await relay.publish(event)
             except Exception as error:  # noqa: BLE001 - this relay is out of reach; try the next
-                unreachable = error
+                transient = error
                 if self.single:
                     raise
                 log("relay %s could not take %s: %s: %s" % (url, event["id"][:16], type(error).__name__, error))
                 continue
             if accepted:
                 return url, None
+            if is_temporary_refusal(why):
+                transient = RuntimeError("relay temporarily refused it: " + why)
+                if self.single:
+                    raise transient
+                log("relay %s temporarily refused %s: %s" % (url, event["id"][:16], why))
+                continue
             reason = why
-        if unreachable is not None:
-            raise unreachable
+        if transient is not None:
+            raise transient
         return None, reason
 
     def position(self, key_name, url):
@@ -322,34 +377,83 @@ class Gateway:
         return "inbound for " + key_name + ("" if self.single else " at " + url)
 
     # ── inbound ──────────────────────────────────────────────────────────────
-    async def receive(self, key_name, recipient, live, url=None):
+    def _consume_page(self, url, page, prev_until, seen_ids, stored):
+        oldest = None
+        newer = False
+        fresh = False
+        for ev in page:
+            if isinstance(ev, dict):
+                created = ev.get("created_at")
+                if type(created) is int:
+                    if oldest is None or created < oldest:
+                        oldest = created
+                    if prev_until is not None and created > prev_until:
+                        newer = True
+                eid = ev.get("id")
+                if isinstance(eid, str):
+                    if eid not in seen_ids:
+                        seen_ids.add(eid)
+                        fresh = True
+                        stored.append(ev)
+                    continue
+            stored.append(ev)
+        if oldest is None:
+            return None
+        if newer:
+            log("relay %s sent events newer than until %d; reading no further" % (url, prev_until))
+            return None
+        if not fresh:
+            if prev_until is None:
+                return None
+            cand = prev_until - 1
+        elif prev_until is not None and oldest >= prev_until:
+            cand = prev_until - 1
+        else:
+            cand = oldest
+        return cand if cand >= 0 else None
+
+    async def receive(self, key_name, recipient, live, url=None, on_ready=None):
         """Deliver the mail and receipts addressed to one key on one relay (the
-        first by default): what is stored, oldest first, and when `live`, then
-        whatever arrives."""
+        first by default): what is stored, paged backwards to the end and taken
+        oldest first, and when `live`, then whatever arrives."""
         url = url or self.relays[0][1]
         secret = self.keys[key_name]
         me = nm.public_key(secret)
-        since = max(0, self.position(key_name, url) - self.overlap)
-        query = [{"kinds": [nm.KIND_MAIL, nm.KIND_RECEIPT], "#p": [me], "since": since}]
+        base_filter = {"kinds": [nm.KIND_MAIL, nm.KIND_RECEIPT], "#p": [me], "limit": self.fetch_page}
         async with nm.Relay(url, secret) as relay:
             current = (url, relay)
-            async with contextlib.aclosing(relay.subscribe(query)) as stream:
-                stored = []
+            async with contextlib.aclosing(relay.subscribe([base_filter])) as stream:
+                page = []
                 async for kind, event in stream:
                     if kind == "eose":
-                        if stored is None:
-                            continue
-                        for old in sorted(stored, key=stored_order):
-                            await self.take(key_name, recipient, secret, me, current, old)
-                        stored = None
-                        self.prune()
-                        self.save()
-                        if not live:
-                            return
-                    elif stored is not None:
-                        stored.append(event)
-                    else:
-                        await self.take(key_name, recipient, secret, me, current, event)
+                        break
+                    page.append(event)
+                seen_ids = set()
+                stored = []
+                prev_until = None
+                while True:
+                    next_until = self._consume_page(url, page, prev_until, seen_ids, stored)
+                    if next_until is None:
+                        break
+                    page = []
+                    async with contextlib.aclosing(relay.subscribe([{**base_filter, "until": next_until}])) as page_stream:
+                        async for pkind, pevent in page_stream:
+                            if pkind == "eose":
+                                break
+                            page.append(pevent)
+                    prev_until = next_until
+                for old in sorted(stored, key=stored_order):
+                    await self.take(key_name, recipient, secret, me, current, old)
+                self.prune()
+                self.save()
+                if on_ready is not None:
+                    on_ready()
+                if not live:
+                    return
+                async for kind, event in stream:
+                    if kind == "eose":
+                        continue
+                    await self.take(key_name, recipient, secret, me, current, event)
 
     async def take(self, key_name, recipient, secret, me, current, event):
         if not isinstance(event, dict) or not isinstance(event.get("id"), str) or event["id"] in self.state["recent"]:
@@ -427,14 +531,30 @@ class Gateway:
                 if recipient is None:
                     raise ValueError("%s is not in the registry" % fields["to"])
             except ValueError as problem:
-                await self.tell(sender, "nostr-outcome-" + ident, "Not sent: %s" % problem)
+                await self.report_failure(sender, "nostr-outcome-" + ident, "Not sent: %s" % problem)
                 await self.settle(delivery)
                 return
             event = nm.seal(self.keys[key_name], recipient, fields.get("subject", ""), body,
                             kind=fields.get("type"), task=fields.get("task"), reply_to=fields.get("in-reply-to"))
-            pending = {"key": key_name, "to": fields["to"], "to_key": recipient, "event": event}
+            pending = {
+                "key": key_name, "to": fields["to"], "to_key": recipient, "event": event,
+                "sender": sender, "queued_at": int(time.time()), "warned": False,
+            }
             self.state["outbound"][ident] = pending
             self.save()
+        else:
+            changed = False
+            if "sender" not in pending:
+                pending["sender"] = sender
+                changed = True
+            if "queued_at" not in pending:
+                pending["queued_at"] = int(time.time())
+                changed = True
+            if "warned" not in pending:
+                pending["warned"] = False
+                changed = True
+            if changed:
+                self.save()
         took, reason = await self.publish_to(pending["to"], pending["event"], self.keys[pending["key"]])
         subject = nm.open_letter(self.keys[pending["key"]], pending["event"])["subject"]
         if took:
@@ -445,7 +565,7 @@ class Gateway:
             await self.tell(sender, "nostr-outcome-" + ident,
                             "Sent to %s: %s (event %s)" % (pending["to"], subject, pending["event"]["id"]))
         else:
-            await self.tell(sender, "nostr-outcome-" + ident, "Not sent to %s: %s" % (
+            await self.report_failure(sender, "nostr-outcome-" + ident, "Not sent to %s: %s" % (
                 pending["to"], reason if reason.startswith("none of our relays") else "the relay refused it: " + reason))
         # Forget the saved event only once the request is settled, so a failed
         # acknowledgement republishes the same event, never a new one.
@@ -454,6 +574,29 @@ class Gateway:
             raise RuntimeError("could not acknowledge %s: %s" % (ident, acked.get("reason", acked)))
         del self.state["outbound"][ident]
         self.save()
+
+    async def check_overdue(self):
+        """Tell a sender once when a queued outbound message waits past ack_overdue."""
+        now = time.time()
+        for ident, pending in list(self.state["outbound"].items()):
+            if pending.get("warned"):
+                continue
+            queued_at = pending.get("queued_at")
+            sender = pending.get("sender")
+            if not isinstance(queued_at, (int, float)) or isinstance(queued_at, bool) or not sender:
+                continue
+            if now < queued_at + self.ack_overdue:
+                continue
+            subject = nm.open_letter(self.keys[pending["key"]], pending["event"])["subject"]
+            await self.tell(
+                sender,
+                "nostr-delayed-" + ident,
+                "Delayed to %s: %s (event %s; still retrying)"
+                % (pending["to"], subject, pending["event"]["id"]),
+            )
+            if ident in self.state["outbound"]:
+                self.state["outbound"][ident]["warned"] = True
+                self.save()
 
     async def settle(self, delivery):
         """Acknowledge one outbound request."""
@@ -491,39 +634,57 @@ class Gateway:
             await self.drain()
         except Exception as error:  # noqa: BLE001
             log("outbound failed: %s: %s" % (type(error).__name__, error))
+        try:
+            await self.check_overdue()
+        except Exception as error:  # noqa: BLE001
+            log("overdue notice failed: %s: %s" % (type(error).__name__, error))
 
     def tick(self):
         asyncio.run(self.once())
 
     async def forever(self, name, step):
-        """Run `step` again after every failure, backing off while failures repeat."""
+        """Run `step` again after every failure, doubling backoff up to 300s until `step` resets it."""
         backoff = 1
+
+        def reset():
+            nonlocal backoff
+            backoff = 1
+
         while True:
-            started = time.monotonic()
             try:
-                await step()
+                await step(reset)
             except asyncio.CancelledError:
                 raise
             except Exception as error:  # noqa: BLE001 - a lost relay or mailbox is retried
-                if time.monotonic() - started > 60:
-                    backoff = 1
-                log("%s: %s: %s; again in %ds" % (name, type(error).__name__, error, backoff))
-                await asyncio.sleep(backoff)
-                backoff = min(60, backoff * 2)
+                current = backoff
+                backoff = min(300, current * 2)
+                log("%s: %s: %s; again in %ds" % (name, type(error).__name__, error, current))
+                await asyncio.sleep(current)
 
     async def serve(self):
-        async def outbox():
+        async def outbox(reset):
             while True:
                 delivery = await self.next_outbound(True)
-                if self.domain and delivery.get("status") == "idle":
+                if delivery.get("status") == "idle":
+                    reset()
                     continue
                 if delivery.get("status") != "delivery":
                     raise RuntimeError("outbox unavailable: %s" % delivery.get("reason", delivery))
                 await self.handle(delivery)
+                reset()
+
+        async def overdue(reset):
+            while True:
+                await self.check_overdue()
+                reset()
+                await asyncio.sleep(1)
+
         tasks = [asyncio.create_task(self.forever(self.inbound_name(key_name, url),
-                                                  lambda k=key_name, r=recipient, u=url: self.receive(k, r, True, u)))
+                                                  lambda reset, k=key_name, r=recipient, u=url:
+                                                  self.receive(k, r, True, u, on_ready=reset)))
                  for key_name, recipient in self.inbound.items() for relay_name, url in self.relays]
         tasks.append(asyncio.create_task(self.forever("outbound", outbox)))
+        tasks.append(asyncio.create_task(self.forever("overdue", overdue)))
         try:
             await asyncio.gather(*tasks)
         finally:
