@@ -121,6 +121,46 @@ class ContextCompactionTests(unittest.TestCase):
         self.assertEqual(self.health.read_bytes(), self.original_health)
         self.assertEqual(self.completion.read_bytes(), self.original_completion)
 
+    def test_request_index_overhead_triggers_a_handoff_before_rendering(self):
+        self.populate(20)
+        for n in range(24):
+            self.fixture.store.accept("request-%d" % n, "Some constraint %d" % n,
+                                      kind="message")
+        original = reference.task_context.conversation_projection(self.fixture.store, "guide")
+        self.peer.reply["choices"][0]["message"]["content"] = "HANDOFF: original source and unfinished task retained."
+        out = self.directory / "index-boundary.txt"
+        # A window just above the old planner's threshold: the separate
+        # request index still needs framing bytes. The old driver skipped
+        # maintenance, then rendering withheld forever on unchanged inputs.
+        forms = '!(import! &self ' + json.dumps(str(boundary.ROOT / "src/context_compaction.metta")) + ')\n'
+        forms += '''!(let* (($base ''' + json.dumps(BASE_PROMPT) + ''')
+          ($view (task:conversation-view "guide" "continuation-tick"))
+          ($root (task:string $view "root"))
+          ($frame (task:working-frame $view 100000 2.5))
+          ($summary (task:handoff-text $root))
+          ($old-space (+ 10 (+ (+ (context:measure $frame 2.5)
+            (math:ceil (/ (str:byte-length $summary) 2.5)))
+            (math:ceil (/ (task:sum-tokens (task:items $view "transcript") 2.5 0) 0.9)))))
+          ($capacity (+ (+ $old-space (math:ceil (/ (str:byte-length (str:concat $base "\\n")) 2.5))) 128))
+          ($rendered (context:prepare $base "guide" "continuation-tick" (repr $capacity) "fixture-model" 256 "default")))
+          (case $rendered
+            (((ContextPreparationFailed $why)
+                (fs:update-text ''' + json.dumps(str(out)) + ''' "replace" (str:concat "WITHHELD: " $why) "" ""))
+             ($text (fs:update-text ''' + json.dumps(str(out)) + ''' "replace" $text "" "")))))
+!(println! COMPACTION_OK)
+'''
+        self.run_guest(forms)
+        rendered = out.read_text()
+        self.assertNotIn("WITHHELD:", rendered)
+        self.assertIn("HANDOFF: original source", rendered)
+        self.assertEqual(len(self.peer.requests), 1)
+        self.assertGreater(self.checkpoint()["start"], 0)
+        self.assertEqual(reference.task_context.conversation_projection(self.fixture.store, "guide")["requests"],
+                         original["requests"])
+        for pair in original["transcript"]:
+            self.assertEqual(reference.task_context.read(self.fixture.store, pair["id"])["id"], pair["id"])
+        self.assert_parent_unchanged()
+
     def test_bootstrap_batches_and_restart_carry_handoff_and_original_ids(self):
         self.populate()
         original = reference.task_context.conversation_projection(self.fixture.store, "guide")

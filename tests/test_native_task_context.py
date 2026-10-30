@@ -11,6 +11,19 @@ import provider_protocol
 ROOT = dispatch.ROOT
 
 class NativeTaskContext(unittest.TestCase):
+    def test_model_calibration_accepts_the_live_python_text_carrier(self):
+        fixture = reference.TaskContextTests(); fixture.setUp()
+        self.addCleanup(fixture.tmp.cleanup)
+        (fixture.path.parent / "context-token-calibration.json").write_text(
+            json.dumps({"fixture-model": {"bytes_per_token": 4.0}}))
+        output = self.guest(fixture.path, '''!(import! &self ./src/task_context_views)
+!(println! (RATIO_LITERAL (context:ratio "fixture-model")))
+!(println! (RATIO_FOREIGN (context:ratio (py-call (builtins.str "fixture-model")))))
+!(println! TASK_CONTEXT_OK)
+''')
+        self.assertRegex(output, r"\(RATIO_LITERAL 4(?:\.0)?\)")
+        self.assertRegex(output, r"\(RATIO_FOREIGN 4(?:\.0)?\)")
+
     def guest(self, database, code):
         harness = dispatch.CommandDispatchEngineTest(); binary = harness._cetta_binary()
         if not binary.is_file(): self.skipTest('set CETTA_BIN to shared-SQLite build')

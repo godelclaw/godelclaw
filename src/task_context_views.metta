@@ -123,7 +123,10 @@
 (= (context:ratio $model)
    (let* (($path (path:join (path:dirname (context:path)) "context-token-calibration.json"))
           ($file (state:json-file $path (JsonObject ())))
-          ($entry (json-object-get $file $model))
+          ; Older Python bridges carry host text as symbols. This field is a
+          ; JSON object key in either bridge representation, never code.
+          ($key (format-args "{}" ($model)))
+          ($entry (json-object-get $file $key))
           ($ratio (json-object-get $entry "bytes_per_token")))
      (case $ratio
        (((JsonNumber $value) (let $n (str:string->number $value) (if (> $n 0) $n 2.5)))
@@ -350,6 +353,15 @@
 (= (task:index-text $requests)
    (if (== $requests ()) "TASK_REQUESTS []"
      (let $chunks (task:index-chunks $requests 0) (str:join "\n_cache_chunk_\n" $chunks))))
+; Planning and rendering must reserve the same request-index framing. A
+; renderer-only reserve can demand a fold after the driver decided to skip it.
+(= (task:index-overhead $requests $ratio)
+   (max 0 (math:ceil (/ (- (str:byte-length (task:index-text $requests))
+                         (str:byte-length (state:encoded (JsonArray $requests)))) $ratio))))
+(= (task:working-cost $frame $ratio)
+   (let $requests (task:quiet-focus (task:items $frame "requests")
+                                   (task:string $frame "focus") (task:string $frame "trigger"))
+     (+ (context:measure $frame $ratio) (task:index-overhead $requests $ratio))))
 ; A step reads as a short header and its result as plain text. A long
 ; result identical to an earlier one in the window is a pointer to that step;
 ; the pointer only looks back, so complete chunks stay unchanged.
@@ -439,9 +451,7 @@
           ($frame (task:working-frame $view $available $ratio))
           ($requests (task:quiet-focus (task:items $frame "requests") (task:string $view "focus") $trigger))
           ($index (task:index-text $requests))
-          ($index-extra (max 0 (math:ceil (/ (- (str:byte-length $index)
-                              (str:byte-length (state:encoded (JsonArray $requests)))) $ratio))))
-          ($space (max 0 (- (- (- $available (context:measure $frame $ratio)) $index-extra)
+          ($space (max 0 (- (- $available (task:working-cost $frame $ratio))
                          (math:ceil (/ (str:byte-length $handoff) $ratio)))))
           ((Window $start $shown) (task:window-from $root $pairs $offset $space $ratio))
           ($complete (* (task:chunk-size) (math:floor (/ (length $shown) (task:chunk-size)))))
