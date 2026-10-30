@@ -96,7 +96,8 @@ def _provider(now):
         call.update(phase="backoff" if retry > now else "failed",
                     ageSeconds=_age(value.get("last_failed_at"), now))
         label = str(value.get("last_failure_type", ""))[:64].lower()
-        call["reason"] = ("timeout" if "timeout" in label else
+        call["reason"] = ("context-preparation" if label.startswith("context-") else
+                          "timeout" if "timeout" in label else
                           "rate-limit" if "rate" in label or "quota" in label else
                           label if label in _REASONS else "unclassified-failure")
         if retry > now:

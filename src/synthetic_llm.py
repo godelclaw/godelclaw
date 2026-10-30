@@ -130,7 +130,10 @@ def _empty_action(reason):
         wait = 0
     cognitive_health.turn_failed(code, retry_after=wait)
     # Exception messages may contain URLs, headers or response bodies.
-    print("[synthetic_llm] failed provider turn: " + code +
+    label = ("[context] preparation withheld: "
+             if isinstance(reason, admission_frontier.ContextPreparationFailure)
+             else "[synthetic_llm] failed provider turn: ")
+    print(label + code +
           ("; awaiting corrective input or configuration" if blocked else f"; retry in {wait:.0f}s"),
           file=sys.stderr)
     return "()"

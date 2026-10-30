@@ -127,9 +127,10 @@
                  ((JsonNumber $t) $t) ($other (json-stringify $other))))
      (str:lower (if (> (str:char-length $text) 64) (str:char-slice $text 0 64) $text))))
 (= (rt:classify $label)
-   (if (rt:contains $label "timeout") "timeout"
+   (if (str:starts-with $label "context-") "context-preparation"
+    (if (rt:contains $label "timeout") "timeout"
      (if (or (rt:contains $label "rate") (rt:contains $label "quota")) "rate-limit"
-       (if (rt:member $label (rt:reasons)) $label "unclassified-failure"))))
+       (if (rt:member $label (rt:reasons)) $label "unclassified-failure")))))
 (= (rt:thousandths $ms) (math:trunc (/ (- $ms (% $ms 1000)) 1000)))
 (= (rt:waiting-pairs $health $now)
    (let* (($base ((JsonPair "phase" (JsonString (if (rt:true-json (rt:get $health "local_commit_pending")) "recording" "waiting")))

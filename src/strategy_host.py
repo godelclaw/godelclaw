@@ -311,11 +311,8 @@ def provider_failed():
 def preparation_failed(reason):
     """Retain this input and use the ordinary retry pacing before admission."""
     import synthetic_llm
-    code = str(reason)
-    if not code.startswith("context-") or len(code) > 96:
-        code = "context-preparation-failed"
-    print("[context] preparation withheld: " + code)
-    return synthetic_llm._empty_action(RuntimeError(code))
+    from admission_frontier import ContextPreparationFailure
+    return synthetic_llm._empty_action(ContextPreparationFailure(reason))
 
 
 def batch_limit(requested, commands):

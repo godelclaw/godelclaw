@@ -89,6 +89,15 @@ class RuntimeContextTest(unittest.TestCase):
         self.assertIs(facts["turnPending"], True)
         self.assertEqual(view.read(self.now+31)["call"]["phase"], "failed")
 
+    def test_local_preparation_failure_is_not_an_unclassified_provider_failure(self):
+        self.write("health.json", dict(schema=2, obligation_since=self.now-100,
+            in_flight_since=0, retry_at=self.now+15, last_outcome="failed",
+            last_failed_at=self.now-1, last_failure_type="context-compaction-required"))
+        facts = view.read(self.now)
+        self.assertEqual(facts["call"]["reason"], "context-preparation")
+        self.assertIs(facts["turnPending"], True)
+
+
     def test_received_answer_waiting_for_storage_is_not_provider_wait(self):
         self.write("health.json", dict(schema=2, obligation_since=self.now-100,
             in_flight_since=self.now-60, retry_at=0, local_commit_pending=True))
