@@ -2,9 +2,40 @@
 import json
 import os
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
 from html.parser import HTMLParser
+
+
+class SearchFailure(RuntimeError):
+    def __init__(self, provider, reason, attempts=()):
+        super().__init__(reason)
+        self.provider = provider
+        self.reason = reason
+        self.attempts = list(attempts)
+
+
+def _failure(provider, error):
+    # Provider exception messages can contain request URLs or credentials.
+    if isinstance(error, SearchFailure):
+        return dict(provider=error.provider, reason=error.reason,
+                    **({"attempts": error.attempts} if error.attempts else {}))
+    if isinstance(error, urllib.error.HTTPError):
+        reason = "http-%d" % error.code
+    elif isinstance(error, TimeoutError):
+        reason = "timeout"
+    elif isinstance(error, urllib.error.URLError):
+        reason = "timeout" if isinstance(error.reason, TimeoutError) else "network-error"
+    elif isinstance(error, (json.JSONDecodeError, UnicodeError, TypeError, AttributeError)):
+        reason = "invalid-response"
+    else:
+        reason = "search-failed"
+    return dict(provider=provider, reason=reason)
+
+
+def _error_result(provider, error):
+    return "SEARCH_ERROR: " + json.dumps(_failure(provider, error), sort_keys=True)
 
 class DDGParser(HTMLParser):
     def __init__(self):
@@ -79,7 +110,7 @@ def _tavily_base_url():
 def tavily_search(query, max_results=10):
     api_key = os.environ.get("TAVILY_API_KEY", "").strip()
     if not api_key:
-        return []
+        raise SearchFailure("tavily", "missing-api-key")
 
     count = max(1, min(20, int(max_results or 10)))
     payload = {
@@ -125,6 +156,8 @@ def tavily_search(query, max_results=10):
 
 def ddg_search(query, max_results=10):
     results = []
+    failures = []
+    completed = False
     for base in (
         "https://lite.duckduckgo.com/lite/?q=",
         "https://html.duckduckgo.com/html/?q=",
@@ -135,14 +168,23 @@ def ddg_search(query, max_results=10):
             headers={"User-Agent": "Mozilla/5.0"}
         )
 
-        with urllib.request.urlopen(req, timeout=10) as r:
-            html = r.read().decode("utf-8", errors="ignore")
-
-        parser = DDGParser()
-        parser.feed(html)
-        results = parser.results[:max_results]
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                html = r.read().decode("utf-8", errors="ignore")
+            parser = DDGParser()
+            parser.feed(html)
+            if not parser.results and any(marker in html.lower() for marker in
+                    ("anomaly-modal", "challenge-form", "bots use duckduckgo too")):
+                raise SearchFailure("ddg", "challenge-required")
+            results = parser.results[:max_results]
+            completed = True
+        except Exception as error:
+            failures.append(_failure("ddg", error))
+            continue
         if results:
             break
+    if not completed:
+        raise SearchFailure("ddg", "all-endpoints-failed", failures)
     return [
         {
             "title": _clean(r.get("title")),
@@ -165,20 +207,29 @@ def _provider_from_query(query):
             return provider, text[len(prefix):].strip()
     return os.environ.get("METTACLAW_SEARCH_PROVIDER", "auto").strip().lower(), text
 
-def search_(query, max_results=10):
+def search_(query, max_results=10, *, _attempts=None):
     provider, query = _provider_from_query(query)
     if provider in ("tavily", "api"):
         return tavily_search(query, max_results)
     if provider in ("ddg", "duckduckgo", "html"):
         return ddg_search(query, max_results)
+    if provider != "auto":
+        raise SearchFailure("configured", "unknown-provider")
 
+    failures = []
     try:
         results = tavily_search(query, max_results)
         if results:
             return results
-    except Exception:
-        pass
-    return ddg_search(query, max_results)
+    except Exception as error:
+        failures.append(_failure("tavily", error))
+    if _attempts is not None:
+        _attempts.extend(failures)
+    try:
+        return ddg_search(query, max_results)
+    except Exception as error:
+        raise SearchFailure("auto", "all-providers-failed",
+                            failures + [_failure("ddg", error)]) from None
 
 def _format_results(results):
     ret = "("
@@ -190,18 +241,22 @@ def _format_results(results):
 
 def search(query, max_results=10):
     try:
-        return _format_results(search_(query, max_results))
-    except Exception:
-        return ""
+        attempts = []
+        result = _format_results(search_(query, max_results, _attempts=attempts))
+        if attempts:
+            result = "SEARCH_FALLBACK: " + json.dumps(attempts, sort_keys=True) + "\n" + result
+        return result
+    except Exception as error:
+        return _error_result("configured", error)
 
 def search_tavily(query, max_results=10):
     try:
         return _format_results(tavily_search(query, max_results))
-    except Exception:
-        return ""
+    except Exception as error:
+        return _error_result("tavily", error)
 
 def search_ddg(query, max_results=10):
     try:
         return _format_results(ddg_search(query, max_results))
-    except Exception:
-        return ""
+    except Exception as error:
+        return _error_result("ddg", error)
