@@ -85,9 +85,13 @@ def main(argv=None):
         from prompt_toolkit.patch_stdout import patch_stdout
         session = PromptSession(history=FileHistory(str(client_state / "history")), mouse_support=False)
         stop, work, outgoing, menu, menu_lock = threading.Event(), queue.Queue(), queue.Queue(), [], threading.Lock()
+        view_epoch = [0]
 
-        def show(body):
+        def show(body, epoch):
             with menu_lock:
+                if body.get("kind") == "menu" and epoch != view_epoch[0]:
+                    print("This menu is no longer active.", flush=True)
+                    return
                 menu[:] = [button for row in body.get("rows", []) for button in row]
                 print("\n" + clean(body.get("text", json.dumps(body, ensure_ascii=False) if "kind" not in body else "")), flush=True)
                 for n, button in enumerate(menu, 1): print("%d  %s" % (n, clean(button[0])), flush=True)
@@ -96,7 +100,7 @@ def main(argv=None):
             while not stop.is_set():
                 item = work.get()
                 try:
-                    show(controls.request(item[0], **item[1]))
+                    show(controls.request(item[0], **item[1]), item[2])
                 except Exception as error:
                     print("Operation incomplete: " + clean(str(error)), flush=True)
 
@@ -151,12 +155,15 @@ def main(argv=None):
             if stored:
                 print("Recent stored replies; /replies shows the complete local archive.")
                 for path in stored[-3:]: print(clean(json.loads(path.read_text())["text"]))
-            work.put(("command", dict(name="/activity", arguments="")))
+            work.put(("command", dict(name="/activity", arguments=""), view_epoch[0]))
             while True:
                 try: text = session.prompt(args.agent + "> ")
                 except KeyboardInterrupt: continue
                 except EOFError: break
                 if not text.strip(): continue
+                with menu_lock:
+                    view_epoch[0] += 1
+                    epoch = view_epoch[0]
                 if text in ("/quit", "/detach"): break
                 if text == "/help":
                     print("/models /model /modes /engines /fuel /energy /activity /health /quota /wake /start /stop\n"
@@ -166,8 +173,9 @@ def main(argv=None):
                 if text == "/retry": outgoing.put(None); continue
                 if text == "/close-menu":
                     with menu_lock: menu.clear()
+                    print("Menu closed.")
                     continue
-                if text == "/status": work.put(("status", {})); continue
+                if text == "/status": work.put(("status", {}, epoch)); continue
                 if text == "/replies":
                     for path in sorted((client_state / "received").glob("*.json"), key=lambda p:p.stat().st_mtime):
                         print(clean(json.loads(path.read_text())["text"]))
@@ -178,9 +186,9 @@ def main(argv=None):
                         continue
                     choice = menu[int(text) - 1][1] if text.isdigit() and 0 < int(text) <= len(menu) else None
                     menu.clear()
-                if choice: work.put(("choice", dict(value=choice)))
+                if choice: work.put(("choice", dict(value=choice), epoch))
                 elif text.startswith("/") and not text.startswith("//"):
-                    name, _, arguments = text.partition(" "); work.put(("command", dict(name=name, arguments=arguments)))
+                    name, _, arguments = text.partition(" "); work.put(("command", dict(name=name, arguments=arguments), epoch))
                 else:
                     try: outgoing.put(mail.prepare(text[1:] if text.startswith("//") else text))
                     except OSError as error: print("Input not accepted locally: " + clean(str(error)), flush=True)

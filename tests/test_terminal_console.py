@@ -25,7 +25,14 @@ class TerminalConsole(unittest.TestCase):
             (fakes/'synthetic_llm.py').write_text('''
 def chat(*a,**kw): raise AssertionError('no model calls')
 def current_model(): return 'offline'
-def model_ids(): return ['offline','other']
+def model_ids():
+    from pathlib import Path
+    import time
+    r=Path(__file__).parent.parent
+    if (r/'menu-gate').exists():
+        (r/'menu-started').touch()
+        while not (r/'menu-release').exists(): time.sleep(.01)
+    return ['offline','other']
 def model_catalog_status(): return 'fixture'
 def model_in_observed_catalog(name): return None
 ''')
@@ -84,6 +91,12 @@ else:
                 os.write(master,b'/models\r');expect('tap to switch')
                 os.write(master,b'99999\r');expect('Choose a displayed number')
                 self.assertFalse((base/'publishing').exists())
+                (base/'menu-gate').touch();os.write(master,b'/models\r')
+                deadline=time.monotonic()+5
+                while not (base/'menu-started').exists() and time.monotonic()<deadline:time.sleep(.01)
+                self.assertTrue((base/'menu-started').exists())
+                os.write(master,b'/close-menu\r');expect('Menu closed.')
+                (base/'menu-release').touch();expect('This menu is no longer active.')
                 paste='hello\ncentral constraint ž\nlast line'
                 os.write(master,b'\x1b[200~'+paste.encode()+b'\x1b[201~\r')
                 deadline=time.monotonic()+5
