@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import errno
 import time
+import math
 
 
 class StorageExhausted(OSError):
@@ -23,8 +24,15 @@ class ProcessOutput:
     def __init__(self, root, reserve=None):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
-        self.reserve = int(os.environ.get("METTACLAW_TOOL_STORAGE_RESERVE_BYTES", "67108864")
-                           if reserve is None else reserve)
+        configured = os.environ.get("METTACLAW_TOOL_STORAGE_RESERVE_BYTES")
+        if reserve is None and configured is None:
+            volume = os.statvfs(self.root)
+            fraction = float(os.environ.get("METTACLAW_TOOL_STORAGE_RESERVE_FRACTION", "0.01"))
+            if not math.isfinite(fraction) or not 0 <= fraction <= 1:
+                raise ValueError("storage reserve fraction must be between zero and one")
+            self.reserve = max(64 * 1024 * 1024, int(volume.f_blocks * volume.f_frsize * fraction))
+        else:
+            self.reserve = int(configured if reserve is None else reserve)
         if self.reserve < 0:
             raise ValueError("storage reserve must be nonnegative")
         self.records = {name: dict(file=(self.root / (name + ".bin")).open("w+b"),
@@ -43,6 +51,9 @@ class ProcessOutput:
         return not self.streams
 
     def pump(self, seconds=.01):
+        volume = os.statvfs(self.root)
+        if volume.f_bavail * volume.f_frsize < self.reserve:
+            raise StorageExhausted()
         deadline = time.monotonic() + seconds
         while self.streams and time.monotonic() < deadline:
             changed = False

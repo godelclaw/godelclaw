@@ -9,6 +9,8 @@ import json
 import math
 import os
 import time
+import sqlite3
+from contextlib import closing
 import agent_checkpoint
 
 
@@ -62,13 +64,13 @@ def wait_changes():
     return _changes.wait(2) if _changes is not None else 0
 
 
-def _store():
+def _store(timeout=10):
     if not (os.environ.get("METTACLAW_STRATEGY_PATH") or
             os.environ.get("METTACLAW_ENGINE_STATE_PATH")):
         return None
     # Schema/legacy migrations belong to cognition's boot. Notices must never
     # wait for its writer, nor repeatedly scan retained request history.
-    store = agent_checkpoint.ledger(initialize=False, timeout=0)
+    store = agent_checkpoint.ledger(initialize=False, timeout=timeout)
     with store.transaction() as db:
         db.execute("""CREATE TABLE IF NOT EXISTS input_notices (
             task TEXT PRIMARY KEY, update_id TEXT NOT NULL, lane TEXT NOT NULL,
@@ -101,10 +103,13 @@ def committed(ids):
     if os.environ.get("METTACLAW_OBSERVED_STRATEGY", "0") != "1":
         return 1
     values = [str(value) for value in (ids.split(",") if isinstance(ids, str) else ids) if str(value)]
-    store = _store()
-    if store is None:
+    if not (os.environ.get("METTACLAW_STRATEGY_PATH") or os.environ.get("METTACLAW_ENGINE_STATE_PATH")):
         return 0
-    with store.transaction() as db:
+    # Read a committed snapshot without acquiring the cognitive writer. Errors
+    # propagate: an unavailable checkpoint must not mean "not processed".
+    with closing(sqlite3.connect(agent_checkpoint.path().resolve().as_uri() + '?mode=ro',
+                                 uri=True, timeout=10)) as db:
+        db.execute("BEGIN")
         return int(all(db.execute("SELECT 1 FROM processed_inputs WHERE id=?", (identity,)).fetchone()
                        for identity in values))
 
@@ -212,7 +217,7 @@ def key(task, lane, kind, role, update="{}"):
     attention.ingress(task, role, update)
     value = json.loads(str(update)) if isinstance(update, str) else update
     update_id = str(value.get("update_id", "")) if isinstance(value, dict) else ""
-    store = _store()
+    store = _store(timeout=0)
     if store is not None:
         with store.transaction() as db:
             if db.execute("SELECT 1 FROM processed_inputs WHERE id=?", (update_id,)).fetchone():
@@ -246,20 +251,20 @@ def submitted(task):
     if entry is not None:
         entry[1] = True
         _last_notice[entry[2]] = time.monotonic()
-    store = _store()
+    store = _store(timeout=0)
     if store is not None:
         with store.transaction() as db:
             db.execute("UPDATE input_notices SET state='submitted' WHERE task=? AND state='registered'", (str(task),))
     return 1
 
 
-def receipt(observation):
+def receipt(observation, timeout=10):
     """Save a correlated channel delivery before any reader acknowledges it."""
     value = json.loads(str(observation)) if isinstance(observation, str) else observation
     if (not isinstance(value, list) or len(value) != 5 or value[0] != "delivery"
             or value[2] != 0 or value[3] != 1):
         return 0
-    store = _store()
+    store = _store(timeout=timeout)
     if store is None:
         return 0
     key, outcome = value[1], value[4]
@@ -288,7 +293,7 @@ def pump(channel=None):
     if channel is None and now - _last_pump < 2:
         return 0
     _last_pump = now
-    store = _store()
+    store = _store(timeout=0)
     if store is None:
         return 0
     import durable_telegram as protocol
@@ -299,7 +304,7 @@ def pump(channel=None):
         channel = protocol.Channel(path, os.devnull, timeout=1)
     def collect():
         for task, observation in channel.pending(64):
-            if receipt(observation):
+            if receipt(observation, timeout=0):
                 channel.acknowledge(task)
     count = 0
     try:

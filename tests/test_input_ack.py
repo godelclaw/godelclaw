@@ -21,6 +21,19 @@ class InputAcknowledgementTest(unittest.TestCase):
         clock = mock.patch.object(input_ack.time, "monotonic", side_effect=lambda: self.now)
         clock.start(); self.addCleanup(clock.stop)
 
+    def test_cognitive_commit_reads_do_not_need_the_writer_lock(self):
+        import tempfile
+        import sqlite3
+        from observed_strategy import Ledger
+        from contextlib import closing
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {"METTACLAW_STRATEGY_PATH": str(Path(directory)/"ledger.db")}):
+            store = Ledger(Path(directory)/"ledger.db")
+            input_ack.processed_update_ids(["one"])
+            with closing(sqlite3.connect(store.path)) as writer:
+                writer.execute("BEGIN IMMEDIATE")
+                self.assertEqual(input_ack.already_committed("one"), 1)
+                self.assertEqual(input_ack.already_committed("two"), 0)
+
     def test_notice_waits_then_keeps_the_same_identity_across_lost_reply_and_restart(self):
         key = lambda: input_ack.key("input-1", "42.0", "message", "operator")
         self.assertEqual(key(), "")

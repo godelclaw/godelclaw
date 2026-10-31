@@ -8,6 +8,7 @@ import re
 import threading
 import time
 import uuid
+import sqlite3
 
 import requests
 
@@ -2242,7 +2243,15 @@ def handover_ack(ids):
     if not mode_channel.acknowledge_handover(values):
         return 0
     import input_ack
-    input_ack.processed_update_ids(values)
+    try:
+        input_ack.processed_update_ids(values)
+    except sqlite3.OperationalError as error:
+        if getattr(error, "sqlite_errorcode", None) not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+            if not any(word in str(error).lower() for word in ("locked", "busy")):
+                raise
+        # The durable handover remains settled; retry this idempotent metadata
+        # transition at the next boundary, never replay the cognitive actions.
+        return 0
     return 1
 
 

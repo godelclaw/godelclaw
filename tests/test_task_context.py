@@ -63,6 +63,14 @@ class TaskContextTests(unittest.TestCase):
         self.assertEqual(view["transcript"][-1]["disposition"], "returned")
         self.assertLessEqual(len(encoded(view)), budget)
 
+    def test_latest_preview_keeps_the_failure_tail_when_the_window_allows_it(self):
+        text = "compiler preamble " * 1000 + "FINAL_FAILURE: theorem remains unproved"
+        self.call([["compile", "source"]], [text])
+        view = task_context.compact(task_context.projection(self.store, "guide"), 5500)
+        newest = view["transcript"][-1]
+        self.assertIn("FINAL_FAILURE", newest["result_preview"])
+        self.assertGreater(len(newest["result_preview"]), 2000)
+
     def test_early_evidence_survives_where_the_old_projection_loses_it(self):
         self.call([["read-file", "contract.lean"]], ["EARLY_FACT: requires finite evidence"])
         for i in range(6):

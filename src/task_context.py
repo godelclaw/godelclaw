@@ -356,10 +356,12 @@ def compact(view, byte_budget=None, *, measure=None):
     newest_stub = None
     if pairs:
         newest = pairs[-1]
+        text = str(newest.get("result", ""))
+        preview = text if len(text) <= 200 else text[:100] + "\n[output excerpt]\n" + text[-100:]
         newest_stub = dict(id=newest["id"], command=newest["command"],
                            disposition=newest["disposition"], compacted=True,
                            retrieve=["task-read", newest["id"], 0],
-                           result_preview=str(newest.get("result", ""))[:200])
+                           result_preview=preview)
     # Input and the latest effect observation share the window. Reserve the
     # observation's identity, disposition and retrieval before fitting input.
     input_budget = max(0, budget - (measure(encoded(newest_stub)) + 200 if newest_stub else 0))
@@ -397,11 +399,18 @@ def compact(view, byte_budget=None, *, measure=None):
         # The newest oversized output has an explicit pointer and preview;
         # an oversized older output does not displace newer evidence.
         if not chosen:
-            result["transcript"]=[newest_stub]
-            if measure(encoded(result)) <= budget:
-                chosen=[newest_stub]
+            text = str(pairs[-1].get("result", ""))
+            for width in (2000, 1000, 500, 100):
+                preview = text if len(text) <= 2*width else text[:width] + "\n[output excerpt]\n" + text[-width:]
+                stub = dict(newest_stub, result_preview=preview)
+                result["transcript"]=[stub]
+                if measure(encoded(result)) <= budget:
+                    chosen=[stub]
+                    break
         result.update(transcript=chosen, archive=archive(len(pairs)-len(chosen)))
         break
+    if measure(encoded(result)) > budget or (pairs and not result["transcript"]):
+        raise ValueError("context budget cannot hold the input references and latest receipt")
     return result
 
 
