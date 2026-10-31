@@ -95,10 +95,16 @@ class BotAPI(Peer):
             return [(d.get("chat_id"), d.get("text")) for n, d in self.calls if n == "sendMessage"]
 
 
+def payload_lines(output):
+    lines = [line for line in output.splitlines() if line]
+    assert "FIXTURE_PAYLOAD_BEGIN" in lines, output[-2000:]
+    return lines[lines.index("FIXTURE_PAYLOAD_BEGIN") + 1:]
+
+
 def start(program, env):
     """Start a MeTTa program with Lila's modules in the background."""
     source = ("!(import! &self ./src/helper.py)\n!(import! &self ./channels/telegram.py)\n"
-              "!(import! &self ./channels/telegram.metta)\n" + program)
+              "!(import! &self ./channels/telegram.metta)\n!(println! FIXTURE_PAYLOAD_BEGIN)\n" + program)
     f = tempfile.NamedTemporaryFile("w", suffix=".metta", dir=ROOT, delete=False)
     f.write(source); f.close()
     p = subprocess.Popen([CETTA, "--lang", "petta", "--import-mode", "ancestor-walk", f.name],
@@ -110,13 +116,14 @@ def finish(started, timeout=120):
     p, name = started
     out, err = p.communicate(timeout=timeout)
     os.unlink(name)
-    return [line for line in out.splitlines() if line][3:], err
+    assert p.returncode == 0, (p.returncode, out[-2000:], err[-2000:])
+    return payload_lines(out), err
 
 
 def run(program, env):
     """Run a MeTTa program with Lila's modules; return its printed results."""
     source = ("!(import! &self ./src/helper.py)\n!(import! &self ./channels/telegram.py)\n"
-              "!(import! &self ./channels/telegram.metta)\n" + program)
+              "!(import! &self ./channels/telegram.metta)\n!(println! FIXTURE_PAYLOAD_BEGIN)\n" + program)
     with tempfile.NamedTemporaryFile("w", suffix=".metta", dir=ROOT, delete=False) as f:
         f.write(source)
     try:
@@ -124,8 +131,8 @@ def run(program, env):
                            capture_output=True, text=True, timeout=120, cwd=ROOT, env=env)
     finally:
         os.unlink(f.name)
-    # The three imports each print true.
-    lines = [line for line in p.stdout.splitlines() if line][3:]
+    assert p.returncode == 0, (p.returncode, p.stdout[-2000:], p.stderr[-2000:])
+    lines = payload_lines(p.stdout)
     return lines, p.stderr
 
 
@@ -145,6 +152,7 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
     ledger = temp / "telegram.jsonl"
     env = dict(os.environ,
                METTACLAW_TELEGRAM_CLIENT="metta",
+               METTACLAW_ENGINE="cetta", METTACLAW_ACTIVE_ENGINE="cetta",
                METTACLAW_TELEGRAM_TRANSPORT="durable",
                METTACLAW_TELEGRAM_SERVICE_SOCKET=str(path),
                METTACLAW_TELEGRAM_LOG_PATH=str(ledger),

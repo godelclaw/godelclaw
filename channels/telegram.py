@@ -1303,58 +1303,27 @@ def _wake_for_operator_message(sender):
     return False
 
 
+def _settings_keyboard(kind, prefix):
+    import helper
+    page = json.loads(helper.menu_page(kind, prefix))
+    return {"inline_keyboard": [[{"text": label, "callback_data": data}
+             for label, data in row] for row in page["rows"]]}
+
+
 def _models_keyboard():
-    """Inline keyboard of switchable models: tap a button to switch (handled
-    by _handle_callback_query, zero LLM involvement)."""
-    import synthetic_llm
-    current = synthetic_llm.current_model()
-    rows = []
-    for m in synthetic_llm.model_ids():
-        if len(("model:" + m).encode("utf-8")) > 64:  # telegram limit
-            continue
-        availability = synthetic_llm.model_in_observed_catalog(m)
-        mark = "● " if m == current else ("⚠ " if availability is False else "")
-        label = mark + m
-        rows.append([{"text": label, "callback_data": "model:" + m}])
-    return {"inline_keyboard": rows}
+    return _settings_keyboard("models", "model")
 
 
 def _modes_keyboard():
-    """Inline keyboard for the persistent cognitive-loop policy."""
-    import loop_modes
-    current = loop_modes.current_mode()
-    rows = []
-    for name in loop_modes.MODES:
-        label = ("● " if name == current else "") + name
-        rows.append([{"text": label, "callback_data": "mode:" + name}])
-    return {"inline_keyboard": rows}
+    return _settings_keyboard("modes", "mode")
 
 
 def _fuels_keyboard():
-    """Inline keyboard for the persisted fuel discipline."""
-    import fuel_modes
-    current = fuel_modes.current_fuel()
-    rows = []
-    for name in fuel_modes.FUELS:
-        label = ("● " if name == current else "") + name
-        rows.append([{"text": label, "callback_data": "fuel:" + name}])
-    return {"inline_keyboard": rows}
+    return _settings_keyboard("fuels", "fuel")
 
 
 def _engines_keyboard():
-    """Inline keyboard for the persisted evaluator selection."""
-    import engine_modes
-    active = engine_modes.active_engine()
-    selected = engine_modes.selected_engine()
-    rows = []
-    for name in engine_modes.ENGINES:
-        mark = "● " if name == active else ("◌ " if name == selected else "")
-        unavailable = " (unavailable)" if not engine_modes.engine_available(name) else ""
-        rows.append([{
-            "text": mark + name + unavailable,
-            "callback_data": "engine:" + name,
-        }])
-    return {"inline_keyboard": rows}
+    return _settings_keyboard("engines", "engine")
 
 
 def _handle_callback_query(cq):
@@ -1364,6 +1333,20 @@ def _handle_callback_query(cq):
     message = cq.get("message") or {}
     chat = message.get("chat") or {}
     try:
+        if data.startswith(("menu:", "choice:")):
+            if not _chat_is_allowed(chat): return "callback_disallowed_chat"
+            if not _is_operator(cq.get("from")): return "callback_not_operator"
+            import helper
+            if data.startswith("choice:"):
+                data = helper.menu_choice_button(data[len("choice:"):])
+            else:
+                page = json.loads(helper.menu_page_button(data[len("menu:"):]))
+                rows = [[{"text": label, "callback_data": value} for label, value in row] for row in page["rows"]]
+                requests.post(_api("answerCallbackQuery"), json={"callback_query_id": cq.get("id"), "text": "page"}, timeout=15)
+                requests.post(_api("editMessageText"), json={"chat_id": chat.get("id"),
+                    "message_id": message.get("message_id"), "text": page["text"],
+                    "reply_markup": {"inline_keyboard": rows}}, timeout=15)
+                return "callback_menu_page"
         if data.startswith("energy:"):
             if not _chat_is_allowed(chat):
                 return "callback_disallowed_chat"
@@ -2004,10 +1987,10 @@ def _durable_loop():
     If the service stops after a task was handled here but before the
     acknowledgment committed, it offers the same task again: that task is
     acknowledged without being handled twice."""
-    handled = []
+    handled, after = [], ""
     while _running:
         try:
-            tasks = _durable.pending(64)
+            tasks = _durable.pending(64, after)
             _health_update(poll_status="ok", last_poll_ok_at=time.time())
             for task, observation in tasks:
                 command = _durable_command_of(observation)
@@ -2025,6 +2008,12 @@ def _durable_loop():
                     handled.append(task)
                     del handled[:-4096]
                 _durable.acknowledge(task)
+            after = ""
+            if len(tasks) == 64:
+                for task, _ in reversed(tasks):
+                    if _durable.rpc(3, task)[0] == 67:
+                        after = task
+                        break
             if not tasks:
                 time.sleep(0.25)
         except Exception as exc:
@@ -2203,9 +2192,7 @@ def handover_ids(ids):
         values = [ids]
     else:
         raise ValueError("handover requires update IDs or comma-separated update IDs")
-    if len(values) > 256:
-        raise ValueError("handover update batch exceeds its bound")
-    result = []
+    result, seen = [], set()
     for value in values:
         if type(value) not in (int, str):
             raise ValueError("invalid handover update ID")
@@ -2213,8 +2200,9 @@ def handover_ids(ids):
         if (not text or len(text) > 19 or not text.isascii() or not text.isdigit()
                 or str(int(text)) != text or not 0 <= int(text) < 2**63):
             raise ValueError("invalid handover update ID")
-        if text not in result:
+        if text not in seen:
             result.append(text)
+            seen.add(text)
     return result
 
 
@@ -2243,8 +2231,6 @@ def activity_source_ack(ids):
         else:
             updates.append(value)
     updates = handover_ids(updates)
-    if len(runtime) > 256:
-        raise ValueError("runtime source batch exceeds its bound")
     if runtime and not input_ack.committed(runtime): return 0
     return handover_ack(updates) if updates else 1
 
@@ -2325,30 +2311,27 @@ def poll_age_seconds(now=None):
 
 
 def _metta_unread_chats():
-    """Chats with input the current turn has not read: messages still pending
-    in the channel service that are not in the prepared batch. None when the
-    service cannot be asked, which withholds the send."""
+    """Read all pending chats; an incomplete read cannot establish absence."""
     import durable_telegram
+    import attention
     path = os.environ.get("METTACLAW_TELEGRAM_SERVICE_SOCKET", "")
     if not path:
         return None
     prepared = set(_current_batch_update_ids)
+    unread = set()
     try:
-        tasks = durable_telegram.Channel(path, os.devnull).pending(256)
+        for task, observation in durable_telegram.Channel(path, os.devnull).iter_pending():
+            attention.observe_pending([(task, observation)])
+            try:
+                value = json.loads(observation)
+            except ValueError:
+                return None
+            if value and value[0] == "input" and len(value) == 5:
+                update = value[4] if isinstance(value[4], dict) else {}
+                if str(update.get("update_id", "")) not in prepared:
+                    unread.add(str(value[1]).split(".", 1)[0])
     except (OSError, durable_telegram.ChannelError):
         return None
-    import attention
-    attention.observe_pending(tasks)
-    unread = set()
-    for _, observation in tasks:
-        try:
-            value = json.loads(observation)
-        except ValueError:
-            continue
-        if value and value[0] == "input" and len(value) == 5:
-            update = value[4] if isinstance(value[4], dict) else {}
-            if str(update.get("update_id", "")) not in prepared:
-                unread.add(str(value[1]).split(".", 1)[0])
     return unread
 
 

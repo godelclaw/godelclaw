@@ -43,12 +43,27 @@ class InputAcknowledgementTest(unittest.TestCase):
             self.assertEqual(input_ack.key("t", "42.0", "message", "operator"), "")
         self.assertEqual(input_ack._pending, {})
 
-    def test_memory_is_bounded_and_consumed_tasks_are_removed(self):
+    def test_pending_notices_are_retained_and_consumed_tasks_are_removed(self):
         for n in range(300):
             input_ack.key(str(n), "42.0", "message", "operator")
-        self.assertEqual(len(input_ack._pending), 256)
+        self.assertEqual(len(input_ack._pending), 300)
         input_ack.begin_scan([["0", "body"]])
         self.assertEqual(list(input_ack._pending), ["0"])
+
+    def test_partial_pages_do_not_forget_unseen_pending_work(self):
+        with mock.patch.object(input_ack, "_scan_after", ""), mock.patch.object(input_ack, "_scan_seen", set()):
+            for n in range(600):
+                input_ack.key(str(n), "42.0", "message", "operator")
+            first = [[str(n), "[]"] for n in range(256)] + [["runtime-scan-unavailable", "[]"]]
+            input_ack.begin_scan(first, first)
+            self.assertEqual(input_ack.scan_after(), "255")
+            self.assertEqual(len(input_ack._pending), 600)
+            second = [[str(n), "[]"] for n in range(256, 512)] + [["runtime-scan-unavailable", "[]"]]
+            input_ack.begin_scan(second, second)
+            last = [[str(n), "[]"] for n in range(512, 600)]
+            input_ack.begin_scan(last, last)
+            self.assertEqual(input_ack.scan_after(), "")
+            self.assertEqual(len(input_ack._pending), 600)
 
     def test_lane_cannot_change_after_capture(self):
         input_ack.key("t", "42.0", "message", "operator")

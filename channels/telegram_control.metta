@@ -162,21 +162,10 @@
 ; A settings menu: one button a choice, the current one marked, the selected
 ; one (an engine chosen but not yet running) marked apart, and those not
 ; available said so. Its data is PREFIX:NAME.
+(= (tc:settings-page $state $toast)
+   (tc:menu $toast (tc:string (tc:at $state "text")) (tc:at $state "rows")))
 (= (tc:settings-menu $kind $prefix $toast)
-   (let $state (json-parse (py-call (helper.menu_state $kind)))
-     (let $current (tc:string (tc:at $state "current"))
-       (let $selected (tc:string (tc:at $state "selected"))
-         (let $unavailable (tc:strings (tc:at $state "unavailable"))
-           (let $rows (collapse (let $name (tc:items (tc:strings (tc:at $state "names")))
-                                  (let $data (format-args "{}:{}" ($prefix $name))
-                                    (if (> (str:byte-length $data) 64) (empty)
-                                      (let $off (tc:member? $name $unavailable)
-                                        (let $mark (if (== $name $current) "● "
-                                                     (if (== $name $selected) "◌ "
-                                                       (if (and $off (== $kind "models")) "⚠ " "")))
-                                          (let $label (format-args "{}{}{}" ($mark $name (if (and $off (== $kind "engines")) " (unavailable)" "")))
-                                            (JsonArray ((JsonArray ((JsonString (tc:cut $label 64)) (JsonString $data))))))))))))
-             (tc:menu $toast (tc:string (tc:at $state "text")) (JsonArray $rows))))))))
+   (tc:settings-page (json-parse (tc:text (py-call (helper.menu_page $kind $prefix 0)))) $toast))
 
 (= (tc:energy-menu $toast)
    (let $view (energy:view)
@@ -209,7 +198,9 @@
       ($at (let $kind (str:byte-slice $data 0 $at)
              (let $arg (str:byte-slice $data (+ $at 1) (str:byte-length $data))
                (case $kind
-                 (("mode" (tc:mode-tap $arg))
+                 (("menu" (tc:settings-page (json-parse (tc:text (py-call (helper.menu_page_button $arg)))) ""))
+                  ("choice" (tc:tap (tc:text (py-call (helper.menu_choice_button $arg)))))
+                  ("mode" (tc:mode-tap $arg))
                   ("fuel" (let $reply (tc:text (fuel:set $arg))
                             (tc:settings-menu "fuels" "fuel" $reply)))
                   ("engine" (let $reply (tc:switch-engine $arg) (tc:settings-menu "engines" "engine" $reply)))
@@ -325,9 +316,9 @@
 (= (tc:serve-once)
    (let $controls (tc:tasks-after-code 6 "" 256)
     (let $handled (tc:handle $controls)
-     (let $tasks (tc:tasks-after "" 256)
+     (let $tasks (tc:tasks-after (tc:text (py-call (input_ack.scan_after))) 256)
       (let $ordinary (tc:notice-tasks $tasks)
-       (let $retained (py-call (input_ack.begin_scan (quote $ordinary)))
+       (let $retained (py-call (input_ack.begin_scan (quote $ordinary) (quote $tasks)))
         (let $_ (tc:prune (collapse (match &self (tc:cached $task $body $value) $task)))
          (let $noticed (tc:notices $tasks)
           (let $cleaned (tc:guarded (catch (nc:pump)) "receipt cleanup") $handled)))))))))

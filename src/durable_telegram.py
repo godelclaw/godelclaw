@@ -160,9 +160,20 @@ class Channel:
         n = reply[5]
         return reply[4], reply[6:6 + n].decode("ascii"), reply[6 + n:].decode("utf-8")
 
-    def pending(self, limit=64):
+    def iter_pending(self, after=""):
+        """Stream a complete pending read; invalidated scans are explicit failures."""
+        while True:
+            code, task, body = self.rpc(NEXT, after)
+            if code == IDLE:
+                return
+            if code != TASK:
+                raise ChannelError("pending scan incomplete: %d" % code)
+            yield task, body
+            after = task
+
+    def pending(self, limit=64, after=""):
         """Read up to limit pending tasks, oldest first, answering none."""
-        tasks, after = [], ""
+        tasks = []
         while len(tasks) < limit:
             code, task, body = self.rpc(NEXT, after)
             if code == TASK:

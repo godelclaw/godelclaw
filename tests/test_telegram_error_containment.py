@@ -66,6 +66,7 @@ class Containment(unittest.TestCase):
         self.env = dict(
             os.environ,
             METTACLAW_TELEGRAM_CLIENT="metta",
+            METTACLAW_ENGINE="cetta", METTACLAW_ACTIVE_ENGINE="cetta",
             METTACLAW_TELEGRAM_SERVICE_SOCKET=self.socket,
             METTACLAW_TELEGRAM_LOG_PATH=str(self.dir / "telegram.jsonl"),
             METTACLAW_TELEGRAM_HEALTH_PATH=str(self.dir / "health.json"),
@@ -167,6 +168,15 @@ class Containment(unittest.TestCase):
         self.assertEqual(self.service.submissions, notices)
         self.assertNotIn(task, self.service.results)
         self.assertIsNone(responder.poll())
+
+    def test_main_client_advances_beyond_its_working_window(self):
+        for n in range(600):
+            self.service.add(["command", str(n), "/mode", "", "42.0"])
+        behind = self.service.add(["input-too-large", "42.0", "message", "operator"])
+        result = self.run_program("!(import! &self ./src/helper.py)\n!(import! &self ./channels/telegram.metta)\n!(tg:start)\n!(tg:poll)\n!(tg:poll)\n!(println! scan-finished)\n")
+        self.assertEqual(result.returncode, 0, result.stderr[-1000:])
+        self.assertIn(behind, self.service.results)
+        self.assertEqual(len(self.service.tasks), 600, "control input was consumed by cognition")
 
     def test_energy_never_raises(self):
         blocked = self.dir / "blocked-parent"

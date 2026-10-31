@@ -24,7 +24,7 @@ sys.path[:0] = [str(ROOT), str(ROOT / "src")]
 from channels import telegram  # noqa: E402
 import durable_telegram  # noqa: E402
 
-NEXT, RESULT, SUBMIT, NEXT_CONTROL = 1, 2, 4, 6
+NEXT, RESULT, RECEIPT, SUBMIT, NEXT_CONTROL = 1, 2, 3, 4, 6
 IDLE, TASK, STORED, UNKNOWN, UNAVAILABLE = 64, 65, 66, 68, 71
 
 
@@ -84,6 +84,8 @@ class FakeService:
                     return self.reply(conn, IDLE)
                 task, observation = tasks[start]
                 return self.reply(conn, TASK, task, observation)
+            if code == RECEIPT:
+                return self.reply(conn, STORED if name in self.results else 67 if any(t == name for t, _ in self.tasks) else UNKNOWN, name)
             if code == RESULT:
                 self.tasks = [(t, o) for t, o in self.tasks if t != name]
                 self.events.append(("ack", name))

@@ -635,12 +635,23 @@
 
 ; Read every task not yet seen and act on it. Messages stay pending until
 ; their turn is acknowledged; everything else is answered here.
+(= (tg:last-pending $tasks)
+   (if (== $tasks ()) ""
+     (let* ((($head $tail) (tg:uncons $tasks))
+            ($later (tg:last-pending $tail)))
+       (if (not (== $later "")) $later
+         (let ($task $body) $head
+           (case (tg:call 3 $task "")
+             (((cwp:reply 67 $name $reply) $task) ($other ""))))))))
+
 (= (tg:poll)
-   (let $tasks (tg:tasks-after "" 256)
-     (let $done (tg:handle-tasks $tasks)
-       (let $events (tg:drain-runtime-events)
-         (let $now (tg:now)
-           (py-call (telegram.metta_publish "last_poll" $now)))))))
+   (let* (($tasks (tg:tasks-after (tg:get poll-after "") 256))
+          ($done (tg:handle-tasks $tasks))
+          ($cursor (if (== (size-atom (tg:list $tasks)) 256) (tg:last-pending $tasks) ""))
+          ($_ (tg:set poll-after $cursor))
+          ($events (tg:drain-runtime-events))
+          ($now (tg:now)))
+     (py-call (telegram.metta_publish "last_poll" $now))))
 
 (= (tg:handle-tasks $tasks)
    (if (== $tasks ()) ()

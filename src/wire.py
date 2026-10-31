@@ -4,9 +4,6 @@ import json
 import re
 
 
-MAX_ACTIONS = 5
-MAX_INPUT_BYTES = 65536
-MAX_NESTING = 4096
 
 # This migration decoder follows Patrick Hammer's corrected mettaclaw parser.
 # The first commit records Patrick's OmegaClaw import; the second explicitly
@@ -136,8 +133,6 @@ def _read_expression(text, offset, action_index, stop=None):
             continue
         elif char == "(":
             depth += 1
-            if depth > MAX_NESTING:
-                _error(text, WireErrorCode.SYNTAX, i, action_index)
         elif char == ")":
             depth -= 1
             if depth == 0:
@@ -203,16 +198,12 @@ def _read_sequence(text, start=0, stop=None, allow_outer_list=False):
             _validate_action_head(text, offset, end, len(actions))
         actions.append(text[offset:end].strip())
         spans.append((offset, end))
-        if len(actions) > MAX_ACTIONS:
-            _error(text, WireErrorCode.TOO_MANY_ACTIONS, offset, len(actions) - 1)
         offset = end
     return actions, spans, affect
 
 
 def decode_sexpr_output(value):
     text = str(value)
-    if len(text.encode("utf-8")) > MAX_INPUT_BYTES:
-        raise WireError(WireErrorCode.INPUT_TOO_LARGE, MAX_INPUT_BYTES, 0)
     if text.startswith("\ufeff"):
         raise WireError(WireErrorCode.UNSUPPORTED_BOM, 0, 0)
 
@@ -235,8 +226,6 @@ def decode_sexpr_output(value):
 
     if not actions:
         raise WireError(WireErrorCode.NO_ACTIONS, len(text.encode("utf-8")), 0)
-    if len(actions) > MAX_ACTIONS:
-        raise WireError(WireErrorCode.TOO_MANY_ACTIONS, 0, MAX_ACTIONS)
     return DecodedTurn(tuple(actions), affect, encoding)
 
 
@@ -310,8 +299,6 @@ def _patrick_file_arguments(rest, action_index):
 
 def decode_patrick_line_output(value):
     text = str(value)
-    if len(text.encode("utf-8")) > MAX_INPUT_BYTES:
-        raise WireError(WireErrorCode.INPUT_TOO_LARGE, MAX_INPUT_BYTES, 0)
     if text.startswith("\ufeff"):
         raise WireError(WireErrorCode.UNSUPPORTED_BOM, 0, 0)
 

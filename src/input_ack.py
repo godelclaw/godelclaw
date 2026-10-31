@@ -15,7 +15,9 @@ import agent_checkpoint
 TEXT = "Received. Your message is queued; /activity shows whether I'm waiting, retrying, or resting."
 _pending = {}
 _last_notice = {}
-_limit = 256
+_cache_limit = 256
+_scan_after = ""
+_scan_seen = set()
 _last_pump = 0.0
 _input_view = None
 _task_cache = {}
@@ -27,7 +29,7 @@ def parsed_task(task, body):
     task, body = str(task), str(body)
     entry = _task_cache.get(task)
     if entry is None or entry[0] != body:
-        if len(_task_cache) >= _limit + 1:
+        if len(_task_cache) >= _cache_limit + 1:
             _task_cache.pop(next(iter(_task_cache)))
         entry = (body, json.loads(body))
         _task_cache[task] = entry
@@ -115,13 +117,28 @@ def text():
     return TEXT
 
 
-def begin_scan(tasks):
-    global _input_view, _active_tasks
+def scan_after():
+    return _scan_after
+
+
+def begin_scan(tasks, source_tasks=None):
+    global _input_view, _active_tasks, _scan_after, _scan_seen
+    source = tasks if source_tasks is None else source_tasks
+    started_from = _scan_after if source_tasks is not None else ""
+    if not started_from:
+        _scan_seen = set()
+    page = [str(item[0]) for item in source
+            if isinstance(item, (list, tuple)) and len(item) == 2
+            and str(item[0]) != "runtime-scan-unavailable"]
+    complete = not any(isinstance(item, (list, tuple)) and len(item) == 2
+                       and str(item[0]) == "runtime-scan-unavailable" for item in source)
+    _scan_seen.update(page)
+    _scan_after = page[-1] if not complete and page else ""
     _input_view = None
     # This is an observation of the durable service's pending inputs. It
     # neither acknowledges them nor calls a model. Scan sentinels distinguish
     # a completed empty scan from a transport failure or a bounded prefix.
-    dates, known = [], len(tasks) <= _limit
+    dates, known = [], complete and not started_from
     for item in tasks:
         if not isinstance(item, (list, tuple)) or len(item) != 2:
             known = False
@@ -157,9 +174,10 @@ def begin_scan(tasks):
     for task in list(_task_cache):
         if task not in active:
             del _task_cache[task]
-    for task in list(_pending):
-        if task not in active:
-            del _pending[task]
+    if complete:
+        for task in list(_pending):
+            if task not in _scan_seen:
+                del _pending[task]
     lanes = {entry[2] for entry in _pending.values()}
     for lane in list(_last_notice):
         if lane not in lanes:
@@ -195,8 +213,6 @@ def key(task, lane, kind, role, update="{}"):
             if db.execute("SELECT 1 FROM processed_inputs WHERE id=?", (update_id,)).fetchone():
                 return ""
     if task not in _pending:
-        if len(_pending) >= _limit:
-            return ""
         _pending[task] = [time.monotonic(), False, lane]
     since, submitted, captured_lane = _pending[task]
     now = time.monotonic()
@@ -214,9 +230,6 @@ def key(task, lane, kind, role, update="{}"):
                 return ""
             old = db.execute("SELECT * FROM input_notices WHERE task=?", (task,)).fetchone()
             if old and (old["lane"] != lane or old["send_key"] != send_key or old["processed"]):
-                return ""
-            count = db.execute("SELECT COUNT(*) FROM input_notices WHERE state IN ('registered','submitted')").fetchone()[0]
-            if not old and count >= _limit:
                 return ""
             db.execute("INSERT OR IGNORE INTO input_notices(task,update_id,lane,send_key,created) VALUES (?,?,?,?,?)",
                        (task, update_id, lane, send_key, time.time()))

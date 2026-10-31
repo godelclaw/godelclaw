@@ -5,8 +5,6 @@ import string
 import unittest
 
 from src.wire import (
-    MAX_INPUT_BYTES,
-    MAX_NESTING,
     PATRICK_LINE_DECODER_COMMITS,
     WireError,
     WireErrorCode,
@@ -40,22 +38,17 @@ class CommandWireFixtureTests(unittest.TestCase):
         decoded = decode_sexpr_output(value)
         self.assertEqual(decoded.actions, (value,))
 
-    def test_pathological_nesting_is_rejected(self):
-        value = "(" * (MAX_NESTING + 1) + "send" + ")" * (MAX_NESTING + 1)
-        with self.assertRaises(WireError) as raised:
-            decode_sexpr_output(value)
-        self.assertEqual(raised.exception.code, WireErrorCode.SYNTAX)
+    def test_deep_data_is_scanned_iteratively(self):
+        value = "(pin " + "(" * 5000 + "x" + ")" * 5000 + ")"
+        self.assertEqual(decode_sexpr_output(value).actions, (value,))
 
-    def test_input_limit_is_measured_in_bytes(self):
-        value = "é" * (MAX_INPUT_BYTES // 2 + 1)
-        with self.assertRaises(WireError) as raised:
-            decode_sexpr_output(value)
-        self.assertEqual(raised.exception.code, WireErrorCode.INPUT_TOO_LARGE)
+    def test_large_multibyte_action_is_preserved(self):
+        value = '(pin "' + "é" * 65536 + '")'
+        self.assertEqual(decode_sexpr_output(value).actions, (value,))
 
-    def test_more_than_five_actions_is_rejected(self):
-        with self.assertRaises(WireError) as raised:
-            decode_sexpr_output("\n".join("(pin x)" for _ in range(6)))
-        self.assertEqual(raised.exception.code, WireErrorCode.TOO_MANY_ACTIONS)
+    def test_action_count_does_not_reject_a_complete_batch(self):
+        actions = tuple("(pin x)" for _ in range(1024))
+        self.assertEqual(decode_sexpr_output("\n".join(actions)).actions, actions)
 
     def test_malformed_affect_is_rejected(self):
         value = (
@@ -137,10 +130,8 @@ shell python /tmp/example.py"""
             decode_patrick_line_output("Here is what I will do:\nsend hello")
         self.assertEqual(raised.exception.code, WireErrorCode.INVALID_ACTION_HEAD)
 
-    def test_line_decoder_shares_five_action_limit(self):
-        with self.assertRaises(WireError) as raised:
-            decode_patrick_line_output("\n".join("pin x" for _ in range(6)))
-        self.assertEqual(raised.exception.code, WireErrorCode.TOO_MANY_ACTIONS)
+    def test_line_decoder_retains_the_complete_action_batch(self):
+        self.assertEqual(len(decode_patrick_line_output("\n".join("pin x" for _ in range(1024))).actions), 1024)
 
     def test_observation_is_sanitized_and_keeps_decoders_distinct(self):
         strict, patrick = observe_model_output("send hello")

@@ -30,7 +30,7 @@ class ControlBacklog(unittest.TestCase):
 
         class API(Peer):
             def __init__(self, *args):
-                self.updates, self.calls, self.serial = [], [], 10000
+                self.updates, self.calls, self.serial, self.menu_id = [], [], 10000, 0
                 super().__init__(*args)
 
             def add(self, update, text):
@@ -39,6 +39,12 @@ class ControlBacklog(unittest.TestCase):
                         "message_id": update, "date": 1790000000,
                         "chat": {"id": 42, "type": "private"},
                         "from": {"id": 7}, "text": text}})
+
+            def tap(self, update, data):
+                with self.lock:
+                    self.updates.append({"update_id": update, "callback_query": {
+                        "id": "q%d" % update, "from": {"id": 7}, "data": data,
+                        "message": {"message_id": self.menu_id, "chat": {"id": 42, "type": "private"}}}})
 
             def receipt(self, connection, method, path, body):
                 data = json.loads(body)
@@ -51,7 +57,8 @@ class ControlBacklog(unittest.TestCase):
                     else:
                         self.serial += 1
                         self.calls.append((name, data))
-                        result = {"message_id": data.get("message_id", self.serial), "chat": {"id": 42}}
+                        result = True if name == "answerCallbackQuery" else {"message_id": data.get("message_id", self.serial), "chat": {"id": 42}}
+                        if "reply_markup" in data: self.menu_id = result["message_id"]
                 return 200, [], json.dumps({"ok": True, "result": result}).encode()
 
             def menu_count(self):
@@ -85,7 +92,7 @@ def chat(*args, **kwargs):
 def quota():
     raise RuntimeError("provider credits exhausted")
 def current_model(): return "offline"
-def model_ids(): return ["offline", "alternative"]
+def model_ids(): return ["provider/" + "long-model-name-" * 8 + str(n) for n in range(500)]
 def model_catalog_status(): return "fixture provider unavailable"
 def model_in_observed_catalog(name): return None
 ''')
@@ -160,6 +167,9 @@ def model_in_observed_catalog(name): return None
                     wait(lambda: any("provider credits exhausted" in d.get("text", "") for _, d in api.calls), "explicit provider failure", 10)
                     api.add(3, "/models")
                     wait(lambda: api.menu_count() >= 2, "later control survives failure", 10)
+                    count = api.menu_count()
+                    api.tap(4, "menu:model:24")
+                    wait(lambda: api.menu_count() > count, "next catalogue page through the real callback path", 10)
                     self.assertTrue(before.items() <= pending(db).items())
                     self.assertFalse((temp / "model.json").exists(), "reading menus changed selected model")
                 finally:

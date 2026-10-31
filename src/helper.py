@@ -985,6 +985,61 @@ def menu_state(kind):
     return json.dumps(state, ensure_ascii=False)
 
 
+_MENU_KINDS = {"model": "models", "mode": "modes", "fuel": "fuels", "engine": "engines"}
+
+
+def menu_page(kind, prefix, offset=0):
+    """A presentation page; every choice remains available on later pages."""
+    import hashlib
+    if _MENU_KINDS.get(str(prefix)) != str(kind):
+        raise ValueError("unknown settings menu")
+    state = json.loads(menu_state(str(kind)))
+    names = state["names"]
+    width = 24
+    offset = max(0, min(int(offset), max(0, len(names) - 1)))
+    offset -= offset % width
+    rows = []
+    for name in names[offset:offset + width]:
+        data = str(prefix) + ":" + name
+        if len(data.encode()) > 64:
+            data = "choice:" + str(prefix) + ":" + hashlib.sha256(data.encode()).hexdigest()[:40]
+        off = name in state.get("unavailable", ())
+        mark = "● " if name == state.get("current") else "◌ " if name == state.get("selected") else "⚠ " if off and kind == "models" else ""
+        label = mark + name + (" (unavailable)" if off and kind == "engines" else "")
+        rows.append([[label[:64], data]])
+    navigation = []
+    if offset:
+        navigation.append(["Previous", "menu:%s:%d" % (prefix, max(0, offset - width))])
+    if offset + width < len(names):
+        navigation.append(["Next", "menu:%s:%d" % (prefix, offset + width)])
+    if navigation:
+        rows.append(navigation)
+    text = state["text"]
+    if len(names) > width:
+        text += " — choices %d–%d of %d" % (offset + 1, min(offset + width, len(names)), len(names))
+    return json.dumps({"text": text, "rows": rows}, ensure_ascii=False)
+
+
+def menu_page_button(argument):
+    prefix, separator, offset = str(argument).partition(":")
+    if not separator or prefix not in _MENU_KINDS:
+        raise ValueError("unknown settings page")
+    return menu_page(_MENU_KINDS[prefix], prefix, int(offset))
+
+
+def menu_choice_button(argument):
+    import hashlib
+    prefix, separator, token = str(argument).partition(":")
+    if not separator or prefix not in _MENU_KINDS:
+        raise ValueError("unknown settings choice")
+    state = json.loads(menu_state(_MENU_KINDS[prefix]))
+    matches = [prefix + ":" + name for name in state["names"]
+               if hashlib.sha256((prefix + ":" + name).encode()).hexdigest()[:40] == token]
+    if len(matches) != 1:
+        raise ValueError("choice expired or ambiguous; reopen the menu")
+    return matches[0]
+
+
 def str_env(name, default=""):
     return os.environ.get(str(name), str(default))
 
