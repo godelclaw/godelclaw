@@ -21,6 +21,15 @@ def install(db):
             sequence INTEGER PRIMARY KEY AUTOINCREMENT, request TEXT NOT NULL,
             text TEXT NOT NULL, sources TEXT NOT NULL);
         CREATE INDEX IF NOT EXISTS task_parent ON task_frames(parent);
+        CREATE TABLE IF NOT EXISTS input_supersessions (
+            request TEXT PRIMARY KEY, covering TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS input_covering ON input_supersessions(covering);
+        CREATE VIEW IF NOT EXISTS task_request_view AS
+            SELECT r.rowid AS rowid,r.id,r.status,r.checker,
+                CASE WHEN s.covering IS NULL THEN r.content ELSE
+                    '[input batch covered by '||s.covering||'; original source via request-read '||r.id||']'
+                END AS content
+            FROM requests r LEFT JOIN input_supersessions s ON s.request=r.id;
         CREATE INDEX IF NOT EXISTS task_proposal_request ON task_proposals(request);
         CREATE INDEX IF NOT EXISTS events_capture
             ON events(json_extract(event,'$.serial'),sequence)
@@ -43,6 +52,10 @@ def resume(store, request):
         seen = set()
         while request and request not in seen:
             seen.add(request)
+            covering = db.execute("SELECT covering FROM input_supersessions WHERE request=?", (request,)).fetchone()
+            if covering:
+                request = covering[0]
+                continue
             if store.selectable(db, request):
                 return request
             row = db.execute("SELECT parent FROM task_frames WHERE request=?", (request,)).fetchone()
@@ -66,7 +79,64 @@ def begin(store, request, trigger, previous=None, chat="", parent=None):
             raise ValueError("unknown parent task")
         db.execute("INSERT OR IGNORE INTO task_frames VALUES (?,?,?,?)",
                    (request, parent, str(trigger), str(chat or "")))
+        cover_inputs(store, db, request)
         store.put(db, "context_focus", request)
+
+
+def cover_inputs(store, db, request):
+    """Supersede only raw input envelopes with a proved source-id subset.
+
+    Row order makes the coverage graph acyclic. Chat and kind are part of its
+    scope. Explicit tasks, waits and deferrals are independent obligations.
+    Original contents, occurrences, notes and call positions remain unchanged.
+    """
+    row = db.execute("""SELECT r.rowid,r.status,r.checker,c.kind,f.chat,
+        (SELECT count(*) FROM request_inputs WHERE request=r.id) AS n
+        FROM requests r JOIN request_context c ON c.request=r.id
+        JOIN task_frames f ON f.request=r.id WHERE r.id=?""", (request,)).fetchone()
+    if not (str(request).startswith("input:") and row and row[1] in ("active", "processed")
+            and row[2] == "operator" and row[3] in ("message", "notification")
+            and row[4] and row[5]):
+        return []
+    candidates = db.execute("""SELECT old.id FROM requests old
+        JOIN request_context c ON c.request=old.id
+        JOIN task_frames f ON f.request=old.id
+        WHERE old.id IN (SELECT i.request FROM request_inputs i
+            JOIN request_inputs current ON current.input=i.input WHERE current.request=?)
+        AND old.rowid<? AND old.id LIKE 'input:%' AND old.checker='operator'
+        AND old.status IN ('active','processed') AND c.kind=? AND f.chat=?
+        AND NOT EXISTS (SELECT 1 FROM request_inputs i WHERE i.request=old.id
+            AND NOT EXISTS (SELECT 1 FROM request_inputs current
+                WHERE current.request=? AND current.input=i.input))""",
+        (request, row[0], row[3], row[4], request)).fetchall()
+    covered = [r[0] for r in candidates]
+    for old in covered:
+        db.execute("INSERT INTO input_supersessions VALUES (?,?)", (old, request))
+        db.execute("UPDATE requests SET status='covered' WHERE id=?", (old,))
+        store.event(db, "input-covered", request=old, covering=request,
+                    certified_achievement=False)
+    if covered:
+        store.advance(db)
+    return covered
+
+
+def reconcile_inputs(store, db):
+    """One-time upgrade for retained retries, including an already processed cover."""
+    marker = "input_supersessions_v1"
+    if db.execute("SELECT 1 FROM meta WHERE key=?", (marker,)).fetchone():
+        return
+    for (request,) in db.execute("""SELECT r.id FROM requests r
+        JOIN request_context c ON c.request=r.id
+        WHERE r.id LIKE 'input:%' AND c.kind IN ('message','notification')
+        AND r.status IN ('active','processed') ORDER BY r.rowid""").fetchall():
+        cover_inputs(store, db, request)
+    db.execute("INSERT INTO meta VALUES (?, 'true')", (marker,))
+
+
+def input_content(db, request, content):
+    row = db.execute("SELECT covering FROM input_supersessions WHERE request=?", (request,)).fetchone()
+    return ("[input batch covered by %s; original source via request-read %s]" % (row[0], request)
+            if row else content)
 
 
 def focus(store, request):
@@ -98,7 +168,8 @@ def _root(db, request):
 
 def _members(db, root):
     return [r[0] for r in db.execute("""WITH RECURSIVE family(id) AS (
-        SELECT ? UNION SELECT f.request FROM task_frames f JOIN family ON f.parent=family.id)
+        SELECT ? UNION SELECT f.request FROM task_frames f JOIN family ON f.parent=family.id
+        UNION SELECT s.request FROM input_supersessions s JOIN family ON s.covering=family.id)
         SELECT id FROM family""", (root,))]
 
 
@@ -212,6 +283,8 @@ def projection(store, request, trigger="continuation-tick"):
         requests = [dict(r) for r in db.execute("""SELECT r.id,r.content,r.status,c.kind,c.note
             FROM requests r JOIN request_context c ON c.request=r.id
             WHERE r.id IN (""" + marks + ") ORDER BY r.rowid", members)]
+        for item in requests:
+            item["content"] = input_content(db, item["id"], item["content"])
         notes = [dict(r) for r in db.execute("SELECT * FROM task_notes WHERE request IN (" + marks + ") ORDER BY sequence", members)]
         pairs = _pairs(store, db, members)
     return dict(root=root, focus=request, trigger=str(trigger), requests=requests,
@@ -235,7 +308,8 @@ def _conversation_pairs(store, db):
             delivered.setdefault(event["request"], row[0])
         elif event.get("kind") == "capture":
             captured.setdefault(event["serial"], row[0])
-    ordered = [(delivered.get(r["id"], 0), 0, n, _input(r["id"], r["content"]))
+    ordered = [(delivered.get(r["id"], 0), 0, n,
+                _input(r["id"], input_content(db, r["id"], r["content"])))
                for n, r in enumerate(db.execute("SELECT id,content FROM requests ORDER BY rowid"))]
     for pair in _pairs(store, db, None):
         _, serial, position = pair["id"].rsplit(":", 2)
@@ -257,6 +331,8 @@ def conversation_projection(store, request, trigger="continuation-tick"):
         requests = [dict(r) for r in db.execute("""SELECT r.id,r.content,r.status,c.kind,c.note
             FROM requests r JOIN request_context c ON c.request=r.id
             WHERE r.id IN (SELECT id FROM requests) ORDER BY r.rowid""")]
+        for item in requests:
+            item["content"] = input_content(db, item["id"], item["content"])
         notes = [dict(r) for r in db.execute("""SELECT * FROM task_notes
             WHERE request IN (SELECT id FROM requests) ORDER BY sequence""")]
         pairs = _conversation_pairs(store, db)
@@ -286,16 +362,20 @@ def compact(view, byte_budget=None, *, measure=None):
         result["requests"] = [r for r in originals if r["id"] in (view["root"],view["focus"])]
         result["frame"] = dict(compacted=True, retrieve=["task-read", "task-frame:"+view["root"], 0],
                                requests=len(originals), notes=len(result["notes"]))
-        # Long pasted inputs are paged visibly, retaining both their beginning
-        # and newest end. The full input is never overwritten.
+        # Prefer the full current input to older tool output. Crossing half a
+        # window is not a reason to cut a source that fits the actual budget.
+        while result["notes"] and measure(encoded(result)) > budget:
+            result["notes"].pop(0)
         allowance = max(256, budget // max(4, 2*len(result["requests"])))
         for item in result["requests"]:
+            if measure(encoded(result)) <= budget:
+                break
             text = item["content"]
             while measure(text) > allowance and len(text) > 512:
                 text = text[:len(text)//4] + "\n[excerpt; full request via request-read]\n" + text[-len(text)//4:]
             if text != item["content"]:
                 item.update(content=text, truncated=True, retrieve=["request-read", item["id"], 0])
-        while result["notes"] and measure(encoded(result)) > budget // 2:
+        while result["notes"] and measure(encoded(result)) > budget:
             result["notes"].pop(0)
     chosen=[]
     for index in range(len(pairs)-1,-1,-1):

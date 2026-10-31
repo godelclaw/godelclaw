@@ -305,12 +305,13 @@
    (case (state:json-field $pair "result_truncated")
      (((JsonBool $value) $value) ($other False))))
 (= (task:show-result $pair)
-   (case (state:json-field $pair "result")
+   (if (== (state:json-field $pair "disposition") (JsonString "input")) $pair
+    (case (state:json-field $pair "result")
      (((JsonString $text)
         (let $short (task:short-text $text)
           (if (== $short $text) $pair
             (state:json-set (state:json-set $pair "result" (JsonString $short)) "result_truncated" (JsonBool True)))))
-      ($other $pair))))
+      ($other $pair)))))
 (= (task:shown-all $pairs)
    (if (== $pairs ()) () (cons-atom (task:shown (car-atom $pairs)) (task:shown-all (cdr-atom $pairs)))))
 (= (task:pair-tokens $pair $ratio)

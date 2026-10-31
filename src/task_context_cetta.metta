@@ -15,7 +15,7 @@
            (if (or (== $parent sqlite:null) (== $parent "")) $request
              (task:root-walk $parent (cons-atom $request $seen))))))))
 (= (task:family-sql $suffix)
-   (str:concat "WITH RECURSIVE family(id) AS (SELECT ? UNION SELECT f.request FROM task_frames f JOIN family ON f.parent=family.id) " $suffix))
+   (str:concat "WITH RECURSIVE family(id) AS (SELECT ? UNION SELECT f.request FROM task_frames f JOIN family ON f.parent=family.id UNION SELECT s.request FROM input_supersessions s JOIN family ON s.covering=family.id) " $suffix))
 (= (task:statement $sql $root)
    (let $source (task:family-sql $sql) (sqlite:statement $source ($root))))
 (= (task:objects $result)
@@ -37,7 +37,7 @@
 ; scans of the complete action/attempt lists. Materialize the issued selection:
 ; otherwise SQLite may re-run its grouped actions scan for every joined call.
 (= (task:pairs-sql)
-   (task:scoped-pairs-sql "SELECT ? UNION SELECT f.request FROM task_frames f JOIN family ON f.parent=family.id" "t.result" ""))
+   (task:scoped-pairs-sql "SELECT ? UNION SELECT f.request FROM task_frames f JOIN family ON f.parent=family.id UNION SELECT s.request FROM input_supersessions s JOIN family ON s.covering=family.id" "t.result" ""))
 (= (task:scoped-pairs-sql $family $result $tail)
    (let* (($exists (state:rows (state:query "SELECT 1 FROM sqlite_master WHERE name='command_attempts'" ())))
           ($attempts (if (== $exists ()) "SELECT '' AS ticket,0 AS position,NULL AS result WHERE 0" "SELECT ticket,position,result FROM command_attempts")))
@@ -84,7 +84,7 @@
      (task:family-projection $request $trigger)))
 (= (task:family-projection $request $trigger)
    (let* (($root (task:root $request))
-          ($requests (task:statement "SELECT r.id,r.content,r.status,c.kind,c.note FROM requests r JOIN request_context c ON c.request=r.id WHERE r.id IN family ORDER BY r.rowid" $root))
+          ($requests (task:statement "SELECT r.id,r.content,r.status,c.kind,c.note FROM task_request_view r JOIN request_context c ON c.request=r.id WHERE r.id IN family ORDER BY r.rowid" $root))
           ($notes (task:statement "SELECT * FROM task_notes WHERE request IN family ORDER BY sequence" $root))
           ($source (task:pairs-sql))
           ($pairs (sqlite:statement $source ($root)))
@@ -108,26 +108,23 @@
      "SELECT serial,request,position,command,result,ticket,disposition FROM ordered ORDER BY ordering,category,ordinal" $tail)))
 (= (task:conversation-base-sql $result $input-limit)
    (let* (($calls (task:scoped-pairs-sql "SELECT id FROM requests" $result ""))
-          ($content (if (== $input-limit -2) "min(length(CAST(r.content AS BLOB)),160000)"
+          ($content (if (== $input-limit -2) "length(CAST(r.content AS BLOB))"
                         (if (< $input-limit 0) "NULL" (task:input-text-sql $input-limit))))
           ($record (str:join "" ("json_object('disposition','input','result'," $content ")"))))
      (str:join "" ("WITH calls(serial,request,position,command,result,ticket,disposition) AS (" $calls "), "
        "ordered AS (SELECT -1 AS serial,r.id AS request,-1 AS position,'null' AS command," $record " AS result,'input' AS ticket,'input' AS disposition,COALESCE((SELECT min(e.sequence) FROM events e WHERE json_extract(e.event,'$.kind')='deliver' AND json_extract(e.event,'$.request')=+r.id),0) AS ordering,0 AS category,r.rowid AS ordinal "
-       "FROM requests r UNION ALL "
+       "FROM task_request_view r UNION ALL "
        "SELECT c.*,COALESCE((SELECT min(e.sequence) FROM events e WHERE json_extract(e.event,'$.kind')='capture' AND json_extract(e.event,'$.serial')=+c.serial),(SELECT COALESCE(max(sequence),0) FROM events)+c.serial+1),1,c.position FROM calls c) "))))
 (= (task:input-text-sql $limit)
-   (if (<= $limit 0) "r.content"
-     (let $half (repr (math:floor (/ $limit 2)))
-       (str:join "" ("CASE WHEN length(r.content)>" (repr $limit)
-         " THEN substr(r.content,1," $half ")||char(10)||'[input excerpt; request-read retains the complete source]'||char(10)||substr(r.content,-" $half ") ELSE r.content END")))))
+   "r.content")
 (= (task:conversation-projection $request $trigger $offset $limit)
    (let* (($root (task:conversation-root)) ($task-root (task:root $request))
           ($requests (if (<= $limit 0)
-             (sqlite:statement "SELECT r.id,r.content,r.status,c.kind,c.note FROM requests r JOIN request_context c ON c.request=r.id ORDER BY r.rowid" ())
-             (sqlite:statement "SELECT r.id,r.status,c.kind,c.note,substr(r.content,1,160) AS excerpt FROM requests r JOIN request_context c ON c.request=r.id WHERE (r.status IN ('active','waiting-user','deferred') OR (r.status='processed' AND c.kind IN ('message','notification'))) OR r.id=? ORDER BY r.rowid" ($request))))
+             (sqlite:statement "SELECT r.id,r.content,r.status,c.kind,c.note FROM task_request_view r JOIN request_context c ON c.request=r.id ORDER BY r.rowid" ())
+             (sqlite:statement "SELECT r.id,r.status,c.kind,c.note,substr(r.content,1,160) AS excerpt FROM task_request_view r JOIN request_context c ON c.request=r.id WHERE (r.status IN ('active','waiting-user','deferred','covered') OR (r.status='processed' AND c.kind IN ('message','notification'))) OR r.id=? ORDER BY r.rowid" ($request))))
           ($notes (if (<= $limit 0)
              (sqlite:statement "SELECT * FROM task_notes ORDER BY sequence" ())
-             (sqlite:statement "SELECT n.* FROM task_notes n JOIN requests r ON r.id=n.request JOIN request_context c ON c.request=r.id WHERE (r.status IN ('active','waiting-user','deferred') OR (r.status='processed' AND c.kind IN ('message','notification'))) OR r.id=? ORDER BY n.sequence" ($request))))
+             (sqlite:statement "SELECT n.* FROM task_notes n JOIN requests r ON r.id=n.request JOIN request_context c ON c.request=r.id WHERE (r.status IN ('active','waiting-user','deferred','covered') OR (r.status='processed' AND c.kind IN ('message','notification'))) OR r.id=? ORDER BY n.sequence" ($request))))
           ($source (task:conversation-sql (task:limited-result-sql $limit) $limit " LIMIT -1 OFFSET ?"))
           ($pairs (sqlite:statement $source ($offset)))
           ((sqlite:committed ($requested $noted $paired)) (state:transaction deferred ($requests $notes $pairs)))

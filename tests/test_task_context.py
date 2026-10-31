@@ -41,6 +41,16 @@ class TaskContextTests(unittest.TestCase):
             self.store.observe([ticket], {ticket: [receipt]})
         return ticket
 
+    def test_input_that_fits_is_not_cut_to_an_arbitrary_share_of_the_window(self):
+        marker = "CENTRAL_CONSTRAINT"
+        body = "begin " * 400 + marker + "end " * 400
+        self.store.accept("input:fits", body, kind="message")
+        task_context.begin(self.store, "input:fits", "operator-event")
+        original = task_context.projection(self.store, "input:fits")
+        view = task_context.compact(original, 5000)
+        self.assertEqual(view["requests"][0]["content"], body)
+        self.assertFalse(view["requests"][0].get("truncated"))
+
     def test_early_evidence_survives_where_the_old_projection_loses_it(self):
         self.call([["read-file", "contract.lean"]], ["EARLY_FACT: requires finite evidence"])
         for i in range(6):

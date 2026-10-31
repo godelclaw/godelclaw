@@ -121,6 +121,33 @@ class ContextCompactionTests(unittest.TestCase):
         self.assertEqual(self.health.read_bytes(), self.original_health)
         self.assertEqual(self.completion.read_bytes(), self.original_completion)
 
+    def test_complete_input_middle_survives_preparation_and_restart_when_it_fits(self):
+        marker = "CENTRAL_CONSTRAINT: preserve the signed source occurrences"
+        body = "before ž" * 9000 + marker + "after ž" * 9000
+        self.fixture.store.accept("input:long", body, kind="message")
+        self.fixture.store.link_inputs("input:long", ["original-occurrence"])
+        reference.task_context.begin(self.fixture.store, "input:long", "operator-event", chat="private")
+        for name in ("first-input", "after-restart"):
+            rendered = self.render(name, capacity=200000, focus="input:long")
+            self.assertNotIn("WITHHELD:", rendered)
+            self.assertIn(marker, rendered)
+            self.assertNotIn("input excerpt", rendered)
+        self.assertEqual(len(self.peer.requests), 0)
+        self.assert_parent_unchanged()
+
+    def test_summary_source_contains_the_middle_of_a_long_input(self):
+        marker = "MIDDLE_DIRECTIVE: independently unfinished work survives"
+        body = "left λ" * 8000 + marker + "right λ" * 8000
+        self.fixture.store.accept("input:source", body, kind="message")
+        reference.task_context.begin(self.fixture.store, "input:source", "operator-event", chat="private")
+        output = self.directory / "complete-summary-source.txt"
+        self.run_guest('!(import! &self ' + json.dumps(str(boundary.ROOT / "src/context_compaction.metta")) + ')\n'
+            '!(let $view (task:conversation-view "input:source" "continuation-tick") '
+            '(fs:update-text ' + json.dumps(str(output)) + ' "replace" '
+            '(context:summary-prompt "" (task:items $view "transcript") ()) "" ""))\n')
+        self.assertIn(marker, output.read_text())
+        self.assert_parent_unchanged()
+
     def test_request_index_overhead_triggers_a_handoff_before_rendering(self):
         self.populate(20)
         for n in range(24):

@@ -57,6 +57,9 @@ class Ledger:
             """)
             import task_context
             task_context.install(db)
+            # executescript ends an open transaction. Migration of coverage,
+            # request states and its marker must commit as one transition.
+            db.execute("BEGIN IMMEDIATE")
             # Existing input identities were created at the delivery boundary,
             # not by a task checker. Migration changes their kind, not outcome.
             db.execute("""INSERT OR IGNORE INTO request_context(request,kind)
@@ -67,6 +70,7 @@ class Ledger:
                                "mode": "godelclaw", "paused": False,
                                "next_sample": 0, "pending": None}.items():
                 db.execute("INSERT OR IGNORE INTO meta VALUES (?,?)", (key, encoded(value)))
+            task_context.reconcile_inputs(self, db)
         self.path.chmod(0o600)
 
     @contextmanager
@@ -192,7 +196,11 @@ class Ledger:
 
     def link_inputs(self, request, inputs):
         """Record which arrivals a request was formed from."""
+        inputs = {str(i) for i in inputs}
         with self.transaction() as db:
+            prior = {r[0] for r in db.execute("SELECT input FROM request_inputs WHERE request=?", (request,))}
+            if request.startswith("input:") and prior and prior != inputs:
+                raise ValueError("input envelope identity reused for different occurrences")
             db.executemany("INSERT OR IGNORE INTO request_inputs(request,input) VALUES (?,?)",
                            [(request, str(i)) for i in inputs])
 
@@ -224,7 +232,12 @@ class Ledger:
                 None)
             if self.refusal:
                 return False
-            kind = "task" if disposition == "keep" else row[2]
+            if row[0] == "covered":
+                if disposition not in ("keep", "reopen"):
+                    self.refusal = "input batch is covered; reopen it to create independent work"
+                    return False
+                db.execute("DELETE FROM input_supersessions WHERE request=?", (key,))
+            kind = "task" if disposition == "keep" or row[0] == "covered" else row[2]
             db.execute("UPDATE requests SET status=? WHERE id=?", (statuses[disposition], key))
             db.execute("UPDATE request_context SET kind=?,note=? WHERE request=?", (kind, note, key))
             self.advance(db)

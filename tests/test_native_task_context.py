@@ -11,6 +11,26 @@ import provider_protocol
 ROOT = dispatch.ROOT
 
 class NativeTaskContext(unittest.TestCase):
+    def test_covered_batches_match_reference_without_shifting_source_slots(self):
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        for name, size in (("input:a", 128), ("input:b", 146), ("input:c", 147)):
+            fixture.store.accept(name, name + " full body", kind="message")
+            fixture.store.link_inputs(name, range(size))
+            reference.task_context.begin(fixture.store, name, "operator-event", chat="private")
+            reference.task_context.note(fixture.store, name, "Retain progress for " + name)
+        expected = reference.task_context.conversation_projection(fixture.store, "input:c")
+        expected_family = reference.task_context.projection(fixture.store, "input:c")
+        output = fixture.path.parent / "covered.json"
+        family = fixture.path.parent / "covered-family.json"
+        self.guest(fixture.path,
+            '!(fs:update-text ' + json.dumps(str(output)) +
+            ' "replace" (state:encoded (task:projection "' + expected["root"] + '" "continuation-tick")) "" "")\n' +
+            '!(fs:update-text ' + json.dumps(str(family)) +
+            ' "replace" (state:encoded (task:projection "input:c" "continuation-tick")) "" "")\n' +
+            '!(println! TASK_CONTEXT_OK)\n')
+        self.assertEqual(json.loads(output.read_text()), expected)
+        self.assertEqual(json.loads(family.read_text()), expected_family)
+
     def test_model_calibration_accepts_the_live_python_text_carrier(self):
         fixture = reference.TaskContextTests(); fixture.setUp()
         self.addCleanup(fixture.tmp.cleanup)
