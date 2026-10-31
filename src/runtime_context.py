@@ -312,6 +312,11 @@ def read(now=None):
     return facts
 
 
+def json_status():
+    """Versioned observations for non-model clients; unknown stays explicit."""
+    return json.dumps(read(), sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
 def render(facts=None):
     facts = read() if facts is None else facts
     body = json.dumps(facts, sort_keys=True, separators=(",", ":"), allow_nan=False)

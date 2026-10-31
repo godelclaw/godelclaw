@@ -350,5 +350,9 @@
   "src/loop_modes_cetta.metta",
   "src/lifecycle_cetta.metta",
   "src/attention_cetta.metta",
-  "src/tool_output.py"
+  "src/tool_output.py",
+  "channels/terminal_control_main.metta",
+  "src/terminal_client.py",
+  "ui/worklog/console.py",
+  "scripts/agent_console.py"
 ]

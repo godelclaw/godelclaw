@@ -28,13 +28,13 @@ CALLER_METTACLAW_TELEGRAM_BOT_TOKEN="${METTACLAW_TELEGRAM_BOT_TOKEN:-}"
 CALLER_TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
 case "$REQUESTED_TARGET" in
     run.metta|"$ROOT/run.metta") NONLIVE_TARGET=0 ;;
-    telegram-control) NONLIVE_TARGET=0 ;;
+    telegram-control|terminal-control) NONLIVE_TARGET=0 ;;
     *) NONLIVE_TARGET=1 ;;
 esac
 
 # A paired release holds only cognitive launchers while both instances are
 # staged and checked. Operator controls and isolated probes remain available.
-if [ "$NONLIVE_TARGET" = 0 ] && [ "$REQUESTED_TARGET" != telegram-control ]; then
+if [ "$NONLIVE_TARGET" = 0 ] && [ "$REQUESTED_TARGET" != telegram-control ] && [ "$REQUESTED_TARGET" != terminal-control ]; then
     while [ -f "$ROOT/.runtime-update-hold" ]; do sleep 1; done
 fi
 STATE_PATH_NAMES=(
@@ -253,6 +253,11 @@ if [ "$REQUESTED_TARGET" = telegram-control ]; then
     CETTA_BIN="${CETTA_BIN:-$CETTA_ROOT/cetta}"
     exec "$CETTA_BIN" --lang petta --import-mode ancestor-walk \
         "$ROOT/channels/telegram_control_main.metta" default
+fi
+if [ "$REQUESTED_TARGET" = terminal-control ]; then
+    CETTA_BIN="${CETTA_BIN:-$CETTA_ROOT/cetta}"
+    exec "$CETTA_BIN" --lang petta --import-mode ancestor-walk \
+        "$ROOT/channels/terminal_control_main.metta" default
 fi
 
 # Default target is the agent loop (run.metta). Pass an alternate repo-relative
