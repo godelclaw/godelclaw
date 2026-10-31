@@ -52,8 +52,11 @@ if a[1]=='send':
 else:
     time.sleep(.2);print(json.dumps({'status':'idle'}));sys.exit(3)
 ''')
+            mail.chmod(0o700)
             commands=base/'bin';commands.mkdir();(commands/'claw-mail').symlink_to(mail)
-            environment=dict(os.environ,PATH=str(commands)+os.pathsep+os.environ.get('PATH',''))
+            environment=dict(os.environ,PATH=str(commands),
+                CETTA_SHARED_MAIL_SOCKET=str(base/'no-service.sock'),CLAW_MAIL_CONFIG=str(base/'isolated-mail.toml'))
+            (base/'isolated-mail.toml').write_text('socket = '+json.dumps(str(base/'no-service.sock'))+'\ncetta = '+json.dumps(os.environ['CETTA_BIN'])+'\n')
             profile=base/'instances.json';profile.write_text(json.dumps({'instances':[{
                 'name':'fixture','root':str(instance),'state_dir':str(state),
                 'environment':{'PYTHONHOME':sys.prefix,'LD_LIBRARY_PATH':str(Path(sys.prefix)/'lib')},
