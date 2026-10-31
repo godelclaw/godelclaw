@@ -31,11 +31,15 @@
 (= (tc:call $code $name $body)
    (let $path (tc:socket) (cwp:call $path $code $name $body 5000)))
 
-(= (tc:tasks-after $after $limit)
+(= (tc:tasks-after $after $limit) (tc:tasks-after-code 1 $after $limit))
+
+; Fetch controls independently of conversational input. Limits bound one scan,
+; never admission or durable retention. Each cycle starts with controls.
+(= (tc:tasks-after-code $code $after $limit)
    (if (== $limit 0) (("runtime-scan-unavailable" "[]"))
-     (case (tc:call 1 $after "")
+     (case (tc:call $code $after "")
        (((cwp:reply 65 $task $body)
-         (let $rest (tc:tasks-after $task (- $limit 1))
+         (let $rest (tc:tasks-after-code $code $task (- $limit 1))
            (cons-atom ($task $body) $rest)))
         ((cwp:reply 64 $name $body) ())
         ($other (("runtime-scan-unavailable" "[]")))))))
@@ -285,6 +289,15 @@
                    ($other 0)))
              (+ $done (tc:handle $tail))))))))
 
+(= (tc:notices $tasks)
+   (if (== $tasks ()) 0
+     (let* ((($task $body) (car-atom $tasks))
+            ($noticed (case (tc:parse $task $body)
+              (((JsonArray ((JsonString "input") (JsonString $lane) (JsonString $kind) (JsonString $role) $update))
+                (tc:guarded (catch (tc:input-notice $task $lane $kind $role $update)) "receipt notice"))
+               ($other 0)))))
+       (tc:notices (cdr-atom $tasks)))))
+
 ; A delayed receipt notice leaves ordinary input pending for cognition.
 ; Submission and delivery have independent durable service identities.
 (= (tc:input-notice $task $lane $kind $role $update)
@@ -310,12 +323,14 @@
        (if $control $tail (cons-atom ($task $body) $tail)))))
 
 (= (tc:serve-once)
-   (let $tasks (tc:tasks-after "" 256)
-     (let $ordinary (tc:notice-tasks $tasks)
-      (let $retained (py-call (input_ack.begin_scan (quote $ordinary)))
-       (let $_ (tc:prune (collapse (match &self (tc:cached $task $body $value) $task)))
-       (let $handled (tc:handle $tasks)
-         (let $cleaned (tc:guarded (catch (nc:pump)) "receipt cleanup") $handled)))))))
+   (let $controls (tc:tasks-after-code 6 "" 256)
+    (let $handled (tc:handle $controls)
+     (let $tasks (tc:tasks-after "" 256)
+      (let $ordinary (tc:notice-tasks $tasks)
+       (let $retained (py-call (input_ack.begin_scan (quote $ordinary)))
+        (let $_ (tc:prune (collapse (match &self (tc:cached $task $body $value) $task)))
+         (let $noticed (tc:notices $tasks)
+          (let $cleaned (tc:guarded (catch (nc:pump)) "receipt cleanup") $handled)))))))))
 
 ; One effectful cycle has one committed outcome. Alternatives inside a scan
 ; must not survive into a later cycle and replay already submitted effects.

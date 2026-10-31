@@ -24,7 +24,7 @@ sys.path[:0] = [str(ROOT), str(ROOT / "src")]
 from channels import telegram  # noqa: E402
 import durable_telegram  # noqa: E402
 
-NEXT, RESULT, SUBMIT = 1, 2, 4
+NEXT, RESULT, SUBMIT, NEXT_CONTROL = 1, 2, 4, 6
 IDLE, TASK, STORED, UNKNOWN, UNAVAILABLE = 64, 65, 66, 68, 71
 
 
@@ -73,14 +73,16 @@ class FakeService:
 
     def handle(self, conn, code, name, body):
         with self.lock:
-            if code == NEXT:
-                ids = [t for t, _ in self.tasks]
+            if code in (NEXT, NEXT_CONTROL):
+                tasks = ([(t, o) for t, o in self.tasks if json.loads(o)[0] in ("command", "callback")]
+                         if code == NEXT_CONTROL else self.tasks)
+                ids = [t for t, _ in tasks]
                 if name and name not in ids:
                     return self.reply(conn, UNKNOWN, name)
                 start = ids.index(name) + 1 if name else 0
-                if start >= len(self.tasks):
+                if start >= len(tasks):
                     return self.reply(conn, IDLE)
-                task, observation = self.tasks[start]
+                task, observation = tasks[start]
                 return self.reply(conn, TASK, task, observation)
             if code == RESULT:
                 self.tasks = [(t, o) for t, o in self.tasks if t != name]
