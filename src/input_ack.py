@@ -194,6 +194,9 @@ def key(task, lane, kind, role, update="{}"):
     if (os.environ.get("METTACLAW_OBSERVED_STRATEGY", "0") != "1"
             or str(kind) != "message" or str(role) != "operator"):
         return ""
+    import cognitive_health
+    if cognitive_health.failure_pending():
+        return ""  # The failure episode supplies actionable feedback instead.
     try:
         delay = float(os.environ.get("METTACLAW_INPUT_ACK_SECONDS", "15"))
     except ValueError:

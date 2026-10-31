@@ -11,6 +11,7 @@ import os
 import tempfile
 import threading
 import time
+import uuid
 
 
 _lock = threading.RLock()
@@ -51,6 +52,11 @@ def _write(value):
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
+        directory = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
     except Exception:
         try:
             os.unlink(temporary)
@@ -99,7 +105,7 @@ def expect_turn(mode="unknown", budget=None, now=None):
         return 0
 
 
-def turn_started(provider="unknown", now=None):
+def turn_started(provider="unknown", now=None, *, model=""):
     """Record the start of the current provider call.
 
     A persisted obligation may predate a process restart or a failed attempt.
@@ -125,6 +131,7 @@ def turn_started(provider="unknown", now=None):
                 "retry_at": 0,
                 "started_count": int(value.get("started_count", 0)) + 1,
                 "provider": _label(provider),
+                "model": str(model),
                 "response_bytes": 0,
                 "transport_quiet_ms": 0,
                 "soft_wait_elapsed": False,
@@ -181,6 +188,8 @@ def turn_completed(response_bytes=0, now=None):
             value = _read()
             admitted = bool(float(value.get("in_flight_since", 0) or 0))
             value.pop('provider_context_repair', None)
+            if isinstance(value.get("failure_episode"), dict):
+                value["failure_episode"]["resolved_at"] = now
             value.update({
                 "schema": 2,
                 "pending_since": 0,
@@ -216,6 +225,15 @@ def turn_failed(kind="provider-error", now=None, retry_after=0):
             obligation = float(value.get("obligation_since", 0) or 0)
             if not obligation:
                 obligation = float(value.get("pending_since", 0) or 0) or now
+            episode = value.get("failure_episode", {})
+            provider = value.get("provider", "unknown") if admitted else "local-runtime"
+            model = value.get("model", "") if admitted else ""
+            if (not episode or episode.get("resolved_at")
+                    or (episode.get("provider"), episode.get("model")) != (provider, model)):
+                episode = dict(id=uuid.uuid4().hex, first_at=now, provider=provider,
+                               model=model, kind=failure, count=0)
+            episode.update(last_at=now, last_kind=failure, count=episode["count"] + 1)
+            value["failure_episode"] = episode
             value.update({
                 "schema": 2,
                 "pending_since": 0,
@@ -328,3 +346,68 @@ def snapshot():
     """Return the receipt state; it contains no prompt or response text."""
     with _lock:
         return dict(_read())
+
+
+def failure_pending():
+    """Failure feedback is a control-plane observation, never a model call."""
+    value = snapshot()
+    episode = value.get("failure_episode", {})
+    return bool(episode and not episode.get("resolved_at"))
+
+
+def _failure_notice(episode):
+    failure = episode["kind"]
+    if failure == "provider-rejected-429":
+        reason = "HTTP 429: the provider refused the request (rate or quota limit). Check its balance/limits, or choose a model with /models."
+    elif failure in ("provider-rejected-401", "provider-rejected-403"):
+        reason = "The provider refused authorization. Check its credentials/access, or choose a model with /models."
+    else:
+        reason = "The turn failed: %s. /activity reports the retry or blocked state; /models remains available." % failure
+    # Provider bodies and exception text may contain credentials. Only host
+    # labels and the configured model identity belong in this notice.
+    identity = json.dumps(dict(provider=episode["provider"], model=episode.get("model", "")), ensure_ascii=True)
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(episode["first_at"]))
+    return ("Turn failure observed at " + stamp + ": " + reason +
+            "\nAttempted configuration: " + identity +
+            "\nYour messages are retained. No model was switched automatically. /activity shows the current state.")
+
+
+def notify_failure():
+    """Reserve immutable notice bytes before enqueueing; retry the same identity.
+
+    Only cognition writes health. The independent responder records its delivery
+    state in the existing checkpoint, avoiding competing JSON health writers.
+    """
+    episode = snapshot().get("failure_episode", {})
+    if not episode or episode.get("resolved_at"):
+        return 0
+    try:
+        import agent_checkpoint
+        import mode_channel
+        import durable_telegram
+        store = agent_checkpoint.ledger()
+        with store.transaction() as db:
+            db.execute("""CREATE TABLE IF NOT EXISTS provider_notices (
+                episode TEXT PRIMARY KEY, intent TEXT NOT NULL,
+                queued INTEGER NOT NULL DEFAULT 0)""")
+            row = db.execute("SELECT intent,queued FROM provider_notices WHERE episode=?", (episode["id"],)).fetchone()
+            if row and row[1]:
+                return 0
+            folder = mode_channel.state() / "channel-outbox"
+            if row:
+                intent = json.loads(row[0])
+            else:
+                route = mode_channel.resolve("telegram")
+                folder.mkdir(parents=True, exist_ok=True)
+                key = durable_telegram.Channel("", str(folder / "sequence")).key(route["chat"], route["thread"])
+                intent = dict(key=key, commands=[["send", _failure_notice(episode), "plain"]])
+                db.execute("INSERT INTO provider_notices(episode,intent) VALUES (?,?)",
+                           (episode["id"], json.dumps(intent, ensure_ascii=False)))
+        # This separate transaction is intentional: the immutable identity and
+        # body must survive a crash before, during or after outbox publication.
+        mode_channel.store(folder / (intent["key"] + ".json"), intent)
+        with store.transaction() as db:
+            db.execute("UPDATE provider_notices SET queued=1 WHERE episode=?", (episode["id"],))
+        return 1
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        return 0

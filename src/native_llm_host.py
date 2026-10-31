@@ -559,7 +559,7 @@ def submitted(plan, transport_id):
     if not getattr(plan, "native_ledger", False):
         native_lifetime.submitted(plan, transport_id)
     if not _compaction(plan):
-        cognitive_health.turn_started(plan.provider)
+        cognitive_health.turn_started(plan.provider, model=plan.wire_model)
     return True
 
 

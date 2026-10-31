@@ -80,11 +80,17 @@ class ControlBacklog(unittest.TestCase):
                 METTACLAW_ENGINE_STATE_PATH=str(temp / "engine"),
                 METTACLAW_MODEL_STATE_PATH=str(temp / "model.json"),
                 METTACLAW_STRATEGY_PATH=str(temp / "strategy.db"),
+                METTACLAW_COGNITIVE_HEALTH_PATH=str(temp / "cognitive.json"),
                 METTACLAW_TELEGRAM_HEALTH_PATH=str(temp / "health.json"),
                 METTACLAW_TELEGRAM_LOG_PATH=str(temp / "events.jsonl"),
                 METTACLAW_TELEGRAM_SERVICE_STATE_DIR=str(temp / "state"),
                 METTACLAW_LIFECYCLE_PATH=str(temp / "lifecycle.json"),
                 XDG_STATE_HOME=str(temp / "xdg"))
+            (temp / "cognitive.json").write_text(json.dumps({
+                "last_outcome": "failed", "failure_episode": {
+                    "id": "fixture-outage", "first_at": 100, "count": 10,
+                    "provider": "fixture", "model": "offline",
+                    "kind": "provider-rejected-429"}}))
             fakes = temp / "fakes"; fakes.mkdir()
             (fakes / "synthetic_llm.py").write_text('''
 def chat(*args, **kwargs):
@@ -163,6 +169,8 @@ def model_in_observed_catalog(name): return None
                     processes.append(responder)
                     api.add(1, "/models")
                     wait(lambda: api.menu_count() >= 1, "model menu despite provider outage and backlog", 10)
+                    wait(lambda: any("HTTP 429" in d.get("text", "") for _, d in api.calls),
+                         "actionable outage notice without a model call", 10)
                     api.add(2, "/quota")
                     wait(lambda: any("provider credits exhausted" in d.get("text", "") for _, d in api.calls), "explicit provider failure", 10)
                     api.add(3, "/models")
@@ -170,6 +178,17 @@ def model_in_observed_catalog(name): return None
                     count = api.menu_count()
                     api.tap(4, "menu:model:24")
                     wait(lambda: api.menu_count() > count, "next catalogue page through the real callback path", 10)
+                    # Restart only the responder: its durable notice identity
+                    # must survive independently of in-memory episode caches.
+                    stopped.add(responder); responder.terminate(); responder.communicate(timeout=10)
+                    count = api.menu_count()
+                    responder = subprocess.Popen([env["CETTA_BIN"], "--lang", "petta", "--import-mode",
+                        "ancestor-walk", str(source)], cwd=ROOT, env=env,
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    processes.append(responder)
+                    api.add(5, "/models")
+                    wait(lambda: api.menu_count() > count, "controls after responder restart", 10)
+                    self.assertEqual(sum("HTTP 429" in d.get("text", "") for _, d in api.calls), 1)
                     self.assertTrue(before.items() <= pending(db).items())
                     self.assertFalse((temp / "model.json").exists(), "reading menus changed selected model")
                 finally:

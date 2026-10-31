@@ -22,6 +22,7 @@
 !(import! &self ./src/fuel_io)
 !(import! &self ./src/mode_channel.py)
 !(import! &self ./src/input_ack.py)
+!(import! &self ./src/cognitive_health.py)
 !(import! &self ./channels/energy.metta)
 !(import! &self ./channels/telegram_control_input.metta)
 !(import! &self ./channels/telegram_notice_cleanup.metta)
@@ -320,8 +321,9 @@
       (let $ordinary (tc:notice-tasks $tasks)
        (let $retained (py-call (input_ack.begin_scan (quote $ordinary) (quote $tasks)))
         (let $_ (tc:prune (collapse (match &self (tc:cached $task $body $value) $task)))
-         (let $noticed (tc:notices $tasks)
-          (let $cleaned (tc:guarded (catch (nc:pump)) "receipt cleanup") $handled)))))))))
+         (let $failure (tc:guarded (catch (py-call (cognitive_health.notify_failure))) "failure notice")
+          (let $noticed (tc:notices $tasks)
+           (let $cleaned (tc:guarded (catch (nc:pump)) "receipt cleanup") $handled))))))))))
 
 ; One effectful cycle has one committed outcome. Alternatives inside a scan
 ; must not survive into a later cycle and replay already submitted effects.

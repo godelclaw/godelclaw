@@ -429,7 +429,7 @@ def _exchange(provider, endpoint, body, max_tokens, *, purpose="unspecified"):
                    model=str(body.get("model", "")), purpose=purpose)
     llm_policy.describe(ticket, model=context["model"], protocol=provider["protocol"],
                         purpose=purpose, transport="python")
-    cognitive_health.turn_started(provider["name"])
+    cognitive_health.turn_started(provider["name"], model=context["model"])
     sent = False
     try:
         import process_supervision
