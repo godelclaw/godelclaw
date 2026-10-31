@@ -12,6 +12,8 @@ import tempfile
 import threading
 import time
 import uuid
+import sqlite3
+from contextlib import closing
 
 
 _lock = threading.RLock()
@@ -385,7 +387,17 @@ def notify_failure():
         import agent_checkpoint
         import mode_channel
         import durable_telegram
-        store = agent_checkpoint.ledger()
+        # A queued notice needs only a read, even while cognition holds the
+        # writer. First publication retries nonblocking rather than delaying
+        # operator controls behind a checkpoint lock or schema migration.
+        path = agent_checkpoint.path()
+        with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True, timeout=0)) as db:
+            exists = db.execute("SELECT 1 FROM sqlite_master WHERE name='provider_notices'").fetchone()
+            if exists:
+                row = db.execute("SELECT queued FROM provider_notices WHERE episode=?", (episode["id"],)).fetchone()
+                if row and row[0]:
+                    return 0
+        store = agent_checkpoint.ledger(initialize=False, timeout=0)
         with store.transaction() as db:
             db.execute("""CREATE TABLE IF NOT EXISTS provider_notices (
                 episode TEXT PRIMARY KEY, intent TEXT NOT NULL,
@@ -409,5 +421,5 @@ def notify_failure():
         with store.transaction() as db:
             db.execute("UPDATE provider_notices SET queued=1 WHERE episode=?", (episode["id"],))
         return 1
-    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError, sqlite3.Error):
         return 0

@@ -23,9 +23,18 @@ def digest(value):
     return hashlib.sha256(encoded(value).encode("utf-8")).hexdigest()
 
 
+class IdentityConflict(ValueError):
+    """A retained identity already names different immutable source data."""
+
+
 class Ledger:
-    def __init__(self, path):
+    def __init__(self, path, *, initialize=True, timeout=10):
         self.path = Path(path)
+        self.timeout = max(0.0, float(timeout))
+        if not initialize:
+            if not self.path.is_file():
+                raise FileNotFoundError(self.path)
+            return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.transaction() as db:
             db.executescript("""
@@ -75,10 +84,10 @@ class Ledger:
 
     @contextmanager
     def transaction(self):
-        db = sqlite3.connect(self.path, timeout=10, isolation_level=None)
+        db = sqlite3.connect(self.path, timeout=self.timeout, isolation_level=None)
         db.row_factory = sqlite3.Row
         try:
-            db.execute("PRAGMA busy_timeout=10000")
+            db.execute("PRAGMA busy_timeout=%d" % int(self.timeout * 1000))
             db.execute("PRAGMA synchronous=FULL")
             db.execute("BEGIN IMMEDIATE")
             yield db
@@ -114,7 +123,7 @@ class Ledger:
             old = db.execute("SELECT content,checker FROM requests WHERE id=?", (key,)).fetchone()
             if old:
                 if old["content"] != str(content) or old["checker"] != checker:
-                    raise ValueError("request identity reused for different intent")
+                    raise IdentityConflict("request identity reused for different intent")
                 return False
             db.execute("INSERT INTO requests VALUES (?,?,?,?)", (key, str(content), "active", checker))
             db.execute("INSERT INTO request_context(request,kind) VALUES (?,?)", (key, kind))
@@ -200,7 +209,7 @@ class Ledger:
         with self.transaction() as db:
             prior = {r[0] for r in db.execute("SELECT input FROM request_inputs WHERE request=?", (request,))}
             if request.startswith("input:") and prior and prior != inputs:
-                raise ValueError("input envelope identity reused for different occurrences")
+                raise IdentityConflict("input envelope identity reused for different occurrences")
             db.executemany("INSERT OR IGNORE INTO request_inputs(request,input) VALUES (?,?)",
                            [(request, str(i)) for i in inputs])
 

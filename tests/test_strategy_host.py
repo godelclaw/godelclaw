@@ -41,6 +41,17 @@ class StrategyHostTest(unittest.TestCase):
         self.assertEqual(host.capture(prompt, 60), 1)
         return prompt
 
+    def test_conflicting_input_identity_exposes_failure_without_consuming_input(self):
+        import cognitive_health
+        with mock.patch.object(host.strategy, "digest", return_value="forced-collision"), \
+             mock.patch.object(cognitive_health, "turn_failed") as failed:
+            host.begin(2, "operator-event", "first input")
+            with self.assertRaises(host.strategy.IdentityConflict):
+                host.begin(3, "operator-event", "different input")
+            failed.assert_called_once_with("input-identity-conflict")
+        self.assertEqual(host.ledger().request_record("input:forced-collision")["content"], "first input")
+        self.assertEqual(host.ledger().request_record("input:forced-collision")["status"], "active")
+
     def test_answer_status_preserves_other_arrivals_and_chat_destinations(self):
         store = host.ledger()
         store.accept("arrival", "work", kind="message")

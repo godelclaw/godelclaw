@@ -127,8 +127,13 @@ def begin(turn, source, message):
                 ids = ["content:" + strategy.digest(str(message))]
             _focus = "input:" + strategy.digest([os.environ.get("METTACLAW_INSTANCE", "default"), ids])
             _message_focus = _focus
-            store.accept(_focus, str(message), kind="message" if str(source) == "operator-event" else "notification")
-            store.link_inputs(_focus, ids)
+            try:
+                store.accept(_focus, str(message), kind="message" if str(source) == "operator-event" else "notification")
+                store.link_inputs(_focus, ids)
+            except strategy.IdentityConflict:
+                import cognitive_health
+                cognitive_health.turn_failed("input-identity-conflict")
+                raise
         elif _focus is None:
             _focus = "autonomous"
             store.accept(_focus, "Ongoing autonomous work; rest and nop do not certify task completion.")

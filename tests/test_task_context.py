@@ -51,6 +51,18 @@ class TaskContextTests(unittest.TestCase):
         self.assertEqual(view["requests"][0]["content"], body)
         self.assertFalse(view["requests"][0].get("truncated"))
 
+    def test_a_nearly_full_input_keeps_the_latest_effect_receipt(self):
+        self.store.accept("input:near-full", "input " * 500, kind="message")
+        task_context.begin(self.store, "input:near-full", "operator-event")
+        self.call([["write-file", "artifact"]], ["Committed output; do not repeat. " * 200], request="input:near-full")
+        source = task_context.projection(self.store, "input:near-full")
+        budget = len(encoded(dict(source, transcript=[]))) + 100
+        view = task_context.compact(source, budget)
+        self.assertTrue(view["transcript"])
+        self.assertEqual(view["transcript"][-1]["id"], source["transcript"][-1]["id"])
+        self.assertEqual(view["transcript"][-1]["disposition"], "returned")
+        self.assertLessEqual(len(encoded(view)), budget)
+
     def test_early_evidence_survives_where_the_old_projection_loses_it(self):
         self.call([["read-file", "contract.lean"]], ["EARLY_FACT: requires finite evidence"])
         for i in range(6):

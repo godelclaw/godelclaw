@@ -5,8 +5,10 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from observed_strategy import Ledger
 import cognitive_health as health
 import input_ack
 import mode_channel
@@ -23,6 +25,7 @@ class ProviderNotices(unittest.TestCase):
             "METTACLAW_TELEGRAM_PRIMARY_CHAT_ID": "42",
             "METTACLAW_OBSERVED_STRATEGY": "1"})
         env.start(); self.addCleanup(env.stop)
+        Ledger(self.root / "ledger.db")
 
     def fail(self, now):
         health.turn_started("fixture", now=now, model="chosen-model")
@@ -62,6 +65,19 @@ class ProviderNotices(unittest.TestCase):
         self.fail(150)
         self.assertEqual(health.notify_failure(), 1)
         self.assertEqual(json.loads(self.intents()[0].read_text()), json.loads(reserved[0]))
+
+    def test_notices_do_not_wait_for_cognitions_writer_or_repeat_schema_work(self):
+        import sqlite3
+        self.fail(100)
+        with closing(sqlite3.connect(self.root / "ledger.db")) as writer:
+            writer.execute("BEGIN IMMEDIATE")
+            # The first notice cannot publish yet; the responder returns now.
+            self.assertEqual(health.notify_failure(), 0)
+        self.assertEqual(health.notify_failure(), 1)
+        with closing(sqlite3.connect(self.root / "ledger.db")) as writer:
+            writer.execute("BEGIN IMMEDIATE")
+            with mock.patch("agent_checkpoint.ledger", side_effect=AssertionError("reinitialized ledger")):
+                self.assertEqual(health.notify_failure(), 0)
 
     def test_recovery_ends_episode_and_next_outage_can_notify_again(self):
         self.fail(100); health.notify_failure()

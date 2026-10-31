@@ -14,5 +14,5 @@ def path():
     return Path(path)
 
 
-def ledger():
-    return observed_strategy.Ledger(path())
+def ledger(*, initialize=True, timeout=10):
+    return observed_strategy.Ledger(path(), initialize=initialize, timeout=timeout)

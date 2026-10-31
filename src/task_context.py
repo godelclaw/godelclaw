@@ -353,29 +353,39 @@ def compact(view, byte_budget=None, *, measure=None):
     result = json.loads(encoded(view))
     pairs = result.pop("transcript")
     result.update(transcript=[], archive=None)
+    newest_stub = None
+    if pairs:
+        newest = pairs[-1]
+        newest_stub = dict(id=newest["id"], command=newest["command"],
+                           disposition=newest["disposition"], compacted=True,
+                           retrieve=["task-read", newest["id"], 0],
+                           result_preview=str(newest.get("result", ""))[:200])
+    # Input and the latest effect observation share the window. Reserve the
+    # observation's identity, disposition and retrieval before fitting input.
+    input_budget = max(0, budget - (measure(encoded(newest_stub)) + 200 if newest_stub else 0))
     def archive(count):
         return dict(count=count, retrieve=["task-history", view["root"], 0]) if count else None
     # Prefer current request/ancestry, notes and live continuations. Completed
     # sibling conversations are recoverable but need not fill every next turn.
-    if measure(encoded(result)) > budget // 2:
+    if measure(encoded(result)) > input_budget // 2:
         originals = result["requests"]
         result["requests"] = [r for r in originals if r["id"] in (view["root"],view["focus"])]
         result["frame"] = dict(compacted=True, retrieve=["task-read", "task-frame:"+view["root"], 0],
                                requests=len(originals), notes=len(result["notes"]))
         # Prefer the full current input to older tool output. Crossing half a
         # window is not a reason to cut a source that fits the actual budget.
-        while result["notes"] and measure(encoded(result)) > budget:
+        while result["notes"] and measure(encoded(result)) > input_budget:
             result["notes"].pop(0)
-        allowance = max(256, budget // max(4, 2*len(result["requests"])))
+        allowance = max(256, input_budget // max(4, 2*len(result["requests"])))
         for item in result["requests"]:
-            if measure(encoded(result)) <= budget:
+            if measure(encoded(result)) <= input_budget:
                 break
             text = item["content"]
             while measure(text) > allowance and len(text) > 512:
                 text = text[:len(text)//4] + "\n[excerpt; full request via request-read]\n" + text[-len(text)//4:]
             if text != item["content"]:
                 item.update(content=text, truncated=True, retrieve=["request-read", item["id"], 0])
-        while result["notes"] and measure(encoded(result)) > budget:
+        while result["notes"] and measure(encoded(result)) > input_budget:
             result["notes"].pop(0)
     chosen=[]
     for index in range(len(pairs)-1,-1,-1):
@@ -387,14 +397,9 @@ def compact(view, byte_budget=None, *, measure=None):
         # The newest oversized output has an explicit pointer and preview;
         # an oversized older output does not displace newer evidence.
         if not chosen:
-            pair=pairs[index]
-            text=str(pair.get("result", ""))
-            stub=dict(id=pair["id"], command=pair["command"], disposition=pair["disposition"],
-                      compacted=True, retrieve=["task-read",pair["id"],0])
-            stub["result_preview"]=text[:2000] + ("\n[output excerpt]\n" + text[-2000:] if len(text)>4000 else text[2000:])
-            result["transcript"]=[stub]
+            result["transcript"]=[newest_stub]
             if measure(encoded(result)) <= budget:
-                chosen=[stub]
+                chosen=[newest_stub]
         result.update(transcript=chosen, archive=archive(len(pairs)-len(chosen)))
         break
     return result

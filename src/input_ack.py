@@ -66,7 +66,9 @@ def _store():
     if not (os.environ.get("METTACLAW_STRATEGY_PATH") or
             os.environ.get("METTACLAW_ENGINE_STATE_PATH")):
         return None
-    store = agent_checkpoint.ledger()
+    # Schema/legacy migrations belong to cognition's boot. Notices must never
+    # wait for its writer, nor repeatedly scan retained request history.
+    store = agent_checkpoint.ledger(initialize=False, timeout=0)
     with store.transaction() as db:
         db.execute("""CREATE TABLE IF NOT EXISTS input_notices (
             task TEXT PRIMARY KEY, update_id TEXT NOT NULL, lane TEXT NOT NULL,

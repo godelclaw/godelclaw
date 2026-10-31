@@ -17,6 +17,7 @@ import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
 
 
 @unittest.skipUnless(all(os.environ.get(k) for k in
@@ -86,6 +87,8 @@ class ControlBacklog(unittest.TestCase):
                 METTACLAW_TELEGRAM_SERVICE_STATE_DIR=str(temp / "state"),
                 METTACLAW_LIFECYCLE_PATH=str(temp / "lifecycle.json"),
                 XDG_STATE_HOME=str(temp / "xdg"))
+            from observed_strategy import Ledger
+            Ledger(temp / "strategy.db")
             (temp / "cognitive.json").write_text(json.dumps({
                 "last_outcome": "failed", "failure_episode": {
                     "id": "fixture-outage", "first_at": 100, "count": 10,
