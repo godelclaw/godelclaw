@@ -555,8 +555,8 @@ def request_status(request):
     return strategy.encoded(ledger().request_record(str(request)))
 
 
-def request_page(offset=0):
-    return strategy.encoded(ledger().request_page(int(offset))) if enabled() else "PROTECTED_STRATEGY_DISABLED"
+def request_page(offset=0, limit=8):
+    return strategy.encoded(ledger().request_page(int(offset), int(limit))) if enabled() else "PROTECTED_STRATEGY_DISABLED"
 
 
 def request_read(request, offset):

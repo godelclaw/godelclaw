@@ -233,10 +233,10 @@ class Ledger:
             return True
 
     def request_page(self, offset=0, limit=8):
-        offset, limit = max(0, int(offset)), max(1, min(20, int(limit)))
+        offset, limit = max(0, int(offset)), max(1, int(limit))
         with self.transaction() as db:
             rows = [dict(r) for r in db.execute("""SELECT r.id,r.status,r.checker,c.kind,c.processed,
-                substr(r.content,1,180) AS summary,c.note FROM requests r JOIN request_context c ON c.request=r.id
+                substr(r.content,1,180) AS summary,c.note FROM requests r LEFT JOIN request_context c ON c.request=r.id
                 ORDER BY r.rowid DESC LIMIT ? OFFSET ?""", (limit, offset))]
             total = db.execute("SELECT COUNT(*) FROM requests").fetchone()[0]
         return dict(records=rows, total=total, next_offset=offset + len(rows) if offset + len(rows) < total else None)
@@ -244,7 +244,7 @@ class Ledger:
     def request_record(self, key, offset=0):
         offset = max(0, int(offset))
         with self.transaction() as db:
-            row = db.execute("SELECT r.*,c.kind,c.processed,c.note FROM requests r JOIN request_context c ON c.request=r.id WHERE r.id=?", (key,)).fetchone()
+            row = db.execute("SELECT r.*,c.kind,c.processed,c.note FROM requests r LEFT JOIN request_context c ON c.request=r.id WHERE r.id=?", (key,)).fetchone()
         if not row:
             return dict(id=key, status="unknown")
         result = dict(row); content = result.pop("content")
@@ -274,6 +274,7 @@ class Ledger:
                     "request": row[0][:4000] if row else "", "unfinished": active,
                     "counts": counts, "omitted_active": max(0, counts.get("active", 0) - len(active)),
                     "request_truncated": bool(row and len(row[0]) > 4000),
+                    "request_index": {"retrieve": ["request-page", 0], "scope": "all retained requests"},
                     "results": results}
 
     def active(self):

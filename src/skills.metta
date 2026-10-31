@@ -183,6 +183,7 @@
 (= (request-status $request) (py-call (strategy_host.request_status $request)))
 (= (request-focus $request) (py-call (strategy_host.focus_request $request)))
 (= (request-page $offset) (py-call (strategy_host.request_page $offset)))
+(= (request-page $offset $count) (py-call (strategy_host.request_page $offset $count)))
 (= (request-read $request $offset) (py-call (strategy_host.request_read $request $offset)))
 (= (request-disposition $request $disposition $reason)
    (py-call (strategy_host.request_disposition $request $disposition $reason)))

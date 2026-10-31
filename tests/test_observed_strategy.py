@@ -10,6 +10,23 @@ class ObservedStrategyTest(unittest.TestCase):
         self.path=Path(self.tmp.name)/'state.sqlite3'; self.store=Ledger(self.path)
         self.store.accept('task','requested work')
 
+    def test_legacy_requests_are_readable_and_paging_reaches_an_end(self):
+        for n in range(40): self.store.accept('legacy-%d' % n, 'retained input %d' % n)
+        with self.store.transaction() as db:
+            db.execute("DELETE FROM request_context WHERE request LIKE 'legacy-%'")
+        offset, seen = 0, []
+        while True:
+            page = self.store.request_page(offset, 13)
+            self.assertEqual(page['total'], 41)
+            seen.extend(row['id'] for row in page['records'])
+            if page['next_offset'] is None: break
+            self.assertGreater(page['next_offset'], offset)
+            offset = page['next_offset']
+        self.assertEqual(len(set(seen)), 41)
+        self.assertEqual(self.store.request_record('legacy-0')['content'], 'retained input 0')
+        self.assertIsNone(self.store.request_record('legacy-0')['kind'])
+        self.assertEqual(len(self.store.request_page(0, 100)['records']), 41)
+
     def issue(self):
         sample=self.store.capture('task','context',{},0)
         return self.store.decide(sample['serial'],dict(kind='command',tool='shell',command=['shell','fixed command']),0)
