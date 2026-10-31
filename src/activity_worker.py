@@ -25,7 +25,7 @@ import sys
 import time
 
 from durable_telegram import Changes
-from tool_output import retain_stream
+from tool_output import ProcessOutput, StorageExhausted
 
 ROOT = Path(__file__).resolve().parents[1]
 IDENTITY = re.compile(r"[A-Za-z0-9_.-]{1,64}\Z")
@@ -109,7 +109,6 @@ class Cache:
             self.db = sqlite3.connect(path, isolation_level=None, timeout=1)
             self.db.row_factory = sqlite3.Row
             self.db.execute("PRAGMA journal_mode=WAL"); self.db.execute("PRAGMA synchronous=FULL")
-            self.db.execute("PRAGMA max_page_count=8192")
             self.db.execute("""CREATE TABLE IF NOT EXISTS jobs (
                 id TEXT PRIMARY KEY, body TEXT NOT NULL, version TEXT NOT NULL,
                 state TEXT NOT NULL, lane TEXT NOT NULL, result TEXT, updated REAL NOT NULL)""")
@@ -304,34 +303,42 @@ class Controller:
             command = [sys.executable, str(ROOT / "src/activity_tool_exec.py"), str(os.getpid()),
                        str(self.args.tools[value["tool"]]), *value["arguments"]]
             env = {k: os.environ[k] for k in ("PATH", "LANG", "LC_ALL") if k in os.environ}
-            stdout = (directory / "stdout.bin").open("w+b")
-        errors = (directory / "stderr.bin").open("w+b")
+            stdout = subprocess.PIPE
+        output = ProcessOutput(directory)
         try:
             process = subprocess.Popen(command, env=env, cwd=directory, stdout=stdout,
-                                       stderr=errors, start_new_session=True)
+                                       stderr=subprocess.PIPE, start_new_session=True)
         except OSError:
-            errors.close()
-            if hasattr(stdout, "close"): stdout.close()
+            output.close()
             self.cache.result(row["id"], packed({"status": "failed", "reason": "process-not-started"})); return
+        output.attach(process)
         self.running[row["id"]] = {"process": process, "kind": value["kind"], "lane": value["lane"],
-                                     "directory": directory, "output_file": stdout if hasattr(stdout, "close") else None, "errors_file": errors}
+                                     "directory": directory, "output": output}
 
     def collect(self):
         for identity, run in list(self.running.items()):
             process = run["process"]
-            if process.poll() is None: continue
+            try:
+                run["output"].pump()
+            except StorageExhausted:
+                run["reason"] = "storage-exhausted"
+                with contextlib.suppress(ProcessLookupError): os.killpg(process.pid, signal.SIGKILL)
+            if process.poll() is None or (not run["output"].complete and not run.get("reason")): continue
             result = self.cache.saved_result(identity) if run["kind"] == "model" else None
             if result is None:
-                if run["kind"] == "tool" and process.returncode >= 0:
-                    preview, artifact = retain_stream(run["output_file"], self.args.state / "tool-results", preview_bytes=6000)
-                    errors, error_artifact = retain_stream(run["errors_file"], self.args.state / "tool-results", preview_bytes=2000)
-                    value = {"status": "completed" if process.returncode == 0 else "failed",
+                if run["kind"] == "tool":
+                    outputs = run["output"].artifacts(self.args.state / "tool-results", partial=bool(run.get("reason")))
+                    preview, artifact = outputs["stdout"]
+                    errors, error_artifact = outputs["stderr"]
+                    value = {"status": "unknown" if run.get("reason") else "completed" if process.returncode == 0 else "failed",
                              "kind": "tool", "exit_code": process.returncode,
                              "value": preview, "stderr": errors,
                              "truncated": artifact["preview_truncated"],
                              "output_bytes": artifact["bytes"], "output_digest": artifact["sha256"],
                              "output_artifact": artifact, "stderr_artifact": error_artifact,
                              "working_directory": str(run["directory"])}
+                    if run.get("reason"):
+                        value.update(reason=run["reason"], effects="unknown")
                     while True:
                         try:
                             result = packed(value)
@@ -342,11 +349,10 @@ class Controller:
                             value["stderr"] = value["stderr"][:len(value["stderr"]) // 2]
                             value["truncated"] = True
                 else:
-                    result = packed({"status": "unknown", "reason": "child-ended-without-recorded-result",
+                    result = packed({"status": "unknown", "reason": run.get("reason", "child-ended-without-recorded-result"),
                                      "working_directory": str(run["directory"])})
             self.cache.result(identity, result)
-            for name in ("output_file", "errors_file"):
-                if run.get(name): run[name].close()
+            run["output"].close()
             del self.running[identity]
 
     def step(self):
@@ -392,7 +398,7 @@ class Controller:
                 # re-observe the same durable IDs on the next event/fallback.
                 pass
             fds = [self.wake.fd] if self.wake.fd >= 0 else []
-            fds += [r["process"].stdout.fileno() for r in self.running.values() if r["process"].stdout]
+            fds += [stream.fileno() for r in self.running.values() for stream in r["output"].streams.values()]
             if fds: select.select(fds, [], [], .2 if self.running else 1)
             else: time.sleep(.2 if self.running else 1)
 
@@ -401,9 +407,7 @@ class Controller:
             process = run["process"]
             with contextlib.suppress(ProcessLookupError): os.killpg(process.pid, signal.SIGKILL)
             process.wait(timeout=5)
-            if process.stdout: process.stdout.close()
-            for name in ("output_file", "errors_file"):
-                if run.get(name): run[name].close()
+            run["output"].close()
         self.running.clear(); self.wake.close(); self.cache.close()
 
 

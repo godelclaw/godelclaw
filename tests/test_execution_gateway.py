@@ -91,6 +91,16 @@ class GatewayTest(unittest.TestCase):
             time.sleep(0.01)
         self.fail(f"request {request_id} did not reach {states}: {receipt}")
 
+    def test_storage_exhaustion_is_explicit_and_leaves_a_partial_artifact(self):
+        with mock.patch.dict(os.environ, {"METTACLAW_TOOL_STORAGE_RESERVE_BYTES": str(2**63)}):
+            client = self.start("full-disk")
+        client.submit("capture", "large")
+        receipt = self.wait("capture", "full-disk")
+        self.assertEqual(receipt["state"], "failed")
+        self.assertEqual(receipt["error"], "storage-exhausted")
+        self.assertFalse(receipt["outputs"]["stdout"]["complete"])
+        self.assertTrue(Path(receipt["outputs"]["stdout"]["path"]).is_file())
+
     def test_crashed_tool_and_bad_json_leave_gateway_usable(self):
         client = self.clients["alpha"]
         for request_id, tool in (("crash-1", "crash"), ("bad-json", "invalid-json")):

@@ -25,6 +25,26 @@ class ToolOutputTests(unittest.TestCase):
             "METTACLAW_CLAUDE_TIMEOUT_SECONDS": "0"})
         environment.start(); self.addCleanup(environment.stop)
 
+    def test_backpressure_spool_keeps_a_partial_prefix_when_storage_is_exhausted(self):
+        read, write = os.pipe()
+        reader = os.fdopen(read, "rb", buffering=0)
+        with tool_output.ProcessOutput(self.path / "capture", reserve=1) as output:
+            output.attach(SimpleNamespace(stdout=reader, stderr=None))
+            os.write(write, b"retained prefix")
+            output.pump()
+            os.write(write, b"cannot store this block")
+            full = SimpleNamespace(f_bavail=0, f_frsize=1)
+            with mock.patch.object(tool_output.os, "fstatvfs", return_value=full):
+                with self.assertRaises(tool_output.StorageExhausted): output.pump()
+            os.close(write)
+            artifacts = output.artifacts(self.path / "objects", partial=True)
+            artifact = artifacts["stdout"][1]
+            self.assertEqual(Path(artifact["path"]).read_bytes(), b"retained prefix")
+            self.assertFalse(artifact["complete"])
+            self.assertEqual(artifact["sha256"], hashlib.sha256(b"retained prefix").hexdigest())
+            self.assertEqual(os.stat(artifact["path"]).st_ino,
+                             os.stat(self.path / "capture/stdout.bin").st_ino)
+
     def test_large_stream_retains_every_byte_and_a_verifiable_identity(self):
         raw = ("evidence λ\n" * 200000).encode()
         preview, artifact = tool_output.retain_stream(BytesIO(raw), preview_bytes=123)

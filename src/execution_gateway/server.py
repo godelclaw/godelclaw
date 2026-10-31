@@ -15,7 +15,7 @@ import tempfile
 import threading
 import time
 
-from tool_output import retain_stream
+from tool_output import ProcessOutput, StorageExhausted
 
 from .client import MAX_FRAME
 from .store import Conflict, Store
@@ -122,16 +122,21 @@ class Gateway:
             for key, path in tool.get("credential_files", {}).items():
                 environment[key] = Path(path).read_text().strip()
             with tempfile.TemporaryFile() as input_file, \
-                 tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
+                 ProcessOutput(self.root / "captures" / request["id"]) as output:
                 input_file.write(json.dumps(request["input"]).encode())
                 input_file.seek(0)
                 process = subprocess.Popen(
                     tool["command"] + request["arguments"],
-                    stdin=input_file, stdout=output, stderr=errors,
+                    stdin=input_file, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                     cwd=tool.get("cwd"), env=environment, start_new_session=True)
                 until = time.monotonic() + max(0, request["deadline"] - time.time())
                 reason = None
-                while process.poll() is None:
+                output.attach(process)
+                while process.poll() is None or not output.complete:
+                    try:
+                        output.pump()
+                    except StorageExhausted:
+                        reason = "storage-exhausted"
                     if self.stop.is_set():
                         reason = "gateway-stopped"
                     elif self.store.cancellation_requested(request["id"]):
@@ -142,8 +147,9 @@ class Gateway:
                         self.terminate(process)
                         break
                     self.stop.wait(0.01)
-                stdout, stdout_artifact = retain_stream(output, self.root / "tool-results")
-                stderr, stderr_artifact = retain_stream(errors, self.root / "tool-results")
+                artifacts = output.artifacts(self.root / "tool-results", partial=bool(reason))
+                stdout, stdout_artifact = artifacts["stdout"]
+                stderr, stderr_artifact = artifacts["stderr"]
                 result = {"stdout": stdout, "stderr": stderr, "exit_code": process.returncode}
                 outputs = {"stdout": stdout_artifact, "stderr": stderr_artifact}
                 large = stdout_artifact["preview_truncated"] or stderr_artifact["preview_truncated"]
@@ -152,9 +158,10 @@ class Gateway:
                     result["preview_truncated"] = True
                 if not reason and process.returncode == 0:
                     if tool.get("result_format") == "json":
-                        output.seek(0)
+                        stream = output.records["stdout"]["file"]
+                        stream.seek(0)
                         try:
-                            parsed = json.load(output)
+                            parsed = json.load(stream)
                         except (ValueError, UnicodeError) as error:
                             state = "uncertain" if job["effect"] == "write" else "failed"
                             self.store.finish(request["id"], state, result=result, error=type(error).__name__, outputs=outputs)

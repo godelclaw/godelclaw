@@ -113,6 +113,35 @@ class CacheTests(unittest.TestCase):
         self.cache.reported("large-tool")
         self.assertEqual((self.path / "large-tool/produced.txt").read_text(), "retained")
 
+    def test_storage_exhaustion_cancels_a_tool_without_claiming_no_effect(self):
+        args = SimpleNamespace(state=self.path, tools={"fixture": Path(sys.executable)})
+        script = "import sys; sys.stdout.write('x'*2000000)"
+        body = packed({"kind": "tool", "lane": "interactive", "tool": "fixture", "arguments": ["-c", script]})
+        self.cache.add("full-disk-tool", body, "interactive")
+        controller = Controller.__new__(Controller)
+        controller.cache, controller.args, controller.running = self.cache, args, {}
+        with mock.patch("activity_worker.fingerprint", return_value="version"), \
+             mock.patch.dict(os.environ, {"METTACLAW_TOOL_STORAGE_RESERVE_BYTES": str(2**63)}):
+            controller.launch(self.cache.rows("queued")[0])
+        deadline = time.monotonic() + 5
+        while controller.running and time.monotonic() < deadline:
+            controller.collect(); time.sleep(.01)
+        self.assertFalse(controller.running)
+        value = json.loads(self.cache.rows("result")[0]["result"])
+        self.assertEqual(value["status"], "unknown")
+        self.assertEqual(value["reason"], "storage-exhausted")
+        self.assertEqual(value["effects"], "unknown")
+        self.assertFalse(value["output_artifact"]["complete"])
+
+    def test_retained_job_history_can_grow_beyond_the_old_database_ceiling(self):
+        # Many individually small records; no oversized channel frame is needed.
+        self.cache.db.execute("BEGIN IMMEDIATE")
+        self.cache.db.executemany("INSERT INTO jobs VALUES(?,?,?,'reported','background',NULL,0)",
+                                 (("history-%d" % n, "x" * 4096, "version") for n in range(9000)))
+        self.cache.db.execute("COMMIT")
+        self.assertGreater(self.cache.db.execute("PRAGMA page_count").fetchone()[0], 8192)
+        self.assertEqual(self.cache.db.execute("SELECT count(*) FROM jobs").fetchone()[0], 9000)
+
     def test_reporting_yields_without_losing_results_or_blocking_future_steps(self):
         for n in range(300):
             identity = "report-%d" % n
