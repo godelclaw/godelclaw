@@ -103,7 +103,10 @@ def main(argv=None):
                 item = outgoing.get()
                 try:
                     if item is None:
-                        print("retried %d retained submissions" % len(mail.retry()), flush=True)
+                        results = mail.retry()
+                        unconfirmed = [r for r in results if r["status"] == "unconfirmed"]
+                        print("%d acceptance receipts; %d inputs still unconfirmed" % (len(results)-len(unconfirmed), len(unconfirmed)), flush=True)
+                        for result in unconfirmed: print(clean(result["id"] + ": " + result["error"]), flush=True)
                     else:
                         mail.publish(item); print("accepted · " + item["id"], flush=True)
                 except Exception as error:
@@ -159,19 +162,26 @@ def main(argv=None):
                           "/detach exits this console. Paste text, then Enter, to send it. // sends a literal slash.")
                     continue
                 if text == "/retry": outgoing.put(None); continue
+                if text == "/close-menu":
+                    with menu_lock: menu.clear()
+                    continue
                 if text == "/status": work.put(("status", {})); continue
                 if text == "/replies":
                     for path in sorted((client_state / "received").glob("*.json"), key=lambda p:p.stat().st_mtime):
                         print(clean(json.loads(path.read_text())["text"]))
                     continue
                 with menu_lock:
+                    if menu and text.isdigit() and not 0 < int(text) <= len(menu):
+                        print("Choose a displayed number, or /close-menu.")
+                        continue
                     choice = menu[int(text) - 1][1] if text.isdigit() and 0 < int(text) <= len(menu) else None
                     menu.clear()
                 if choice: work.put(("choice", dict(value=choice)))
                 elif text.startswith("/") and not text.startswith("//"):
                     name, _, arguments = text.partition(" "); work.put(("command", dict(name=name, arguments=arguments)))
                 else:
-                    outgoing.put(mail.prepare(text[1:] if text.startswith("//") else text))
+                    try: outgoing.put(mail.prepare(text[1:] if text.startswith("//") else text))
+                    except OSError as error: print("Input not accepted locally: " + clean(str(error)), flush=True)
             stop.set()
         return 0
     finally:

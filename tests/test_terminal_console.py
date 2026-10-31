@@ -76,6 +76,9 @@ else:
                 self.fail('missing '+text+'; tail: '+transcript[-1800:].decode(errors='replace'))
             try:
                 expect('ACTIVITY_1')
+                os.write(master,b'/models\r');expect('tap to switch')
+                os.write(master,b'99999\r');expect('Choose a displayed number')
+                self.assertFalse((base/'publishing').exists())
                 paste='hello\ncentral constraint ž\nlast line'
                 os.write(master,b'\x1b[200~'+paste.encode()+b'\x1b[201~\r')
                 deadline=time.monotonic()+5

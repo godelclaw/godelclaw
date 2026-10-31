@@ -128,22 +128,30 @@ class MailSession:
 
     def publish(self, record):
         result = self.call("send", "--id", record["id"], record["sender"], record["recipient"], record["text"])
-        if result.get("status") != "accepted":
+        if result.get("status") not in ("accepted", "duplicate") or result.get("id") != record["id"]:
             raise RuntimeError("input acceptance is unconfirmed; retained for retry under the same id")
         store(self.root / "accepted" / (record["id"] + ".json"), dict(record=record, receipt=result))
         (self.root / "pending" / (record["id"] + ".json")).unlink(missing_ok=True)
         return result
 
     def retry(self):
-        return [self.publish(json.loads(path.read_text())) for path in sorted((self.root / "pending").glob("*.json"))]
+        results = []
+        for path in sorted((self.root / "pending").glob("*.json")):
+            try:
+                results.append(self.publish(json.loads(path.read_text())))
+            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+                results.append(dict(status="unconfirmed", id=path.stem, error=str(error)))
+        return results
 
     def receive(self):
         result = self.call("wait", "--timeout", "2", self.sender)
         if result.get("status") == "delivery":
+            if not isinstance(result.get("id"), str) or not isinstance(result.get("text"), str):
+                raise RuntimeError("invalid reply observation; not acknowledged")
             path = self.root / "received" / (hashlib.sha256(result["id"].encode()).hexdigest() + ".json")
             store(path, result)
             receipt = self.call("ack", self.sender, result["id"])
-            if receipt.get("status") != "settled":
+            if receipt.get("status") not in ("settled", "duplicate") or receipt.get("id") != result["id"]:
                 raise RuntimeError("reply is retained; acknowledgement is unconfirmed")
             return result
         if result.get("status") != "idle":

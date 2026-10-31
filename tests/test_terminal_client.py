@@ -29,11 +29,12 @@ if args[1]=='send':
     data=root/'accepted.json'
     old=json.loads(data.read_text()) if data.exists() else {}
     if identity in old: assert old[identity]==text
+    repeated=identity in old
     old[identity]=text;data.write_text(json.dumps(old))
     if not (root/'failed-once').exists():
         (root/'failed-once').touch()
         print(json.dumps({'status':'unavailable'}));sys.exit(2)
-    print(json.dumps({'status':'accepted','id':identity}))
+    print(json.dumps({'status':'duplicate' if repeated else 'accepted','id':identity}))
 else:
     print(json.dumps({'status':'idle'}))
 ''')
@@ -44,17 +45,27 @@ else:
         record = self.session.prepare(body)
         with self.assertRaises(RuntimeError): self.session.publish(record)
         self.assertTrue((self.session.root / "pending" / (record['id'] + '.json')).is_file())
-        self.assertEqual(self.session.retry()[0]['status'], 'accepted')
+        self.assertEqual(self.session.retry()[0]['status'], 'duplicate')
         accepted = json.loads((self.root / 'accepted.json').read_text())
         self.assertEqual(accepted, {record['id']: body})
         self.assertEqual(list((self.session.root / 'pending').glob('*.json')), [])
+
+    def test_one_refused_retry_does_not_hide_other_pending_input(self):
+        first=self.session.prepare("first"); second=self.session.prepare("second")
+        def publish(record):
+            if record["id"]==first["id"]: raise RuntimeError("fact-limit")
+            return dict(status="accepted",id=record["id"])
+        with mock.patch.object(self.session,"publish",side_effect=publish):
+            results=self.session.retry()
+        self.assertEqual({r["status"] for r in results},{"accepted","unconfirmed"})
+        self.assertEqual({r["id"] for r in results},{first["id"],second["id"]})
 
     def test_reply_is_durably_saved_before_acknowledgement(self):
         reply = dict(status='delivery', id='message-one', text='A real reply', **{'from':'fixture-agent'})
         def call(*args, **kwargs):
             if args[0]=='wait': return reply
             self.assertTrue(list((self.session.root / 'received').glob('*.json')))
-            return dict(status='settled')
+            return dict(status='settled',id=reply['id'])
         with mock.patch.object(self.session, 'call', side_effect=call):
             self.assertEqual(self.session.receive(), reply)
         with mock.patch.object(self.session, 'call', return_value=reply) as calls, \
