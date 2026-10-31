@@ -25,6 +25,7 @@ import sys
 import time
 
 from durable_telegram import Changes
+from tool_output import retain_stream
 
 ROOT = Path(__file__).resolve().parents[1]
 IDENTITY = re.compile(r"[A-Za-z0-9_.-]{1,64}\Z")
@@ -71,9 +72,9 @@ class Client:
             raise WorkerError("unexpected worker response data")
         return status, name, body
 
-    def pending(self):
-        after = ""
-        for _ in range(128):
+    def pending(self, after=""):
+        """Stream tasks from a resumable position; callers choose their work quantum."""
+        while True:
             status, identity, body = self.rpc(1, after)
             if status == 64 or (status == 68 and after): return
             if status != 65: raise WorkerError("worker task unavailable")
@@ -96,7 +97,7 @@ def packed(value):
 
 
 class Cache:
-    def __init__(self, directory, version, retained=64):
+    def __init__(self, directory, version, retained=0):
         self.directory = Path(directory); private(self.directory, directory=True)
         self.version = version
         self.retained = retained
@@ -115,13 +116,12 @@ class Cache:
             self.db.execute("""CREATE TABLE IF NOT EXISTS receipts (
                 id TEXT PRIMARY KEY, body_digest TEXT NOT NULL, result_digest TEXT NOT NULL,
                 updated REAL NOT NULL)""")
+            self.db.execute("CREATE INDEX IF NOT EXISTS activity_jobs_state ON jobs(state,lane)")
             for row in self.rows("started"):
                 result = self.saved_result(row["id"])
                 if result is None:
                     result = packed({"status": "unknown", "reason": "worker-interrupted-after-start"})
                 self.result(row["id"], result)
-            for row in self.rows("reported"):
-                self.retire_files(row["id"])
         except BaseException:
             self.close(); raise
 
@@ -135,7 +135,13 @@ class Cache:
             self.close(); raise
 
     def rows(self, state):
-        return self.db.execute("SELECT * FROM jobs WHERE state=? ORDER BY rowid", (state,)).fetchall()
+        return list(self.iter_rows(state))
+
+    def iter_rows(self, state):
+        yield from self.db.execute("SELECT * FROM jobs WHERE state=? ORDER BY rowid", (state,))
+
+    def next_queued(self, lane):
+        return self.db.execute("SELECT * FROM jobs WHERE state='queued' AND lane=? ORDER BY rowid LIMIT 1", (lane,)).fetchone()
 
     def add(self, identity, body, lane):
         if not IDENTITY.fullmatch(identity) or len(body.encode()) > BODY_MAX:
@@ -181,13 +187,13 @@ class Cache:
                    (identity, hashlib.sha256(row[0].encode()).hexdigest(),
                     hashlib.sha256(row[1].encode()).hexdigest(), time.time()))
         self.write("UPDATE jobs SET state='reported',updated=? WHERE id=? AND state='result'", (time.time(), identity))
-        # STORED is durable local observation, so this worker's temporary
-        # buffers/files can retire. Native input/result receipts remain owned.
-        self.retire_files(identity)
-        self.write("DELETE FROM jobs WHERE state='reported' AND id NOT IN "
-                   "(SELECT id FROM jobs WHERE state='reported' ORDER BY updated DESC LIMIT ?)", (self.retained,))
-        self.write("DELETE FROM receipts WHERE id NOT IN "
-                   "(SELECT id FROM receipts ORDER BY updated DESC LIMIT ?)", (max(self.retained, 256),))
+        # Runtime handles can retire after STORED. Evidence and tool-created
+        # files remain available until explicit maintenance.
+        if self.retained > 0:
+            self.write("DELETE FROM jobs WHERE state='reported' AND id NOT IN "
+                       "(SELECT id FROM jobs WHERE state='reported' ORDER BY updated DESC LIMIT ?)", (self.retained,))
+        # Identity receipts remain durable even when an explicit body-retention
+        # policy retires payloads. A delayed retry must not become new work.
 
     def retire_files(self, identity):
         directory = self.directory / identity
@@ -216,7 +222,7 @@ def request(body, args):
     elif value.get("kind") == "tool":
         if set(value) != {"kind", "lane", "tool", "arguments"} or value["tool"] not in args.tools:
             raise WorkerError("tool is not registered")
-        if not isinstance(value["arguments"], list) or len(value["arguments"]) > 16 or any(
+        if not isinstance(value["arguments"], list) or any(
                 not isinstance(item, str) or "\0" in item for item in value["arguments"]):
             raise WorkerError("invalid captured tool arguments")
     else:
@@ -228,7 +234,8 @@ def fingerprint(args):
     digest = hashlib.sha256(b"native-activity-worker/1\0")
     for name in ("activity_worker.py", "activity_model_host.py", "activity_model_worker.metta",
                  "activity_tool_exec.py", "native_llm_host.py", "native_llm.metta", "native_lifetime.py",
-                 "provider_protocol.py", "provider_stream.py", "llm_policy.py"):
+                 "provider_protocol.py", "provider_stream.py", "llm_policy.py", "tool_output.py",
+                 "llm_policy_cetta.metta", "native_lifetime_cetta.metta"):
         digest.update((ROOT / "src" / name).read_bytes()); digest.update(b"\0")
     for path in [args.engine, *args.tools.values()]:
         # Streaming the executable digest avoids retaining another engine-sized
@@ -245,7 +252,7 @@ class Controller:
     def __init__(self, args):
         self.args = args; self.client = Client(args.socket)
         self.cache = Cache(args.state, fingerprint(args), args.retain_results)
-        self.running = {}; self.stopped = False
+        self.running = {}; self.stopped = False; self.after = ""
         self.wake = Changes([args.journal_dir, args.state], ignore_names=[
             "worker.sqlite3", "worker.sqlite3-wal", "worker.sqlite3-shm"])
 
@@ -297,68 +304,81 @@ class Controller:
             command = [sys.executable, str(ROOT / "src/activity_tool_exec.py"), str(os.getpid()),
                        str(self.args.tools[value["tool"]]), *value["arguments"]]
             env = {k: os.environ[k] for k in ("PATH", "LANG", "LC_ALL") if k in os.environ}
-            stdout = subprocess.PIPE
+            stdout = (directory / "stdout.bin").open("w+b")
+        errors = (directory / "stderr.bin").open("w+b")
         try:
             process = subprocess.Popen(command, env=env, cwd=directory, stdout=stdout,
-                                       stderr=subprocess.DEVNULL, start_new_session=True)
+                                       stderr=errors, start_new_session=True)
         except OSError:
+            errors.close()
+            if hasattr(stdout, "close"): stdout.close()
             self.cache.result(row["id"], packed({"status": "failed", "reason": "process-not-started"})); return
-        if process.stdout: os.set_blocking(process.stdout.fileno(), False)
         self.running[row["id"]] = {"process": process, "kind": value["kind"], "lane": value["lane"],
-                                     "output": bytearray(), "overflow": False}
+                                     "directory": directory, "output_file": stdout if hasattr(stdout, "close") else None, "errors_file": errors}
 
     def collect(self):
         for identity, run in list(self.running.items()):
             process = run["process"]
-            def drain():
-                if not process.stdout: return
-                with contextlib.suppress(BlockingIOError):
-                    while True:
-                        block = os.read(process.stdout.fileno(), 8192)
-                        if not block: break
-                        room = max(0, 32768 - len(run["output"]))
-                        run["output"].extend(block[:room])
-                        if len(block) > room:
-                            run["overflow"] = True
-                            with contextlib.suppress(ProcessLookupError): os.killpg(process.pid, signal.SIGKILL)
-                            break
-            drain()
             if process.poll() is None: continue
-            # Exit can race the first nonblocking read. Read the final bytes
-            # before closing the pipe; descendants are not allowed to keep it.
-            drain()
-            if process.stdout: process.stdout.close()
             result = self.cache.saved_result(identity) if run["kind"] == "model" else None
             if result is None:
-                if run["kind"] == "tool" and not run["overflow"] and process.returncode >= 0:
-                    output = bytes(run["output"])
-                    decoded = output.decode("utf-8", errors="replace")
-                    result = packed({"status": "completed" if process.returncode == 0 else "failed",
-                                     "kind": "tool", "exit_code": process.returncode,
-                                     "value": decoded[:8000], "truncated": len(decoded) > 8000,
-                                     "output_bytes": len(output),
-                                     "output_digest": hashlib.sha256(output).hexdigest()})
+                if run["kind"] == "tool" and process.returncode >= 0:
+                    preview, artifact = retain_stream(run["output_file"], self.args.state / "tool-results", preview_bytes=6000)
+                    errors, error_artifact = retain_stream(run["errors_file"], self.args.state / "tool-results", preview_bytes=2000)
+                    value = {"status": "completed" if process.returncode == 0 else "failed",
+                             "kind": "tool", "exit_code": process.returncode,
+                             "value": preview, "stderr": errors,
+                             "truncated": artifact["preview_truncated"],
+                             "output_bytes": artifact["bytes"], "output_digest": artifact["sha256"],
+                             "output_artifact": artifact, "stderr_artifact": error_artifact,
+                             "working_directory": str(run["directory"])}
+                    while True:
+                        try:
+                            result = packed(value)
+                            break
+                        except WorkerError:
+                            if not value["value"] and not value["stderr"]: raise
+                            value["value"] = value["value"][:len(value["value"]) // 2]
+                            value["stderr"] = value["stderr"][:len(value["stderr"]) // 2]
+                            value["truncated"] = True
                 else:
-                    result = packed({"status": "unknown", "reason": "child-ended-without-recorded-result"})
-            self.cache.result(identity, result); del self.running[identity]
+                    result = packed({"status": "unknown", "reason": "child-ended-without-recorded-result",
+                                     "working_directory": str(run["directory"])})
+            self.cache.result(identity, result)
+            for name in ("output_file", "errors_file"):
+                if run.get(name): run[name].close()
+            del self.running[identity]
 
     def step(self):
         self.collect()
-        for row in self.cache.rows("result"):
+        quantum = getattr(self.args, "intake_ms", 20) / 1000
+        deadline = time.monotonic() + quantum
+        for row in self.cache.iter_rows("result"):
             status, _, _ = self.client.rpc(2, row["id"], row["result"])
             if status != 66: raise WorkerError("result was not recorded under its original identity")
             self.cache.reported(row["id"])
-        for identity, body in self.client.pending():
+            if time.monotonic() >= deadline: break
+        deadline = time.monotonic() + quantum
+        ended = True
+        for identity, body in self.client.pending(self.after):
             try:
                 lane = request(body, self.args)["lane"]
             except (ValueError, WorkerError): lane = "interactive"
             self.cache.add(identity, body, lane)
-        for row in self.cache.rows("queued"):
-            if len(self.running) >= self.args.parallel: break
+            self.after = identity
+            if time.monotonic() >= deadline:
+                ended = False
+                break
+        if ended: self.after = ""
+        deadline = time.monotonic() + quantum
+        while len(self.running) < self.args.parallel:
+            row = self.cache.next_queued("interactive")
             backgrounds = sum(item["lane"] == "background" for item in self.running.values())
-            if row["lane"] == "background" and backgrounds >= self.args.parallel - self.args.reserve_interactive:
-                continue
+            if row is None and backgrounds < self.args.parallel - self.args.reserve_interactive:
+                row = self.cache.next_queued("background")
+            if row is None: break
             self.launch(row)
+            if time.monotonic() >= deadline: break
 
     def run(self):
         while not self.stopped:
@@ -382,6 +402,8 @@ class Controller:
             with contextlib.suppress(ProcessLookupError): os.killpg(process.pid, signal.SIGKILL)
             process.wait(timeout=5)
             if process.stdout: process.stdout.close()
+            for name in ("output_file", "errors_file"):
+                if run.get(name): run[name].close()
         self.running.clear(); self.wake.close(); self.cache.close()
 
 
@@ -395,12 +417,13 @@ def options(argv=None):
     parser.add_argument("--model", required=True)
     parser.add_argument("--max-tokens", type=int, default=1024)
     parser.add_argument("--parallel", type=int, default=2)
+    parser.add_argument("--intake-ms", type=float, default=20)
     parser.add_argument("--reserve-interactive", type=int, default=1)
-    parser.add_argument("--retain-results", type=int, default=64)
+    parser.add_argument("--retain-results", type=int, default=0)
     parser.add_argument("--tool", action="append", default=[])
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args(argv); args.tools = {}
-    if not 1 <= args.reserve_interactive < args.parallel <= 16 or args.max_tokens <= 0 or args.retain_results < 0:
+    if not 1 <= args.reserve_interactive < args.parallel or args.max_tokens <= 0 or args.retain_results < 0 or not 0 < args.intake_ms < float("inf"):
         raise WorkerError("invalid worker resource configuration")
     for path in (args.state, args.journal_dir): private(path, directory=True)
     if not args.engine.is_file() or not os.access(args.engine, os.X_OK):

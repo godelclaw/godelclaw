@@ -4,12 +4,14 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import time
+import hashlib
 import unittest
 from types import SimpleNamespace
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from activity_worker import Cache, Controller, WorkerError, packed
+from activity_worker import Cache, Client, Controller, WorkerError, packed
 
 
 class CacheTests(unittest.TestCase):
@@ -40,14 +42,14 @@ class CacheTests(unittest.TestCase):
         self.cache.add("call", "captured", "background")
         with self.assertRaises(WorkerError): self.cache.add("call", "changed", "background")
 
-    def test_recovery_finishes_cleanup_after_the_stored_receipt(self):
+    def test_recovery_preserves_tool_artifacts_after_the_stored_receipt(self):
         self.cache.add("call", "captured", "background"); self.cache.start("call")
         self.cache.result("call", packed({"status": "completed", "value": "stored"}))
         directory = self.path / "call"; directory.mkdir(mode=0o700)
         (directory / "buffer").write_text("retire only after receipt")
         self.cache.write("UPDATE jobs SET state='reported' WHERE id=?", ("call",))
         self.cache.close(); self.cache = Cache(self.path, "version")
-        self.assertFalse(directory.exists())
+        self.assertTrue(directory.exists())
         self.assertEqual(len(self.cache.rows("reported")), 1)
 
     def test_changed_adapter_is_rejected_before_process_or_provider_start(self):
@@ -69,6 +71,62 @@ class CacheTests(unittest.TestCase):
         self.assertEqual(len(self.cache.rows("reported")), 2)
         self.assertEqual([r["id"] for r in self.cache.rows("started")], ["pending"])
         with self.assertRaises(WorkerError): self.cache.add("r0", "capture", "background")
+
+    def test_default_retention_keeps_every_completed_identity(self):
+        self.cache.close(); self.cache = Cache(self.path, "version")
+        for i in range(300):
+            identity = "retained-%03d" % i
+            self.cache.add(identity, "captured", "background")
+            self.cache.result(identity, packed({"status": "completed", "value": "evidence"}))
+            self.cache.reported(identity)
+        self.assertEqual(len(self.cache.rows("reported")), 300)
+        self.assertEqual(self.cache.db.execute("SELECT count(*) FROM receipts").fetchone()[0], 300)
+        self.cache.close(); self.cache = Cache(self.path, "version")
+        with self.assertRaises(WorkerError): self.cache.add("retained-000", "different", "background")
+
+    def test_pending_worker_stream_continues_past_128(self):
+        client = Client("unused")
+        client.rpc = mock.Mock(side_effect=[(65, "t%d" % n, "body") for n in range(1024)] + [(64, "", "")])
+        self.assertEqual(len(list(client.pending())), 1024)
+        self.assertEqual(client.rpc.call_args, mock.call(1, "t1023"))
+
+    def test_tool_output_is_spooled_and_artifacts_survive_reporting(self):
+        args = SimpleNamespace(state=self.path, tools={"fixture": Path(sys.executable)})
+        script = "import sys; from pathlib import Path; Path('produced.txt').write_text('retained'); sys.stdout.write('x'*2000000); sys.stderr.write('e'*100000)"
+        body = packed({"kind": "tool", "lane": "interactive", "tool": "fixture", "arguments": ["-c", script] + ["arg"] * 32})
+        self.cache.add("large-tool", body, "interactive")
+        controller = Controller.__new__(Controller)
+        controller.cache, controller.args, controller.running = self.cache, args, {}
+        with mock.patch("activity_worker.fingerprint", return_value="version"):
+            controller.launch(self.cache.rows("queued")[0])
+        deadline = time.monotonic() + 10
+        while controller.running and time.monotonic() < deadline:
+            controller.collect(); time.sleep(.01)
+        self.assertFalse(controller.running)
+        result = json.loads(self.cache.rows("result")[0]["result"])
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["output_bytes"], 2000000)
+        raw = Path(result["output_artifact"]["path"]).read_bytes()
+        self.assertEqual(raw, b"x" * 2000000)
+        self.assertEqual(hashlib.sha256(raw).hexdigest(), result["output_digest"])
+        self.assertEqual(Path(result["stderr_artifact"]["path"]).read_bytes(), b"e" * 100000)
+        self.cache.reported("large-tool")
+        self.assertEqual((self.path / "large-tool/produced.txt").read_text(), "retained")
+
+    def test_reporting_yields_without_losing_results_or_blocking_future_steps(self):
+        for n in range(300):
+            identity = "report-%d" % n
+            self.cache.add(identity, "captured", "interactive")
+            self.cache.result(identity, packed({"status": "completed", "value": "evidence"}))
+        controller = Controller.__new__(Controller)
+        controller.cache, controller.running, controller.after = self.cache, {}, ""
+        controller.args = SimpleNamespace(intake_ms=.01, parallel=2, reserve_interactive=1)
+        controller.client = SimpleNamespace(rpc=mock.Mock(return_value=(66, "", "")), pending=lambda after: iter(()))
+        for _ in range(310):
+            controller.step()
+            if not self.cache.db.execute("SELECT 1 FROM jobs WHERE state='result' LIMIT 1").fetchone(): break
+        self.assertFalse(self.cache.rows("result"))
+        self.assertEqual(self.cache.db.execute("SELECT count(*) FROM receipts").fetchone()[0], 300)
 
     def test_second_controller_cannot_acquire_cache(self):
         with self.assertRaises(BlockingIOError): Cache(self.path, "version")

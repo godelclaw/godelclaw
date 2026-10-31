@@ -349,5 +349,6 @@
   "src/mode_state_python.metta",
   "src/loop_modes_cetta.metta",
   "src/lifecycle_cetta.metta",
-  "src/attention_cetta.metta"
+  "src/attention_cetta.metta",
+  "src/tool_output.py"
 ]

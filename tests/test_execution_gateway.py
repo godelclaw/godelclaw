@@ -39,7 +39,7 @@ class GatewayTest(unittest.TestCase):
         secret = root / "test-token"
         secret.write_text("synthetic-token-" + agent)
         tools = {}
-        for name in ("echo", "delay", "crash", "identity", "invalid-json", "large", "write"):
+        for name in ("echo", "delay", "crash", "identity", "invalid-json", "large", "large-json", "write"):
             tools[name] = {
                 "command": [sys.executable, str(ROOT / "tests/fixtures/gateway_tool.py"), name],
                 "effect": "write" if name == "write" else "read",
@@ -220,7 +220,15 @@ class GatewayTest(unittest.TestCase):
         with self.assertRaises(GatewayError):
             client.request("submit", request={"id": "bad"})
         client.submit("large", "large", input={"bytes": 200000})
-        self.assertEqual(self.wait("large")["error"], "result-too-large")
+        receipt = self.wait("large")
+        self.assertEqual(receipt["error"], "JSONDecodeError")
+        self.assertEqual(Path(receipt["outputs"]["stdout"]["path"]).read_bytes(), b"x" * 200000 + b"\n")
+        client.submit("large-json", "large-json", input={"bytes": 2000000})
+        receipt = self.wait("large-json")
+        self.assertEqual(receipt["state"], "succeeded")
+        artifact = receipt["result"]["stored_json"]
+        self.assertEqual(json.loads(Path(artifact["path"]).read_text())["payload"], "x" * 2000000)
+        self.assertEqual(hashlib.sha256(Path(artifact["path"]).read_bytes()).hexdigest(), artifact["sha256"])
         client.submit("good-again", "echo")
         self.assertEqual(self.wait("good-again")["state"], "succeeded")
 
@@ -279,7 +287,9 @@ class GatewayTest(unittest.TestCase):
     def engine_environment(self, agent, engine):
         env = isolated_environ()
         env.update({
-            "METTACLAW_SKIP_INITIALIZE": "1", "METTACLAW_ENGINE": engine,
+            "METTACLAW_SKIP_INITIALIZE": "1", "METTACLAW_SKIP_CONFIG": "1", "METTACLAW_ENGINE": engine,
+            "PETTA_ROOT": os.environ.get("PETTA_ROOT", str(Path.home() / "repos/PeTTa")),
+            "PETTA_PY_ENV": os.environ.get("PETTA_PY_ENV", str(Path.home() / "miniforge3/envs/petta")),
             "METTACLAW_ENGINE_STATE_PATH": str(self.base / agent / "engine"),
             "METTACLAW_GATEWAY_SOCKET": self.clients[agent].socket_path,
             "METTACLAW_GATEWAY_AGENT": agent,

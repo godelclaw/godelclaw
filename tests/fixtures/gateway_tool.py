@@ -26,6 +26,8 @@ elif mode == "invalid-json":
     print("not JSON")
 elif mode == "large":
     print("x" * value["bytes"])
+elif mode == "large-json":
+    print(json.dumps({"payload": "x" * value["bytes"]}))
 elif mode == "write":
     with Path(value["path"]).open("a") as stream:
         stream.write("effect\n")

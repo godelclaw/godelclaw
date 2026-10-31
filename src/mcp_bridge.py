@@ -3,6 +3,7 @@ import os
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from pathlib import Path
+from tool_output import retain_text
 
 def _json(data):
     text = json.dumps(data, ensure_ascii=True, sort_keys=True)
@@ -16,6 +17,7 @@ def _json(data):
                 "truncated": True,
                 "chars": len(text),
                 "prefix": text[:limit],
+                "artifact": retain_text(text),
             },
             ensure_ascii=True,
             sort_keys=True,

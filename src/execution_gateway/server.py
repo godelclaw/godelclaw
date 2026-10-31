@@ -15,10 +15,11 @@ import tempfile
 import threading
 import time
 
+from tool_output import retain_stream
+
 from .client import MAX_FRAME
 from .store import Conflict, Store
 
-MAX_OUTPUT = 128 * 1024
 NAME = re.compile(r"[A-Za-z0-9_.-]{1,100}\Z")
 
 
@@ -137,30 +138,38 @@ class Gateway:
                         reason = "cancelled"
                     elif time.monotonic() >= until:
                         reason = "deadline"
-                    elif os.fstat(output.fileno()).st_size + os.fstat(errors.fileno()).st_size > MAX_OUTPUT:
-                        reason = "result-too-large"
                     if reason:
                         self.terminate(process)
                         break
                     self.stop.wait(0.01)
-                # Check bounds even if a child finished between polls.
-                size = os.fstat(output.fileno()).st_size + os.fstat(errors.fileno()).st_size
-                if size > MAX_OUTPUT:
-                    reason = reason or "result-too-large"
-                output.seek(0)
-                errors.seek(0)
-                stdout = output.read(MAX_OUTPUT).decode("utf-8", "replace")
-                stderr = errors.read(MAX_OUTPUT - min(MAX_OUTPUT, len(stdout.encode()))).decode("utf-8", "replace")
+                stdout, stdout_artifact = retain_stream(output, self.root / "tool-results")
+                stderr, stderr_artifact = retain_stream(errors, self.root / "tool-results")
                 result = {"stdout": stdout, "stderr": stderr, "exit_code": process.returncode}
+                outputs = {"stdout": stdout_artifact, "stderr": stderr_artifact}
+                large = stdout_artifact["preview_truncated"] or stderr_artifact["preview_truncated"]
+                if large:
+                    result["artifacts"] = {"stdout": stdout_artifact, "stderr": stderr_artifact}
+                    result["preview_truncated"] = True
                 if not reason and process.returncode == 0:
                     if tool.get("result_format") == "json":
-                        result = json.loads(stdout)
-                    self.store.finish(request["id"], "succeeded", result=result)
+                        output.seek(0)
+                        try:
+                            parsed = json.load(output)
+                        except (ValueError, UnicodeError) as error:
+                            state = "uncertain" if job["effect"] == "write" else "failed"
+                            self.store.finish(request["id"], state, result=result, error=type(error).__name__, outputs=outputs)
+                            return
+                        if stdout_artifact["preview_truncated"]:
+                            result["result_format"] = "json"
+                            result["stored_json"] = stdout_artifact
+                        else:
+                            result = parsed
+                    self.store.finish(request["id"], "succeeded", result=result, outputs=outputs)
                     return
                 reason = reason or "tool-exit"
                 state = ("uncertain" if job["effect"] == "write" else
                          "cancelled" if reason == "cancelled" else "failed")
-                self.store.finish(request["id"], state, result=result, error=reason)
+                self.store.finish(request["id"], state, result=result, error=reason, outputs=outputs)
         except Exception as exc:
             if process is not None and process.poll() is None:
                 self.terminate(process)

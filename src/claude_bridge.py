@@ -9,6 +9,7 @@ Claude Code itself; this bridge adds no permission bypasses.
 """
 
 import os
+import math
 import shutil
 import subprocess
 
@@ -59,19 +60,33 @@ def ask(prompt):
         return ("claude-code: binary not found — set METTACLAW_CLAUDE_BIN or "
                 "install to ~/.local/bin/claude")
     try:
+        selected = float(os.environ.get("METTACLAW_CLAUDE_TIMEOUT_SECONDS", "0"))
+    except ValueError:
+        return "claude-code: invalid configured timeout"
+    if not math.isfinite(selected) or selected < 0:
+        return "claude-code: invalid configured timeout"
+    try:
         r = subprocess.run(
             [binpath, "-p", prompt],
-            capture_output=True, text=True, timeout=300,
+            capture_output=True, text=True, timeout=selected if selected > 0 else None,
             cwd=os.path.expanduser("~"),
         )
-    except subprocess.TimeoutExpired:
-        return "claude-code: timed out after 300s — ask a smaller question"
+    except subprocess.TimeoutExpired as error:
+        from io import BytesIO
+        from tool_output import retain_stream
+        parts = []
+        for label, value in (("stdout", error.stdout), ("stderr", error.stderr)):
+            if value:
+                raw = value.encode() if isinstance(value, str) else value
+                _, artifact = retain_stream(BytesIO(raw))
+                parts.append(label + ": " + artifact["path"])
+        return "claude-code: configured deadline reached; result and effects are unknown, inspect before retrying. " + "; ".join(parts)
     except OSError as exc:
         return "claude-code failed to launch: %s" % exc
     out = (r.stdout or "").strip()
     err = (r.stderr or "").strip()
-    if r.returncode != 0 and not out:
-        return "claude-code error (exit %d): %s" % (r.returncode, err[:800])
-    if len(out) > _MAX_OUT:
-        out = out[:_MAX_OUT] + " …[truncated]"
+    from tool_output import text_view
+    if r.returncode != 0:
+        return "claude-code error (exit %d): %s\n%s" % (r.returncode, text_view(err, 800), text_view(out, _MAX_OUT))
+    out = text_view(out, _MAX_OUT)
     return out or "(claude-code returned nothing)"

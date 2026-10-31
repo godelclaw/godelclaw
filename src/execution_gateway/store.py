@@ -33,6 +33,9 @@ class Store:
                     at REAL NOT NULL, detail TEXT NOT NULL
                 );
             """)
+            if "outputs" not in {row[1] for row in db.execute("PRAGMA table_info(jobs)")}:
+                db.execute("ALTER TABLE jobs ADD COLUMN outputs TEXT")
+            db.execute("CREATE INDEX IF NOT EXISTS gateway_jobs_ready ON jobs(state,sequence)")
             owner = db.execute("SELECT agent FROM owner").fetchone()
             if owner and owner[0] != agent:
                 raise Conflict("queue belongs to another agent")
@@ -82,6 +85,7 @@ class Store:
         return {"agent": self.agent, "id": request_id, "state": row["state"],
                 "result": json.loads(row["result"]) if row["result"] else None,
                 "error": row["error"],
+                "outputs": json.loads(row["outputs"]) if row["outputs"] else None,
                 "receipts": [{**dict(r), "detail": json.loads(r["detail"])}
                              for r in receipts]}
 
@@ -124,16 +128,16 @@ class Store:
                 db.execute("UPDATE jobs SET cancel=1 WHERE id=?", (request_id,))
         return self.get(request_id)
 
-    def finish(self, request_id, state, *, result=None, error=None):
+    def finish(self, request_id, state, *, result=None, error=None, outputs=None):
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT state FROM jobs WHERE id=?", (request_id,)).fetchone()
             if row[0] != "running":
                 raise Conflict("only a running attempt can finish")
             self.note(db, request_id, state, {"error": error} if error else {})
-            db.execute("UPDATE jobs SET state=?,result=?,error=? WHERE id=?",
+            db.execute("UPDATE jobs SET state=?,result=?,error=?,outputs=? WHERE id=?",
                        (state, json.dumps(result) if result is not None else None,
-                        error, request_id))
+                        error, json.dumps(outputs) if outputs is not None else None, request_id))
 
     def recover(self):
         """Never silently replay a dispatch whose receipt was lost."""
