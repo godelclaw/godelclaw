@@ -59,7 +59,9 @@ def main(argv=None):
     client_state = args.client_state or state / "terminal-client"
     client_state.mkdir(parents=True, exist_ok=True)
     command = shutil.which("claw-mail")
-    mail_script = args.mail_script or (Path(command).resolve().parent / "cli/shared_mail.py" if command else None)
+    installed = Path(command).resolve() if command else None
+    mail_script = args.mail_script or (installed if installed and installed.suffix == ".py" else
+                  installed.parent / "cli/shared_mail.py" if installed else None)
     control_only = bool(args.command or args.status)
     if not control_only and (not mail_script or not mail_script.is_file()):
         raise ValueError("choose the installed Python mail client with --mail-script")

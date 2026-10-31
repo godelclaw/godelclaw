@@ -52,6 +52,8 @@ if a[1]=='send':
 else:
     time.sleep(.2);print(json.dumps({'status':'idle'}));sys.exit(3)
 ''')
+            commands=base/'bin';commands.mkdir();(commands/'claw-mail').symlink_to(mail)
+            environment=dict(os.environ,PATH=str(commands)+os.pathsep+os.environ.get('PATH',''))
             profile=base/'instances.json';profile.write_text(json.dumps({'instances':[{
                 'name':'fixture','root':str(instance),'state_dir':str(state),
                 'environment':{'PYTHONHOME':sys.prefix,'LD_LIBRARY_PATH':str(Path(sys.prefix)/'lib')},
@@ -60,8 +62,8 @@ else:
             master,slave=pty.openpty()
             fcntl.ioctl(master,termios.TIOCSWINSZ,struct.pack('HHHH',30,110,0,0))
             process=subprocess.Popen([sys.executable,str(ROOT/'scripts/agent_console.py'),
-                '--agent','fixture','--instances',str(profile),'--mail-script',str(mail),'--dir',str(base/'display')],
-                cwd=ROOT,stdin=slave,stdout=slave,stderr=slave,start_new_session=True)
+                '--agent','fixture','--instances',str(profile),'--dir',str(base/'display')],
+                cwd=ROOT,env=environment,stdin=slave,stdout=slave,stderr=slave,start_new_session=True)
             os.close(slave);transcript=bytearray()
             def expect(text):
                 deadline=time.monotonic()+15
