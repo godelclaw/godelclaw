@@ -6,17 +6,14 @@ only until it scrolled out — and died entirely on restart. The agent asked
 for exactly this: "if pins survived restart, I'd wake up already knowing
 what I was doing."
 
-Pins live in a small file, newest last, hard-capped so the per-turn context
-cost stays bounded (~1.5 KB worst case). The PINNED block in the context is
-built from this file, so a restart changes nothing the agent can see.
+Pins retain complete text until explicit removal. The per-turn context is a
+bounded window over that retained file, so prompt size does not delete memory.
 """
 
 import os
 import threading
 import time
 
-_MAX_PINS = 12
-_MAX_LEN = 300
 _CONTEXT_PINS = 12
 _CONTEXT_LINE = 400
 _LOCK = threading.RLock()
@@ -33,7 +30,7 @@ def _read():
     try:
         with open(_path(), "r", encoding="utf-8") as f:
             return [l.rstrip("\n") for l in f if l.strip()]
-    except OSError:
+    except FileNotFoundError:
         return []
 
 
@@ -52,21 +49,18 @@ def _write(lines):
 
 
 def pin(text):
-    """Add one pin; oldest falls off past the cap. Returns what happened."""
-    text = " ".join(str(text).split())[:_MAX_LEN]
+    """Retain one complete pin; only explicit unpin removes another."""
+    text = " ".join(str(text).split())
     if not text:
         return "pin failed: empty text"
     with _LOCK:
         lines = _read()
         lines = [l for l in lines if l.split("] ", 1)[-1] != text]
         lines.append("[%s] %s" % (time.strftime("%m-%d %H:%M"), text))
-        dropped = len(lines) - _MAX_PINS
-        lines = lines[-_MAX_PINS:]
         ok = _write(lines)
     if not ok:
         return "pin failed: could not persist"
-    note = " (oldest %d dropped)" % dropped if dropped > 0 else ""
-    return "pinned %d/%d%s — survives restarts" % (len(lines), _MAX_PINS, note)
+    return "pinned %d — survives restarts" % len(lines)
 
 
 def unpin(fragment):
@@ -116,13 +110,25 @@ def mark_context_body(body):
 
 def context_view():
     """Bounded newest-first working view; the ``pins`` tool retains full access."""
+    from collections import deque
     with _LOCK:
-        lines = _read()
-    if not lines:
+        retained = deque(maxlen=_CONTEXT_PINS)
+        total = 0
+        try:
+            with open(_path(), encoding="utf-8") as source:
+                for line in source:
+                    if line.strip():
+                        total += 1
+                        retained.append(line.rstrip("\n"))
+        except FileNotFoundError:
+            return NO_PINS
+        except OSError as error:
+            return "pins unavailable: " + type(error).__name__
+    if not retained:
         return NO_PINS
     visible = [line if len(line) <= _CONTEXT_LINE
                else line[:_CONTEXT_LINE - 1] + "…"
-               for line in lines[-_CONTEXT_PINS:]]
+               for line in retained]
     header = "PINNED newest %d of %d; (pins) reads the full retained list" % (
-        len(visible), len(lines))
+        len(visible), total)
     return mark_context_body(header + "\n" + " | ".join(visible))

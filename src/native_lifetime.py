@@ -12,25 +12,10 @@ from pathlib import Path
 import time
 import llm_policy
 
-EVIDENCE_LIMIT = 32
-EVIDENCE_SECONDS = 7 * 86400
-RECEIPT_LIMIT = 256
-RECEIPT_SECONDS = 30 * 86400
 TERMINAL_RECONCILE_GRACE_SECONDS = 2
 
-
-def _prune(db):
-    """Bound terminal evidence without retiring any live transport authority."""
-    now = time.time()
-    terminal = "state NOT IN ('claimed','submitted')"
-    db.execute(f"UPDATE native_calls SET result=NULL WHERE {terminal} AND "
-               "(updated<? OR id NOT IN (SELECT id FROM native_calls WHERE result IS NOT NULL "
-               f"AND {terminal} ORDER BY updated DESC LIMIT ?))",
-               (now - EVIDENCE_SECONDS, EVIDENCE_LIMIT))
-    db.execute(f"DELETE FROM native_calls WHERE {terminal} AND "
-               "(updated<? OR id NOT IN (SELECT id FROM native_calls "
-               f"WHERE {terminal} ORDER BY updated DESC LIMIT ?))",
-               (now - RECEIPT_SECONDS, RECEIPT_LIMIT))
+# Call identities, outcomes and evidence are durable history. Bounded status
+# projections must not erase them; explicit maintenance owns retention.
 
 
 def process_start(pid):
@@ -60,7 +45,8 @@ def transaction():
             db.execute("ALTER TABLE native_calls ADD COLUMN notified INTEGER NOT NULL DEFAULT 0")
             # Processes before this column announced the outcomes they saw.
             db.execute("UPDATE native_calls SET notified=1 WHERE state NOT IN ('claimed','submitted')")
-        _prune(db)
+        db.execute("CREATE INDEX IF NOT EXISTS native_call_state ON native_calls(state)")
+        db.execute("CREATE INDEX IF NOT EXISTS native_call_recent ON native_calls(purpose,created DESC)")
         yield db
 
 
@@ -128,7 +114,7 @@ def claim(plan):
                 raise ValueError("invalid native call activity")
             capacity = int(os.environ.get("METTACLAW_ACTIVITY_CALL_CAPACITY", "2"))
             reserve = int(os.environ.get("METTACLAW_ACTIVITY_INTERACTIVE_RESERVE", "1"))
-            if not 1 <= reserve < capacity <= 16:
+            if not 1 <= reserve < capacity:
                 raise ValueError("invalid activity call capacity")
             if any(not row[0] or row[0] == activity for row in active) or len(active) >= capacity:
                 return False

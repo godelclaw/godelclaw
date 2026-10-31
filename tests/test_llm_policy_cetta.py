@@ -179,6 +179,16 @@ class NativeLedgerFixture(unittest.TestCase):
         self.assertEqual(stored_details(self.native_db), stored_details(self.python_db))
 
 class NativePolicyTests(NativeLedgerFixture):
+    def test_old_terminal_receipts_survive_fresh_admission(self):
+        self.replay([
+            ('admit', 'old', 'synthetic', 10, '', 1000),
+            ('complete', 'old', 3, 'stop', 1001),
+            ('admit', 'new', 'synthetic', 10, '', 1000 + 172800 + 1),
+        ])
+        for path in (self.python_db, self.native_db):
+            with closing(sqlite3.connect(path)) as db:
+                self.assertEqual(db.execute("SELECT status FROM requests WHERE id='old'").fetchone()[0], 'completed')
+
     def test_invalid_accounting_counters_are_unknown_without_blocking_completion(self):
         steps = []
         for i, value in enumerate(('abc', '5_0', '+5', True, 1.5, -1, {}, [], 10**30)):

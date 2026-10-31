@@ -144,19 +144,19 @@ class NativeLifetimeTest(unittest.TestCase):
         foreign = SimpleNamespace(**{**vars(plan), "epoch": "other"})
         self.assertFalse(native_lifetime.settle(foreign, "completed", "foreign"))
 
-    def test_terminal_retention_is_bounded_and_never_prunes_pending(self):
-        for _ in range(native_lifetime.EVIDENCE_LIMIT + 3):
+    def test_terminal_history_survives_volume_and_age(self):
+        for _ in range(35):
             plan = self.plan(); native_lifetime.claim(plan)
             native_lifetime.settle(plan, "completed", "fixture evidence")
         pending = self.plan(); native_lifetime.claim(pending)
         with native_lifetime.transaction() as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM native_calls WHERE result IS NOT NULL").fetchone()[0],
-                             native_lifetime.EVIDENCE_LIMIT)
+                             35)
             db.execute("UPDATE native_calls SET updated=0 WHERE state='completed'")
             db.execute("UPDATE native_calls SET updated=0 WHERE id=?", (pending.correlation,))
         with native_lifetime.transaction() as db:
-            self.assertEqual(db.execute("SELECT COUNT(*) FROM native_calls").fetchone()[0], 1)
-            self.assertEqual(db.execute("SELECT state FROM native_calls").fetchone()[0], "claimed")
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM native_calls").fetchone()[0], 36)
+            self.assertEqual(db.execute("SELECT state FROM native_calls WHERE id=?", (pending.correlation,)).fetchone()[0], "claimed")
 
     def test_late_evidence_has_bounded_view_and_one_durable_wake(self):
         plan = self.plan(); native_lifetime.claim(plan)

@@ -175,6 +175,8 @@ def transaction():
         conn.execute("CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, started REAL NOT NULL, "
                      "reserved INTEGER NOT NULL, status TEXT NOT NULL, output INTEGER, "
                      "provider TEXT NOT NULL, mode TEXT NOT NULL, finish TEXT)")
+        conn.execute("CREATE INDEX IF NOT EXISTS llm_requests_started ON requests(started)")
+        conn.execute("CREATE INDEX IF NOT EXISTS llm_requests_state ON requests(status)")
         conn.execute("CREATE TABLE IF NOT EXISTS cooldowns (provider TEXT PRIMARY KEY, until REAL NOT NULL)")
         conn.execute("CREATE TABLE IF NOT EXISTS llm_call_history (sequence INTEGER PRIMARY KEY, "
                      "call_id TEXT NOT NULL, event TEXT NOT NULL, observed REAL NOT NULL, "
@@ -240,8 +242,7 @@ def admit(provider, max_output, *, now=None, mode=None, request_fingerprint="",
             provider=str(provider), mode=mode,
             instance=os.environ.get("METTACLAW_INSTANCE", "default"),
             session=os.environ.get("METTACLAW_ACTIVITY_CALL_SCOPE", "")), now=now)
-        # Expired accounting windows no longer own admission authority.
-        conn.execute("DELETE FROM requests WHERE started<? AND status NOT IN ('pending','unknown')", (now-172800,))
+        # Accounting windows filter admission; they do not erase durable receipts.
     try:
         import strategy_host
         strategy_host.provider_admitted(ticket)

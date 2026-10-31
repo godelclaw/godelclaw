@@ -226,6 +226,7 @@ class NativeLifetimeTests(policy_tests.NativeLedgerFixture):
                 for name in ('owner', 'fingerprint'):
                     db.execute('ALTER TABLE requests DROP COLUMN ' + name)
                 for name in ('activity', 'lane', 'purpose', 'notified'):
+                    db.execute('DROP INDEX IF EXISTS native_call_recent')
                     db.execute('ALTER TABLE native_calls DROP COLUMN ' + name)
                 db.commit()
         with patch.dict(os.environ, self.env, clear=True), patch.object(llm_policy.time, 'time', return_value=1000):
@@ -400,12 +401,12 @@ class NativeLifetimeTests(policy_tests.NativeLedgerFixture):
             self.assertEqual(conn.execute("SELECT soft_elapsed FROM native_calls WHERE id='a'").fetchone()[0], 1)
             self.assertEqual(conn.execute("SELECT typeof(process_start) FROM native_calls WHERE id='a'").fetchone()[0], 'text')
 
-    def test_receipt_pruning_never_retires_an_active_call(self):
+    def test_receipts_and_evidence_survive_the_old_retention_ceiling(self):
         self.seed([dict(id='terminal-%03d' % i, state='completed', request='completed',
                         updated=900 + i / 10, result='receipt') for i in range(260)] +
                   [dict(id='active', updated=0)])
         self.replay_lifetime([('recover', 1000)], {})
         with closing(sqlite3.connect(self.native_db)) as conn:
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM native_calls WHERE state='completed'").fetchone()[0], 256)
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM native_calls WHERE result IS NOT NULL").fetchone()[0], 32)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM native_calls WHERE state='completed'").fetchone()[0], 260)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM native_calls WHERE result IS NOT NULL").fetchone()[0], 260)
             self.assertEqual(conn.execute("SELECT state FROM native_calls WHERE id='active'").fetchone()[0], 'claimed')

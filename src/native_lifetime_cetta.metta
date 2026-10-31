@@ -4,13 +4,11 @@
 
 (: nl:field (-> %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (nl:field $metadata $key $default) (lp:field $metadata $key $default))
+; Retention is explicit maintenance; ordinary calls never erase old receipts.
 (: nl:prune (-> %Undefined% %Undefined%))
-(= (nl:prune $now)
-   ((sqlite:statement "UPDATE native_calls SET result=NULL WHERE state NOT IN ('claimed','submitted') AND (updated<? OR id NOT IN (SELECT id FROM native_calls WHERE result IS NOT NULL AND state NOT IN ('claimed','submitted') ORDER BY updated DESC LIMIT ?))" ((- $now 604800) 32))
-    (sqlite:statement "DELETE FROM native_calls WHERE state NOT IN ('claimed','submitted') AND (updated<? OR id NOT IN (SELECT id FROM native_calls WHERE state NOT IN ('claimed','submitted') ORDER BY updated DESC LIMIT ?))" ((- $now 2592000) 256))))
+(= (nl:prune $now) ())
 (: nl:transaction (-> %Undefined% %Undefined% %Undefined%))
-(= (nl:transaction $statements $now)
-   (lp:transaction (lp:append (nl:prune $now) $statements)))
+(= (nl:transaction $statements $now) (lp:transaction $statements))
 (: nl:ascii-id (-> %Undefined% %Undefined%))
 (= (nl:ascii-id $text)
    (if (ue:equal $text "") True
@@ -31,7 +29,7 @@
         (case (lp:python-int (lp:env "METTACLAW_ACTIVITY_INTERACTIVE_RESERVE" "1"))
           (((PythonException $class $message) (lp:python-error $class $message))
            ($reserve
-             (if (and (>= $reserve 1) (and (< $reserve $capacity) (<= $capacity 16)))
+             (if (and (>= $reserve 1) (< $reserve $capacity))
                (NativeCapacity $capacity $reserve)
                (lp:python-error ValueError "invalid activity call capacity")))))))))
 
