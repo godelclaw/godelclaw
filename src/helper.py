@@ -540,7 +540,7 @@ def _working_write(data, settle=False):
 
 
 def working_set_save(loops, sleep, lastresults, hb_clock,
-                     continuation_pending=0, banked_loops=0):
+                     continuation_pending=0, banked_loops=0, rest_await_input=0):
     """persist: snapshot the working self at a turn boundary.
 
     ``banked_loops`` is the budget a rest set aside; it belongs to the
@@ -555,6 +555,7 @@ def working_set_save(loops, sleep, lastresults, hb_clock,
             "last_heartbeat": float(hb_clock),
             "continuation_pending": bool(int(continuation_pending)),
             "banked_loops": max(0, int(banked_loops)),
+            "rest_await_input": bool(int(rest_await_input)),
             "saved_at": time.time(),
         })
         _working_write(data, settle=True)
@@ -624,7 +625,7 @@ def intent_save(why):
     waking (WOKE_FROM_REST) and survives any boundary in between."""
     try:
         data = _working_read()
-        data["intent"] = str(why)[:500]
+        data["intent"] = str(why)
         _working_write(data)
         return 1
     except Exception:

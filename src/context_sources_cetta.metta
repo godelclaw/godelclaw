@@ -10,6 +10,11 @@
 !(import! &self ./src/effect_receipts_cetta.metta)
 
 !(bind! &ctx-known (new-state ()))
+!(bind! &ctx-epoch (new-state ""))
+(= (ctx:begin-epoch $epoch)
+   (if (== $epoch (get-state &ctx-epoch)) True
+     (let* (($_ (change-state! &ctx-known ()))
+            ($_ (change-state! &ctx-epoch $epoch))) True)))
 !(bind! &ctx-blank (new-state
    (re:compile (str:join "" ("\\A" (prose:pattern space) "*\\z")))))
 !(bind! &ctx-first-space (new-state (re:compile (prose:pattern space))))
@@ -36,25 +41,27 @@
             (($key $text $revision) $item)
             ($remaining (ctx:without $id $rest)))
        (if (== $id $key) $remaining (cons-atom $item $remaining)))))
-(= (ctx:absent $id)
-   (let $_ (change-state! &ctx-known (ctx:without $id (get-state &ctx-known)))
-     (CtxObservation $id "absent" "" (ctx:revision ""))))
+(= (ctx:absent $id $epoch)
+   (let $_ (change-state! &ctx-known (ctx:without ($id $epoch) (get-state &ctx-known)))
+     (CtxObservation $id "absent" "" (ctx:revision "") $epoch)))
 ; This state transition refines ContextProjection.admit: absent -> none,
 ; unavailable -> previous, known -> some (bounded text, raw revision).
 (= (ctx:observe $id $limit $tail $outcome)
+   (ctx:observe-at $id $limit $tail $outcome (get-state &ctx-epoch)))
+(= (ctx:observe-at $id $limit $tail $outcome $epoch)
    (case $outcome
      ((("unavailable")
-       (case (ctx:previous $id (get-state &ctx-known))
-         ((Missing (CtxObservation $id "unavailable" "" ""))
-          ((Previous $text $revision) (CtxObservation $id "stale-known" $text $revision)))))
-      (("missing") (ctx:absent $id))
+       (case (ctx:previous ($id $epoch) (get-state &ctx-known))
+         ((Missing (CtxObservation $id "unavailable" "" "" $epoch))
+          ((Previous $text $revision) (CtxObservation $id "stale-known" $text $revision $epoch)))))
+      (("missing") (ctx:absent $id $epoch))
       (("value" $raw)
-       (if (ctx:blank? $raw) (ctx:absent $id)
+       (if (ctx:blank? $raw) (ctx:absent $id $epoch)
          (let* (($text (ctx:clip $raw $limit $tail))
                 ($revision (ctx:revision $raw))
                 ($_ (change-state! &ctx-known
-                      (cons-atom ($id $text $revision) (ctx:without $id (get-state &ctx-known))))))
-           (CtxObservation $id "known" $text $revision))))
+                      (cons-atom (($id $epoch) $text $revision) (ctx:without ($id $epoch) (get-state &ctx-known))))))
+           (CtxObservation $id "known" $text $revision $epoch))))
       ($other (Error ctx:observe invalid-outcome)))))
 ; Assembly: prepare + five retained loaders = six loader crossings (was eight).
 ; Add the shared Python work-state marker on successfully rendered work and
@@ -67,15 +74,15 @@
       ("work-state" (gv:load $id)) ("affect-gestalt" (gv:load $id))
       ("effect-receipts" (er:context-load))
       ($retained (ctx:decode (py-call (context_source_loaders.load $loaders $id)))))))
-(= (ctx:project $loaders $specs)
+(= (ctx:project $loaders $specs $epoch)
    (if (== $specs ()) ()
      (let* (((($key $limit $tail) $rest) (decons-atom $specs))
             ($id (str:symbol->string $key))
             ; Keep loader/str(value) conversion outside the decode catch: a
             ; conversion exception still fails the bundle, exactly as Python.
             ($outcome (ctx:load $loaders $id))
-            ($observation (ctx:observe $id $limit $tail $outcome))
-            ($others (ctx:project $loaders $rest)))
+            ($observation (ctx:observe-at $id $limit $tail $outcome $epoch))
+            ($others (ctx:project $loaders $rest $epoch)))
        (cons-atom $observation $others))))
 (= (ctx:decode $wire)
    (case $wire
@@ -89,15 +96,21 @@
    (case $answers
      ((($text) (if (== (get-type $text) String) ("value" $text) ("unavailable")))
       ($other ("unavailable")))))
+(= (ctx:evidence-role $id)
+   (case $id (("pins" "assistant-memory") ("work-state" "assistant-memory")
+     ("recent-proposals" "assistant-memory") ("conversation" "conversation-record")
+     ($other "operational-observation"))))
 (= (ctx:render-one $observation)
-   (let (CtxObservation $id $status $text $revision) $observation
+   (let (CtxObservation $id $status $text $revision $epoch) $observation
      (str:join "" ("SOURCE[" $id "] status=" $status " revision="
        (if (== $revision "") "unavailable" $revision)
+       " context-epoch=" (if (== $epoch "") "unbound" $epoch)
+       " evidence=" (ctx:evidence-role $id)
        (if (== $text "") "" (str:concat "\n" $text))))))
 (= (ctx:group $observations $group)
    (if (== $observations ()) ()
      (let* ((($item $rest) (decons-atom $observations))
-            ((CtxObservation $id $status $text $revision) $item)
+            ((CtxObservation $id $status $text $revision $epoch) $item)
             ($others (ctx:group $rest $group))
             ($belongs (if (== $group "turn")
                         (not (or (== $id "project-capabilities")
@@ -114,7 +127,8 @@
         (str:join "\n\n" (ctx:group $observations "conversation"))
         (str:join "\n\n" (ctx:group $observations "turn"))))))
 (= (ctx:build $prepared)
-   (let ($loaders $specs) $prepared (ctx:layout (ctx:project $loaders $specs))))
+   (let* ((($loaders $specs $epoch) $prepared)
+          ($_ (ctx:begin-epoch $epoch))) (ctx:layout (ctx:project $loaders $specs $epoch))))
 ; Capture errors, empty/nondeterministic answers, and unreduced helpers. None
 ; of these can silently choose context_sources.bundle on the native route.
 (= (ctx:safe $answers)

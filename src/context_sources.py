@@ -8,6 +8,8 @@ from dataclasses import dataclass
 import hashlib
 import os
 import threading
+import json
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -23,6 +25,37 @@ class Observation:
     status: str
     text: str
     revision: str
+    epoch: str = ""
+
+
+def context_epoch():
+    """Bind retained projections to this task, workspace and instructions.
+
+    The epoch identifies an observation context. It does not promote an
+    assistant's historical notes into operator instructions for that task.
+    """
+    import strategy_host
+    if not strategy_host.enabled():
+        return "unmanaged"
+    with strategy_host._lock:
+        task = strategy_host._focus or "autonomous"
+    workspace = os.path.realpath(os.environ.get("METTACLAW_PROJECT_ROOT", os.getcwd()))
+    soul = Path(os.environ.get("METTACLAW_PROMPT_PATH", "memory/soul.md"))
+    try:
+        instructions = hashlib.sha256(soul.read_bytes()).hexdigest()
+    except OSError:
+        import uuid
+        instructions = "unavailable:" + uuid.uuid4().hex
+    body = json.dumps((task, workspace, instructions), ensure_ascii=True)
+    return "sha256:" + hashlib.sha256(body.encode()).hexdigest()
+
+
+def evidence_role(source_id):
+    if source_id in ("pins", "work-state", "recent-proposals"):
+        return "assistant-memory"
+    if source_id == "conversation":
+        return "conversation-record"
+    return "operational-observation"
 
 
 SOURCE_SPECS = (
@@ -72,6 +105,7 @@ class Projector:
     def __init__(self):
         self._known = {}
         self._lock = threading.RLock()
+        self._epoch = ""
 
     @staticmethod
     def _revision(value):
@@ -79,34 +113,40 @@ class Projector:
             str(value).encode("utf-8", "replace")
         ).hexdigest()
 
-    def observe(self, spec, loader):
+    def observe(self, spec, loader, epoch=None):
+        epoch = self._epoch if epoch is None else epoch
+        key = (epoch, spec.source_id)
         try:
             value = loader()
         except Exception:
             with self._lock:
-                previous = self._known.get(spec.source_id)
+                previous = self._known.get(key)
             if previous is None:
-                return Observation(spec.source_id, "unavailable", "", "")
+                return Observation(spec.source_id, "unavailable", "", "", epoch)
             return Observation(
                 spec.source_id, "stale-known", previous.text,
-                previous.revision)
+                previous.revision, epoch)
 
         if value is None or not str(value).strip():
             with self._lock:
-                self._known.pop(spec.source_id, None)
+                self._known.pop(key, None)
             return Observation(
-                spec.source_id, "absent", "", self._revision(""))
+                spec.source_id, "absent", "", self._revision(""), epoch)
 
         raw = str(value)
         text = _clip(raw, spec)
         observed = Observation(
-            spec.source_id, "known", text, self._revision(raw))
+            spec.source_id, "known", text, self._revision(raw), epoch)
         with self._lock:
-            self._known[spec.source_id] = observed
+            self._known[key] = observed
         return observed
 
-    def project(self, sources):
-        return tuple(self.observe(spec, loader) for spec, loader in sources)
+    def project(self, sources, epoch=""):
+        with self._lock:
+            if self._epoch != epoch:
+                self._known.clear()
+                self._epoch = epoch
+            return tuple(self.observe(spec, loader, epoch) for spec, loader in sources)
 
     @staticmethod
     def render_observations(observations):
@@ -114,6 +154,8 @@ class Projector:
         for item in observations:
             header = "SOURCE[%s] status=%s revision=%s" % (
                 item.source_id, item.status, item.revision or "unavailable")
+            header += " context-epoch=%s evidence=%s" % (
+                item.epoch or "unbound", evidence_role(item.source_id))
             blocks.append(header + ("\n" + item.text if item.text else ""))
         return "\n\n".join(blocks)
 
@@ -221,7 +263,7 @@ def bundle(conversation=None, views=None):
     views are (source_id, text) pairs of sources already computed by the
     caller; any source not among them is loaded here."""
     try:
-        observations = _PROJECTOR.project(_loaders(conversation, views))
+        observations = _PROJECTOR.project(_loaders(conversation, views), context_epoch())
         projection = layout(observations)
         return projection
     except Exception:

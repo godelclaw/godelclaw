@@ -17,7 +17,7 @@ def prepare(views, *conversation):
     sources = context_sources._loaders(*conversation, views=views)
     return (Loaders(sources), tuple(
         (spec.source_id, spec.max_chars, spec.keep_tail)
-        for spec, _ in sources))
+        for spec, _ in sources), context_sources.context_epoch())
 
 
 def load(loaders, source_id):

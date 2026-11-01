@@ -96,11 +96,11 @@
    (py-call (helper.command_batch_limit
      (coordinate-get-or command-batch-limit 5 (policy-record $selected)))))
 
-;; A rest in flight is exactly a banked budget waiting to be handed back,
-;; so the periphery already answers "is renewal suspended?" and no separate
-;; persisted flag is needed. The rest ends itself; nothing has to clear it.
+;; Waiting for activity is explicit even with no budget left to bank.
+;; Timed naps still use the banked budget and their existing continuation.
 (= (loop-resting $periphery)
-   (if (> (coordinate-get-or banked-loops 0 $periphery) 0) 1 0))
+   (if (or (> (coordinate-get-or banked-loops 0 $periphery) 0)
+           (== (coordinate-get-or rest-await-input 0 $periphery) 1)) 1 0))
 
 (= (policy-wait-seconds $selected $loops $requested $paused)
    (if (and (and (policy-autonomous-renewal $selected) (<= $loops 0))

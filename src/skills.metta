@@ -20,7 +20,8 @@
     "- Add/update one goal (liberal format, see (help \"goal-write\")): (goal-write (goal name Area sti:0.8 lti:0.3 vibes:(a b) blocked-by:none last-verified:never note:why it matters))"
     "- Retire a goal with a reason, or close it with reason solved once last-verified is set; it goes to the compost log and goal-write can bring it back: (goal-drop \"name\" \"reason\")"
     "- Rest now, ending this burst until the next human message: (rest)"
-    "- Rest now and poll more slowly while idle: (rest seconds)"
+    "- Wait for new activity without spending inference on idle clock ticks: (rest)"
+    "- Rest for a chosen interval: (rest seconds)"
     "- Rest with a stated intention shown at your next waking: (rest seconds \"why\")"
     "- Rest, then run one quoted command without another model call: (rest seconds (quote (command ...)))"
     "- Finish this fast burst without suspending autonomous renewal: (nop)"
@@ -126,6 +127,7 @@
 ;; breath. The loop does the banking because only it can see the periphery.
 (= (rest)
    (progn (py-call (helper.rest_cancel))
+          (loop-directive-set rest-await-input 1)
           (loop-directive-set rest-request 1)
           (loop-directive-set pending-continuation (quote no-continuation))
           (RESTING budget-banked)))
@@ -135,6 +137,7 @@
    ;; message or /wake may deliberately end it; other activity queues.
    (let $n (max 1 (py-call (int $seconds)))
         (progn (py-call (helper.rest_cancel))
+               (loop-directive-set rest-await-input 0)
                (loop-directive-set rest-request 1)
                (loop-directive-set sleep-interval $n)
                (loop-directive-set pending-continuation
@@ -147,6 +150,7 @@
    ;; unwraps it after the timer expires.
    (let $n (max 1 (py-call (int $seconds)))
         (progn (py-call (helper.rest_schedule $n (quote $continuation)))
+               (loop-directive-set rest-await-input 0)
                (loop-directive-set rest-request 1)
                (loop-directive-set sleep-interval $n)
                (loop-directive-set pending-continuation
@@ -160,6 +164,7 @@
    ;; text is context for the next waking rather than executable data.
    (let $n (max 1 (py-call (int $seconds)))
         (progn (py-call (helper.rest_cancel))
+               (loop-directive-set rest-await-input 0)
                (loop-directive-set rest-request 1)
                (loop-directive-set sleep-interval $n)
                (loop-directive-set pending-continuation
