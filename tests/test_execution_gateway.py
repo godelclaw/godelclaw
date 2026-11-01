@@ -22,6 +22,61 @@ from execution_gateway import Client, GatewayError  # noqa: E402
 from execution_gateway.store import TERMINAL  # noqa: E402
 
 
+def resolve_pinned_client_cetta() -> tuple[Path | None, dict | None]:
+    """Resolve the repository's pinned client CeTTa binary without relying on hidden shell state."""
+    explicit = os.environ.get("CETTA_BIN")
+    if explicit:
+        path = Path(explicit).expanduser()
+        if path.is_file() and os.access(path, os.X_OK):
+            resolved = path.resolve()
+            manifest_path = resolved.parent / "build-manifest.json"
+            revision = None
+            if manifest_path.is_file():
+                try:
+                    revision = json.loads(manifest_path.read_text()).get("revision")
+                except (OSError, ValueError):
+                    revision = None
+            return resolved, {
+                "path": str(resolved),
+                "revision": revision,
+                "sha256": hashlib.sha256(resolved.read_bytes()).hexdigest(),
+                "source": "CETTA_BIN",
+            }
+        return None, None
+
+    expected_ref = (ROOT / "CETTA_REF").read_text().strip().lower()
+    short_ref = expected_ref[:8]
+    candidates = (
+        ROOT / ".runtime/cetta/cetta",
+        Path.home() / f".local/lib/pettaclaw/cetta-ours-{short_ref}/cetta",
+        Path.home() / f".local/lib/pettaclaw/cetta-{short_ref}/cetta",
+    )
+    for candidate in candidates:
+        if not candidate.is_file() or not os.access(candidate, os.X_OK):
+            continue
+        manifest_path = candidate.parent / "build-manifest.json"
+        if not manifest_path.is_file():
+            continue
+        try:
+            manifest = json.loads(manifest_path.read_text())
+        except (OSError, ValueError):
+            continue
+        if str(manifest.get("revision", "")).strip().lower() != expected_ref:
+            continue
+        expected_sha = (manifest.get("files") or {}).get("cetta")
+        resolved = candidate.resolve()
+        actual_sha = hashlib.sha256(resolved.read_bytes()).hexdigest()
+        if expected_sha and actual_sha != expected_sha:
+            continue
+        return resolved, {
+            "path": str(resolved),
+            "revision": expected_ref,
+            "sha256": actual_sha,
+            "source": "CETTA_REF",
+        }
+    return None, None
+
+
 class GatewayTest(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="gateway-")
@@ -324,16 +379,17 @@ class GatewayTest(unittest.TestCase):
         return env
 
     def test_real_petta_and_cetta_clients_continue_while_tools_run(self):
-        cetta = Path(os.environ.get("CETTA_BIN", Path.home() / "repos/CeTTa-runtime/cetta"))
+        cetta, _ = resolve_pinned_client_cetta()
         petta = Path(os.environ.get("PETTA_ROOT", Path.home() / "repos/PeTTa"))
         exercised = []
         for engine in ("petta", "cetta"):
-            if not ((petta / "run.sh").is_file() if engine == "petta" else cetta.is_file()):
+            if not ((petta / "run.sh").is_file() if engine == "petta" else (cetta is not None and cetta.is_file())):
                 continue
             agent = "probe-" + engine
             self.start(agent)
             env = self.engine_environment(agent, engine)
-            env["CETTA_BIN"] = str(cetta.resolve())
+            if cetta is not None:
+                env["CETTA_BIN"] = str(cetta)
             result = subprocess.run(["./run.sh", "tests/fixtures/gateway_bridge_probe.metta"],
                                     cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
                                     capture_output=True, text=True, timeout=20)
@@ -351,12 +407,12 @@ class GatewayTest(unittest.TestCase):
             self.skipTest("native MeTTa engines are unavailable")
 
     def test_native_evaluator_failure_is_an_ordinary_gateway_receipt(self):
-        cetta = Path(os.environ.get("CETTA_BIN", Path.home() / "repos/CeTTa-runtime/cetta"))
-        if not cetta.is_file():
-            self.skipTest("CeTTa executable is unavailable")
+        cetta, _ = resolve_pinned_client_cetta()
+        if cetta is None or not cetta.is_file():
+            self.skipTest("pinned CeTTa executable is unavailable")
         python_env = Path(os.environ.get("PETTA_PY_ENV", Path.home() / "miniforge3/envs/petta"))
         client = self.start("native", {"native-fault": {
-            "command": [str(cetta.resolve()), "--lang", "petta",
+            "command": [str(cetta), "--lang", "petta",
                         "tests/fixtures/gateway_native_fault.metta"],
             "cwd": str(ROOT), "effect": "read", "environment": {
                 "PYTHONHOME": str(python_env),
@@ -373,11 +429,11 @@ class GatewayTest(unittest.TestCase):
         self.assertEqual(self.wait("after-native-error", "native")["state"], "succeeded")
 
     def test_named_gateway_skills_on_both_native_engines(self):
-        cetta = Path(os.environ.get("CETTA_BIN", Path.home() / "repos/CeTTa-runtime/cetta"))
+        cetta, _ = resolve_pinned_client_cetta()
         petta = Path(os.environ.get("PETTA_ROOT", Path.home() / "repos/PeTTa"))
         exercised = []
         for engine in ("petta", "cetta"):
-            if not ((petta / "run.sh").is_file() if engine == "petta" else cetta.is_file()):
+            if not ((petta / "run.sh").is_file() if engine == "petta" else (cetta is not None and cetta.is_file())):
                 continue
             agent = "skills-" + engine
             self.start(agent, {"read-lines": {
@@ -385,7 +441,8 @@ class GatewayTest(unittest.TestCase):
                 "cwd": str(ROOT), "effect": "read", "result_format": "json",
                 "environment": {"PYTHONPATH": str(ROOT / "src"), "METTACLAW_GATEWAY_AGENT": agent}}})
             env = self.engine_environment(agent, engine)
-            env["CETTA_BIN"] = str(cetta.resolve())
+            if cetta is not None:
+                env["CETTA_BIN"] = str(cetta)
             result = subprocess.run(["./run.sh", "tests/fixtures/gateway_skills_probe.metta"],
                                     cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
                                     capture_output=True, text=True, timeout=20)

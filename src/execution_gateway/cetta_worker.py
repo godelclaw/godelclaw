@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
 import math
 import os
 from pathlib import Path
+import re
 import select
 import struct
 import subprocess
@@ -232,35 +235,161 @@ class WorkerEvaluationError(RuntimeError):
         super().__init__("worker evaluation error: " + repr(detail))
 
 
+_VALIDATED_WORKERS_LOCK = threading.Lock()
+_VALIDATED_WORKERS: dict[tuple[str, int, int, int, int, str], dict] = {}
+
+
 def gateway_cetta_ref() -> str:
-    return (HERE / "GATEWAY_CETTA_REF").read_text().strip()
+    ref = (HERE / "GATEWAY_CETTA_REF").read_text().strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", ref):
+        raise WorkerUnavailable(f"invalid GATEWAY_CETTA_REF: {ref!r}")
+    return ref
+
+
+def validate_gateway_worker_bundle(
+    worker_path: str | Path,
+    *,
+    expected_ref: str | None = None,
+) -> dict:
+    """Verify that worker_path belongs to a valid durable CeTTa bundle at expected_ref with matching SHA-256."""
+    required_ref = (expected_ref or gateway_cetta_ref()).lower()
+    candidate = Path(worker_path).expanduser()
+    try:
+        resolved = candidate.resolve(strict=True)
+    except OSError as err:
+        raise WorkerUnavailable(f"gateway worker binary does not exist: {candidate}") from err
+
+    if not resolved.is_file() or not os.access(resolved, os.X_OK):
+        raise WorkerUnavailable(f"gateway worker binary is not executable: {resolved}")
+
+    proc_scope = resolved.parent / f"{resolved.name}.proc-scope"
+    if not proc_scope.is_file() or not os.access(proc_scope, os.X_OK):
+        raise WorkerUnavailable(f"gateway worker bundle missing executable companion {proc_scope}")
+
+    manifest_path = resolved.parent / "build-manifest.json"
+    if not manifest_path.is_file():
+        raise WorkerUnavailable(
+            f"gateway worker bundle missing build-manifest.json: {manifest_path}"
+        )
+
+    try:
+        st = resolved.stat()
+        pst = proc_scope.stat()
+        mst = manifest_path.stat()
+    except OSError as err:
+        raise WorkerUnavailable(f"unable to stat gateway worker bundle: {err}") from err
+
+    cache_key = (
+        str(resolved),
+        st.st_dev,
+        st.st_ino,
+        st.st_mtime_ns,
+        st.st_size,
+        f"{pst.st_mtime_ns}:{pst.st_size}:{mst.st_mtime_ns}:{mst.st_size}:{required_ref}",
+    )
+    with _VALIDATED_WORKERS_LOCK:
+        cached = _VALIDATED_WORKERS.get(cache_key)
+    if cached is not None:
+        return dict(cached)
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as err:
+        raise WorkerUnavailable(f"corrupt build-manifest.json at {manifest_path}: {err}") from err
+
+    if not isinstance(manifest, dict) or manifest.get("schema") != 1:
+        raise WorkerUnavailable(f"unsupported build-manifest.json schema at {manifest_path}")
+
+    bundle_rev = str(manifest.get("revision", "")).strip().lower()
+    if bundle_rev != required_ref:
+        raise WorkerUnavailable(
+            f"gateway worker revision mismatch at {resolved}: "
+            f"expected {required_ref}, manifest reports {bundle_rev!r}"
+        )
+
+    features = manifest.get("features")
+    if not isinstance(features, list) or "ENABLE_DURABLE=1" not in features:
+        raise WorkerUnavailable(
+            f"gateway worker bundle lacks ENABLE_DURABLE=1 in {manifest_path}"
+        )
+
+    files_map = manifest.get("files")
+    if not isinstance(files_map, dict):
+        raise WorkerUnavailable(f"build-manifest.json missing files map in {manifest_path}")
+
+    actual_shas: dict[str, str] = {}
+    for target in (resolved, proc_scope):
+        expected_sha = files_map.get(target.name)
+        if not isinstance(expected_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_sha):
+            raise WorkerUnavailable(
+                f"build-manifest.json missing SHA-256 entry for {target.name} in {manifest_path}"
+            )
+        actual_sha = hashlib.sha256(target.read_bytes()).hexdigest()
+        if actual_sha != expected_sha:
+            raise WorkerUnavailable(
+                f"gateway worker SHA-256 mismatch for {target}: "
+                f"expected {expected_sha}, got {actual_sha}"
+            )
+        actual_shas[target.name] = actual_sha
+
+    info = {
+        "path": resolved,
+        "bundle": resolved.parent,
+        "manifest": manifest_path,
+        "revision": required_ref,
+        "sha256": actual_shas[resolved.name],
+        "proc_scope_sha256": actual_shas[proc_scope.name],
+    }
+    with _VALIDATED_WORKERS_LOCK:
+        if len(_VALIDATED_WORKERS) >= 64:
+            _VALIDATED_WORKERS.clear()
+        _VALIDATED_WORKERS[cache_key] = info
+    return dict(info)
+
+
+def describe_gateway_worker(explicit: str | Path | None = None) -> dict:
+    """Resolve and cryptographically validate the pinned gateway cetta-value-worker bundle.
+
+    Generic agent-runtime variables (CETTA_BIN, CETTA_VALUE_WORKER_BIN, METTACLAW_MODE_CETTA_BIN)
+    are intentionally ignored so global agent runtime settings can never hijack the queue store.
+    Only an explicit `worker_binary` argument or `METTACLAW_GATEWAY_WORKER_BIN` may override
+    the pinned gateway bundle, and every selection must pass manifest revision + SHA-256 checks.
+    """
+    expected_ref = gateway_cetta_ref()
+    if explicit is not None:
+        return validate_gateway_worker_bundle(explicit, expected_ref=expected_ref)
+
+    gateway_override = os.environ.get("METTACLAW_GATEWAY_WORKER_BIN")
+    if gateway_override:
+        return validate_gateway_worker_bundle(gateway_override, expected_ref=expected_ref)
+
+    short_ref = expected_ref[:8]
+    runtime_root = HERE.parent.parent
+    candidates = [
+        runtime_root / f".runtime/cetta-gateway-{short_ref}/cetta-value-worker",
+        runtime_root / ".runtime/cetta-gateway/cetta-value-worker",
+        Path.home() / f".local/lib/pettaclaw/cetta-gateway-{short_ref}/cetta-value-worker",
+        Path.home() / f".local/lib/pettaclaw/cetta-ours-{short_ref}/cetta-value-worker",
+    ]
+    errors: list[str] = []
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        try:
+            return validate_gateway_worker_bundle(candidate, expected_ref=expected_ref)
+        except WorkerUnavailable as err:
+            errors.append(str(err))
+
+    detail = f"; rejections: {'; '.join(errors)}" if errors else ""
+    searched = ", ".join(str(p) for p in candidates)
+    raise WorkerUnavailable(
+        f"verified gateway cetta-value-worker ({short_ref}) not found; checked: {searched}{detail}"
+    )
 
 
 def resolve_gateway_worker(explicit: str | Path | None = None) -> Path:
-    """Locate the gateway-local frozen cetta-value-worker binary without coupling to global CETTA_BIN."""
-    candidates: list[Path] = []
-    if explicit:
-        candidates.append(Path(explicit).expanduser())
-    for env_key in ("METTACLAW_GATEWAY_WORKER_BIN", "CETTA_VALUE_WORKER_BIN"):
-        env_val = os.environ.get(env_key)
-        if env_val:
-            candidates.append(Path(env_val).expanduser())
-
-    short_ref = gateway_cetta_ref()[:8]
-    runtime_root = HERE.parent.parent
-    candidates.extend([
-        runtime_root / ".runtime/cetta/cetta-value-worker",
-        runtime_root / "cetta/cetta-value-worker",
-        Path.home() / f".local/lib/pettaclaw/cetta-gateway-{short_ref}/cetta-value-worker",
-        Path.home() / f".local/lib/pettaclaw/cetta-ours-{short_ref}/cetta-value-worker",
-        Path.home() / "repos/CeTTa-ours/runtime/cetta-value-worker",
-    ])
-
-    for candidate in candidates:
-        if candidate.is_file() and os.access(candidate, os.X_OK):
-            return candidate.resolve()
-    searched = ", ".join(str(p) for p in candidates)
-    raise WorkerUnavailable(f"gateway cetta-value-worker ({short_ref}) not found; checked: {searched}")
+    """Locate and validate the gateway-local frozen cetta-value-worker executable."""
+    return describe_gateway_worker(explicit)["path"]
 
 
 class CettaValueWorker:

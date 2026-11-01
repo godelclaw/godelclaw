@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -106,12 +108,112 @@ def _decode_detail(detail) -> dict:
     raise StoreUnavailable(f"malformed receipt detail in queue record: {detail!r}")
 
 
+_ACTIVE_STORE_LOCKS_GUARD = threading.Lock()
+_ACTIVE_STORE_LOCKS: set[str] = set()
+
+
 def _fsync_directory(directory: Path):
     fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
     try:
         os.fsync(fd)
     finally:
         os.close(fd)
+
+
+def _canonical_store_key(store_dir: Path) -> tuple[Path, str]:
+    parent = store_dir.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    resolved_parent = parent.resolve(strict=True)
+    return resolved_parent, str(resolved_parent / store_dir.name)
+
+
+def _owner_lock_path(store_dir: Path) -> Path:
+    resolved_parent, _ = _canonical_store_key(store_dir)
+    return resolved_parent / f".{store_dir.name}.owner.lock"
+
+
+def _activation_marker_path(store_dir: Path) -> Path:
+    resolved_parent, _ = _canonical_store_key(store_dir)
+    return resolved_parent / f".{store_dir.name}.activated.json"
+
+
+def _acquire_store_lock(store_dir: Path) -> tuple[str, int, Path]:
+    resolved_parent, key = _canonical_store_key(store_dir)
+    lock_path = resolved_parent / f".{store_dir.name}.owner.lock"
+    with _ACTIVE_STORE_LOCKS_GUARD:
+        if key in _ACTIVE_STORE_LOCKS:
+            raise StoreUnavailable(
+                f"queue store {store_dir} already has an active owner in this process"
+            )
+        if lock_path.is_symlink():
+            raise StoreUnavailable(f"owner lock file must not be a symlink: {lock_path}")
+        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as err:
+            os.close(fd)
+            raise StoreUnavailable(
+                f"queue store {store_dir} is locked by another active owner"
+            ) from err
+        _ACTIVE_STORE_LOCKS.add(key)
+        return (key, fd, lock_path)
+
+
+def _release_store_lock(handle: tuple[str, int, Path] | None):
+    if handle is None:
+        return
+    key, fd, _ = handle
+    with _ACTIVE_STORE_LOCKS_GUARD:
+        _ACTIVE_STORE_LOCKS.discard(key)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        finally:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+def _read_activation_marker(marker_path: Path) -> dict:
+    if marker_path.is_symlink():
+        raise StoreUnavailable(f"activation marker must not be a symlink: {marker_path}")
+    try:
+        data = json.loads(marker_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as err:
+        raise StoreUnavailable(f"corrupt store activation marker {marker_path}: {err}") from err
+    if (
+        not isinstance(data, dict)
+        or data.get("schema") != 1
+        or not isinstance(data.get("agent"), str)
+        or not data["agent"]
+    ):
+        raise StoreUnavailable(f"invalid store activation marker format: {marker_path}")
+    return data
+
+
+def _write_activation_marker(marker_path: Path, payload: dict):
+    if marker_path.is_symlink():
+        raise StoreUnavailable(f"activation marker must not be a symlink: {marker_path}")
+    parent = marker_path.parent
+    tmp_path = parent / f".{marker_path.name}.tmp-{uuid.uuid4().hex}"
+    encoded = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    fd = os.open(tmp_path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        written = 0
+        while written < len(encoded):
+            written += os.write(fd, encoded[written:])
+        os.fchmod(fd, 0o600)
+        os.fsync(fd)
+    except BaseException:
+        os.close(fd)
+        tmp_path.unlink(missing_ok=True)
+        raise
+    os.close(fd)
+    os.replace(tmp_path, marker_path)
+    _fsync_directory(parent)
 
 
 def _raise_refused(reason):
@@ -143,7 +245,8 @@ class Store:
         compact_ratio: float = 2.5,
         low_headroom_bytes: int = 64 * 1024 * 1024,
         low_headroom_ratio: float = 1.5,
-        _auto_import: bool = True,
+        _write_marker_on_open: bool = True,
+        _prelocked_owner: tuple[str, int, Path] | None = None,
     ):
         self.path = Path(path)
         self.agent = agent
@@ -165,41 +268,76 @@ class Store:
         self._cancel_cache: dict[str, bool] = {}
         self._opened_generation: int | None = None
         self._next_check_physical: int = self.min_compact_bytes
+        self._write_marker_on_open = bool(_write_marker_on_open)
+        self._owner_lock: tuple[str, int, Path] | None = None
+        self._worker: CettaValueWorker | None = None
 
         if self.path.exists() and not self.path.is_dir():
+            if _prelocked_owner is not None:
+                _release_store_lock(_prelocked_owner)
             raise ValueError(
                 f"queue path {self.path} is a file, not a CeTTa store directory; "
                 "open queue.db or use Store.import_sqlite()"
             )
 
-        if _auto_import and not self.path.exists() and self.path.name == "queue.db":
-            legacy_sqlite = self.path.parent / "queue.sqlite3"
-            if legacy_sqlite.is_file():
-                self.import_sqlite(
-                    legacy_sqlite,
-                    self.path,
-                    agent=self.agent,
-                    worker_binary=self._worker_binary,
-                    maximum_bytes=self._maximum_bytes,
-                )
-
-        if not self.path.exists():
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.mkdir(mode=0o700)
-        os.chmod(self.path, 0o700)
-
-        self._worker = CettaValueWorker(
-            self._worker_binary,
-            self._module,
-            self._entry,
-            language="petta",
-            maximum_bytes=self._maximum_bytes,
+        self._owner_lock = (
+            _prelocked_owner if _prelocked_owner is not None else _acquire_store_lock(self.path)
         )
         try:
+            self._marker_path = _activation_marker_path(self.path)
+            marker_present = self._marker_path.exists() or self._marker_path.is_symlink()
+            root_csl = self.path / "root.csl"
+
+            if marker_present:
+                marker = _read_activation_marker(self._marker_path)
+                if marker["agent"] != self.agent:
+                    raise Conflict("queue belongs to another agent")
+                if not self.path.is_dir() or not root_csl.is_file():
+                    raise StoreUnavailable(
+                        f"activated CeTTa queue store is missing or incomplete at {self.path}; "
+                        "refusing automatic SQLite re-import or empty reinitialization"
+                    )
+                self._require_existing = True
+            else:
+                legacy_sqlite = (
+                    self.path.parent / "queue.sqlite3"
+                    if self.path.name == "queue.db"
+                    else None
+                )
+                if (
+                    legacy_sqlite is not None
+                    and (legacy_sqlite.exists() or legacy_sqlite.is_symlink())
+                    and not root_csl.is_file()
+                ):
+                    raise StoreUnavailable(
+                        f"legacy SQLite queue {legacy_sqlite} exists without an activated CeTTa "
+                        f"store at {self.path}; run explicit execution_gateway.migration import"
+                    )
+                if root_csl.is_file():
+                    self._require_existing = True
+                elif self.path.exists() and any(self.path.iterdir()):
+                    raise StoreUnavailable(
+                        f"CeTTa store directory {self.path} is non-empty but missing root.csl"
+                    )
+                else:
+                    self.path.mkdir(mode=0o700, exist_ok=True)
+                    self._require_existing = False
+
+            os.chmod(self.path, 0o700)
+            self._worker = CettaValueWorker(
+                self._worker_binary,
+                self._module,
+                self._entry,
+                language="petta",
+                maximum_bytes=self._maximum_bytes,
+            )
             with self._lock:
                 self._ensure_open()
         except BaseException:
-            self._worker.close()
+            if self._worker is not None:
+                self._worker.close()
+            owner_lock, self._owner_lock = self._owner_lock, None
+            _release_store_lock(owner_lock)
             raise
 
     def __enter__(self):
@@ -211,16 +349,19 @@ class Store:
     def close(self):
         with self._lock:
             self._clear_cancel_cache()
-            if getattr(self, "_worker", None) is None or self._worker.closed:
-                return
             try:
-                if self._worker.process is not None and self._worker.process.poll() is None:
-                    self._worker.call(E("Close"))
-            except Exception:
-                pass
+                if self._worker is not None and not self._worker.closed:
+                    try:
+                        if self._worker.process is not None and self._worker.process.poll() is None:
+                            self._worker.call(E("Close"))
+                    except Exception:
+                        pass
+                    finally:
+                        self._opened_generation = None
+                        self._worker.close()
             finally:
-                self._opened_generation = None
-                self._worker.close()
+                owner_lock, self._owner_lock = self._owner_lock, None
+                _release_store_lock(owner_lock)
 
     def _clear_cancel_cache(self):
         with self._cancel_lock:
@@ -235,15 +376,29 @@ class Store:
             self._cancel_cache[request_id] = bool(flag)
 
     def _ensure_open(self):
+        if self._owner_lock is None or self._worker is None:
+            raise StoreUnavailable("CeTTa queue store is closed")
         gen = self._worker.ensure_alive()
         if self._opened_generation == gen:
             return
         self._clear_cancel_cache()
-        answer = self._worker.call(E("Open", str(self.path), self.agent))
+        verb = "OpenExisting" if self._require_existing else "Open"
+        answer = self._worker.call(E(verb, str(self.path), self.agent))
         if isinstance(answer, tuple) and answer and answer[0] == S("GatewayRefusedV1"):
             _raise_refused(answer[1])
         if answer != S("GatewayReadyV1"):
-            raise StoreUnavailable(f"failed to open CeTTa queue store: {answer!r}")
+            raise StoreUnavailable(f"failed to open CeTTa queue store ({verb}): {answer!r}")
+        self._require_existing = True
+        if self._write_marker_on_open and not self._marker_path.exists():
+            _write_activation_marker(
+                self._marker_path,
+                {
+                    "schema": 1,
+                    "agent": self.agent,
+                    "mode": "initialized",
+                    "activated_at": time.time(),
+                },
+            )
         self._opened_generation = gen
 
     def _call(self, expr, *, operation_id: str | None = None):
@@ -268,6 +423,9 @@ class Store:
         if isinstance(answer, tuple) and answer:
             if answer[0] == S("GatewayRefusedV1"):
                 _raise_refused(answer[1])
+            if answer[0] == S("GatewayEmptyReadOnlyV1"):
+                self.last_envelope = answer
+                return S("GatewayEmptyV1"), False
             if answer[0] in (S("GatewayCommittedV1"), S("GatewayReplayedV1")):
                 replayed = answer[0] == S("GatewayReplayedV1")
                 if replayed and not allow_replay:
@@ -561,27 +719,39 @@ class Store:
         worker_binary: str | Path | None = None,
         maximum_bytes: int = MAX_BYTES,
     ) -> dict:
-        """Snapshot SQLite via sqlite3.backup (leaving source untouched), import to CeTTa, and verify 100% parity."""
+        """Snapshot SQLite via sqlite3.backup (leaving source untouched), import to CeTTa, verify 100% parity, and publish durable activation marker."""
         source = Path(sqlite_path).resolve(strict=True)
+        resolved_worker = resolve_gateway_worker(worker_binary)
         target = Path(store_dir)
-        if target.exists():
-            raise ValueError(f"destination store directory already exists: {target}")
         target.parent.mkdir(parents=True, exist_ok=True)
 
+        target_lock = _acquire_store_lock(target)
         temp_backup_dir = None
-        if backup_path is not None:
-            snap_file = Path(backup_path)
-            snapshot_sqlite(source, snap_file)
-        else:
-            temp_backup_dir = tempfile.TemporaryDirectory(
-                prefix=".sqlite-backup-", dir=target.parent
-            )
-            os.chmod(temp_backup_dir.name, 0o700)
-            snap_file = Path(temp_backup_dir.name) / "snapshot.sqlite3"
-            snapshot_sqlite(source, snap_file)
-
         staging_dir = target.parent / f".{target.name}.importing-{uuid.uuid4().hex}"
+        staging_lock_file = _owner_lock_path(staging_dir)
         try:
+            target_marker = _activation_marker_path(target)
+            if target_marker.exists() or target_marker.is_symlink():
+                raise StoreUnavailable(
+                    f"CeTTa store {target} was already activated ({target_marker}); "
+                    "refusing to re-import stale SQLite"
+                )
+            if target.exists():
+                raise ValueError(f"destination store directory already exists: {target}")
+
+            if backup_path is not None:
+                snap_file = Path(backup_path)
+                snapshot_sqlite(source, snap_file)
+            else:
+                temp_backup_dir = tempfile.TemporaryDirectory(
+                    prefix=".sqlite-backup-", dir=target.parent
+                )
+                os.chmod(temp_backup_dir.name, 0o700)
+                snap_file = Path(temp_backup_dir.name) / "snapshot.sqlite3"
+                snapshot_sqlite(source, snap_file)
+
+            snap_sha256 = hashlib.sha256(snap_file.read_bytes()).hexdigest()
+
             conn = sqlite3.connect(f"file:{snap_file}?mode=ro", uri=True, timeout=5)
             try:
                 conn.row_factory = sqlite3.Row
@@ -694,9 +864,9 @@ class Store:
             staging = cls(
                 staging_dir,
                 agent,
-                worker_binary=worker_binary,
+                worker_binary=resolved_worker,
                 maximum_bytes=maximum_bytes,
-                _auto_import=False,
+                _write_marker_on_open=False,
             )
             try:
                 chunk_size = 128
@@ -733,26 +903,43 @@ class Store:
                         raise StoreUnavailable(f"post-import parity mismatch on job {jid!r}")
             finally:
                 staging.close()
+                staging_lock_file.unlink(missing_ok=True)
 
             _fsync_directory(staging_dir)
             os.rename(staging_dir, target)
-            _fsync_directory(target.parent)
+            _write_activation_marker(
+                target_marker,
+                {
+                    "schema": 1,
+                    "agent": agent,
+                    "mode": "imported-sqlite",
+                    "source_sqlite": str(source),
+                    "snapshot_sha256": snap_sha256,
+                    "imported_jobs": len(job_rows),
+                    "imported_receipts": len(receipt_rows),
+                    "imported_max_sequence": max_seq,
+                    "activated_at": time.time(),
+                },
+            )
             return {
                 "agent": agent,
                 "source_sqlite": str(source),
                 "backup_sqlite": str(snap_file) if backup_path is not None else None,
                 "store_dir": str(target),
+                "activation_marker": str(target_marker),
                 "jobs": len(job_rows),
                 "receipts": len(receipt_rows),
                 "max_sequence": max_seq,
             }
         except BaseException:
+            staging_lock_file.unlink(missing_ok=True)
             if staging_dir.exists():
                 shutil.rmtree(staging_dir, ignore_errors=True)
             raise
         finally:
             if temp_backup_dir is not None:
                 temp_backup_dir.cleanup()
+            _release_store_lock(target_lock)
 
     @classmethod
     def export_sqlite(
@@ -766,29 +953,42 @@ class Store:
     ) -> dict:
         """Export a consistent CeTTa store snapshot back into a full SQLite gateway database and verify parity."""
         source_dir = Path(store_dir).resolve(strict=True)
+        if not source_dir.is_dir() or not (source_dir / "root.csl").is_file():
+            raise StoreUnavailable(f"CeTTa store directory is missing or incomplete: {source_dir}")
         target_sql = Path(sqlite_path)
         target_sql.parent.mkdir(parents=True, exist_ok=True)
         resolved_worker = resolve_gateway_worker(worker_binary)
 
-        if agent is None:
-            probe_worker = CettaValueWorker(
-                resolved_worker,
-                DEFAULT_MODULE,
-                DEFAULT_ENTRY,
-                language="petta",
-                maximum_bytes=maximum_bytes,
-            )
-            try:
-                probed = probe_worker.call(E("ReadExistingOwner", str(source_dir)))
-            finally:
-                probe_worker.close()
-            if (
-                not isinstance(probed, tuple)
-                or len(probed) != 3
-                or probed[0] != S("SpaceProbeFoundV1")
-            ):
-                raise StoreUnavailable(f"unable to read store owner from {source_dir}: {probed!r}")
-            agent = str(probed[1])
+        source_lock = _acquire_store_lock(source_dir)
+        try:
+            if agent is None:
+                marker_path = _activation_marker_path(source_dir)
+                if marker_path.is_file() and not marker_path.is_symlink():
+                    agent = _read_activation_marker(marker_path)["agent"]
+                else:
+                    probe_worker = CettaValueWorker(
+                        resolved_worker,
+                        DEFAULT_MODULE,
+                        DEFAULT_ENTRY,
+                        language="petta",
+                        maximum_bytes=maximum_bytes,
+                    )
+                    try:
+                        probed = probe_worker.call(E("ReadExistingOwner", str(source_dir)))
+                    finally:
+                        probe_worker.close()
+                    if (
+                        not isinstance(probed, tuple)
+                        or len(probed) != 3
+                        or probed[0] != S("SpaceProbeFoundV1")
+                    ):
+                        raise StoreUnavailable(
+                            f"unable to read store owner from {source_dir}: {probed!r}"
+                        )
+                    agent = str(probed[1])
+        except BaseException:
+            _release_store_lock(source_lock)
+            raise
 
         staging_sql = target_sql.parent / f".{target_sql.name}.exporting-{uuid.uuid4().hex}"
         with cls(
@@ -796,7 +996,8 @@ class Store:
             agent,
             worker_binary=resolved_worker,
             maximum_bytes=maximum_bytes,
-            _auto_import=False,
+            _write_marker_on_open=False,
+            _prelocked_owner=source_lock,
         ) as store:
             with store._lock:
                 opened = store._call(E("ExportOpen"))
