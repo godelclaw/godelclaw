@@ -74,10 +74,10 @@
    (addition-protected-request $request 32768))
 
 (= (addition-protected-request $request $tokens)
-   (let* (($formatted (py-call (model_commentary.prompt $request)))
+   (let* (($formatted (request:format $request))
           ($context (hierarchy:context)))
      (if (== $context "") (state:prepare-context $formatted $tokens)
-       (state:prepare-context (hierarchy:append-context $formatted $context) $tokens))))
+       (state:prepare-context (request:append $formatted $context) $tokens))))
 
 (= (addition-prepare-request
       $selected $legacy $system $activity $advertised)

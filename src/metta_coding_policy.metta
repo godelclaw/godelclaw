@@ -33,7 +33,7 @@
 ;; JSON remains opaque to the loop; these accessors are its only consumers.
 (= (coding-prepare-request
       $selected $legacy-request $system-message $activity-message $advertised)
-   (if (== (policy-structured-request $selected) 1)
+   (if (or (== (policy-structured-request $selected) 1) (== $legacy-request ""))
        (coding-prepared-request
          (iter-process-prepare-request
            $system-message $activity-message $advertised

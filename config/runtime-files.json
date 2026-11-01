@@ -219,6 +219,7 @@
   "src/iter_authoring.py",
   "src/iter_process_cetta.metta",
   "src/iter_process_io.metta",
+  "src/request_context.metta",
   "src/iter_process_policy.metta",
   "src/iter_process_swi.metta",
   "src/job_io.metta",

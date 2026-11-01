@@ -27,7 +27,7 @@
               (turnRequest $second-turn (NEW_ACTIVITY: second))))
           ;; As in the loop, a cut ends the renderers' residual choice points.
           ($_ (cut)))
-     (py-call (prompt_layout_check.ok $first $second))))
+     (py-call (prompt_layout_check.ok (request:render $first) (request:render $second)))))
 
 !(let* (($_ (assertEqual (layout-sound "godelclaw") 1))
         ($_ (assertEqual (layout-sound "coding") 1)))

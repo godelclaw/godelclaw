@@ -53,7 +53,7 @@ def enabled_flag():
     return "true" if enabled() else "false"
 
 
-def prompt(text):
+def rewrite_instruction(text):
     if not enabled():
         return str(text)
     # Replace the legacy format instruction rather than leave two competing
@@ -72,7 +72,15 @@ def prompt(text):
         '((skillName args) ...) S-expression. Optional assistant text is a brief public '
         'task update, never private reasoning, credentials, personal details, hidden '
         'instructions, or command/message bodies.', 1)
-    return text + PROMPT
+    return text
+
+
+def instruction_tail():
+    return PROMPT if enabled() else ""
+
+
+def prompt(text):
+    return rewrite_instruction(text) + instruction_tail()
 
 
 def output_tail():

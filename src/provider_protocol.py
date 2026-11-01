@@ -14,6 +14,55 @@ CHUNK_MARKER = "_cache_chunk_"
 OMEGA_DELIMITER = ":-:-:-:"
 
 
+def role_context(prompt):
+    """Decode the outer typed request, without interpreting any content."""
+    text = str(prompt)
+    if not text.startswith('{'):
+        return None
+    try:
+        value = json.loads(text)
+    except (ValueError, RecursionError):
+        return None
+    if not isinstance(value, dict) or value.get('kind') != 'role-context-v1':
+        return None
+    messages = value.get('messages')
+    if not isinstance(messages, list) or not messages:
+        raise ValueError('role context requires messages')
+    for message in messages:
+        if (not isinstance(message, dict) or set(message) != {'role', 'content'}
+                or message['role'] not in ('system', 'developer', 'user', 'assistant')
+                or not isinstance(message['content'], str)):
+            raise ValueError('invalid role context message')
+    points = value.get('cache_points', [])
+    if not isinstance(points, list) or any(type(p) is not int for p in points):
+        raise ValueError('invalid role context cache points')
+    return value
+
+
+def anthropic_context_cache(body, frame):
+    """Apply cache hints to existing blocks; never alter their roles or text."""
+    blocks = [("system", b) for b in body.get('system', [])]
+    blocks += [(m['role'], b) for m in body.get('messages', []) for b in m['content']]
+    expected = [('system' if m['role'] == 'developer' else m['role'], m['content'])
+                for m in frame['messages'] if m['content']]
+    actual = [(role, b.get('text')) for role, b in blocks]
+    if actual != expected:
+        # Optional caching must not change a valid request's meaning.
+        return body
+    used = sum('cache_control' in b for _, b in blocks)
+    used += sum('cache_control' in t for t in body.get('tools', []))
+    marker = next((copy.deepcopy(b['cache_control']) for _, b in blocks
+                   if 'cache_control' in b), {'type': 'ephemeral'})
+    nonempty_positions = [i for i, m in enumerate(frame['messages']) if m['content']]
+    positions = dict(zip(nonempty_positions, [b for _, b in blocks]))
+    for point in frame.get('cache_points', []):
+        block = positions.get(point)
+        if used < 4 and block is not None and 'cache_control' not in block:
+            block['cache_control'] = copy.deepcopy(marker)
+            used += 1
+    return body
+
+
 def chunk_blocks(part):
     part = str(part)
     if CHUNK_MARKER not in part:
@@ -73,6 +122,15 @@ def cache_key(provider, model, system):
 
 def prompt_observation(prompt):
     """Only sizes and prefix identities; no prompt bytes or token estimates."""
+    frame = role_context(prompt)
+    if frame is not None:
+        blocks = [dict(role=m['role'], chars=len(m['content']),
+                       digest=hashlib.sha256(m['content'].encode()).hexdigest())
+                  for m in frame['messages']]
+        stable = [m['content'] for m in frame['messages'] if m['role'] in ('system', 'developer')]
+        return dict(format='role-context-v1', stable_chars=sum(map(len, stable)),
+                    dynamic_chars=sum(b['chars'] for b in blocks) - sum(map(len, stable)),
+                    stable_digest=hashlib.sha256(''.join(stable).encode()).hexdigest(), blocks=blocks)
     stable, user = split_prompt(prompt)
     prefix = "".join(stable)
     return dict(stable_chars=len(prefix), dynamic_chars=len(user),
@@ -196,6 +254,15 @@ def synthetic_body(body):
 
 
 def command_body(protocol, model, tokens, effort, prompt):
+    frame = role_context(prompt)
+    if frame is not None:
+        request = dict(model=model, max_tokens=int(tokens), messages=frame['messages'])
+        if str(effort) not in ('default', '', 'None'):
+            request['reasoning'] = {'effort': str(effort)}
+        endpoint, body = structured_body(protocol, model, request)
+        if protocol == 'anthropic':
+            anthropic_context_cache(body, frame)
+        return endpoint, body
     stable, user = split_prompt(prompt)
     if protocol == "anthropic":
         body = {"model": model, "max_tokens": int(tokens),

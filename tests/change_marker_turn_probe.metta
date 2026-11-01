@@ -18,7 +18,7 @@
           ($first (coding-request-prompt (turnRequest $turn (NEW_ACTIVITY: first))))
           ($second (coding-request-prompt (turnRequest $turn (NEW_ACTIVITY: second))))
           ($_ (cut)))
-     (py-call (change_marker_check.one_turn $first $second))))
+     (py-call (change_marker_check.one_turn (request:render $first) (request:render $second)))))
 
 !(let* (($_ (assertEqual (marker-counts-turns "godelclaw") 1))
         ($_ (assertEqual (marker-counts-turns "coding") 1)))

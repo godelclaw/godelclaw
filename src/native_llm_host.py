@@ -214,7 +214,24 @@ def _plan(kind, model, tokens, builder, *, native_ledger=False):
 
 
 def command_plan(model, tokens, effort, prompt, *, native_ledger=False):
+    frame = provider_protocol.role_context(prompt)
     def conversation(protocol, selected):
+        if frame is not None:
+            result = dict(model=selected, max_tokens=int(tokens),
+                          messages=copy.deepcopy(frame['messages']),
+                          role_policy='preserve' if protocol == 'responses' else 'merge-system-developer')
+            if protocol == 'anthropic':
+                result['cache_system'] = True
+                ttl = os.environ.get('METTACLAW_ANTHROPIC_CACHE_TTL', '5m')
+                if ttl not in ('5m', '1h'):
+                    raise ValueError('Anthropic cache TTL must be 5m or 1h')
+                if ttl != '5m':
+                    result['cache_ttl'] = ttl
+            if str(effort) not in ('default', '', 'None'):
+                result['reasoning'] = {'effort': str(effort)}
+            if model_commentary.enabled():
+                result.update(tools=[model_commentary.tool_schema()], tool_choice='auto')
+            return result
         stable, user = provider_protocol.split_prompt(prompt)
         if protocol == "anthropic":
             # Keep complete transcript chunks as separate wire blocks. The
@@ -251,10 +268,13 @@ def command_plan(model, tokens, effort, prompt, *, native_ledger=False):
             result.update(tools=[model_commentary.tool_schema()], tool_choice="auto")
         return result
     plan = _plan("command", model, tokens, conversation, native_ledger=native_ledger)
-    if getattr(plan, "protocol", "") in ("anthropic", "responses") or model_commentary.enabled():
+    if frame is not None or getattr(plan, "protocol", "") in ("anthropic", "responses") or model_commentary.enabled():
         plan.encoding = "messages"
     plan.prompt_layout = provider_protocol.prompt_observation(prompt)
-    plan.cache_boundaries = provider_protocol.cache_boundaries(provider_protocol.split_prompt(prompt)[0])
+    if frame is not None:
+        plan.role_context = frame
+    else:
+        plan.cache_boundaries = provider_protocol.cache_boundaries(provider_protocol.split_prompt(prompt)[0])
     plan.prompt_text = str(prompt)
     return plan
 
@@ -612,6 +632,8 @@ def wire_body(plan, body):
     if plan.stream and plan.protocol == "chat-completions":
         value.update(stream=True, stream_options={"include_usage": True})
     if plan.protocol == "anthropic":
+        if hasattr(plan, 'role_context'):
+            provider_protocol.anthropic_context_cache(value, plan.role_context)
         if hasattr(plan, "cache_boundaries"):
             provider_protocol.anthropic_cache_system(value, plan.cache_boundaries)
         plan.cache_layout = provider_protocol.anthropic_cache_observation(value)

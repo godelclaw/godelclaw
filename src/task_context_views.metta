@@ -1,6 +1,7 @@
 ; Selection, recoverable compaction and paging are MeTTa policy. The original
 ; database rows remain unchanged and addressable after every excerpt.
 !(import! &self ./src/task_context_cetta)
+!(import! &self ./src/request_context)
 !(import! &self (library math))
 !(import! &self ./src/task_idle_views)
 
@@ -224,7 +225,7 @@
 (= (task:budget-context $base $focus $trigger $capacity $ratio)
    (let* (($target (context:target))
           ($available (if (== $capacity "") $target
-                        (min $target (max 0 (- (- (str:string->number $capacity) (math:ceil (/ (str:byte-length $base) $ratio))) 128)))))
+                        (min $target (max 0 (- (- (str:string->number $capacity) (math:ceil (/ (request:bytes $base) $ratio))) 128)))))
           ($selected (task:compact (task:conversation-view $focus $trigger) $available $ratio))
           ($candidate (state:json-set $selected "transcript"
                         (JsonArray (task:idle-pairs
@@ -232,7 +233,7 @@
           ($view (if (<= (str:byte-length (state:encoded $candidate))
                          (str:byte-length (state:encoded $selected)))
                     $candidate $selected)))
-     (str:join "\n\n" ((task:place-transcript $base ()) (str:concat "TASK_CONTEXT " (state:encoded $view))))))
+     (request:append (task:place-transcript $base ()) (str:concat "TASK_CONTEXT " (state:encoded $view)))))
 
 ; The whole-window view spans task frames. The transcript is append-only from a
 ; saved start and is compacted when it passes 90% of the available window;
@@ -420,11 +421,16 @@
 (= (task:place-transcript $base $chunks)
    (task:place-transcript $base $chunks ""))
 (= (task:place-transcript $base $chunks $index)
+   (case $base
+     (((RoleContext $messages $advertised $observations $history $old-index $data $instructions)
+       (request:place $base $chunks $index))
+      ($plain (task:place-transcript-text $plain $chunks $index)))))
+(= (task:place-transcript-text $base $chunks $index)
    (case (str:find $base "_cache_boundary_")
      (((TextNotFound $_) $base)
       ($first
         (let* (($head (str:byte-slice $base 0 (+ $first 16)))
-               ($rest (str:byte-slice $base (+ $first 16) (str:byte-length $base))))
+               ($rest (str:byte-slice $base (+ $first 16) (request:bytes $base))))
           (case (str:find $rest "_cache_boundary_")
             (((TextNotFound $_) $base)
              ($second
@@ -444,7 +450,7 @@
 (= (task:full-context-view $base $view $capacity $ratio)
    (let* (($trigger (task:string $view "trigger"))
           ($window (if (== $capacity "") (task:fallback-window) (str:string->number $capacity)))
-          ($available (max 0 (- (- $window (math:ceil (/ (str:byte-length $base) $ratio))) 128)))
+          ($available (max 0 (- (- $window (math:ceil (/ (request:bytes $base) $ratio))) 128)))
           ($root (task:string $view "root"))
           ($handoff (task:joined-handoff $root $view))
           ($pairs (task:items $view "transcript"))
@@ -473,9 +479,11 @@
                           (JsonPair "available_tokens" (task:number $available)))))
           ($context (state:json-set $meta "window" $window-info)))
      (if (> $start $offset) (ContextPreparationFailed "context-compaction-required")
-       (str:join "\n\n" ($placed (if (== $placed $base) $handoff "")
-                          (str:concat "TASK_RECENT newest steps, oldest first:" $recent-text)
-                          (str:concat "TASK_CONTEXT " (state:encoded $context)))))))
+       (request:append
+         (request:append
+           (request:append $placed (if (== $placed $base) $handoff ""))
+           (str:concat "TASK_RECENT newest steps, oldest first:" $recent-text))
+         (str:concat "TASK_CONTEXT " (state:encoded $context))))))
 
 ; Inputs have their own chronological entries. Metadata keeps request state
 ; and exact retrieval addresses, without repeating every input each turn.

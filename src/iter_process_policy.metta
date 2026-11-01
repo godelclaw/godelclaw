@@ -3,14 +3,11 @@
 ;; and every other outcome stutters locally.
 !(import! &self (library lib_import))
 !(import! &self ./src/iter_process_io)
+!(import! &self ./src/request_context)
 
 (= (iter-process-visible $system-message $activity-message $advertised)
    (coding-view
-     (coding-message-list
-       (coding-message system $system-message)
-       (coding-message-list
-         (coding-message user $activity-message)
-         coding-messages-empty))
+     (request:initial-messages $system-message $activity-message)
      (coding-capability-list
        (coding-capability command-batch $advertised)
        coding-capabilities-empty)))
@@ -46,7 +43,7 @@
        (string_concat "ITER_PROCESS_OBSERVATIONS "
                       (swrite $observations))))
 
-(= (iter-process-render-request
+(= (iter-process-render-text
       (iter-native-result
         (coding-view $messages $advertised) $observations))
    (let* (($rendered-messages (iter-native-render-messages $messages))
@@ -70,3 +67,10 @@
 (= (iter-process-request-observations
       (iter-native-result $visible $observations))
    (iter-native-render-observations $observations))
+
+(= (iter-process-render-request (iter-native-result (coding-view $messages $advertised) $observations))
+   (if (request:cetta?)
+     (RoleContext $messages (repr $advertised)
+       (if (== $observations iter-observations-empty) ""
+         (str:concat "ITER_PROCESS_OBSERVATIONS " (repr $observations))) () "" "" "")
+     (iter-process-render-text (iter-native-result (coding-view $messages $advertised) $observations))))

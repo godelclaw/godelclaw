@@ -3,6 +3,7 @@
 ; in CeTTa. Existing host callbacks retain normal call recovery and usage data.
 !(import! &self ./src/chatgpt_plan_cetta.metta)
 !(import! &self ./src/api_registry.metta)
+!(import! &self ./src/request_context)
 !(import! &self io)
 !(import! &self fs)
 !(import! &self path:)
@@ -193,18 +194,22 @@
    (let* (($correction (py-call (native_llm_host.correction_context)))
           ($model (str:byte-slice $selected 8 (str:byte-length $selected)))
           ($effort-text (str:concat "" $effort))
-          ((ChatGPTPrompt $parts $user) (chatgpt:split $prompt 3 ()))
+          ($frame (request:decode $prompt))
+          ((ChatGPTPrompt $parts $user)
+            (if (== $frame LegacyPrompt) (chatgpt:split $prompt 3 ()) (ChatGPTPrompt () "")))
           ($stable (chatgpt:chunk-parts $parts))
           ($native (== (str:concat "" (py-call (model_commentary.enabled_flag))) "true"))
-          ($cache (str:sha256 (repr ($model (if (== $stable ()) () (car-atom $stable))))))
           ($tool (json-parse (py-call (model_commentary.tool_schema_json))))
           ($system-messages (chatgpt:system-messages $stable))
-          ($messages (llm:v1:append $system-messages
-             ((JsonObject ((JsonPair "role" (JsonString "user"))
-                           (JsonPair "content" (JsonString $user)))))))
+          ($messages (case $frame
+             (((RoleMessages $explicit $_) $explicit)
+              ($legacy (llm:v1:append $system-messages
+                ((JsonObject ((JsonPair "role" (JsonString "user"))
+                              (JsonPair "content" (JsonString $user))))))))))
+          ($cache (str:sha256 (repr ($model (if (== $messages ()) () (car-atom $messages))))))
           ; The route rejects `instructions` longer than 1,048,576 characters,
-          ; and the stable parts carry the growing transcript. They stay input
-          ; items, in order, as Codex sends its context; the window decides.
+          ; so context remains ordered input items. Explicit message roles are
+          ; independent of prefix-cache boundaries; the window decides.
           ($base-request
             (if $native
               (JsonObject ((JsonPair "model" (JsonString $model))

@@ -282,7 +282,7 @@
                          $capacity $model $tokens $effort $ratio))))
 
 (= (context:prepare $base $focus $trigger $capacity $model $tokens $effort)
-   (let* (($assembled (str:join "\n" ($base (topics:context))))
+   (let* (($assembled (request:append $base (topics:context)))
           ($footer (str:concat "" (py-call (model_commentary.output_tail))))
           ($ratio (context:ratio $model))
           ($window (if (== $capacity "") (task:fallback-window) (str:string->number $capacity)))
@@ -291,7 +291,7 @@
      (if (== (context:mode) budget)
        (context:checked-text (task:render-context $assembled $focus $trigger $render-capacity $model)
                              $footer $window $ratio 1)
-       (let* (($available (max 0 (- (- $render-window (math:ceil (/ (str:byte-length $assembled) $ratio))) 128)))
+       (let* (($available (max 0 (- (- $render-window (math:ceil (/ (request:bytes $assembled) $ratio))) 128)))
               ($view (task:initial-view $focus $trigger $available $ratio))
               ($repair (== (py-call (provider_rejection.begin_context_repair)) 1))
               ($ready (catch (if $repair
@@ -308,7 +308,7 @@
    (case $rendered
      (((ContextPreparationFailed $_) $rendered)
       ($body
-        (let $text (str:concat $body $footer)
+        (let $text (request:render (request:instruct $body $footer))
           (if (<= (math:ceil (/ (str:byte-length $text) $ratio)) $window)
             (context:prepared-text $text $incomplete)
             (ContextPreparationFailed "context-render-exceeds-window")))))))
