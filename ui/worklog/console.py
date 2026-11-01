@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import queue
 import shutil
+import signal
 import sys
 import threading
 
@@ -12,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT), str(ROOT / "src")]
 from terminal_client import Controls, MailSession
 from ui.worklog.viewer import Reader, clean
+from ui.worklog.inlineview.adapter import EventBlocks
 
 
 def profile(args):
@@ -83,7 +85,32 @@ def main(argv=None):
         from prompt_toolkit import PromptSession
         from prompt_toolkit.history import FileHistory
         from prompt_toolkit.patch_stdout import patch_stdout
-        session = PromptSession(history=FileHistory(str(client_state / "history")), mouse_support=False)
+        from prompt_toolkit.styles import Style
+        from prompt_toolkit.filters import Condition, to_filter
+        from prompt_toolkit.layout import ConditionalContainer, Layout
+        from prompt_toolkit.layout.containers import VerticalAlign
+        from prompt_toolkit.renderer import CPR_Support
+        blocks = EventBlocks(args.agent, lambda: shutil.get_terminal_size((80, 24)).columns,
+                             ascii_only=(getattr(sys.stdout, "encoding", "") or "").lower().replace("-", "") != "utf8")
+        # The editor stays the one PromptSession; the status line is its own bottom toolbar, so
+        # nothing the agent streams can share a row with the draft.
+        session = PromptSession(history=FileHistory(str(client_state / "history")), mouse_support=False,
+                                bottom_toolbar=blocks.footer, refresh_interval=.5,
+                                style=Style.from_dict({"bottom-toolbar": "noreverse #888888", "bottom-toolbar.text": "noreverse #888888"}))
+        # Bottom anchoring. prompt_toolkit's inline application already spans from its start row to the
+        # bottom of the screen (it asks the terminal for the cursor row) but its prompt window grows into the
+        # spare rows, so the prompt sat at the top of that area. Stop it extending and align the root container
+        # to the bottom: wrapped draft rows + the status toolbar always end on the last terminal row, whatever
+        # is printed above, and the area is re-measured on resize. No padding text, no scroll region.
+        session.layout.current_window.dont_extend_height = to_filter(True)
+        session.layout.container.align = VerticalAlign.BOTTOM
+        # prompt_toolkit re-measures that area after every output via a cursor-position query; until the
+        # answer arrives it would draw the composer directly under the new text and then jump it down. Draw
+        # nothing while a measurement is pending (never on a terminal that does not answer such queries).
+        renderer = session.app.renderer
+        measured = Condition(lambda: renderer.height_is_known or renderer.cpr_support != CPR_Support.SUPPORTED)
+        session.layout = session.app.layout = Layout(ConditionalContainer(session.layout.container, filter=measured),
+                                                     focused_element=session.layout.current_window)
         stop, work, outgoing, menu, menu_lock = threading.Event(), queue.Queue(), queue.Queue(), [], threading.Lock()
         view_epoch = [0]
 
@@ -137,14 +164,23 @@ def main(argv=None):
             # Follow from attachment; the full work log remains separately readable.
             for path in args.dir.glob("*.jsonl"):
                 stat = path.stat(); reader.offsets[path.name] = (stat.st_ino, stat.st_size)
+            previous_failure = ""
             while not stop.wait(.15):
-                for event in reader.read():
-                    if event.get("session") != args.agent and event.get("parent_session") != args.agent: continue
-                    kind = event.get("kind", "")
-                    if kind in ("text.delta", "tool.output"):
-                        print(clean(event.get("text", "")), end="", flush=True)
-                    elif kind in ("tool.started", "tool.finished", "session.finished", "gap"):
-                        print("\n" + clean(event.get("name") or kind) + " · " + clean(event.get("status", "")), flush=True)
+                mine = [e for e in reader.read() if e.get("session") == args.agent or e.get("parent_session") == args.agent]
+                # Whole lines only: a fragment flushed through patch_stdout is redrawn on the draft's row.
+                blocks.consumed = 0
+                try:
+                    text = blocks.feed(mine)
+                except Exception as error:   # last resort: the reader already moved past this batch, so show it as plain text
+                    text = blocks.recover(mine, error)
+                failure = blocks.fault
+                if failure and failure != previous_failure: print("Display renderer fault; the affected events are shown as plain text: " + clean(failure), flush=True)
+                previous_failure = failure
+                if text: print(text, end="", flush=True)
+
+        def terminate(number, frame):
+            raise SystemExit(128 + number)   # unwinds through prompt_toolkit, which restores the tty
+        for name in ("SIGTERM", "SIGHUP"): signal.signal(getattr(signal, name), terminate)
 
         with patch_stdout(raw=False):
             for target in (worker, publisher, replies, events): threading.Thread(target=target, daemon=True).start()

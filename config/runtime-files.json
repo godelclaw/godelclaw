@@ -354,5 +354,10 @@
   "channels/terminal_control_main.metta",
   "src/terminal_client.py",
   "ui/worklog/console.py",
-  "scripts/agent_console.py"
+  "scripts/agent_console.py",
+  "ui/worklog/inlineview/__init__.py",
+  "ui/worklog/inlineview/textsafe.py",
+  "ui/worklog/inlineview/render.py",
+  "ui/worklog/inlineview/engine.py",
+  "ui/worklog/inlineview/adapter.py"
 ]
