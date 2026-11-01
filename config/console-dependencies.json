@@ -1,0 +1,8 @@
+{
+  "prompt_toolkit": "3.0.52",
+  "wcwidth": "0.9.4",
+  "rich": "15.0.0",
+  "markdown-it-py": "4.2.0",
+  "mdurl": "0.1.2",
+  "pygments": "2.20.0"
+}

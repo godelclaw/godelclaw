@@ -17,6 +17,95 @@ A configured instance supplies its existing root, state and qualified interprete
 input is accepted with `--submit -`, avoiding command-line size limits. Install
 the declared Python dependencies for the interactive composer.
 
+## Versioned console installation
+
+The console has a separate offline build/install path. It does not deploy a
+cognitive runtime, start a service, or change an instance. Use Python 3.11 or
+newer with the exact distributions in `config/console-dependencies.json` already
+installed (the builder never downloads anything):
+
+```sh
+python3 scripts/build_console_release.py --output "$BUILD/console-release"
+python3 scripts/install_console.py --release "$BUILD/console-release" \
+  --prefix "$PREFIX" --python "$PYTHON" --dry-run
+python3 scripts/install_console.py --release "$BUILD/console-release" \
+  --prefix "$PREFIX" --python "$PYTHON" --apply --backup-dir "$BACKUPS/console-before"
+```
+
+`BUILD`, `PREFIX`, `PYTHON` (an executable file, not a shell command), and `BACKUPS`
+are operator-selected paths. The default prefix is `~/.local`. Build outside the
+prefix; use a new backup directory outside both the prefix and build input.
+Omitting `--apply` is non-mutating inspection, including isolated import checks.
+An existing launcher or selection that differs requires `--replace-existing`
+explicitly, even if it is a symlink. Inspection reports prior content as base64,
+its hash, file mode or exact link target; keep this output private if a custom
+launcher contains sensitive settings. No custom shell is parsed or discarded
+without that consent and a durable backup.
+
+For migration, carry any embedded `--mail-script` binding forward explicitly:
+add `--mail-script "$MAIL_SCRIPT"` to both inspect and apply. Otherwise the
+unchanged frontend discovers the installed `claw-mail` as before. Other custom
+launcher flags must be supplied explicitly when launching; arbitrary shell
+configuration is not automatically translated. Instance profiles, transport
+configuration, display paths, client state, history and retry identities are
+not copied, moved or rewritten.
+
+Both `bin/agent-console` and `bin/godel-cli` delegate through one
+`share/godelclaw/console-current` selection. `agent-console` passes generic
+frontend flags unchanged; `godel-cli` prepends `--agent godel`. Explicit arguments
+come last, so `godel-cli --agent other` and `godel-cli --agent=other` override that
+default. A bound mail script can likewise be overridden with `--mail-script`.
+All argument boundaries, including spaces and multiline input, are preserved.
+
+The release contains the reviewed files in `config/console-files.json` and the
+import closure of Rich and prompt_toolkit: Pygments, markdown-it-py, mdurl and
+wcwidth. Installed distribution RECORD hashes are checked before copying;
+package metadata and licenses are retained, while bytecode, console scripts and
+installation-local metadata are omitted. No symlinks into a checkout, environment
+or qualification run are used. Local client helpers also need `mode_channel`,
+`durable_telegram`, `stream_sink` and `stream_lifecycle`; the frontend uses only
+their storage/display interfaces, not their service entry points.
+
+The SHA-256 manifest identifies every bundled file and its mode. Identical source
+and installed distribution bytes produce the same release identity. Installation
+verifies the manifest, stages a complete copy, and refuses to repair, merge or
+overwrite changed content at an existing release identity. Launcher bindings
+have a separate identity covering the release, interpreter bytes and shell
+content. The external interpreter must match the builder's Python major/minor;
+it is not bundled. Launch uses `-I -S -B` so imports cannot silently fall back to
+user sites, environment sites, mutable source or bytecode caches. The interpreter,
+standard library and existing mail/runtime deployment remain prerequisites;
+this is not a Python or cognitive runtime updater.
+
+Rollback uses the exact prior launcher bytes/modes or symlink targets, including
+dangling links and previously absent paths:
+
+```sh
+python3 scripts/install_console.py --rollback "$BACKUPS/console-before"
+python3 scripts/install_console.py --rollback "$BACKUPS/console-before" --apply
+```
+
+The backup receipt is durable before any selection or launcher replacement.
+Each replacement is atomic; subsequent installs switch the shared selection in
+one operation. First migration from unrelated launchers necessarily replaces
+two separate entry points, so do not invoke them during that short migration.
+A failed/interrupted apply can be rolled back with the same receipt; it is not
+automatically retried. Rollback preflights all destinations and refuses later
+manual edits rather than destroying them. Cooperating installs/rollbacks use a
+prefix-local lock. Trusted local directories/receipts and no concurrent manual
+filesystem edits are assumed; manifests provide byte integrity, not signatures
+against a malicious local writer. Published snapshots and old releases remain
+after rollback for inspection; no garbage collection or live-session restart is
+performed. A running frontend is unaffected by switching launchers.
+
+Packaging regression checks (no live attachment):
+
+```sh
+python3 -B -m unittest discover -s tests -p test_console_installation.py -v
+```
+
+## Session behavior
+
 `/detach` or Ctrl-D leaves cognition running. `/stop` explicitly pauses it.
 `/retry` resubmits retained input with its original identity; it does not repeat
 model-selected external actions. `/replies` reads retained local replies.

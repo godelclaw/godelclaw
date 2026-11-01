@@ -1,0 +1,17 @@
+[
+  "LICENSE",
+  "scripts/agent_console.py",
+  "scripts/console_entry.py",
+  "src/terminal_client.py",
+  "src/mode_channel.py",
+  "src/durable_telegram.py",
+  "src/stream_sink.py",
+  "src/stream_lifecycle.py",
+  "ui/worklog/console.py",
+  "ui/worklog/viewer.py",
+  "ui/worklog/inlineview/__init__.py",
+  "ui/worklog/inlineview/adapter.py",
+  "ui/worklog/inlineview/engine.py",
+  "ui/worklog/inlineview/render.py",
+  "ui/worklog/inlineview/textsafe.py"
+]
