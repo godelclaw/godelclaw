@@ -50,6 +50,8 @@ chroma_db.rebuilt-*/
 
 # Agent-authored knowledge base: private facts, quotes, provenance.
 kb/
+!/src/execution_gateway/metta/kb/
+!/src/execution_gateway/metta/kb/*.metta
 
 # Machine-specific verification receipts stay local.
 /modes/completion-audit.json

@@ -32,6 +32,7 @@ class GatewayInstallationTest(unittest.TestCase):
         shutil.copytree(ROOT / "src/execution_gateway", self.runtime / "src/execution_gateway",
                         ignore=shutil.ignore_patterns("__pycache__"))
         shutil.copy2(ROOT / "src/fsops.py", self.runtime / "src/fsops.py")
+        shutil.copy2(ROOT / "src/tool_output.py", self.runtime / "src/tool_output.py")
         self.config = self.base / "configuration"
         self.config.mkdir()
         self.units = self.base / "units"

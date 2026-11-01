@@ -26,7 +26,20 @@ def prepare(instance, runtime, config_dir, unit_dir):
     source = runtime / "src"
     if any(c in str(source) for c in ("\n", "\r", os.pathsep)):
         raise ValueError("runtime path cannot contain a line break or path separator")
-    for name in ("execution_gateway/__main__.py", "execution_gateway/read_tools.py", "fsops.py"):
+    for name in (
+        "execution_gateway/__main__.py",
+        "execution_gateway/read_tools.py",
+        "execution_gateway/cetta_worker.py",
+        "execution_gateway/sqlite_store.py",
+        "execution_gateway/migration.py",
+        "execution_gateway/GATEWAY_CETTA_REF",
+        "execution_gateway/metta/gateway_queue.metta",
+        "execution_gateway/metta/native_kb_server.metta",
+        "execution_gateway/metta/native_space_query_server.metta",
+        "execution_gateway/metta/kb/space_job_queue.metta",
+        "fsops.py",
+        "tool_output.py",
+    ):
         if not (source / name).is_file():
             raise ValueError("deployed gateway module is missing: " + name)
     config_path = config_dir / f"gateway-{instance}.json"

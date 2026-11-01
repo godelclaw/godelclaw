@@ -138,8 +138,13 @@ class GatewayTest(unittest.TestCase):
         with self.assertRaises(GatewayError):
             wrong.submit("impersonation", "echo")
         for agent in ("alpha", "beta"):
-            db = (self.base / agent / "queue.sqlite3").read_bytes()
-            self.assertNotIn(("synthetic-token-" + agent).encode(), db)
+            store_dir = self.base / agent / "queue.db"
+            self.assertTrue(store_dir.is_dir())
+            self.assertFalse((self.base / agent / "queue.sqlite3").exists())
+            files = [p for p in store_dir.rglob("*") if p.is_file()]
+            self.assertTrue(files)
+            for item in files:
+                self.assertNotIn(("synthetic-token-" + agent).encode(), item.read_bytes())
 
     def test_tool_discovery_does_not_expose_command_or_credentials(self):
         tools = self.clients["alpha"].tools()
@@ -277,20 +282,30 @@ class GatewayTest(unittest.TestCase):
 
     def test_unrecordable_completion_stops_dispatch_and_recovers_conservatively(self):
         path = self.base / "recording-failure.txt"
-        database = self.base / "alpha/queue.sqlite3"
-        with sqlite3.connect(database) as db:
-            db.execute("CREATE TRIGGER no_finish BEFORE UPDATE OF state ON jobs"
-                       " WHEN NEW.state NOT IN ('queued','running')"
-                       " BEGIN SELECT RAISE(ABORT,'injected receipt failure'); END")
-        self.clients["alpha"].submit("unrecordable", "write", input={"path": str(path)})
-        self.workers["alpha"].wait(timeout=5)
-        self.assertNotEqual(self.workers["alpha"].returncode, 0)
-        self.assertEqual(path.read_text(), "effect\n")
-        self.logs["alpha"].close()
-        with sqlite3.connect(database) as db:
-            db.execute("DROP TRIGGER no_finish")
+        database = self.base / "alpha/queue.db"
+        self.clients["alpha"].submit("unrecordable", "write",
+                                     input={"path": str(path), "delay": 0.25})
+        until = time.monotonic() + 5
+        while not path.exists() and time.monotonic() < until:
+            time.sleep(0.01)
+        self.assertTrue(path.exists())
+        for item in database.iterdir():
+            if item.is_file():
+                item.chmod(0o400)
+        database.chmod(0o500)
+        try:
+            self.workers["alpha"].wait(timeout=5)
+            self.assertNotEqual(self.workers["alpha"].returncode, 0)
+            self.assertEqual(path.read_text(), "effect\n")
+            self.logs["alpha"].close()
+        finally:
+            database.chmod(0o700)
+            for item in database.iterdir():
+                if item.is_file():
+                    item.chmod(0o600)
         client = self.start("alpha")
-        receipt = client.submit("unrecordable", "write", input={"path": str(path)})
+        receipt = client.submit("unrecordable", "write",
+                                input={"path": str(path), "delay": 0.25})
         self.assertEqual(receipt["state"], "uncertain")
         self.assertEqual(path.read_text(), "effect\n")
 

@@ -46,7 +46,8 @@ class Gateway:
                 raise ValueError("tool command must be an argv list")
             if tool.get("result_format", "text") not in ("text", "json"):
                 raise ValueError("invalid tool result format")
-        self.store = Store(self.root / "queue.sqlite3", self.agent)
+        self.store = Store(self.root / "queue.db", self.agent,
+                           worker_binary=config.get("cetta_worker"))
         self.store.recover()
         self.socket_path = self.root / "gateway.sock"
         if self.socket_path.exists():
@@ -190,6 +191,7 @@ class Gateway:
                 if job:
                     self.execute(job)
                 else:
+                    self.store.maintain_if_needed()
                     self.ready.wait(0.05)
                     self.ready.clear()
         except Exception as exc:
@@ -237,6 +239,7 @@ class Gateway:
                 server.shutdown()
                 listener.join(timeout=5)
                 consumer.join(timeout=5)
+                self.store.close()
         self.socket_path.unlink(missing_ok=True)
         self.lock.close()
         if self.failure:

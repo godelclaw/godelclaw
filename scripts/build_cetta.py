@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = "https://github.com/godelclaw/CeTTa.git"
@@ -59,6 +60,37 @@ def verify_sqlite_feature(binary):
         env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8"})
     if result.returncode or result.stdout.splitlines() != ["true", '(sqlite:result ("value") ((7)) 0 0)']:
         raise RuntimeError("installed engine lacks the required native SQLite query API")
+
+
+def verify_durable_feature(prefix):
+    """Verify native durable Space storage and (when bundled) (library db)."""
+    binary = prefix / "cetta"
+    worker = prefix / "cetta-value-worker"
+    if not worker.is_file() or not os.access(worker, os.X_OK):
+        raise RuntimeError("installed bundle lacks executable cetta-value-worker")
+    with tempfile.TemporaryDirectory(prefix="cetta-durable-verify-") as root:
+        os.chmod(root, 0o700)
+        store_dir = Path(root) / "probe.db"
+        store_dir.mkdir(mode=0o700)
+        os.chmod(store_dir, 0o700)
+        exprs = [
+            "-e", "!(import! &self (library durable_space))",
+            "-e", f'!(case (store:open "{store_dir}" "create") (((StoreOpened $o) (store:close $o)) ($e $e)))',
+        ]
+        expected = ["true", "StoreClosed"]
+        if (prefix / "lib/petta/db.metta").is_file():
+            db_dir = Path(root) / "ergonomic.db"
+            exprs += [
+                "-e", "!(import! &self (library db))",
+                "-e", f'!(case (db:open "{db_dir}") (($c (db:close $c))))',
+            ]
+            expected += ["true", "true"]
+        result = subprocess.run([str(binary), "--lang", "petta", *exprs],
+            text=True, capture_output=True, timeout=30,
+            env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8"})
+        if result.returncode or result.stdout.splitlines() != expected:
+            raise RuntimeError("installed engine lacks the required native durable Space API: "
+                               + (result.stderr or result.stdout))
 
 
 def main():
@@ -134,6 +166,7 @@ def main():
         shutil.copytree(source / name, prefix / name, dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     verify_sqlite_feature(prefix / "cetta")
+    verify_durable_feature(prefix)
     for directory, notice in (("secp256k1", "COPYING"), ("tomlc17", "LICENSE")):
         license_file = source / "vendor" / directory / notice
         if license_file.is_file():
@@ -148,6 +181,7 @@ def main():
     environment = {
         "CETTA_BIN": str(prefix / "cetta"),
         "METTACLAW_MODE_CETTA_BIN": str(prefix / "cetta"),
+        "CETTA_VALUE_WORKER_BIN": str(prefix / "cetta-value-worker"),
         "CETTA_TELEGRAM_SERVICE_BIN": str(prefix / "cetta-telegram-service"),
         "CETTA_TELEGRAM_SERVICE_ROOT": str(prefix),
     }
