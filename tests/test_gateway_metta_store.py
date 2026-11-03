@@ -79,7 +79,7 @@ class GatewayMettaStorePhaseATest(unittest.TestCase):
 
         global_ref = (ROOT / "CETTA_REF").read_text().strip()
         self.assertEqual(global_ref, "1182239fd98c04c0ec9b8abc7019dc36a8ba3e07")
-        self.assertEqual(gateway_cetta_ref(), "9273a379d3be9a07999bc427b6cf55eb4bf48c1a")
+        self.assertEqual(gateway_cetta_ref(), "2b5c2c7d2633176d80fa8534d744fef2fc8a89c7")
 
         verified = describe_gateway_worker()
         self.assertEqual(verified["revision"], gateway_cetta_ref())
