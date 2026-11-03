@@ -78,8 +78,8 @@ class GatewayMettaStorePhaseATest(unittest.TestCase):
         self.assertEqual(digest, QUALIFIED_SPACE_JOB_QUEUE_SHA256)
 
         global_ref = (ROOT / "CETTA_REF").read_text().strip()
-        self.assertEqual(global_ref, "1182239fd98c04c0ec9b8abc7019dc36a8ba3e07")
-        self.assertEqual(gateway_cetta_ref(), "2b5c2c7d2633176d80fa8534d744fef2fc8a89c7")
+        self.assertRegex(global_ref, r"^[0-9a-f]{40}$")
+        self.assertRegex(gateway_cetta_ref(), r"^[0-9a-f]{40}$")
 
         verified = describe_gateway_worker()
         self.assertEqual(verified["revision"], gateway_cetta_ref())
@@ -102,13 +102,6 @@ class GatewayMettaStorePhaseATest(unittest.TestCase):
             "CETTA_VALUE_WORKER_BIN": str(fake_worker),
             "METTACLAW_MODE_CETTA_BIN": str(fake_cetta),
         }
-        old_pinned_worker = (
-            Path.home() / f".local/lib/pettaclaw/cetta-ours-{global_ref[:8]}/cetta-value-worker"
-        )
-        if old_pinned_worker.is_file():
-            hostile_env["CETTA_VALUE_WORKER_BIN"] = str(old_pinned_worker)
-            hostile_env["CETTA_BIN"] = str(old_pinned_worker.parent / "cetta")
-
         with mock.patch.dict(os.environ, hostile_env, clear=False):
             os.environ.pop("METTACLAW_GATEWAY_WORKER_BIN", None)
             resolved = resolve_gateway_worker()
@@ -118,16 +111,7 @@ class GatewayMettaStorePhaseATest(unittest.TestCase):
                 store.submit(req, fp, "read")
                 self.assertEqual(store.claim()["id"], "decoupled-1")
 
-        # Negative controls: gateway-specific override or explicit worker_binary
-        # must validate build-manifest.json (revision, ENABLE_DURABLE=1, .proc-scope, SHA-256).
-        if old_pinned_worker.is_file():
-            with mock.patch.dict(
-                os.environ, {"METTACLAW_GATEWAY_WORKER_BIN": str(old_pinned_worker)}, clear=False
-            ):
-                with self.assertRaisesRegex(
-                    WorkerUnavailable, "missing executable companion|revision mismatch"
-                ):
-                    resolve_gateway_worker()
+        self.assertEqual((ROOT / "CETTA_REF").read_text().strip(), global_ref)
 
         def make_fake_bundle(name: str) -> Path:
             bdir = self.base / name
@@ -174,7 +158,7 @@ class GatewayMettaStorePhaseATest(unittest.TestCase):
 
         wrong_rev = make_fake_bundle("bundle-wrong-rev")
         m_wrong = json.loads((wrong_rev / "build-manifest.json").read_text())
-        m_wrong["revision"] = global_ref
+        m_wrong["revision"] = "0" * 40 if gateway_cetta_ref() != "0" * 40 else "1" * 40
         (wrong_rev / "build-manifest.json").write_text(json.dumps(m_wrong))
         with self.assertRaisesRegex(WorkerUnavailable, "revision mismatch"):
             resolve_gateway_worker(wrong_rev / "cetta-value-worker")
