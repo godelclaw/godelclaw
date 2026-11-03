@@ -49,9 +49,23 @@ def runtime_current(config):
             return False
     shared = config.get('shared_environment')
     if not shared:
-        return True
+        return protocols_ready(config)
     desired = updater.sha(Path(shared['source']))
-    return desired is not None and updater.sha(Path(shared['path'])) == desired
+    if desired is None or updater.sha(Path(shared['path'])) != desired:
+        return False
+    return protocols_ready(config)
+
+
+def protocols_ready(config):
+    for command in config.get('readiness_checks', []):
+        try:
+            result = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True,
+                                    timeout=float(config.get('boot_timeout', 60)))
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        if result.returncode:
+            return False
+    return True
 
 
 def committed_source(source, names):

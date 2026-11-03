@@ -93,11 +93,17 @@ class ReleasePermissionsTest(unittest.TestCase):
             self.assertFalse(sync.runtime_current(config))
         with mock.patch.object(update, 'running_settings', return_value=dict(CETTA_BIN='new')):
             self.assertTrue(sync.runtime_current(config))
+        config['readiness_checks'] = [['probe', 'transport']]
+        with mock.patch.object(update, 'running_settings', return_value=dict(CETTA_BIN='new')):
+            with mock.patch.object(sync.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)):
+                self.assertFalse(sync.runtime_current(config))
+            with mock.patch.object(sync.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)):
+                self.assertTrue(sync.runtime_current(config))
 
 
 class PairedUpdateTest(unittest.TestCase):
     def exercise(self, failed=False, runtime_missing=False, controls=False, control_failure=False,
-                 shared_environment=False, single=False):
+                 shared_environment=False, single=False, readiness=False, readiness_failure=False):
         with tempfile.TemporaryDirectory() as temporary:
             work = Path(temporary)
             release = work / "release"
@@ -129,7 +135,8 @@ class PairedUpdateTest(unittest.TestCase):
                 (Path(item["state_dir"]) / "runtime-release.json").write_text(
                     json.dumps({"schema": 1, "release": "old", "model": "stale-model"}) + "\n")
             plan.write_text(json.dumps({"instances": selected,
-                                        "boot_timeout": -1 if runtime_missing else 60}))
+                                        "boot_timeout": -1 if runtime_missing or readiness_failure else 60,
+                                        "readiness_checks": [["readiness", "native"]] if readiness or readiness_failure else []}))
             if shared_environment:
                 old_env, new_env = work/'common.env', work/'candidate.env'
                 old_env.write_text('CETTA_BIN=old\n'); new_env.write_text('CETTA_BIN=new\n')
@@ -162,6 +169,8 @@ class PairedUpdateTest(unittest.TestCase):
                     (state / "recycle.requested").unlink()
                 return pids[name]
             def check(command, **kwargs):
+                if command[0] == "readiness":
+                    return subprocess.CompletedProcess(command, int(readiness_failure), "PROTOCOL_CHECK", "")
                 qualified.append(command[-1])
                 return subprocess.CompletedProcess(command, int(failed and command[-1] == selected[-1]["name"]), "CHECK_OK", "")
             def settings(name, extra_keys=()):
@@ -174,14 +183,14 @@ class PairedUpdateTest(unittest.TestCase):
             args = ["update_instances", "--plan", str(plan), "--release", str(release),
                     "--receipt-dir", str(work / "receipt"), "--apply"]
             with mock.patch.object(sys, "argv", args), mock.patch.object(update, "service", service), mock.patch.object(update, "running_settings", settings), mock.patch.object(update.subprocess, "run", check):
-                if runtime_missing:
+                if runtime_missing or readiness_failure:
                     with self.assertRaises(TimeoutError): update.main()
                 elif failed or control_failure:
                     with self.assertRaises(RuntimeError): update.main()
                 else:
                     self.assertEqual(update.main(), 0)
             receipt = json.loads((work / "receipt/receipt.json").read_text())
-            rollback = failed or runtime_missing or control_failure
+            rollback = failed or runtime_missing or control_failure or readiness_failure
             self.assertEqual(receipt["status"], "rolled-back" if rollback else "activated")
             self.assertEqual([item['name'] for item in receipt['instances']],
                              [item['name'] for item in selected])
@@ -191,7 +200,7 @@ class PairedUpdateTest(unittest.TestCase):
             if controls:
                 self.assertEqual(control_restarts, [] if failed else
                     ["alpha-control", "alpha-control"] if control_failure else
-                    [item['name'] + '-control' for item in selected] * (2 if runtime_missing else 1))
+                    [item['name'] + '-control' for item in selected] * (2 if runtime_missing or readiness_failure else 1))
             for item in instances:
                 root = Path(item["root"])
                 unchanged = rollback or item not in selected
@@ -245,6 +254,12 @@ class PairedUpdateTest(unittest.TestCase):
 
     def test_controls_restart_only_after_the_whole_group_qualifies(self):
         self.exercise(controls=True)
+
+    def test_protocol_readiness_is_required_after_processes_start(self):
+        self.exercise(controls=True, readiness_failure=True, shared_environment=True)
+
+    def test_protocol_readiness_allows_a_healthy_group_to_activate(self):
+        self.exercise(controls=True, readiness=True)
 
     def test_failed_qualification_never_restarts_controls(self):
         self.exercise(failed=True, controls=True)

@@ -152,6 +152,11 @@ def main():
     manifest = json.loads((release / "manifest.json").read_text())
     plan = json.loads(args.plan.read_text())
     instances = plan["instances"]
+    readiness_checks = plan.get("readiness_checks", [])
+    if (not isinstance(readiness_checks, list) or
+            any(not isinstance(command, list) or not command or
+                any(not isinstance(arg, str) for arg in command) for command in readiness_checks)):
+        raise ValueError("readiness checks must be nonempty argument lists")
     if not instances:
         raise ValueError("an update needs at least one instance")
     control_services = [name for instance in instances for name in instance.get("control_services", [])]
@@ -297,6 +302,19 @@ def main():
                     except RuntimeError:
                         booted = False
             booted &= all(service(name, "show") != "0" for name in activated_controls)
+            # A service manager may expose a PID before a journal or queue
+            # has opened. Require configured protocol witnesses as well.
+            if booted:
+                for index, command in enumerate(readiness_checks):
+                    try:
+                        result = subprocess.run(command, stdin=subprocess.DEVNULL,
+                                                capture_output=True, text=True,
+                                                timeout=max(0.1, deadline - time.monotonic()))
+                        (output / ("readiness-" + str(index) + ".log")).write_text(result.stdout + result.stderr)
+                        booted &= result.returncode == 0
+                    except (OSError, subprocess.TimeoutExpired):
+                        (output / ("readiness-" + str(index) + ".log")).write_text("Readiness probe unavailable or boot deadline exceeded\n")
+                        booted = False
             if booted:
                 break
             if time.monotonic() > deadline:
