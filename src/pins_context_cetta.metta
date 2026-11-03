@@ -7,10 +7,9 @@
 ;  - the file is UTF-8, strictly. Malformed bytes make the oracle raise, which
 ;    the bundle records as an unavailable (or stale-known) source, so here
 ;    they are an (Error ...) and the bundle's own loader answers instead;
-;  - a missing, unreadable or directory path is an OSError there: no pins;
-;  - the other errno failures the engine names (OSError and its subclasses:
-;    not a directory, too many symlinks ...) are the same no pins; any
-;    other native read error is left to the oracle (Error);
+;  - a missing path means no pins; other filesystem failures remain
+;    explicitly unavailable, so an unreadable memory is never erased;
+;  - unsupported native read errors are left to the Python loader (Error);
 ;  - text mode ends a line at \n, \r\n or a lone \r and at nothing else
 ;    (not \x0b, \x1c, \x85, \u2028 ...); a line is kept when it holds a
 ;    character that Python's str.strip() does not strip, and kept whole;
@@ -69,10 +68,10 @@
          (((Error $call $why) (Error pinsctx:read invalid-utf8))
           ($count (PinsctxText $text)))))
       (("missing" $_) (PinsctxText ""))
-      (("directory" $_) (PinsctxText ""))
-      (("denied" $_) (PinsctxText ""))
+      (("directory" $_) (PinsctxUnavailable "IsADirectoryError"))
+      (("denied" $_) (PinsctxUnavailable "PermissionError"))
       (("error" $class $_)
-       (if (pinsctx:os-error? $class) (PinsctxText "") (Error pinsctx:read $class)))
+       (if (pinsctx:os-error? $class) (PinsctxUnavailable $class) (Error pinsctx:read $class)))
       ($other (Error pinsctx:read $other)))))
 ; The classes the engine names for an errno: all OSError to the oracle.
 (= (pinsctx:os-error? $class)
@@ -112,9 +111,11 @@
 
 ; The marker-free view text, or (Error ...) when the file cannot be read as
 ; the oracle reads it.
-(= (pinsctx:view)
-   (case (pinsctx:read)
+(= (pinsctx:view) (pinsctx:render-read (pinsctx:read)))
+(= (pinsctx:render-read $read)
+   (case $read
      (((Error $call $why) (Error pinsctx:view $why))
+      ((PinsctxUnavailable $class) (str:concat "pins unavailable: " $class))
       ((PinsctxText $text)
        (case (pinsctx:lines $text)
          (((PinsctxLines 0 $_) "(no pins)")
@@ -124,6 +125,9 @@
 ; action window, under "pins-body" (marker-free). A failed read is an
 ; (Error ...), never an empty text.
 (= (pinsctx:context-views)
-   (case (pinsctx:view)
-     (((Error $call $why) (Error pinsctx:context-views $why))
-      ($text (("pins-body" $text))))))
+   (case (pinsctx:read)
+     (((PinsctxUnavailable $class) (Error pinsctx:context-views $class))
+      ($read
+        (case (pinsctx:render-read $read)
+          (((Error $call $why) (Error pinsctx:context-views $why))
+           ($text (("pins-body" $text)))))))))

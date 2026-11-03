@@ -165,7 +165,8 @@ class FullGodelShadowTests(unittest.TestCase):
             )
             self.assertIn("SHADOW_DENIED unsupported-command", result.stdout)
             self.assertNotIn("reason failed_effect", result.stdout)
-            self.assertIn("send Done — deleted the messages", result.stdout)
+            self.assertRegex(result.stdout, r'\(send "?Done — deleted the messages"?\)')
+            self.assertEqual(result.stdout.count("COMMAND_RETURN:"), 2)
             self.assertEqual(shadow.state()["effects"], 0)
 
     def test_failed_send_returns_its_result_without_discarding_suffix(self):
@@ -178,7 +179,8 @@ class FullGodelShadowTests(unittest.TestCase):
             )
             self.assertIn("SHADOW_DENIED unsupported-command", result.stdout)
             self.assertNotIn("reason failed_effect", result.stdout)
-            self.assertIn("send reported to the group", result.stdout)
+            self.assertRegex(result.stdout, r'\(send "?reported to the group"?\)')
+            self.assertEqual(result.stdout.count("COMMAND_RETURN:"), 2)
             self.assertEqual(shadow.state()["effects"], 0)
 
     def test_corrupt_selector_cannot_fall_through_to_shell(self):

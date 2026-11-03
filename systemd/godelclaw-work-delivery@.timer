@@ -1,0 +1,10 @@
+[Unit]
+Description=Retry %i coding report delivery independently of inference
+
+[Timer]
+OnBootSec=15s
+OnUnitInactiveSec=30s
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

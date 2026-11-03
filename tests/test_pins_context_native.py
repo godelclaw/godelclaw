@@ -403,7 +403,7 @@ class NativePinsContextTest(unittest.TestCase):
                 put(self.pins, content)
                 sources = [(spec, loader) for spec, loader in context_sources._loaders()
                            if spec.source_id == "pins"]
-                out.append(context_sources.layout(projector.project(sources)))
+                out.append(context_sources.layout(projector.project(sources, context_sources.context_epoch())))
         return out
 
     SEQUENCE = [None, b"", pin_lines("[10-24 09:00] one λ"), pin_lines("[10-24 09:00] one λ"),

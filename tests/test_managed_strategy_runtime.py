@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from isolated_env import isolated_environ
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -21,7 +22,7 @@ class ManagedRuntimeTest(unittest.TestCase):
             self.skipTest("configure a CeTTa or PeTTa executable")
         for engine in engines:
             with self.subTest(engine=engine), tempfile.TemporaryDirectory() as temporary:
-                env = dict(os.environ, METTACLAW_ENGINE=engine,
+                env = isolated_environ(METTACLAW_ENGINE=engine, METTACLAW_SKIP_CONFIG="1",
                            METTACLAW_OBSERVED_STRATEGY="1",
                            METTACLAW_LLM_TRANSPORT="python",
                            METTACLAW_SKIP_INITIALIZE="1",

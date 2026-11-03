@@ -789,7 +789,7 @@ class CodingSessionTests(unittest.TestCase):
         self.assertNotIn("delivery", json.loads((done / "state.json").read_text()))
 
     def run_report_watcher(self, runner):
-        result = subprocess.run([os.environ['CETTA_BIN'], '--lang', 'petta', '--quiet',
+        result = subprocess.run([os.environ['CETTA_BIN'], '--lang', 'petta', '--import-mode', 'ancestor-walk', '--quiet',
                                  str(ROOT / 'work_delivery_main.metta')], cwd=runner,
                                 env=self.env, capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

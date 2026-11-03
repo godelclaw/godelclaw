@@ -63,6 +63,8 @@ def guest_env(directory, engine="cetta", **overrides):
         METTACLAW_ENGINE=engine, METTACLAW_ACTIVE_ENGINE=engine,
         METTACLAW_ENGINE_STATE_PATH=str(directory / "engine"),
         METTACLAW_HISTORY_PATH=str(directory / "history.metta"),
+        METTACLAW_PROJECT_ROOT=str(directory),
+        METTACLAW_PROMPT_PATH=str(directory / "instructions.txt"),
         METTACLAW_MEMORY_BACKEND_CONFIG=str(directory / "memory-backend.json"),
         XDG_STATE_HOME=str(directory / "state"),
         PYTHONPATH=os.pathsep.join(str(ROOT / name) for name in ("tests", "src", "channels")),
@@ -209,6 +211,7 @@ class NativeActionWindowTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(dir=base)
         self.addCleanup(self.temp.cleanup)
         self.directory = Path(self.temp.name)
+        (self.directory / "instructions.txt").write_text("Action window fixture instructions\n")
         self.arguments = 0
 
     def argument(self, value):
@@ -598,7 +601,8 @@ class NativeActionWindowTest(unittest.TestCase):
         for settings in ({}, {"METTACLAW_RECENT_ACTION_TURNS": "3", "METTACLAW_OBSERVED_STRATEGY": "1"}):
             with self.oracle_environment(settings), contextlib.redirect_stdout(io.StringIO()):
                 expected = context_sources.layout(
-                    context_sources.Projector().project(action_window_probe.action_loaders()))
+                    context_sources.Projector().project(action_window_probe.action_loaders(),
+                                                        context_sources.context_epoch()))
             for client, swi in ((client, swi) for client in ("True", "False") for swi in (False, True)):
                 with self.subTest(settings=settings, client=client, swi=swi):
                     output = self.directory / "bundle"
@@ -621,7 +625,8 @@ class NativeActionWindowTest(unittest.TestCase):
         self.boundary_journals()
         with self.oracle_environment({}), contextlib.redirect_stdout(io.StringIO()):
             expected = context_sources.layout(
-                context_sources.Projector().project(action_window_probe.action_loaders()))
+                context_sources.Projector().project(action_window_probe.action_loaders(),
+                                                    context_sources.context_epoch()))
         for broken in ("(case 1 ((2 never)))", '(Error action-window:context-views "simulated")',
                        '(py-call (builtins.int "not a number"))'):
             with self.subTest(broken=broken):

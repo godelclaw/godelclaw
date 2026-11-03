@@ -95,9 +95,13 @@ class NativeContextBundleTest(unittest.TestCase):
         # Project 03 sources use actual native loaders, not the old per-source
         # Python wire fixtures. Keep their stores empty and deterministic here;
         # test_small_views_native owns their changing/failure fixture matrix.
+        instructions = self.directory / "instructions.txt"
+        instructions.write_text("Context fixture instructions\n")
         registry = self.directory / "registry.json"
         registry.write_text('{"schema":1,"projects":[]}')
         patcher = mock.patch.dict(os.environ, {
+            "METTACLAW_PROJECT_ROOT": str(self.directory),
+            "METTACLAW_PROMPT_PATH": str(instructions),
             "METTACLAW_PROJECT_REGISTRY_PATH": str(registry),
             "METTACLAW_ITER_PROCESS_DIR": str(self.directory / "transformations"),
             "CETTA_BIN": str(self.directory / "absent-cetta")})
@@ -111,7 +115,8 @@ class NativeContextBundleTest(unittest.TestCase):
             '!(ctx:observe "s" 4 False ("value" "🙂é日本"))',
             '!(py-call (context_bundle_probe.note %s (ctx:render-one (ctx:observe "s" 4 False ("unavailable")))))' % q(out)])
         self.assertEqual(out.read_text(), "SOURCE[s] status=stale-known revision=" +
-                         context_sources.Projector._revision("🙂é日本") + "\n🙂é…")
+                         context_sources.Projector._revision("🙂é日本") +
+                         " context-epoch=unbound evidence=operational-observation\n🙂é…")
 
     def compare(self, scenarios, prelude=(), engine="cetta", swi=False, trigger="idle", oracle_scenarios=None, receipt_states=None, **settings):
         import strategy_host

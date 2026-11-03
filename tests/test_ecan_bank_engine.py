@@ -19,7 +19,8 @@ class BankTests(unittest.TestCase):
                                 ('snapshot', 'write'), ('snapshot', 'read')]:
                 with self.subTest(name=name, phase=phase):
                     env['ECAN_SNAPSHOT_PHASE'] = phase
-                    result = subprocess.run([engine, '--lang', 'petta', str(ROOT / f'tests/ecan_{name}.metta')],
+                    result = subprocess.run([engine, '--lang', 'petta', '--import-mode', 'ancestor-walk',
+                                             str(ROOT / f'tests/ecan_{name}.metta')],
                                             cwd=ROOT, env=env, text=True, capture_output=True, timeout=30)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertNotIn('TestFailure', result.stdout)

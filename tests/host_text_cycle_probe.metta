@@ -1,0 +1,11 @@
+; The boot probe must reach an actual cycle, including the restored host tag.
+!(import! &self (library lib_import))
+!(import! &self ./lib_mettaclaw)
+!(py-eval "(__import__('helper').__dict__.__setitem__('_working_boot_cache', {}), __import__('helper').__dict__.__setitem__('working_boot', lambda: 3))")
+!(initMemory)
+!(configure commchannel telegram)
+!(let* (($state (initLoop))
+         ($_ (assert (== (loop-pending-continuation (process-periphery $state)) no-continuation)))
+         ($results (collapse (once (processCycle $state))))
+         ($_ (assert (== (size-atom $results) 1))))
+    (println! HOST_TEXT_CYCLE_OK))

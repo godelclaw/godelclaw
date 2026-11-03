@@ -216,12 +216,14 @@ class FullShadow:
             "!(println! (addition-effect-turn-begin %d))\n" % turn
             if begin_frontier else ""
         )
-        return (
+        imports = "" if self.engine == "cetta" else (
             "!(import! &self (library lib_import))\n"
             "!(import! &self ./src/utils)\n"
             "!(import! &self ./src/skills)\n"
             "!(import! &self ./src/command_pipeline)\n"
             "!(import! &self ./src/turn_additions)\n"
+        )
+        return (imports +
             "%s"
             "!(let* ("
             "($respi %s) "
