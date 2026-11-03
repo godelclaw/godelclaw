@@ -20,6 +20,16 @@
 
 (= (utils:decode-safe $value) (py-call (helper.decode_safe_text $value)))
 
+; py-str's conversion, with exclusive branches: its overlapping base and
+; general equations keep answering after the text.
+(= (utils:py-str $parts) (utils:py-str-from $parts ""))
+(= (utils:py-str-from $parts $out)
+   (if (== $parts ()) $out
+     (let* (($head (car-atom $parts))
+            ($tail (cdr-atom $parts))
+            ($next (py-call (operator.add $out (py-call (str $head))))))
+       (utils:py-str-from $tail $next))))
+
 (= (string-safe $str)
    (string-replace (string-replace (string-replace $str "\"\"" "_quote_") "\n" "_newline_") "'" "_apostrophe_"))
 

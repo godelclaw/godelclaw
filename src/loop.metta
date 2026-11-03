@@ -58,7 +58,14 @@
 ;; transform them without receiving the command dispatcher's executable
 ;; authority.
 (= (getContextPrefix)
-   (string-safe (py-str ("PROMPT: " (getPrompt)))))
+   (string-safe (utils:py-str ("PROMPT: " (getPrompt)))))
+
+;; One item a line, as the structured request advertises the skills.
+(= (loop:lines $items)
+   (if (== $items ()) ()
+     (let $rest (cdr-atom $items)
+       (if (== $rest ()) $items
+         (cons-atom (car-atom $items) (cons-atom "\n" (loop:lines $rest)))))))
 
 ; In the whole-window task view the last results are already the newest steps
 ; of TASK_RECENT, so repeating them here would only double their cost.
@@ -70,7 +77,7 @@
 
 (= (getContextInstructions $periphery)
    (string-safe
-     (py-str
+     (utils:py-str
        (" OUTPUT_FORMAT: "
         (py-call (strategy_host.batch_description (policy-command-batch-limit (loop-active-policy $periphery))))
         (attention:description)
@@ -101,7 +108,7 @@
 
 (= (getContext $periphery)
    (string-safe
-     (py-str
+     (utils:py-str
        ((getContextPrefix) " SKILLS: " (getSkills)
         (getContextSuffix $periphery)))))
 
@@ -234,16 +241,17 @@
 ;; count every turn twice and leave a structured request its markers consumed.
 (= (turnRequest $periphery $lastmessage)
    (let* (($policy (loop-active-policy $periphery))
-          ($instructions (string-safe (py-str ((getContextPrefix) (getContextInstructions $periphery)))))
+          ($instructions (string-safe (utils:py-str ((getContextPrefix) (getContextInstructions $periphery)))))
           ($evidence (getContextObservations $periphery))
-          ($advertised (string-safe (py-str (getSkills)))))
+          ($advertised (string-safe (utils:py-str (loop:lines (getSkills))))))
      (if (state:cetta? (engine:active))
        (addition-prepare-request $policy ""
          (InstructionContext $instructions $evidence)
-         (string-safe (py-str $lastmessage)) $advertised)
-       (let* (($prompt (getContext $periphery)) ($legacy (py-str ($prompt $lastmessage))))
+         (string-safe (utils:py-str $lastmessage)) $advertised)
+       (let* (($prompt (getContext $periphery)) ($legacy (utils:py-str ($prompt $lastmessage))))
          (addition-prepare-request $policy $legacy
-           (str:concat $instructions $evidence) (string-safe (py-str $lastmessage)) $advertised)))))
+           (str:concat $instructions $evidence) (string-safe (utils:py-str $lastmessage)) $advertised)))))
+
 
 ;; One model-and-tools episode.  It returns a candidate periphery; rest and nop
 ;; contribute ordinary policy directives rather than mutating the runner.
@@ -351,10 +359,10 @@
             (if (== $requestObservations "")
                 (string-safe (repr $results))
                 (string-safe
-                  (py-str ($requestObservations " " (repr $results))))))
+                  (utils:py-str ($requestObservations " " (repr $results))))))
           ($feedback
             (if (== $undelivered "") $turnFeedback
-                (string-safe (py-str ($undelivered " " $turnFeedback)))))
+                (string-safe (utils:py-str ($undelivered " " $turnFeedback)))))
           ($withResults
             (coordinate-set last-results $feedback $paced))
           ($directed (loop-directives-apply $withResults))
