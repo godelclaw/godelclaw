@@ -2,12 +2,15 @@
 from contextlib import closing
 import json
 import os
+from pathlib import Path
 import sqlite3
 import subprocess
+import sys
 import time
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import llm_policy
 import native_lifetime
 import usage_history

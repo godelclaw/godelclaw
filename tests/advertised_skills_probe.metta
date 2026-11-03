@@ -13,7 +13,7 @@
 (= (skills-a-line $mode)
    (let* (($_ (py-call (loop_modes.set_mode $mode)))
           ($turn (process-periphery (initLoop)))
-          ($prompt (coding-request-prompt (turnRequest $turn (NEW_ACTIVITY: first))))
+          ($prompt (request:render (coding-request-prompt (turnRequest $turn (NEW_ACTIVITY: first)))))
           ($_ (cut)))
      (py-call (advertised_skills_check.one_skill_a_line $prompt (getSkills)))))
 

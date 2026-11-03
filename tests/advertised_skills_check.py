@@ -1,4 +1,5 @@
 """Structured requests advertise one skill a line."""
+import json
 
 
 def _safe(text):
@@ -10,6 +11,11 @@ def _safe(text):
 def one_skill_a_line(prompt, skills):
     """1 when the advertisement separates every skill by exactly one line break."""
     prompt, skills = str(prompt), [str(skill) for skill in skills]
+    if prompt.startswith("{"):
+        packet = json.loads(prompt)
+        if packet.get("kind") == "role-context-v1":
+            prompt = "\n\n".join(message["content"] for message in packet["messages"]
+                                   if message["role"] == "system")
     start = prompt.index("ADVERTISED_CAPABILITIES:")
     end = prompt.find("\n\n", start)
     section = prompt[start:] if end < 0 else prompt[start:end]
