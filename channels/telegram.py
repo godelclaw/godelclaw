@@ -2726,11 +2726,12 @@ def sleep_until_message(seconds):
         _wake_event.clear()
         _wake_reason = ""
         _rest_notice_sent = False
-        _sleep_until = deadline
+        # Notices and health show when the rest ends, not this capped wait.
+        _sleep_until = max(deadline, helper.rest_until())
     import process_supervision
     process_supervision.progress("channel-wait", min(1, max(0, deadline - time.time())))
     _health_update(force=True, loop_status="waiting",
-                   waiting_since=time.time(), waiting_until=deadline)
+                   waiting_since=time.time(), waiting_until=_sleep_until)
     try:
         while True:
             if helper.recycle_requested():

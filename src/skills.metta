@@ -137,6 +137,7 @@
    ;; message or /wake may deliberately end it; other activity queues.
    (let $n (max 1 (py-call (int $seconds)))
         (progn (py-call (helper.rest_cancel))
+               (py-call (helper.rest_hold $n))
                (loop-directive-set rest-await-input 0)
                (loop-directive-set rest-request 1)
                (loop-directive-set sleep-interval $n)
@@ -150,6 +151,7 @@
    ;; unwraps it after the timer expires.
    (let $n (max 1 (py-call (int $seconds)))
         (progn (py-call (helper.rest_schedule $n (quote $continuation)))
+               (py-call (helper.rest_hold $n))
                (loop-directive-set rest-await-input 0)
                (loop-directive-set rest-request 1)
                (loop-directive-set sleep-interval $n)
@@ -164,6 +166,7 @@
    ;; text is context for the next waking rather than executable data.
    (let $n (max 1 (py-call (int $seconds)))
         (progn (py-call (helper.rest_cancel))
+               (py-call (helper.rest_hold $n))
                (loop-directive-set rest-await-input 0)
                (loop-directive-set rest-request 1)
                (loop-directive-set sleep-interval $n)

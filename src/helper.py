@@ -578,8 +578,41 @@ def rest_schedule(seconds, command):
 def rest_cancel():
     data = _working_read()
     data.pop('rest_timer', None)
+    data.pop('rest_until', None)
     _working_write(data)
     return 1
+
+
+def rest_hold(seconds):
+    """Record when a timed rest ends. The heartbeat's wake and a process
+    restart leave it standing; only its deadline or a real wake ends it."""
+    data = _working_read()
+    data['rest_until'] = time.time() + max(0, float(seconds))
+    _working_write(data)
+    return 1
+
+
+def rest_release():
+    """The rest ended early: a wake, an operator message, mail or a job."""
+    data = _working_read()
+    if 'rest_until' in data:
+        data.pop('rest_until')
+        _working_write(data)
+    return 1
+
+
+def rest_until():
+    """Epoch when the current timed rest ends, or 0 when none is held."""
+    until = _working_read().get('rest_until')
+    try:
+        until = float(until)
+    except (TypeError, ValueError):
+        return 0
+    return until if until > time.time() else 0
+
+
+def rest_holding():
+    return int(rest_until() > 0)
 
 
 def rest_pending():
@@ -613,9 +646,13 @@ def wait_seconds(requested, last_heartbeat, interval):
     deadlines = [max(0, float(requested))]
     if float(interval) > 0:
         deadlines.append(max(0, float(last_heartbeat)+float(interval)-now))
-    timer = _working_read().get('rest_timer', {})
+    data = _working_read()
+    timer = data.get('rest_timer', {})
     if timer.get('status') == 'waiting':
         deadlines.append(max(0, timer['deadline']-now))
+    until = rest_until()
+    if until:
+        deadlines.append(until-now)
     import math
     return math.ceil(min(deadlines))
 
@@ -654,6 +691,10 @@ def working_boot():
             marker += ' | SCHEDULED_COMMAND_INTERRUPTED: outcome unknown; not replayed: ' + repr(timer.get('command'))
             data.pop('rest_timer', None)
             _working_write(data)
+        held = rest_until()
+        if held and timer.get('status') != 'waiting':
+            import math
+            cache['sleepInterval'] = math.ceil(held-time.time())
         prior = str(cache.get("lastresults", ""))
         # The marker lives only in the waking view; the snapshot keeps
         # pristine content so markers never stack across boots.

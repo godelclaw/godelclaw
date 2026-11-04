@@ -855,8 +855,9 @@
        (let $a (tg:set wake-reason "")
         (let $stale (tg:drop-wake-request)
          (let $b (tg:set rest-notice 0)
-           (let $c (tg:set sleep-until $deadline)
-             (let $p (py-call (telegram.metta_publish "sleep_until" $deadline))
+           ;; Notices and health show when the rest ends, not this capped wait.
+           (let $c (tg:set sleep-until (max $deadline (py-call (helper.rest_until))))
+             (let $p (py-call (telegram.metta_publish "sleep_until" (tg:get sleep-until 0)))
                (let $result (tg:rest-loop $deadline $n $enabled)
                  (let $d (tg:set sleep-until 0)
                    (let $q (py-call (telegram.metta_publish "sleep_until" 0))

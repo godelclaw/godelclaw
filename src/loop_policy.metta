@@ -100,7 +100,14 @@
 ;; Timed naps still use the banked budget and their existing continuation.
 (= (loop-resting $periphery)
    (if (or (> (coordinate-get-or banked-loops 0 $periphery) 0)
-           (== (coordinate-get-or rest-await-input 0 $periphery) 1)) 1 0))
+           (loop-parked $periphery)) 1 0))
+
+;; Parked: waiting for activity, or inside a timed rest whose deadline has not
+;; passed. The deadline lives in the working set, so it outlasts the heartbeat's
+;; capped waits and a process restart.
+(= (loop-parked $periphery)
+   (or (== (coordinate-get-or rest-await-input 0 $periphery) 1)
+       (== (py-call (helper.rest_holding)) 1)))
 
 (= (policy-wait-seconds $selected $loops $requested $paused)
    (if (and (and (policy-autonomous-renewal $selected) (<= $loops 0))

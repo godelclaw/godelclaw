@@ -27,6 +27,8 @@ class RuntimeProbeTest(unittest.TestCase):
         ("tests/fuel_policy_probe.metta", "FUEL_POLICY_OK"),
         ("tests/rest_banking_probe.metta", "REST_BANKING_OK"),
         ("tests/rest_continuation_probe.metta", "REST_CONTINUATION_OK"),
+        ("tests/rest_activity_wait_probe.metta", "REST_ACTIVITY_WAIT_OK"),
+        ("tests/rest_heartbeat_hold_probe.metta", "REST_HEARTBEAT_HOLD_OK"),
         ("tests/context_sources_probe.metta", "CONTEXT_SOURCES_OK"),
         ("tests/native_iter_process_probe.metta", "NATIVE_ITER_PROCESS_OK"),
         ("tests/metta_coding_policy_probe.metta", "METTA_CODING_POLICY_OK"),

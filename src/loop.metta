@@ -133,7 +133,7 @@
 ;; adds under a ceiling, decay keeps most. Only the grant is policy.
 (= (heartbeatPeriphery $periphery $now $refuelled)
    (coordinate-set last-heartbeat $now
-     (if (== (coordinate-get-or rest-await-input 0 $periphery) 1)
+     (if (loop-parked $periphery)
        (coordinate-set banked-loops $refuelled $periphery)
        (coordinate-set sleep-interval (sleepInterval)
          (coordinate-set burst-end budget
@@ -142,7 +142,7 @@
    (if $due
        (let $refuelled
             (fuel:refuel
-              (if (== (coordinate-get-or rest-await-input 0 $periphery) 1)
+              (if (loop-parked $periphery)
                   (coordinate-get-or banked-loops 0 $periphery)
                   (loop-budget $periphery))
               (policy-burst-budget (loop-active-policy $periphery)))
@@ -166,9 +166,10 @@
               ($fresh (goal-bookkeeping:fresh $wake))
               ($message (goal-bookkeeping:message $wake)))
          (if (== $fresh 1)
-           (let $armed
+           (let* (($_ (py-call (helper.rest_release)))
+                  ($armed
                 (max (loop-budget $periphery)
-                     (if (tg:client-metta?) (tg:last-message-arm-loops) (py-call (telegram.lastMessageArmLoops))))
+                     (if (tg:client-metta?) (tg:last-message-arm-loops) (py-call (telegram.lastMessageArmLoops))))))
                 (progn
                   (println! $message)
                   (coordinate-set last-heartbeat (get_time)
@@ -194,19 +195,20 @@
                $periphery))))
        $periphery))
 
-;; A housekeeping timeout cannot end an activity wait. Real incoming input,
-;; a control wake or a completed asynchronous operation can end it. Explicit
-;; timed rests retain their existing timer/continuation behavior.
+;; A housekeeping timeout cannot end an activity wait, nor a timed rest before
+;; its deadline: the life heartbeat caps each wait, so its timeout is not the
+;; rest's. Real incoming input, a control wake or a completed asynchronous
+;; operation can end either.
 (= (restoreAfterWait $periphery $timed-out)
-   (if (and (== (coordinate-get-or rest-await-input 0 $periphery) 1)
-            (== $timed-out 1)) $periphery
+   (if (and (== $timed-out 1) (loop-parked $periphery)) $periphery
      (applyRestRestore (coordinate-set rest-await-input 0 $periphery))))
 
 ;; Waking hands the banked budget back, however the rest ended — timer,
 ;; operator message or /wake — and returns idle pacing to normal. Taking the
 ;; maximum keeps a timer continuation's own allowance when one fired.
 (= (applyRestRestore $periphery)
-   (let $banked (coordinate-get-or banked-loops 0 $periphery)
+   (let* (($_ (py-call (helper.rest_release)))
+          ($banked (coordinate-get-or banked-loops 0 $periphery)))
      (if (> $banked 0)
          (coordinate-set banked-loops 0
            (coordinate-set sleep-interval (sleepInterval)
