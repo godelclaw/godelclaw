@@ -114,21 +114,41 @@ The structured status is a versioned set of timestamped runtime observations.
 Unavailable facts stay unknown. A completed provider call is not evidence that
 a task or goal is complete.
 
-The default terminal should combine live work output with an input composer:
+The interactive console combines live work output with an input composer. Work
+output scrolls above four rows that stay on the last lines of the terminal:
 
 ```text
-Agent · provider backoff · input retained
-14:02  input accepted · request 8ad...
-14:03  tool finished · artifact 41b...
+◆ work-20261104-225522-a6fe · started by godel · 22:55:24
+◇ thinking
+  I'm going to begin by checking what's in the workspace.
 
-> /models
-1  current model [selected]
-2  another available model
-   next page / previous page / cancel
+✓ shell · exit 0 · 0.1s · 22:55:25
+  cd /srv/work/ledger && rg -n "db:transaction" docs src | head -20
+    docs/native_store/PROTOCOL.txt:90:db:transaction opens a write scope
+    output: /srv/agent/memory/coding/work-20261104-225522-a6fe/executions/x1.log
 
-> Continue the existing task, preserving its earlier constraints.
-accepted · request b52... · waiting for provider
+› Continue the existing task, preserving its earlier constraints.
+accepted · b52c0e8f3d6a4a0f9b1e2d7c5a8f6e31
+───────────────────────────────────────────────────────────────────────────
+⠹ work-20261104-225522-a6fe running cd /srv/work/ledger && make test · 4.1s
+› Message godel
+godel · model-name high · resting 2m10s · work-…-a6fe running 4.1s · queue 2 · last call 9.6s
 ```
+
+A `◆` line says whose output follows when the session changes. A shell command
+is printed verbatim on its own lines and a log path in full; long ones are left
+for the terminal to soft-wrap, so tmux copy mode joins them back exactly. Prose
+is folded to the width; no line carries a border or trailing spaces. Thinking
+and ready transitions are shown only in the status row, not in scrollback.
+
+Below the rule, the activity row shows what is running now (or the keys, when
+idle, or how to answer an open menu); the status row shows the agent, its
+model, its state (thinking, ready, resting, compacting), the newest active work
+session and its state, the agent's input queue and the last model-call latency.
+Model, queue and provider backoff come from the same read-only runtime status as
+`/status`, sampled every few seconds while no control request is in progress.
+Enter sends; Alt-Enter or Ctrl-J starts a new line; pasted text keeps its lines.
+Colour follows the terminal palette and is omitted when `NO_COLOR` is set.
 
 Controls reuse the same handlers and menu data as Telegram: models, modes,
 engines, fuel, activity, health, start, stop and wake. Menu selection is explicit;

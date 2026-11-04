@@ -8,12 +8,166 @@ import shutil
 import signal
 import sys
 import threading
+import time
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT), str(ROOT / "src")]
+from stream_sink import control
 from terminal_client import Controls, MailSession
-from ui.worklog.viewer import Reader, clean
+from ui.worklog.viewer import Reader
 from ui.worklog.inlineview.adapter import EventBlocks
+from ui.worklog.inlineview.textsafe import clean
+
+PRIME_AGE = 7 * 86400       # display files this recent may hold the agent's current state
+PRIME_FILES = 8             # newest files whose tails are absorbed at attachment
+PRIME_BYTES = 1 << 20       # bytes read from the end of each
+STATUS_PERIOD = 5           # seconds between runtime status samples for the status row
+STATUS_BACKOFF = 300        # longest pause after repeated sampling failures
+HELP = """Type a message and press Enter to send it; Alt-Enter or Ctrl-J starts a new line, and pasted text keeps its lines.
+Agent controls, shared with Telegram (a menu is answered by typing its number):
+  /models /model /modes /engines /fuel /energy /activity /health /quota /wake /start /stop
+  /status       the structured runtime status
+  /retry        resend locally retained inputs with their original IDs
+  /replies      the complete local archive of replies
+  /close-menu   close the open menu
+  /detach       leave the console (also Ctrl-D); cognition keeps running
+  //text        send text that begins with a slash
+"""
+# 16-colour names only, so the terminal's own palette (light or dark) decides the shades.
+STYLE = {
+    "rule": "ansibrightblack", "placeholder": "ansibrightblack", "prompt.marker": "ansicyan bold",
+    "activity.spinner": "ansicyan bold", "activity.session": "bold", "activity.state": "ansicyan",
+    "activity.command": "", "activity.meta": "ansibrightblack", "activity.hint": "ansibrightblack",
+    "activity.warning": "ansiyellow",
+    "status": "noreverse", "status.agent": "bold", "status.model": "ansimagenta", "status.state": "",
+    "status.busy": "ansicyan", "status.work": "bold", "status.label": "ansibrightblack", "status.value": "",
+    "status.warning": "ansiyellow", "status.error": "ansired bold", "status.sep": "ansibrightblack",
+    "status.meta": "ansibrightblack",
+}
+
+
+def EditorProxy(StdoutProxy):
+    """prompt_toolkit's patch_stdout proxy, drawing each batch of output in ONE terminal write.
+
+    run_in_terminal (what patch_stdout uses) erases the editor, prints, and redraws it with
+    three separate writes, so a terminal can show a frame without the editor on every event.
+    Here, in the application's own loop and in order: erase the editor, print the batch, ask
+    for the cursor row, redraw the editor, then flush once. It waits (briefly) for an
+    outstanding cursor-row answer first, as run_in_terminal does. Each prompt runs a fresh
+    event loop that is closed when the prompt returns, dropping callbacks still queued on it,
+    so text is kept here until it is written: on the loop of the prompt now running, or
+    directly when none is (release() is called after each prompt returns).
+    Output is raw: every caller hands it sanitised whole lines."""
+    import collections
+
+    class Proxy(StdoutProxy):
+        def __init__(self):
+            super().__init__(sleep_between_writes=0.05, raw=True)
+            self.pending, self.guard, self.loop = collections.deque(), threading.Lock(), None
+            self.writing = threading.Lock()     # taking text and writing it are one step, so order holds
+
+        def _take(self):
+            with self.guard:
+                text = "".join(self.pending)
+                self.pending.clear()
+                self.loop = None
+            return text
+
+        def _direct(self):
+            with self.writing:
+                text = self._take()
+                if text:
+                    self._output.enable_autowrap()
+                    self._output.write_raw(text)
+                    self._output.flush()
+
+        def release(self):
+            """No prompt is running: write whatever is still waiting for a loop."""
+            if self._get_app_loop() is None:
+                self._direct()
+
+        def _write_and_flush(self, loop, text):
+            with self.guard:
+                self.pending.append(text)
+                if loop is not None and loop is self.loop:
+                    return                      # a drain is already queued on this loop
+                self.loop = loop
+            if loop is None:
+                return self._direct()
+            try:
+                loop.call_soon_threadsafe(self._drain, loop, time.monotonic() + .2)
+            except RuntimeError:                # that prompt has just ended
+                self._direct()
+
+        def _drain(self, loop, deadline):
+            app = self.app_session.app
+            if app is None or app.loop is not loop or not app.is_running:
+                return self._direct()
+            if (app._running_in_terminal or app.renderer.waiting_for_cpr) and time.monotonic() < deadline:
+                loop.call_later(.005, self._drain, loop, deadline)
+                return
+            with self.writing:
+                text = self._take()
+                if not text:
+                    return
+                output = self._output
+                if app._running_in_terminal:
+                    output.write_raw(text)
+                    output.flush()
+                    return
+                renderer, flush = app.renderer, output.flush
+                output.flush = lambda: None
+                try:
+                    renderer.erase()                # also re-enables autowrap for the text
+                    output.write_raw(text)
+                    renderer.request_absolute_cursor_position()
+                finally:
+                    output.flush = flush
+                app._redraw()                       # renders and flushes everything at once
+
+    return Proxy()
+
+
+def reflowed_rows(renderer, size):
+    """Rows by which re-wrapping at a narrower width moved the cursor down: each editor row
+    drawn above the cursor that no longer fits takes extra rows, and so does the cursor's
+    own row up to the cursor."""
+    screen, old = renderer._last_screen, renderer._last_size
+    if screen is None or old is None or size.columns >= old.columns:
+        return 0
+    columns = max(1, size.columns)
+    cursor = renderer._cursor_pos
+    extra = 0
+    for row in range(cursor.y):
+        used = 0
+        for column, char in screen.data_buffer[row].items():
+            if char.char.strip():
+                used = max(used, column + max(1, char.width))
+        extra += max(0, used - 1) // columns
+    return extra + cursor.x // columns
+
+
+def tail_events(path, size, limit=PRIME_BYTES):
+    """Complete JSON events in the last `limit` bytes before `size` (a partial first line is dropped)."""
+    try:
+        with Path(path).open("rb") as stream:
+            start = max(0, size - limit)
+            stream.seek(start)
+            data = stream.read(size - start)
+    except OSError:
+        return []
+    lines = data.split(b"\n")
+    if start:
+        lines = lines[1:]
+    events = []
+    for line in lines[:-1]:          # the last piece has no newline (empty or still being written)
+        try:
+            value = json.loads(line)
+        except (ValueError, UnicodeError):
+            continue
+        if isinstance(value, dict):
+            events.append(value)
+    return events
 
 
 def profile(args):
@@ -83,45 +237,126 @@ def main(argv=None):
             name, _, arguments = args.command.partition(" ")
             print(json.dumps(controls.request("command", name=name, arguments=arguments), ensure_ascii=False)); return 0
         from prompt_toolkit import PromptSession
+        from prompt_toolkit.filters import Condition, is_done, to_filter
         from prompt_toolkit.history import FileHistory
-        from prompt_toolkit.patch_stdout import patch_stdout
-        from prompt_toolkit.styles import Style
-        from prompt_toolkit.filters import Condition, to_filter
-        from prompt_toolkit.layout import ConditionalContainer, Layout
+        from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.layout import ConditionalContainer, HSplit, Layout, Window
         from prompt_toolkit.layout.containers import VerticalAlign
+        from prompt_toolkit.layout.controls import FormattedTextControl
+        from prompt_toolkit.patch_stdout import StdoutProxy
         from prompt_toolkit.renderer import CPR_Support
-        blocks = EventBlocks(args.agent, lambda: shutil.get_terminal_size((80, 24)).columns,
-                             ascii_only=(getattr(sys.stdout, "encoding", "") or "").lower().replace("-", "") != "utf8")
-        # The editor stays the one PromptSession; the status line is its own bottom toolbar, so
-        # nothing the agent streams can share a row with the draft.
-        session = PromptSession(history=FileHistory(str(client_state / "history")), mouse_support=False,
-                                bottom_toolbar=blocks.footer, refresh_interval=.5,
-                                style=Style.from_dict({"bottom-toolbar": "noreverse #888888", "bottom-toolbar.text": "noreverse #888888"}))
-        # Bottom anchoring. prompt_toolkit's inline application already spans from its start row to the
-        # bottom of the screen (it asks the terminal for the cursor row) but its prompt window grows into the
-        # spare rows, so the prompt sat at the top of that area. Stop it extending and align the root container
-        # to the bottom: wrapped draft rows + the status toolbar always end on the last terminal row, whatever
-        # is printed above, and the area is re-measured on resize. No padding text, no scroll region.
-        session.layout.current_window.dont_extend_height = to_filter(True)
-        session.layout.container.align = VerticalAlign.BOTTOM
-        # prompt_toolkit re-measures that area after every output via a cursor-position query; until the
-        # answer arrives it would draw the composer directly under the new text and then jump it down. Draw
-        # nothing while a measurement is pending (never on a terminal that does not answer such queries).
-        renderer = session.app.renderer
-        measured = Condition(lambda: renderer.height_is_known or renderer.cpr_support != CPR_Support.SUPPORTED)
-        session.layout = session.app.layout = Layout(ConditionalContainer(session.layout.container, filter=measured),
-                                                     focused_element=session.layout.current_window)
+        from prompt_toolkit.styles import Style
+        ascii_only = (getattr(sys.stdout, "encoding", "") or "").lower().replace("-", "") != "utf8"
+        color = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+        columns = lambda: shutil.get_terminal_size((80, 24)).columns
+        blocks = EventBlocks(args.agent, columns, ascii_only=ascii_only, color=color)
         stop, work, outgoing, menu, menu_lock = threading.Event(), queue.Queue(), queue.Queue(), [], threading.Lock()
         view_epoch = [0]
+        facts, reply_fault, unconfirmed = [{}, 0.0], [""], [0]     # facts: [last status sample, when]
+
+        def say(text):
+            """Everything printed above the editor: whole, sanitised lines."""
+            print(text if text.endswith("\n") else text + "\n", end="", flush=True)
+
+        def note(text, style=""):
+            say(blocks.line(text, style))
+
+        def live_facts():
+            sample, when = facts        # replaced whole by the poller, never mutated
+            return sample if time.time() - when < 30 else {}
+
+        def menu_hint():
+            with menu_lock:
+                count = len(menu)
+            return ("menu open%stype 1-%d to choose, or /close-menu" % (blocks._sep(), count)) if count else None
+
+        def notes():
+            out = []
+            if unconfirmed[0]:
+                out.append("%d unconfirmed%s/retry" % (unconfirmed[0], blocks._sep()))
+            if reply_fault[0]:
+                out.append("replies unavailable")
+            return out
+
+        def prompt_message():
+            # Rows above the draft: a rule that separates the editor from scrollback, then the
+            # activity row. They are redrawn in place and erased before anything scrolls, so
+            # neither ever reaches the scrollback.
+            rule = ("-" if ascii_only else "─") * max(1, columns() - 1)
+            return ([("class:rule", rule), ("", "\n")] + blocks.activity(menu_hint()) +
+                    [("", "\n"), ("class:prompt.marker", "> " if ascii_only else "› ")])
+
+        bindings = KeyBindings()
+
+        @bindings.add("escape", "enter")
+        @bindings.add("c-j")
+        def _newline(event):
+            event.current_buffer.insert_text("\n")
+
+        session = PromptSession(history=FileHistory(str(client_state / "history")), mouse_support=False,
+                                message=prompt_message, prompt_continuation=lambda width, line, wrap: "  ",
+                                placeholder=lambda: [("class:placeholder", "Message " + args.agent)],
+                                key_bindings=bindings, erase_when_done=True, refresh_interval=.25,
+                                style=Style.from_dict(STYLE))
+        # The status row is our own window rather than prompt_toolkit's bottom toolbar, which is
+        # hidden whenever the cursor row is being re-measured (after every output) and would make
+        # the editor hop by a row.
+        status_row = ConditionalContainer(
+            Window(FormattedTextControl(lambda: blocks.status(live_facts(), notes())), height=1,
+                   dont_extend_height=True, style="class:status"), filter=~is_done)
+        session.layout.current_window.dont_extend_height = to_filter(True)
+        inner = HSplit([session.layout.container, status_row], align=VerticalAlign.BOTTOM)
+        # Bottom anchoring. prompt_toolkit's inline application spans from its start row to the bottom
+        # of the screen; aligning to the bottom keeps the rule, activity row, draft and status row on the
+        # last rows whatever is printed above. No padding text, no scroll region.
+        # It re-measures that area after every output with a cursor-position query. Until the screen has
+        # filled once, drawing before the answer would put the editor under the new text and then jump it
+        # down, so nothing is drawn while a measurement is pending. Once the editor has reached the last
+        # row, output can only scroll it, never move it, so it is drawn at once (no blink per event); a
+        # resize measures again.
+        renderer = session.app.renderer
+        settled = [None]
+
+        def measured():
+            if renderer.cpr_support != CPR_Support.SUPPORTED:
+                return True
+            size = session.app.output.get_size()
+            if settled[0] == size:
+                return True
+            if not renderer.height_is_known:
+                return False
+            below = getattr(renderer, "_min_available_height", 0)
+            if 0 < below <= inner.preferred_height(size.columns, size.rows).preferred:
+                settled[0] = size
+            return True
+        session.layout = session.app.layout = Layout(ConditionalContainer(inner, filter=Condition(measured)),
+                                                     focused_element=session.layout.current_window)
+        # When tmux narrows a pane it re-wraps every line longer than the new width, so the rule and
+        # activity row above the cursor take more rows and the cursor moves down by that many;
+        # prompt_toolkit's erase on resize would then leave their first rows behind (and they would
+        # scroll into the history). Start the erase that many rows higher. Only inside tmux, whose
+        # reflow is known: a terminal that does not reflow would lose real output instead.
+        resize = session.app._on_resize
+
+        def on_resize():
+            if os.environ.get("TMUX"):
+                try:
+                    up = reflowed_rows(renderer, session.app.output.get_size())
+                    if up:
+                        session.app.output.cursor_up(up)
+                except Exception:
+                    pass
+            resize()
+        session.app._on_resize = on_resize
 
         def show(body, epoch):
             with menu_lock:
                 if body.get("kind") == "menu" and epoch != view_epoch[0]:
-                    print("This menu is no longer active.", flush=True)
+                    note("This menu is no longer active.", "dim")
                     return
                 menu[:] = [button for row in body.get("rows", []) for button in row]
-                print("\n" + clean(body.get("text", json.dumps(body, ensure_ascii=False) if "kind" not in body else "")), flush=True)
-                for n, button in enumerate(menu, 1): print("%d  %s" % (n, clean(button[0])), flush=True)
+                text = body.get("text", json.dumps(body, ensure_ascii=False) if "kind" not in body else "")
+                say("\n" + blocks.menu(text, [button[0] for button in menu]))
 
         def worker():
             while not stop.is_set():
@@ -129,7 +364,7 @@ def main(argv=None):
                 try:
                     show(controls.request(item[0], **item[1]), item[2])
                 except Exception as error:
-                    print("Operation incomplete: " + clean(str(error)), flush=True)
+                    note("Operation incomplete: " + clean(str(error)), "warning")
 
         def publisher():
             while not stop.is_set():
@@ -137,44 +372,80 @@ def main(argv=None):
                 try:
                     if item is None:
                         results = mail.retry()
-                        unconfirmed = [r for r in results if r["status"] == "unconfirmed"]
-                        print("%d acceptance receipts; %d inputs still unconfirmed" % (len(results)-len(unconfirmed), len(unconfirmed)), flush=True)
-                        for result in unconfirmed: print(clean(result["id"] + ": " + result["error"]), flush=True)
+                        unconfirmed_results = [r for r in results if r["status"] == "unconfirmed"]
+                        note("%d acceptance receipts; %d inputs still unconfirmed" % (
+                            len(results) - len(unconfirmed_results), len(unconfirmed_results)))
+                        for result in unconfirmed_results: note(result["id"] + ": " + result["error"], "warning")
                     else:
-                        mail.publish(item); print("accepted · " + item["id"], flush=True)
+                        mail.publish(item); note("  accepted · " + item["id"], "dim")
                 except Exception as error:
-                    print("Input acceptance unconfirmed; /retry keeps its original ID: " + clean(str(error)), flush=True)
+                    note("Input acceptance unconfirmed; /retry keeps its original ID: " + clean(str(error)), "warning")
+                count_unconfirmed()
+
+        def count_unconfirmed():
+            try: unconfirmed[0] = sum(1 for _ in (client_state / "pending").glob("*.json"))
+            except OSError: pass
 
         def replies():
             previous_error = ""
             while not stop.is_set():
                 try:
                     value = mail.receive()
-                    if value: print("\n" + clean(value.get("from", args.agent)) + ":\n" + clean(value["text"]), flush=True)
+                    if value: say("\n" + blocks.reply(value.get("from") or args.agent, value["text"]))
                     else: stop.wait(.1)
-                    previous_error = ""
+                    previous_error = reply_fault[0] = ""
                 except Exception as error:
                     label = clean(str(error))
-                    if label != previous_error: print("Reply channel unavailable: " + label, flush=True)
-                    previous_error = label
+                    if label != previous_error: note("Reply channel unavailable: " + label, "warning")
+                    previous_error = reply_fault[0] = label
                     stop.wait(2)
+
+        def poller():
+            # The same read-only runtime status /status prints (model, input queue, provider
+            # phase), sampled only while no operator request is using the control process, with
+            # a short reply timeout, and less and less often while it keeps failing.
+            pause = 1
+            while not stop.wait(pause):
+                try:
+                    value = controls.try_request("status", reply_timeout=2)
+                    if isinstance(value, dict):
+                        facts[:] = [value, time.time()]
+                    pause = STATUS_PERIOD if value is not None else 1
+                except Exception:
+                    pause = min(STATUS_BACKOFF, max(STATUS_PERIOD, pause * 2))
+                count_unconfirmed()
+
+        def mine(event):
+            return event.get("session") == args.agent or event.get("parent_session") == args.agent
 
         def events():
             reader = Reader(args.dir)
-            # Follow from attachment; the full work log remains separately readable.
+            # Follow from attachment; the full work log remains separately readable. The tails of the
+            # most recent files are absorbed silently so the status row starts with the agent's state.
+            recent = []
             for path in args.dir.glob("*.jsonl"):
-                stat = path.stat(); reader.offsets[path.name] = (stat.st_ino, stat.st_size)
+                try: stat = path.stat()
+                except OSError: continue
+                reader.offsets[path.name] = (stat.st_ino, stat.st_size)
+                if time.time() - stat.st_mtime < PRIME_AGE:
+                    recent.append((stat.st_mtime, path, stat.st_size))
+            enabled, epoch = control(args.dir)
+            backlog = []
+            for _, path, size in sorted(recent)[-PRIME_FILES:] if enabled else []:
+                backlog += [e for e in tail_events(path, size) if e.get("epoch", "initial") == epoch and mine(e)]
+            if backlog:
+                blocks.prime(sorted(backlog, key=lambda e: (e.get("time", 0), e.get("producer", ""), e.get("sequence", 0))))
             previous_failure = ""
             while not stop.wait(.15):
-                mine = [e for e in reader.read() if e.get("session") == args.agent or e.get("parent_session") == args.agent]
+                batch = [e for e in reader.read() if mine(e)]
                 # Whole lines only: a fragment flushed through patch_stdout is redrawn on the draft's row.
                 blocks.consumed = 0
                 try:
-                    text = blocks.feed(mine)
+                    text = blocks.feed(batch)
                 except Exception as error:   # last resort: the reader already moved past this batch, so show it as plain text
-                    text = blocks.recover(mine, error)
+                    text = blocks.recover(batch, error)
                 failure = blocks.fault
-                if failure and failure != previous_failure: print("Display renderer fault; the affected events are shown as plain text: " + clean(failure), flush=True)
+                if failure and failure != previous_failure: note("Display renderer fault; the affected events are shown as plain text: " + clean(failure), "warning")
                 previous_failure = failure
                 if text: print(text, end="", flush=True)
 
@@ -182,43 +453,50 @@ def main(argv=None):
             raise SystemExit(128 + number)   # unwinds through prompt_toolkit, which restores the tty
         for name in ("SIGTERM", "SIGHUP"): signal.signal(getattr(signal, name), terminate)
 
-        with patch_stdout(raw=False):
-            for target in (worker, publisher, replies, events): threading.Thread(target=target, daemon=True).start()
-            print("Attached to %s. /models /activity /help · Ctrl-D detaches; cognition keeps running." % args.agent)
-            pending = sum(1 for _ in (client_state / "pending").glob("*.json"))
-            if pending: print("%d inputs await confirmed acceptance; /retry reuses their IDs." % pending)
+        # raw: the blocks carry SGR colour; every printed string is sanitised first (see say/blocks).
+        proxy = EditorProxy(StdoutProxy)
+        streams = sys.stdout, sys.stderr
+        sys.stdout = sys.stderr = proxy
+        try:
+            for target in (worker, publisher, replies, events, poller): threading.Thread(target=target, daemon=True).start()
+            note("Attached to %s. /help lists commands; Ctrl-D detaches and cognition keeps running." % args.agent, "dim")
+            count_unconfirmed()
+            if unconfirmed[0]: note("%d inputs await confirmed acceptance; /retry reuses their IDs." % unconfirmed[0], "warning")
             stored = sorted((client_state / "received").glob("*.json"), key=lambda p:p.stat().st_mtime)
             if stored:
-                print("Recent stored replies; /replies shows the complete local archive.")
-                for path in stored[-3:]: print(clean(json.loads(path.read_text())["text"]))
+                note("Recent stored replies; /replies shows the complete local archive.", "dim")
+                for path in stored[-3:]:
+                    value = json.loads(path.read_text())
+                    say(blocks.reply(value.get("from") or args.agent, value["text"]))
             work.put(("command", dict(name="/activity", arguments=""), view_epoch[0]))
             while True:
-                try: text = session.prompt(args.agent + "> ")
+                try: text = session.prompt()
                 except KeyboardInterrupt: continue
                 except EOFError: break
+                finally: proxy.release()
                 if not text.strip(): continue
+                say(blocks.user_input(text))
                 with menu_lock:
                     view_epoch[0] += 1
                     epoch = view_epoch[0]
                 if text in ("/quit", "/detach"): break
                 if text == "/help":
-                    print("/models /model /modes /engines /fuel /energy /activity /health /quota /wake /start /stop\n"
-                          "/retry retries locally retained submissions with their original IDs.\n"
-                          "/detach exits this console. Paste text, then Enter, to send it. // sends a literal slash.")
+                    say(HELP)
                     continue
                 if text == "/retry": outgoing.put(None); continue
                 if text == "/close-menu":
                     with menu_lock: menu.clear()
-                    print("Menu closed.")
+                    note("Menu closed.", "dim")
                     continue
                 if text == "/status": work.put(("status", {}, epoch)); continue
                 if text == "/replies":
                     for path in sorted((client_state / "received").glob("*.json"), key=lambda p:p.stat().st_mtime):
-                        print(clean(json.loads(path.read_text())["text"]))
+                        value = json.loads(path.read_text())
+                        say(blocks.reply(value.get("from") or args.agent, value["text"]))
                     continue
                 with menu_lock:
                     if menu and text.isdigit() and not 0 < int(text) <= len(menu):
-                        print("Choose a displayed number, or /close-menu.")
+                        note("Choose a displayed number, or /close-menu.", "warning")
                         continue
                     choice = menu[int(text) - 1][1] if text.isdigit() and 0 < int(text) <= len(menu) else None
                     menu.clear()
@@ -227,8 +505,13 @@ def main(argv=None):
                     name, _, arguments = text.partition(" "); work.put(("command", dict(name=name, arguments=arguments), epoch))
                 else:
                     try: outgoing.put(mail.prepare(text[1:] if text.startswith("//") else text))
-                    except OSError as error: print("Input not accepted locally: " + clean(str(error)), flush=True)
+                    except OSError as error: note("Input not accepted locally: " + clean(str(error)), "warning")
+                    count_unconfirmed()
             stop.set()
+            note("Detached from %s; cognition keeps running." % args.agent, "dim")
+        finally:
+            sys.stdout, sys.stderr = streams
+            proxy.close()
         return 0
     finally:
         if mail is not None: mail.close()

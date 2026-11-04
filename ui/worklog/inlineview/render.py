@@ -1,8 +1,9 @@
-"""Blocks for the inline viewer. Every block is a plain string of whole lines,
-each at most `width` cells, with no right-hand borders or gutters beyond leading
-indentation, so a terminal selection copies clean text. SGR colour appears only
-when `color` is true."""
+"""Blocks for the inline viewer. Every block is a string of whole lines with no
+borders, gutters or trailing spaces; prose is folded to `width` cells, while a
+command or a path is one logical line the terminal may soft-wrap, so a terminal
+or tmux selection copies it exactly. SGR colour appears only when `color` is true."""
 import json
+import re
 
 from rich.cells import cell_len
 from rich.console import Console
@@ -16,15 +17,23 @@ from rich.color import ColorSystem
 
 from .textsafe import clean, clock, command_text, guard_output, one_line, span, truncate
 
-RUNNING, OK, FAILED, UNCERTAIN = "running", "ok", "failed", "uncertain"
-GLYPHS = {RUNNING: "◌", OK: "✓", FAILED: "✗", UNCERTAIN: "?"}
-ASCII_GLYPHS = {RUNNING: "~", OK: "+", FAILED: "x", UNCERTAIN: "?"}
-GLYPH_STYLE = {RUNNING: "cyan", OK: "green", FAILED: "bold red", UNCERTAIN: "yellow"}
+RUNNING, OK, FAILED, UNCERTAIN, PROPOSED = "running", "ok", "failed", "uncertain", "proposed"
+GLYPHS = {RUNNING: "◌", OK: "✓", FAILED: "✗", UNCERTAIN: "?", PROPOSED: "·"}
+ASCII_GLYPHS = {RUNNING: "~", OK: "+", FAILED: "x", UNCERTAIN: "?", PROPOSED: "-"}
+GLYPH_STYLE = {RUNNING: "cyan", OK: "green", FAILED: "bold red", UNCERTAIN: "yellow", PROPOSED: "dim"}
 
-_UNCERTAIN_WORDS = ("interrupted", "unknown", "uncertain", "not run", "proposed", "pending",
-                    "abandon", "cancel", "stopped", "forming", "awaiting")
-_FAILED_WORDS = ("fail", "error", "timeout", "timed out", "killed", "denied", "reject", "crash", "refused")
-_OK_WORDS = ("complete", "done", "ok", "success", "succeed", "finished", "passed", "recorded", "applied")
+_UNCERTAIN_WORDS = ("interrupted", "unknown", "uncertain", "not run", "pending", "abandon", "cancel",
+                    "stopped", "forming", "awaiting", "deferred", "withheld")
+_FAILED_WORDS = ("fail", "error", "timeout", "timed out", "timed-out", "killed", "denied", "reject", "crash",
+                 "refused", "signal", "exception", "no_result", "not_started", "not started", "http-status")
+_OK_WORDS = ("complete", "done", "ok", "success", "succeed", "finished", "passed", "recorded", "applied",
+             "returned", "exited")
+# Usual outcome words, left out of a block's detail line (the glyph already says it).
+_PLAIN_STATUS = ("exited", "returned", "applied", "completed", "done", "finished", "running")
+SHELL_TOOLS = {"exec_command": "shell", "write_stdin": "shell input", "exec_poll": "poll", "exec_cancel": "cancel"}
+COMMAND_LINES = 12          # rows of a multi-line command shown before eliding the rest
+COMMAND_CHARS = 2000        # characters of a one-line command shown before eliding the rest
+METTA_ROWS = 4              # rows of a long MeTTa command form
 THEME = Theme({
     "markdown.code": "bold cyan", "markdown.code_block": "dim", "markdown.hr": "dim",
     "markdown.item.bullet": "bold", "markdown.item.number": "bold", "markdown.link": "none",
@@ -32,16 +41,22 @@ THEME = Theme({
 })
 
 
-def classify(status, terminal, exit_code=None, text_item=False):
-    """Map an item's reported state to a glyph state; unknown outcomes stay uncertain."""
+def classify(status, terminal, exit_code=None, text_item=False, result=""):
+    """Map an item's reported state to a glyph state; unknown outcomes stay uncertain.
+    A MeTTa command that returned an (Error ...) value counts as failed; a tool call
+    the model proposed is PROPOSED until the executor reports what happened to it."""
     if not terminal:
         return RUNNING
     word = str(status or "").lower()
+    if word == "proposed":
+        return PROPOSED
     if any(w in word for w in _UNCERTAIN_WORDS) and word != "forming":
         return UNCERTAIN
     if exit_code not in (None, 0):
         return FAILED
     if any(w in word for w in _FAILED_WORDS):
+        return FAILED
+    if word == "returned" and str(result or "").lstrip().startswith("(Error"):
         return FAILED
     if exit_code == 0 or any(w in word for w in _OK_WORDS):
         return OK
@@ -64,7 +79,7 @@ class FlatCode(CodeBlock):
 
 
 ASCII_FOLD = str.maketrans({"·": "-", "…": ".", "•": "*", "▌": "|", "─": "-", "━": "-", "○": " ", "◆": "*",
-                            "↳": "-", "›": ">", "✓": "+", "✗": "x", "◌": "~"})
+                            "↳": "-", "›": ">", "✓": "+", "✗": "x", "◌": "~", "◇": "-", "→": ">"})
 
 
 class DottedItem(ListItem):
@@ -148,6 +163,14 @@ class Renderer:
             out.append(line)
         return out
 
+    def logical(self, text):
+        """One Text as one unfolded line: the terminal soft-wraps it, so a selection
+        of a command or path copies exactly what was printed."""
+        text = text.copy()
+        text.no_wrap, text.overflow, text.end = True, "ignore", ""
+        width = max(self.width, text.cell_len + 1)
+        return _SegLines(self.lines(text, width)[:1])
+
     def to_str(self, seg_lines):
         parts = []
         for line in seg_lines:
@@ -163,7 +186,7 @@ class Renderer:
     def block(self, *renderables, trailing_blank=True):
         seg = []
         for r in renderables:
-            seg += self.lines(r)
+            seg += r.seg if isinstance(r, _SegLines) else self.lines(r)
         if trailing_blank:
             seg.append([])
         return self.to_str(seg)
@@ -172,36 +195,50 @@ class Renderer:
         return clock(seconds, self.now) if seconds else ""
 
     def _lead(self, seconds, state=None):
-        """Dim time and optional status glyph, as a Text."""
+        """Optional status glyph (time goes at the end of a line, see _meta), as a Text."""
         t = Text()
-        stamp = self._stamp(seconds)
-        if stamp:
-            t.append(stamp + "  ", style="dim")
         if state:
             t.append(self.glyph(state) + " ", style=GLYPH_STYLE[state])
         return t
 
-    # -- session level ----------------------------------------------------
-    def session_header(self, sid, session):
-        head = Text()
-        head.append("◆ " if not self.ascii else "* ", style="bold")
-        head.append(one_line(session.get("title") or sid), style="bold")
-        head.append("  " + one_line(session.get("status", "")), style="bold green")
-        bits = []
-        if session.get("model"):
-            bits.append(one_line(session["model"]))
-        if session.get("started"):
-            bits.append("started " + self._stamp(session["started"]))
-        if session.get("parent"):
-            bits.append("parent " + one_line(session["parent"]))
-        bits += self.call_bits(session)
+    def _meta(self, line, bits, seconds=None):
+        """Append ' · a · b · HH:MM:SS' in dim to a header line."""
         bits = [b for b in bits if b]
-        room = max(10, self.width - 3)
-        while len(bits) > 1 and cell_len(self._join(bits)) > room:
-            bits.pop()                      # drop trailing facts whole rather than cut one mid-word
-        sub = Text("  " + truncate(self._join(bits), room, self.ell), style="dim", no_wrap=True)
-        head.no_wrap, head.overflow = True, "ellipsis"
-        return self.block(head, sub)
+        stamp = self._stamp(seconds)
+        if stamp:
+            bits.append(stamp)
+        if bits:
+            line.rstrip()
+            line.append((" %s " % self.sep if line.plain else "") + self._join(bits), style="dim")
+        return line
+
+    def _fit(self, line):
+        """A header line kept to one row (its facts are short; commands are printed separately)."""
+        line.no_wrap, line.overflow = True, "ellipsis"
+        return line
+
+    # -- session level ----------------------------------------------------
+    def session_line(self, sid, session, first=True, seconds=None):
+        """Marks whose output follows. The first mention of a session names its model,
+        parent and task; a later switch back to it is one short line."""
+        head = Text()
+        head.append(("◆ " if not self.ascii else "* "), style="bold magenta")
+        head.append(one_line(sid), style="bold")
+        bits = []
+        if first:
+            if session.get("model"):
+                bits.append(one_line(session["model"]))
+            if session.get("parent"):
+                bits.append("started by " + one_line(session["parent"]))
+        parts = [self._fit(self._meta(head, bits, seconds or session.get("updated")))]
+        title = one_line(session.get("title") or "")
+        if first and title and title != sid:
+            parts.append(Text("  " + truncate(title, max(10, self.width - 2), self.ell), style="dim", no_wrap=True))
+        return self.block(*parts, trailing_blank=False)
+
+    def session_header(self, sid, session):
+        """Kept for snapshot callers: the first-mention session line plus a blank line."""
+        return self.session_line(sid, session, first=True) + "\n"
 
     def call_times(self, session):
         return self._join(self.call_bits(session))
@@ -216,49 +253,53 @@ class Renderer:
             bits.append("updated " + self._stamp(session["updated"]))
         return bits
 
+    def interrupted(self, sid, session, reason="", took=None, seconds=None):
+        """A model call that ended without its result; the only state change kept in scrollback
+        (thinking/ready transitions live in the status line)."""
+        t = Text("! " + one_line(sid) + " model call interrupted", style="yellow")
+        bits = [("reason " + one_line(reason)) if reason else "", span(took) if took is not None else ""]
+        return self.block(self._fit(self._meta(t, bits, seconds)), trailing_blank=False)
+
     def status_change(self, sid, session):
-        t = self._lead(session.get("updated"))
-        t.append(("↳ " if not self.ascii else "-> ") + one_line(sid) + " " + one_line(session.get("status", "")), style="dim")
-        ct = self.call_times(session).split(self._join(["", "updated"]))[0]
-        if ct:
-            t.append(self._join(["", ct]), style="dim")
-        return self.block(t, trailing_blank=False)
+        return self.interrupted(sid, session, took=session.get("call_took"), seconds=session.get("updated"))
 
     def plan(self, session, seconds=None):
         text = session.get("plan", "")
-        t = self._lead(seconds)
-        t.append("Plan", style="bold")
-        rows = [t]
+        t = Text("Plan", style="bold")
+        rows = [self._meta(t, [], seconds)]
         try:
-            for p in json.loads(text).get("plan", []):
+            value = json.loads(text)
+            if value.get("explanation"):
+                rows.append(Padding(Text(one_line(value["explanation"]), style="dim"), (0, 0, 0, 2)))
+            for p in value.get("plan", []):
                 state = {"completed": OK, "in_progress": RUNNING}.get(str(p.get("status")), None)
-                row = Text("  ")
+                row = Text()
                 if state:
                     row.append(self.glyph(state) + " ", style=GLYPH_STYLE[state])
                 else:
                     row.append(("○ " if not self.ascii else "  "), style="dim")
                 row.append(one_line(p.get("step", "")))
-                row.no_wrap = False
-                rows.append(row)
+                rows.append(Padding(row, (0, 0, 0, 2)))
         except (ValueError, TypeError, AttributeError):
             rows.append(Text("  " + one_line(text)))
         return self.block(*rows)
 
     def gap(self, value):
-        t = Text(("! " if True else "") + (("display missed %d updates; " % value) if isinstance(value, int) else (one_line(value) + "; "))
+        t = Text("! " + (("display missed %d updates; " % value) if isinstance(value, int) else (one_line(value) + "; "))
                  + "final records remain authoritative", style="yellow")
         return self.block(t)
 
     def note(self, text, seconds=None, dim=True):
-        t = self._lead(seconds)
-        t.append(one_line(text), style="dim" if dim else "")
-        return self.block(t, trailing_blank=False)
+        t = Text(one_line(text), style="dim" if dim else "")
+        return self.block(self._meta(t, [], seconds), trailing_blank=False)
 
-    def report(self, session):
-        head = self._lead(session.get("updated"))
-        head.append("Session " + one_line(session.get("status", "")), style="bold")
+    def report(self, session, sid=None, took=None):
+        status = one_line(session.get("status", ""))
+        state = classify(status, True)
+        head = self._lead(None, state)
+        head.append((one_line(sid) + " " if sid else "Session ") + status, style="bold")
+        parts = [self._fit(self._meta(head, [span(took) if took else ""], session.get("updated")))]
         body = clean(session.get("report", "")).strip()
-        parts = [head]
         if body:
             parts.append(self.markdown(body, rows=self.text_rows))
         return self.block(*parts)
@@ -276,74 +317,177 @@ class Renderer:
                 seg = head + [marker] + tail
         return _SegLines(seg)
 
+    def _bullet(self, lines, glyph, style):
+        """Put a glyph in the two-cell indent of the first line of rendered markdown."""
+        seg = lines.seg
+        if seg and seg[0] and seg[0][0].text.startswith("  "):
+            first = seg[0][0]
+            seg[0] = [Segment(glyph + " ", Style.parse(style)), Segment(first.text[2:], first.style)] + seg[0][1:]
+        return lines
+
     def text_chunk(self, title, channel, started, text, state=None, header=True, close=False, cont=False, tail_note=None):
-        """One append-only slice of a commentary / reasoning item."""
+        """One append-only slice of a commentary / reasoning item.
+
+        Commentary (what the agent says) is a bulleted paragraph; reasoning is dim italic
+        under a 'thinking' line. Neither repeats the session name or time: the session line
+        above a run of output says whose it is."""
         parts = []
-        if header:
-            t = self._lead(started, state if state in (RUNNING, UNCERTAIN, FAILED) and close else None)
-            t.append(one_line(title), style="bold cyan" if channel == "commentary" else "bold magenta" if channel == "reasoning-summary" else "bold")
+        reasoning = channel == "reasoning-summary"
+        if header and (reasoning or channel not in ("commentary",)):
+            t = self._lead(None, state if state in (RUNNING, UNCERTAIN, FAILED) and close else None)
+            label = "thinking" if reasoning else one_line(title)
+            t.append(("◇ " if reasoning else "") + label, style="dim" if reasoning else "bold")
             if cont:
-                t.append(" (cont.)", style="dim")
+                t.append(" (continued)", style="dim")
             parts.append(t)
         if tail_note:
             parts.append(Text("  " + tail_note, style="dim"))
         if text.strip():
-            parts.append(self.markdown(text, rows=self.text_rows, style="dim italic" if channel == "reasoning-summary" else ""))
+            body = self.markdown(text, rows=self.text_rows, style="dim italic" if reasoning else "")
+            if channel == "commentary" and header:
+                body = self._bullet(body, "•", "bold")
+            parts.append(body)
         if close and state == UNCERTAIN:
             parts.append(Text("  " + self.glyph(UNCERTAIN) + " interrupted", style="yellow"))
         return self.block(*parts)
 
     def command_title(self, command):
-        return "$ " + one_line(command_text(command))
+        return one_line(command_text(command))
 
-    def tool_block(self, title_text, is_command, started, state, status, took, exit_code, text, artifact=None, truncated=False):
-        width = self.width
-        lead = self._lead(started, state)
-        avail = width - lead.cell_len - 1
-        title = one_line(title_text)
-        head = lead
-        if self.full:
-            head.append(title, style="bold")
-            head.no_wrap = False
-            head.overflow = "fold"
-        else:
-            head.append(truncate(title, max(4, avail), self.ell), style="bold")
-        detail = [one_line(status or ("running" if state == RUNNING else ""))]
-        if took:
-            detail.append(took)
-        if exit_code is not None:
-            detail.append("exit %s" % exit_code)
-        parts = [head, Text("    " + self._join([d for d in detail if d]), style="dim")]
+    def _command_lines(self, command):
+        """A shell command as printed lines: verbatim, two-space indent, never folded."""
+        text = clean(command).expandtabs(4).rstrip("\n")
+        rows = text.split("\n")
+        out = []
+        shown = rows if self.full else rows[:COMMAND_LINES]
+        for n, row in enumerate(shown):
+            if not self.full and len(row) > COMMAND_CHARS:
+                row = row[:COMMAND_CHARS] + self.ell + " (%d more characters)" % (len(row) - COMMAND_CHARS)
+            out.append(self.logical(Text("  " + row.rstrip(), style="bold")))
+        if len(rows) > len(shown):
+            out.append(Text("  %s %d more command lines" % (self.ell, len(rows) - len(shown)), style="dim"))
+        return out
+
+    def _output_lines(self, text, truncated):
+        parts = []
         body = clean(text).expandtabs(4)
         lines = body.split("\n")
+        if truncated and len(lines) > 1:
+            lines = lines[1:]           # the retained tail starts mid-line
         while lines and not lines[-1].strip():
             lines.pop()
+        while lines and not lines[0].strip():
+            lines.pop(0)
         if truncated and lines:
-            parts.append(Text("    " + self.ell + " earlier output not retained", style="dim"))
-        if lines:
-            if self.full:
-                for ln in lines:
-                    parts.append(Text("    " + ln, no_wrap=False, overflow="fold"))
+            parts.append(Text("    " + self.ell + " earlier output is in the log", style="dim"))
+        if not lines:
+            return parts
+        if self.full:
+            return parts + [Text("    " + ln.rstrip(), no_wrap=False, overflow="fold") for ln in lines]
+        head_l, hidden, tail_l = limit_lines(lines, self.output_rows)
+        cap = max(4, self.width - 5)
+        for ln in head_l:
+            parts.append(Text("    " + truncate(ln.rstrip(), cap, self.ell), style="dim", no_wrap=True))
+        if hidden:
+            parts.append(Text("    %s %d more line%s" % (self.ell, hidden, "" if hidden == 1 else "s"), style="dim"))
+        for ln in tail_l:
+            parts.append(Text("    " + truncate(ln.rstrip(), cap, self.ell), style="dim", no_wrap=True))
+        return parts
+
+    def tool(self, kind, name, command, started, state, status, took, exit_code, text, artifact=None,
+             truncated=False, seconds=None):
+        """One finished (or flushed) tool-like item.
+
+        A shell command is printed on its own lines below the outcome line, verbatim and
+        unfolded; a short MeTTa command is the outcome line's title. Output is a head/tail
+        preview and the complete log path is one unfolded line."""
+        status = one_line(status or ("running" if state == RUNNING else ""))
+        word = status.lower()
+        detail = [] if word in _PLAIN_STATUS else [status]
+        if exit_code is not None and (name in SHELL_TOOLS or exit_code != 0):
+            detail.append("exit %s" % exit_code)
+        if took:
+            detail.append(took)
+        head = self._lead(None, state)
+        shell = bool(command) and (name in SHELL_TOOLS or not str(command).startswith("["))
+        body = []
+        if shell:
+            head.append(SHELL_TOOLS.get(name, name or "shell"), style="bold")
+            body = self._command_lines(command)
+        elif command:
+            title = self.command_title(command)
+            room = self.width - head.cell_len - cell_len(self._join(detail + ["00:00:00"])) - 4
+            if self.full or cell_len(title) <= room:
+                head.append(title, style="bold")
             else:
-                head_l, hidden, tail_l = limit_lines(lines, self.output_rows)
-                cap = max(4, width - 5)
-                for ln in head_l:
-                    parts.append(Text("    " + truncate(ln, cap, self.ell), no_wrap=True))
-                if hidden:
-                    parts.append(Text("    %s %d more line%s" % (self.ell, hidden, "" if hidden == 1 else "s"), style="dim"))
-                for ln in tail_l:
-                    parts.append(Text("    " + truncate(ln, cap, self.ell), no_wrap=True))
+                # A long MeTTa form (often a task or message text) is read, not pasted: fold it.
+                head.append("metta", style="bold")
+                folded = self.lines(Padding(Text(title, style="bold", overflow="fold"), (0, 0, 0, 2)))
+                if len(folded) > METTA_ROWS:
+                    folded = folded[:METTA_ROWS - 1] + [[Segment("  %s %d more characters" % (
+                        self.ell, max(0, cell_len(title) - (METTA_ROWS - 1) * (self.width - 2))), Style(dim=True))]]
+                body = [_SegLines(folded)]
+        elif kind == "maintenance":
+            title = one_line(text) or "maintenance"
+            head.append(title[:1].lower() + title[1:], style="bold")
+            text = ""
+        else:
+            label = one_line(name or kind.replace(".", " ")).replace("apply_patch", "patch")
+            head.append(label, style="bold")
+            if kind in ("patch", "steering") and word in _PLAIN_STATUS:
+                detail.insert(0, status)
+        head = self._fit(self._meta(head, detail, seconds or started))
+        parts = [head] + body + self._output_lines(text, truncated)
         if artifact:
-            parts.append(Text("    output: " + one_line(artifact), style="dim", no_wrap=not self.full, overflow="fold" if self.full else "ellipsis"))
+            line = Text("    output: ", style="dim")
+            line.append(one_line(artifact))
+            parts.append(self.logical(line))
         return self.block(*parts)
 
+    def tool_block(self, title_text, is_command, started, state, status, took, exit_code, text, artifact=None, truncated=False):
+        """Older entry point: a titled block (title is the command when `is_command`)."""
+        return self.tool("tool", "exec_command" if is_command else title_text, title_text if is_command else "",
+                         started, state, status, took, exit_code, text, artifact, truncated)
+
     def user_note(self, seconds, text, marker):
-        t = self._lead(seconds)
-        t.append("you ", style="bold")
-        t.append(("› " if not self.ascii else "> "))
+        t = Text()
+        t.append("› " if not self.ascii else "> ", style="bold cyan")
         t.append_text(Text(clean(text).replace("\n", " ").replace("\t", " "), no_wrap=False, overflow="fold"))
-        m = Text("    " + marker, style="dim")
+        m = Text("  " + marker, style="dim")
         return self.block(t, m, trailing_blank=False)
+
+    def user_input(self, text):
+        """The operator's submitted text, verbatim: '› ' before its first line, two spaces before the rest."""
+        rows = clean(text).expandtabs(4).rstrip("\n").split("\n")
+        parts = []
+        for n, row in enumerate(rows):
+            t = Text(("› " if not self.ascii else "> ") if n == 0 else "  ", style="bold cyan")
+            t.append(row.rstrip(), style="bold")
+            parts.append(self.logical(t))
+        return self.block(*parts, trailing_blank=False)
+
+    def menu(self, text, labels):
+        """A control reply's text, then its choices numbered for typing."""
+        parts = [self.logical(Text(row.rstrip())) for row in clean(text).expandtabs(4).rstrip("\n").split("\n")]
+        digits = len(str(len(labels)))
+        for n, label in enumerate(labels, 1):
+            row = Text("  ")
+            row.append(str(n).rjust(digits), style="bold cyan")
+            row.append("  " + one_line(label))
+            parts.append(row)
+        if labels:
+            parts.append(Text("  type a number to choose, or /close-menu", style="dim"))
+        return self.block(*parts)
+
+    def reply(self, sender, text, seconds=None):
+        """A message the agent sent to this console: a header, then the text verbatim at column 0."""
+        head = Text(one_line(sender), style="bold green")
+        head.append(" → you" if not self.ascii else " -> you", style="green")
+        parts = [self._fit(self._meta(head, [], seconds))]
+        body = clean(text).expandtabs(4).rstrip("\n")
+        for row in body.split("\n"):
+            parts.append(self.logical(Text(row.rstrip())))
+        return self.block(*parts)
 
 
 class _SegLines:

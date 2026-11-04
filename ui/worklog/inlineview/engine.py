@@ -5,6 +5,7 @@ Text items additionally keep a small buffer so they can be committed one
 paragraph at a time; tool items are committed once, when they finish.
 Nothing printed is ever revised."""
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -14,8 +15,8 @@ if _VENDOR.is_dir():            # standalone checkout; inside a release stream_s
     sys.path.insert(0, str(_VENDOR))
 from stream_sink import Projection, control  # noqa: E402
 
-from .render import OK, RUNNING, UNCERTAIN, classify
-from .textsafe import one_line, span, truncate
+from .render import FAILED, OK, PROPOSED, RUNNING, UNCERTAIN, classify
+from .textsafe import command_text, one_line, span, truncate
 
 TEXT_KINDS = ("text.delta", "text.snapshot", "text.reconcile")
 SKIP_KINDS = ("attempt.open", "attempt.finished", "gap")
@@ -24,6 +25,8 @@ FULL_TAIL = 16777216
 TAIL = 12000
 SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 ASCII_SPINNER = "|/-\\"
+SESSION_RESTAMP = 300       # seconds of quiet after which output is re-anchored by a session line
+MAINTENANCE_OK = ("stop", "tool_calls", "finished", "completed", "done")
 
 
 def order(event):
@@ -115,6 +118,12 @@ class Engine:
         self.exit_codes = {}
         self.last_item = None
         self.flush_running = False
+        self.last_sid = None        # session of the last printed block (a switch prints a session line)
+        self.last_time = 0
+        self.blank = True           # the output so far ends with a blank line
+        self.models = {}            # last non-empty model per session (attempt.open sends "" first)
+        self.rests = {}             # sid -> (since, seconds or None) after a (rest ...) returned RESTING
+        self.reasons = {}           # sid -> reason of the last model attempt that did not complete
 
     # -- helpers -----------------------------------------------------------
     def reset(self):
@@ -126,13 +135,27 @@ class Engine:
         s = self.proj.sessions.get(sid, {})
         return sid == self.selected or s.get("parent") == self.selected
 
+    def _out(self, text):
+        if text:
+            self.write(text)
+            self.blank = text.endswith("\n\n") or (self.blank and text == "\n")
+
     def _emit(self, text, sid=None):
+        """Write a block; first say whose it is when that changed, or after a long quiet."""
         if self.muted or not text:
             return
-        if sid is not None and sid not in self.headers:
-            self.headers.add(sid)
-            self.write(self.r.session_header(sid, self.proj.sessions[sid]))
-        self.write(text)
+        if sid is not None:
+            now = self.proj.sessions[sid].get("updated") or self.now()
+            first = sid not in self.headers
+            if first or sid != self.last_sid or now - self.last_time > SESSION_RESTAMP:
+                self.headers.add(sid)
+                if not self.blank:
+                    self._out("\n")
+                session = dict(self.proj.sessions[sid])
+                session["model"] = self.models.get(sid) or session.get("model", "")
+                self._out(self.r.session_line(sid, session, first=first, seconds=now))
+            self.last_sid, self.last_time = sid, now
+        self._out(text)
 
     # -- ingest ------------------------------------------------------------
     def apply(self, records):
@@ -161,12 +184,33 @@ class Engine:
             self.done &= live
             self.exit_codes = {k: v for k, v in self.exit_codes.items() if k in live}
 
+    def _track(self, sid, session, kind, key, rec):
+        """Facts for the status area that the projection does not keep."""
+        if kind == "attempt.open" and rec.get("model"):
+            self.models[sid] = str(rec["model"])
+        if kind in ("attempt.open", "maintenance") or (kind == "tool.dispatching" and not
+                                                       command_text(rec.get("command", "")).startswith("(rest")):
+            self.rests.pop(sid, None)
+        if kind == "attempt.finished":
+            if rec.get("status") == "completed":
+                self.reasons.pop(sid, None)
+            else:
+                self.reasons[sid] = str(rec.get("reason") or rec.get("status") or "")
+        if kind == "tool.finished":
+            item = session["items"].get(key, {})
+            command = command_text(item.get("command") or rec.get("command") or "")
+            result = str(rec.get("text", ""))
+            if command.startswith("(rest") and result.lstrip().startswith("(RESTING"):
+                timed = re.search(r"sleep-interval-seconds (\d+)", result)
+                self.rests[sid] = (rec.get("time") or self.now(), int(timed.group(1)) if timed else None)
+
     def _after(self, sid, rec):
         session = self.proj.sessions[sid]
         if not self.visible(sid):
             self.muted = True
         kind = rec.get("kind")
         key = self._rec_key(rec)
+        self._track(sid, session, kind, key, rec)
         if kind in TEXT_KINDS:
             item = session["items"].get(key)
             if item is not None:
@@ -177,23 +221,27 @@ class Engine:
         if kind == "plan":
             self._plan(sid, session, rec.get("time"))
         if kind == "session.finished":
-            self._emit(self.r.report(session), sid)
+            took = (session.get("updated") or 0) - (session.get("started") or 0)
+            self._emit(self.r.report(session, sid, took if session.get("started") and took > 0 else None), sid)
         if session.get("gap") and session.get("gap") != self.last_gap.get(sid):
             self.last_gap[sid] = session["gap"]
             self._emit(self.r.gap(session["gap"]), sid)
         self._status(sid, session)
 
     def _status(self, sid, session):
+        """Thinking/ready transitions belong to the status line; only an interrupted model
+        call is worth a line in scrollback."""
         old = self.last_status.get(sid)
         self.last_status[sid] = session["status"]
-        if old is not None and old != session["status"] and sid in self.headers:
-            self._emit(self.r.status_change(sid, session), sid)
+        if old is not None and old != session["status"] and session["status"] == "interrupted" and sid in self.headers:
+            self._emit(self.r.interrupted(sid, session, self.reasons.get(sid, ""), session.get("call_took"),
+                                          session.get("updated")), sid)
 
     def _plan(self, sid, session, seconds=None):
         if session.get("plan") != self.last_plan.get(sid):
             self.last_plan[sid] = session.get("plan")
             if session.get("plan"):
-                self._emit(self.r.plan(session, seconds), sid)
+                self._emit(self.r.plan(session, None), sid)
 
     # -- text items --------------------------------------------------------
     def _title(self, session, channel, item):
@@ -224,14 +272,17 @@ class Engine:
             self._finish_text(sid, st, final, item.get("status"))
 
     def _adopt(self, sid, key, st, final):
-        """A final text replaces streamed items of the same attempt/channel."""
+        """A final text replaces streamed items of the same attempt/channel. When it extends
+        what was streamed (printed or still buffered), only the rest is printed, once."""
         for tid, other in list(self.texts.items()):
             if tid[0] != sid or tid[1] == key or other.closed:
                 continue
             if other.attempt == st.attempt and other.channel == st.channel:
-                if not st.committed and final.startswith(other.committed) and other.committed:
+                if not st.committed and (other.committed or other.buffer) and final.startswith(other.committed):
                     st.committed, st.opened, st.started = other.committed, other.opened, other.started
-                    other.closed = True
+                    other.closed, other.buffer = True, ""
+                    if self.last_item == (sid, id(other)):
+                        self.last_item = (sid, id(st))
                 else:
                     self._finish_text(sid, other, None, None)
 
@@ -321,22 +372,29 @@ class Engine:
             return
         code = self.exit_codes.get((sid, key))
         terminal = bool(item.get("terminal"))
-        state = classify(item.get("status"), terminal, code)
-        if item.get("kind") in ("patch", "steering", "maintenance") and terminal and not item.get("status") in (None, "", "forming"):
-            state = classify(item.get("status"), True, code)
-        ran = item.get("updated", 0) - item.get("dispatched", 0)
-        took = span(ran) if item.get("dispatched") and terminal and ran >= 0 else ""
-        command = item.get("command")
-        if command:
-            title, is_command = self.r.command_title(command), True
-        else:
-            title = item.get("name") or item.get("kind", "item").replace(".", " ")
-            title, is_command = title[:1].upper() + title[1:], False
+        kind = str(item.get("kind", ""))
         text = item.get("text", "")
-        truncated = len(text) >= (FULL_TAIL if self.full else TAIL)
-        self._emit(self.r.tool_block(title, is_command, item.get("started") or item.get("updated"), state,
-                                     item.get("status") if terminal else "running", took, code, text,
-                                     item.get("artifact"), truncated), sid)
+        state = classify(item.get("status"), terminal, code, result=text)
+        if kind in ("patch", "steering") and terminal and not item.get("status") in (None, "", "forming"):
+            state = classify(item.get("status"), True, code, result=text)
+        if state == PROPOSED:
+            return          # the executor's own item reports what became of the proposed call
+        status = item.get("status") if terminal else "running"
+        if kind == "maintenance" and terminal:
+            ok = str(item.get("status", "")).lower() in MAINTENANCE_OK
+            state, status = (OK, "") if ok else (FAILED, item.get("status"))
+            if ok and str(text).startswith("Task history compaction"):
+                text = "Compacted task history"
+        if kind == "tool.forming" and state == UNCERTAIN:
+            status = "call not run"
+        began = item.get("dispatched") or (item.get("started") if kind == "maintenance" else None)
+        ran = (item.get("updated") or 0) - (began or 0)
+        took = span(ran) if began and terminal and ran >= 0 else ""
+        retained = len(str(text).encode("utf-8", "replace"))
+        truncated = bool(item.get("artifact")) and retained >= (FULL_TAIL if self.full else TAIL) - 16
+        self._emit(self.r.tool(kind, str(item.get("name") or ""), item.get("command") or "",
+                               item.get("started") or item.get("updated"), state, status, took, code, text,
+                               item.get("artifact"), truncated, seconds=item.get("updated")), sid)
         self.last_item = None
 
     def sweep_all(self):
@@ -363,6 +421,7 @@ class Engine:
                 sid = rec.get("session", "agent")
                 if isinstance(rec.get("exit_code"), int) and not isinstance(rec.get("exit_code"), bool):
                     self.exit_codes[(sid, self._rec_key(rec))] = rec["exit_code"]
+                self._track(sid, self.proj.sessions[sid], rec.get("kind"), self._rec_key(rec), rec)
         self.proj.refresh_owners()
         sessions = sorted(self.proj.sessions.items(), key=lambda p: p[1]["updated"])
         for sid, session in sessions:
@@ -378,11 +437,12 @@ class Engine:
             shown_ids = {k for k, _ in shown}
             if not self.muted:
                 self.headers.add(sid)
-                self.write(self.r.session_header(sid, session))
+                self._out(self.r.session_header(sid, session))
+                self.last_sid, self.last_time = sid, self.now()
                 if session.get("plan"):
-                    self.write(self.r.plan(session))
+                    self._out(self.r.plan(session))
                 if hidden:
-                    self.write(self.r.note("%s %d earlier item%s not shown (--full shows all)" % (self.r.ell, hidden, "" if hidden == 1 else "s")))
+                    self._out(self.r.note("%s %d earlier item%s not shown (--full shows all)" % (self.r.ell, hidden, "" if hidden == 1 else "s")))
             for key, item in items:
                 tid = (sid, key)
                 visible_item = key in shown_ids and not self.muted
@@ -396,9 +456,9 @@ class Engine:
                     pass  # stale running item outside the window: prints when it finishes
             self.muted = not self.visible(sid) or session["updated"] < cutoff
             if not self.muted and session.get("gap"):
-                self.write(self.r.gap(session["gap"]))
+                self._out(self.r.gap(session["gap"]))
             if not self.muted and session.get("report") and session["status"] in FINISHED:
-                self.write(self.r.report(session))
+                self._out(self.r.report(session, sid))
         self.muted = False
 
     def _snapshot_text(self, sid, session, key, item):
@@ -413,34 +473,61 @@ class Engine:
         else:
             self._feed(sid, st, text)
 
-    # -- footer ------------------------------------------------------------------
-    def footer(self, width, color=False, ascii_only=False):
-        """One line for the live status footer (no trailing newline)."""
+    # -- live state for the status area -----------------------------------------
+    def doing(self, sid, now=None):
+        """What one session is doing now: dict(state, since, busy, command, seconds)."""
+        now = self.now() if now is None else now
+        s = self.proj.sessions[sid]
+        running = [i for i in s["items"].values() if not i.get("terminal") and i.get("kind") != "tool.forming"]
+        compacting = [i for i in running if i.get("kind") == "maintenance"]
+        commands = sorted((i for i in running if i.get("command")),
+                          key=lambda i: i.get("dispatched") or i.get("started") or 0)
+        if compacting:
+            return dict(state="compacting history", since=compacting[-1].get("started"), busy=True)
+        if commands:
+            i = commands[-1]
+            return dict(state="running", since=i.get("dispatched") or i.get("started"), busy=True,
+                        command=command_text(i["command"]), more=len(commands) - 1)
+        if s["status"] == "thinking":
+            return dict(state="thinking", since=s.get("call_started"), busy=True)
+        if sid in self.rests:
+            since, seconds = self.rests[sid]
+            return dict(state="resting", since=since, busy=False, seconds=seconds)
+        return dict(state=s["status"], since=None, busy=False)
+
+    def live(self):
+        """Structured state of the attached agent and its active work sessions (no output)."""
         now = self.now()
         sessions = [(sid, s) for sid, s in self.proj.sessions.items() if self.visible(sid)]
-        if not sessions:
+        agent = self.selected if self.selected in self.proj.sessions else None
+        if agent is None and sessions:
+            roots = [p for p in sessions if not p[1].get("parent")]
+            agent = max(roots or sessions, key=lambda p: p[1]["updated"])[0]
+        work = sorted(((sid, s) for sid, s in sessions if sid != agent and s.get("parent")
+                       and s["status"] not in FINISHED), key=lambda p: p[1]["updated"])
+        value = dict(now=now, agent=None, work=[])
+        if agent is not None:
+            s = self.proj.sessions[agent]
+            value["agent"] = dict(sid=agent, model=self.models.get(agent) or s.get("model", ""),
+                                  last_call=s.get("call_took"), **self.doing(agent, now))
+        for sid, s in reversed(work):
+            value["work"].append(dict(sid=sid, model=self.models.get(sid) or s.get("model", ""),
+                                      last_call=s.get("call_took"), **self.doing(sid, now)))
+        return value
+
+    def footer(self, width, color=False, ascii_only=False):
+        """One plain line summarising the live state (no trailing newline)."""
+        value = self.live()
+        if value["agent"] is None:
             return "waiting for agent or coding-session output" + ("..." if ascii_only else "…")
-        sessions.sort(key=lambda p: p[1]["updated"])
-        active = [p for p in sessions if p[1].get("parent") and p[1]["status"] not in FINISHED]
-        sid, s = (active[-1:] or sessions[-1:])[0]
-        spin = (ASCII_SPINNER if ascii_only else SPINNER)
-        busy = s["status"] not in FINISHED and s["status"] != "ready"
-        frame = spin[int(now * 8) % len(spin)] if busy else ("-" if ascii_only else "·")
-        bits = [frame + " " + one_line(sid), one_line(s["status"])]
-        if s["status"] == "thinking" and s.get("call_started"):
-            bits[-1] += " " + span(now - s["call_started"])
-        running = [(k, i) for k, i in s["items"].items() if not i.get("terminal") and i.get("command")]
-        if running:
-            k, i = running[-1]
-            began = i.get("dispatched") or i.get("started") or now
-            bits.append("running " + "$ " + one_line(i["command"]) + " (" + span(now - began) + ")")
-            if len(running) > 1:
-                bits.append("+%d more" % (len(running) - 1))
-        elif s.get("updated") and s["status"] != "thinking":
-            bits.append("updated " + span(now - s["updated"]) + " ago")
-        if len(sessions) > 1:
-            bits.append("%d sessions" % len(sessions))
-        return truncate((" - " if ascii_only else " · ").join(bits), max(10, width - 1), "..." if ascii_only else "…")
+        now, sep = value["now"], (" - " if ascii_only else " · ")
+        bits = []
+        for entry in [value["agent"]] + value["work"][:1]:
+            word = entry["state"] + (" " + span(now - entry["since"]) if entry.get("since") else "")
+            bits.append(one_line(entry["sid"]) + " " + word)
+        if len(value["work"]) > 1:
+            bits.append("+%d more sessions" % (len(value["work"]) - 1))
+        return truncate(sep.join(bits), max(10, width - 1), "..." if ascii_only else "…")
 
     def active(self):
         for sid, s in self.proj.sessions.items():

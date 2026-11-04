@@ -40,21 +40,34 @@ class Controls:
 
     def request(self, kind, **fields):
         with self.lock:
-            identity = uuid.uuid4().hex
-            try:
-                self.process.stdin.write(json.dumps(dict(id=identity, kind=kind, **fields)) + "\n")
-                self.process.stdin.flush()
-            except (OSError, ValueError) as error:
-                raise ControlError("control process unavailable; no automatic retry") from error
-            while True:
-                try: reply = self.replies.get(timeout=self.timeout)
-                except queue.Empty as error:
-                    raise ControlError("control reply unavailable; effects may be unknown; inspect state before retrying") from error
-                if reply is None:
-                    raise ControlError("control process ended; inspect its diagnostic log")
-                if reply.get("id") == identity:
-                    if "error" in reply: raise ControlError(reply["error"])
-                    return reply["body"]
+            return self._request(kind, fields)
+
+    def try_request(self, kind, reply_timeout=None, **fields):
+        """The same request, or None at once when another request is using the process.
+        A background sample passes a short reply_timeout so it never holds an operator back."""
+        if not self.lock.acquire(blocking=False):
+            return None
+        try:
+            return self._request(kind, fields, reply_timeout)
+        finally:
+            self.lock.release()
+
+    def _request(self, kind, fields, reply_timeout=None):
+        identity = uuid.uuid4().hex
+        try:
+            self.process.stdin.write(json.dumps(dict(id=identity, kind=kind, **fields)) + "\n")
+            self.process.stdin.flush()
+        except (OSError, ValueError) as error:
+            raise ControlError("control process unavailable; no automatic retry") from error
+        while True:
+            try: reply = self.replies.get(timeout=reply_timeout or self.timeout)
+            except queue.Empty as error:
+                raise ControlError("control reply unavailable; effects may be unknown; inspect state before retrying") from error
+            if reply is None:
+                raise ControlError("control process ended; inspect its diagnostic log")
+            if reply.get("id") == identity:
+                if "error" in reply: raise ControlError(reply["error"])
+                return reply["body"]
 
     def close(self):
         if self.process.stdin:
