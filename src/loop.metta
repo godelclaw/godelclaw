@@ -564,12 +564,15 @@
                          (py-call (cognitive_health.wait_for_retry $retryWait))
                          (channel:sleep-until-message $wait $enabled)))
           ($timedOut (mode:wait-timed-out $waitResult))
+          ;; A recycle request ends the wait without waking: the rest, its
+          ;; bank and any scheduled command carry over to the next process.
+          ($recycling (== (py-call (helper.recycle_requested)) 1))
           ($_ (py-call (strategy_host.wake (get_time))))
           ($continued
-            (if $enabled
+            (if (and $enabled (not $recycling))
                 (applyTimedContinuation $periphery $timedOut)
                 $periphery))
-          ($restored (restoreAfterWait $continued $timedOut))
+          ($restored (if $recycling $continued (restoreAfterWait $continued $timedOut)))
           ($continuedLoops (loop-budget $restored))
           ($ready
             (if $enabled

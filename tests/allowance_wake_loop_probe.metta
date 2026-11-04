@@ -1,8 +1,8 @@
 ; Through the real turn: a parked agent with a large bank stays dormant for
 ; quiet group messages below the count, wakes for a mention or the Nth message
 ; with at most its sender's allowance, returns to waiting once that is spent,
-; banks its heartbeat, wakes fully for the operator, and keeps all of it
-; across a restart.
+; banks its heartbeat, keeps resting through a recycle request and a restart,
+; and wakes fully for the operator.
 ; The runner supplies the MeTTa client, a counted group -100 (every 3), the
 ; bot name GodelTestBot and operator 777 (test_runtime_probes PROBE_ENV).
 !(import! &self (library lib_import))
@@ -95,6 +95,15 @@
          ($_ (assertEqual (aw:waiting $p7) 1))
          ($renewed (aw:bank $p7))
          ($_ (println! (HEARTBEAT_BANK $renewed)))
+         ;; A recycle request ends the wait without waking: nothing is handed
+         ;; back, so the next process boots still resting.
+         ($_ (py-eval "open(__import__('os').environ['METTACLAW_RECYCLE_REQUEST_PATH'], 'w').write('probe')"))
+         ((success $p7r) (waitProcess $p7))
+         ($_ (persistProcessState (rooted weak-process-core-v1 $p7r)))
+         ($_ (py-call (helper.recycle_ack)))
+         ($_ (assertEqual (loop-budget $p7r) 0))
+         ($_ (assertEqual (aw:bank $p7r) $renewed))
+         ($_ (assertEqual (aw:waiting $p7r) 1))
          ;; Across a restart the bank and the activity wait survive. A new
          ;; process boots from the saved working set; initLoop's settings are
          ;; already configured in this one.
