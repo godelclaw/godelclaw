@@ -414,7 +414,7 @@
      (if (not (== (collapse (match $bank $stamp True)) ())) True
        (case (collapse (memory:record $id))
          ((( (Memory $i $rev $p $vector $doc $meta))
-           (let* (($scored (am:score-ids $profile $vector (am:without $id $candidates)))
+           (let* (($scored (am:other-texts $doc (am:score-ids $profile $vector (am:without $id $candidates))))
                   ($options (am:bootstrap-options $scored $minimum))
                   ($chosen (list:retain-top-k-keyed $options $count))
                   ($_ (am:initial-links $bank $id $chosen $weight)))
@@ -470,11 +470,83 @@
             ($rows (am:rank-query $bank $profile $vector $rows $count $mode))))))))
       ($error (am:fallback $profile $vector $count $error)))))
 
+;; One recall row per distinct text. Copies of a text are one memory written
+;; twice, so they share one slot, one seed share and one exposure (the
+;; RecallProvenance model in MeTTapedia's pettaclaw Lean models). The row kept
+;; is the oldest copy, then the smaller identifier, so attention accrues to one
+;; identifier however the copies tie; it carries its group's best cosine.
+(= (am:age-key $id $meta)
+   (case (memory:field $meta "time")
+     ((($time) (str:concat (str:concat "" $time) (str:concat " " $id)))
+      ($other (str:concat " " $id)))))
+(= (am:group-texts $groups $rows)
+   (if (== $rows ()) True
+     (let* ((($cos (MemoryInfo $id $r $d $m)) (car-atom $rows))
+            ($key (am:age-key $id $m))
+            ($_ (case (collapse (match $groups (AmText $d $k $b $row $cs) (AmText $k $b $row $cs)))
+                  ((() (add-atom $groups (AmText $d $key $cos (MemoryInfo $id $r $d $m) ())))
+                   (((AmText $k $b (MemoryInfo $i2 $r2 $d2 $m2) $cs))
+                    (let* (($_ (remove-atom $groups (AmText $d $k $b (MemoryInfo $i2 $r2 $d2 $m2) $cs)))
+                           ($best (max $b $cos)))
+                      (if (< (str:compare $key $k) 0)
+                          (let $more (cons-atom $i2 $cs)
+                            (add-atom $groups (AmText $d $key $best (MemoryInfo $id $r $d $m) $more)))
+                          (let $more (cons-atom $id $cs)
+                            (add-atom $groups (AmText $d $k $best (MemoryInfo $i2 $r2 $d2 $m2) $more))))))))))
+       (am:group-texts $groups (cdr-atom $rows)))))
+(= (am:text-rows $groups)
+   (collapse (match $groups (AmText $d $k $b $row $cs) ($b $row))))
+(= (am:text-copies $groups)
+   (collapse (match $groups (AmText $d $k $b (MemoryInfo $id $r $d2 $m) $cs)
+     (if (== $cs ()) (empty) (Copies $id $cs)))))
+;; A copy's spread mass belongs to its representative; merging by max counts
+;; the shared evidence once.
+(= (am:merge-copy-mass $spread $copies)
+   (if (== $copies ()) True
+     (let* (((Copies $id $others) (car-atom $copies))
+            ($best (am:max-of (am:mass $spread $id) (am:masses $spread $others)))
+            ($_ (collapse (match $spread (AttentionMass $id $v) (remove-atom $spread (AttentionMass $id $v)))))
+            ($_ (if (> $best 0) (add-atom $spread (AttentionMass $id $best)) True)))
+       (am:merge-copy-mass $spread (cdr-atom $copies)))))
+(= (am:masses $spread $ids)
+   (if (== $ids ()) () (cons-atom (am:mass $spread (car-atom $ids)) (am:masses $spread (cdr-atom $ids)))))
+(= (am:max-of $best $values)
+   (if (== $values ()) $best (am:max-of (max $best (car-atom $values)) (cdr-atom $values))))
+;; The similarity ranking with one row per text, in ranking order. A fetch that
+;; yields `count` distinct texts, or that the store exhausts, is exact
+;; (`refetch_exact`); otherwise the fetch doubles.
+(= (am:distinct-query $profile $vector $count)
+   (if (== $count 0) (am:distinct-rows (ws:query $profile $vector (ws:count)) 0)
+     (am:distinct-fetch $profile $vector $count $count)))
+(= (am:distinct-fetch $profile $vector $count $n)
+   (case (ws:query $profile $vector $n)
+     (((MemoryFailure $at $why) (MemoryFailure $at $why))
+      ($hits (let $kept (am:distinct-rows $hits $count)
+               (if (or (>= (size-atom $kept) $count) (< (size-atom $hits) $n)) $kept
+                 (am:distinct-fetch $profile $vector $count (* 2 $n))))))))
+(= (am:distinct-rows $hits $count)
+   (let* (($groups (new-space)) ($_ (am:group-texts $groups $hits)) ($seen (new-space)))
+     (am:distinct-from $hits $groups $seen (if (== $count 0) -1 $count))))
+(= (am:distinct-from $rows $groups $seen $left)
+   (if (or (== $rows ()) (== $left 0)) ()
+     (let ($cos (MemoryInfo $id $r $d $m)) (car-atom $rows)
+       (if (== (collapse (match $seen (AmSeen $d) True)) ())
+         (let* (($_ (add-atom $seen (AmSeen $d)))
+                ($kept (collapse (match $groups (AmText $d $k $b $row $cs) ($b $row)))))
+           (cons-atom (car-atom $kept) (am:distinct-from (cdr-atom $rows) $groups $seen (- $left 1))))
+         (am:distinct-from (cdr-atom $rows) $groups $seen $left)))))
+(= (am:other-texts $doc $rows)
+   (if (== $rows ()) ()
+     (let* ((($cos (MemoryInfo $id $r $d $m)) (car-atom $rows)) ($rest (am:other-texts $doc (cdr-atom $rows))))
+       (if (== $d $doc) $rest (cons-atom (car-atom $rows) $rest)))))
+
 (= (am:rank-query $bank $profile $vector $similar $count $mode)
    (let* (($ids (unique-atom (union-atom (am:hit-ids $similar)
                     (if (== $mode "similarity") () (am:focus-ids (am:view-focus $bank
                       (if (== $count 0) 0 (* $count (am:get $bank "candidate-multiplier")))))))))
-          ($rows (am:score-ids $profile $vector $ids))
+          ($first (new-space)) ($_ (am:group-texts $first (am:score-ids $profile $vector $ids)))
+          ($rows (am:text-rows $first))
+          ($kept-ids (am:hit-ids $rows))
           ($seed-map (new-space))
           ($focus-max (case (am:view-focus $bank 1) ((() 0) ((($v $item)) $v))))
           ($_ (am:seed $bank $rows $seed-map $focus-max))
@@ -490,10 +562,14 @@
               (am:get $bank "restart") (am:mix $bank $mode) $count $sims
               (am:pool-floor $bank $similar $count)))
           ($spread (new-space)) ($_ (am:install $spread $spread-rows))
-          ($all-ids (unique-atom (union-atom
-                      (union-atom $ids (collapse (match $sims (AttentionSim $id $s) $id)))
-                      (am:mass-ids $spread-rows))))
-          ($all-rows (am:score-ids $profile $vector $all-ids))
+          ($second (new-space))
+          ($_ (am:group-texts $second (am:score-ids $profile $vector (unique-atom (union-atom
+                      (union-atom $kept-ids (collapse (match $sims (AttentionSim $id $s) $id)))
+                      (am:mass-ids $spread-rows))))))
+          ($_ (am:merge-copy-mass $spread (am:text-copies $second)))
+          ($copies (unique-atom (union-atom (am:text-copies $first) (am:text-copies $second))))
+          ($all-rows (am:text-rows $second))
+          ($all-ids (am:hit-ids $all-rows))
           ($ranking (new-space))
           ($_ (am:rerank $bank $all-rows $spread (am:max-mass $spread-rows) $mode $ranking))
           ($scored (collapse (match $ranking (AttentionResult $score $row) ($score $row))))
@@ -507,7 +583,7 @@
           ($_ (change-state! &am-last (AttentionQuery $mode
                 (Scores (collapse (match $ranking (AttentionRank $id $s $i $a $c) (AttentionRank $id $s $i $a $c))))
                 (Persistence $saved) (Spread (Rounds $rounds) $status)
-                (Study (get-state &ax-last)))))) $answer))
+                (Study (get-state &ax-last)) (Copies $copies))))) $answer))
 (= (am:unscore $rows)
    (if (== $rows ()) ()
      (let ($score $row) (car-atom $rows) (cons-atom $row (am:unscore (cdr-atom $rows))))))
@@ -520,7 +596,7 @@
 ; Preserve the native similarity ordering exactly, including ties.
 (= (am:similar-query $bank $profile $vector $count)
    (let* (($_ (am:tick))
-          ($rows (ws:query $profile $vector (if (== $count 0) (ws:count) $count))))
+          ($rows (am:distinct-query $profile $vector $count)))
      (case $rows
        (((MemoryFailure $at $why) $rows)
         ($hits

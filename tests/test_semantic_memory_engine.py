@@ -85,15 +85,20 @@ class MemoryTests(unittest.TestCase):
         self.server.communicate(timeout=10)
 
     def run_metta(self, body, timeout=30):
-        path = self.home / ('probe-%d.metta' % time.monotonic_ns())
-        path.write_text('!(import! &self ' + json.dumps(str(ROOT / 'src/semantic_memory_cetta.metta')) + ')\n'
-                       '(= (fixture:drain $n) (let $_ (semantic:maintain) '
-                       '  (if (== (memory-pending) ()) True '
-                       '    (if (== $n 0) (FixturePending (memory-pending)) '
-                       '      (let (io:pending $h) (io:submit (timer:after 10)) '
-                       '        (let $_ (io:wait $h 1000) (fixture:drain (- $n 1))))))))\n' + body)
-        result = subprocess.run([self.engine, '--lang', 'petta', str(path)], cwd=ROOT,
-                                env=self.env, text=True, capture_output=True, timeout=timeout)
+        # Load the module as the agent does: a program at the checkout root
+        # whose ./src imports resolve from there.
+        with tempfile.NamedTemporaryFile('w', dir=ROOT, prefix='.memory-probe-', suffix='.metta',
+                                         encoding='utf-8') as source:
+            source.write('!(import! &self ./src/semantic_memory_cetta.metta)\n'
+                         '(= (fixture:drain $n) (let $_ (semantic:maintain) '
+                         '  (if (== (memory-pending) ()) True '
+                         '    (if (== $n 0) (FixturePending (memory-pending)) '
+                         '      (let (io:pending $h) (io:submit (timer:after 10)) '
+                         '        (let $_ (io:wait $h 1000) (fixture:drain (- $n 1))))))))\n' + body)
+            source.flush()
+            result = subprocess.run([self.engine, '--lang', 'petta', '--import-mode', 'ancestor-walk',
+                                     source.name], cwd=ROOT,
+                                    env=self.env, text=True, capture_output=True, timeout=timeout)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertNotIn('(Error ', result.stdout, result.stdout)
         return result.stdout

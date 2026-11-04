@@ -114,6 +114,28 @@ class AttentionTests(unittest.TestCase):
         self.assertIn('(ECANSetting sti-half-life 300)', output)
         self.assertIn('(STILL_WORKS (MemoryResults ((MemoryHit "a"', output)
 
+    def test_copies_of_one_text_share_one_recall_slot(self):
+        # "a2" repeats a's text: one memory written twice. It must not take a
+        # second slot from the distinct runner-up "c", in either mode.
+        self.collection.add(['a2', 'c'], [[1., 0., 0.], [.8, .6, 0.]],
+                            ['old alpha', 'alpha sibling'], [{'time': 'original'}, {'time': 'original'}])
+        output = self.run_metta('''
+!(println! (SIM (semantic:query "alpha" 2 "similarity")))
+!(println! (SIMLINKS (am:links (am:bank))))
+!(println! (MIX (semantic:query "alpha" 2 "hybrid")))
+!(println! (DETAIL (attention-last)))
+!(println! (LINKS (am:links (am:bank))))
+''')
+        def line(tag):
+            return output.split('(' + tag + ' ', 1)[1].split('\n', 1)[0]
+        for tag in ('SIM', 'MIX'):
+            hits = re.findall(r'MemoryHit "([^"]+)"', line(tag))
+            self.assertEqual(sorted(hits), ['a', 'c'], (tag, line(tag)))
+        for tag in ('SIMLINKS', 'LINKS'):
+            self.assertNotRegex(line(tag), r'AttentionLink "a2?" "a2?"', tag)
+            self.assertNotIn('"a2"', line(tag), tag)
+        self.assertIn('(Copies ((Copies "a" ("a2"))))', line('DETAIL'))
+
     def test_lazy_semantic_bootstrap_is_idempotent_and_preserves_explicit_links(self):
         self.collection.add(['c'], [[.8, .6, 0.]], ['related alpha beta'], [{}])
         output = self.run_metta('''
