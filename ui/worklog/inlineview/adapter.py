@@ -87,13 +87,16 @@ def fallback_text(events):
 
 
 class EventBlocks:
-    def __init__(self, agent, columns, now=time.time, ascii_only=False, color=False):
+    def __init__(self, agent, columns, now=time.time, ascii_only=False, color=False, label=None):
+        # `agent` selects sessions and stays an identifier; `label` only names it.
         self.agent, self.columns, self.now, self.ascii = agent, columns, now, ascii_only
+        self.label = label or agent
         self.lock = threading.Lock()
         self.out = []
         self.consumed = 0       # events of the current batch already handled (rendered or fallen back)
         self.fault = ""         # last renderer error, bounded and sanitised ("" when the last batch was clean)
         self.renderer = Renderer(width=80, color=color, ascii_only=ascii_only, now=now())
+        self.renderer.names = {agent: self.label}
         self.engine = Engine(self.renderer, self.out.append, selected=agent, now=now)
 
     def _width(self):
@@ -259,7 +262,7 @@ class EventBlocks:
             model = facts.get("model") if isinstance(facts.get("model"), dict) else {}
             name = one_line(model.get("name") or (agent or {}).get("model") or "")
             effort = one_line(model.get("reasoningEffort") or "")
-            items = [(0, [("class:status.agent", one_line(self.agent))])]
+            items = [(0, [("class:status.agent", one_line(self.label))])]
             if name:
                 items.append((2, [("class:status.model", name + (" " + effort if effort and effort != "default" else ""))]))
             call = facts.get("call") if isinstance(facts.get("call"), dict) else {}
@@ -298,7 +301,7 @@ class EventBlocks:
                     items.append((1, [("class:status.warning", one_line(note))]))
             return self._fit(items, width)
         except Exception:
-            return [("class:status.agent", one_line(self.agent)), ("class:status.state", " · status unavailable")]
+            return [("class:status.agent", one_line(self.label)), ("class:status.state", " · status unavailable")]
 
     def _fit(self, items, width):
         """Join the items with ' · ' and drop the least important ones until the row fits;
@@ -320,12 +323,18 @@ class EventBlocks:
         if size(joined(chosen)) > width:
             chosen = [(p, [(style, self._short(t) if style == "class:status.work" else t) for style, t in f])
                       for p, f in chosen]
-        while size(joined(chosen)) > width and len(chosen) > 1:
-            worst = max(range(len(chosen)), key=lambda n: (chosen[n][0], n))
-            if chosen[worst][0] == 0:
+        # One drop order, fixed before the width is consulted: the fields that may
+        # go (importance above 0), least important first, the later one on a tie.
+        # The row drops the shortest prefix of it that fits, so a wider terminal
+        # never hides a field a narrower one shows (ConsoleView.fit_monotone).
+        order = sorted((n for n, (p, _) in enumerate(chosen) if p > 0),
+                       key=lambda n: (chosen[n][0], n), reverse=True)
+        for k in range(len(order) + 1):
+            dropped = set(order[:k])
+            row = [item for n, item in enumerate(chosen) if n not in dropped]
+            if size(joined(row)) <= width:
                 break
-            del chosen[worst]
-        return self._clip(joined(chosen), width)
+        return self._clip(joined(row), width)
 
     def _clip(self, fragments, width):
         out, used = [], 0

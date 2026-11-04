@@ -63,10 +63,13 @@ class EventFlow(unittest.TestCase):
         # State changes live in the status row, not between blocks.
         for noise in ("↳", " ready", "· since", "proposed", "Exec_command", "Reasoning summary"):
             self.assertNotIn(noise, text)
-        # A shell command is its own line, verbatim (multi-line commands keep their lines).
-        self.assertIn("  " + fixture.GREP, lines)
-        for row in fixture.HEREDOC.split("\n"):
-            self.assertIn("  " + row, lines)
+        # A shell command is printed verbatim at column 0, so its copied lines join
+        # back to it (ConsoleView.copy_exact): a here-document still ends.
+        self.assertIn(fixture.GREP, lines)
+        rows = fixture.HEREDOC.split("\n")
+        start = lines.index(rows[0])
+        self.assertEqual("\n".join(lines[start:start + len(rows)]), fixture.HEREDOC)
+        self.assertIn("EOF", lines[start:start + len(rows)])
         # The complete log path, never shortened.
         self.assertIn("    output: /srv/agent/memory/coding/%s/executions/x1.log" % fixture.WORK, lines)
 
@@ -86,8 +89,44 @@ class EventFlow(unittest.TestCase):
         renderer = Renderer(width=40)
         command = "cd /srv/work/a-rather-long-directory-name && grep -rn pattern src | head -20"
         out = renderer.tool("tool.finished", "exec_command", command, 1, OK, "exited", "0.1s", 0, "", "/a/b/" + "c" * 60)
-        self.assertIn("  " + command, out.split("\n"))
+        self.assertIn(command, out.split("\n"))
         self.assertIn("    output: /a/b/" + "c" * 60, out.split("\n"))
+
+    def test_status_row_degrades_in_one_order(self):
+        # ConsoleView.fit_*: essential fields stay, kept fields keep their order, and a
+        # wider row never hides a field a narrower one shows.
+        import random
+        generator = random.Random(1105)
+        blocks = EventBlocks("godel", lambda: 80)
+        for _ in range(300):
+            items = [(generator.choice([0, 1, 2, 3, 4]), [("class:status.meta", "f%d" % n + "x" * generator.randint(0, 9))])
+                     for n in range(generator.randint(1, 7))]
+            def kept(width):
+                return [t for _, t in blocks._fit(items, width) if t != blocks._sep()]
+            names = [frag[0][1] for _, frag in items]
+            essential = [frag[0][1] for p, frag in items if p == 0]
+            total = len(" · ".join(names))
+            previous = None
+            for width in range(len(" · ".join(essential)), total + 2):
+                row = kept(width)
+                self.assertTrue(all(name in row for name in essential), (items, width, row))
+                self.assertEqual(row, [n for n in names if n in row], (items, width, row))
+                self.assertLessEqual(len(" · ".join(row)), width, (items, width, row))
+                if previous is not None:
+                    self.assertTrue(set(previous) <= set(row), (items, width, previous, row))
+                previous = row
+
+    def test_configured_name_labels_without_changing_selection(self):
+        stream = events()
+        clock = Clock(stream[-1]["time"] + 2)
+        named = EventBlocks("godel", lambda: 140, now=clock, label="Gödel")
+        plain = EventBlocks("godel", lambda: 140, now=clock)
+        text_named, text_plain = named.feed(stream), plain.feed(events())
+        self.assertTrue("".join(t for _, t in named.status()).startswith("Gödel"))
+        self.assertIn("◆ Gödel", text_named)
+        self.assertNotIn("◆ godel", text_named)
+        # The same events are selected and shown; only the agent's name differs.
+        self.assertEqual(text_named.replace("Gödel", "godel"), text_plain)
 
     def test_classification(self):
         self.assertEqual(classify("returned", True, result="(RESTING budget-banked)"), OK)

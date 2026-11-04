@@ -130,6 +130,7 @@ def limit_lines(lines, rows, head_ratio=3):
 class Renderer:
     def __init__(self, width=100, color=False, ascii_only=False, full=False, now=None):
         self.width, self.color, self.ascii, self.full, self.now = width, color, ascii_only, full, now
+        self.names = {}         # session identifier -> configured display name
         self.text_rows = 60
         self.output_rows = 8
         self.sep = "-" if ascii_only else "·"
@@ -223,13 +224,13 @@ class Renderer:
         parent and task; a later switch back to it is one short line."""
         head = Text()
         head.append(("◆ " if not self.ascii else "* "), style="bold magenta")
-        head.append(one_line(sid), style="bold")
+        head.append(one_line(self.names.get(sid, sid)), style="bold")
         bits = []
         if first:
             if session.get("model"):
                 bits.append(one_line(session["model"]))
             if session.get("parent"):
-                bits.append("started by " + one_line(session["parent"]))
+                bits.append("started by " + one_line(self.names.get(session["parent"], session["parent"])))
         parts = [self._fit(self._meta(head, bits, seconds or session.get("updated")))]
         title = one_line(session.get("title") or "")
         if first and title and title != sid:
@@ -355,7 +356,9 @@ class Renderer:
         return one_line(command_text(command))
 
     def _command_lines(self, command):
-        """A shell command as printed lines: verbatim, two-space indent, never folded."""
+        """A shell command as printed lines: verbatim at column 0, never folded, so the
+        copied lines join back to the command; an indent would, for one, stop a
+        copied here-document's terminator from ending it (ConsoleView.copy_exact)."""
         text = clean(command).expandtabs(4).rstrip("\n")
         rows = text.split("\n")
         out = []
@@ -363,7 +366,7 @@ class Renderer:
         for n, row in enumerate(shown):
             if not self.full and len(row) > COMMAND_CHARS:
                 row = row[:COMMAND_CHARS] + self.ell + " (%d more characters)" % (len(row) - COMMAND_CHARS)
-            out.append(self.logical(Text("  " + row.rstrip(), style="bold")))
+            out.append(self.logical(Text(row.rstrip(), style="bold")))
         if len(rows) > len(shown):
             out.append(Text("  %s %d more command lines" % (self.ell, len(rows) - len(shown)), style="dim"))
         return out

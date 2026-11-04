@@ -192,6 +192,41 @@ def profile(args):
     return root, state, env
 
 
+def configured_name(args):
+    """The agent's configured display name, METTACLAW_AGENT_NAME: the instance's
+    own environment, else the environment files of its systemd units (its own
+    service, then its control services such as the Telegram channel that names
+    it in replies; the first unit that sets it, later files overriding earlier
+    ones within a unit). Only that one setting is read; an unconfigured agent is
+    named by its identifier."""
+    try:
+        config = json.loads(args.instances.read_text()) if args.instances.is_file() else {}
+    except (OSError, ValueError):
+        return None
+    selected = next((i for i in config.get("instances", []) if i.get("name") == args.agent), {})
+    name = selected.get("environment", {}).get("METTACLAW_AGENT_NAME")
+    units = [selected.get("service")] + list(selected.get("control_services", []))
+    for unit in (u for u in units if u):
+        if name:
+            break
+        import subprocess
+        try:
+            files = subprocess.run(["systemctl", "--user", "show", unit, "--property=EnvironmentFiles",
+                                    "--value"], capture_output=True, text=True, timeout=3).stdout
+        except (OSError, subprocess.SubprocessError):
+            files = ""
+        for line in files.splitlines():
+            try:
+                text = Path(line.split(" (ignore_errors=")[0].strip()).read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            for row in text.splitlines():
+                if row.startswith("METTACLAW_AGENT_NAME="):
+                    name = row.split("=", 1)[1].strip().strip("\"'") or name
+    name = (name or "").strip()
+    return name if name and len(name) <= 32 and name.isprintable() else None
+
+
 def main(argv=None):
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
@@ -212,6 +247,7 @@ def main(argv=None):
     if args.json and args.submit is None and args.submit_file is None and not args.command and not args.status:
         parser.error("--json requires --submit, --submit-file, --command or --status")
     root, state, environment = profile(args)
+    agent_label = configured_name(args) or args.agent
     client_state = args.client_state or state / "terminal-client"
     client_state.mkdir(parents=True, exist_ok=True)
     command = shutil.which("claw-mail")
@@ -249,7 +285,7 @@ def main(argv=None):
         ascii_only = (getattr(sys.stdout, "encoding", "") or "").lower().replace("-", "") != "utf8"
         color = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
         columns = lambda: shutil.get_terminal_size((80, 24)).columns
-        blocks = EventBlocks(args.agent, columns, ascii_only=ascii_only, color=color)
+        blocks = EventBlocks(args.agent, columns, ascii_only=ascii_only, color=color, label=agent_label)
         stop, work, outgoing, menu, menu_lock = threading.Event(), queue.Queue(), queue.Queue(), [], threading.Lock()
         view_epoch = [0]
         facts, reply_fault, unconfirmed = [{}, 0.0], [""], [0]     # facts: [last status sample, when]
@@ -295,7 +331,7 @@ def main(argv=None):
 
         session = PromptSession(history=FileHistory(str(client_state / "history")), mouse_support=False,
                                 message=prompt_message, prompt_continuation=lambda width, line, wrap: "  ",
-                                placeholder=lambda: [("class:placeholder", "Message " + args.agent)],
+                                placeholder=lambda: [("class:placeholder", "Message " + agent_label)],
                                 key_bindings=bindings, erase_when_done=True, refresh_interval=.25,
                                 style=Style.from_dict(STYLE))
         # The status row is our own window rather than prompt_toolkit's bottom toolbar, which is
@@ -391,7 +427,7 @@ def main(argv=None):
             while not stop.is_set():
                 try:
                     value = mail.receive()
-                    if value: say("\n" + blocks.reply(value.get("from") or args.agent, value["text"]))
+                    if value: say("\n" + blocks.reply(agent_label if value.get("from") in (None, "", args.agent) else value["from"], value["text"]))
                     else: stop.wait(.1)
                     previous_error = reply_fault[0] = ""
                 except Exception as error:
@@ -459,7 +495,7 @@ def main(argv=None):
         sys.stdout = sys.stderr = proxy
         try:
             for target in (worker, publisher, replies, events, poller): threading.Thread(target=target, daemon=True).start()
-            note("Attached to %s. /help lists commands; Ctrl-D detaches and cognition keeps running." % args.agent, "dim")
+            note("Attached to %s. /help lists commands; Ctrl-D detaches and cognition keeps running." % agent_label, "dim")
             count_unconfirmed()
             if unconfirmed[0]: note("%d inputs await confirmed acceptance; /retry reuses their IDs." % unconfirmed[0], "warning")
             stored = sorted((client_state / "received").glob("*.json"), key=lambda p:p.stat().st_mtime)
@@ -467,7 +503,7 @@ def main(argv=None):
                 note("Recent stored replies; /replies shows the complete local archive.", "dim")
                 for path in stored[-3:]:
                     value = json.loads(path.read_text())
-                    say(blocks.reply(value.get("from") or args.agent, value["text"]))
+                    say(blocks.reply(agent_label if value.get("from") in (None, "", args.agent) else value["from"], value["text"]))
             work.put(("command", dict(name="/activity", arguments=""), view_epoch[0]))
             while True:
                 try: text = session.prompt()
@@ -492,7 +528,7 @@ def main(argv=None):
                 if text == "/replies":
                     for path in sorted((client_state / "received").glob("*.json"), key=lambda p:p.stat().st_mtime):
                         value = json.loads(path.read_text())
-                        say(blocks.reply(value.get("from") or args.agent, value["text"]))
+                        say(blocks.reply(agent_label if value.get("from") in (None, "", args.agent) else value["from"], value["text"]))
                     continue
                 with menu_lock:
                     if menu and text.isdigit() and not 0 < int(text) <= len(menu):
@@ -508,7 +544,7 @@ def main(argv=None):
                     except OSError as error: note("Input not accepted locally: " + clean(str(error)), "warning")
                     count_unconfirmed()
             stop.set()
-            note("Detached from %s; cognition keeps running." % args.agent, "dim")
+            note("Detached from %s; cognition keeps running." % agent_label, "dim")
         finally:
             sys.stdout, sys.stderr = streams
             proxy.close()
