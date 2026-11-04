@@ -68,6 +68,11 @@ def _store(timeout=10):
     if not (os.environ.get("METTACLAW_STRATEGY_PATH") or
             os.environ.get("METTACLAW_ENGINE_STATE_PATH")):
         return None
+    # Without the managed ledger, cognition never creates one: no notice was
+    # registered and no input needs a processed mark.
+    if (os.environ.get("METTACLAW_OBSERVED_STRATEGY", "0") != "1"
+            and not agent_checkpoint.path().exists()):
+        return None
     # Schema/legacy migrations belong to cognition's boot. Notices must never
     # wait for its writer, nor repeatedly scan retained request history.
     store = agent_checkpoint.ledger(initialize=False, timeout=timeout)
