@@ -12,7 +12,7 @@
          (or (and (>= $cp 8192) (<= $cp 8202))
            (or (== $cp 8232) (or (== $cp 8233)
              (or (== $cp 8239) (or (== $cp 8287) (== $cp 12288))))))))))))
-(= (mode-text:points $text) (list:to-expression (str:python-codepoints $text)))
+(= (mode-text:points $text) (tuple:from (str:python-codepoints $text)))
 (= (mode-text:lstrip $points)
    (if (== $points ()) ()
      (if (mode-text:space? (car-atom $points))

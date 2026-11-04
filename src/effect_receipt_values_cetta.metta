@@ -8,7 +8,7 @@
 (= (erv:failed? $value)
    (case $value (((ErFailure $_ $_ $_) True) ($other False))))
 (= (erv:points $text)
-   (let $points (str:python-codepoints $text) (list:to-expression $points)))
+   (let $points (str:python-codepoints $text) (tuple:from $points)))
 (= (erv:from-points $points) (str:from-python-codepoints $points))
 (= (erv:take $items $n)
    (if (or (<= $n 0) (== $items ())) ()
