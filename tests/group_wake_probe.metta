@@ -1,0 +1,48 @@
+!(import! &self (library lib_import))
+!(import! &self ./channels/telegram.metta)
+
+; The test sets METTACLAW_TELEGRAM_GROUP_WAKE_EVERY to "-100:3, -200:x".
+!(assert (== (tg:wake-every "-100") 3))
+!(assert (== (tg:wake-every "-200") 1))
+!(assert (== (tg:wake-every "42") 1))
+!(assert (== (tg:quiet-batch?) False))
+
+; Quiet messages in a counted group wait until the third; edits do not count.
+!(tg:activity-add-kind "message" "" "-100" "one" False "full" "u1" False)
+!(assert (== (tg:quiet-batch?) True))
+!(tg:activity-add-kind "edited_message" "" "-100" "one, edited" False "full" "u2" False)
+!(tg:activity-add-kind "message" "" "-100" "two" False "full" "u3" False)
+!(assert (== (tg:quiet-batch?) True))
+!(tg:activity-add-kind "message" "" "-100" "three" False "full" "u4" False)
+!(assert (== (tg:quiet-batch?) False))
+
+; Forgetting settled items forgets their notes too.
+!(tg:forget-items (tg:pending-items))
+!(assert (== (tg:pending-count) 0))
+!(assert (== (collapse (match &self (tg:item-meta $u $k $w) $u)) ()))
+
+; A wake sender's message, another chat or other activity wakes at once.
+!(tg:activity-add-kind "message" "" "-100" "quiet" False "full" "v1" False)
+!(assert (== (tg:quiet-batch?) True))
+!(tg:activity-add-kind "message" "" "-100" "from the operator" False "full" "v2" "operator message")
+!(assert (== (tg:quiet-batch?) False))
+!(tg:forget-items (tg:pending-items))
+!(tg:activity-add-kind "message" "" "-100" "quiet" False "full" "w1" False)
+!(tg:activity-add-kind "message" "" "42" "elsewhere" False "full" "w2" False)
+!(assert (== (tg:quiet-batch?) False))
+!(tg:forget-items (tg:pending-items))
+!(tg:activity-add-kind "message" "" "-100" "quiet" False "full" "x1" False)
+!(tg:activity-add "" "runtime" "[runtime] job finished" False "light" "x2" False)
+!(assert (== (tg:quiet-batch?) False))
+!(tg:forget-items (tg:pending-items))
+; A mention of this bot, or a reply to it, wakes at once.
+!(assert (== (tg:addressed-to-me? (json-parse "{}") "hi @godeltestbot") True))
+!(assert (== (tg:addressed-to-me? (json-parse "{\"reply_to_message\": {\"from\": {\"username\": \"GodelTestBot\"}}}") "sure") True))
+!(assert (== (tg:addressed-to-me? (json-parse "{\"reply_to_message\": {\"from\": {\"username\": \"someone\"}}}") "sure") False))
+!(assert (== (tg:addressed-to-me? (json-parse "{}") "hi everyone") False))
+!(tg:activity-add-kind "message" "" "-100" "quiet" False "full" "y1" False)
+!(assert (== (tg:quiet-batch?) True))
+!(tg:activity-add-kind (tg:count-kind "message" (json-parse "{}") "@GodelTestBot what do you think?") "" "-100" "asked" False "light" "y2" False)
+!(assert (== (tg:quiet-batch?) False))
+!(tg:forget-items (tg:pending-items))
+!(println! GROUP_WAKE_OK)

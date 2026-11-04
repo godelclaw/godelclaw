@@ -399,8 +399,10 @@
                   (fuel:spend (loop-budget $selectedPeriphery))
                   $selectedPeriphery)))
           ($message (eval (receive)))
+          ;; A parked agent lets a quiet group batch keep waiting.
           ($hasActivity
-            (== (py-call (helper.text_nonempty $message)) 1))
+            (and (== (py-call (helper.text_nonempty $message)) 1)
+                 (not (and (loop-parked $decremented) (channel:quiet-activity?)))))
           ($isHuman (eval (lastMessageIsHuman)))
           ($activityApplied (applyObservedWake $decremented $hasActivity))
           ($humanApplied

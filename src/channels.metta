@@ -49,6 +49,11 @@
        (if (mail:empty? $conversation)
          (let $mail (mail:receive) (if (mail:empty? $mail) (jobs:receive) $mail)) $conversation))))
 
+;; Whether pending conversation may keep a parked agent waiting: see
+;; tg:quiet-batch?. Other channels and clients always wake it.
+(= (channel:quiet-activity?)
+   (if (and (== (commchannel) telegram) (tg:client-metta?)) (tg:quiet-batch?) False))
+
 ; Existing channel adapters never route or acknowledge native mail.
 (= (channel:sleep-until-message $seconds $enabled)
    (if (tg:client-metta?) (tg:sleep-until-message $seconds $enabled)

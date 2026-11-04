@@ -441,6 +441,76 @@
          (let $published (py-call (telegram.metta_publish "activity_epoch" $epoch))
            (if (== $wake False) True (tg:wake-request $wake)))))))
 
+; A message from intake also records its kind and whether its sender wakes the
+; agent, for the group wake count below. Other activity carries no such note.
+; A message that mentions or replies to this bot counts as addressed: it wakes
+; the agent like any message did before, with its sender's arming tier.
+(= (tg:activity-add-kind $kind $task $chat $text $from-bot $tier $update-id $wake)
+   (let $note (if (or (not (== $wake False)) (== $kind addressed)) wake quiet)
+     (let $meta (add-atom &self (tg:item-meta $update-id $kind $note))
+       (tg:activity-add $task $chat $text $from-bot $tier $update-id $wake))))
+
+(= (tg:count-kind $kind $message $text)
+   (if (tg:addressed-to-me? $message $text) addressed $kind))
+(= (tg:addressed-to-me? $message $text)
+   (let $me (str:lower (tg:env "METTACLAW_TELEGRAM_BOT_USERNAME" ""))
+     (if (== $me "") False
+       (or (case (str:find (str:lower $text) (str:concat "@" $me))
+             (((TextNotFound $_) False) ($at True)))
+           (== (str:lower (tg:str (tg:at (tg:at (tg:at $message "reply_to_message") "from") "username")))
+               $me)))))
+
+;; -------------------------------------------------------- group wakes
+;; METTACLAW_TELEGRAM_GROUP_WAKE_EVERY lists CHAT:N pairs. While the agent is
+;; parked, ordinary messages in such a group keep waiting until N new ones are
+;; pending there. Edits wait with them but do not count. A message from a wake
+;; sender (the operator or a wake peer) and any other activity wake it as before.
+(= (tg:wake-every $chat)
+   (tg:wake-every-in (str:split "," (tg:env "METTACLAW_TELEGRAM_GROUP_WAKE_EVERY" "")) $chat))
+(= (tg:wake-every-in $pairs $chat)
+   (if (== $pairs ()) 1
+     (let ($head $tail) (tg:uncons $pairs)
+       (let $parts (str:split ":" (str:trim $head))
+         (if (and (== (size-atom $parts) 2) (== (str:trim (car-atom $parts)) $chat))
+           (tg:positive-count (str:trim (car-atom (cdr-atom $parts))))
+           (tg:wake-every-in $tail $chat))))))
+(= (tg:positive-count $text)
+   (if (or (== $text "") (not (str:is-all-in digit $text))) 1
+     (max 1 (str:string->number $text))))
+
+; True when every pending item is a quiet message in a counted group and no
+; such group has reached its count.
+(= (tg:quiet-batch?)
+   (let $items (tg:uncommitted (tg:pending-items))
+     (if (== $items ()) False (tg:quiet-items $items ()))))
+(= (tg:quiet-items $items $counted)
+   (if (== $items ()) (tg:below-counts $counted $counted)
+     (let ($head $tail) (tg:uncons $items)
+       (let ($seq $task $chat $text $bot $tier $uid) $head
+         (let $meta (collapse (match &self (tg:item-meta $uid $kind $wake) ($kind $wake)))
+           (if (== $meta ()) False
+             (let ($kind $wake) (car-atom $meta)
+               (if (or (== $wake wake) (<= (tg:wake-every $chat) 1)) False
+                 (tg:quiet-items $tail
+                   (if (== $kind "message") (cons-atom $chat $counted) $counted))))))))))
+(= (tg:below-counts $chats $all)
+   (if (== $chats ()) True
+     (let ($head $tail) (tg:uncons $chats)
+       (if (>= (tg:count-of $head $all) (tg:wake-every $head)) False
+         (tg:below-counts $tail $all)))))
+(= (tg:count-of $x $items)
+   (if (== $items ()) 0
+     (let ($head $tail) (tg:uncons $items)
+       (+ (if (== $head $x) 1 0) (tg:count-of $x $tail)))))
+
+(= (tg:forget-meta $uid)
+   (let $notes (collapse (match &self (tg:item-meta $uid $kind $wake) (tg:item-meta $uid $kind $wake)))
+     (tg:remove-notes $notes)))
+(= (tg:remove-notes $notes)
+   (if (== $notes ()) ()
+     (let ($head $tail) (tg:uncons $notes)
+       (let $gone (remove-atom &self $head) (tg:remove-notes $tail)))))
+
 (= (tg:pending-items)
    (collapse (match &self (tg:pending $seq $task $chat $text $bot $tier $uid)
                ($seq $task $chat $text $bot $tier $uid))))
@@ -610,7 +680,8 @@
      (let ($head $tail) (tg:uncons $items)
        (let ($seq $task $chat $text $bot $tier $uid) $head
          (let $gone (remove-atom &self (tg:pending $seq $task $chat $text $bot $tier $uid))
-           (let $unseen (tg:unsee $task) (tg:forget-items $tail)))))))
+           (let $noted (tg:forget-meta $uid)
+             (let $unseen (tg:unsee $task) (tg:forget-items $tail))))))))
 
 (= (tg:pending-count) (size-atom (tg:pending-items)))
 (= (tg:prepared-count) (size-atom (tg:prepared-items)))
@@ -787,7 +858,7 @@
                                (let $bot (tg:truthy (tg:at $sender "is_bot"))
                                  (let $tier (tg:tier-for $sender-id)
                                    (let $wake (tg:wake-reason-for $sender-id $role)
-                                     (let $added (tg:activity-add $task $chat-id $formatted $bot $tier (tg:str (tg:at $update "update_id")) $wake)
+                                     (let $added (tg:activity-add-kind (tg:count-kind $mkind $message $text) $task $chat-id $formatted $bot $tier (tg:str (tg:at $update "update_id")) $wake)
                                        (let $notice (if (== $wake False) (tg:maybe-rest-notice $chat-id $sender-id) ())
                                          (tg:publish-counts))))))))))))))))))))
 
