@@ -29,6 +29,7 @@ class RuntimeProbeTest(unittest.TestCase):
         ("tests/rest_continuation_probe.metta", "REST_CONTINUATION_OK"),
         ("tests/rest_activity_wait_probe.metta", "REST_ACTIVITY_WAIT_OK"),
         ("tests/rest_heartbeat_hold_probe.metta", "REST_HEARTBEAT_HOLD_OK"),
+        ("tests/allowance_wake_loop_probe.metta", "ALLOWANCE_WAKE_LOOP_OK"),
         ("tests/context_sources_probe.metta", "CONTEXT_SOURCES_OK"),
         ("tests/native_iter_process_probe.metta", "NATIVE_ITER_PROCESS_OK"),
         ("tests/metta_coding_policy_probe.metta", "METTA_CODING_POLICY_OK"),
@@ -57,6 +58,17 @@ class RuntimeProbeTest(unittest.TestCase):
         ("tests/burst_end_and_prose_probe.metta",
          "BURST_END_AND_PROSE_OK"),
     )
+
+    # Settings a probe needs from process start, which the clients read once.
+    PROBE_ENV = {
+        "tests/allowance_wake_loop_probe.metta": {
+            "METTACLAW_TELEGRAM_CLIENT": "metta",
+            "METTACLAW_TELEGRAM_SERVICE_SOCKET": "",
+            "METTACLAW_TELEGRAM_GROUP_WAKE_EVERY": "-100:3",
+            "METTACLAW_TELEGRAM_BOT_USERNAME": "GodelTestBot",
+            "METTACLAW_TELEGRAM_OPERATOR_IDS": "777",
+        },
+    }
 
     def assert_witness(self, result, marker, engine):
         diagnostic = (result.stdout + "\n" + result.stderr)[-5000:]
@@ -187,6 +199,7 @@ class RuntimeProbeTest(unittest.TestCase):
                         )),
                     })
                     env.update(engine_env)
+                    env.update(self.PROBE_ENV.get(probe, {}))
                     result = subprocess.run(
                         ["./run.sh", probe], cwd=ROOT, env=env,
                         stdin=subprocess.DEVNULL, capture_output=True,

@@ -53,6 +53,13 @@
 ;; tg:quiet-batch?. Other channels and clients always wake it.
 (= (channel:quiet-activity?)
    (if (and (== (commchannel) telegram) (tg:client-metta?)) (tg:quiet-batch?) False))
+;; Whether this wake may hand back the whole banked budget: see
+;; tg:full-wake-batch?. Other channels and clients always may.
+(= (channel:full-wake?)
+   (if (and (== (commchannel) telegram) (tg:client-metta?)) (tg:full-wake-batch?) True))
+;; The arming allowance of the batch's routed sender.
+(= (channel:wake-allowance)
+   (if (tg:client-metta?) (tg:last-message-arm-loops) (py-call (telegram.lastMessageArmLoops))))
 
 ; Existing channel adapters never route or acknowledge native mail.
 (= (channel:sleep-until-message $seconds $enabled)

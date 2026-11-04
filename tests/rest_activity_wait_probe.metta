@@ -4,6 +4,11 @@
 !(import! &self ./src/weak_process_core)
 !(import! &self ./src/open_assemblage)
 !(import! &self ./src/loop_policy)
+; This probe loads no channel. Its wakes stand for ones that hand back the
+; whole bank (the operator's, mail or a job); allowance wakes have their own
+; probe through the full turn.
+(= (channel:full-wake?) True)
+(= (channel:wake-allowance) 10)
 !(import! &self ./src/loop)
 (= (assertEqual $a $b) (assert (== $a $b)))
 !(add-atom &self (= (sleepInterval) 1))

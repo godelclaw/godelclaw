@@ -443,10 +443,10 @@
 
 ; A message from intake also records its kind and whether its sender wakes the
 ; agent, for the group wake count below. Other activity carries no such note.
-; A message that mentions or replies to this bot counts as addressed: it wakes
-; the agent like any message did before, with its sender's arming tier.
+; Notes: sender-wake for the operator or a wake peer, addressed for a message
+; that mentions or replies to this bot, quiet otherwise.
 (= (tg:activity-add-kind $kind $task $chat $text $from-bot $tier $update-id $wake)
-   (let $note (if (or (not (== $wake False)) (== $kind addressed)) wake quiet)
+   (let $note (if (not (== $wake False)) sender-wake (if (== $kind addressed) addressed quiet))
      (let $meta (add-atom &self (tg:item-meta $update-id $kind $note))
        (tg:activity-add $task $chat $text $from-bot $tier $update-id $wake))))
 
@@ -490,9 +490,23 @@
          (let $meta (collapse (match &self (tg:item-meta $uid $kind $wake) ($kind $wake)))
            (if (== $meta ()) False
              (let ($kind $wake) (car-atom $meta)
-               (if (or (== $wake wake) (<= (tg:wake-every $chat) 1)) False
+               (if (or (not (== $wake quiet)) (<= (tg:wake-every $chat) 1)) False
                  (tg:quiet-items $tail
                    (if (== $kind "message") (cons-atom $chat $counted) $counted))))))))))
+; True when the pending batch may hand back the whole banked budget: it is
+; empty (mail or a job woke the agent), or holds a message from the operator
+; or a wake peer, or activity with no intake note (a runtime event).
+(= (tg:full-wake-batch?)
+   (let $items (tg:uncommitted (tg:pending-items))
+     (if (== $items ()) True (tg:any-full-wake $items))))
+(= (tg:any-full-wake $items)
+   (if (== $items ()) False
+     (let ($head $tail) (tg:uncons $items)
+       (let ($seq $task $chat $text $bot $tier $uid) $head
+         (let $meta (collapse (match &self (tg:item-meta $uid $kind $note) $note))
+           (if (or (== $meta ()) (== (car-atom $meta) sender-wake)) True
+             (tg:any-full-wake $tail)))))))
+
 (= (tg:below-counts $chats $all)
    (if (== $chats ()) True
      (let ($head $tail) (tg:uncons $chats)

@@ -154,11 +154,34 @@
            (heartbeatPeriphery $periphery $now $refuelled)))
        $periphery))
 
+;; A wake from an activity wait hands the whole bank back for the operator, a
+;; wake peer, mail, a job or a runtime event. Any other message, a mention
+;; included, releases at most its sender's arming allowance from the bank; the
+;; rest stays banked, and once the allowance is spent the agent is still
+;; waiting for activity.
 (= (applyObservedWake $periphery $has-activity)
    (if (and $has-activity
             (== (coordinate-get-or rest-await-input 0 $periphery) 1))
-     (applyRestRestore (coordinate-set rest-await-input 0 $periphery))
+     (if (channel:full-wake?)
+       (applyRestRestore (coordinate-set rest-await-input 0 $periphery))
+       (applyAllowanceWake $periphery (channel:wake-allowance)))
      $periphery))
+
+;; An activity wait with no budget polls at idle pace, also once an
+;; allowance wake's budget is spent.
+(= (loop-wait-sleep $periphery)
+   (if (and (== (coordinate-get-or rest-await-input 0 $periphery) 1)
+            (<= (loop-budget $periphery) 0))
+       (max (loop-sleep $periphery) (policy-idle-wait (loop-active-policy $periphery)))
+       (loop-sleep $periphery)))
+
+(= (applyAllowanceWake $periphery $allowance)
+   (let* (($banked (coordinate-get-or banked-loops 0 $periphery))
+          ($loops (loop-budget $periphery))
+          ($grant (min $banked (max 0 (- $allowance $loops)))))
+     (coordinate-set banked-loops (- $banked $grant)
+       (coordinate-set loops (+ $loops $grant)
+         (coordinate-set sleep-interval (sleepInterval) $periphery)))))
 
 (= (applyHumanActivity $periphery $has-activity $is-human)
    (if (and $has-activity $is-human)
@@ -186,7 +209,8 @@
 (= (applyRestBanking $periphery)
    (if (== (coordinate-get-or rest-request 0 $periphery) 1)
        (coordinate-set rest-request 0
-         (coordinate-set banked-loops (loop-budget $periphery)
+         (coordinate-set banked-loops
+           (+ (coordinate-get-or banked-loops 0 $periphery) (loop-budget $periphery))
            (coordinate-set loops 0
              (if (== (coordinate-get-or rest-await-input 0 $periphery) 1)
                (coordinate-set sleep-interval
@@ -399,10 +423,14 @@
                   (fuel:spend (loop-budget $selectedPeriphery))
                   $selectedPeriphery)))
           ($message (eval (receive)))
-          ;; A parked agent lets a quiet group batch keep waiting.
+          ;; A parked agent with no budget lets a quiet group batch keep
+          ;; waiting. With budget left the turn runs and presents the batch,
+          ;; so it must count as activity to be settled.
           ($hasActivity
             (and (== (py-call (helper.text_nonempty $message)) 1)
-                 (not (and (loop-parked $decremented) (channel:quiet-activity?)))))
+                 (not (and (and (loop-parked $decremented)
+                                (<= (loop-budget $decremented) 0))
+                           (channel:quiet-activity?)))))
           ($isHuman (eval (lastMessageIsHuman)))
           ($activityApplied (applyObservedWake $decremented $hasActivity))
           ($humanApplied
@@ -516,7 +544,7 @@
           ($policyWait
             (if $enabled
                 (policy-wait-seconds $policy $loops
-                                     (loop-sleep $periphery) $paused)
+                                     (loop-wait-sleep $periphery) $paused)
                 60))
           ($retryWait (if $enabled
                          (max (py-call (strategy_host.retry_seconds))
