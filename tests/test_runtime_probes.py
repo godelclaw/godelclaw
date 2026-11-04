@@ -59,6 +59,10 @@ class RuntimeProbeTest(unittest.TestCase):
          "BURST_END_AND_PROSE_OK"),
     )
 
+    # Probes of the MeTTa Telegram client, which needs CeTTa's native system
+    # and environment operations.
+    CETTA_ONLY = {"tests/allowance_wake_loop_probe.metta"}
+
     # Settings a probe needs from process start, which the clients read once.
     PROBE_ENV = {
         "tests/allowance_wake_loop_probe.metta": {
@@ -132,6 +136,8 @@ class RuntimeProbeTest(unittest.TestCase):
                 },
             }) + "\n", encoding="utf-8")
             for probe, marker in self.PROBES:
+                if engine != "cetta" and probe in self.CETTA_ONLY:
+                    continue
                 with self.subTest(probe=probe):
                     probe_state = pathlib.Path(directory) / pathlib.Path(probe).stem
                     probe_state.mkdir(exist_ok=True)
