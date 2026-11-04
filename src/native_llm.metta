@@ -58,7 +58,7 @@
      (let* (($selected (py-call (synthetic_llm.current_model $model)))
             ($subscription (llm:subscription-model? $selected)))
        (if $subscription
-         (py-call (synthetic_llm._empty_action chatgpt-requires-native-cetta))
+         (py-call (synthetic_llm.unavailable_action chatgpt-requires-native-cetta))
          (py-call (synthetic_llm.chat $model $tokens $effort $prompt)))))))
 
 (= (llm:structured $request)

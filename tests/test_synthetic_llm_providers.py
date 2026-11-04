@@ -251,6 +251,19 @@ class ProviderRoutingTest(unittest.TestCase):
             {"role": "system", "content": "ABC"},
             {"role": "user", "content": "D"}])
 
+    def test_unavailable_route_keeps_its_reason_in_the_failure_code(self):
+        import admission_frontier
+        self.assertEqual(admission_frontier.failure_code(
+            synthetic_llm.ProviderUnavailable(["JsonString", "account_deactivated"])),
+            "provider-unavailable:account_deactivated")
+        self.assertEqual(admission_frontier.failure_code(
+            synthetic_llm.ProviderUnavailable("native-auth-not-built")),
+            "provider-unavailable:native-auth-not-built")
+        self.assertEqual(admission_frontier.failure_code(
+            synthetic_llm.ProviderUnavailable('{"body": "x y"}')),
+            'provider-unavailable:--body-:--x-y--')
+        self.assertEqual(admission_frontier.failure_code(TimeoutError()), "TimeoutError")
+
     def test_claude_without_key_returns_empty_action_not_raise(self):
         self.enable_flag()
         os.environ["SYNTHETIC_MODEL"] = "claude-fable-5"

@@ -24,5 +24,6 @@ class ContextPreparationFailure(RuntimeError):
 
 
 def failure_code(error):
-    return (error.reason_code if isinstance(error, (AdmissionDenied, ContextPreparationFailure))
+    code = getattr(error, "reason_code", None)
+    return (code if isinstance(error, BaseException) and isinstance(code, str) and code
             else type(error).__name__)

@@ -362,6 +362,31 @@ class EmptyResponse(RuntimeError):
     pass
 
 
+class ProviderUnavailable(RuntimeError):
+    """A provider route could not be used. Its short reason, not the bare
+    type of whatever carried it, is what the failure record keeps."""
+
+    def __init__(self, reason):
+        words = []
+
+        def flatten(value):
+            if isinstance(value, (list, tuple)):
+                for item in value:
+                    flatten(item)
+            elif str(value) not in ("JsonString", "JsonNull", "JsonNumber", "JsonBool"):
+                words.append(str(value))
+        flatten(reason)
+        text = "/".join(words) or "unknown"
+        # Codes only: keep identifier characters, as messages may carry bodies.
+        text = "".join(c if c.isalnum() or c in "-_.:/" else "-" for c in text)[:64]
+        super().__init__(text)
+        self.reason_code = "provider-unavailable:" + text
+
+
+def unavailable_action(reason):
+    return _empty_action(ProviderUnavailable(reason))
+
+
 def _authenticated_request(provider, endpoint, body):
     if provider["name"] == "synthetic":
         body = provider_protocol.synthetic_body(body)

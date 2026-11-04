@@ -278,11 +278,11 @@
 (= (chatgpt:command $selected $tokens $effort $prompt)
    (let $session-value (chatgpt:session)
     (case $session-value
-     (((ChatGPTUnavailable $why) (py-call (synthetic_llm._empty_action $why)))
+     (((ChatGPTUnavailable $why) (py-call (synthetic_llm.unavailable_action $why)))
       ($session
        (let $planned (catch (chatgpt:command-plan $selected $tokens $effort $prompt $session))
         (case $planned
-         (((Error $source $reason) (py-call (synthetic_llm._empty_action chatgpt-plan-error)))
+         (((Error $source $reason) (py-call (synthetic_llm.unavailable_action chatgpt-plan-error)))
           ($plan (llm:run $plan))))))))))
 (= (chatgpt:plan? $plan)
    (let* (($profile (py-call (builtins.getattr $plan "request_profile" "")))
