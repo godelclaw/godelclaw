@@ -66,6 +66,7 @@ def program(legacy):
         '(task:conversation-projection "task-1" "tick" 0 0)',
         '(task:conversation-projection "task-1" "tick" 2 1000)',
         '(task:conversation-projection "task-1" "tick" 1 40)',
+        '(task:conversation-projection "task-1" "tick" 0 40)',  # input:a is longer than the limit: inputs stay whole
         '(task:read "%s" 0 8192)' % call,
         '(task:read "%s:%d:0" 0 8192)' % (OWNER, legacy),
         '(task:read "task-input:input:b" 0 8192)',

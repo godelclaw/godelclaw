@@ -2318,9 +2318,12 @@
 ; first and last halves around a marker, and says so; any other record is unchanged.
 ; <mode> a limit (0 or less: the whole result), or dispositions: the record's disposition alone
 ; ("recorded" without one), as task:conversation-history asks for.
+; A call's result is cut at the limit; an input is shown whole, as task_context_cetta's query
+; cuts only the attempts' results.
 (= (input-ledger:shaped-row ($serial $request $position $command $record $ticket $disposition) $mode)
    ($serial $request $position $command
-    (if (== $mode dispositions) (input-ledger:disposition-record $record) (input-ledger:limited $record $mode))
+    (if (== $mode dispositions) (input-ledger:disposition-record $record)
+      (if (== $ticket "input") $record (input-ledger:limited $record $mode)))
     $ticket $disposition))
 
 (= (input-ledger:disposition-record $record)
