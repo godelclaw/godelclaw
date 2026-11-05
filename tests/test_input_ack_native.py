@@ -82,7 +82,7 @@ def digest(path):
 
 
 def worker_processes():
-    """Pids of cetta value workers running the input ledger module as a client worker, by command line."""
+    """Pids of cetta value workers running the ledger's client module, by command line."""
     found = []
     for entry in Path("/proc").iterdir():
         if entry.name.isdigit():
@@ -90,7 +90,7 @@ def worker_processes():
                 command = (entry / "cmdline").read_bytes().split(b"\0")
             except OSError:
                 continue
-            if any(part.endswith(b"input_ledger.metta") for part in command) and b"--serve" not in command:
+            if any(part.endswith(b"ledger_client.metta") for part in command) and b"--serve" not in command:
                 found.append(int(entry.name))
     return found
 
@@ -318,7 +318,7 @@ class Hang:
 class RecordingProxy(DropPublishProxy):
     """DropPublishProxy that keeps the frames that mention DbPublish or a request id, and counts connections."""
     def __init__(self, path, upstream):
-        self.publishes, self.ids, self.connections = [], [], 0
+        self.publishes, self.reads, self.ids, self.connections = [], [], [], 0
         self.cut_capture, self.cut = threading.Event(), threading.Event()
         self.cut_after_ensure, self.cut_in = threading.Event(), 0
         super().__init__(path, upstream)
@@ -333,12 +333,20 @@ class RecordingProxy(DropPublishProxy):
         if data and b"DbEnsure" in data and self.cut_after_ensure.is_set():
             self.cut_after_ensure.clear()
             self.cut_in = 2
-        if data and b"DbCapture" in data and self.cut_capture.is_set():
+        if data and b"LedgerCall" in data and self.cut_after_ensure.is_set():
+            # A ledger verb is one call on its own connection: it is closed before the verb runs.
+            self.cut_after_ensure.clear()
+            self.cut.set()
+            return None
+        if data and (b"DbCapture" in data or b"LedgerCall" in data) and self.cut_capture.is_set():
             self.cut_capture.clear()
             self.cut.set()
             return None  # the connection is lost in the middle of a snapshot read
-        if data and b"DbPublish" in data:
+        # A write: a publish of a client-side transaction, or a ledger verb that carries a request id.
+        if data and (b"DbPublish" in data or (b"LedgerCall" in data and re.search(rb"(rq1|ck1|il1)\.", data))):
             self.publishes.append(data)
+        elif data and b"LedgerCall" in data:
+            self.reads.append(data)  # a ledger verb without a request id of the caller
         if data:
             self.ids += re.findall(rb"il1\.[^.\x00-\x20]+\.[0-9a-f]{64}", data)
         return data
@@ -608,7 +616,7 @@ class FailureTest(NativeCase):
         self.assertEqual(input_ack.committed(["known", "unknown"]), 0, "a lost read must not read as processed")
         self.assertTrue(proxy.cut.is_set())
 
-    def test_a_connection_that_closed_between_ensure_and_the_verb_is_replaced_inside_the_call(self):
+    def test_a_connection_that_closed_before_the_verb_is_replaced_inside_the_call(self):
         self.ensure()
         proxy = RecordingProxy(self.directory / "proxy.sock", self.server.socket)
         self.addCleanup(proxy.close)
@@ -635,11 +643,13 @@ class FailureTest(NativeCase):
             self.assertEqual(input_ack.processed_update_ids(["u2", "u1"]), 1)
             self.assertEqual(next(clock), 301.0)
         self.assertTrue(proxy.dropped.is_set(), "the proxy never lost a reply")
-        # The one publish committed and lost its reply. The module opened a new connection for the retry, which
-        # carried the same request id (resolved it) and replayed: the id never changed, nothing was published twice.
-        self.assertEqual({text.decode() for text in proxy.ids}, {mark_id(["u1", "u2"], 300.0)})
-        self.assertGreaterEqual(len(proxy.ids), 3, "the retry did not present the request id")
-        self.assertEqual(len(proxy.publishes), 1)
+        # The one write committed and lost its reply. The module opened a new connection for the retry, which sent
+        # the same verb and arguments ($now among them), so the server derived the same request id and replayed:
+        # nothing was applied twice.
+        calls = [frame[frame.index(b"LedgerCallV1"):] for frame in proxy.publishes + proxy.reads if b"LedgerCallV1" in frame]
+        marks = [call for call in calls if b"mark-processed" in call]
+        self.assertGreaterEqual(len(marks), 2, "the retry did not repeat the call")
+        self.assertEqual(len(set(marks)), 1, "the retry changed the call")
         self.assertGreaterEqual(proxy.connections, 2)
         self.assertEqual(self.dump()[1], {"u1": 300.0, "u2": 300.0})
         # Applied once: a later call with the same ids and another time changes nothing.

@@ -577,7 +577,8 @@ class DropPublishProxy:
                     reply = self.frame(server)
                     if reply is None:
                         return
-                    if b"DbPublish" in request and self.armed.is_set():
+                    # A publish of a client-side transaction, or a ledger verb run by the server.
+                    if (b"DbPublish" in request or b"LedgerCall" in request) and self.armed.is_set():
                         self.armed.clear()
                         self.dropped.set()
                         return

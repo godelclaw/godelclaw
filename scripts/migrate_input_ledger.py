@@ -256,12 +256,19 @@ def migrate(source, socket, *, batch=BATCH, after_copy=None):
         raise MigrationError("the target store is not empty (census: %s): nothing was copied"
                              % input_ack._show(census))
     expect, batches = "empty", 0
+    big = working is not None and len(working.encode("utf-8")) >= input_ack.WORKING_SET_NOTE
     for chunk in _batches(working_atoms + atoms + notice_atoms + request_rows, batch):
-        answer = call("import", (S(expect), tuple(chunk)))
+        try:
+            answer = call("import", (S(expect), tuple(chunk)))
+        except MigrationError as error:
+            if batches == 0 and big:
+                # The server runs the import: a value of about 1 MiB cannot be sent to it, which refuses it as surely.
+                raise MigrationError("the store refused the working set (%d bytes; the engine takes no value of about "
+                                     "1 MiB): nothing was copied (%s)" % (len(working.encode("utf-8")), error)) from error
+            raise
         if answer == S("refused"):
             # The verb answers `refused` for an aborted transaction: a store that is not empty, or a body that
             # failed, which is what the engine's limit on the size of an atom (about 1 MiB) does to the first batch.
-            big = working is not None and len(working.encode("utf-8")) >= input_ack.WORKING_SET_NOTE
             raise MigrationError(("the target store is not empty, or it refused the working set (%d bytes; the engine "
                                   "takes no value of about 1 MiB): nothing was copied" % len(working.encode("utf-8"))
                                   if big else "the target store is not empty: nothing was copied") if batches == 0

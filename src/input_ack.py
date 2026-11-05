@@ -115,9 +115,9 @@ def _store(timeout=10):
 # ---- the native input ledger (METTACLAW_INPUT_LEDGER_SOCKET) ----
 #
 # With the variable set, the tables of this module live in the native db server
-# on that socket and are reached through src/input_ledger.metta, run by a
-# persistent cetta-value-worker (the CSP1 client of execution_gateway, the same
-# one the gateway queue uses). SQLite is not consulted then, and when the server
+# on that socket, which runs src/input_ledger.metta next to its store; each verb is
+# one LedgerCall made by src/ledger_client.metta in a persistent cetta-value-worker
+# (the CSP1 client of execution_gateway, the same one the gateway queue uses). SQLite is not consulted then, and when the server
 # cannot be reached these calls fail: there is no silent fallback to SQLite,
 # which would split the ledger into two stores. Unset (or empty), nothing here runs.
 LEDGER_SOCKET = "METTACLAW_INPUT_LEDGER_SOCKET"
@@ -169,7 +169,7 @@ def _ledger_worker():
     global _ledger
     from execution_gateway.cetta_worker import CettaValueWorker
     from pathlib import Path
-    module = Path(__file__).resolve().with_name("input_ledger.metta")
+    module = Path(__file__).resolve().with_name("ledger_client.metta")
     binary = _worker_binary()
     with _ledger_lock:
         if _ledger is not None and (_ledger[0] != os.getpid() or _ledger[1] != (binary, module)):
@@ -182,7 +182,7 @@ def _ledger_worker():
             _ledger = None
         if _ledger is None or _ledger[2].closed:
             _ledger = (os.getpid(), (binary, module),
-                       CettaValueWorker(binary, module, "input-ledger:run", timeout=10, language="petta"))
+                       CettaValueWorker(binary, module, "ledger-client:run", timeout=10, language="petta"))
         return _ledger[2]
 
 

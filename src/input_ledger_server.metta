@@ -1,6 +1,12 @@
 ; The native database service of the input ledger: ONE store on ONE socket.
 ; Nothing here is specific to an agent; the unit that runs it names the instance.
 ;
+; The ledger's transitions and readers run here, next to the store: the route
+; LedgerCall takes (LedgerCallV1 <verb> <arguments>) and answers
+; (LedgerAnswersV1 <answers>) with what src/input_ledger.metta's perform answers on
+; this store. Its reads are local and each call is one round trip
+; (src/ledger_client.metta is the caller's side).
+;
 ;   cetta-value-worker --serve --lang petta src/input_ledger_server.metta db-server:configuration
 ;
 ; Configuration is by environment (the worker takes no other arguments):
@@ -19,6 +25,7 @@
 ; request values are inert data and never select server filesystem paths.
 !(import! &self (library db))
 !(import! &self (library system))
+!(import! &self ./input_ledger)
 
 (= (db-server:configuration)
   (let* (($path (system:getenv-or-default "CETTA_DB_SOURCE" ""))
@@ -29,7 +36,17 @@
 (= (db-server:serve $path $socket)
   (case (db:open $path)
     (((Error $where $why) (Error $where $why))
-     ($owner (db-server:service $owner $socket)))))
+     ($owner (case (input-ledger:ensure $owner)
+               ((True (db-server:service $owner $socket))
+                ($failure $failure)))))))
+
+; One ledger verb on this store. A write's request id makes a repeated call (after a
+; lost reply) replay the first answer.
+(= (ledger-server:call (ServiceCallV1 (DbConfigurationV1 $owner $identity $incarnation $kind $artifacts) $peer $source
+    (LedgerCallV1 $verb $arguments)))
+  (if (== $kind directory)
+      (LedgerAnswersV1 (collapse (input-ledger:perform $owner $verb $arguments)))
+      (DbRefusedV1 read-only)))
 (= (db-server:service $owner $socket)
   (let* (($incarnation (system:uuid4-hex))
          ($artifacts (act:artifact-root $socket))
@@ -72,8 +89,9 @@
        (ServiceRouteV1 DbRangeOpen Read db-server:range-open)
        (ServiceRouteV1 DbRangeNext Read db-server:range-next)
        (ServiceRouteV1 DbRangeRead Read db-server:range-read)
-       (ServiceRouteV1 DbRangeCancel Read db-server:range-cancel))
-      (ServiceLimitsV2 64 1024 $frame 30000 268435456 1000000 0)
+       (ServiceRouteV1 DbRangeCancel Read db-server:range-cancel)
+       (ServiceRouteV1 LedgerCall Write ledger-server:call))
+      (ServiceLimitsV2 64 1024 $frame 30000 268435456 2147483647 0)
       (ServiceMaintenanceV1 db-server:maintenance (DbMaintenanceIdleV1 $memory True) $work))))
 (= (db-server:configuration-data $owner $incarnation $artifacts)
   (case $owner

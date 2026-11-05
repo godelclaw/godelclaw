@@ -475,13 +475,14 @@ class RetryTest(NativeCase):
         # atom, and the meta keys an acceptance writes: the revision and the clock
         self.assertEqual(atoms, 1 + 3 + 4 * len(REQUESTS) + 1 + 2)
         # Three checkpoints, the second lost its reply: its request id was presented again by the retry on a new
-        # connection, and only three publishes were sent (none twice).
+        # connection (the server replayed it), and the writes carried one request id each.
         by_id = {}
         for item in proxy.ids:
             by_id[item.decode()] = by_id.get(item.decode(), 0) + 1
         self.assertEqual(len(by_id), 3, by_id)
-        self.assertGreaterEqual(max(by_id.values()), 3, "the lost one was not presented again: %s" % by_id)
-        self.assertEqual(len(proxy.publishes), len(REQUESTS) + 3)  # a publish per accepted request, then the three
+        self.assertGreaterEqual(max(by_id.values()), 2, "the lost one was not presented again: %s" % by_id)
+        written = {name for frame in proxy.publishes for name in re.findall(rb"(?:rq1|ck1|il1)\.[0-9a-f]+", frame)}
+        self.assertEqual(len(written), len(REQUESTS) + 3)  # a write per accepted request, then the three
         self.assertGreaterEqual(proxy.connections, 4)
 
     def test_a_reply_lost_between_python_and_the_worker_repeats_the_same_request(self):
@@ -538,8 +539,10 @@ class RetryTest(NativeCase):
 class ContentionTest(NativeCase):
     def test_checkpoints_racing_a_noisy_writer_commit_once_each_and_end_as_the_oracle(self):
         # The count-driven noise writer of the free-running test commits to another collection (14 commits, the
-        # last 12 back to back) while this process checkpoints: every lost race is run again with the same request
-        # id. The proxy counts the publishes: more than one per checkpoint means a race was lost and repeated.
+        # last 12 back to back) while this process checkpoints: each checkpoint commits once and the store ends as
+        # the oracle. The server runs the checkpoints next to the store, between the noise writer's publishes;
+        # a client-side transaction that lost a race would run again with the same request id. The proxy counts
+        # the writes: at least one per checkpoint.
         self.ensure()
         proxy = ProxyCheckpoint(self.directory / "proxy.sock", self.server.socket)
         self.addCleanup(proxy.close)
@@ -752,7 +755,8 @@ class FailureMappingTest(NativeCase):
         class CutEveryCapture(RecordingProxy):
             def frame(self, connection):
                 data = RecordingProxy.frame(self, connection)
-                return None if data and b"DbCapture" in data else data  # every snapshot read loses its connection
+                # every read (a snapshot of a client, or a ledger verb run by the server) loses its connection
+                return None if data and (b"DbCapture" in data or b"LedgerCall" in data) else data
 
         proxy = CutEveryCapture(self.directory / "proxy.sock", self.server.socket)
         self.addCleanup(proxy.close)

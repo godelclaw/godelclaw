@@ -34,7 +34,7 @@ import observed_strategy
 from observed_strategy import IdentityConflict, Ledger, digest
 from execution_gateway.cetta_worker import CettaValueWorker, E, S
 from native_ledger_client import NativeRunner
-from test_input_ack_native import NativeCase, RecordingProxy, SKIP
+from test_input_ack_native import DbServerAt, NativeCase, RecordingProxy, SKIP
 from test_input_ledger_remote import ENGINE, Oracle, WORKER, available, oracle_environment
 from test_turn_checkpoint_native import AWKWARD, native_dump_program, parse_native_full, sha, working
 
@@ -730,17 +730,24 @@ class ReplayTest(NativeCase):
 
     def test_a_store_made_with_the_earlier_index_layout_is_refused_loudly(self):
         # The layout of a collection is fixed when it is first ensured; a store of the task-4/5 layout (no request
-        # atoms, no request indexes) cannot be used by this module: it must be made again from SQLite.
+        # atoms, no request indexes) cannot be used by this module: it must be made again from SQLite. The server
+        # ensures the layout when it starts, so it refuses to serve such a store, and no call reaches one.
+        store = self.directory / "old-store"
         out = self.run_client("old", "!(import! &self (library db))\n"
-                                     "!(let* (($db (db:connect %s))\n"
+                                     "!(let* (($db (db:open %s))\n"
                                      "        ($r (db:ensure $db inputs ((SpaceIndexV1 3 1) (SpaceIndexV1 11 1) (SpaceIndexV1 11 2)"
-                                     " (SpaceIndexV1 11 4) (SpaceIndexV1 11 8)))))\n"
-                                     "   (println! (old $r)))\n" % json.dumps(str(self.server.socket)))
+                                     " (SpaceIndexV1 11 4) (SpaceIndexV1 11 8))))\n"
+                                     "        ($_ (db:close $db)))\n"
+                                     "   (println! (old $r)))\n" % json.dumps(str(store)))
         self.assertIn("(old true)", out)
-        self.session()
-        with self.assertRaises(input_ack.LedgerUnavailable) as raised:
+        old = DbServerAt(self.directory / "old.sock", store)
+        code = old.start()
+        self.addCleanup(old.stop)
+        self.assertIsNotNone(code, "the server served a store of the earlier layout")
+        self.assertNotEqual(code, 0)
+        self.session(old.socket)
+        with self.assertRaises(input_ack.LedgerUnavailable):
             input_ack.committed(["a"])
-        self.assertIn("index-layout-mismatch", str(raised.exception))
 
 
 @unittest.skipUnless(available(), SKIP)
