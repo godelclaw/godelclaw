@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -36,6 +37,28 @@ class ReleasePermissionsTest(unittest.TestCase):
                 for item in manifest["files"] if item.get("vendored")
             }
             self.assertLessEqual(vendored, selected)
+
+    def test_every_relative_import_of_a_selected_module_is_selected(self):
+        # A module that is imported but not selected never reaches an instance: the agent then fails at boot.
+        root = Path(__file__).resolve().parents[1]
+        selected = set(json.loads((root / "config/runtime-files.json").read_text()))
+        instance_local = {"config/channel.metta", "src/instance_hooks.metta"}  # written per instance
+        missing = []
+        for name in sorted(selected):
+            if not name.endswith(".metta") or name.startswith("modes/conformance/runtime-repros/"):
+                continue
+            text = "\n".join(line.split(";", 1)[0] for line in (root / name).read_text(encoding="utf-8").splitlines())
+            for target in re.findall(r"import!\s+&\w+\s+(\./[^\s()]+)", text):
+                base, found = (root / name).parent, None
+                while found is None:
+                    found = next((c for c in (base / target, base / (target + ".metta")) if c.is_file()), None)
+                    if found is not None or base == root:
+                        break
+                    base = base.parent
+                relative = str(found.resolve().relative_to(root)) if found else target
+                if relative not in selected and relative.lstrip("./") not in instance_local:
+                    missing.append((name, target))
+        self.assertEqual(missing, [])
 
     def test_content_override_preserves_launcher_permissions(self):
         with tempfile.TemporaryDirectory() as temporary:
