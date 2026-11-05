@@ -461,13 +461,8 @@ class Ledger:
         """The receipts the protected view shows, from the native store: those not yet observed and the
         newest of the focus, oldest first, at most two (as rows with the receipt's JSON text)."""
         import input_ack
-        chosen = {a["ticket"]: a for a in input_ack.actions("unobserved")}
-        own = [a for a in input_ack.actions(("request", focus)) if a["receipt"] is not None]
-        if own:
-            newest = max(own, key=lambda action: action["serial"])
-            chosen[newest["ticket"]] = newest
-        rows = sorted(chosen.values(), key=lambda action: action["serial"])[:2]
-        return [{"ticket": a["ticket"], "receipt": encoded(a["receipt"])} for a in rows]
+        return [{"ticket": a["ticket"], "receipt": encoded(a["receipt"])}
+                for a in input_ack.actions(("protected", "" if focus is None else focus))]
 
     def active(self):
         import input_ack

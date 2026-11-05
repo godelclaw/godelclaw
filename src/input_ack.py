@@ -214,7 +214,7 @@ def _show(value):
     return repr(value)
 
 
-def _ledger_call(verb, arguments, timeout=10, socket=None):
+def _ledger_call(verb, arguments, timeout=10, socket=None, page=None):
     """One verb of the ledger module on the native store; the verb's own value.
 
     The request names the socket and carries its arguments, $now among them,
@@ -223,13 +223,17 @@ def _ledger_call(verb, arguments, timeout=10, socket=None):
     outcome (input-ledger:session); the transport below is repeated once, on
     a restarted worker, with the same request. Raises LedgerBusy for a write
     that lost every race and LedgerUnavailable for any other failure. `socket`
-    names another server than the configured one (the migration script)."""
+    names another server than the configured one (the migration script). `page`, (start, count), asks
+    for one page of a read (_ledger_read)."""
     from execution_gateway.cetta_worker import E, S, Symbol, WorkerEvaluationError, WorkerUnavailable
+    if page is None and verb in PAGED_READS:
+        return _ledger_read(verb, arguments, timeout, socket)
     socket_path = _native_socket() if socket is None else str(socket)
     if len(os.fsencode(socket_path)) > SOCKET_BYTES:
         raise LedgerUnavailable("input ledger socket path is %d bytes; a unix socket path may hold %d: %s"
                                 % (len(os.fsencode(socket_path)), SOCKET_BYTES, socket_path))
-    request = E("ledger", socket_path, verb, tuple(arguments))
+    request = (E("ledger", socket_path, verb, tuple(arguments)) if page is None else
+               E("ledger-page", socket_path, verb, tuple(arguments), int(page[0]), int(page[1])))
     problem = None
     for _ in range(2):
         try:
@@ -252,6 +256,42 @@ def _ledger_call(verb, arguments, timeout=10, socket=None):
             raise LedgerBusy("input ledger %s lost every race: %s" % (verb, _show(value)))
         raise LedgerUnavailable("input ledger %s: %s" % (verb, _show(value)))
     return {S("true"): True, S("false"): False}.get(value, value) if isinstance(value, Symbol) else value
+
+
+PAGE_ROWS = 2000
+# The reads input-ledger:pageable names: their answers grow with the ledger, and the worker passes each answer on
+# as one value, so they are always read in pages.
+PAGED_READS = frozenset({"request-rows", "actions", "attempts", "task-view", "task-rows", "conversation-rows",
+                         "conversation-history", "turn-dump", "meta-prefix"})
+
+
+def _ledger_read(verb, arguments, timeout=10, socket=None):
+    """A read's answer however long it is, in pages that each fit one wire value (input-ledger:page):
+    a list answer's rows joined in order, a record's expression fields joined so. A page too large for
+    the wire is asked again with half its rows."""
+    from execution_gateway.cetta_worker import S
+    merged, start, count = None, 0, PAGE_ROWS
+    while True:
+        try:
+            page = _ledger_call(verb, arguments, timeout, socket, page=(start, count))
+        except LedgerUnavailable as error:
+            if "reply-limit" in str(error) and count > 1:
+                count //= 2
+                continue
+            raise
+        if not (isinstance(page, tuple) and len(page) == 3 and page[0] == S("page")):
+            raise LedgerUnavailable("input ledger %s: unexpected page %s" % (verb, _show(page)))
+        merged = page[2] if merged is None else _joined(merged, page[2])
+        if page[1] != S("more"):
+            return merged
+        start += count
+
+
+def _joined(merged, value):
+    if merged == () or isinstance(merged[0], tuple):
+        return merged + value
+    return merged[:1] + tuple(field + more if isinstance(field, tuple) else field
+                              for field, more in zip(merged[1:], value[1:]))
 
 
 def _ledger_flag(verb, arguments, timeout=10):
@@ -628,12 +668,12 @@ WHOLE_READ_SECONDS = 900
 
 
 def actions(which="all"):
-    """The actions, oldest first: "all", "unobserved" (with a receipt), ("ticket", t), ("status", s) or
-    ("request", r). Each a dict whose receipt is None or {ticket, payload, disposition, domain}."""
+    """The actions, oldest first: "all", "unobserved" (with a receipt), ("ticket", t), ("status", s),
+    ("request", r) or ("protected", focus) (the protected view's two receipts). Each a dict whose receipt is None or {ticket, payload, disposition, domain}."""
     from execution_gateway.cetta_worker import S
     selection = which if isinstance(which, str) else (S(which[0]), str(which[1]))
-    timeout = WHOLE_READ_SECONDS if which == "all" else 10
-    return [_action_of(row) for row in _entries(_ledger_call("actions", (selection,), timeout), "actions")]
+    answer = _ledger_call("actions", (selection,), WHOLE_READ_SECONDS if which == "all" else 10)
+    return [_action_of(row) for row in _entries(answer, "actions")]
 
 
 def attempt_begin(ticket, position, command_text, request_id=None):
@@ -668,7 +708,7 @@ def attempts(ticket=None, recent=None):
 def turn_dump():
     """(meta keys, turns, arrivals): every turn as a dict and every request's arrival position."""
     from execution_gateway.cetta_worker import S
-    answer = _ledger_call("turn-dump", ())
+    answer = _ledger_call("turn-dump", (), WHOLE_READ_SECONDS)
     if not (isinstance(answer, tuple) and len(answer) == 4 and answer[0] == S("dump")):
         raise LedgerUnavailable("input ledger turn-dump: unexpected answer %s" % _show(answer))
     state = {entry[0]: None if _is_none(entry[1]) else entry[1] for entry in _entries(answer[1], "turn-dump")}
