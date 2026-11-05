@@ -62,10 +62,11 @@ def available():
 
 class DbServer:
     """One native db server process on `directory`/store, listening on `directory`/s.sock."""
-    def __init__(self, directory):
+    def __init__(self, directory, value_bytes=input_ack.LEDGER_VALUE_BYTES):
         self.directory = Path(directory)
         self.store = self.directory / "store"
         self.socket = self.directory / "s.sock"
+        self.value_bytes = value_bytes  # the unit's allowance unless a test asks for another
         self.process = None
         self.starts = 0
         self.pids = []
@@ -77,7 +78,8 @@ class DbServer:
         log = open(self.directory / ("server-%d.log" % self.starts), "wb")
         with log:
             self.process = subprocess.Popen(
-                [str(WORKER), "--serve", "--lang", "petta", str(SERVER_MODULE), "db-server:configuration"],
+                [str(WORKER), "--value-bytes", str(self.value_bytes), "--serve", "--lang", "petta", str(SERVER_MODULE),
+                 "db-server:configuration"],
                 env=environment, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
         self.pids.append(self.process.pid)
         deadline = time.monotonic() + 30

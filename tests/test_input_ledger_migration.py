@@ -31,7 +31,7 @@ from execution_gateway.cetta_worker import E, S
 import test_input_ledger as base
 from test_input_ack_native import EVERY_STATE, NativeCase, SKIP
 from native_ledger_client import NativeRunner
-from test_input_ledger_remote import ENGINE, LANE, Oracle, WORKER, available, oracle_environment, run_oracle
+from test_input_ledger_remote import DbServer, ENGINE, LANE, Oracle, WORKER, available, oracle_environment, run_oracle
 from test_turn_checkpoint_native import (AWKWARD, REQUESTS, encoded, native_dump_program, parse_native, parse_native_full, sha,
                                          working)
 
@@ -257,15 +257,31 @@ class MigrationTest(NativeCase):
                 self.assertEqual(self.dump(), ([], {}))
         self.assertEqual(digest(source), before)
 
+    def test_values_of_megabytes_are_copied_and_read_back(self):
+        # The ledger's server takes values of input_ack.LEDGER_VALUE_BYTES (the engine's default is 1 MiB).
+        source, _ = self.build_with_checkpoints()
+        big = self.directory / "big.db"
+        shutil.copyfile(source, big)
+        with closing(sqlite3.connect(big)) as db:
+            db.execute("UPDATE meta SET value=? WHERE key='working_set'", (encoded(working(40.0, lastresults="x" * 1200000)),))
+            db.execute("UPDATE requests SET content=printf('%.*c', 3000000, 'y') WHERE id='task-1'")
+            db.commit()
+        done = self.run_script("--source", str(big), "--socket", str(self.server.socket))
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+
     def test_a_working_set_the_store_cannot_hold_is_refused_before_anything_else_is_copied(self):
-        # The engine's limit (about 1 MiB per atom; see the report). The working set is in the first batch, so
-        # the refusal leaves the target empty and the run can simply be repeated once the working set is smaller.
+        # A server started with the engine's default allowance (1 MiB) cannot take this working set. It is in the
+        # first batch, so the refusal leaves the target empty and the run can be repeated on a server that takes it.
         source, _ = self.build_with_checkpoints()
         huge = self.directory / "huge.db"
         shutil.copyfile(source, huge)
         with closing(sqlite3.connect(huge)) as db:
             db.execute("UPDATE meta SET value=? WHERE key='working_set'", (encoded(working(40.0, lastresults="x" * 1200000)),))
             db.commit()
+        self.server.stop()
+        (self.directory / "small").mkdir()
+        self.server = DbServer(self.directory / "small", value_bytes=1048576)
+        self.server.start()
         # One row per batch: were the working set not in the first batch, rows would be committed before it fails.
         done = self.run_script("--source", str(huge), "--socket", str(self.server.socket), "--batch", "1")
         self.assertEqual(done.returncode, 1, done.stdout)
@@ -415,8 +431,6 @@ class MigrationTest(NativeCase):
             "no context row": ("DELETE FROM request_context WHERE request='task-1'", "no request_context row"),
             "covered": ("UPDATE requests SET status='covered' WHERE id='task-1'", "is covered"),
             "a supersession": ("INSERT INTO input_supersessions VALUES ('task-1','input:2')", "input_supersessions"),
-            "a content of about 1 MiB": ("UPDATE requests SET content=printf('%.*c', 1100000, 'x') WHERE id='task-1'",
-                                        "1 MiB"),
             "a content that is no text": ("UPDATE requests SET content=CAST(x'ff' AS BLOB) WHERE id='task-1'", "not text"),
         }
         for name, (statement, message) in cases.items():

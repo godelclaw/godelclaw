@@ -121,7 +121,11 @@ def _store(timeout=10):
 # cannot be reached these calls fail: there is no silent fallback to SQLite,
 # which would split the ledger into two stores. Unset (or empty), nothing here runs.
 LEDGER_SOCKET = "METTACLAW_INPUT_LEDGER_SOCKET"
-WORKING_SET_NOTE = 1000000  # a failure of a working set this large is explained (engine limit: about 1 MiB per atom)
+# The value allowance of the ledger's server and of its client worker (the unit passes the same
+# --value-bytes): a command output, a request or a working set is one value, and the largest
+# command output on record is about 11 MB. The engine's default allowance is 1 MiB.
+LEDGER_VALUE_BYTES = 256 * 1024 * 1024
+WORKING_SET_NOTE = 1000000  # a failure of a value at least this large is explained
 SOCKET_BYTES = 107  # sockaddr_un.sun_path holds 108 bytes on Linux, the last one a NUL
 _ledger = None
 _ledger_lock = threading.RLock()
@@ -182,7 +186,8 @@ def _ledger_worker():
             _ledger = None
         if _ledger is None or _ledger[2].closed:
             _ledger = (os.getpid(), (binary, module),
-                       CettaValueWorker(binary, module, "ledger-client:run", timeout=10, language="petta"))
+                       CettaValueWorker(binary, module, "ledger-client:run", timeout=10, language="petta",
+                                        maximum_bytes=LEDGER_VALUE_BYTES))
         return _ledger[2]
 
 
@@ -276,9 +281,9 @@ def turn_checkpoint(working_text, ids, request, now, request_id=None):
     except LedgerUnavailable as error:
         size = len(str(working_text).encode("utf-8", "surrogatepass"))
         if type(error) is LedgerUnavailable and size >= WORKING_SET_NOTE:
-            # The engine refuses an atom of about 1 MiB (an Error, or no answer at all): say so.
-            raise LedgerUnavailable("%s; the working set is %d bytes and the native store refuses "
-                                    "values of about 1 MiB (nothing was written)" % (error, size)) from error
+            # A value beyond the server's allowance is refused (an Error, or no answer at all): say so.
+            raise LedgerUnavailable("%s; the working set is %d bytes, beyond what the native store's server "
+                                    "accepts (nothing was written)" % (error, size)) from error
         raise
 
 
@@ -327,14 +332,14 @@ def _flag_of(value):
 
 
 def _request_write(verb, arguments, size_of=None):
-    """A write of the requests; explains the engine's refusal of an atom of about 1 MiB."""
+    """A write of the requests; explains the refusal of a value beyond the server's allowance."""
     try:
         return _ledger_call(verb, arguments)
     except LedgerUnavailable as error:
         size = len(str(size_of).encode("utf-8", "surrogatepass")) if size_of is not None else 0
         if type(error) is LedgerUnavailable and size >= WORKING_SET_NOTE:
-            raise LedgerUnavailable("%s; the content is %d bytes and the native store refuses values "
-                                    "of about 1 MiB (nothing was written)" % (error, size)) from error
+            raise LedgerUnavailable("%s; the content is %d bytes, beyond what the native store's server "
+                                    "accepts (nothing was written)" % (error, size)) from error
         raise
 
 

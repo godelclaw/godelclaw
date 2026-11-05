@@ -35,7 +35,7 @@ from execution_gateway.cetta_worker import CettaValueWorker, E, S, WorkerReplyUn
 from native_ledger_client import NativeRunner
 import test_input_ledger as base
 from test_input_ack_native import NativeCase, RecordingProxy, SKIP
-from test_input_ledger_remote import (ENGINE, LANE, PRELUDE, Oracle, WORKER, available, literal, noise_program,
+from test_input_ledger_remote import (DbServer, ENGINE, LANE, PRELUDE, Oracle, WORKER, available, literal, noise_program,
                                       oracle_environment)
 
 AWKWARD = ('q"uote \\back \nnew\tline \u00e9\u65e5\u672c \U0001d11e \u2028\u2029 {"a":[1,2]} \x7f \x00\x01\x1f '
@@ -770,8 +770,22 @@ class FailureMappingTest(NativeCase):
         os.environ[input_ack.LEDGER_SOCKET] = str(self.server.socket)
         self.assertEqual(store.working_checkpoint(), working(1.0, lastresults="kept"))
 
-    def test_a_working_set_of_a_megabyte_is_refused_loudly_atomically_and_the_store_goes_on(self):
-        # The engine's limit (see the report): an atom of about 1 MiB cannot be stored. Not worked around here.
+    def test_a_working_set_of_megabytes_is_stored_and_read_back_byte_for_byte(self):
+        # The ledger's server and worker take values of input_ack.LEDGER_VALUE_BYTES; the engine's default is 1 MiB.
+        self.session()
+        store = Ledger(self.directory / "gate.db")
+        store.accept("input:one", "m", kind="message")
+        big = working(2.0, lastresults="z\u00e9" * 1500000)  # about 4.5 MB
+        store.checkpoint(big, ["big"], "input:one")
+        self.assertEqual(store.working_checkpoint(), big)
+        self.assertEqual(input_ack.committed(["big"]), 1)
+
+    def test_a_working_set_beyond_the_servers_allowance_is_refused_loudly_atomically_and_the_store_goes_on(self):
+        # A server started with the engine's default allowance (1 MiB) refuses a larger value; nothing is written.
+        self.server.stop()
+        self.server = DbServer(self.directory / "small", value_bytes=1048576)
+        (self.directory / "small").mkdir()
+        self.server.start()
         self.session()
         store = Ledger(self.directory / "gate.db")
         store.accept("input:one", "m", kind="message")
@@ -782,7 +796,7 @@ class FailureMappingTest(NativeCase):
             self.assertEqual(len(encoded(huge).encode("utf-8")), size)
             with self.assertRaises(input_ack.LedgerUnavailable) as raised:
                 store.checkpoint(huge, ["lost"], "input:one")
-            self.assertIn("refuses values of about 1 MiB", str(raised.exception))
+            self.assertIn("beyond what the native store's server accepts", str(raised.exception))
             self.assertIn("nothing was written", str(raised.exception))
             self.assertEqual(store.working_checkpoint(), working(1.0, lastresults="small"))
             self.assertEqual(input_ack.committed(["kept"]), 1)
@@ -790,10 +804,9 @@ class FailureMappingTest(NativeCase):
         notices, ids, stored, requests, atoms = parse_native(self.run_client("dump", native_dump_program(self.server.socket)))
         self.assertEqual((set(ids), requests), ({"kept"}, {}))
         self.assertEqual(len(self.worker_pids), 1, "the worker had to be replaced")
-        store.checkpoint(working(3.0, lastresults="y" * 900000), ["after"], "input:one")  # under the limit
+        store.checkpoint(working(3.0, lastresults="y" * 900000), ["after"], "input:one")  # under the allowance
         self.assertEqual(store.working_checkpoint()["lastresults"], "y" * 900000)
         self.assertEqual(input_ack.committed(["after"]), 1)
-
 
 if __name__ == "__main__":
     unittest.main()

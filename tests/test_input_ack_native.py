@@ -362,7 +362,8 @@ class DbServerAt:
         self.socket, self.store, self.process = Path(socket_path), Path(store), None
 
     def command(self):
-        return [str(WORKER), "--serve", "--lang", "petta", str(SERVER_MODULE), "db-server:configuration"]
+        return [str(WORKER), "--value-bytes", str(input_ack.LEDGER_VALUE_BYTES), "--serve", "--lang", "petta",
+                str(SERVER_MODULE), "db-server:configuration"]
 
     def start(self):
         env = {"PATH": os.environ["PATH"], "CETTA_DB_SOURCE": str(self.store), "CETTA_DB_SOCKET": str(self.socket)}

@@ -24,10 +24,10 @@ never recorded when). Then it reads every record back by key and compares it wit
 the source column by column (the working set and every content byte for byte),
 and counts what the store holds.
 Refused before anything is written: a request without a request_context row, with a
-status, kind or processed flag the native store does not know, with a content of about
-1 MiB or more (the engine takes no atom that large), a source with a request that is
-covered or a row in input_supersessions (the task-context family is not native yet:
-nothing would delete the supersession when the request is reopened).
+status, kind or processed flag the native store does not know, with a content of
+more bytes than the ledger's server accepts as one value (input_ack.LEDGER_VALUE_BYTES), a
+source with a request that is covered or a row in input_supersessions (this script does not
+copy the task context yet: nothing would delete the supersession when the request is reopened).
 It refuses a target that holds any atom, and never merges into one. The copy is
 made in batches, each atomic: if it stops half way, discard the target store
 (it is not in use before the cutover) and run it again on a fresh one.
@@ -175,8 +175,8 @@ def request_atoms(row, number):
         raise MigrationError("%s has a status that is none of %s" % (where, ", ".join(STATUSES)))
     if type(processed) is not int or processed not in (0, 1):
         raise MigrationError("%s processed is not 0 or 1" % where)
-    if len(content.encode("utf-8", "surrogatepass")) >= input_ack.WORKING_SET_NOTE:
-        raise MigrationError("%s has a content of %d bytes: the engine takes no atom of about 1 MiB"
+    if len(content.encode("utf-8", "surrogatepass")) >= input_ack.LEDGER_VALUE_BYTES:
+        raise MigrationError("%s has a content of %d bytes: more than the ledger's server accepts as one value"
                              % (where, len(content.encode("utf-8", "surrogatepass"))))
     try:
         content.encode("utf-8")
