@@ -166,6 +166,7 @@ def main():
     emit("METTACLAW_INPUT_ACK_SECONDS", ack_delay)
     emit("METTACLAW_INPUT_POLICY", input_policy)
     emit("METTACLAW_OBSERVED_STRATEGY", agent.get("observed_strategy"))
+    emit("METTACLAW_NATIVE_LEDGER", agent.get("native_ledger", False))
     emit("METTACLAW_SHELL_TIMEOUT_SECONDS", agent.get("shell_timeout_seconds", 120))
     emit("METTACLAW_REASONING_EFFORT", agent.get("reasoning_effort", "default"))
     emit("METTACLAW_LLM_TRANSPORT", agent.get("llm_transport"))

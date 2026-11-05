@@ -64,6 +64,10 @@ model_commentary = false
 public_tool_receipts = false
 # Record task history and restore it after a restart.
 observed_strategy = true
+# The turn's records (requests, turns, actions, task context) in the native ledger served by
+# pettaclaw-input-ledger@<instance> next to the agent's state, instead of the SQLite file. The
+# SQLite file keeps topics, provider notices and the archived events.
+native_ledger = false
 # Agent tools accept explicit overrides of these defaults.
 shell_timeout_seconds = 120
 reasoning_effort = "default"

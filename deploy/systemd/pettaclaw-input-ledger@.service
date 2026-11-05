@@ -1,0 +1,27 @@
+[Unit]
+Description=Native input ledger server for %i
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=exec
+# %i is the agent's instance: its state is %S/%i, as run.sh derives it.
+Environment=CETTA_DB_SOURCE=%S/%i/input-ledger/store
+Environment=CETTA_DB_SOCKET=%S/%i/input-ledger/ledger.sock
+# The agent's deployed code; an instance whose code lives elsewhere sets LEDGER_CODE in a drop-in.
+Environment=LEDGER_CODE=%h/pettaclaw-%i
+# The runtime the agents run (CETTA_BIN, CETTA_VALUE_WORKER_BIN); the updater keeps it on the selected bundle.
+EnvironmentFile=%h/.config/godelclaw/runtime.env
+WorkingDirectory=%S/%i/input-ledger
+ExecStart=/bin/sh -c 'worker="$CETTA_VALUE_WORKER_BIN"; [ -n "$worker" ] || worker="$(dirname "$CETTA_BIN")/cetta-value-worker"; exec "$worker" --value-bytes 268435456 --serve --lang petta "$LEDGER_CODE/src/input_ledger_server.metta" db-server:configuration'
+StateDirectory=%i/input-ledger
+StateDirectoryMode=0770
+UMask=0007
+LimitCORE=0
+Restart=always
+RestartSec=2
+KillMode=control-group
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target

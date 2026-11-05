@@ -6,9 +6,9 @@
 !(import! &self ./src/native_llm.metta)
 
 (= (context:checkpoint $root)
-   (let $rows (state:rows (state:query "SELECT value FROM meta WHERE key=?" ((task:window-key $root))))
-     (if (== $rows ()) (Checkpoint sqlite:null 0 "")
-       (let* (($raw (car-atom (car-atom $rows))) ($value (json-parse $raw))
+   (let $saved (state:meta-text (task:window-key $root))
+     (if (== $saved sqlite:null) (Checkpoint sqlite:null 0 "")
+       (let* (($raw $saved) ($value (json-parse $raw))
               ($start (task:checkpoint-start $value))
               ($summary (if (== $start 0) "" (task:checkpoint-summary $value))))
          (Checkpoint $raw $start $summary)))))
@@ -16,6 +16,16 @@
 (= (context:old-checkpoint $raw)
    (if (== $raw sqlite:null) (JsonObject ()) (task:checkpoint-record (json-parse $raw))))
 (= (context:write-checkpoint $root $old $checkpoint)
+   (if (state:native-ledger) (context:native-write-checkpoint $root $old $checkpoint)
+     (context:sql-write-checkpoint $root $old $checkpoint)))
+; The checkpoint is set only where it still holds <old> (absent for sqlite:null).
+(= (context:native-write-checkpoint $root $old $checkpoint)
+   (case (state:ledger "meta-cas" ((task:window-key $root) (if (== $old sqlite:null) none $old)
+                                   (state:encoded $checkpoint) (state:request-id)))
+     ((published ContextPublished)
+      (changed (ContextPreparationFailed "context-checkpoint-changed"))
+      ($other (ContextPreparationFailed "context-checkpoint-write-failed")))))
+(= (context:sql-write-checkpoint $root $old $checkpoint)
    (let* (($key (task:window-key $root)) ($value (state:encoded $checkpoint))
           ($result (state:transaction immediate (
             (sqlite:statement "INSERT INTO meta(key,value) SELECT ?,? WHERE ? IS NULL ON CONFLICT(key) DO NOTHING" ($key $value $old))
@@ -211,7 +221,9 @@
                              (JsonPair "reason" (JsonString $reason))
                              (JsonPair "streak" (task:number $streak))
                              (JsonPair "retry_at" (task:number $retry))))
-     (state:query "INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value" ($key (state:encoded $failure)))))
+     (if (state:native-ledger)
+       (state:ledger "meta-put" ($key (state:encoded $failure) (state:request-id)))
+       (state:query "INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value" ($key (state:encoded $failure))))))
 
 ; The checkpoint denotes only a validated handoff. An omitted working range
 ; lives in the prompt, never in that checkpoint: it remains eligible for a
