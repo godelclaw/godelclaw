@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import sqlite3
 import threading
 import time
 
@@ -407,9 +408,14 @@ def reserve_command(turn, command):
         if str(turn) != _turn or not _ticket:
             return 0
         store = ledger()
-        with store.transaction() as db:
-            db.execute("CREATE TABLE IF NOT EXISTS command_attempts (ticket TEXT, position INTEGER, command TEXT, result TEXT, PRIMARY KEY(ticket,position))")
-            db.execute("INSERT INTO command_attempts VALUES (?,?,?,NULL)", (_ticket, _position, strategy.encoded(command)))
+        import input_ack
+        if input_ack._native_socket():
+            if not input_ack.attempt_begin(_ticket, _position, strategy.encoded(command)):
+                raise sqlite3.IntegrityError("UNIQUE constraint failed: command_attempts.ticket, command_attempts.position")
+        else:
+            with store.transaction() as db:
+                db.execute("CREATE TABLE IF NOT EXISTS command_attempts (ticket TEXT, position INTEGER, command TEXT, result TEXT, PRIMARY KEY(ticket,position))")
+                db.execute("INSERT INTO command_attempts VALUES (?,?,?,NULL)", (_ticket, _position, strategy.encoded(command)))
         _position += 1
         try:
             import stream_sink
@@ -430,11 +436,15 @@ def command_identity(turn):
 def command_result(turn, disposition, command, result):
     if enabled() and str(turn) == _turn and _ticket:
         store = ledger()
-        with store.transaction() as db:
-            db.execute("UPDATE command_attempts SET result=? WHERE ticket=? AND position=? AND command=? AND result IS NULL",
-                       (strategy.encoded({"disposition": str(disposition), "result": str(result)}), _ticket,
-                        _position - 1, strategy.encoded(command)))
-            store.event(db, "command-result", ticket=_ticket, position=_position - 1)
+        import input_ack
+        outcome = strategy.encoded({"disposition": str(disposition), "result": str(result)})
+        if input_ack._native_socket():
+            input_ack.attempt_result(_ticket, _position - 1, strategy.encoded(command), outcome)
+        else:
+            with store.transaction() as db:
+                db.execute("UPDATE command_attempts SET result=? WHERE ticket=? AND position=? AND command=? AND result IS NULL",
+                           (outcome, _ticket, _position - 1, strategy.encoded(command)))
+                store.event(db, "command-result", ticket=_ticket, position=_position - 1)
         _close_answered_message(command, str(result))
         import process_supervision
         process_supervision.progress("command-receipt")
@@ -520,49 +530,64 @@ def command_receipts(cursor=""):
     budget = 8192
     page = {"receipts": [], "next_cursor": None}
     store = ledger()
-    with store.transaction() as db:
-        if not db.execute("SELECT 1 FROM sqlite_master WHERE name='command_attempts'").fetchone():
-            return strategy.encoded(page)
+    import input_ack
+    if input_ack._native_socket():
+        # The attempt's clock position is its rowid. One more row than the page tells whether older ones exist.
         if bound is None:
-            bound = db.execute("SELECT MAX(rowid) FROM command_attempts").fetchone()[0] or 0
-        rows = db.execute("SELECT rowid,ticket,position,command,result FROM command_attempts WHERE rowid<=? ORDER BY rowid DESC LIMIT 32", (bound,))
-        for row in rows:
-            identity = row["ticket"] + ":" + str(row["position"])
-            result = row["result"] or strategy.encoded({"disposition": "uncertain",
-                "reason": "no terminal receipt recorded; do not replay"})
-            raw = ('{"command":' + row["command"] + ',"id":' + strategy.encoded(identity)
-                   + ',"position":' + str(row["position"]) + ',"result":' + result
-                   + ',"ticket":' + strategy.encoded(row["ticket"]) + '}')
-            if row["rowid"] != bound:
-                offset = 0
-            if offset > len(raw):
-                return strategy.encoded({"error": "receipt cursor beyond record"})
-            after = row["rowid"] - 1
-            more = db.execute("SELECT 1 FROM command_attempts WHERE rowid<=? LIMIT 1", (after,)).fetchone()
-            next_cursor = str(after) + ":0" if more else None
-            if not offset and len(raw.encode()) < budget - 256:
-                candidate = {"receipts": page["receipts"] + [json.loads(raw)], "next_cursor": next_cursor}
-                if len(strategy.encoded(candidate).encode()) <= budget:
-                    page = candidate
-                    continue
-            if page["receipts"]:
-                page["next_cursor"] = str(row["rowid"]) + ":" + str(offset)
-                break
-            # A large record is sliced as text. Offsets count Unicode characters;
-            # the actual page limit counts encoded bytes, including JSON escapes.
-            def fragment(end):
-                return {"receipts": [{"id": identity, "chunk": raw[offset:end],
-                    "offset": offset, "total": len(raw)}], "next_cursor":
-                    str(row["rowid"]) + ":" + str(end) if end < len(raw) else next_cursor}
-            low, high = offset, min(len(raw), offset + budget)
-            while low < high:
-                middle = (low + high + 1) // 2
-                if len(strategy.encoded(fragment(middle)).encode()) <= budget:
-                    low = middle
-                else:
-                    high = middle - 1
-            page = fragment(low)
+            newest = input_ack.attempts(recent=(2 ** 62, 1))
+            if not newest:
+                return strategy.encoded(page)
+            bound = newest[0]["order"]
+        fetched = [dict(rowid=a["order"], ticket=a["ticket"], position=a["position"], command=a["command"],
+                        result=a["result"]) for a in input_ack.attempts(recent=(bound, 33))]
+        rows = fetched[:32]
+        older = lambda after: any(row["rowid"] <= after for row in fetched)
+    else:
+        with store.transaction() as db:
+            if not db.execute("SELECT 1 FROM sqlite_master WHERE name='command_attempts'").fetchone():
+                return strategy.encoded(page)
+            if bound is None:
+                bound = db.execute("SELECT MAX(rowid) FROM command_attempts").fetchone()[0] or 0
+            rows = [dict(r) for r in db.execute("SELECT rowid,ticket,position,command,result FROM command_attempts WHERE rowid<=? ORDER BY rowid DESC LIMIT 32", (bound,))]
+            oldest = db.execute("SELECT MIN(rowid) FROM command_attempts").fetchone()[0]
+        older = lambda after: oldest is not None and oldest <= after
+    for row in rows:
+        identity = row["ticket"] + ":" + str(row["position"])
+        result = row["result"] or strategy.encoded({"disposition": "uncertain",
+            "reason": "no terminal receipt recorded; do not replay"})
+        raw = ('{"command":' + row["command"] + ',"id":' + strategy.encoded(identity)
+               + ',"position":' + str(row["position"]) + ',"result":' + result
+               + ',"ticket":' + strategy.encoded(row["ticket"]) + '}')
+        if row["rowid"] != bound:
+            offset = 0
+        if offset > len(raw):
+            return strategy.encoded({"error": "receipt cursor beyond record"})
+        after = row["rowid"] - 1
+        more = older(after)
+        next_cursor = str(after) + ":0" if more else None
+        if not offset and len(raw.encode()) < budget - 256:
+            candidate = {"receipts": page["receipts"] + [json.loads(raw)], "next_cursor": next_cursor}
+            if len(strategy.encoded(candidate).encode()) <= budget:
+                page = candidate
+                continue
+        if page["receipts"]:
+            page["next_cursor"] = str(row["rowid"]) + ":" + str(offset)
             break
+        # A large record is sliced as text. Offsets count Unicode characters;
+        # the actual page limit counts encoded bytes, including JSON escapes.
+        def fragment(end):
+            return {"receipts": [{"id": identity, "chunk": raw[offset:end],
+                "offset": offset, "total": len(raw)}], "next_cursor":
+                str(row["rowid"]) + ":" + str(end) if end < len(raw) else next_cursor}
+        low, high = offset, min(len(raw), offset + budget)
+        while low < high:
+            middle = (low + high + 1) // 2
+            if len(strategy.encoded(fragment(middle)).encode()) <= budget:
+                low = middle
+            else:
+                high = middle - 1
+        page = fragment(low)
+        break
     return strategy.encoded(page)
 
 

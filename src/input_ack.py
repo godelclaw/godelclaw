@@ -499,6 +499,173 @@ def request_rows(which="all"):
     return rows
 
 
+# ---- the turns and their actions: observed_strategy.Ledger's turn and effect methods ----
+# The same records hold the meta keys, the captured turns, the actions with their receipts and
+# strategy_host's command attempts (see "the turns and their actions" in input_ledger.metta), so
+# that a finish checks the action and moves the request in one native transaction.
+
+def _symbol_none(value):
+    from execution_gateway.cetta_worker import S
+    return S("none") if value is None else value
+
+
+def _is_none(value):
+    from execution_gateway.cetta_worker import S
+    return value == S("none")
+
+
+def _entries(answer, verb):
+    if not (isinstance(answer, tuple) and all(isinstance(item, tuple) for item in answer)):
+        raise LedgerUnavailable("input ledger %s: unexpected answer %s" % (verb, _show(answer)))
+    return answer
+
+
+def ledger_state():
+    """The stored meta keys, {key: value}: pending None or a serial, router_revision its JSON text. A key
+    never written is absent; observed_strategy supplies its initial value."""
+    state = {}
+    for entry in _entries(_ledger_call("state", ()), "state"):
+        if len(entry) != 2 or not isinstance(entry[0], str):
+            raise LedgerUnavailable("input ledger state: unexpected entry %s" % _show(entry))
+        state[entry[0]] = None if _is_none(entry[1]) else entry[1]
+    return state
+
+
+def ledger_control(mode, paused, router_text, request_id=None):
+    """True when the mode, the pause or the router revision changed (the revision advanced)."""
+    answer = _ledger_call("control", (_symbol_none(mode), _symbol_none(paused), _symbol_none(router_text),
+                                      str(request_id or _rid())))
+    if type(answer) is not bool:
+        raise LedgerUnavailable("input ledger control: unexpected answer %s" % _show(answer))
+    return answer
+
+
+def ledger_restore(request_id=None):
+    if _ledger_call("restore", (str(request_id or _rid()),)) is not True:
+        raise LedgerUnavailable("input ledger restore: unexpected answer")
+    return True
+
+
+def turn_capture(focus, boundary_digest, router_text, guard, owner, request_id=None):
+    """None while paused, else (serial, revision, mode, owner) of the captured turn. A store without an
+    owner takes `owner` in this capture; the tickets it issues carry its owner."""
+    from execution_gateway.cetta_worker import S
+    answer = _ledger_call("capture", (str(focus), str(boundary_digest), str(router_text), str(guard), str(owner),
+                                      str(request_id or _rid())))
+    if answer == S("paused"):
+        return None
+    if not (isinstance(answer, tuple) and len(answer) == 5 and answer[0] == S("captured")
+            and type(answer[1]) is int and type(answer[2]) is int):
+        raise LedgerUnavailable("input ledger capture: unexpected answer %s" % _show(answer))
+    return answer[1], answer[2], answer[3], _checked_text(answer[4], "owner")
+
+
+def turn_decide(serial, kind, tool, command_text, request_id=None):
+    """"ignored" (not the pending turn), the ticket of an issued command, or the kind of the reply."""
+    from execution_gateway.cetta_worker import S
+    answer = _ledger_call("decide", (int(serial), str(kind), str(tool), str(command_text), str(request_id or _rid())))
+    if answer == S("ignored"):
+        return "ignored"
+    if isinstance(answer, tuple) and len(answer) == 2 and answer[0] in (S("issued"), S("decided")):
+        return _checked_text(answer[1], "ticket")
+    raise LedgerUnavailable("input ledger decide: unexpected answer %s" % _show(answer))
+
+
+def _turn_flag(verb, arguments):
+    answer = _ledger_call(verb, arguments)
+    if type(answer) is not bool:
+        raise LedgerUnavailable("input ledger %s: unexpected answer %s" % (verb, _show(answer)))
+    return answer
+
+
+def action_report(ticket, payload, disposition, domain, payload_digest, request_id=None):
+    """True when this call recorded the action's receipt (once, for an issued or uncertain action)."""
+    payload = str(payload)
+    return _turn_flag("report", (str(ticket), payload, str(disposition), str(domain), str(payload_digest),
+                                 len(payload), str(request_id or _rid())))
+
+
+def action_observe(pairs, request_id=None):
+    """Mark observed the actions whose receipt payload digest is the presented one: pairs of (ticket, digest)."""
+    pairs = tuple((str(ticket), str(digest)) for ticket, digest in pairs)
+    if pairs:
+        _turn_flag("observe", (pairs, str(request_id or _rid())))
+
+
+def action_attest(request, ticket, request_id=None):
+    return _turn_flag("attest", (str(request), str(ticket), str(request_id or _rid())))
+
+
+def action_finish(request, ticket, request_id=None):
+    return _turn_flag("finish", (str(request), str(ticket), str(request_id or _rid())))
+
+
+def _action_of(row):
+    from execution_gateway.cetta_worker import S
+    if not (isinstance(row, tuple) and len(row) == 10 and row[0] == S("action")):
+        raise LedgerUnavailable("input ledger actions: unexpected row %s" % _show(row))
+    _, ticket, request, serial, tool, command, status, observed, receipt, payload = row
+    if _is_none(receipt):
+        receipt = None
+    elif isinstance(receipt, tuple) and len(receipt) == 3 and receipt[0] == S("receipt"):
+        receipt = dict(ticket=ticket, payload=payload, disposition=receipt[1], domain=receipt[2])
+    else:
+        raise LedgerUnavailable("input ledger actions: unexpected receipt %s" % _show(receipt))
+    return dict(ticket=ticket, request=request, serial=serial, tool=tool, command=command,
+                status=status, observed=_flag_of(observed), receipt=receipt)
+
+
+def actions(which="all"):
+    """The actions, oldest first: "all", "unobserved" (with a receipt), ("ticket", t), ("status", s) or
+    ("request", r). Each a dict whose receipt is None or {ticket, payload, disposition, domain}."""
+    from execution_gateway.cetta_worker import S
+    selection = which if isinstance(which, str) else (S(which[0]), str(which[1]))
+    return [_action_of(row) for row in _entries(_ledger_call("actions", (selection,)), "actions")]
+
+
+def attempt_begin(ticket, position, command_text, request_id=None):
+    """True when recorded; False when the (ticket, position) already has an attempt."""
+    from execution_gateway.cetta_worker import S
+    answer = _ledger_call("attempt-begin", (str(ticket), int(position), str(command_text), str(request_id or _rid())))
+    if answer not in (S("created"), S("exists")):
+        raise LedgerUnavailable("input ledger attempt-begin: unexpected answer %s" % _show(answer))
+    return answer == S("created")
+
+
+def attempt_result(ticket, position, command_text, result_text, request_id=None):
+    """True when the result was recorded (the attempt exists for that command and had none)."""
+    return _turn_flag("attempt-result", (str(ticket), int(position), str(command_text), str(result_text),
+                                         str(request_id or _rid())))
+
+
+def attempts(ticket=None, recent=None):
+    """The attempts of a ticket by position, or (with recent=(bound, limit)) the newest `limit` whose order
+    is at most `bound`, newest first: dicts {ticket, position, command, result (None before it), order}."""
+    from execution_gateway.cetta_worker import S
+    selection = (S("ticket"), str(ticket)) if recent is None else (S("recent"), int(recent[0]), int(recent[1]))
+    rows = []
+    for row in _entries(_ledger_call("attempts", (selection,)), "attempts"):
+        if not (len(row) == 6 and row[0] == S("attempt")):
+            raise LedgerUnavailable("input ledger attempts: unexpected row %s" % _show(row))
+        rows.append(dict(ticket=row[1], position=row[2], command=row[3],
+                         result=None if _is_none(row[4]) else row[4], order=row[5]))
+    return rows
+
+
+def turn_dump():
+    """(meta keys, turns, arrivals): every turn as a dict and every request's arrival position."""
+    from execution_gateway.cetta_worker import S
+    answer = _ledger_call("turn-dump", ())
+    if not (isinstance(answer, tuple) and len(answer) == 4 and answer[0] == S("dump")):
+        raise LedgerUnavailable("input ledger turn-dump: unexpected answer %s" % _show(answer))
+    state = {entry[0]: None if _is_none(entry[1]) else entry[1] for entry in _entries(answer[1], "turn-dump")}
+    turns = [dict(serial=t[1], status=t[2], revision=t[3], mode=t[4], owner=t[5], focus=t[6],
+                  boundary_digest=t[7], router=t[8], guard=t[9], position=t[10])
+             for t in _entries(answer[2], "turn-dump")]
+    arrivals = {entry[0]: entry[1] for entry in _entries(answer[3], "turn-dump")}
+    return state, sorted(turns, key=lambda turn: turn["serial"]), arrivals
+
+
 def processed_update_ids(ids):
     """Called only after successful cognition, saved history and durable input ack."""
     values = [str(value) for value in ids if str(value)]

@@ -60,7 +60,9 @@
 (= (input-ledger:ensure $db)
    (db:ensure $db inputs ((SpaceIndexV1 3 1) (SpaceIndexV1 11 1) (SpaceIndexV1 11 2)
                           (SpaceIndexV1 11 4) (SpaceIndexV1 11 8)
-                          (SpaceIndexV1 10 1) (SpaceIndexV1 10 5) (SpaceIndexV1 4 1))))
+                          (SpaceIndexV1 10 1) (SpaceIndexV1 10 5) (SpaceIndexV1 4 1)
+                          (SpaceIndexV1 5 1) (SpaceIndexV1 9 1) (SpaceIndexV1 9 2)
+                          (SpaceIndexV1 9 6) (SpaceIndexV1 9 7) (SpaceIndexV1 6 1))))
 
 ; An id keeps its first time (INSERT OR IGNORE); the empty id is skipped.
 ; Matches inside a transaction see its own edits, so a repeated id in one
@@ -375,7 +377,10 @@
                 ($_ (add-atom $space (request $id $seq $kind $checker "active" none "" $summary $digest)))
                 ($_ (add-atom $space (request-text $id $content)))
                 ($_ (add-atom $space (request-prev $id $before)))
-                ($_ (input-ledger:forget-legacy $space $id)))
+                ($_ (input-ledger:forget-legacy $space $id))
+                ($position (input-ledger:tick $space))
+                ($_ (add-atom $space (ledger:arrival $id $position)))
+                ($_ (input-ledger:advance $space)))
            created)
          (let (request $i $q $k $c $st $p $n $sm $dg) (car-atom $found)
            (if (and (== $c $checker) (== (input-ledger:texts $space $id) ($content)))
@@ -431,7 +436,8 @@
              (refused "input batch is covered; reopen it to create independent work")
              (let* (($kind (if (or (== $disposition "keep") (== $st "covered")) "task" $k))
                     ($_ (input-ledger:replace $space (request $id $q $k $c $st $p $n $sm $dg)
-                            (request $id $q $kind $c (input-ledger:disposition-status $disposition) $p $note $sm $dg))))
+                            (request $id $q $kind $c (input-ledger:disposition-status $disposition) $p $note $sm $dg)))
+                    ($_ (input-ledger:advance $space)))
                ok)))))
 
 (= (input-ledger:disposition-in $space $id $disposition $note)
@@ -482,7 +488,8 @@
                            (input-ledger:retirable-with $space $prefix "waiting-user"))))
 
 (= (input-ledger:retire-in $space $prefix $note)
-   (let $ids (input-ledger:retire-each $space (input-ledger:retirable $space $prefix) $note)
+   (let* (($ids (input-ledger:retire-each $space (input-ledger:retirable $space $prefix) $note))
+          ($_ (if (== $ids ()) done (input-ledger:advance $space))))
      (retired $ids)))
 
 ; One write of the requests: the same shape as the checkpoint's. $fields are the
@@ -1181,6 +1188,49 @@
       (("import" ($expect $rows)) (input-ledger:import $db $expect $rows))
       (("census" ()) (input-ledger:census $db))
       (("lookup" ($kind $keys)) (input-ledger:lookup $db $kind $keys))
+      (("state" ()) (input-ledger:state-read $db))
+      (("turn-dump" ()) (input-ledger:turn-dump $db))
+      (("control" ($mode $paused $router $request-id))
+       (input-ledger:turn-write $db input-ledger:control
+         (input-ledger:fields ($mode $paused $router)) $request-id False
+         (|-> ($space) (input-ledger:control-in $space $mode $paused $router))))
+      (("restore" ($request-id))
+       (input-ledger:turn-write $db input-ledger:restore "" $request-id True
+         (|-> ($space) (input-ledger:restore-in $space))))
+      (("capture" ($focus $digest $router $guard $owner $request-id))
+       (input-ledger:turn-write $db input-ledger:capture
+         (input-ledger:fields ($focus $digest $router $guard $owner)) $request-id paused
+         (|-> ($space) (input-ledger:capture-in $space $focus $digest $router $guard $owner))))
+      (("decide" ($serial $kind $tool $command $request-id))
+       (input-ledger:turn-write $db input-ledger:decide
+         (input-ledger:fields ($serial $kind $tool $command)) $request-id ignored
+         (|-> ($space) (input-ledger:decide-in $space $serial $kind $tool $command))))
+      (("report" ($ticket $payload $disposition $domain $digest $length $request-id))
+       (input-ledger:turn-write $db input-ledger:report
+         (input-ledger:fields ($ticket $digest $disposition $domain $length)) $request-id False
+         (|-> ($space) (input-ledger:report-in $space $ticket $payload $disposition $domain $digest $length))))
+      (("observe" ($pairs $request-id))
+       (input-ledger:turn-write $db input-ledger:observe
+         (input-ledger:fields $pairs) $request-id False
+         (|-> ($space) (input-ledger:observe-in $space $pairs))))
+      (("attest" ($request $ticket $request-id))
+       (input-ledger:turn-write $db input-ledger:attest
+         (input-ledger:fields ($request $ticket)) $request-id False
+         (|-> ($space) (input-ledger:attest-in $space $request $ticket))))
+      (("finish" ($request $ticket $request-id))
+       (input-ledger:turn-write $db input-ledger:finish
+         (input-ledger:fields ($request $ticket)) $request-id False
+         (|-> ($space) (input-ledger:finish-in $space $request $ticket))))
+      (("attempt-begin" ($ticket $position $command $request-id))
+       (input-ledger:turn-write $db input-ledger:attempt-begin
+         (input-ledger:fields ($ticket $position $command)) $request-id exists
+         (|-> ($space) (input-ledger:attempt-begin-in $space $ticket $position $command))))
+      (("attempt-result" ($ticket $position $command $result $request-id))
+       (input-ledger:turn-write $db input-ledger:attempt-result
+         (input-ledger:fields ($ticket $position $command $result)) $request-id False
+         (|-> ($space) (input-ledger:attempt-result-in $space $ticket $position $command $result))))
+      (("actions" ($which)) (input-ledger:actions $db $which))
+      (("attempts" ($which)) (input-ledger:attempts $db $which))
       ($other (Error input-ledger:run (unknown-request $other))))))
 
 (= (input-ledger:attempt $socket $verb $arguments)
@@ -1207,3 +1257,369 @@
            ((($value) (answer $value))
             ($other (Error input-ledger:run (answers $other)))))))
       ($other (Error input-ledger:run (unknown-request $other))))))
+
+; ---- the turns and their actions (samples, actions, command_attempts and the meta keys) ----
+
+; The tables samples, actions and command_attempts and the meta keys of the SQLite
+; ledger, in the same collection as the requests, so that one transaction checks an
+; action and moves its request:
+;
+;   (ledger:state <key> <value>)   one meta key: "owner" "mode" (text), "revision"
+;                                  "next_sample" "clock" (integers), "paused" (True or
+;                                  False), "pending" (a serial or none), "router_revision"
+;                                  (its JSON text, absent until set). A key never written
+;                                  has its initial value (input-ledger:initial).
+;   (ledger:turn <serial> <status> <snapshot> <position>)
+;                                  samples: status "pending", "interrupted" or the kind of
+;                                  its reply; <snapshot> is (ledger:snapshot <revision>
+;                                  <mode> <owner> <focus> <boundary digest> <router JSON>
+;                                  <guard>); <position> is the clock at the capture
+;   (ledger:action <ticket> <request> <serial> <tool> <command> <status> <observed> <receipt>)
+;                                  actions: the command as its JSON text, observed 0 or 1,
+;                                  <receipt> none or (ledger:receipt <disposition> <domain>
+;                                  <payload digest> <payload length>)
+;   (ledger:payload <ticket> <payload>)
+;                                  the receipt's payload, ONE atom, written once, so that
+;                                  observing or attesting rewrites only the small action
+;   (ledger:attempt <ticket> <position> <command> <result> <order>)
+;                                  command_attempts: <result> none until recorded, <order>
+;                                  the clock at the attempt (the rowid order)
+;   (ledger:arrival <id> <position>)
+;                                  the clock when a request was accepted
+;
+; The clock replaces the events table, whose live readers wanted only the order of
+; the deliveries and the captures. Indexes: the state, payload and arrival by their
+; key (arity 3, position 1), the turn by serial (5, 1), the action by ticket (9, 1),
+; request (9, 2), status (9, 6) and observed (9, 7), the attempt by ticket (6, 1).
+
+(= (input-ledger:initial "revision") 0)
+(= (input-ledger:initial "mode") "godelclaw")
+(= (input-ledger:initial "paused") False)
+(= (input-ledger:initial "next_sample") 0)
+(= (input-ledger:initial "pending") none)
+(= (input-ledger:initial "clock") 0)
+(= (input-ledger:initial "owner") absent)
+(= (input-ledger:initial "router_revision") absent)
+
+(= (input-ledger:state-of $space $key)
+   (case (collapse (match $space (ledger:state $key $value) $value))
+     ((() (input-ledger:initial $key))
+      (($value) $value)
+      ($other (Error input-ledger:state (several $key (size-atom $other)))))))
+
+(= (input-ledger:state-put $space $key $value)
+   (case (collapse (match $space (ledger:state $key $old) (ledger:state $key $old)))
+     ((() (let $_ (add-atom $space (ledger:state $key $value)) done))
+      (($old) (input-ledger:replace $space $old (ledger:state $key $value)))
+      ($other (Error input-ledger:state (several $key (size-atom $other)))))))
+
+; meta 'revision' += 1, in the transaction of the change it counts.
+(= (input-ledger:advance $space)
+   (let* (($revision (input-ledger:state-of $space "revision"))
+          ($next (+ $revision 1)))
+     (input-ledger:state-put $space "revision" $next)))
+
+; The next position of the store clock.
+(= (input-ledger:tick $space)
+   (let* (($clock (input-ledger:state-of $space "clock"))
+          ($next (+ $clock 1))
+          ($_ (input-ledger:state-put $space "clock" $next)))
+     $next))
+
+; The store's owner, which names its tickets: the first capture sets it to the caller's
+; (the owner of the SQLite ledger it replaces), and it never changes.
+(= (input-ledger:owner-or $space $candidate)
+   (let $kept (input-ledger:state-of $space "owner")
+     (if (== $kept absent)
+         (let $_ (add-atom $space (ledger:state "owner" $candidate)) $candidate)
+         $kept)))
+
+(= (input-ledger:states $view)
+   (collapse (match $view (ledger:state $key $value) ($key $value))))
+
+; Ledger.control: mode and paused change when given (not none) and different, the
+; router revision (its JSON text) when given and absent or different; a change
+; advances the revision. True when anything changed.
+; A boolean that arrived over the wire is not == to the literal True or False of a
+; source, but it is a truth value: booleans are compared by their truth.
+(= (input-ledger:same $left $right)
+   (if (and (== (get-type $left) Bool) (== (get-type $right) Bool))
+       (== (if $left 1 0) (if $right 1 0))
+       (== $left $right)))
+
+(= (input-ledger:changed $space $key $value)
+   (if (== $value none)
+       False
+       (if (input-ledger:same (input-ledger:state-of $space $key) $value)
+           False
+           (let $_ (input-ledger:state-put $space $key $value) True))))
+
+(= (input-ledger:control-in $space $mode $paused $router)
+   (let* (($a (input-ledger:changed $space "mode" $mode))
+          ($b (input-ledger:changed $space "paused" $paused))
+          ($c (input-ledger:changed $space "router_revision" $router)))
+     (if (or $a (or $b $c))
+         (let $_ (input-ledger:advance $space) True)
+         (empty))))
+
+; Ledger.restore: the pending turn, if any, is interrupted, every issued action becomes
+; uncertain (it may have run before the crash: it is never issued again), and the
+; revision advances.
+(= (input-ledger:turns-of $space $serial)
+   (collapse (match $space (ledger:turn $serial $status $snapshot $position)
+                    (ledger:turn $serial $status $snapshot $position))))
+
+(= (input-ledger:interrupt $space $serial)
+   (case (input-ledger:turns-of $space $serial)
+     ((((ledger:turn $s "pending" $snapshot $position))
+       (input-ledger:replace $space (ledger:turn $s "pending" $snapshot $position)
+                                    (ledger:turn $s "interrupted" $snapshot $position)))
+      ($other done))))
+
+(= (input-ledger:actions-with $space $status)
+   (collapse (match $space (ledger:action $t $r $s $tool $c $status $o $rc)
+                    (ledger:action $t $r $s $tool $c $status $o $rc))))
+
+(= (input-ledger:uncertain-each $space $actions)
+   (if (== $actions ())
+       done
+       (let* ((($head $tail) (decons-atom $actions))
+              ((ledger:action $t $r $s $tool $c $st $o $rc) $head)
+              ($_ (input-ledger:replace $space $head (ledger:action $t $r $s $tool $c "uncertain" $o $rc))))
+         (input-ledger:uncertain-each $space $tail))))
+
+(= (input-ledger:restore-in $space)
+   (let* (($pending (input-ledger:state-of $space "pending"))
+          ($_ (if (== $pending none) done (input-ledger:interrupt $space $pending)))
+          ($_ (input-ledger:state-put $space "pending" none))
+          ($_ (input-ledger:uncertain-each $space (input-ledger:actions-with $space "issued")))
+          ($_ (input-ledger:advance $space)))
+     True))
+
+; Ledger.capture: nothing while paused; else the next serial is captured pending with
+; its snapshot, the counters move and the clock stamps the capture. The answer
+; (captured <serial> <revision> <mode> <owner>) completes the caller's snapshot.
+(= (input-ledger:capture-in $space $focus $digest $router $guard $candidate)
+   (if (input-ledger:state-of $space "paused")
+       (empty)
+       (let* (($serial (input-ledger:state-of $space "next_sample"))
+              ($revision (input-ledger:state-of $space "revision"))
+              ($mode (input-ledger:state-of $space "mode"))
+              ($owner (input-ledger:owner-or $space $candidate))
+              ($position (input-ledger:tick $space))
+              ($_ (add-atom $space (ledger:turn $serial "pending"
+                                     (ledger:snapshot $revision $mode $owner $focus $digest $router $guard)
+                                     $position)))
+              ($next (+ $serial 1))
+              ($_ (input-ledger:state-put $space "next_sample" $next))
+              ($_ (input-ledger:state-put $space "pending" $serial)))
+         (captured $serial $revision $mode $owner))))
+
+; Ledger.decide: ignored unless <serial> is the pending turn; the turn takes the kind
+; of its reply, and a command is issued under the ticket <owner>:<serial> for the
+; captured focus. Answers (issued <ticket>) or (decided <kind>).
+(= (input-ledger:decide-in $space $serial $kind $tool $command)
+   (if (not (== (input-ledger:state-of $space "pending") $serial))
+       (empty)
+       (case (input-ledger:turns-of $space $serial)
+         ((((ledger:turn $s $st (ledger:snapshot $rv $md $owner $focus $dg $rt $gd) $p))
+           (let* (($_ (input-ledger:state-put $space "pending" none))
+                  ($_ (input-ledger:replace $space
+                        (ledger:turn $s $st (ledger:snapshot $rv $md $owner $focus $dg $rt $gd) $p)
+                        (ledger:turn $s $kind (ledger:snapshot $rv $md $owner $focus $dg $rt $gd) $p)))
+                  ($ticket (str:concat $owner (str:concat ":" (repr $serial)))))
+             (if (== $kind "command")
+                 (let $_ (add-atom $space (ledger:action $ticket $focus $serial $tool $command "issued" 0 none))
+                   (issued $ticket))
+                 (decided $kind))))
+          ($other (Error input-ledger:decide (turns $serial (size-atom $other))))))))
+
+(= (input-ledger:actions-of $space $ticket)
+   (collapse (match $space (ledger:action $ticket $r $s $tool $c $st $o $rc)
+                    (ledger:action $ticket $r $s $tool $c $st $o $rc))))
+
+; Ledger.report: once, for an issued or uncertain action without a receipt: the
+; receipt and its payload are stored, the action is returned and the revision advances.
+(= (input-ledger:report-in $space $ticket $payload $disposition $domain $digest $length)
+   (case (input-ledger:actions-of $space $ticket)
+     ((((ledger:action $t $r $s $tool $c $st $o none))
+       (if (or (== $st "issued") (== $st "uncertain"))
+           (let* (($_ (input-ledger:replace $space (ledger:action $t $r $s $tool $c $st $o none)
+                        (ledger:action $t $r $s $tool $c "returned" $o (ledger:receipt $disposition $domain $digest $length))))
+                  ($_ (add-atom $space (ledger:payload $t $payload)))
+                  ($_ (input-ledger:advance $space)))
+             True)
+           (empty)))
+      ($other (empty)))))
+
+; Ledger.observe: an action whose receipt's payload digest is the presented one is
+; observed. <pairs> is ((<ticket> <presented digest>) ...).
+(= (input-ledger:observe-one $space $ticket $digest)
+   (case (input-ledger:actions-of $space $ticket)
+     ((((ledger:action $t $r $s $tool $c $st 0 (ledger:receipt $d $dm $digest $n)))
+       (let $_ (input-ledger:replace $space (ledger:action $t $r $s $tool $c $st 0 (ledger:receipt $d $dm $digest $n))
+                                           (ledger:action $t $r $s $tool $c $st 1 (ledger:receipt $d $dm $digest $n)))
+         1))
+      ($other 0))))
+
+(= (input-ledger:observe-each $space $pairs $count)
+   (if (== $pairs ())
+       $count
+       (let* ((($head $tail) (decons-atom $pairs))
+              (($ticket $digest) $head)
+              ($one (input-ledger:observe-one $space $ticket $digest))
+              ($next (+ $count $one)))
+         (input-ledger:observe-each $space $tail $next))))
+
+(= (input-ledger:observe-in $space $pairs)
+   (let $count (input-ledger:observe-each $space $pairs 0)
+     (if (== $count 0) (empty) True)))
+
+; The action <ticket> of <request>, observed, with a returned receipt: its fields, else none.
+(= (input-ledger:observed-return $space $request $ticket)
+   (case (input-ledger:actions-of $space $ticket)
+     ((((ledger:action $t $request $s $tool $c $st 1 (ledger:receipt "returned" $dm $dg $n)))
+       (ledger:action $t $request $s $tool $c $st 1 (ledger:receipt "returned" $dm $dg $n)))
+      ($other none))))
+
+(= (input-ledger:active-request $space $request)
+   (case (input-ledger:heads $space $request)
+     ((((request $id $q $k $c "active" $p $n $sm $dg)) True)
+      ($other False))))
+
+; Ledger.attest's write, after the caller's checker accepted the receipt: the request
+; is active and the action is its own, observed and returned; the receipt's domain
+; becomes success. The receipt is written once, so the checked receipt is this one.
+(= (input-ledger:attest-in $space $request $ticket)
+   (if (not (input-ledger:active-request $space $request))
+       (empty)
+       (case (input-ledger:observed-return $space $request $ticket)
+         ((none (empty))
+          ((ledger:action $t $r $s $tool $c $st $o (ledger:receipt $d $dm $dg $n))
+           (if (== $dm "success")
+               (empty)
+               (let $_ (input-ledger:replace $space (ledger:action $t $r $s $tool $c $st $o (ledger:receipt $d $dm $dg $n))
+                                                   (ledger:action $t $r $s $tool $c $st $o (ledger:receipt $d "success" $dg $n)))
+                 True)))))))
+
+; Ledger.finish's write, after the caller's checker accepted: the request is active and
+; the action is its own, observed, returned and attested success; the request is
+; achieved. Only this check achieves a request (TurnLedger achieved_only_by_check).
+(= (input-ledger:finish-in $space $request $ticket)
+   (if (not (input-ledger:active-request $space $request))
+       (empty)
+       (case (input-ledger:observed-return $space $request $ticket)
+         (((ledger:action $t $r $s $tool $c $st $o (ledger:receipt $d "success" $dg $n))
+           (input-ledger:move-in $space $request ("active") "achieved"))
+          ($other (empty))))))
+
+; Readers of the actions: (action <ticket> <request> <serial> <tool> <command> <status>
+; <observed> <receipt> <payload>), the receipt none or (receipt <disposition> <domain>),
+; the payload "" without a receipt, oldest first.
+(= (input-ledger:payload-of $view $ticket)
+   (case (collapse (match $view (ledger:payload $ticket $text) $text))
+     ((($text) $text)
+      (() "")
+      ($other (Error input-ledger:payload (several $ticket (size-atom $other)))))))
+
+(= (input-ledger:action-row $view (ledger:action $t $r $s $tool $c $st $o $rc))
+   (case $rc
+     ((none (action $t $r $s $tool $c $st $o none ""))
+      ((ledger:receipt $d $dm $dg $n)
+       (let $payload (input-ledger:payload-of $view $t)
+         (action $t $r $s $tool $c $st $o (receipt $d $dm) $payload))))))
+
+(= (input-ledger:serial-first $left $right)
+   (let* (((ledger:action $t1 $r1 $s1 $x1 $c1 $st1 $o1 $rc1) $left)
+          ((ledger:action $t2 $r2 $s2 $x2 $c2 $st2 $o2 $rc2) $right))
+     (<= $s1 $s2)))
+
+(= (input-ledger:action-rows $view $actions)
+   (map-atom (list:sort-by input-ledger:serial-first $actions) $action (input-ledger:action-row $view $action)))
+
+(= (input-ledger:selected-actions $view $which)
+   (case $which
+     (("all" (collapse (match $view (ledger:action $t $r $s $tool $c $st $o $rc) (ledger:action $t $r $s $tool $c $st $o $rc))))
+      ((ticket $ticket) (input-ledger:actions-of $view $ticket))
+      ((status $status) (input-ledger:actions-with $view $status))
+      ((request $request) (collapse (match $view (ledger:action $t $request $s $tool $c $st $o $rc)
+                                           (ledger:action $t $request $s $tool $c $st $o $rc))))
+      ("unobserved" (collapse (match $view (ledger:action $t $r $s $tool $c $st 0 (ledger:receipt $d $dm $dg $n))
+                                     (ledger:action $t $r $s $tool $c $st 0 (ledger:receipt $d $dm $dg $n)))))
+      ($other (Error input-ledger:actions (unknown-selection $which))))))
+
+(= (input-ledger:actions $db $which)
+   (case (db:snapshot $db inputs)
+     (((Error $where $why) (Error $where $why))
+      ($view (let* (($answer (input-ledger:action-rows $view (input-ledger:selected-actions $view $which)))
+                    ($_ (db:close $view)))
+               $answer)))))
+
+; strategy_host's command attempts. A begin of a (ticket, position) already recorded is
+; refused (exists), as the SQLite primary key refuses it; a result is recorded once,
+; for the same command.
+(= (input-ledger:attempts-at $space $ticket $position)
+   (collapse (match $space (ledger:attempt $ticket $position $c $r $o) (ledger:attempt $ticket $position $c $r $o))))
+
+(= (input-ledger:attempt-begin-in $space $ticket $position $command)
+   (if (== (input-ledger:attempts-at $space $ticket $position) ())
+       (let* (($order (input-ledger:tick $space))
+              ($_ (add-atom $space (ledger:attempt $ticket $position $command none $order))))
+         created)
+       (empty)))
+
+(= (input-ledger:attempt-result-in $space $ticket $position $command $result)
+   (case (input-ledger:attempts-at $space $ticket $position)
+     ((((ledger:attempt $t $p $command none $o))
+       (let $_ (input-ledger:replace $space (ledger:attempt $t $p $command none $o)
+                                           (ledger:attempt $t $p $command $result $o))
+         True))
+      ($other (empty)))))
+
+(= (input-ledger:position-first $left $right)
+   (let* (((attempt $t1 $p1 $c1 $r1 $o1) $left) ((attempt $t2 $p2 $c2 $r2 $o2) $right)) (<= $p1 $p2)))
+
+(= (input-ledger:order-last $left $right)
+   (let* (((attempt $t1 $p1 $c1 $r1 $o1) $left) ((attempt $t2 $p2 $c2 $r2 $o2) $right)) (>= $o1 $o2)))
+
+;   (attempt <ticket> <position> <command> <result or none> <order>) ...
+(= (input-ledger:attempts $db $which)
+   (case (db:snapshot $db inputs)
+     (((Error $where $why) (Error $where $why))
+      ($view (let* (($answer
+                      (case $which
+                        (((ticket $ticket)
+                          (list:sort-by input-ledger:position-first
+                            (collapse (match $view (ledger:attempt $ticket $p $c $r $o) (attempt $ticket $p $c $r $o)))))
+                         ((recent $bound $limit)
+                          (list:take $limit (list:sort-by input-ledger:order-last
+                            (collapse (match $view (ledger:attempt $t $p $c $r $o)
+                                        (if (<= $o $bound) (attempt $t $p $c $r $o) (empty)))))))
+                         ($other (Error input-ledger:attempts (unknown-selection $which))))))
+                    ($_ (db:close $view)))
+               $answer)))))
+
+;   (turns (<serial> <status> <snapshot fields ...> <position>) ...) and the meta keys
+(= (input-ledger:turn-dump $db)
+   (case (db:snapshot $db inputs)
+     (((Error $where $why) (Error $where $why))
+      ($view (let* (($turns (collapse (match $view (ledger:turn $s $st (ledger:snapshot $rv $md $ow $f $dg $rt $gd) $p)
+                                         (turn $s $st $rv $md $ow $f $dg $rt $gd $p))))
+                    ($states (input-ledger:states $view))
+                    ($arrivals (collapse (match $view (ledger:arrival $id $p) ($id $p))))
+                    ($_ (db:close $view)))
+               (dump $states $turns $arrivals))))))
+
+(= (input-ledger:state-read $db)
+   (case (db:snapshot $db inputs)
+     (((Error $where $why) (Error $where $why))
+      ($view (let* (($states (input-ledger:states $view)) ($_ (db:close $view))) $states)))))
+
+; One write of a turn or an action: a request id of the caller and an answer that,
+; when the body changed nothing (an abort), is the verb's known answer.
+(= (input-ledger:turn-write $db $verb $fields $request-id $unchanged $body)
+   (let $outcome (input-ledger:request-write $db $verb $fields $request-id $body)
+     (case (input-ledger:unchanged $outcome $unchanged)
+       (((Error $where $why) (Error $where $why))
+        ((db:uncertain $r $c $o) (Error $verb (db:uncertain $r $c $o)))
+        ($answer $answer)))))

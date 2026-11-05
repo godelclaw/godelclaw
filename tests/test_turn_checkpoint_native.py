@@ -116,6 +116,8 @@ def native_dump_program(socket_path):
         '        ($_ (println! (chain (collapse (match $view (request-prev $r $b) ($r $b))))))\n'
         '        ($_ (println! (tail (collapse (match $view (request-tail "tail" $n $r) $r)))))\n'
         '        ($_ (println! (legacy (collapse (match $view (request-processed $r $t) (request-processed $r $t))))))\n'
+        '        ($_ (println! (arrivals (collapse (match $view (ledger:arrival $r $p) ($r $p))))))\n'
+        '        ($_ (println! (states (collapse (match $view (ledger:state $k $v) $k)))))\n'
         '        ($_ (println! (atoms (size-atom (collapse (match $view $a $a))))))\n'
         '        ($_ (db:close $view)))\n   (db:close $db))\n') % literal(str(socket_path))
 
@@ -131,6 +133,7 @@ def parse_native_full(output):
                 working=[(record[0], record[1]) for record in named["working"]],
                 requests=heads, texts={record[0]: (record[1], record[2]) for record in named["texts"]},
                 counter=named["counter"], legacy=named["legacy"], atoms=named["atoms"],
+                arrivals={record[0]: record[1] for record in named["arrivals"]}, states=sorted(named["states"]),
                 chain={record[0]: record[1] for record in named["chain"]}, tail=named["tail"])
 
 
@@ -204,6 +207,7 @@ class Turns:
         notices, ids, stored, atoms = full["notices"], full["processed"], full["working"], full["atoms"]
         requests = {key: value[3] for key, value in full["requests"].items() if value[3] is not None}
         return {"notices": notices, "processed": ids, "requests": requests, "working": stored, "atoms": atoms,
+                "arrivals": full["arrivals"], "states": full["states"],
                 "statuses": {key: value[2] for key, value in full["requests"].items()}, "full": full,
                 "sqlite": sqlite_state}
 
@@ -280,9 +284,11 @@ class OracleTest(NativeCase):
         self.assertNotIn("turn-checkpoint", sqlite_side["events"])
         self.assertNotIn("input-processed", sqlite_side["events"])
         self.assertIn("turn-checkpoint", oracle["events"])
-        # the working set, the processed ids, the notices, and per request a record, a content and a link, plus the
-        # tail atom
-        self.assertEqual(native["atoms"], 1 + len(native["processed"]) + len(native["notices"]) + 3 * len(REQUESTS) + 1)
+        # the working set, the processed ids, the notices, and per request a record, a content, a link and an
+        # arrival, plus the tail atom and the meta keys an acceptance writes (the revision and the clock)
+        self.assertEqual(set(native["arrivals"]), {key for key, _ in REQUESTS})
+        self.assertEqual(native["states"], ["clock", "revision"])
+        self.assertEqual(native["atoms"], 1 + len(native["processed"]) + len(native["notices"]) + 4 * len(REQUESTS) + 1 + 2)
 
     def test_after_a_native_checkpoint_the_message_can_be_addressed_and_is_no_longer_active(self):
         # Task 5 pinned the opposite (a known gap): the requests were SQLite rows, so a native checkpoint's status
@@ -465,8 +471,9 @@ class RetryTest(NativeCase):
         self.assertEqual(set(requests), expected_flags)
         text = encoded(STEPS[2][0])
         self.assertEqual(stored, [(sha(text), len(text.encode("utf-8")))])
-        # the working set, 3 processed ids, a record, a content and a link per request, the tail atom
-        self.assertEqual(atoms, 1 + 3 + 3 * len(REQUESTS) + 1)
+        # the working set, 3 processed ids, a record, a content, a link and an arrival per request, the tail
+        # atom, and the meta keys an acceptance writes: the revision and the clock
+        self.assertEqual(atoms, 1 + 3 + 4 * len(REQUESTS) + 1 + 2)
         # Three checkpoints, the second lost its reply: its request id was presented again by the retry on a new
         # connection, and only three publishes were sent (none twice).
         by_id = {}
@@ -500,7 +507,9 @@ class RetryTest(NativeCase):
         self.assertEqual(requests[0], requests[1], "the repeated request must be the very same one")
         self.assertEqual(store.working_checkpoint(), working(4.0, lastresults="once"))
         notices, ids, stored, flags, atoms = parse_native(self.run_client("dump", native_dump_program(self.server.socket)))
-        self.assertEqual((ids, set(flags), len(stored), atoms), ({"u1": 4.0}, {"input:one"}, 1, 1 + 1 + 3 + 1))  # + a record, a content, a link, the tail atom
+        # the working set, the processed id, a record, a content, a link and an arrival, the tail atom, and the
+        # revision and the clock
+        self.assertEqual((ids, set(flags), len(stored), atoms), ({"u1": 4.0}, {"input:one"}, 1, 1 + 1 + 4 + 1 + 2))
 
     def test_a_retry_that_arrives_after_a_newer_checkpoint_is_a_replay_and_does_not_revert_it(self):
         # What content-derived request ids would get wrong: the retry of a lost reply comes after another

@@ -192,7 +192,10 @@ class OracleTest(NativeCase):
         self.assertEqual(full["counter"], [len(rows)])
         self.assertEqual(full["tail"], [rows[-1]["id"]])
         self.assertEqual(full["chain"], {row["id"]: (rows[number - 1]["id"] if number else "") for number, row in enumerate(rows)})
-        self.assertEqual(full["atoms"], 3 * len(rows) + 1 + len(full["processed"]) + len(full["notices"]) + len(full["working"]))
+        # and an arrival (its clock position, increasing in acceptance order) per request, and the meta keys written
+        self.assertEqual(sorted(full["arrivals"], key=full["arrivals"].get), [row["id"] for row in rows])
+        self.assertEqual(full["atoms"], 3 * len(rows) + 1 + len(full["processed"]) + len(full["notices"]) + len(full["working"])
+                         + len(full["arrivals"]) + len(full["states"]))
         for number, row in enumerate(rows, 1):
             kind, checker, status, settled, note, summary, content_digest, seq = full["requests"][row["id"]]
             # (the dump is read as text with universal newlines: a CR LF prints as LF; the hashes below are exact)

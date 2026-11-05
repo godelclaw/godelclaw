@@ -31,6 +31,7 @@ class Ledger:
     def __init__(self, path, *, initialize=True, timeout=10):
         self.path = Path(path)
         self.timeout = max(0.0, float(timeout))
+        self._owner = None
         if not initialize:
             if not self.path.is_file():
                 raise FileNotFoundError(self.path)
@@ -80,7 +81,43 @@ class Ledger:
                                "next_sample": 0, "pending": None}.items():
                 db.execute("INSERT OR IGNORE INTO meta VALUES (?,?)", (key, encoded(value)))
             task_context.reconcile_inputs(self, db)
+            self._owner = self.get(db, "owner")
         self.path.chmod(0o600)
+
+    def _owner_candidate(self):
+        """The owner of this ledger's SQLite meta: the native store takes it at its first capture."""
+        if self._owner is None:
+            with self.transaction() as db:
+                self._owner = self.get(db, "owner")
+        return self._owner
+
+    @staticmethod
+    def _native():
+        """Whether the requests, turns and actions are records of the native ledger (METTACLAW_INPUT_LEDGER_SOCKET)."""
+        import input_ack
+        return bool(input_ack._native_socket())
+
+    # The meta keys of a new ledger; on the native store a key never written has this value.
+    INITIAL_META = {"revision": 0, "mode": "godelclaw", "paused": False, "next_sample": 0, "pending": None}
+
+    def _native_meta(self):
+        """The meta keys of the native store as the SQLite meta table holds them (decoded)."""
+        import input_ack
+        meta = dict(self.INITIAL_META)
+        meta.update(input_ack.ledger_state())
+        meta.pop("clock", None)
+        if "owner" not in meta:  # no turn was captured yet: the owner the first capture takes
+            meta["owner"] = self._owner_candidate()
+        if "router_revision" in meta:
+            meta["router_revision"] = json.loads(meta["router_revision"])
+        return meta
+
+    @staticmethod
+    def _native_action(ticket, request):
+        """SELECT * FROM actions WHERE ticket=? AND request=?, from the native store: a dict or None."""
+        import input_ack
+        found = [a for a in input_ack.actions(("ticket", ticket)) if a["request"] == request]
+        return found[0] if found else None
 
     @contextmanager
     def transaction(self):
@@ -139,6 +176,10 @@ class Ledger:
             return True
 
     def control(self, *, mode=None, paused=None, router_revision=None):
+        if self._native():
+            import input_ack
+            input_ack.ledger_control(mode, paused, None if router_revision is None else encoded(router_revision))
+            return
         with self.transaction() as db:
             changed = False
             for key, value in (("mode", mode), ("paused", paused)):
@@ -156,6 +197,10 @@ class Ledger:
 
 
     def restore(self):
+        if self._native():
+            import input_ack
+            input_ack.ledger_restore()
+            return
         with self.transaction() as db:
             pending = self.get(db, "pending")
             if pending is not None:
@@ -380,22 +425,35 @@ class Ledger:
                 active, counts = native["unfinished"], native["counts"]
                 request, request_length = native["focus"] if native["focus"] else ("", 0)
             results = []
-            for item in db.execute("""SELECT ticket,receipt FROM actions
+            for item in (self._native_results(focus) if native is not None else db.execute("""SELECT ticket,receipt FROM actions
                     WHERE receipt IS NOT NULL AND
                     (observed=0 OR ticket=(SELECT ticket FROM actions
                         WHERE request=? AND receipt IS NOT NULL ORDER BY rowid DESC LIMIT 1))
-                    ORDER BY rowid LIMIT 2""", (focus,)):
+                    ORDER BY rowid LIMIT 2""", (focus,))):
                 receipt = json.loads(item["receipt"])
                 payload = str(receipt["payload"])
                 results.append({**receipt, "payload": payload[:result_chars],
                                 "payload_digest": digest(payload),
                                 "truncated": len(payload) > result_chars})
-            return {"owner": self.get(db, "owner"), "focus": focus,
+            return {"owner": self._native_meta()["owner"] if native is not None else self.get(db, "owner"), "focus": focus,
                     "request": request, "unfinished": active,
                     "counts": counts, "omitted_active": max(0, counts.get("active", 0) - len(active)),
                     "request_truncated": request_length > 4000,
                     "request_index": {"retrieve": ["request-page", 0], "scope": "all retained requests"},
                     "results": results}
+
+    @staticmethod
+    def _native_results(focus):
+        """The receipts the protected view shows, from the native store: those not yet observed and the
+        newest of the focus, oldest first, at most two (as rows with the receipt's JSON text)."""
+        import input_ack
+        chosen = {a["ticket"]: a for a in input_ack.actions("unobserved")}
+        own = [a for a in input_ack.actions(("request", focus)) if a["receipt"] is not None]
+        if own:
+            newest = max(own, key=lambda action: action["serial"])
+            chosen[newest["ticket"]] = newest
+        rows = sorted(chosen.values(), key=lambda action: action["serial"])[:2]
+        return [{"ticket": a["ticket"], "receipt": encoded(a["receipt"])} for a in rows]
 
     def active(self):
         import input_ack
@@ -407,6 +465,24 @@ class Ledger:
 
     def recover_recorded_actions(self):
         """Recover only batches whose admitted commands all have durable results."""
+        if self._native():
+            import input_ack
+            ready = []
+            for action in input_ack.actions(("status", "uncertain")):
+                proposal = json.loads(action["command"])
+                if not isinstance(proposal, dict) or "limit" not in proposal:
+                    continue
+                commands = proposal["commands"]
+                expected = min(len(commands), proposal["limit"])
+                attempts = input_ack.attempts(ticket=action["ticket"])
+                if (len(attempts) == expected and all(a["result"] is not None for a in attempts)
+                        and all(a["position"] == i and json.loads(a["command"]) == commands[i]
+                                for i, a in enumerate(attempts))):
+                    ready.append((action["ticket"], {"recovered_results": [json.loads(a["result"]) for a in attempts],
+                                                     "deferred_commands": commands[expected:]}))
+            for ticket, result in ready:
+                self.report(ticket, encoded(result))
+            return len(ready)
         with self.transaction() as db:
             exists = db.execute("SELECT 1 FROM sqlite_master WHERE name='command_attempts'").fetchone()
             if not exists:
@@ -436,10 +512,9 @@ class Ledger:
             # actions: the requests are read from the native store, the actions stay in SQLite.
             exact = {r["id"]: r["checker"] for r in input_ack.request_rows("active")
                      if r["checker"][:7].isascii() and r["checker"][:7].lower() == "sha256:"}
-            with self.transaction() as db:
-                candidates = [dict(id=row["request"], checker=exact[row["request"]], ticket=row["ticket"])
-                              for row in db.execute("SELECT request,ticket FROM actions WHERE observed=1 AND receipt IS NOT NULL ORDER BY rowid")
-                              if row["request"] in exact]
+            candidates = [dict(id=a["request"], checker=exact[a["request"]], ticket=a["ticket"])
+                          for a in input_ack.actions("all")
+                          if a["observed"] and a["receipt"] is not None and a["request"] in exact]
             return self._finish_exact(candidates)
         with self.transaction() as db:
             candidates = list(db.execute("SELECT requests.id,requests.checker,actions.ticket FROM requests JOIN actions ON requests.id=actions.request WHERE requests.status='active' AND actions.observed=1 AND actions.receipt IS NOT NULL AND requests.checker LIKE 'sha256:%'"))
@@ -456,6 +531,17 @@ class Ledger:
 
     def observe(self, tickets, presented):
         """The exact correlated result projection must be in the sent request."""
+        if self._native():
+            # The store compares the presented digest with its receipt's: the same check, in its transaction.
+            import input_ack
+            pairs = []
+            for ticket in tickets:
+                if ticket in presented:
+                    projection = next((r for r in presented[ticket] if r.get("ticket") == ticket), None)
+                    if projection and isinstance(projection.get("payload_digest"), str):
+                        pairs.append((ticket, projection["payload_digest"]))
+            input_ack.action_observe(pairs)
+            return
         with self.transaction() as db:
             for ticket in tickets:
                 row = db.execute("SELECT receipt FROM actions WHERE ticket=? AND receipt IS NOT NULL", (ticket,)).fetchone()
@@ -468,10 +554,20 @@ class Ledger:
                         self.event(db, "observe", ticket=ticket)
 
     def admission_denial(self, focus, now):
+        if self._native():
+            return "cognition-paused" if self._native_meta()["paused"] else None
         with self.transaction() as db:
             return "cognition-paused" if self.get(db, "paused") else None
 
     def capture(self, focus, boundary, router, now, guard="", wake_seconds=600, goal_lease=None):
+        if self._native():
+            import input_ack
+            captured = input_ack.turn_capture(focus, digest(boundary), encoded(router), guard, self._owner_candidate())
+            if captured is None:
+                return None
+            serial, revision, mode, owner = captured
+            return {"serial": serial, "revision": revision, "mode": mode, "owner": owner,
+                    "focus": focus, "boundary_digest": digest(boundary), "router": router, "guard": guard}
         with self.transaction() as db:
             if self.get(db, "paused"):
                 return None
@@ -489,10 +585,22 @@ class Ledger:
 
     def decision_pending(self, serial):
         """Whether this exact captured turn may still be decided."""
+        if self._native():
+            return self._native_meta()["pending"] == serial
         with self.transaction() as db:
             return self.get(db, "pending") == serial
 
     def decide(self, serial, response, now, guard="", retry_after=1):
+        if self._native():
+            import input_ack
+            kind = response.get("kind", "text")
+            if kind == "command" and "tool" not in response:
+                # SQLite reads the tool only for the pending turn, after the check.
+                if self._native_meta()["pending"] != serial:
+                    return "ignored"
+                raise KeyError("tool")
+            command = encoded(response.get("command")) if kind == "command" else ""
+            return input_ack.turn_decide(serial, kind, response["tool"] if kind == "command" else "", command)
         with self.transaction() as db:
             if self.get(db, "pending") != serial:
                 return "ignored"
@@ -509,6 +617,9 @@ class Ledger:
             return ticket if kind == "command" else kind
 
     def report(self, ticket, payload, disposition="returned", domain="unknown"):
+        if self._native():
+            import input_ack
+            return input_ack.action_report(ticket, payload, disposition, domain, digest(str(payload)))
         with self.transaction() as db:
             row = db.execute("SELECT receipt,status FROM actions WHERE ticket=?", (ticket,)).fetchone()
             if not row or row["receipt"] is not None or row["status"] not in ("issued", "uncertain"):
@@ -523,13 +634,22 @@ class Ledger:
     def finish(self, request, ticket, checkers, *, now=None):
         import time
         now = time.time() if now is None else now
-        import input_ack
-        native = input_ack._native_socket()
+        if self._native():
+            # The checker runs here on what the store holds; the store then checks the request, the
+            # action and its attested receipt again and moves the request, in one transaction.
+            import input_ack
+            work = self._native_active(request)
+            action = self._native_action(ticket, request)
+            if not work or not action or not action["observed"]:
+                return False
+            receipt = action["receipt"]
+            checker = checkers.get(work["checker"])
+            if (receipt["disposition"] != "returned" or receipt["domain"] != "success"
+                    or checker is None or not checker(dict(work), receipt)):
+                return False
+            return input_ack.action_finish(request, ticket)
         with self.transaction() as db:
-            if native:
-                work = self._native_active(request)
-            else:
-                work = db.execute("SELECT * FROM requests WHERE id=? AND status='active'", (request,)).fetchone()
+            work = db.execute("SELECT * FROM requests WHERE id=? AND status='active'", (request,)).fetchone()
             action = db.execute("SELECT * FROM actions WHERE ticket=? AND request=?", (ticket, request)).fetchone()
             if (not work or not action or not action["observed"]):
                 return False
@@ -538,9 +658,6 @@ class Ledger:
             if (receipt["disposition"] != "returned" or receipt["domain"] != "success"
                     or checker is None or not checker(dict(work), receipt)):
                 return False
-            if native:
-                # The request is a native record: its status moves in the native store, only if it is still active.
-                return input_ack.request_finish(request)
             db.execute("UPDATE requests SET status='achieved' WHERE id=?", (request,))
             self.event(db, "finish", request=request, ticket=ticket)
             return True
@@ -577,18 +694,24 @@ class Ledger:
     def compact(self, keep=0):
         # Replaceable presentation history is separate from requests, issued
         # actions and receipts. Logical history remains queryable in SQLite.
+        if self._native():
+            return  # the native store keeps no event journal
         with self.transaction() as db:
             self.event(db, "compact", keep=max(0, int(keep)))
 
     def attest(self, request, ticket, checker):
         """A trusted task oracle may establish domain success for its receipt."""
-        import input_ack
-        native = input_ack._native_socket()
+        if self._native():
+            import input_ack
+            work = self._native_active(request)
+            action = self._native_action(ticket, request)
+            if not work or not action or not action["receipt"] or not action["observed"]:
+                return False
+            if action["receipt"]["disposition"] != "returned" or not checker(dict(work), dict(action["receipt"])):
+                return False
+            return input_ack.action_attest(request, ticket)
         with self.transaction() as db:
-            if native:
-                work = self._native_active(request)
-            else:
-                work = db.execute("SELECT * FROM requests WHERE id=? AND status='active'", (request,)).fetchone()
+            work = db.execute("SELECT * FROM requests WHERE id=? AND status='active'", (request,)).fetchone()
             action = db.execute("SELECT receipt,observed FROM actions WHERE ticket=? AND request=?", (ticket, request)).fetchone()
             if not work or not action or not action["receipt"] or not action["observed"]:
                 return False
@@ -604,6 +727,15 @@ class Ledger:
     def projection(self):
         import input_ack
         native = input_ack.request_rows("all") if input_ack._native_socket() else None
+        if native is not None:
+            actions = [dict(ticket=a["ticket"], request=a["request"], serial=a["serial"], tool=a["tool"],
+                            command=a["command"], status=a["status"],
+                            receipt=None if a["receipt"] is None else encoded(a["receipt"]), observed=a["observed"])
+                       for a in input_ack.actions("all")]
+            return {"meta": self._native_meta(),
+                    "requests": [dict(id=r["id"], content=r["content"], status=r["status"], checker=r["checker"])
+                                 for r in native],
+                    "actions": actions, "events": []}
         with self.transaction() as db:
             return {"meta": {r[0]: json.loads(r[1]) for r in db.execute("SELECT * FROM meta")},
                     "requests": [dict(r) for r in db.execute("SELECT * FROM requests ORDER BY rowid")]
