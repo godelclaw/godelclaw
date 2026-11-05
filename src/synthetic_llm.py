@@ -551,14 +551,6 @@ _observation_lock = threading.RLock()
 _OBSERVATION_TTLS["model-window"] = _OBSERVATION_TTLS["models"]
 _refreshing_observations = set()
 
-_SYNTHETIC_PINNED_MODELS = (
-    "syn:large:text",
-    "hf:zai-org/GLM-5.3-Flash",
-    "hf:zai-org/GLM-5.2",
-    "hf:moonshotai/Kimi-K3",
-)
-
-
 def _observation_path():
     configured = os.environ.get("METTACLAW_PROVIDER_OBSERVATION_PATH", "")
     if configured:
@@ -885,12 +877,6 @@ def models():
     return "(" + " ".join(items) + ")" if items else "(catalog refreshing)"
 
 
-def _pinned_synthetic_models():
-    raw = os.environ.get("SYNTHETIC_PINNED_MODELS", "")
-    configured = [part.strip() for part in raw.split(",") if part.strip()]
-    return configured or list(_SYNTHETIC_PINNED_MODELS)
-
-
 # Subscription choices observed with chatgpt-models on 2026-10-15.
 # These are pinned choices, not a claim of current account availability.
 _CHATGPT_MENU_MODELS = (
@@ -918,14 +904,15 @@ def _chatgpt_menu_enabled():
 
 
 def model_ids():
-    """Switchable ids from local durable state, never a provider round trip."""
+    """Switchable ids from local durable state, never a provider round trip.
+
+    Synthetic's choices are exactly its last observed catalog, plus the selected
+    model if the catalog no longer lists it, so the menu never offers a model the
+    provider does not serve."""
     record = _cached_observation("models")
     rows = record.get("value") if isinstance(record.get("value"), list) else []
     ids = [str(row.get("id")) for row in rows
            if isinstance(row, dict) and row.get("id")]
-    for model_id in _pinned_synthetic_models():
-        if model_id not in ids:
-            ids.append(model_id)
     if _chatgpt_menu_enabled():
         for model_id in _CHATGPT_MENU_MODELS:
             if model_id not in ids:
