@@ -25,7 +25,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 
-CHUNK = 500
+CHUNK = 500        # actions per read
+WRITE_CHUNK = 20   # marks per transaction: a transaction's own edits are searched linearly
 
 
 def window_start(input_ack):
@@ -73,8 +74,8 @@ def main(argv=None):
             chunk = [(ticket, position) for ticket in tickets[begin:begin + CHUNK] for position in by_ticket[ticket]]
             pairs += input_ack.presented_receipts(chunk, input_ack.WHOLE_READ_SECONDS)
         if args.apply:
-            for start_at in range(0, len(pairs), CHUNK):  # each chunk is one transaction
-                input_ack.action_observe(pairs[start_at:start_at + CHUNK])
+            for start_at in range(0, len(pairs), WRITE_CHUNK):  # each chunk is one transaction
+                input_ack.action_observe(pairs[start_at:start_at + WRITE_CHUNK])
     finally:
         input_ack.close_ledger()
     print(json.dumps({"window": key, "start": start, "carried_calls": len(calls), "applied": args.apply,

@@ -182,6 +182,14 @@ class StrategyHostTest(unittest.TestCase):
         self.assertEqual(host.broker_begin(2, []), 1)
         self.assertEqual(self.observed(ticket), 0)
 
+    def test_a_failed_marking_never_fails_the_answered_turn(self):
+        ticket = self.returned_call()
+        self.capture()
+        with mock.patch.object(type(host.ledger()), "observe_presented", side_effect=RuntimeError("ledger down")):
+            self.assertEqual(host.broker_begin(2, [["shell", "true"]]), 1)
+        self.assertEqual(self.observed(ticket), 0)
+        self.assertIsNotNone(host._ticket)                       # the decision itself was recorded
+
     def test_the_presented_calls_are_the_rows_with_a_result(self):
         rows = [{"id": "o:3:0", "disposition": "returned"}, {"id": "o:3:1", "disposition": "uncertain"},
                 {"id": "o:4:0", "disposition": "not_run"}, {"id": "task-input:in:1", "disposition": "input"},

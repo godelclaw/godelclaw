@@ -539,6 +539,8 @@ class Ledger:
                 count += self.finish(candidate["id"], candidate["ticket"], {candidate["checker"]: checker})
         return count
 
+    OBSERVE_CHUNK = 20
+
     def observe_presented(self, calls):
         """Mark observed the actions an answered prompt presented: `calls` are the (ticket, position) calls it
         carried with their results; an action counts when its receipt exists and every attempt of it was
@@ -549,7 +551,10 @@ class Ledger:
         if self._native():
             import input_ack
             pairs = input_ack.presented_receipts(calls)
-            input_ack.action_observe(pairs)
+            # Small transactions: a transaction's own edits are searched linearly, so its cost grows with
+            # the square of its marks; twenty cost well under a second.
+            for start in range(0, len(pairs), self.OBSERVE_CHUNK):
+                input_ack.action_observe(pairs[start:start + self.OBSERVE_CHUNK])
             return len(pairs)
         carried = {}
         for ticket, position in calls:

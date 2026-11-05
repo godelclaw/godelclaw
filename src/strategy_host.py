@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import sqlite3
+import sys
 import threading
 import time
 
@@ -417,10 +418,15 @@ def broker_begin(turn, commands, limit=1):
 
 
 def _observe_answered(store):
-    """The model answered the captured prompt: the results it carried have been seen."""
+    """The model answered the captured prompt: the results it carried have been seen. Marking never fails
+    the turn: the results stay in the window, and the next answered prompt carries them again."""
     presented = _sample.pop("presented", ()) if _sample is not None else ()
-    if presented:
+    if not presented:
+        return
+    try:
         store.observe_presented(presented)
+    except Exception as error:  # the ledger was unavailable or slow; the decision itself is recorded
+        print("observe_presented failed: %s: %s" % (type(error).__name__, error), file=sys.stderr, flush=True)
 
 
 def begin_continuation(turn, commands):
