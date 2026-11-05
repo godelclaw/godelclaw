@@ -30,6 +30,10 @@ _broker_feedback = {"reason": "no-current-capture"}
 _context_trigger = "continuation-tick"
 _task_projection = None
 _context_preparation = None
+# The calls the renderer carried with their results in the prompt it is preparing, as (ticket, position);
+# bound to that prompt's digest by context_prepared, kept by capture for the exact prompt sent, and marked
+# observed once the model's answer to it is recorded (broker_begin).
+_context_presented = None
 
 def enabled():
     return os.environ.get("METTACLAW_OBSERVED_STRATEGY", "0") == "1"
@@ -91,13 +95,14 @@ def guard(include_topic=True):
 
 
 def begin(turn, source, message):
-    global _turn, _sample, _ticket, _position, _focus, _input_turn, _message_focus, _runtime_projection, _context_trigger, _task_projection, _context_preparation
+    global _turn, _sample, _ticket, _position, _focus, _input_turn, _message_focus, _runtime_projection, _context_trigger, _task_projection, _context_preparation, _context_presented
     if not enabled():
         return 1
     with _lock:
         _turn, _sample, _ticket, _position = str(turn), None, None, 0
         _runtime_projection = None
         _context_preparation = None
+        _context_presented = None
         _message_focus = None
         # A multi-action foreground request keeps its observation/reconsider
         # steps. Autonomous scheduling resumes at the loop's existing wake
@@ -152,7 +157,7 @@ def prepare(prompt, output_tokens=32768):
     """Append protected work/results after replaceable transformations."""
     if not enabled():
         return str(prompt)
-    global _focus, _runtime_projection, _task_projection
+    global _focus, _runtime_projection, _task_projection, _context_presented
     import topic_jobs
     prompt = str(prompt) + "\n" + topic_jobs.context()
     topic_jobs.notify()
@@ -173,6 +178,8 @@ def prepare(prompt, output_tokens=32768):
     _task_projection = "TASK_CONTEXT " + strategy.encoded(view)
     rendered = prompt + "\n\n" + _task_projection
     import hashlib
+    with _lock:
+        _context_presented = presented_calls(view.get("transcript", []))
     context_prepared(hashlib.sha256(rendered.encode()).hexdigest(), int(bool(view.get("archive"))))
     return rendered
 
@@ -258,15 +265,45 @@ def description():
             "No disposition or resolution bookkeeping is required. context-policy adjusts the task context target. ")
 
 
+def context_presented(calls):
+    """The renderer's list of the calls it is carrying with their results, a JSON array of call ids
+    (owner:serial:position); an empty array starts a preparation."""
+    global _context_presented
+    found = []
+    for identity in json.loads(str(calls)):
+        ticket, separator, position = str(identity).rpartition(":")
+        if separator and ticket and position.isdigit():
+            found.append((ticket, int(position)))
+    with _lock:
+        _context_presented = tuple(found)
+    return 1
+
+
+def presented_calls(rows):
+    """The calls among transcript rows that carry their result: (ticket, position) of each row whose id is a
+    call id and whose disposition is not not_run or uncertain. A cut, repeated or collapsed result still
+    carries its content."""
+    found = []
+    for row in rows:
+        identity = str(row.get("id", ""))
+        ticket, separator, position = identity.rpartition(":")
+        if (separator and ticket and position.isdigit() and not identity.startswith("task-input:")
+                and row.get("disposition") not in ("not_run", "uncertain", "input")):
+            found.append((ticket, int(position)))
+    return tuple(found)
+
+
 def context_prepared(prompt_digest, incomplete):
-    """A renderer-owned coverage receipt, never inferred from prompt prose."""
-    global _context_preparation
+    """A renderer-owned coverage receipt, never inferred from prompt prose; it binds the calls the
+    renderer reported carrying to this prompt."""
+    global _context_preparation, _context_presented
     digest = str(prompt_digest)
     value = int(incomplete)
     if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest) or value not in (0, 1):
         raise ValueError("invalid prepared context receipt")
     with _lock:
-        _context_preparation = (digest, bool(value))
+        _context_preparation = (digest, bool(value), _context_presented or ())
+        _context_presented = None
     return 1
 
 
@@ -282,8 +319,10 @@ def capture(prompt, wake_seconds):
         if _sample is not None:
             observed = hashlib.sha256(str(prompt).encode()).hexdigest()
             receipt = _context_preparation
-            _sample["context_incomplete"] = (
-                receipt[1] if receipt is not None and receipt[0] == observed else True)
+            exact = receipt is not None and receipt[0] == observed
+            _sample["context_incomplete"] = receipt[1] if exact else True
+            # Only calls the renderer carried in this exact prompt; marked once its answer is recorded.
+            _sample["presented"] = receipt[2] if exact else ()
         _context_preparation = None
         return int(_sample is not None)
 
@@ -362,6 +401,7 @@ def broker_begin(turn, commands, limit=1):
         if not commands:
             store.decide(_sample["serial"], {"kind": "text"}, time.time())
             _ticket = None
+            _observe_answered(store)
             return 1
         _ticket = store.decide(_sample["serial"], {
             "kind": "command", "tool": "batch", "request": _focus,
@@ -372,7 +412,15 @@ def broker_begin(turn, commands, limit=1):
             _broker_feedback = {"reason": "capture-already-settled"}
             return 0
         _broker_feedback = {"reason": "recorded"}
+        _observe_answered(store)
         return 1
+
+
+def _observe_answered(store):
+    """The model answered the captured prompt: the results it carried have been seen."""
+    presented = _sample.pop("presented", ()) if _sample is not None else ()
+    if presented:
+        store.observe_presented(presented)
 
 
 def begin_continuation(turn, commands):

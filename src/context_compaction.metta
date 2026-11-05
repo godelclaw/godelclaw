@@ -294,7 +294,8 @@
                          $capacity $model $tokens $effort $ratio))))
 
 (= (context:prepare $base $focus $trigger $capacity $model $tokens $effort)
-   (let* (($assembled (request:append $base (topics:context)))
+   (let* (($fresh (py-call (strategy_host.context_presented "[]")))
+          ($assembled (request:append $base (topics:context)))
           ($footer (str:concat "" (py-call (model_commentary.output_tail))))
           ($ratio (context:ratio $model))
           ($window (if (== $capacity "") (task:fallback-window) (str:string->number $capacity)))

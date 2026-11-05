@@ -254,6 +254,7 @@
           ($available (if (== $capacity "") $target
                         (min $target (max 0 (- (- (str:string->number $capacity) (math:ceil (/ (request:bytes $base) $ratio))) 128)))))
           ($selected (task:compact (task:conversation-view $focus $trigger) $available $ratio))
+          ($carried (task:report-carried (task:items $selected "transcript")))
           ($candidate (state:json-set $selected "transcript"
                         (JsonArray (task:idle-pairs
                           (task:items $selected "transcript")))))
@@ -474,6 +475,20 @@
                           $facts $conversation $turn)))))))))))))))
 (= (task:full-context $base $focus $trigger $capacity $ratio)
    (task:full-context-view $base (task:conversation-view $focus $trigger) $capacity $ratio))
+; The calls a render carries with their results, reported to the host, which binds them to
+; the rendered prompt (strategy_host.context_presented, context_prepared): call ids of the rows
+; whose disposition is not not_run, uncertain or input. A cut, repeated or collapsed result
+; still carries its content (lean/pettaclaw/ObservedReceipts.lean: presents).
+(= (task:carried-id $pair)
+   (let $id (task:string $pair "id")
+     (if (str:starts-with $id "task-input:") (empty)
+       (case (state:json-field $pair "disposition")
+         (((JsonString "not_run") (empty)) ((JsonString "uncertain") (empty)) ((JsonString "input") (empty))
+          ($other (JsonString $id)))))))
+(= (task:carried-ids $pairs) (collapse (let $pair (superpose $pairs) (task:carried-id $pair))))
+(= (task:report-carried $pairs)
+   (py-call (strategy_host.context_presented (json-stringify (JsonArray (task:carried-ids $pairs))))))
+
 (= (task:full-context-view $base $view $capacity $ratio)
    (let* (($trigger (task:string $view "trigger"))
           ($window (if (== $capacity "") (task:fallback-window) (str:string->number $capacity)))
@@ -488,6 +503,7 @@
           ($space (max 0 (- (- $available (task:working-cost $frame $ratio))
                          (math:ceil (/ (str:byte-length $handoff) $ratio)))))
           ((Window $start $shown) (task:window-from $root $pairs $offset $space $ratio))
+          ($carried (task:report-carried $shown))
           ($complete (* (task:chunk-size) (math:floor (/ (length $shown) (task:chunk-size)))))
           ((Chunks $chunks $seen) (task:chunks (task:take $shown $complete) $start () ()))
           ($placed (task:place-transcript $base (if (== $handoff "") $chunks (cons-atom $handoff $chunks))

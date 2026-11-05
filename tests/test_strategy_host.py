@@ -142,6 +142,54 @@ class StrategyHostTest(unittest.TestCase):
 
 
 
+    def returned_call(self):
+        """Turn 1 issues one command whose result returns; the next turn's prompt carries it."""
+        self.capture()
+        command = ["shell", "printf witness"]
+        self.assertEqual(host.broker_begin(1, [command]), 1)
+        self.assertEqual(host.reserve_command(1, command), 1)
+        effect_receipts.record_command(1, "returned", command, "witness")
+        host.broker_end(1, [["COMMAND_RETURN:", [command, "witness"]]])
+        host.begin(2, "continuation-tick", "")
+        return host.ledger().projection()["actions"][0]["ticket"]
+
+    def observed(self, ticket):
+        return next(a["observed"] for a in host.ledger().projection()["actions"] if a["ticket"] == ticket)
+
+    def test_an_answered_prompt_marks_the_results_it_carried(self):
+        ticket = self.returned_call()
+        self.assertEqual(self.observed(ticket), 0)
+        prompt = self.capture()
+        self.assertIn("witness", prompt)
+        self.assertEqual(self.observed(ticket), 0)              # carried, not yet answered
+        self.assertEqual(host.broker_begin(2, []), 1)           # the model answered it
+        self.assertEqual(self.observed(ticket), 1)
+
+    def test_a_failed_provider_call_marks_nothing(self):
+        ticket = self.returned_call()
+        self.capture()
+        host.provider_failed()
+        self.assertEqual(self.observed(ticket), 0)
+        host.begin(3, "continuation-tick", "")
+        self.capture()
+        self.assertEqual(host.broker_begin(3, [["shell", "true"]]), 1)
+        self.assertEqual(self.observed(ticket), 1)
+
+    def test_a_prompt_other_than_the_prepared_one_marks_nothing(self):
+        ticket = self.returned_call()
+        prompt = host.prepare("visible request")
+        self.assertEqual(host.capture(prompt + " edited", 60), 1)
+        self.assertEqual(host.broker_begin(2, []), 1)
+        self.assertEqual(self.observed(ticket), 0)
+
+    def test_the_presented_calls_are_the_rows_with_a_result(self):
+        rows = [{"id": "o:3:0", "disposition": "returned"}, {"id": "o:3:1", "disposition": "uncertain"},
+                {"id": "o:4:0", "disposition": "not_run"}, {"id": "task-input:in:1", "disposition": "input"},
+                {"id": "o:5:2", "disposition": "failed"}, {"disposition": "returned"}]
+        self.assertEqual(host.presented_calls(rows), (("o:3", 0), ("o:5", 2)))
+        host.context_presented(json.dumps(["o:3:0", "bad", "o:x", "o:7:12"]))
+        self.assertEqual(host._context_presented, (("o:3", 0), ("o:7", 12)))
+
     def test_batch_envelope_keeps_every_emitted_command(self):
         raw = '((command-batch (pin "note") (send "message")))'
         self.assertEqual(host.normalize_response(raw), '((pin "note") (send "message"))')

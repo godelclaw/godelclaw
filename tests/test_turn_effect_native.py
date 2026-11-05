@@ -183,6 +183,38 @@ def generated(seed):
     return scenario
 
 
+def presentations(store, native, note):
+    """An answered prompt marks an action observed only when it carried every attempt's result and the
+    receipt exists (lean/pettaclaw/ObservedReceipts.lean); the protected view then moves on."""
+    store.accept("r1", "work one")
+    tickets = []
+    for number in range(4):
+        snap = store.capture("r1", "b%d" % number, ROUTER, 0)
+        commands = [["shell", "ls %d" % number], ["shell", "cat %d" % number]]
+        tickets.append(store.decide(snap["serial"], {"kind": "command", "tool": "batch",
+                                                     "command": {"commands": commands, "limit": 2}}, 0))
+    one, two, three, four = tickets
+    for ticket in (one, two, three):
+        record_attempt(store, native, ticket, 0, ["shell", "ls"], {"disposition": "returned", "result": "a"})
+    for ticket in (one, two):
+        record_attempt(store, native, ticket, 1, ["shell", "cat"], {"disposition": "returned", "result": "b"})
+    record_attempt(store, native, three, 1, ["shell", "cat"], None)          # interrupted: no result
+    record_attempt(store, native, four, 0, ["shell", "ls"], {"disposition": "returned", "result": "c"})
+    for ticket in (one, two, three):
+        store.report(ticket, "batch " + ticket)                              # four has no receipt
+    note("view-before", [r["ticket"] for r in store.protected("r1")["results"]])
+    note("partial", store.observe_presented([(one, 0)]))                     # one of two calls carried
+    note("none", store.observe_presented([]))
+    note("whole", store.observe_presented([(one, 0), (one, 1), ("elsewhere:9", 0)]))
+    note("again", store.observe_presented([(one, 0), (one, 1)]))             # already observed
+    note("interrupted", store.observe_presented([(three, 0), (three, 1)]))
+    note("no-receipt", store.observe_presented([(four, 0)]))
+    note("view-between", [r["ticket"] for r in store.protected("r1")["results"]])
+    note("second", store.observe_presented([(two, 1), (two, 0), (three, 0)]))
+    note("view-after", [r["ticket"] for r in store.protected("r1")["results"]])
+    note("observed", {a["ticket"]: a["observed"] for a in store.projection()["actions"]})
+
+
 class NativeSides(NativeCase):
     """A scenario (a function of a Ledger, whether it is native, and a note function) on SQLite and on
     the native store, compared step by step with the owner normalized."""
@@ -225,6 +257,17 @@ class TurnEffectNativeTest(NativeSides):
         self.assertEqual(steps["recovered"], [1, 0])
         self.assertEqual(steps["final"]["meta"]["mode"], "research")
 
+
+    def test_an_answered_prompt_marks_what_it_carried_as_sqlite_does(self):
+        oracle, _ = self.compare(presentations)
+        steps = dict(oracle)
+        one, two = [t for t in steps["view-before"]]
+        self.assertEqual([steps[k] for k in ("partial", "none", "whole", "again", "interrupted", "no-receipt", "second")],
+                         [0, 0, 1, 0, 0, 0, 1])
+        self.assertEqual(steps["view-between"][0], two)        # the marked receipt left the waiting list
+        self.assertNotIn(one, steps["view-after"] + steps["view-between"])
+        observed = steps["observed"]
+        self.assertEqual(sorted(t for t, v in observed.items() if v), sorted([one, two]))
 
     def test_the_receipts_page_and_the_reservations_match_sqlite(self):
         import strategy_host as host

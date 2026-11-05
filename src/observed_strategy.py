@@ -539,6 +539,36 @@ class Ledger:
                 count += self.finish(candidate["id"], candidate["ticket"], {candidate["checker"]: checker})
         return count
 
+    def observe_presented(self, calls):
+        """Mark observed the actions an answered prompt presented: `calls` are the (ticket, position) calls it
+        carried with their results; an action counts when its receipt exists and every attempt of it was
+        carried (lean/pettaclaw/ObservedReceipts.lean). Answers how many it marked."""
+        calls = [(str(ticket), int(position)) for ticket, position in calls]
+        if not calls:
+            return 0
+        if self._native():
+            import input_ack
+            pairs = input_ack.presented_receipts(calls)
+            input_ack.action_observe(pairs)
+            return len(pairs)
+        carried = {}
+        for ticket, position in calls:
+            carried.setdefault(ticket, set()).add(position)
+        count = 0
+        with self.transaction() as db:
+            if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='command_attempts'").fetchone():
+                return 0
+            for ticket, positions in carried.items():
+                if not db.execute("SELECT 1 FROM actions WHERE ticket=? AND observed=0 AND receipt IS NOT NULL",
+                                  (ticket,)).fetchone():
+                    continue
+                attempts = db.execute("SELECT position, result FROM command_attempts WHERE ticket=?", (ticket,)).fetchall()
+                if attempts and all(result is not None and position in positions for position, result in attempts):
+                    db.execute("UPDATE actions SET observed=1 WHERE ticket=?", (ticket,))
+                    self.event(db, "observe", ticket=ticket)
+                    count += 1
+        return count
+
     def observe(self, tickets, presented):
         """The exact correlated result projection must be in the sent request."""
         if self._native():

@@ -1258,6 +1258,9 @@
        (input-ledger:turn-write $db input-ledger:report
          (input-ledger:fields ($ticket $digest $disposition $domain $length)) $request-id False
          (|-> ($space) (input-ledger:report-in $space $ticket $payload $disposition $domain $digest $length))))
+      (("presented-receipts" ($calls))
+       (input-ledger:task-read $db input-ledger:presented-receipts
+         (|-> ($view) (input-ledger:presented-receipts-of $view $calls))))
       (("observe" ($pairs $request-id))
        (input-ledger:turn-write $db input-ledger:observe
          (input-ledger:fields $pairs) $request-id False
@@ -1567,6 +1570,30 @@
 
 ; Ledger.observe: an action whose receipt's payload digest is the presented one is
 ; observed. <pairs> is ((<ticket> <presented digest>) ...).
+; presented-receipts: <calls> are the (ticket position) calls an answered prompt carried with
+; their results. Of their actions, those not yet observed whose receipt exists and every
+; attempt of which has its result among the carried calls, as (ticket digest) pairs for
+; observe (lean/pettaclaw/ObservedReceipts.lean: presents, send).
+(= (input-ledger:presented-receipts-of $view $calls)
+   (let $tickets (unique-atom (map-atom $calls $call (input-ledger:first-of-two $call)))
+     (collapse (let $ticket (superpose $tickets) (input-ledger:presented-receipt $view $ticket $calls)))))
+
+(= (input-ledger:presented-receipt $view $ticket $calls)
+   (case (input-ledger:actions-of $view $ticket)
+     ((((ledger:action $t $r $s $tool $c $st unobserved (ledger:receipt $d $dm $dg $n)))
+       (let* (($attempts (collapse (match $view (ledger:attempt $ticket $p $cmd $result $o) ($p $result))))
+              ($carried (foldl-atom $calls () $kept $call (input-ledger:carried-position $ticket $call $kept))))
+         (if (and (not (== $attempts ())) (input-ledger:all-carried $attempts $carried)) ($ticket $dg) (empty))))
+      ($other (empty)))))
+
+(= (input-ledger:carried-position $ticket ($t $p) $kept) (if (== $t $ticket) (cons-atom $p $kept) $kept))
+
+(= (input-ledger:all-carried $attempts $carried)
+   (if (== $attempts ()) True
+     (let* ((($head $rest) (decons-atom $attempts)) (($p $result) $head))
+       (if (and (not (== $result none)) (input-ledger:member $p $carried))
+           (input-ledger:all-carried $rest $carried) False))))
+
 (= (input-ledger:observe-one $space $ticket $digest)
    (case (input-ledger:actions-of $space $ticket)
      ((((ledger:action $t $r $s $tool $c $st unobserved (ledger:receipt $d $dm $digest $n)))

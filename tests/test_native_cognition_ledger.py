@@ -10,6 +10,7 @@ checkpoint's compare-and-set print the same text on both.
 import hermetic_env  # noqa: F401,E402  (first, before any src module: see hermetic_env.py)
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -87,6 +88,11 @@ def program(legacy):
         '!(println! (WRITE-2 (context:write-checkpoint "task-1" sqlite:null (JsonObject ((JsonPair "start" (JsonNumber "3")))))))',
         '!(println! (CHECK-1 (context:checkpoint "task-1")))',
         '!(println! (SAVED (task:saved-start "task-1") (state:encoded (state:meta (task:window-key "task-1")))))',
+        # The calls the renderer reports carrying (strategy_host.context_presented): rows with a result.
+        '!(let $pairs (task:items (task:conversation-projection "task-1" "tick" 0 0) "transcript")'
+        ' (println! (CARRIED (task:carried-ids $pairs))))',
+        '!(let $pairs (task:items (task:conversation-projection "task-1" "tick" 0 0) "transcript")'
+        ' (println! (REPORTED (task:report-carried $pairs))))',
         '!(println! COGNITION_OK)',
     ]
     return "\n".join(code) + "\n"
@@ -117,7 +123,7 @@ class CognitionLedgerTest(NativeCase):
             with store.transaction() as db:
                 db.execute("UPDATE meta SET value=? WHERE key='owner'", (encoded(OWNER),))
             store._owner = None
-            legacy = scenario(store, native)
+            legacy = self.legacy = scenario(store, native)
             input_ack.close_ledger()
             return self.run_guest(directory, runner.path, self.server.socket if native else None, program(legacy))
 
@@ -130,6 +136,10 @@ class CognitionLedgerTest(NativeCase):
         self.assertIn("ContextPublished", lines["(WRITE-1"])
         self.assertIn("context-checkpoint-changed", lines["(WRITE-2"])
         self.assertIn("TASK_NOTE_SAVED", lines["(NOTE"])
+        # Three batches of two calls, the second of each without a result, and one legacy call.
+        carried = re.findall(r'"OWNER:(\d+):(\d+)"', lines["(CARRIED"].replace(OWNER, "OWNER"))
+        self.assertEqual(sorted(carried), sorted([("0", "0"), ("1", "0"), ("2", "0"), (str(self.legacy), "0")]))
+        self.assertEqual(lines["(REPORTED"], "(REPORTED 1)")
 
 
 if __name__ == "__main__":
