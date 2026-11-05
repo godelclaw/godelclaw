@@ -1,3 +1,7 @@
+# The ledger server of one agent, when its [agent] native_ledger is set. The agent and its
+# control process connect to it; their units want it and start after it (drop-ins). An
+# update restarts it with the selected runtime only if the instance's plan lists it first
+# among its control_services: started before an update, it keeps the engine it started with.
 [Unit]
 Description=Native input ledger server for %i
 StartLimitIntervalSec=120
