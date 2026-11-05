@@ -1302,13 +1302,15 @@
 ;                                  False), "pending" (a serial or none), "router_revision"
 ;                                  (its JSON text, absent until set). A key never written
 ;                                  has its initial value (input-ledger:initial).
-;   (ledger:turn <serial> <status> <snapshot> <position>)
-;                                  samples: status "pending", "interrupted" or the kind of
+;   (ledger:turn <key> <serial> <status> <snapshot> <position>)
+;                                  samples (<key> is the serial's text: an index keys only
+;                                  symbols and strings): status "pending", "interrupted" or the kind of
 ;                                  its reply; <snapshot> is (ledger:snapshot <revision>
 ;                                  <mode> <owner> <focus> <boundary digest> <router JSON>
 ;                                  <guard>); <position> is the clock at the capture
 ;   (ledger:action <ticket> <request> <serial> <tool> <command> <status> <observed> <receipt>)
-;                                  actions: the command as its JSON text, observed 0 or 1,
+;                                  actions: the command as its JSON text, <observed> the
+;                                  symbol observed or unobserved (0 or 1 to the readers),
 ;                                  <receipt> none or (ledger:receipt <disposition> <domain>
 ;                                  <payload digest> <payload length>)
 ;   (ledger:payload <ticket> <payload>)
@@ -1322,8 +1324,10 @@
 ;
 ; The clock replaces the events table, whose live readers wanted only the order of
 ; the deliveries and the captures. Indexes: the state, payload and arrival by their
-; key (arity 3, position 1), the turn by serial (5, 1), the action by ticket (9, 1),
-; request (9, 2), status (9, 6) and observed (9, 7), the attempt by ticket (6, 1).
+; key (arity 3, position 1), the turn by its key and the attempt by ticket (6, 1), the
+; action by ticket (9, 1), request (9, 2), status (9, 6) and observed (9, 7). Every
+; indexed field holds a string or a symbol: the index treats numbers as wildcards, so an
+; integer key would make each lookup read every record of its arity.
 
 (= (input-ledger:initial "revision") 0)
 (= (input-ledger:initial "mode") "godelclaw")
@@ -1398,15 +1402,18 @@
 ; Ledger.restore: the pending turn, if any, is interrupted, every issued action becomes
 ; uncertain (it may have run before the crash: it is never issued again), and the
 ; revision advances.
+(= (input-ledger:key $serial) (repr $serial))
+
 (= (input-ledger:turns-of $space $serial)
-   (collapse (match $space (ledger:turn $serial $status $snapshot $position)
-                    (ledger:turn $serial $status $snapshot $position))))
+   (let $key (input-ledger:key $serial)
+     (collapse (match $space (ledger:turn $key $serial $status $snapshot $position)
+                      (ledger:turn $key $serial $status $snapshot $position)))))
 
 (= (input-ledger:interrupt $space $serial)
    (case (input-ledger:turns-of $space $serial)
-     ((((ledger:turn $s "pending" $snapshot $position))
-       (input-ledger:replace $space (ledger:turn $s "pending" $snapshot $position)
-                                    (ledger:turn $s "interrupted" $snapshot $position)))
+     ((((ledger:turn $k $s "pending" $snapshot $position))
+       (input-ledger:replace $space (ledger:turn $k $s "pending" $snapshot $position)
+                                    (ledger:turn $k $s "interrupted" $snapshot $position)))
       ($other done))))
 
 (= (input-ledger:actions-with $space $status)
@@ -1440,7 +1447,8 @@
               ($mode (input-ledger:state-of $space "mode"))
               ($owner (input-ledger:owner-or $space $candidate))
               ($position (input-ledger:tick $space))
-              ($_ (add-atom $space (ledger:turn $serial "pending"
+              ($key (input-ledger:key $serial))
+              ($_ (add-atom $space (ledger:turn $key $serial "pending"
                                      (ledger:snapshot $revision $mode $owner $focus $digest $router $guard)
                                      $position)))
               ($next (+ $serial 1))
@@ -1455,14 +1463,14 @@
    (if (not (== (input-ledger:state-of $space "pending") $serial))
        (empty)
        (case (input-ledger:turns-of $space $serial)
-         ((((ledger:turn $s $st (ledger:snapshot $rv $md $owner $focus $dg $rt $gd) $p))
+         ((((ledger:turn $k $s $st (ledger:snapshot $rv $md $owner $focus $dg $rt $gd) $p))
            (let* (($_ (input-ledger:state-put $space "pending" none))
                   ($_ (input-ledger:replace $space
-                        (ledger:turn $s $st (ledger:snapshot $rv $md $owner $focus $dg $rt $gd) $p)
-                        (ledger:turn $s $kind (ledger:snapshot $rv $md $owner $focus $dg $rt $gd) $p)))
+                        (ledger:turn $k $s $st (ledger:snapshot $rv $md $owner $focus $dg $rt $gd) $p)
+                        (ledger:turn $k $s $kind (ledger:snapshot $rv $md $owner $focus $dg $rt $gd) $p)))
                   ($ticket (str:concat $owner (str:concat ":" (repr $serial)))))
              (if (== $kind "command")
-                 (let $_ (add-atom $space (ledger:action $ticket $focus $serial $tool $command "issued" 0 none))
+                 (let $_ (add-atom $space (ledger:action $ticket $focus $serial $tool $command "issued" unobserved none))
                    (issued $ticket))
                  (decided $kind))))
           ($other (Error input-ledger:decide (turns $serial (size-atom $other))))))))
@@ -1489,9 +1497,9 @@
 ; observed. <pairs> is ((<ticket> <presented digest>) ...).
 (= (input-ledger:observe-one $space $ticket $digest)
    (case (input-ledger:actions-of $space $ticket)
-     ((((ledger:action $t $r $s $tool $c $st 0 (ledger:receipt $d $dm $digest $n)))
-       (let $_ (input-ledger:replace $space (ledger:action $t $r $s $tool $c $st 0 (ledger:receipt $d $dm $digest $n))
-                                           (ledger:action $t $r $s $tool $c $st 1 (ledger:receipt $d $dm $digest $n)))
+     ((((ledger:action $t $r $s $tool $c $st unobserved (ledger:receipt $d $dm $digest $n)))
+       (let $_ (input-ledger:replace $space (ledger:action $t $r $s $tool $c $st unobserved (ledger:receipt $d $dm $digest $n))
+                                           (ledger:action $t $r $s $tool $c $st observed (ledger:receipt $d $dm $digest $n)))
          1))
       ($other 0))))
 
@@ -1511,8 +1519,8 @@
 ; The action <ticket> of <request>, observed, with a returned receipt: its fields, else none.
 (= (input-ledger:observed-return $space $request $ticket)
    (case (input-ledger:actions-of $space $ticket)
-     ((((ledger:action $t $request $s $tool $c $st 1 (ledger:receipt "returned" $dm $dg $n)))
-       (ledger:action $t $request $s $tool $c $st 1 (ledger:receipt "returned" $dm $dg $n)))
+     ((((ledger:action $t $request $s $tool $c $st observed (ledger:receipt "returned" $dm $dg $n)))
+       (ledger:action $t $request $s $tool $c $st observed (ledger:receipt "returned" $dm $dg $n)))
       ($other none))))
 
 (= (input-ledger:active-request $space $request)
@@ -1555,12 +1563,16 @@
       (() "")
       ($other (Error input-ledger:payload (several $ticket (size-atom $other)))))))
 
-(= (input-ledger:action-row $view (ledger:action $t $r $s $tool $c $st $o $rc))
-   (case $rc
-     ((none (action $t $r $s $tool $c $st $o none ""))
-      ((ledger:receipt $d $dm $dg $n)
-       (let $payload (input-ledger:payload-of $view $t)
-         (action $t $r $s $tool $c $st $o (receipt $d $dm) $payload))))))
+(= (input-ledger:observed-flag observed) 1)
+(= (input-ledger:observed-flag unobserved) 0)
+
+(= (input-ledger:action-row $view (ledger:action $t $r $s $tool $c $st $observed $rc))
+   (let $o (input-ledger:observed-flag $observed)
+     (case $rc
+       ((none (action $t $r $s $tool $c $st $o none ""))
+        ((ledger:receipt $d $dm $dg $n)
+         (let $payload (input-ledger:payload-of $view $t)
+           (action $t $r $s $tool $c $st $o (receipt $d $dm) $payload)))))))
 
 (= (input-ledger:serial-first $left $right)
    (let* (((ledger:action $t1 $r1 $s1 $x1 $c1 $st1 $o1 $rc1) $left)
@@ -1577,8 +1589,8 @@
       ((status $status) (input-ledger:actions-with $view $status))
       ((request $request) (collapse (match $view (ledger:action $t $request $s $tool $c $st $o $rc)
                                            (ledger:action $t $request $s $tool $c $st $o $rc))))
-      ("unobserved" (collapse (match $view (ledger:action $t $r $s $tool $c $st 0 (ledger:receipt $d $dm $dg $n))
-                                     (ledger:action $t $r $s $tool $c $st 0 (ledger:receipt $d $dm $dg $n)))))
+      ("unobserved" (collapse (match $view (ledger:action $t $r $s $tool $c $st unobserved (ledger:receipt $d $dm $dg $n))
+                                     (ledger:action $t $r $s $tool $c $st unobserved (ledger:receipt $d $dm $dg $n)))))
       ($other (Error input-ledger:actions (unknown-selection $which))))))
 
 (= (input-ledger:actions $db $which)
@@ -1636,7 +1648,7 @@
 (= (input-ledger:turn-dump $db)
    (case (db:snapshot $db inputs)
      (((Error $where $why) (Error $where $why))
-      ($view (let* (($turns (collapse (match $view (ledger:turn $s $st (ledger:snapshot $rv $md $ow $f $dg $rt $gd) $p)
+      ($view (let* (($turns (collapse (match $view (ledger:turn $k $s $st (ledger:snapshot $rv $md $ow $f $dg $rt $gd) $p)
                                          (turn $s $st $rv $md $ow $f $dg $rt $gd $p))))
                     ($states (input-ledger:states $view))
                     ($arrivals (collapse (match $view (ledger:arrival $id $p) ($id $p))))
@@ -1669,7 +1681,8 @@
 ;                                                           at linking gives the rowid order
 ;   (ledger:covered <request> <covering>)                   input_supersessions
 ;   (ledger:covers <covering> <request>)                    the same, from the covering batch
-;   (ledger:proposal <serial> <request> <commands> <disposition>)   task_proposals
+;   (ledger:proposal <key> <serial> <request> <commands> <disposition>)   task_proposals,
+;                                                           <key> the serial's text
 ;   (ledger:proposal-of <request> <serial>)                 the same, from the request
 ;   (ledger:note <request> <sequence> <text> <sources>)     task_notes, <sequence> numbered by "notes"
 ;   (ledger:state "context_focus" <request or none>)        meta 'context_focus'
@@ -1824,17 +1837,18 @@
 
 ; task_context.proposal: a serial names one proposal; its disposition may change.
 (= (input-ledger:proposal-in $space $serial $request $commands $disposition)
-   (case (collapse (match $space (ledger:proposal $serial $r $c $d) (ledger:proposal $serial $r $c $d)))
-     ((() (let* (($_ (add-atom $space (ledger:proposal $serial $request $commands $disposition)))
+   (let $key (input-ledger:key $serial)
+   (case (collapse (match $space (ledger:proposal $key $serial $r $c $d) (ledger:proposal $key $serial $r $c $d)))
+     ((() (let* (($_ (add-atom $space (ledger:proposal $key $serial $request $commands $disposition)))
                  ($_ (add-atom $space (ledger:proposal-of $request $serial))))
             ok))
-      (((ledger:proposal $s $r $c $d))
+      (((ledger:proposal $k $s $r $c $d))
        (if (and (== $r $request) (== $c $commands))
            (if (== $d $disposition)
                (empty)
-               (let $_ (input-ledger:replace $space (ledger:proposal $s $r $c $d) (ledger:proposal $s $r $c $disposition)) ok))
+               (let $_ (input-ledger:replace $space (ledger:proposal $k $s $r $c $d) (ledger:proposal $k $s $r $c $disposition)) ok))
            conflict))
-      ($other (Error input-ledger:proposal (several $serial (size-atom $other)))))))
+      ($other (Error input-ledger:proposal (several $serial (size-atom $other))))))))
 
 ; task_context.note: a note on a known request, in clock order.
 (= (input-ledger:note-in $space $request $text $sources)
@@ -1895,8 +1909,9 @@
 (= (input-ledger:notes-of $view $id) (match $view (ledger:note $id $s $t $src) ($id $s $t $src)))
 (= (input-ledger:covering-of $view $id) (match $view (ledger:covered $id $c) ($id $c)))
 (= (input-ledger:proposals-of $view $id)
-   (let $serial (match $view (ledger:proposal-of $id $serial) $serial)
-     (match $view (ledger:proposal $serial $id $c $d) ($serial $id $c $d))))
+   (let* (($serial (match $view (ledger:proposal-of $id $serial) $serial))
+          ($key (input-ledger:key $serial)))
+     (match $view (ledger:proposal $key $serial $id $c $d) ($serial $id $c $d))))
 (= (input-ledger:request-actions $view $id)
    (match $view (ledger:action $t $id $s $tool $c $st $o $rc) ($s $t $id $c)))
 (= (input-ledger:arrival-of $view $id) (match $view (ledger:arrival $id $p) ($id $p)))
@@ -1905,9 +1920,11 @@
    (collapse (let ($s $t $r $c) (superpose $actions)
      (match $view (ledger:attempt $t $p $cmd $result $o) ($t $p $result)))))
 
+(= (input-ledger:capture-of $view $serial)
+   (let $key (input-ledger:key $serial) (match $view (ledger:turn $key $serial $st $sn $p) ($serial $p))))
+
 (= (input-ledger:captures-of $view $serials)
-   (collapse (let $serial (superpose (unique-atom $serials))
-     (match $view (ledger:turn $serial $st $sn $p) ($serial $p)))))
+   (collapse (let $serial (superpose (unique-atom $serials)) (input-ledger:capture-of $view $serial))))
 
 (= (input-ledger:first-of ($first $second $third $fourth)) $first)
 
@@ -1927,7 +1944,7 @@
                               (input-ledger:of-requests $view $which input-ledger:covering-of)))
           ($notes (if $all (collapse (match $view (ledger:note $r $s $t $src) ($r $s $t $src)))
                           (input-ledger:of-requests $view $which input-ledger:notes-of)))
-          ($proposals (if $all (collapse (match $view (ledger:proposal $s $r $c $d) ($s $r $c $d)))
+          ($proposals (if $all (collapse (match $view (ledger:proposal $k $s $r $c $d) ($s $r $c $d)))
                               (input-ledger:of-requests $view $which input-ledger:proposals-of)))
           ($actions (if $all (collapse (match $view (ledger:action $t $r $s $tool $c $st $o $rc) ($s $t $r $c)))
                             (input-ledger:of-requests $view $which input-ledger:request-actions)))
@@ -1949,7 +1966,7 @@
 
 ; read(): the request of a call's serial (its proposal's, else its action's), or none.
 (= (input-ledger:call-request $view $serial $ticket)
-   (case (collapse (match $view (ledger:proposal $serial $r $c $d) $r))
+   (case (let $key (input-ledger:key $serial) (collapse (match $view (ledger:proposal $key $serial $r $c $d) $r)))
      ((($request) $request)
       ($none (case (collapse (match $view (ledger:action $ticket $r $serial $tool $c $st $o $rc) $r))
                ((($request) $request) ($other none)))))))

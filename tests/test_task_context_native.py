@@ -20,7 +20,8 @@ from observed_strategy import IdentityConflict, Ledger
 import task_context
 from native_ledger_client import NativeRunner
 from test_input_ack_native import RecordingProxy, SKIP
-from test_input_ledger_remote import available, oracle_environment
+from test_input_ledger_remote import PRELUDE, available, oracle_environment
+from test_input_ledger import literal
 from test_turn_effect_native import NativeSides, ROUTER, record_attempt, presented
 
 
@@ -96,25 +97,51 @@ class TaskContextNativeTest(NativeSides):
         self.assertEqual(steps["proposal-conflict"][0], "raised")
 
     def test_reads_and_updates_touch_their_own_records_and_not_the_store(self):
-        """Every pattern with a symbol head can use its family's head index; a lookup by id must still use
-        the id index, and replacing a record (here the focus) must not scan the collection (the engine's
-        indexed removal). A candidate read through the server is one DbCandidateNextV1 request; the 60
-        requests hold about 300 atoms."""
-        proxy = CountingProxy(self.directory / "count.sock", self.server.socket)
+        """The store answers a pattern from one index, and the index keys only strings and symbols (a number at an
+        indexed position would make every lookup read every record of its arity). So every field the ledger looks
+        up by is a string or a symbol, and a lookup or an update reads its own records whatever else the store
+        holds. The verbs run here as a client over db:connect, so that each candidate the store reads crosses the
+        proxy as one DbCandidateNextV1; the server's own calls choose the same indexes."""
         with oracle_environment() as directory:
-            NativeRunner.create(directory, proxy.path)
+            NativeRunner.create(directory, self.server.socket)
             store = Ledger(directory / "x.db")
             for number in range(60):
-                store.accept("r%d" % number, "work %d" % number)
+                key = "r%d" % number
+                store.accept(key, "work %d" % number)
+                snap = store.capture(key, "b", ROUTER, 0)
+                ticket = store.decide(snap["serial"], {"kind": "command", "tool": "t", "command": [number]}, 0)
+                task_context.proposal(store, snap["serial"], key, [[number]], "admitted")
+                store.report(ticket, "out %d" % number)
+                store.observe([ticket], presented(store, ticket))
             task_context.begin(store, "r1", "tick", None, "")
-            proxy.steps = 0
-            self.assertEqual(store.status_of("r7"), "active")
-            self.assertLessEqual(proxy.steps, 4, "one request's record, not the 60 requests'")
-            proxy.steps = 0
-            task_context.begin(store, "r7", "tick", None, "")
-            self.assertEqual(task_context.resume(store, "r7"), "r7")
-            self.assertLessEqual(proxy.steps, 30, "a frame, the focus and a resume touch their own records")
+            owner = store.projection()["meta"]["owner"]
             input_ack.close_ledger()
+        self.assertGreater(input_ack_census(self), 500, "the store holds the records of 60 turns")
+        proxy = CountingProxy(self.directory / "count.sock", self.server.socket)
+        self.addCleanup(proxy.close)
+        ticket = '"%s:7"' % owner
+        for verb, arguments, bound in (("request-get", '("r7" none)', 4),
+                                       ("actions", "((ticket %s))" % ticket, 8),
+                                       ("task-family", '("r7")', 22),
+                                       ("task-resume", '("r7")', 14),
+                                       ("task-call", "(7 %s)" % ticket, 6),
+                                       ("task-view", '(("r7"))', 66),
+                                       ("task-begin", '("r7" "tick" none "" none "rq1.cost")', 30),
+                                       ("decide", '(999 "text" "" "" "rq1.cost2")', 4)):
+            proxy.steps = 0
+            out = self.run_client(verb, PRELUDE + '!(let* (($db (db:connect %s)) ($a (input-ledger:perform $db %s %s))'
+                                  ' ($_ (db:close $db))) (println! (got $a)))\n' % (literal(str(proxy.path)), literal(verb), arguments))
+            self.assertIn("(got ", out, verb)
+            self.assertNotIn("(got (Error", out, verb)
+            # The same counts hold at 20 turns as at 60: about twice each is allowed.
+            self.assertLessEqual(proxy.steps, bound, "%s read %d candidates" % (verb, proxy.steps))
+
+
+def input_ack_census(case):
+    """The number of atoms of any kind in the case's store."""
+    case.session(case.server.socket)
+    census = input_ack._ledger_call("census", ())
+    return census[1] + census[2] + census[3] + census[4]
 
 
 class CountingProxy(RecordingProxy):
