@@ -53,7 +53,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-STATES = ("registered", "submitted", "deleted", "expired")
+STATES = ("registered", "submitted", "withdrawing", "deleted", "expired")
 KINDS = ("message", "notification", "task", "goal", "autonomous")
 STATUSES = ("active", "processed", "waiting-user", "deferred", "addressed", "achieved", "cancelled", "covered")
 HEAD_COLUMNS = ("id", "seq", "kind", "checker", "status", "settled", "note", "summary", "digest")

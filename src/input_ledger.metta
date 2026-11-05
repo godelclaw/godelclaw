@@ -15,7 +15,7 @@
 ; lane, send-key and delete-key are strings; created and checked are seconds;
 ; processed is 0 or 1; message-id and delete-key are the symbol `none` while
 ; the column is NULL (a string or integer otherwise); state is one of the
-; symbols registered, submitted, deleted, expired. Both kinds share one
+; symbols registered, submitted, withdrawing, deleted, expired. Both kinds share one
 ; collection because a db transaction covers a single collection, and
 ; register / mark-processed must read and write both atomically.
 ;
@@ -949,6 +949,107 @@
 (= (input-ledger:delete-key $lane $send-key)
    (input-ledger:derived-key $lane (str:concat "notice-delete:" $send-key)))
 
+; ---- the receipt-driven cleanup of channels/telegram_notice_cleanup.metta ----
+; The live cleanup's own rules, one verb per statement of its SQL, apart from receipt, due
+; and check (input_ack.pump's): an operator control's notice is withdrawn and then deleted
+; unprocessed; a delete key is made per attempt, an existing one adopted, and cleared after a
+; definite non-delivery. Each write carries the caller's nonce in its request: a lost reply is
+; repeated with it, a later call is evaluated anew, as each SQL statement is.
+
+(= (input-ledger:open-notice $state)
+   (or (== $state registered) (or (== $state submitted) (== $state withdrawing))))
+
+; UPDATE input_notices SET state='withdrawing' WHERE task=? AND state IN ('registered','submitted')
+(= (input-ledger:withdraw-in $space $task)
+   (let $found (input-ledger:notices-of-task $space $task)
+     (if (== $found ()) True (input-ledger:withdraw-row $space (car-atom $found)))))
+
+(= (input-ledger:withdraw-row $space (input-notice $t $u $l $s $c $m $p $d $st $ch))
+   (if (or (== $st registered) (== $st submitted))
+       (let $_ (input-ledger:replace $space (input-notice $t $u $l $s $c $m $p $d $st $ch)
+                                            (input-notice $t $u $l $s $c $m $p $d withdrawing $ch))
+         True)
+       True))
+
+(= (input-ledger:notice-withdraw $db $task $nonce)
+   (input-ledger:write $db input-ledger:notice-withdraw
+     (input-ledger:request input-ledger:notice-withdraw (str:concat (input-ledger:field $task) (input-ledger:field $nonce)))
+     (|-> ($space) (input-ledger:withdraw-in $space $task))
+     (input-ledger:attempts) none))
+
+; A delivery receipt for <key>, the one notice whose send or delete key it is (none or two:
+; False). <outcome>: (delivered <message-id>), not-sent, or other.
+;   send key, delivered id > 0, no message id or the same: record the message id;
+;   delete key, delivered 0 or the message id, processed or withdrawing: deleted;
+;   delete key, not-sent: the delete key is cleared, so the next attempt makes a new one.
+(= (input-ledger:delivery-in $space $key $outcome)
+   (let $rows (unique-atom (union-atom (input-ledger:notices-of-send-key $space $key)
+                                       (input-ledger:notices-of-delete-key $space $key)))
+     (if (== (size-atom $rows) 1) (input-ledger:delivery-row $space $key $outcome (car-atom $rows)) False)))
+
+(= (input-ledger:delivery-row $space $key $outcome (input-notice $t $u $l $s $c $m $p $d $st $ch))
+   (case $outcome
+     (((delivered $id)
+       (if (== $key $s)
+           (if (and (> $id 0) (or (== $m none) (== $m $id)))
+               (let $_ (input-ledger:replace $space (input-notice $t $u $l $s $c $m $p $d $st $ch)
+                                                    (input-notice $t $u $l $s $c $id $p $d $st $ch))
+                 True)
+               False)
+           (if (and (or (== $p 1) (== $st withdrawing)) (or (== $id 0) (== $id $m)))
+               (let $_ (input-ledger:replace $space (input-notice $t $u $l $s $c $m $p $d $st $ch)
+                                                    (input-notice $t $u $l $s $c $m $p $d deleted $ch))
+                 True)
+               False)))
+      (not-sent
+       (if (== $key $d)
+           (let $_ (input-ledger:replace $space (input-notice $t $u $l $s $c $m $p $d $st $ch)
+                                                (input-notice $t $u $l $s $c $m $p none $st $ch))
+             True)
+           True))
+      ($other True))))
+
+(= (input-ledger:notice-delivery $db $key $outcome $nonce)
+   (input-ledger:write $db input-ledger:notice-delivery
+     (input-ledger:request input-ledger:notice-delivery
+       (str:concat (input-ledger:field $key) (str:concat (input-ledger:field $outcome) (input-ledger:field $nonce))))
+     (|-> ($space) (input-ledger:delivery-in $space $key $outcome))
+     (input-ledger:attempts) none))
+
+; UPDATE input_notices SET delete_key=COALESCE(delete_key,?) WHERE task=? AND state IN
+; ('registered','submitted','withdrawing'), then the stored delete key (none: no notice, or
+; none stored).
+(= (input-ledger:cleanup-key-in $space $task $candidate)
+   (let $found (input-ledger:notices-of-task $space $task)
+     (if (== $found ()) none (input-ledger:cleanup-key-row $space (car-atom $found) $candidate))))
+
+(= (input-ledger:cleanup-key-row $space (input-notice $t $u $l $s $c $m $p $d $st $ch) $candidate)
+   (if (and (== $d none) (input-ledger:open-notice $st))
+       (let $_ (input-ledger:replace $space (input-notice $t $u $l $s $c $m $p $d $st $ch)
+                                            (input-notice $t $u $l $s $c $m $p $candidate $st $ch))
+         $candidate)
+       $d))
+
+(= (input-ledger:notice-cleanup-key $db $task $candidate $nonce)
+   (input-ledger:write $db input-ledger:notice-cleanup-key
+     (input-ledger:request input-ledger:notice-cleanup-key
+       (str:concat (input-ledger:field $task) (str:concat (input-ledger:field $candidate) (input-ledger:field $nonce))))
+     (|-> ($space) (input-ledger:cleanup-key-in $space $task $candidate))
+     (input-ledger:attempts) none))
+
+; SELECT task,lane,message_id FROM input_notices WHERE state IN ('registered','submitted',
+; 'withdrawing') AND message_id IS NOT NULL AND (processed=1 OR state='withdrawing') ORDER BY created
+(= (input-ledger:deletable-key ($created $row)) $created)
+(= (input-ledger:deletable-entry (input-notice $t $u $l $s $c $m $p $d $st $ch))
+   (if (and (input-ledger:open-notice $st) (and (not (== $m none)) (or (== $p 1) (== $st withdrawing))))
+       ($c ($t $l $m))
+       (empty)))
+
+(= (input-ledger:deletable-of $view)
+   (let $entries (collapse (match $view (input-notice $t $u $l $s $c $m $p $d $st $ch)
+                             (input-ledger:deletable-entry (input-notice $t $u $l $s $c $m $p $d $st $ch))))
+     (map-atom (sort-atom $entries) $entry (input-ledger:second $entry))))
+
 ; ---- the store half of input_ack.pump() ----
 
 ; Notices in state registered or submitted, ordered by processed descending,
@@ -1231,6 +1332,11 @@
       (("request-rows" ($which)) (input-ledger:request-rows $db $which))
       (("submitted" ($task)) (input-ledger:submitted $db $task))
       (("receipt" ($key $outcome)) (input-ledger:receipt $db $key $outcome))
+      (("notice-withdraw" ($task $nonce)) (input-ledger:notice-withdraw $db $task $nonce))
+      (("notice-delivery" ($key $outcome $nonce)) (input-ledger:notice-delivery $db $key $outcome $nonce))
+      (("notice-cleanup-key" ($task $candidate $nonce)) (input-ledger:notice-cleanup-key $db $task $candidate $nonce))
+      (("notice-deletable" ())
+       (input-ledger:task-read $db input-ledger:notice-deletable (|-> ($view) (input-ledger:deletable-of $view))))
       (("due" ($limit)) (input-ledger:due $db $limit))
       (("check" ($task $now $max-age)) (input-ledger:check $db $task $now $max-age))
       (("ensure" ()) True)

@@ -2,11 +2,23 @@
 ; with cognition. Withdrawing a mistaken notice does not complete its input.
 !(import! &self ./src/state_sqlite.metta)
 !(import! &self cwp)
+!(import! &self system)
+
+; With the native ledger the notices live in its store and each statement below is one of
+; its notice-* verbs (src/input_ledger.metta), with the same rules; a nonce per call makes a
+; lost reply repeatable and a later call new.
+(= (nc:native?) (state:native-ledger))
+(= (nc:native $verb $arguments) (state:ledger $verb $arguments))
+; True from the ledger may arrive as the wire's boolean: truthy, not == to True.
+(= (nc:native-flag $answer)
+   (case (get-type $answer) ((Bool (if $answer True False)) ($other False))))
 
 (= (nc:call $code $name $body)
    (cwp:call (system:getenv-or-default "METTACLAW_TELEGRAM_SERVICE_SOCKET" "")
              $code $name $body 5000))
 (= (nc:ready?)
+   (if (nc:native?) True (nc:sqlite-ready?)))
+(= (nc:sqlite-ready?)
    (and (fs:exists (state:checkpoint))
      (case (state:query "SELECT 1 FROM sqlite_master WHERE type='table' AND name='input_notices'" ())
        (((sqlite:result $_ ((1)) $_ $_) True) ($other False)))))
@@ -15,9 +27,11 @@
 (= (nc:saved? $answer)
    (case $answer (((sqlite:result $_ $_ $_ $_) True) ($error False))))
 (= (nc:withdraw $task)
-   (if (nc:ready?)
-     (nc:saved? (state:query "UPDATE input_notices SET state='withdrawing' WHERE task=? AND state IN ('registered','submitted')" ($task)))
-     False))
+   (if (nc:native?)
+     (nc:native-flag (nc:native "notice-withdraw" ($task (system:uuid4-hex))))
+     (if (nc:ready?)
+       (nc:saved? (state:query "UPDATE input_notices SET state='withdrawing' WHERE task=? AND state IN ('registered','submitted')" ($task)))
+       False)))
 
 ; Persist each observation before acknowledging its service occurrence.
 ; A new delete identity is allowed only after definite non-delivery. The
@@ -26,11 +40,20 @@
    (if (not (nc:ready?)) False
      (case $value
        (((JsonArray ((JsonString "delivery") (JsonString $key) (JsonNumber "0") (JsonNumber "1") $outcome))
+         (if (nc:native?)
+           (nc:native-flag (nc:native "notice-delivery" ($key (nc:outcome-atom $outcome) (system:uuid4-hex))))
          (case (state:query "SELECT task,send_key,delete_key,message_id,processed,state FROM input_notices WHERE send_key=? OR delete_key=?" ($key $key))
            (((sqlite:result $_ (($task $send $delete $message $processed $state)) $_ $_)
              (nc:outcome $key $outcome $task $send $delete $message $processed $state))
-            ($other False))))
+            ($other False)))))
         ($other False)))))
+
+; A delivery outcome as the native verb takes it.
+(= (nc:outcome-atom $outcome)
+   (case $outcome
+     (((JsonArray ((JsonString "delivered") (JsonNumber $raw))) (delivered (parse $raw)))
+      ((JsonArray ((JsonString "not-sent"))) not-sent)
+      ($other other))))
 (= (nc:outcome $key $outcome $task $send $delete $message $processed $state)
    (case $outcome
      (((JsonArray ((JsonString "delivered") (JsonNumber $raw)))
@@ -57,10 +80,13 @@
 (= (nc:delete-key $task $lane)
    (let* (($number (repr (system:monotonic-ns)))
           ($padding (str:byte-slice "00000000000000000000" 0 (- 20 (str:byte-length $number))))
-          ($candidate (str:join "" ($lane "." $padding $number)))
-          ($_ (state:query "UPDATE input_notices SET delete_key=COALESCE(delete_key,?) WHERE task=? AND state IN ('registered','submitted','withdrawing')" ($candidate $task))))
-     (case (state:query "SELECT delete_key FROM input_notices WHERE task=?" ($task))
-       (((sqlite:result $_ (($key)) $_ $_) $key) ($other sqlite:null)))))
+          ($candidate (str:join "" ($lane "." $padding $number))))
+     (if (nc:native?)
+       (case (nc:native "notice-cleanup-key" ($task $candidate (system:uuid4-hex)))
+         ((none sqlite:null) ($key (if (== (get-type $key) String) $key sqlite:null))))
+       (let $_ (state:query "UPDATE input_notices SET delete_key=COALESCE(delete_key,?) WHERE task=? AND state IN ('registered','submitted','withdrawing')" ($candidate $task))
+         (case (state:query "SELECT delete_key FROM input_notices WHERE task=?" ($task))
+           (((sqlite:result $_ (($key)) $_ $_) $key) ($other sqlite:null)))))))
 (= (nc:delete $row)
    (let ($task $lane $message) $row
      (let $key (nc:delete-key $task $lane)
@@ -73,9 +99,15 @@
    (if (== $rows ()) 0
      (let $done (nc:delete (car-atom $rows))
        (+ $done (nc:delete-rows (cdr-atom $rows))))))
+; The notices whose message may be deleted, oldest first: (task lane message-id) rows.
+(= (nc:deletable)
+   (if (nc:native?)
+     (case (nc:native "notice-deletable" ())
+       (((Error $where $why) ()) ($rows $rows)))
+     (case (state:query "SELECT task,lane,message_id FROM input_notices WHERE state IN ('registered','submitted','withdrawing') AND message_id IS NOT NULL AND (processed=1 OR state='withdrawing') ORDER BY created" ())
+       (((sqlite:result $_ $rows $_ $_) $rows)
+        ($other ())))))
 (= (nc:pump)
    (if (not (nc:ready?)) 0
      (let $_ (nc:collect "")
-       (case (state:query "SELECT task,lane,message_id FROM input_notices WHERE state IN ('registered','submitted','withdrawing') AND message_id IS NOT NULL AND (processed=1 OR state='withdrawing') ORDER BY created" ())
-         (((sqlite:result $_ $rows $_ $_) (nc:delete-rows $rows))
-          ($other 0))))))
+       (nc:delete-rows (nc:deletable)))))
