@@ -87,8 +87,16 @@ def context():
             facts["mode_input"] = hashlib.sha256(json.dumps(offered, sort_keys=True).encode()).hexdigest() if offered else ''
     else:
         facts['mode_input'] = ''
+    import input_ack
     checkpoint = os.environ.get('METTACLAW_STRATEGY_PATH')
-    if checkpoint:
+    if input_ack._native_socket():
+        # The task windows are meta keys of the native ledger; an unreachable one leaves no fact.
+        try:
+            rows = [list(row) for row in input_ack.meta_prefix("task_window:")]
+            facts['checkpoint'] = hashlib.sha256(json.dumps(rows).encode()).hexdigest()
+        except sqlite3.Error:
+            pass
+    elif checkpoint:
         try:
             with closing(sqlite3.connect(Path(checkpoint).resolve().as_uri() + '?mode=ro', uri=True, timeout=.1)) as db:
                 rows = db.execute("SELECT key,value FROM meta WHERE key GLOB 'task_window:*' ORDER BY key").fetchall()

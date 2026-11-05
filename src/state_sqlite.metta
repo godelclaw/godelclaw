@@ -2,6 +2,15 @@
 ; schema, change journal mode or rewrite identities.
 !(import! &self (library sqlite))
 !(import! &self ./src/state_cetta)
+!(import! &self ./src/ledger_client)
+
+; With METTACLAW_INPUT_LEDGER_SOCKET set, the turn's records are the native ledger's:
+; its server answers each verb (src/input_ledger.metta), and the readers below ask it
+; instead of the SQLite file.
+(= (state:ledger-socket) (system:getenv-or-default "METTACLAW_INPUT_LEDGER_SOCKET" ""))
+(= (state:native-ledger) (not (== (state:ledger-socket) "")))
+(= (state:ledger $verb $arguments) (ledger-client:call (state:ledger-socket) $verb $arguments))
+(= (state:request-id) (str:concat "rq1." (system:uuid4-hex)))
 
 (= (state:checkpoint)
    (system:getenv-or-default "METTACLAW_STRATEGY_PATH"
@@ -20,6 +29,7 @@
 (= (state:value $value)
    (case $value
      ((sqlite:null JsonNull)
+      (none JsonNull)
       ((sqlite:blob $bytes) (JsonObject ((JsonPair "blob" (JsonString (repr $bytes))))))
       ($other
         (case (get-type $value)
@@ -67,8 +77,22 @@
       ($other $other))))
 (= (state:encoded $value) (json-stringify (state:canonical $value)))
 (= (state:meta $key)
-   (let $rows (state:rows (state:query "SELECT value FROM meta WHERE key=?" ($key)))
-     (if (== $rows ()) JsonNull (json-parse (car-atom (car-atom $rows))))))
+   (if (state:native-ledger)
+     (case (state:ledger "meta-get" ($key))
+       (((Error $where $why) (Error $where $why))
+        (none JsonNull)
+        ($text (json-parse $text))))
+     (let $rows (state:rows (state:query "SELECT value FROM meta WHERE key=?" ($key)))
+       (if (== $rows ()) JsonNull (json-parse (car-atom (car-atom $rows)))))))
+; The raw JSON text of a meta key, or sqlite:null when it is absent.
+(= (state:meta-text $key)
+   (if (state:native-ledger)
+     (case (state:ledger "meta-get" ($key))
+       (((Error $where $why) (Error $where $why))
+        (none sqlite:null)
+        ($text $text)))
+     (let $rows (state:rows (state:query "SELECT value FROM meta WHERE key=?" ($key)))
+       (if (== $rows ()) sqlite:null (car-atom (car-atom $rows))))))
 (= (state:text $value)
    (case $value (((JsonString $text) $text)
                 ((JsonNumber $text) $text)

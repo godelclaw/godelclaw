@@ -1,6 +1,8 @@
 !(import! &self (library db))
 !(import! &self (library str))
 !(import! &self (library list))
+!(import! &self (library json))
+!(import! &self (library math))
 
 ; Input ledger in the native library db: collection `inputs` holds two kinds
 ; of record, ported from the tables of input_ack.py.
@@ -1258,6 +1260,26 @@
       (("task-family" ($request))
        (input-ledger:task-read $db input-ledger:task-family (|-> ($view) (input-ledger:family $view $request))))
       (("task-view" ($which)) (input-ledger:task-view $db $which))
+      (("meta-get" ($key)) (input-ledger:task-read $db input-ledger:meta-get (|-> ($view) (input-ledger:meta-of $view $key))))
+      (("meta-prefix" ($prefix))
+       (input-ledger:task-read $db input-ledger:meta-prefix (|-> ($view) (input-ledger:meta-prefix-of $view $prefix))))
+      (("meta-cas" ($key $old $new $request-id))
+       (input-ledger:turn-write $db input-ledger:meta-cas (input-ledger:fields ($key $old $new)) $request-id changed
+         (|-> ($space) (input-ledger:meta-cas-in $space $key $old $new))))
+      (("meta-put" ($key $new $request-id))
+       (input-ledger:turn-write $db input-ledger:meta-put (input-ledger:fields ($key $new)) $request-id ok
+         (|-> ($space) (input-ledger:meta-put-in $space $key $new))))
+      (("task-rows" ($request))
+       (input-ledger:task-read $db input-ledger:task-rows (|-> ($view) (input-ledger:task-rows-of $view $request))))
+      (("conversation-rows" ($focus $offset $limit))
+       (input-ledger:task-read $db input-ledger:conversation-rows
+         (|-> ($view) (input-ledger:conversation-rows-of $view $focus $offset $limit))))
+      (("conversation-history" ($offset $count))
+       (input-ledger:task-read $db input-ledger:conversation-history
+         (|-> ($view) (input-ledger:conversation-history-of $view $offset $count))))
+      (("initial-start" ($capacity $ratio))
+       (input-ledger:task-read $db input-ledger:initial-start
+         (|-> ($view) (input-ledger:initial-start-of $view $capacity $ratio))))
       (("request-context" ($request))
        (input-ledger:task-read $db input-ledger:request-context
          (|-> ($view) (context (case (input-ledger:frame-of $view $request) (((frame $p $t $chat) $chat) ($none none)))
@@ -1970,3 +1992,307 @@
      ((($request) $request)
       ($none (case (collapse (match $view (ledger:action $ticket $r $serial $tool $c $st $o $rc) $r))
                ((($request) $request) ($other none)))))))
+
+; ---- the cognition side's reads (task_context_cetta, task_context_views, context_compaction) ----
+
+; The meta keys other modules keep, as the JSON text the SQLite meta table holds:
+;   (ledger:meta <key> <JSON text>)      task_window:<root>, context_failure:<...> and the like
+; A key of the ledger itself (owner, context_focus ...) is read from its ledger:state.
+(= (input-ledger:json-of $value)
+   (if (== $value none) "null"
+     (case (get-type $value)
+       ((String (json-stringify (JsonString $value)))
+        (Number (repr $value))
+        (Bool (if $value "true" "false"))
+        ($other (repr $value))))))
+
+(= (input-ledger:typed-key $key)
+   (input-ledger:member $key ("owner" "revision" "mode" "paused" "next_sample" "pending" "context_focus")))
+
+(= (input-ledger:meta-of $view $key)
+   (if (input-ledger:typed-key $key)
+       (let $value (input-ledger:state-of $view $key) (if (== $value absent) none (input-ledger:json-of $value)))
+       (if (== $key "router_revision")
+           (let $value (input-ledger:state-of $view $key) (if (== $value absent) none $value))
+           (case (collapse (match $view (ledger:meta $key $text) $text))
+             ((($text) $text) ($other none))))))
+
+; context:write-checkpoint: the key is set when it holds <old> (none: when it is absent).
+(= (input-ledger:meta-cas-in $space $key $old $new)
+   (case (collapse (match $space (ledger:meta $key $text) $text))
+     ((() (if (== $old none) (let $_ (add-atom $space (ledger:meta $key $new)) published) (empty)))
+      (($text) (if (== $text $old) (input-ledger:replace-meta $space $key $text $new) (empty)))
+      ($other (Error input-ledger:meta (several $key))))))
+
+(= (input-ledger:replace-meta $space $key $text $new)
+   (if (== $text $new) published
+     (let $_ (input-ledger:replace $space (ledger:meta $key $text) (ledger:meta $key $new)) published)))
+
+(= (input-ledger:meta-put-in $space $key $new)
+   (case (collapse (match $space (ledger:meta $key $text) $text))
+     ((() (let $_ (add-atom $space (ledger:meta $key $new)) ok))
+      (($text) (if (== $text $new) (empty) (let $_ (input-ledger:replace $space (ledger:meta $key $text) (ledger:meta $key $new)) ok)))
+      ($other (Error input-ledger:meta (several $key))))))
+
+(= (input-ledger:key-first ($k1 $t1) ($k2 $t2)) (<= (str:compare $k1 $k2) 0))
+
+; The meta keys under a prefix, by key: ((<key> <JSON text>) ...).
+(= (input-ledger:meta-prefix-of $view $prefix)
+   (list:sort-by input-ledger:key-first
+     (collapse (match $view (ledger:meta $key $text) (if (str:starts-with $key $prefix) ($key $text) (empty))))))
+
+; task_request_view: a covered batch's content names its covering batch.
+(= (input-ledger:view-content $view $id $content)
+   (case (collapse (match $view (ledger:covered $id $covering) $covering))
+     ((($covering) (str:join "" ("[input batch covered by " $covering "; original source via request-read " $id "]")))
+      ($other $content))))
+
+;   (<id> <content> <status> <kind> <note> <seq>) of the requests among $which (all), oldest first
+(= (input-ledger:request-view-row $view (request $id $q $k $c $st $p $n $sm $dg))
+   ($id (input-ledger:view-content $view $id (input-ledger:text-one $view $id)) $st $k $n $q))
+
+(= (input-ledger:request-view-rows $view $which)
+   (let $heads (if (== $which all) (input-ledger:all-heads $view) (input-ledger:heads-of-ids $view $which))
+     (map-atom (list:sort-by input-ledger:seq-first $heads) $head (input-ledger:request-view-row $view $head))))
+
+(= (input-ledger:note-first ($r1 $s1 $t1 $x1) ($r2 $s2 $t2 $x2)) (<= $s1 $s2))
+
+;   ((<sequence> <request> <text> <sources>) ...) by sequence
+(= (input-ledger:note-rows $notes)
+   (map-atom (list:sort-by input-ledger:note-first $notes) $note (input-ledger:note-row $note)))
+(= (input-ledger:note-row ($request $sequence $text $sources)) ($sequence $request $text $sources))
+
+; The call rows of task_context_cetta's pairs query: (<serial> <request> <position> <command>
+; <record> <ticket> <disposition>), <command> an element's JSON text, <record> its attempt's
+; result (none before it is recorded), <ticket> the attempt's ticket (none without an
+; attempt); a legacy action's calls only where an attempt exists; by serial and position.
+(= (input-ledger:json-items $text)
+   (case (json-parse $text) (((JsonArray $items) $items) ($other ()))))
+
+(= (input-ledger:legacy-commands $command)
+   (case (json-parse $command)
+     (((JsonObject $pairs) (case (input-ledger:json-member $pairs "commands") (((JsonArray $items) $items) ($other ()))))
+      ($value ($value)))))
+
+(= (input-ledger:json-member $pairs $key)
+   (if (== $pairs ()) none
+     (let* ((($head $tail) (decons-atom $pairs)) ((JsonPair $name $value) $head))
+       (if (== $name $key) $value (input-ledger:json-member $tail $key)))))
+
+(= (input-ledger:attempt-at $attempts $ticket $position)
+   (if (== $attempts ()) none
+     (let* ((($head $tail) (decons-atom $attempts)) (($t $p $result) $head))
+       (if (and (== $t $ticket) (== $p $position)) (found $result) (input-ledger:attempt-at $tail $ticket $position)))))
+
+(= (input-ledger:call-rows $serial $request $items $position $ticket $attempts $disposition)
+   (if (== $items ()) ()
+     (let* ((($item $rest) (decons-atom $items))
+            ($found (if (== $ticket none) none (input-ledger:attempt-at $attempts $ticket $position)))
+            ($next (+ $position 1))
+            ($later (input-ledger:call-rows $serial $request $rest $next $ticket $attempts $disposition)))
+       (case $found
+         (((found $result) (cons-atom ($serial $request $position (json-stringify $item) $result $ticket $disposition) $later))
+          ($none (if (== $disposition "legacy") $later
+                   (cons-atom ($serial $request $position (json-stringify $item) none none $disposition) $later))))))))
+
+(= (input-ledger:action-of-serial $actions $serial)
+   (if (== $actions ()) none
+     (let* ((($head $tail) (decons-atom $actions)) (($s $t $r $c) $head))
+       (if (== $s $serial) $head (input-ledger:action-of-serial $tail $serial)))))
+
+(= (input-ledger:proposal-rows $proposals $actions $attempts)
+   (if (== $proposals ()) ()
+     (let* ((($head $tail) (decons-atom $proposals)) (($serial $request $commands $disposition) $head)
+            ($action (input-ledger:action-of-serial $actions $serial))
+            ($ticket (case $action ((none none) (($s $t $r $c) $t))))
+            ($rows (input-ledger:call-rows $serial $request (input-ledger:json-items $commands) 0 $ticket $attempts $disposition)))
+       (union-atom $rows (input-ledger:proposal-rows $tail $actions $attempts)))))
+
+(= (input-ledger:legacy-rows $actions $proposed $attempts)
+   (if (== $actions ()) ()
+     (let* ((($head $tail) (decons-atom $actions)) (($serial $ticket $request $command) $head)
+            ($rows (if (input-ledger:member $serial $proposed) ()
+                     (input-ledger:call-rows $serial $request (input-ledger:legacy-commands $command) 0 $ticket $attempts "legacy"))))
+       (union-atom $rows (input-ledger:legacy-rows $tail $proposed $attempts)))))
+
+(= (input-ledger:call-first ($s1 $r1 $p1 $c1 $x1 $t1 $d1) ($s2 $r2 $p2 $c2 $x2 $t2 $d2))
+   (or (< $s1 $s2) (and (== $s1 $s2) (<= $p1 $p2))))
+
+(= (input-ledger:pair-rows $view $which)
+   (let* (($proposals (if (== $which all) (collapse (match $view (ledger:proposal $k $s $r $c $d) ($s $r $c $d)))
+                          (input-ledger:of-requests $view $which input-ledger:proposals-of)))
+          ($actions (if (== $which all) (collapse (match $view (ledger:action $t $r $s $tool $c $st $o $rc) ($s $t $r $c)))
+                        (input-ledger:of-requests $view $which input-ledger:request-actions)))
+          ($attempts (input-ledger:attempts-of-actions $view $actions))
+          ($proposed (map-atom $proposals $proposal (input-ledger:first-of $proposal))))
+     (list:sort-by input-ledger:call-first
+       (union-atom (input-ledger:proposal-rows $proposals $actions $attempts)
+                   (input-ledger:legacy-rows $actions $proposed $attempts)))))
+
+;   (task-rows <root> <requests> <notes> <pairs>) of the family of a request
+(= (input-ledger:task-rows-of $view $request)
+   (case (input-ledger:family $view $request)
+     ((cyclic cyclic)
+      ((family $root $members)
+       (task-rows $root (map-atom (input-ledger:request-view-rows $view $members) $row (input-ledger:without-seq $row))
+                  (input-ledger:note-rows (input-ledger:of-requests $view $members input-ledger:notes-of))
+                  (input-ledger:pair-rows $view $members))))))
+
+(= (input-ledger:without-seq ($id $content $status $kind $note $seq)) ($id $content $status $kind $note))
+
+; The conversation (task_context_cetta's ordered query): each request at its acceptance
+; (category 0, ordinal its seq), each call at its turn's capture (category 1, ordinal its
+; position); a call whose turn has no capture comes after everything, by serial. Entries
+; are (<ordering> <category> <ordinal> <row>), <row> as pair-rows answers; an input's row is
+; (-1 <request> -1 "null" <record> "input" "input").
+(= (input-ledger:input-record $content $limit)
+   (json-stringify (JsonObject ((JsonPair "disposition" (JsonString "input"))
+     (JsonPair "result" (if (== $limit -2) (JsonNumber (repr (str:byte-length $content)))
+                          (if (< $limit 0) JsonNull (JsonString $content))))))))
+
+(= (input-ledger:position-in $pairs $key $default)
+   (if (== $pairs ()) $default
+     (let* ((($head $tail) (decons-atom $pairs)) (($k $p) $head))
+       (if (== $k $key) $p (input-ledger:position-in $tail $key $default)))))
+
+(= (input-ledger:input-entry $arrivals $input-limit ($id $content $status $kind $note $seq))
+   ((input-ledger:position-in $arrivals $id 0) 0 $seq (-1 $id -1 "null" (input-ledger:input-record $content $input-limit) "input" "input")))
+
+(= (input-ledger:call-entry $captures $last ($serial $request $position $command $record $ticket $disposition))
+   ((input-ledger:position-in $captures $serial (+ $last (+ $serial 1))) 1 $position
+    ($serial $request $position $command $record $ticket $disposition)))
+
+(= (input-ledger:entry-first ($o1 $c1 $n1 $r1) ($o2 $c2 $n2 $r2))
+   (or (< $o1 $o2) (and (== $o1 $o2) (or (< $c1 $c2) (and (== $c1 $c2) (<= $n1 $n2))))))
+
+(= (input-ledger:entries $view $input-limit $result-limit)
+   (let* (($requests (input-ledger:request-view-rows $view all))
+          ($arrivals (collapse (match $view (ledger:arrival $r $p) ($r $p))))
+          ($calls (input-ledger:pair-rows $view all))
+          ($captures (input-ledger:captures-of $view (map-atom $calls $call (input-ledger:first-of-call $call))))
+          ($last (input-ledger:state-of $view "clock"))
+          ($inputs (map-atom $requests $row (input-ledger:input-entry $arrivals $input-limit $row)))
+          ($called (map-atom $calls $row (input-ledger:call-entry $captures $last (input-ledger:shaped-row $row $result-limit)))))
+     (list:sort-by input-ledger:entry-first (union-atom $inputs $called))))
+
+(= (input-ledger:first-of-call ($serial $request $position $command $record $ticket $disposition)) $serial)
+
+; task:limited-result-sql: a recorded result whose text is longer than the limit keeps its
+; first and last halves around a marker, and says so; any other record is unchanged.
+; <mode> a limit (0 or less: the whole result), or dispositions: the record's disposition alone
+; ("recorded" without one), as task:conversation-history asks for.
+(= (input-ledger:shaped-row ($serial $request $position $command $record $ticket $disposition) $mode)
+   ($serial $request $position $command
+    (if (== $mode dispositions) (input-ledger:disposition-record $record) (input-ledger:limited $record $mode))
+    $ticket $disposition))
+
+(= (input-ledger:disposition-record $record)
+   (if (== $record none) none
+     (case (catch (json-parse $record))
+       (((JsonObject $pairs)
+         (let $value (input-ledger:json-member $pairs "disposition")
+           (json-stringify (JsonObject ((JsonPair "disposition"
+             (if (or (== $value none) (== $value JsonNull)) (JsonString "recorded") $value)))))))
+        ($other "{\"disposition\":\"recorded\"}")))))
+
+;   (history <total> <pairs>): the conversation's entries from <offset>, <count> of them (all
+;   for 0), with inputs without their bodies and results reduced to their dispositions.
+(= (input-ledger:take $items $count)
+   (if (or (<= $count 0) (== $items ())) ()
+     (let* ((($head $tail) (decons-atom $items))) (cons-atom $head (input-ledger:take $tail (- $count 1))))))
+
+(= (input-ledger:conversation-history-of $view $offset $count)
+   (let* (($entries (input-ledger:entries $view -1 dispositions))
+          ($rest (input-ledger:drop $entries $offset))
+          ($page (if (== $count 0) $rest (input-ledger:take $rest $count))))
+     (history (size-atom $entries) (map-atom $page $entry (input-ledger:row-of-entry $entry)))))
+
+(= (input-ledger:limited $record $limit)
+   (if (or (<= $limit 0) (== $record none)) $record
+     (case (catch (json-parse $record))
+       (((JsonObject $pairs)
+         (case (input-ledger:json-member $pairs "result")
+           (((JsonString $text)
+             (let $length (str:char-length $text)
+               (if (> $length $limit)
+                   (json-stringify (JsonObject (input-ledger:truncated-pairs $pairs (input-ledger:cut $text $length $limit))))
+                   $record)))
+            ($other $record))))
+        ($other $record)))))
+
+(= (input-ledger:cut $text $length $limit)
+   (let* (($half (math:floor (/ $limit 2)))
+          ($tokens (math:floor (/ (+ (- $length $limit) 3) 4))))
+     (str:join "" ((str:char-slice $text 0 $half) "\n…" (repr $tokens)
+                   " tokens truncated; task-read shows the whole result…\n"
+                   (str:char-slice $text (- $length $half) $length)))))
+
+(= (input-ledger:truncated-pairs $pairs $short)
+   (let $replaced (map-atom $pairs $pair (input-ledger:replace-result $pair $short))
+     (if (== (input-ledger:json-member $pairs "result_truncated") none)
+         (union-atom $replaced ((JsonPair "result_truncated" (JsonBool True))))
+         (map-atom $replaced $pair (input-ledger:mark-truncated $pair)))))
+
+(= (input-ledger:replace-result (JsonPair $name $value) $short)
+   (if (== $name "result") (JsonPair "result" (JsonString $short)) (JsonPair $name $value)))
+(= (input-ledger:mark-truncated (JsonPair $name $value))
+   (if (== $name "result_truncated") (JsonPair "result_truncated" (JsonBool True)) (JsonPair $name $value)))
+
+(= (input-ledger:drop $items $count)
+   (if (or (<= $count 0) (== $items ())) $items (input-ledger:drop (cdr-atom $items) (- $count 1))))
+
+(= (input-ledger:open-request ($id $content $status $kind $note $seq) $focus)
+   (or (== $id $focus)
+       (or (input-ledger:member $status ("active" "waiting-user" "deferred" "covered"))
+           (and (== $status "processed") (or (== $kind "message") (== $kind "notification"))))))
+
+(= (input-ledger:excerpt-row ($id $content $status $kind $note $seq))
+   ($id $status $kind $note (str:char-slice $content 0 160)))
+
+;   (conversation-rows <requests> <notes> <pairs>): with a limit of 0 or less every request
+;   (id content status kind note) and note; else the open requests and the focus as
+;   (id status kind note excerpt) and their notes, and results cut at the limit. The pairs
+;   are the entries after the first <offset>.
+(= (input-ledger:conversation-rows-of $view $focus $offset $limit)
+   (let* (($all (input-ledger:request-view-rows $view all))
+          ($shown (if (<= $limit 0) $all
+                    (collapse (let $row (superpose $all) (if (input-ledger:open-request $row $focus) $row (empty))))))
+          ($requests (if (<= $limit 0) (map-atom $shown $row (input-ledger:without-seq $row))
+                         (map-atom $shown $row (input-ledger:excerpt-row $row))))
+          ($ids (map-atom $shown $row (input-ledger:first-of-row $row)))
+          ($notes (if (<= $limit 0) (input-ledger:note-rows (collapse (match $view (ledger:note $r $s $t $src) ($r $s $t $src))))
+                      (input-ledger:note-rows (input-ledger:of-requests $view $ids input-ledger:notes-of))))
+          ($entries (input-ledger:drop (input-ledger:entries $view $limit $limit) $offset))
+          ($pairs (map-atom $entries $entry (input-ledger:row-of-entry $entry))))
+     (conversation-rows $requests $notes $pairs)))
+
+(= (input-ledger:first-of-row ($id $content $status $kind $note $seq)) $id)
+(= (input-ledger:row-of-entry ($ordering $category $ordinal $row)) $row)
+
+; task:initial-start: where the first window starts. Each entry weighs its input's bytes or
+; its result's (at most 160000), its command's bytes, its request's characters and 160;
+; everything fits in 90% of the window, or the window starts at the first entry whose
+; suffix fits in 20% of it (the last entry when none does).
+(= (input-ledger:entry-bytes ($ordering $category $ordinal ($serial $request $position $command $record $ticket $disposition)))
+   (let $body (if (== $category 0)
+                  (case (json-parse $record) (((JsonObject $pairs) (case (input-ledger:json-member $pairs "result") (((JsonNumber $n) (parse $n)) ($other 0)))) ($other 0)))
+                  (if (== $record none) 0 (min (str:byte-length $record) 160000)))
+     (+ (+ $body (str:byte-length $command)) (+ (str:char-length $request) 160))))
+
+; From the last entry back (<reversed> sizes, <index> the last entry's): the smallest index
+; whose suffix fits; the suffix only grows towards the first entry.
+(= (input-ledger:suffix-start $reversed $index $tail $bound $best)
+   (if (== $reversed ()) $best
+     (let* ((($size $rest) (decons-atom $reversed))
+            ($sum (+ $tail $size))
+            ($next (if (<= $sum $bound) $index $best)))
+       (input-ledger:suffix-start $rest (- $index 1) $sum $bound $next))))
+
+(= (input-ledger:initial-start-of $view $capacity $ratio)
+   (let* (($entries (input-ledger:entries $view -2 0))
+          ($sizes (map-atom $entries $entry (input-ledger:entry-bytes $entry)))
+          ($total (foldl-atom $sizes 0 $sum $size (+ $sum $size)))
+          ($count (size-atom $sizes)))
+     (if (<= $total (* 0.9 (* $capacity $ratio))) 0
+       (let $found (input-ledger:suffix-start (list:reverse $sizes) (- $count 1) 0 (* 0.2 (* $capacity $ratio)) none)
+         (if (== $found none) (max 0 (- $count 1)) $found)))))

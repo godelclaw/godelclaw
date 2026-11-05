@@ -736,6 +736,12 @@ def task_family(request):
     raise LedgerUnavailable("input ledger task-family: unexpected answer %s" % _show(answer))
 
 
+def meta_prefix(prefix):
+    """The meta keys other modules keep under a prefix, by key: [(key, JSON text)]."""
+    return [(_checked_text(entry[0], "key"), _checked_text(entry[1], "value"))
+            for entry in _entries(_ledger_call("meta-prefix", (str(prefix),)), "meta-prefix")]
+
+
 def request_context(request):
     """(the chat of the request's frame or None, its inputs)."""
     from execution_gateway.cetta_worker import S
