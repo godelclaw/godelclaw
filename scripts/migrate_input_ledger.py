@@ -25,9 +25,16 @@ the source column by column (the working set and every content byte for byte),
 and counts what the store holds.
 Refused before anything is written: a request without a request_context row, with a
 status, kind or processed flag the native store does not know, with a content of
-more bytes than the ledger's server accepts as one value (input_ack.LEDGER_VALUE_BYTES), a
-source with a request that is covered or a row in input_supersessions (this script does not
-copy the task context yet: nothing would delete the supersession when the request is reopened).
+more bytes than the ledger's server accepts as one value (input_ack.LEDGER_VALUE_BYTES).
+
+It then copies the rest of the turn core (read_core, core_atoms): the meta keys, the turns
+(samples), the actions with their receipts' payloads, the command attempts, the task frames,
+the request inputs, the input supersessions, the task proposals and notes. The events table
+stays in SQLite: its two orderings, each request's first deliver and each turn's first capture,
+become the clock positions of the arrivals and turns, and the clock continues after its last
+sequence. Topics (meta active_topic, topic_contexts, model_jobs) and provider notices stay in
+SQLite. The copy is checked by reading every reader of observed_strategy, task_context and
+strategy_host on the source and on the target and comparing them (verify_readers).
 It refuses a target that holds any atom, and never merges into one. The copy is
 made in batches, each atomic: if it stops half way, discard the target store
 (it is not in use before the cutover) and run it again on a fresh one.
@@ -48,7 +55,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 STATES = ("registered", "submitted", "deleted", "expired")
 KINDS = ("message", "notification", "task", "goal", "autonomous")
-STATUSES = ("active", "processed", "waiting-user", "deferred", "addressed", "achieved", "cancelled")
+STATUSES = ("active", "processed", "waiting-user", "deferred", "addressed", "achieved", "cancelled", "covered")
 HEAD_COLUMNS = ("id", "seq", "kind", "checker", "status", "settled", "note", "summary", "digest")
 NOTICE_COLUMNS = ("task", "update_id", "lane", "send_key", "created", "message_id",
                   "processed", "delete_key", "state", "checked")
@@ -71,10 +78,11 @@ def _text(value, where):
     return value
 
 
-def read_source(path):
+def read_source(path, core=None):
     """(processed rows, notice rows, working set text or None, request rows) of the SQLite ledger, in one read
     transaction on a read-only connection. A request row is (id, content, status, checker, kind, processed, note) in
-    rowid order."""
+    rowid order. With a dict as `core`, the same transaction also fills it with the rest of the turn core's rows
+    (core_rows)."""
     path = Path(path)
     if not path.is_file():
         raise MigrationError("the source ledger is not a file: %s" % path)
@@ -93,8 +101,6 @@ def read_source(path):
                     working = _working_text(found[0][0])
             requests = []
             if "requests" in tables:
-                if "input_supersessions" in tables and db.execute("SELECT 1 FROM input_supersessions").fetchone():
-                    raise MigrationError("the source has input_supersessions rows: the task-context family is not native yet")
                 context = "request_context" in tables
                 requests = db.execute("SELECT r.id, r.content, r.status, r.checker, %s FROM requests r %s ORDER BY r.rowid"
                                       % (("c.kind, c.processed, c.note", "LEFT JOIN request_context c ON c.request=r.id")
@@ -108,6 +114,8 @@ def read_source(path):
                 # A table from before `checked` existed reads as input_ack's ALTER TABLE would give it: 0.
                 columns = ", ".join(name if name in have else "0.0" for name in NOTICE_COLUMNS)
                 notices = db.execute("SELECT %s FROM input_notices ORDER BY task" % columns).fetchall()
+            if core is not None:
+                core.update(core_rows(db, tables))
     except sqlite3.Error as error:
         raise MigrationError("cannot read the source ledger: %s" % error) from error
     return processed, notices, working, requests
@@ -169,8 +177,6 @@ def request_atoms(row, number):
         raise MigrationError("%s (%s) has no request_context row" % (where, "an id"))
     if kind not in KINDS:
         raise MigrationError("%s has a kind that is none of %s" % (where, ", ".join(KINDS)))
-    if status == "covered":
-        raise MigrationError("%s is covered: the task-context family is not native yet" % where)
     if status not in STATUSES:
         raise MigrationError("%s has a status that is none of %s" % (where, ", ".join(STATUSES)))
     if type(processed) is not int or processed not in (0, 1):
@@ -195,6 +201,136 @@ def request_links(requests):
         links.append(E("request-prev", row[0], before))
         before = row[0]
     return links + ([E("request-tail", "tail", len(requests), before)] if requests else [])
+
+
+# ---- the rest of the turn core ----
+
+TYPED_META = ("owner", "revision", "mode", "paused", "next_sample", "pending", "router_revision", "context_focus")
+SQLITE_META = ("working_set", "active_topic", "input_supersessions_v1")  # copied above, kept by SQLite, or SQLite's own
+
+
+def core_rows(db, tables):
+    """The rows of the turn core beyond the input ledger's, read in the caller's transaction."""
+    rows = lambda table, sql: db.execute(sql).fetchall() if table in tables else []
+    core = dict(
+        meta=rows("meta", "SELECT key, value FROM meta ORDER BY key"),
+        samples=rows("samples", "SELECT serial, snapshot, status FROM samples ORDER BY serial"),
+        actions=rows("actions", "SELECT ticket, request, serial, tool, command, status, receipt, observed "
+                                "FROM actions ORDER BY rowid"),
+        attempts=rows("command_attempts", "SELECT rowid, ticket, position, command, result "
+                                          "FROM command_attempts ORDER BY rowid"),
+        frames=rows("task_frames", "SELECT request, parent, trigger, chat FROM task_frames ORDER BY rowid"),
+        inputs=rows("request_inputs", "SELECT rowid, request, input FROM request_inputs ORDER BY rowid"),
+        supersessions=rows("input_supersessions", "SELECT request, covering FROM input_supersessions"),
+        proposals=rows("task_proposals", "SELECT serial, request, commands, disposition FROM task_proposals "
+                                         "ORDER BY serial"),
+        notes=rows("task_notes", "SELECT sequence, request, text, sources FROM task_notes ORDER BY sequence"),
+        delivered=rows("events", "SELECT json_extract(event,'$.request'), MIN(sequence) FROM events "
+                                 "WHERE json_extract(event,'$.kind')='deliver' GROUP BY 1"),
+        captured=rows("events", "SELECT json_extract(event,'$.serial'), MIN(sequence) FROM events "
+                                "WHERE json_extract(event,'$.kind')='capture' GROUP BY 1"),
+        last_event=(rows("events", "SELECT MAX(sequence) FROM events") or [(0,)])[0][0] or 0,
+        last_note=max([row[0] for row in rows("task_notes", "SELECT MAX(sequence) FROM task_notes") if row[0]]
+                      + [row[0] for row in rows("sqlite_sequence", "SELECT seq FROM sqlite_sequence WHERE name='task_notes'")]
+                      + [0]),
+        last_attempt=(rows("command_attempts", "SELECT MAX(rowid) FROM command_attempts") or [(0,)])[0][0] or 0)
+    return core
+
+
+def _json(text, where):
+    try:
+        return json.loads(text)
+    except (TypeError, ValueError) as error:
+        raise MigrationError("%s is not JSON: %s" % (where, error)) from error
+
+
+def _none(value):
+    from execution_gateway.cetta_worker import S
+    return S("none") if value is None else value
+
+
+def core_atoms(core):
+    """The records of the turn core, as src/input_ledger.metta describes them."""
+    from execution_gateway.cetta_worker import E, S
+    from observed_strategy import digest, encoded
+    atoms = []
+    meta = {key: value for key, value in core["meta"]}
+    for key, text in core["meta"]:
+        where = "meta %s" % key
+        if key in SQLITE_META:
+            continue
+        if key == "router_revision":
+            atoms.append(E("ledger:state", key, _text(text, where)))
+        elif key in TYPED_META:
+            value = _json(text, where)
+            if key in ("owner", "mode") and type(value) is not str:
+                raise MigrationError("%s is not text" % where)
+            if key in ("revision", "next_sample") and type(value) is not int:
+                raise MigrationError("%s is not an integer" % where)
+            if key == "paused" and type(value) is not bool:
+                raise MigrationError("%s is not a boolean" % where)
+            if key in ("pending", "context_focus") and value is not None and type(value) is not (int if key == "pending" else str):
+                raise MigrationError("%s has an unexpected type" % where)
+            atoms.append(E("ledger:state", key, _none(value)))
+        else:
+            atoms.append(E("ledger:meta", key, _text(text, where)))
+    atoms += [E("ledger:state", "clock", int(core["last_event"])),
+              E("ledger:state", "notes", int(core["last_note"])),
+              E("ledger:state", "attempts", int(core["last_attempt"]))]
+    for request, position in core["delivered"]:
+        atoms.append(E("ledger:arrival", _text(request, "a deliver event's request"), int(position)))
+    captured = {int(serial): int(position) for serial, position in core["captured"] if serial is not None}
+    for serial, snapshot, status in core["samples"]:
+        where = "sample %d" % serial
+        snap = _json(snapshot, where + " snapshot")
+        atoms.append(E("ledger:turn", repr(int(serial)), int(serial), _text(status, where + " status"),
+                       E("ledger:snapshot", snap.get("revision", 0), snap.get("mode", ""), snap.get("owner", ""),
+                         _none(snap.get("focus")), snap.get("boundary_digest", ""), encoded(snap.get("router")),
+                         snap.get("guard", "")),
+                       captured.get(int(serial), S("none"))))
+    for ticket, request, serial, tool, command, status, receipt, observed in core["actions"]:
+        where = "action %s" % serial
+        if receipt is None:
+            record = S("none")
+        else:
+            value = _json(receipt, where + " receipt")
+            payload = str(value["payload"])
+            record = E("ledger:receipt", str(value["disposition"]), str(value["domain"]), digest(payload), len(payload))
+            atoms.append(E("ledger:payload", ticket, payload))
+        atoms.append(E("ledger:action", ticket, request, int(serial), tool, command, status,
+                       S("observed") if observed else S("unobserved"), record))
+    for rowid, ticket, position, command, result in core["attempts"]:
+        atoms.append(E("ledger:attempt", ticket, int(position), command, _none(result), int(rowid)))
+    for request, parent, trigger, chat in core["frames"]:
+        atoms.append(E("ledger:frame", request, _none(parent), trigger, chat or ""))
+        if parent:
+            atoms.append(E("ledger:child", parent, request))
+    for rowid, request, input_id in core["inputs"]:
+        atoms += [E("ledger:input-of", request, str(input_id)), E("ledger:requests-of", str(input_id), request, int(rowid))]
+    for request, covering in core["supersessions"]:
+        atoms += [E("ledger:covered", request, covering), E("ledger:covers", covering, request)]
+    for serial, request, commands, disposition in core["proposals"]:
+        listed = _json(commands, "proposal %s commands" % serial)
+        atoms += [E("ledger:proposal", repr(int(serial)), int(serial), request, commands, disposition,
+                    captured.get(int(serial), S("none")), len(listed) if isinstance(listed, list) else 0),
+                  E("ledger:proposal-of", request, int(serial))]
+    for sequence, request, text, sources in core["notes"]:
+        atoms.append(E("ledger:note", request, int(sequence), text, sources))
+    return atoms
+
+
+def _value_batches(items, size, limit=32 * 1024 * 1024):
+    """Batches of at most `size` atoms and about `limit` bytes of text."""
+    batch, total = [], 0
+    for item in items:
+        weight = len(repr(item))
+        if batch and (len(batch) >= size or total + weight > limit):
+            yield batch
+            batch, total = [], 0
+        batch.append(item)
+        total += weight
+    if batch:
+        yield batch
 
 
 def _same_number(stored, expected):
@@ -241,7 +377,9 @@ def migrate(source, socket, *, batch=BATCH, after_copy=None):
         except sqlite3.OperationalError as error:
             raise MigrationError("the native ledger failed: %s" % error) from error
 
-    processed, notices, working, requests = read_source(source)
+    rows = {}
+    processed, notices, working, requests = read_source(source, core=rows)
+    core = core_atoms(rows)
     atoms = [processed_atom(row, number) for number, row in enumerate(processed)]
     notice_atoms = [notice_atom(row, number) for number, row in enumerate(notices)]
     request_pairs = [request_atoms(row, number) for number, row in enumerate(requests)]
@@ -276,12 +414,18 @@ def migrate(source, socket, *, batch=BATCH, after_copy=None):
         if answer is not True:
             raise MigrationError("unexpected answer to a batch: %s" % input_ack._show(answer))
         expect, batches = "any", batches + 1
+    for chunk in _value_batches(core, batch):
+        answer = call("import", (S("any"), tuple(chunk)))
+        if answer is not True:
+            raise MigrationError("unexpected answer to a batch of the turn core: %s" % input_ack._show(answer))
+        batches += 1
     if after_copy is not None:
         after_copy(call)
     census = call("census", ())
-    # other atoms: the working set, per request a content and a link to the one before, and the tail atom
+    # other atoms: the working set, per request a content and a link to the one before, the tail atom, and the
+    # records of the turn core
     if census != (S("census"), len(atoms), len(notice_atoms), len(heads),
-                  len(working_atoms) + 2 * len(heads) + (1 if heads else 0)):
+                  len(working_atoms) + 2 * len(heads) + (1 if heads else 0) + len(core)):
         raise MigrationError("the target holds %s, the source had %d processed ids, %d notices, %d requests and %d working set"
                              % (input_ack._show(census), len(atoms), len(notice_atoms), len(heads), len(working_atoms)))
     newest = call("request-page", (0, 1))
@@ -312,7 +456,78 @@ def migrate(source, socket, *, batch=BATCH, after_copy=None):
                         raise MigrationError("%s row %d differs in: %s" % (kind, rows.index(want), ", ".join(different)))
     return {"source": str(Path(source).resolve()), "socket": str(socket), "processed_inputs": len(atoms),
             "input_notices": len(notice_atoms), "requests": len(heads), "working_set_bytes": None if working is None else len(working.encode("utf-8")),
-            "batches": batches, "verified": True}
+            "turn_core_records": len(core), "batches": batches, "verified": True}
+
+
+def verify_readers(source, socket, *, progress=None):
+    """Compare what the agent reads on the source and on the target: the Ledger's views, each request's record,
+    status, protected view and task projection, the conversation, the request inputs, the context focus and
+    strategy_host's receipts pages. The source is read through a scratch copy (the SQLite code opens it for
+    writing); the target through the native path. Answers the list of the readers that differ (empty: none)."""
+    import os
+    import shutil
+    import tempfile
+    from unittest import mock
+    import input_ack
+    import observed_strategy
+    import strategy_host
+    import task_context
+    typed = ("owner", "revision", "mode", "paused", "next_sample", "pending", "router_revision", "context_focus")
+
+    def views(store):
+        projection = store.projection()
+        meta = projection["meta"]
+        found = {"meta": {key: meta.get(key) for key in typed},
+                 "requests": projection["requests"], "actions": projection["actions"],
+                 "page": store.request_page(0, 10 ** 6), "active": store.active()}
+        for record in found["page"]["records"]:
+            record["summary"] = record["summary"].split("\x00")[0]  # SQLite's substr stops at a NUL
+        ids = [row["id"] for row in projection["requests"]]
+        focus = meta.get("context_focus")
+        found["records"] = {key: store.request_record(key) for key in ids}
+        found["protected"] = {key: store.protected(key) for key in [focus] + [row["id"] for row in found["active"]] if key}
+        found["projections"] = {key: task_context.projection(store, key) for key in ids}
+        found["current"] = task_context.current(store)
+        found["resume"] = task_context.resume(store, focus) if focus else None
+        found["conversation"] = task_context.conversation_projection(store, focus) if focus else None
+        with mock.patch.object(strategy_host, "_ledger", store), mock.patch.dict(os.environ, {"METTACLAW_OBSERVED_STRATEGY": "1"}):
+            pages, cursor = [], ""
+            for _ in range(5):
+                page = json.loads(strategy_host.command_receipts(cursor))
+                pages.append(page)
+                cursor = page.get("next_cursor")
+                if not cursor:
+                    break
+        found["receipts"] = pages
+        return found
+
+    with tempfile.TemporaryDirectory(prefix="ledger-verify-") as scratch:
+        copy = Path(scratch) / "source.sqlite3"
+        shutil.copyfile(source, copy)
+        saved = os.environ.get(input_ack.LEDGER_SOCKET)
+        try:
+            os.environ.pop(input_ack.LEDGER_SOCKET, None)
+            oracle = views(observed_strategy.Ledger(copy))
+            if progress:
+                progress("read the source")
+            os.environ[input_ack.LEDGER_SOCKET] = str(socket)
+            native = views(observed_strategy.Ledger(Path(scratch) / "gate.sqlite3"))
+            if progress:
+                progress("read the target")
+        finally:
+            input_ack.close_ledger()
+            if saved is None:
+                os.environ.pop(input_ack.LEDGER_SOCKET, None)
+            else:
+                os.environ[input_ack.LEDGER_SOCKET] = saved
+    differing = []
+    for name in oracle:
+        if isinstance(oracle[name], dict) and name in ("records", "protected", "projections"):
+            differing += ["%s[%d]" % (name, index) for index, key in enumerate(oracle[name])
+                          if native[name].get(key) != oracle[name][key]]
+        elif native[name] != oracle[name]:
+            differing.append(name)
+    return differing
 
 
 def main(argv=None):
@@ -320,11 +535,19 @@ def main(argv=None):
     parser.add_argument("--source", type=Path, required=True, help="the SQLite ledger to read (read-only)")
     parser.add_argument("--socket", required=True, help="the socket of the native ledger server (an empty store)")
     parser.add_argument("--batch", type=int, default=BATCH, help="rows per transaction (default %d)" % BATCH)
+    parser.add_argument("--verify-readers", action="store_true",
+                        help="after the copy, compare every reader on the source and on the target")
     args = parser.parse_args(argv)
     if not 1 <= args.batch <= 1000:
         parser.error("--batch must be between 1 and 1000")
     try:
         report = migrate(args.source, args.socket, batch=args.batch)
+        if args.verify_readers:
+            differing = verify_readers(args.source, args.socket,
+                                       progress=lambda what: print(what, file=sys.stderr, flush=True))
+            report["readers_differing"] = differing
+            if differing:
+                raise MigrationError("the target reads differently from the source: %s" % ", ".join(differing[:20]))
     except MigrationError as error:
         print("migration refused or failed: %s" % error, file=sys.stderr)
         return 1

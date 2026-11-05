@@ -490,7 +490,7 @@ def request_rows(which="all"):
     `which`: "all", "active" or a list of ids."""
     from execution_gateway.cetta_worker import S
     selector = S(which) if which in ("all", "active") else tuple(str(item) for item in dict.fromkeys(which))
-    answer = _ledger_call("request-rows", (selector,))
+    answer = _ledger_call("request-rows", (selector,), WHOLE_READ_SECONDS if which == "all" else 10)
     if not isinstance(answer, tuple):
         raise LedgerUnavailable("input ledger request-rows: unexpected answer %s" % _show(answer))
     return [_request_row(row) for row in answer]
@@ -622,12 +622,18 @@ def _action_of(row):
                 status=status, observed=_flag_of(observed), receipt=receipt)
 
 
+# A read of every record of a family (the diagnostic projection, the conversation of the SQLite engine's
+# context) can carry the whole history; it gets this deadline instead of a call's usual one.
+WHOLE_READ_SECONDS = 900
+
+
 def actions(which="all"):
     """The actions, oldest first: "all", "unobserved" (with a receipt), ("ticket", t), ("status", s) or
     ("request", r). Each a dict whose receipt is None or {ticket, payload, disposition, domain}."""
     from execution_gateway.cetta_worker import S
     selection = which if isinstance(which, str) else (S(which[0]), str(which[1]))
-    return [_action_of(row) for row in _entries(_ledger_call("actions", (selection,)), "actions")]
+    timeout = WHOLE_READ_SECONDS if which == "all" else 10
+    return [_action_of(row) for row in _entries(_ledger_call("actions", (selection,), timeout), "actions")]
 
 
 def attempt_begin(ticket, position, command_text, request_id=None):
@@ -766,7 +772,7 @@ def task_view(which):
     """Everything a task projection reads, for a list of requests or "all", from one snapshot."""
     from execution_gateway.cetta_worker import S
     selection = S("all") if which == "all" else tuple(str(item) for item in dict.fromkeys(which))
-    answer = _ledger_call("task-view", (selection,))
+    answer = _ledger_call("task-view", (selection,), WHOLE_READ_SECONDS if which == "all" else 10)
     if not (isinstance(answer, tuple) and len(answer) == 10 and answer[0] == S("view")):
         raise LedgerUnavailable("input ledger task-view: unexpected answer %s" % _show(answer))
     _, owner, requests, coverings, notes, proposals, actions, attempts, arrivals, captures = answer

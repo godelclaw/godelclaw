@@ -526,9 +526,10 @@ class Ledger:
             # actions: the requests are read from the native store, the actions stay in SQLite.
             exact = {r["id"]: r["checker"] for r in input_ack.request_rows("active")
                      if r["checker"][:7].isascii() and r["checker"][:7].lower() == "sha256:"}
+            found = [a for key in exact for a in input_ack.actions(("request", key))
+                     if a["observed"] and a["receipt"] is not None]
             candidates = [dict(id=a["request"], checker=exact[a["request"]], ticket=a["ticket"])
-                          for a in input_ack.actions("all")
-                          if a["observed"] and a["receipt"] is not None and a["request"] in exact]
+                          for a in sorted(found, key=lambda action: action["serial"])]
             return self._finish_exact(candidates)
         with self.transaction() as db:
             candidates = list(db.execute("SELECT requests.id,requests.checker,actions.ticket FROM requests JOIN actions ON requests.id=actions.request WHERE requests.status='active' AND actions.observed=1 AND actions.receipt IS NOT NULL AND requests.checker LIKE 'sha256:%'"))

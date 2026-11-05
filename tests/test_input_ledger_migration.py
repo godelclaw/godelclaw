@@ -114,12 +114,14 @@ class MigrationTest(NativeCase):
         done = self.migrate_cli(source)
         self.assertEqual(done.returncode, 0, done.stderr)
         report = json.loads(done.stdout)
+        # No input rows; the ledger's meta keys (its owner, revision and the like) are the one batch of the turn core.
         self.assertEqual((report["processed_inputs"], report["input_notices"], report["batches"], report["verified"]),
-                         (0, 0, 0, True))
+                         (0, 0, 1, True))
+        self.assertGreater(report["turn_core_records"], 0)
         self.assertEqual(self.dump(), ([], {}))
         self.assertEqual(digest(source), before)
-        # Nothing was copied, so the store is still empty and a second run is not a re-run of a copy.
-        self.assertEqual(self.migrate_cli(source).returncode, 0)
+        # The target now holds those keys: a second run refuses it rather than copying twice.
+        self.assertEqual(self.migrate_cli(source).returncode, 1)
 
     def test_a_populated_ledger_with_every_state_is_copied_row_for_row_and_behaves_alike_afterwards(self):
         operations = EVERY_STATE + [EXTRA_IDS]
@@ -152,6 +154,19 @@ class MigrationTest(NativeCase):
         self.assertEqual(rows, final_notices)
         self.assertEqual(ids, final_processed)
 
+    def test_the_turn_core_is_copied_and_every_reader_reads_as_on_the_source(self):
+        # Frames, coverage, turns, actions with receipts, attempts, proposals and notes, written on SQLite.
+        from observed_strategy import Ledger
+        from test_task_context_native import contexts
+        with oracle_environment() as directory:
+            oracle = Oracle.create(directory)
+            contexts(Ledger(oracle.path), False, lambda name, value: None)
+            source = self.directory / "core.db"
+            shutil.copyfile(oracle.path, source)
+        report = self.migrate_here(source)
+        self.assertGreater(report["turn_core_records"], 30)
+        self.assertEqual(migration.verify_readers(source, str(self.server.socket)), [])
+
     def test_a_large_ledger_is_copied_in_batches(self):
         operations = [("mark", ["id-%04d" % n for n in range(300)], float(n)) for n in range(1)]
         operations += [("register", "task-%03d" % n, "id-%04d" % n if n % 2 else "free-%d" % n, LANE, 100.0 + n)
@@ -162,7 +177,7 @@ class MigrationTest(NativeCase):
         done = self.run_script("--source", str(source), "--socket", str(self.server.socket), "--batch", "50")
         self.assertEqual(done.returncode, 0, done.stderr)
         report = json.loads(done.stdout)
-        self.assertEqual(report["batches"], -(-(len(processed) + len(notices)) // 50))
+        self.assertEqual(report["batches"], -(-(len(processed) + len(notices)) // 50) + -(-report["turn_core_records"] // 50))
         self.assertGreater(report["batches"], 4)
         self.assertEqual(self.dump(), (notices, processed))
         self.assertLess(time.monotonic() - started, 120)
@@ -417,7 +432,7 @@ class MigrationTest(NativeCase):
         # a working set, the processed ids and notices, a record, a content and a link per request, the tail atom
         atoms = (1 if report["working_set_bytes"] else 0) + report["processed_inputs"] + report["input_notices"] \
             + 3 * report["requests"] + 1
-        self.assertEqual(report["batches"], -(-atoms // 3))
+        self.assertEqual(report["batches"], -(-atoms // 3) + -(-report["turn_core_records"] // 3))
         self.assertGreater(report["batches"], 7)
         self.assertTrue(report["verified"])
 
@@ -429,8 +444,6 @@ class MigrationTest(NativeCase):
             "unknown kind": ("UPDATE request_context SET kind='bogus' WHERE request='task-1'", "kind that is none of"),
             "a processed flag of 2": ("UPDATE request_context SET processed=2 WHERE request='task-1'", "processed is not 0 or 1"),
             "no context row": ("DELETE FROM request_context WHERE request='task-1'", "no request_context row"),
-            "covered": ("UPDATE requests SET status='covered' WHERE id='task-1'", "is covered"),
-            "a supersession": ("INSERT INTO input_supersessions VALUES ('task-1','input:2')", "input_supersessions"),
             "a content that is no text": ("UPDATE requests SET content=CAST(x'ff' AS BLOB) WHERE id='task-1'", "not text"),
         }
         for name, (statement, message) in cases.items():
