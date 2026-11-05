@@ -4,11 +4,14 @@ A notice does not consume input, complete work, or make a provider request.
 The service owns the input and the actual delivery receipts.
 """
 
+import atexit
 import hashlib
 import json
 import math
 import os
+import threading
 import time
+import uuid
 import sqlite3
 from contextlib import closing
 import agent_checkpoint
@@ -42,16 +45,37 @@ def task_active(task):
     return int(str(task) in _active_tasks)
 
 
+def telegram_service_state_dir():
+    """The durable Telegram service's state directory (cetta-telegram-<instance>, or
+    METTACLAW_TELEGRAM_SERVICE_STATE_DIR): what the change watch and the service share.
+    It is NOT the agent's own state directory, where the native input ledger lives."""
+    from pathlib import Path
+    state = os.environ.get("METTACLAW_TELEGRAM_SERVICE_STATE_DIR")
+    if not state:
+        state = str(Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) /
+                    ("cetta-telegram-" + os.environ.get("METTACLAW_INSTANCE", "agent")))
+    return Path(state)
+
+
+def ledger_paths(state):
+    """(store directory, socket) of the native input ledger: <state>/input-ledger/store
+    and <state>/input-ledger/ledger.sock, where `state` is the AGENT's own state
+    directory, the one that holds its engine selection, observed-strategy.sqlite3 and
+    modes/ (agent_checkpoint.state_dir(): the parent of METTACLAW_ENGINE_STATE_PATH,
+    <XDG_STATE_HOME or ~/.local/state>/<instance> by run.sh). The caller passes it; there
+    is no default. The unit pettaclaw-input-ledger@.service serves these paths;
+    METTACLAW_INPUT_LEDGER_SOCKET carries the socket to the processes that use it."""
+    from pathlib import Path
+    root = Path(state) / "input-ledger"
+    return root / "store", root / "ledger.sock"
+
+
 def arm_changes():
     global _changes
     if _changes is None:
-        from pathlib import Path
         import durable_telegram
         import mode_channel
-        state = os.environ.get("METTACLAW_TELEGRAM_SERVICE_STATE_DIR")
-        if not state:
-            state = str(Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) /
-                        ("cetta-telegram-" + os.environ.get("METTACLAW_INSTANCE", "agent")))
+        state = str(telegram_service_state_dir())
         outbox = mode_channel.state() / "channel-outbox"
         outbox.mkdir(parents=True, exist_ok=True)
         _changes = durable_telegram.Changes([state, outbox], ignore_names=("pump.lock", "sequence"))
@@ -88,10 +112,402 @@ def _store(timeout=10):
     return store
 
 
+# ---- the native input ledger (METTACLAW_INPUT_LEDGER_SOCKET) ----
+#
+# With the variable set, the tables of this module live in the native db server
+# on that socket and are reached through src/input_ledger.metta, run by a
+# persistent cetta-value-worker (the CSP1 client of execution_gateway, the same
+# one the gateway queue uses). SQLite is not consulted then, and when the server
+# cannot be reached these calls fail: there is no silent fallback to SQLite,
+# which would split the ledger into two stores. Unset (or empty), nothing here runs.
+LEDGER_SOCKET = "METTACLAW_INPUT_LEDGER_SOCKET"
+WORKING_SET_NOTE = 1000000  # a failure of a working set this large is explained (engine limit: about 1 MiB per atom)
+SOCKET_BYTES = 107  # sockaddr_un.sun_path holds 108 bytes on Linux, the last one a NUL
+_ledger = None
+_ledger_lock = threading.RLock()
+
+
+class LedgerUnavailable(sqlite3.OperationalError):
+    """The native ledger cannot answer: nobody listens, the answer was lost for
+    good, or the store refused. What an unopenable SQLite file raises, and handled
+    the same by callers (channels/telegram.py handover_ack re-raises it)."""
+
+
+class LedgerBusy(LedgerUnavailable):
+    """The write kept losing races to other writers; nothing was applied. Looks
+    like a locked SQLite database to callers, who return 0 and retry later."""
+
+    def __init__(self, message):
+        super().__init__("database is locked: " + message)
+        self.sqlite_errorcode = sqlite3.SQLITE_BUSY
+
+
+def _native_socket():
+    return os.environ.get(LEDGER_SOCKET, "")
+
+
+def _managed():
+    """Whether _store() would open a ledger at all: the same two conditions, without opening one."""
+    if not (os.environ.get("METTACLAW_STRATEGY_PATH") or
+            os.environ.get("METTACLAW_ENGINE_STATE_PATH")):
+        return False
+    return not (os.environ.get("METTACLAW_OBSERVED_STRATEGY", "0") != "1"
+                and not agent_checkpoint.path().exists())
+
+
+def _worker_binary():
+    explicit = os.environ.get("CETTA_VALUE_WORKER_BIN")
+    if explicit:
+        return explicit
+    engine = os.environ.get("CETTA_BIN")
+    # The value worker sits next to cetta in the bundle (build_cetta.py writes both into runtime.env).
+    from pathlib import Path
+    return str(Path(engine).with_name("cetta-value-worker")) if engine else "cetta-value-worker"
+
+
+def _ledger_worker():
+    global _ledger
+    from execution_gateway.cetta_worker import CettaValueWorker
+    from pathlib import Path
+    module = Path(__file__).resolve().with_name("input_ledger.metta")
+    binary = _worker_binary()
+    with _ledger_lock:
+        if _ledger is not None and (_ledger[0] != os.getpid() or _ledger[1] != (binary, module)):
+            if _ledger[0] == os.getpid():
+                _ledger[2].close()
+            else:  # a forked child gives up its copies of its parent's pipes and leaves that worker alone
+                for stream in (getattr(_ledger[2].process, "stdin", None), getattr(_ledger[2].process, "stdout", None)):
+                    if stream is not None:
+                        stream.close()
+            _ledger = None
+        if _ledger is None or _ledger[2].closed:
+            _ledger = (os.getpid(), (binary, module),
+                       CettaValueWorker(binary, module, "input-ledger:run", timeout=10, language="petta"))
+        return _ledger[2]
+
+
+def close_ledger():
+    """Stop this process's ledger worker (it restarts on the next call)."""
+    global _ledger
+    with _ledger_lock:
+        current, _ledger = _ledger, None
+    if current is not None and current[0] == os.getpid():
+        current[2].close()
+
+
+atexit.register(close_ledger)
+
+
+def _show(value):
+    from execution_gateway.cetta_worker import FloatBits, Symbol, scalar_float
+    if isinstance(value, Symbol):
+        return str(value.name)
+    if isinstance(value, FloatBits):
+        return repr(scalar_float(value))
+    if isinstance(value, tuple):
+        return "(" + " ".join(_show(item) for item in value) + ")"
+    return repr(value)
+
+
+def _ledger_call(verb, arguments, timeout=10, socket=None):
+    """One verb of the ledger module on the native store; the verb's own value.
+
+    The request names the socket and carries its arguments, $now among them,
+    so a repeat of it is the same write with the same request ids. The module
+    reconnects and repeats a request itself after an unavailable or uncertain
+    outcome (input-ledger:session); the transport below is repeated once, on
+    a restarted worker, with the same request. Raises LedgerBusy for a write
+    that lost every race and LedgerUnavailable for any other failure. `socket`
+    names another server than the configured one (the migration script)."""
+    from execution_gateway.cetta_worker import E, S, Symbol, WorkerEvaluationError, WorkerUnavailable
+    socket_path = _native_socket() if socket is None else str(socket)
+    if len(os.fsencode(socket_path)) > SOCKET_BYTES:
+        raise LedgerUnavailable("input ledger socket path is %d bytes; a unix socket path may hold %d: %s"
+                                % (len(os.fsencode(socket_path)), SOCKET_BYTES, socket_path))
+    request = E("ledger", socket_path, verb, tuple(arguments))
+    problem = None
+    for _ in range(2):
+        try:
+            worker = _ledger_worker()
+            with worker.lock:
+                worker.timeout = float(timeout) if timeout and timeout > 0 else 5.0
+                reply = worker.call(request)
+            break
+        except WorkerEvaluationError as error:
+            raise LedgerUnavailable("input ledger %s: %s" % (verb, _show(error.detail))) from error
+        except (WorkerUnavailable, OSError) as error:
+            problem = error
+    else:
+        raise LedgerUnavailable("input ledger %s: worker unavailable: %s" % (verb, problem)) from problem
+    if not (isinstance(reply, tuple) and len(reply) == 2 and reply[0] == S("answer")):
+        raise LedgerUnavailable("input ledger %s: unexpected reply %s" % (verb, _show(reply)))
+    value = reply[1]
+    if isinstance(value, tuple) and value[:1] == (S("Error"),):
+        if value == (S("Error"), S("db:transaction"), (S("StoreRefused"), S("conflict"))):
+            raise LedgerBusy("input ledger %s lost every race: %s" % (verb, _show(value)))
+        raise LedgerUnavailable("input ledger %s: %s" % (verb, _show(value)))
+    return {S("true"): True, S("false"): False}.get(value, value) if isinstance(value, Symbol) else value
+
+
+def _ledger_flag(verb, arguments, timeout=10):
+    """A verb that answers True (the write committed) or fails."""
+    answer = _ledger_call(verb, arguments, timeout)
+    if answer is not True:
+        raise LedgerUnavailable("input ledger %s: unexpected answer %r" % (verb, answer))
+    return True
+
+
+def turn_checkpoint(working_text, ids, request, now, request_id=None):
+    """The native store's half of observed_strategy.Ledger.checkpoint: the working set
+    (its JSON text), the processed input ids, the request's processed status and
+    the notices' processed flags, as ONE transaction. Raises when it did not
+    commit (LedgerBusy: it lost every race; LedgerUnavailable: anything else,
+    and then it may or may not have committed: see below).
+
+    `request_id` names this checkpoint. It is made once here, before the first try, and
+    every repeat of the request (the module's sessions, the transport's second try)
+    carries it, so a repeat replays the commit instead of applying it twice. A new call
+    makes a new one: two checkpoints with equal arguments are two checkpoints, and the
+    second must apply even when another one came between them (A, B, A)."""
+    request_id = request_id or "ck1." + uuid.uuid4().hex
+    try:
+        return _ledger_flag("checkpoint", (str(working_text), tuple(str(i) for i in ids if str(i)),
+                                           str(request or ""), float(now), str(request_id)))
+    except LedgerUnavailable as error:
+        size = len(str(working_text).encode("utf-8", "surrogatepass"))
+        if type(error) is LedgerUnavailable and size >= WORKING_SET_NOTE:
+            # The engine refuses an atom of about 1 MiB (an Error, or no answer at all): say so.
+            raise LedgerUnavailable("%s; the working set is %d bytes and the native store refuses "
+                                    "values of about 1 MiB (nothing was written)" % (error, size)) from error
+        raise
+
+
+def working_set():
+    """The JSON text of the working set the last checkpoint stored, or None when none
+    was stored yet. An unreachable store raises: it is never an empty working set."""
+    from execution_gateway.cetta_worker import S
+    value = _ledger_call("working-set", ())
+    if value == S("none"):
+        return None
+    if not isinstance(value, str):
+        raise LedgerUnavailable("input ledger working-set: unexpected answer %s" % _show(value))
+    return value
+
+
+# ---- the requests in the native store (observed_strategy.Ledger on METTACLAW_INPUT_LEDGER_SOCKET) ----
+#
+# Thin transport: each function is one verb of src/input_ledger.metta (see "the requests"
+# there for the records) and returns Python values; the rules (what a disposition
+# refuses, what settles a request) live in the verbs, and observed_strategy.Ledger maps
+# the values to what its callers expect. A write makes its request id ONCE here, before
+# the first try: every repeat of the call (the module's sessions, the transport's second
+# try) carries it and replays the first answer; a new call is a new transition.
+
+def _rid():
+    return "rq1." + uuid.uuid4().hex
+
+
+def _name(value, what):
+    from execution_gateway.cetta_worker import Symbol
+    if isinstance(value, Symbol):
+        return str(value.name)
+    raise LedgerUnavailable("input ledger: unexpected %s %s" % (what, _show(value)))
+
+
+def _checked_text(value, what):
+    if not isinstance(value, str):
+        raise LedgerUnavailable("input ledger: unexpected %s %s" % (what, _show(value)))
+    return value
+
+
+def _flag_of(value):
+    if type(value) is not int or value not in (0, 1):
+        raise LedgerUnavailable("input ledger: unexpected flag %s" % _show(value))
+    return value
+
+
+def _request_write(verb, arguments, size_of=None):
+    """A write of the requests; explains the engine's refusal of an atom of about 1 MiB."""
+    try:
+        return _ledger_call(verb, arguments)
+    except LedgerUnavailable as error:
+        size = len(str(size_of).encode("utf-8", "surrogatepass")) if size_of is not None else 0
+        if type(error) is LedgerUnavailable and size >= WORKING_SET_NOTE:
+            raise LedgerUnavailable("%s; the content is %d bytes and the native store refuses values "
+                                    "of about 1 MiB (nothing was written)" % (error, size)) from error
+        raise
+
+
+def request_accept(key, content, checker, kind, summary, digest, request_id=None):
+    """"created", "exists" (same content and checker) or "conflict" (the id names another intent)."""
+    answer = _request_write("request-accept", (str(key), str(content), str(checker), str(kind), str(summary),
+                                               str(digest), str(request_id or _rid())), size_of=content)
+    name = _name(answer, "answer")
+    if name not in ("created", "exists", "conflict"):
+        raise LedgerUnavailable("input ledger request-accept: unexpected answer %s" % name)
+    return name
+
+
+def request_settle(key, now, request_id=None):
+    """Ledger._processed: True when the request was settled by this call."""
+    answer = _ledger_call("request-settle", (str(key), float(now), str(request_id or _rid())))
+    if type(answer) is not bool:
+        raise LedgerUnavailable("input ledger request-settle: unexpected answer %s" % _show(answer))
+    return answer
+
+
+def request_disposition(key, disposition, note, request_id=None):
+    """None when recorded, else the refusal (a text)."""
+    from execution_gateway.cetta_worker import S
+    answer = _ledger_call("request-disposition", (str(key), str(disposition), str(note), str(request_id or _rid())))
+    if answer == S("ok"):
+        return None
+    if isinstance(answer, tuple) and len(answer) == 2 and answer[0] == S("refused") and isinstance(answer[1], str) and answer[1]:
+        return answer[1]
+    raise LedgerUnavailable("input ledger request-disposition: unexpected answer %s" % _show(answer))
+
+
+def _request_move(verb, key, request_id):
+    answer = _ledger_call(verb, (str(key), str(request_id or _rid())))
+    if type(answer) is not bool:
+        raise LedgerUnavailable("input ledger %s: unexpected answer %s" % (verb, _show(answer)))
+    return answer
+
+
+def request_cancel(key, request_id=None):
+    """active -> cancelled: True when it moved."""
+    return _request_move("request-cancel", key, request_id)
+
+
+def request_finish(key, request_id=None):
+    """active -> achieved: True when it moved."""
+    return _request_move("request-finish", key, request_id)
+
+
+def request_answered(key, request_id=None):
+    """active or processed -> addressed: True when it moved."""
+    return _request_move("request-answered", key, request_id)
+
+
+def request_retire(prefix, note, request_id=None):
+    """The ids (oldest first) of the open requests under the prefix that were cancelled."""
+    from execution_gateway.cetta_worker import S
+    answer = _ledger_call("request-retire", (str(prefix), str(note), str(request_id or _rid())))
+    if not (isinstance(answer, tuple) and len(answer) == 2 and answer[0] == S("retired")
+            and isinstance(answer[1], tuple) and all(isinstance(item, str) for item in answer[1])):
+        raise LedgerUnavailable("input ledger request-retire: unexpected answer %s" % _show(answer))
+    return list(answer[1])
+
+
+def request_get(key, text=False):
+    """None for an unknown request, else {id, kind, checker, status, processed, note, content} (content only with text=True)."""
+    from execution_gateway.cetta_worker import S
+    answer = _ledger_call("request-get", (str(key), S("text" if text else "head")))
+    if answer == S("none"):
+        return None
+    if not (isinstance(answer, tuple) and len(answer) == 8 and answer[0] == S("got")):
+        raise LedgerUnavailable("input ledger request-get: unexpected answer %s" % _show(answer))
+    _, identity, kind, checker, status, processed, note, content = answer
+    return dict(id=_checked_text(identity, "id"), kind=_checked_text(kind, "kind"), checker=_checked_text(checker, "checker"),
+                status=_checked_text(status, "status"), processed=_flag_of(processed), note=_checked_text(note, "note"),
+                content=_checked_text(content, "content"))
+
+
+def request_record(key, offset=0):
+    """None for an unknown request, else {id, kind, checker, status, processed, note, slice, length, digest}."""
+    from execution_gateway.cetta_worker import S
+    answer = _ledger_call("request-record", (str(key), int(offset)))
+    if answer == S("none"):
+        return None
+    if not (isinstance(answer, tuple) and len(answer) == 10 and answer[0] == S("record")):
+        raise LedgerUnavailable("input ledger request-record: unexpected answer %s" % _show(answer))
+    _, identity, kind, checker, status, processed, note, piece, length, digest = answer
+    if type(length) is not int:
+        raise LedgerUnavailable("input ledger request-record: unexpected length %s" % _show(length))
+    return dict(id=_checked_text(identity, "id"), kind=_checked_text(kind, "kind"), checker=_checked_text(checker, "checker"),
+                status=_checked_text(status, "status"), processed=_flag_of(processed), note=_checked_text(note, "note"),
+                slice=_checked_text(piece, "content"), length=length, digest=_checked_text(digest, "digest"))
+
+
+def request_page(offset, limit):
+    """(total, rows) with rows as dicts id, status, checker, kind, processed, summary, note, newest first."""
+    from execution_gateway.cetta_worker import S
+    answer = _ledger_call("request-page", (int(offset), int(limit)))
+    if not (isinstance(answer, tuple) and len(answer) == 3 and answer[0] == S("page") and type(answer[1]) is int
+            and isinstance(answer[2], tuple)):
+        raise LedgerUnavailable("input ledger request-page: unexpected answer %s" % _show(answer))
+    rows = []
+    for row in answer[2]:
+        if not (isinstance(row, tuple) and len(row) == 7):
+            raise LedgerUnavailable("input ledger request-page: unexpected row %s" % _show(row))
+        identity, status, checker, kind, processed, summary, note = row
+        rows.append(dict(id=_checked_text(identity, "id"), status=_checked_text(status, "status"),
+                         checker=_checked_text(checker, "checker"), kind=_checked_text(kind, "kind"),
+                         processed=_flag_of(processed), summary=_checked_text(summary, "summary"),
+                         note=_checked_text(note, "note")))
+    return answer[1], rows
+
+
+def request_protected(focus):
+    """What Ledger.protected reads of the requests, from one snapshot: {counts, total, unfinished, focus}.
+    unfinished: dicts id, summary, content_digest, checker (at most 8); focus: None or (first 4000 characters, length)."""
+    from execution_gateway.cetta_worker import S
+    answer = _ledger_call("request-protected", (str(focus) if focus is not None else "",))
+    if not (isinstance(answer, tuple) and len(answer) == 5 and answer[0] == S("protected")
+            and isinstance(answer[1], tuple) and type(answer[2]) is int and isinstance(answer[3], tuple)):
+        raise LedgerUnavailable("input ledger request-protected: unexpected answer %s" % _show(answer))
+    counts = {}
+    for item in answer[1]:
+        if not (isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str) and type(item[1]) is int):
+            raise LedgerUnavailable("input ledger request-protected: unexpected count %s" % _show(item))
+        counts[item[0]] = item[1]
+    if sum(counts.values()) != answer[2]:
+        raise LedgerUnavailable("input ledger request-protected: the counts %r do not add up to the %d requests "
+                                "(a status this code does not know)" % (counts, answer[2]))
+    unfinished = []
+    for item in answer[3]:
+        if not (isinstance(item, tuple) and len(item) == 4 and all(isinstance(part, str) for part in item)):
+            raise LedgerUnavailable("input ledger request-protected: unexpected request %s" % _show(item))
+        unfinished.append(dict(id=item[0], summary=item[1], content_digest=item[2], checker=item[3]))
+    found = answer[4]
+    if found == S("none"):
+        piece = None
+    elif (isinstance(found, tuple) and len(found) == 3 and found[0] == S("slice") and isinstance(found[1], str)
+          and type(found[2]) is int):
+        piece = (found[1], found[2])
+    else:
+        raise LedgerUnavailable("input ledger request-protected: unexpected focus %s" % _show(found))
+    return dict(counts=counts, total=answer[2], unfinished=unfinished, focus=piece)
+
+
+def request_rows(which="all"):
+    """Requests whole, oldest first: dicts id, content, status, checker, kind, processed, note.
+    `which`: "all", "active" or a list of ids."""
+    from execution_gateway.cetta_worker import S
+    selector = S(which) if which in ("all", "active") else tuple(str(item) for item in dict.fromkeys(which))
+    answer = _ledger_call("request-rows", (selector,))
+    if not isinstance(answer, tuple):
+        raise LedgerUnavailable("input ledger request-rows: unexpected answer %s" % _show(answer))
+    rows = []
+    for row in answer:
+        if not (isinstance(row, tuple) and len(row) == 8 and row[0] == S("row")):
+            raise LedgerUnavailable("input ledger request-rows: unexpected row %s" % _show(row))
+        _, identity, content, status, checker, kind, processed, note = row
+        rows.append(dict(id=_checked_text(identity, "id"), content=_checked_text(content, "content"),
+                         status=_checked_text(status, "status"), checker=_checked_text(checker, "checker"),
+                         kind=_checked_text(kind, "kind"), processed=_flag_of(processed), note=_checked_text(note, "note")))
+    return rows
+
+
 def processed_update_ids(ids):
     """Called only after successful cognition, saved history and durable input ack."""
     values = [str(value) for value in ids if str(value)]
     if not values:
+        return 1
+    if _native_socket():
+        if _managed():
+            # One $now for the whole batch and for every retry of it.
+            _ledger_flag("mark-processed", (time.time(), tuple(values)))
         return 1
     store = _store()
     if store is None:
@@ -110,6 +526,9 @@ def committed(ids):
     values = [str(value) for value in (ids.split(",") if isinstance(ids, str) else ids) if str(value)]
     if not (os.environ.get("METTACLAW_STRATEGY_PATH") or os.environ.get("METTACLAW_ENGINE_STATE_PATH")):
         return 0
+    if _native_socket():
+        # An unreachable ledger raises: it must not mean "not processed" either.
+        return int(bool(_ledger_call("committed", (tuple(values),))))
     # Read a committed snapshot without acquiring the cognitive writer. Errors
     # propagate: an unavailable checkpoint must not mean "not processed".
     with closing(sqlite3.connect(agent_checkpoint.path().resolve().as_uri() + '?mode=ro',
@@ -222,7 +641,13 @@ def key(task, lane, kind, role, update="{}"):
     attention.ingress(task, role, update)
     value = json.loads(str(update)) if isinstance(update, str) else update
     update_id = str(value.get("update_id", "")) if isinstance(value, dict) else ""
-    store = _store(timeout=0)
+    native = bool(_native_socket()) and _managed()
+    if native:
+        if update_id and _ledger_call("committed", ((update_id,),), 0):
+            return ""
+        store = None
+    else:
+        store = _store(timeout=0)
     if store is not None:
         with store.transaction() as db:
             if db.execute("SELECT 1 FROM processed_inputs WHERE id=?", (update_id,)).fetchone():
@@ -239,6 +664,13 @@ def key(task, lane, kind, role, update="{}"):
     identity = os.environ.get("METTACLAW_INSTANCE", "default") + ":input-receipt:" + task
     number = int.from_bytes(hashlib.sha256(identity.encode()).digest()[:8], "big")
     send_key = lane + ".%020d" % number
+    if native:
+        # Registers atomically unless the update is processed or the notice conflicts; "" then.
+        # $now is part of the request id and stays the same when the call is repeated.
+        answer = _ledger_call("register", (task, update_id, lane, send_key, time.time()), 0)
+        if answer not in ("", send_key):
+            raise LedgerUnavailable("input ledger register: unexpected answer %r" % (answer,))
+        return answer
     if store is not None:
         with store.transaction() as db:
             if db.execute("SELECT 1 FROM processed_inputs WHERE id=?", (update_id,)).fetchone():
@@ -256,6 +688,10 @@ def submitted(task):
     if entry is not None:
         entry[1] = True
         _last_notice[entry[2]] = time.monotonic()
+    if _native_socket():
+        if _managed():
+            _ledger_flag("submitted", (str(task),), 0)
+        return 1
     store = _store(timeout=0)
     if store is not None:
         with store.transaction() as db:
@@ -269,6 +705,8 @@ def receipt(observation, timeout=10):
     if (not isinstance(value, list) or len(value) != 5 or value[0] != "delivery"
             or value[2] != 0 or value[3] != 1):
         return 0
+    if _native_socket():
+        return _native_receipt(value, timeout) if _managed() else 0
     store = _store(timeout=timeout)
     if store is None:
         return 0
@@ -291,6 +729,65 @@ def receipt(observation, timeout=10):
     return 1
 
 
+def _native_receipt(value, timeout):
+    """The body of receipt() on the native ledger, after its envelope checks."""
+    from execution_gateway.cetta_worker import E, S
+    key, outcome = value[1], value[4]
+    if not isinstance(key, str):
+        return 0  # a key that is no text names no notice (SQLite would raise for a list or object)
+    if (isinstance(outcome, list) and len(outcome) == 2 and outcome[0] == "delivered"
+            and type(outcome[1]) is int):
+        if not -2**63 <= outcome[1] < 2**63:
+            raise OverflowError("message id out of range")
+        outcome = E("delivered", outcome[1])
+    else:
+        outcome = S("failed")  # known failed/uncertain evidence grants no deletion
+    answer = _ledger_call("receipt", (key, outcome), timeout)
+    if type(answer) is not int or answer not in (0, 1):
+        raise LedgerUnavailable("input ledger receipt: unexpected answer %r" % (answer,))
+    return answer
+
+
+def _pump_native(channel):
+    """pump() on the native ledger: the same steps, one check per due notice."""
+    from execution_gateway.cetta_worker import S
+    if not _managed():
+        return 0
+    _ledger_call("ensure", (), 0)  # as _store() opens the ledger first: an unreachable one fails here
+    import durable_telegram as protocol
+    if channel is None:
+        path = os.environ.get("METTACLAW_TELEGRAM_SERVICE_SOCKET")
+        if not path:
+            return 0
+        channel = protocol.Channel(path, os.devnull, timeout=1)
+    def collect():
+        for task, observation in channel.pending(64):
+            if receipt(observation, timeout=0):
+                channel.acknowledge(task)
+    count = 0
+    try:
+        collect()
+        rows = _ledger_call("due", (32,), 0)
+        for row in rows:
+            if not (isinstance(row, tuple) and len(row) == 11 and isinstance(row[1], str)):
+                raise LedgerUnavailable("input ledger due: unexpected row %s" % _show(row))
+            # One step in one transaction: checked, expiry or the delete key. $now stays the same on repeats.
+            answer = _ledger_call("check", (row[1], time.time(), 172800), 0)
+            if answer in (S("wait"), S("expired")):
+                continue
+            if not (isinstance(answer, tuple) and len(answer) == 3 and answer[0] == S("delete")
+                    and isinstance(answer[1], str) and type(answer[2]) is int):
+                raise LedgerUnavailable("input ledger check: unexpected answer %s" % _show(answer))
+            code, _, _ = channel.rpc(protocol.SUBMIT, answer[1],
+                                      json.dumps([["delete", answer[2]]], separators=(",", ":")))
+            if code == protocol.STORED:
+                count += 1
+        collect()
+    except (OSError, ValueError, protocol.ChannelError):
+        pass  # durable intentions and unacknowledged receipt tasks remain
+    return count
+
+
 def pump(channel=None):
     """Reconcile owned delivery tasks and keyed deletion intents independently."""
     global _last_pump
@@ -298,6 +795,8 @@ def pump(channel=None):
     if channel is None and now - _last_pump < 2:
         return 0
     _last_pump = now
+    if _native_socket():
+        return _pump_native(channel)
     store = _store(timeout=0)
     if store is None:
         return 0

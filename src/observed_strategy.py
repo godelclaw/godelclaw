@@ -119,6 +119,13 @@ class Ledger:
                         "autonomous" if key == "autonomous" else "task")
         if kind not in ("message", "notification", "task", "goal", "autonomous"):
             raise ValueError("unknown request kind")
+        import input_ack
+        if input_ack._native_socket():
+            content = str(content)
+            answer = input_ack.request_accept(key, content, checker, kind, content[:180], digest(content))
+            if answer == "conflict":
+                raise IdentityConflict("request identity reused for different intent")
+            return answer == "created"
         with self.transaction() as db:
             old = db.execute("SELECT content,checker FROM requests WHERE id=?", (key,)).fetchone()
             if old:
@@ -162,12 +169,20 @@ class Ledger:
 
     @staticmethod
     def selectable(db, key):
+        import input_ack
+        if input_ack._native_socket():
+            row = input_ack.request_get(str(key))
+            return bool(row and (row["status"] == "active" or
+                                 (row["status"] == "processed" and row["kind"] in ("message", "notification"))))
         row = db.execute("SELECT r.status,c.kind FROM requests r JOIN request_context c ON c.request=r.id WHERE r.id=?", (key,)).fetchone()
         return bool(row and (row[0] == "active" or
                             (row[0] == "processed" and row[1] in ("message", "notification"))))
 
     def processed(self, key):
         """A durable input handover settles delivery, not the requested work."""
+        import input_ack
+        if input_ack._native_socket():
+            return input_ack.request_settle(str(key), time.time())
         with self.transaction() as db:
             return self._processed(db, key)
 
@@ -187,7 +202,18 @@ class Ledger:
         Transport acknowledgement follows this commit. After a crash between
         them, the service's still-pending input is acknowledged from this
         journal without presenting it to cognition a second time.
+
+        With METTACLAW_INPUT_LEDGER_SOCKET set the native input ledger owns the whole
+        checkpoint: one native transaction stores the working set, the settled
+        input ids, their notices' processed flags and the request's processed status
+        (the request is a record of the same store: see input_ack.turn_checkpoint).
+        Nothing of it is written to SQLite then, and
+        an unreachable server raises (LedgerUnavailable, a sqlite3.OperationalError):
+        a fallback would split the ledger.
         """
+        import input_ack
+        if input_ack._native_socket():
+            return self._native_checkpoint(working, input_ids, request)
         with self.transaction() as db:
             db.execute("INSERT INTO meta VALUES ('working_set',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (encoded(working),))
             for identity in input_ids:
@@ -198,7 +224,20 @@ class Ledger:
                 self._processed(db, request)
             self.event(db, "turn-checkpoint", settled_inputs=len(input_ids))
 
+    def _native_checkpoint(self, working, input_ids, request):
+        import input_ack
+        ids = [str(identity) for identity in input_ids]
+        # The time of the processed records is the working set's own, as in SQLite
+        # (a KeyError there too, and nothing written, when ids come without it).
+        saved = working["saved_at"] if ids else (working.get("saved_at") if isinstance(working, dict) else None)
+        # Whether the request exists and may be settled is decided in the same native transaction.
+        input_ack.turn_checkpoint(encoded(working), ids, str(request) if request else "", float(saved or 0.0))
+
     def working_checkpoint(self):
+        import input_ack
+        if input_ack._native_socket():
+            text = input_ack.working_set()
+            return None if text is None else json.loads(text)
         with self.transaction() as db:
             row = db.execute("SELECT value FROM meta WHERE key='working_set'").fetchone()
             return json.loads(row[0]) if row else None
@@ -226,6 +265,10 @@ class Ledger:
                     "defer": "deferred", "addressed": "addressed", "reopen": "active"}
         if disposition not in statuses or not isinstance(note, str) or not 1 <= len(note) <= 800:
             raise ValueError("use keep, waiting-user, defer, addressed or reopen with a short reason")
+        import input_ack
+        if input_ack._native_socket():
+            self.refusal = input_ack.request_disposition(key, disposition, note)
+            return self.refusal is None
         with self.transaction() as db:
             row = db.execute("SELECT r.status,r.checker,c.kind,c.processed FROM requests r JOIN request_context c ON c.request=r.id WHERE r.id=?", (key,)).fetchone()
             self.refusal = (
@@ -256,6 +299,10 @@ class Ledger:
 
     def request_page(self, offset=0, limit=8):
         offset, limit = max(0, int(offset)), max(1, int(limit))
+        import input_ack
+        if input_ack._native_socket():
+            total, rows = input_ack.request_page(offset, limit)
+            return dict(records=rows, total=total, next_offset=offset + len(rows) if offset + len(rows) < total else None)
         with self.transaction() as db:
             rows = [dict(r) for r in db.execute("""SELECT r.id,r.status,r.checker,c.kind,c.processed,
                 substr(r.content,1,180) AS summary,c.note FROM requests r LEFT JOIN request_context c ON c.request=r.id
@@ -265,6 +312,15 @@ class Ledger:
 
     def request_record(self, key, offset=0):
         offset = max(0, int(offset))
+        import input_ack
+        if input_ack._native_socket():
+            found = input_ack.request_record(key, offset)
+            if found is None:
+                return dict(id=key, status="unknown")
+            return dict(id=found["id"], status=found["status"], checker=found["checker"], kind=found["kind"],
+                        processed=found["processed"], note=found["note"], content=found["slice"],
+                        content_digest=found["digest"], offset=offset,
+                        next_offset=offset+4000 if offset+4000 < found["length"] else None)
         with self.transaction() as db:
             row = db.execute("SELECT r.*,c.kind,c.processed,c.note FROM requests r LEFT JOIN request_context c ON c.request=r.id WHERE r.id=?", (key,)).fetchone()
         if not row:
@@ -274,13 +330,55 @@ class Ledger:
                       next_offset=offset+4000 if offset+4000 < len(content) else None)
         return result
 
-    def protected(self, focus, result_chars=6000):
+    @staticmethod
+    def _native_active(request):
+        """SELECT * FROM requests WHERE id=? AND status='active', from the native store: a dict or None."""
+        import input_ack
+        found = input_ack.request_get(str(request), text=True)
+        if not found or found["status"] != "active":
+            return None
+        return dict(id=found["id"], content=found["content"], status=found["status"], checker=found["checker"])
+
+    def status_of(self, key):
+        """requests.status of a request, or None when there is none (SELECT status FROM requests WHERE id=?)."""
+        import input_ack
+        if input_ack._native_socket():
+            found = input_ack.request_get(str(key))
+            return found["status"] if found else None
         with self.transaction() as db:
-            active = [{"id": r["id"], "summary": r["content"][:180],
-                       "content_digest": digest(r["content"]), "checker": r["checker"]}
-                      for r in db.execute("SELECT * FROM requests WHERE status='active' ORDER BY (id=?) DESC,rowid DESC LIMIT 8", (focus,))]
-            row = db.execute("SELECT content FROM requests WHERE id=?", (focus,)).fetchone()
-            counts = dict(db.execute("SELECT status,COUNT(*) FROM requests GROUP BY status"))
+            row = db.execute("SELECT status FROM requests WHERE id=?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def request_rows(self, ids):
+        """id, content, status, kind, note of the requests among `ids` (all of them for None), oldest first:
+        the join of requests and request_context the task projections read. Native store only (the
+        projections keep their own SQL on the SQLite tables)."""
+        import input_ack
+        return [dict(id=r["id"], content=r["content"], status=r["status"], kind=r["kind"], note=r["note"])
+                for r in input_ack.request_rows(list(ids) if ids is not None else "all")]
+
+    @staticmethod
+    def native_request(key):
+        """One request whole from the native store (id, kind, checker, status, processed, note, content), or None."""
+        import input_ack
+        return input_ack.request_get(str(key), text=True)
+
+    def protected(self, focus, result_chars=6000):
+        import input_ack
+        # The requests come from the native store (one snapshot) when it is configured; the
+        # actions and the owner are not requests and stay in SQLite.
+        native = input_ack.request_protected(focus) if input_ack._native_socket() else None
+        with self.transaction() as db:
+            if native is None:
+                active = [{"id": r["id"], "summary": r["content"][:180],
+                           "content_digest": digest(r["content"]), "checker": r["checker"]}
+                          for r in db.execute("SELECT * FROM requests WHERE status='active' ORDER BY (id=?) DESC,rowid DESC LIMIT 8", (focus,))]
+                row = db.execute("SELECT content FROM requests WHERE id=?", (focus,)).fetchone()
+                request, request_length = (row[0][:4000], len(row[0])) if row else ("", 0)
+                counts = dict(db.execute("SELECT status,COUNT(*) FROM requests GROUP BY status"))
+            else:
+                active, counts = native["unfinished"], native["counts"]
+                request, request_length = native["focus"] if native["focus"] else ("", 0)
             results = []
             for item in db.execute("""SELECT ticket,receipt FROM actions
                     WHERE receipt IS NOT NULL AND
@@ -293,13 +391,17 @@ class Ledger:
                                 "payload_digest": digest(payload),
                                 "truncated": len(payload) > result_chars})
             return {"owner": self.get(db, "owner"), "focus": focus,
-                    "request": row[0][:4000] if row else "", "unfinished": active,
+                    "request": request, "unfinished": active,
                     "counts": counts, "omitted_active": max(0, counts.get("active", 0) - len(active)),
-                    "request_truncated": bool(row and len(row[0]) > 4000),
+                    "request_truncated": request_length > 4000,
                     "request_index": {"retrieve": ["request-page", 0], "scope": "all retained requests"},
                     "results": results}
 
     def active(self):
+        import input_ack
+        if input_ack._native_socket():
+            return [dict(id=r["id"], content=r["content"], status=r["status"], checker=r["checker"])
+                    for r in input_ack.request_rows("active")]
         with self.transaction() as db:
             return [dict(r) for r in db.execute("SELECT * FROM requests WHERE status='active' ORDER BY rowid")]
 
@@ -328,8 +430,22 @@ class Ledger:
 
     def finish_exact_results(self):
         """Run request-specific, operator-registered exact-output checkers."""
+        import input_ack
+        if input_ack._native_socket():
+            # requests.checker LIKE 'sha256:%' (ASCII case-insensitive) joined with the observed receipts of
+            # actions: the requests are read from the native store, the actions stay in SQLite.
+            exact = {r["id"]: r["checker"] for r in input_ack.request_rows("active")
+                     if r["checker"][:7].isascii() and r["checker"][:7].lower() == "sha256:"}
+            with self.transaction() as db:
+                candidates = [dict(id=row["request"], checker=exact[row["request"]], ticket=row["ticket"])
+                              for row in db.execute("SELECT request,ticket FROM actions WHERE observed=1 AND receipt IS NOT NULL ORDER BY rowid")
+                              if row["request"] in exact]
+            return self._finish_exact(candidates)
         with self.transaction() as db:
             candidates = list(db.execute("SELECT requests.id,requests.checker,actions.ticket FROM requests JOIN actions ON requests.id=actions.request WHERE requests.status='active' AND actions.observed=1 AND actions.receipt IS NOT NULL AND requests.checker LIKE 'sha256:%'"))
+        return self._finish_exact(candidates)
+
+    def _finish_exact(self, candidates):
         count = 0
         for candidate in candidates:
             expected = candidate["checker"].removeprefix("sha256:")
@@ -407,8 +523,13 @@ class Ledger:
     def finish(self, request, ticket, checkers, *, now=None):
         import time
         now = time.time() if now is None else now
+        import input_ack
+        native = input_ack._native_socket()
         with self.transaction() as db:
-            work = db.execute("SELECT * FROM requests WHERE id=? AND status='active'", (request,)).fetchone()
+            if native:
+                work = self._native_active(request)
+            else:
+                work = db.execute("SELECT * FROM requests WHERE id=? AND status='active'", (request,)).fetchone()
             action = db.execute("SELECT * FROM actions WHERE ticket=? AND request=?", (ticket, request)).fetchone()
             if (not work or not action or not action["observed"]):
                 return False
@@ -417,12 +538,18 @@ class Ledger:
             if (receipt["disposition"] != "returned" or receipt["domain"] != "success"
                     or checker is None or not checker(dict(work), receipt)):
                 return False
+            if native:
+                # The request is a native record: its status moves in the native store, only if it is still active.
+                return input_ack.request_finish(request)
             db.execute("UPDATE requests SET status='achieved' WHERE id=?", (request,))
             self.event(db, "finish", request=request, ticket=ticket)
             return True
 
     def retire(self, prefix, note):
         """Close the open cycles of a goal its agent retired; never an achievement."""
+        import input_ack
+        if input_ack._native_socket():
+            return input_ack.request_retire(prefix, note[:800])
         with self.transaction() as db:
             rows = [r[0] for r in db.execute(
                 "SELECT id FROM requests WHERE substr(id,1,?)=? AND status IN ('active','deferred','waiting-user')",
@@ -438,6 +565,9 @@ class Ledger:
     def cancel(self, request, operator_authorized=False):
         if not operator_authorized:
             return False
+        import input_ack
+        if input_ack._native_socket():
+            return input_ack.request_cancel(request)
         with self.transaction() as db:
             changed = db.execute("UPDATE requests SET status='cancelled' WHERE id=? AND status='active'", (request,)).rowcount
             if changed:
@@ -452,8 +582,13 @@ class Ledger:
 
     def attest(self, request, ticket, checker):
         """A trusted task oracle may establish domain success for its receipt."""
+        import input_ack
+        native = input_ack._native_socket()
         with self.transaction() as db:
-            work = db.execute("SELECT * FROM requests WHERE id=? AND status='active'", (request,)).fetchone()
+            if native:
+                work = self._native_active(request)
+            else:
+                work = db.execute("SELECT * FROM requests WHERE id=? AND status='active'", (request,)).fetchone()
             action = db.execute("SELECT receipt,observed FROM actions WHERE ticket=? AND request=?", (ticket, request)).fetchone()
             if not work or not action or not action["receipt"] or not action["observed"]:
                 return False
@@ -467,9 +602,13 @@ class Ledger:
 
 
     def projection(self):
+        import input_ack
+        native = input_ack.request_rows("all") if input_ack._native_socket() else None
         with self.transaction() as db:
             return {"meta": {r[0]: json.loads(r[1]) for r in db.execute("SELECT * FROM meta")},
-                    "requests": [dict(r) for r in db.execute("SELECT * FROM requests ORDER BY rowid")],
+                    "requests": [dict(r) for r in db.execute("SELECT * FROM requests ORDER BY rowid")]
+                    if native is None else [dict(id=r["id"], content=r["content"], status=r["status"], checker=r["checker"])
+                                            for r in native],
                     "actions": [dict(r) for r in db.execute("SELECT * FROM actions ORDER BY rowid")],
                     "events": [json.loads(r[0]) for r in db.execute("SELECT event FROM events ORDER BY sequence")]}
 

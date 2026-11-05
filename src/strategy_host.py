@@ -109,8 +109,13 @@ def begin(turn, source, message):
         resume_parent = None
         _focus = task_context.resume(store, previous)
         if _focus is None and previous and str(source) not in ("operator-event", "channel-event"):
-            with store.transaction() as db:
-                state = db.execute("SELECT status FROM requests WHERE id=?", (previous,)).fetchone()
+            import input_ack
+            if input_ack._native_socket():
+                state = store.status_of(previous)
+                state = None if state is None else (state,)
+            else:
+                with store.transaction() as db:
+                    state = db.execute("SELECT status FROM requests WHERE id=?", (previous,)).fetchone()
             if state and state[0] == "addressed":
                 _focus = previous
         _context_trigger, _task_projection = str(source), None
@@ -453,6 +458,23 @@ def _close_answered_message(command, result):
     if not result.startswith("sent message "):
         return
     store = ledger()
+    import input_ack
+    if input_ack._native_socket():
+        # The request (kind, status) is a native record; the frame's chat and the inputs stay in SQLite.
+        found = store.native_request(_focus)
+        if not found or found["kind"] not in ("message", "notification"):
+            return
+        with store.transaction() as db:
+            frame = db.execute("SELECT chat FROM task_frames WHERE request=?", (_focus,)).fetchone()
+            inputs = [r[0] for r in db.execute("SELECT input FROM request_inputs WHERE request=?", (_focus,))]
+        if len(inputs) != 1:
+            return
+        import telegram
+        target = telegram._reply_target(command[1] if name == "send-telegram-chat" else "")
+        if not (frame and frame[0]) or str(target) != str(frame[0]):
+            return
+        input_ack.request_answered(_focus)  # the answer-delivered event is not written natively
+        return
     with store.transaction() as db:
         row = db.execute("SELECT c.kind,f.chat FROM request_context c LEFT JOIN task_frames f ON f.request=c.request WHERE c.request=?", (_focus,)).fetchone()
         if not row or row[0] not in ("message", "notification"):

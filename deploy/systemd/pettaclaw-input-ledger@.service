@@ -1,0 +1,23 @@
+[Unit]
+Description=Native input ledger server for %i
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=exec
+WorkingDirectory=%h/pettaclaw-%i
+Environment=CETTA_DB_SOURCE=%S/%i/input-ledger/store
+Environment=CETTA_DB_SOCKET=%S/%i/input-ledger/ledger.sock
+EnvironmentFile=%h/.config/pettaclaw/%i-runtime.env
+ExecStart=/bin/sh -c 'worker="$CETTA_VALUE_WORKER_BIN"; [ -n "$worker" ] || worker="$(dirname "$CETTA_BIN")/cetta-value-worker"; exec "$worker" --serve --lang petta %h/pettaclaw-%i/src/input_ledger_server.metta db-server:configuration'
+StateDirectory=%i/input-ledger
+StateDirectoryMode=0700
+UMask=0077
+LimitCORE=0
+Restart=always
+RestartSec=2
+KillMode=control-group
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target

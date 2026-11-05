@@ -41,6 +41,13 @@ def install(db):
     """)
 
 
+def _native():
+    """With METTACLAW_INPUT_LEDGER_SOCKET set the requests are records of the native input ledger
+    (Ledger.accept, status_of, request_rows ...), not rows of the SQLite tables."""
+    import input_ack
+    return bool(input_ack._native_socket())
+
+
 def current(store):
     with store.transaction() as db:
         return store.get(db, "context_focus")
@@ -66,7 +73,11 @@ def resume(store, request):
 def begin(store, request, trigger, previous=None, chat="", parent=None):
     with store.transaction() as db:
         if parent is None and previous != request and previous != "autonomous" and not str(previous).startswith("goal:"):
-            prior = db.execute("SELECT status FROM requests WHERE id=?", (previous,)).fetchone()
+            if _native():
+                status = store.status_of(previous)
+                prior = None if status is None else (status,)
+            else:
+                prior = db.execute("SELECT status FROM requests WHERE id=?", (previous,)).fetchone()
             # A correction received while a task awaits a reply still belongs
             # to that task. An ordinary new message is a new frame; otherwise
             # one forgotten active request turns the whole future into a
@@ -75,7 +86,8 @@ def begin(store, request, trigger, previous=None, chat="", parent=None):
                 parent = previous
         if parent == request:
             parent = None
-        if parent and not db.execute("SELECT 1 FROM requests WHERE id=?", (parent,)).fetchone():
+        if parent and not (store.status_of(parent) is not None if _native() else
+                           db.execute("SELECT 1 FROM requests WHERE id=?", (parent,)).fetchone()):
             raise ValueError("unknown parent task")
         db.execute("INSERT OR IGNORE INTO task_frames VALUES (?,?,?,?)",
                    (request, parent, str(trigger), str(chat or "")))
@@ -90,6 +102,12 @@ def cover_inputs(store, db, request):
     scope. Explicit tasks, waits and deferrals are independent obligations.
     Original contents, occurrences, notes and call positions remain unchanged.
     """
+    if _native():
+        # Covering joins the requests with task_frames and request_inputs, which stay in SQLite, and
+        # sets requests.status='covered' next to input_supersessions: it belongs to the task-context
+        # family that is not native yet. Nothing is covered in native mode (the SQLite tables hold
+        # no request rows to cover), and nothing is hidden by it: superseded batches stay active.
+        return []
     row = db.execute("""SELECT r.rowid,r.status,r.checker,c.kind,f.chat,
         (SELECT count(*) FROM request_inputs WHERE request=r.id) AS n
         FROM requests r JOIN request_context c ON c.request=r.id
@@ -176,10 +194,14 @@ def _members(db, root):
 def _pairs(store, db, members):
     marks = ",".join("?" for _ in members) if members is not None else "SELECT id FROM requests"
     parameters = members if members is not None else ()
-    proposals = {r["serial"]: dict(r) for r in db.execute(
-        "SELECT * FROM task_proposals WHERE request IN (" + marks + ")", parameters)}
-    actions = {r["serial"]: dict(r) for r in db.execute(
-        "SELECT * FROM actions WHERE request IN (" + marks + ") ORDER BY rowid", parameters)}
+    if members is None and _native():
+        # Every request is in the native store, none in this file: no request filter (each call has one).
+        proposal_sql, action_sql = "SELECT * FROM task_proposals", "SELECT * FROM actions ORDER BY rowid"
+    else:
+        proposal_sql = "SELECT * FROM task_proposals WHERE request IN (" + marks + ")"
+        action_sql = "SELECT * FROM actions WHERE request IN (" + marks + ") ORDER BY rowid"
+    proposals = {r["serial"]: dict(r) for r in db.execute(proposal_sql, parameters)}
+    actions = {r["serial"]: dict(r) for r in db.execute(action_sql, parameters)}
     # Older journals already have complete admitted proposals and attempts.
     for serial, action in actions.items():
         if serial not in proposals:
@@ -221,8 +243,12 @@ def read(store, identity, offset=0, size=8192):
         return _page(identity, frame, offset, size)
     if str(identity).startswith("task-input:"):
         request = str(identity)[len("task-input:"):]
-        with store.transaction() as db:
-            row = db.execute("SELECT content FROM requests WHERE id=?", (request,)).fetchone()
+        if _native():
+            found = store.native_request(request)
+            row = None if found is None else (found["content"],)
+        else:
+            with store.transaction() as db:
+                row = db.execute("SELECT content FROM requests WHERE id=?", (request,)).fetchone()
         if row is None:
             raise ValueError("unknown input identity")
         return _page(identity, _input(request, row[0]), offset, size)
@@ -258,7 +284,8 @@ def note(store, request, text, sources="[]"):
     for identity in references:
         read(store, identity, size=1)
     with store.transaction() as db:
-        if not db.execute("SELECT 1 FROM requests WHERE id=?", (request,)).fetchone():
+        if not (store.status_of(request) is not None if _native() else
+                db.execute("SELECT 1 FROM requests WHERE id=?", (request,)).fetchone()):
             raise ValueError("unknown task")
         db.execute("INSERT INTO task_notes(request,text,sources) VALUES (?,?,?)",
                    (request, str(text), encoded(references)))
@@ -280,7 +307,7 @@ def projection(store, request, trigger="continuation-tick"):
         root = _root(db, request)
         members = _members(db, root)
         marks = ",".join("?" for _ in members)
-        requests = [dict(r) for r in db.execute("""SELECT r.id,r.content,r.status,c.kind,c.note
+        requests = store.request_rows(members) if _native() else [dict(r) for r in db.execute("""SELECT r.id,r.content,r.status,c.kind,c.note
             FROM requests r JOIN request_context c ON c.request=r.id
             WHERE r.id IN (""" + marks + ") ORDER BY r.rowid", members)]
         for item in requests:
@@ -310,7 +337,8 @@ def _conversation_pairs(store, db):
             captured.setdefault(event["serial"], row[0])
     ordered = [(delivered.get(r["id"], 0), 0, n,
                 _input(r["id"], input_content(db, r["id"], r["content"])))
-               for n, r in enumerate(db.execute("SELECT id,content FROM requests ORDER BY rowid"))]
+               for n, r in enumerate(store.request_rows(None) if _native() else
+                                     db.execute("SELECT id,content FROM requests ORDER BY rowid"))]
     for pair in _pairs(store, db, None):
         _, serial, position = pair["id"].rsplit(":", 2)
         ordered.append((captured.get(int(serial), last + int(serial) + 1),
@@ -328,13 +356,13 @@ def conversation_projection(store, request, trigger="continuation-tick"):
     with store.transaction() as db:
         root = "conversation:" + store.get(db, "owner")
         task_root = _root(db, request)
-        requests = [dict(r) for r in db.execute("""SELECT r.id,r.content,r.status,c.kind,c.note
+        requests = store.request_rows(None) if _native() else [dict(r) for r in db.execute("""SELECT r.id,r.content,r.status,c.kind,c.note
             FROM requests r JOIN request_context c ON c.request=r.id
             WHERE r.id IN (SELECT id FROM requests) ORDER BY r.rowid""")]
         for item in requests:
             item["content"] = input_content(db, item["id"], item["content"])
-        notes = [dict(r) for r in db.execute("""SELECT * FROM task_notes
-            WHERE request IN (SELECT id FROM requests) ORDER BY sequence""")]
+        notes = [dict(r) for r in db.execute(("SELECT * FROM task_notes ORDER BY sequence" if _native() else """SELECT * FROM task_notes
+            WHERE request IN (SELECT id FROM requests) ORDER BY sequence"""))]
         pairs = _conversation_pairs(store, db)
     return dict(root=root, task_root=task_root, focus=request, trigger=str(trigger),
                 requests=requests, notes=notes, transcript=pairs, archive=None, offset=0)
