@@ -470,13 +470,12 @@ def _close_answered_message(command, result):
     store = ledger()
     import input_ack
     if input_ack._native_socket():
-        # The request (kind, status) is a native record; the frame's chat and the inputs stay in SQLite.
+        # The request, its frame and its inputs are records of the native store.
         found = store.native_request(_focus)
         if not found or found["kind"] not in ("message", "notification"):
             return
-        with store.transaction() as db:
-            frame = db.execute("SELECT chat FROM task_frames WHERE request=?", (_focus,)).fetchone()
-            inputs = [r[0] for r in db.execute("SELECT input FROM request_inputs WHERE request=?", (_focus,))]
+        chat, inputs = input_ack.request_context(_focus)
+        frame = None if chat is None else (chat,)
         if len(inputs) != 1:
             return
         import telegram

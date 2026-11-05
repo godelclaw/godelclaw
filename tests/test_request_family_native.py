@@ -467,7 +467,7 @@ class TaskContextTest(NativeCase):
         self.assertEqual(steps["unknown-parent"][:2], ("raised", "ValueError"))
         self.assertEqual(len(steps["conversation"]["requests"]), 3)
 
-    def test_covering_belongs_to_the_task_context_family_and_is_off_in_native_mode(self):
+    def test_covering_supersedes_the_same_batches_on_the_native_store(self):
         import task_context
 
         def scenario(store, note):
@@ -478,10 +478,8 @@ class TaskContextTest(NativeCase):
             note("statuses", [store.status_of("input:a"), store.status_of("input:b"), [r["id"] for r in store.active()]])
         oracle, native = Sides(self).run(scenario)
         self.assertEqual(dict(oracle["steps"])["statuses"], ["covered", "active", ["input:b"]], "SQLite covers input:a")
-        # Known divergence, listed in the report: nothing is covered natively; the superseded batch stays active
-        # (more is listed, nothing is hidden). It needs input_supersessions, task_frames and request_inputs in the
-        # same store.
-        self.assertEqual(dict(native["steps"])["statuses"], ["active", "active", ["input:a", "input:b"]])
+        # The frames, the inputs and the coverage are native records too: the same batch is covered.
+        self.assertEqual(dict(native["steps"])["statuses"], dict(oracle["steps"])["statuses"])
 
     def test_the_strategy_host_closes_an_answered_message_and_disposes_through_the_same_store(self):
         import strategy_host as host

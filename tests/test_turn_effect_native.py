@@ -183,14 +183,19 @@ def generated(seed):
     return scenario
 
 
-@unittest.skipUnless(available(), SKIP)
-class TurnEffectNativeTest(NativeCase):
+class NativeSides(NativeCase):
+    """A scenario (a function of a Ledger, whether it is native, and a note function) on SQLite and on
+    the native store, compared step by step with the owner normalized."""
     def run_both(self, scenario):
         outcomes = {}
         for native in (False, True):
             with oracle_environment() as directory:
                 runner = NativeRunner.create(directory, self.server.socket) if native else Oracle.create(directory)
                 store = Ledger(runner.path)
+                # One owner on both sides, so that the digests of texts that carry it agree too.
+                with store.transaction() as db:
+                    db.execute("UPDATE meta SET value=? WHERE key='owner'", (encoded("owner-of-both"),))
+                store._owner = None
                 steps = []
                 scenario(store, native, lambda name, value: steps.append((name, value)))
                 outcomes[native] = normalized(steps, owner_of(store))
@@ -210,6 +215,9 @@ class TurnEffectNativeTest(NativeCase):
             self.assertEqual(got, want, (number, want[0]))
         return oracle, native
 
+
+@unittest.skipUnless(available(), SKIP)
+class TurnEffectNativeTest(NativeSides):
     def test_every_turn_and_effect_method_matches_sqlite(self):
         oracle, _ = self.compare(lifecycle)
         steps = dict(oracle)

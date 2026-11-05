@@ -85,10 +85,14 @@ class Ledger:
         self.path.chmod(0o600)
 
     def _owner_candidate(self):
-        """The owner of this ledger's SQLite meta: the native store takes it at its first capture."""
+        """The owner of this ledger's SQLite meta: the native store takes it at its first capture. A plain
+        read, which callers may make inside their own write transaction on this file."""
         if self._owner is None:
-            with self.transaction() as db:
-                self._owner = self.get(db, "owner")
+            db = sqlite3.connect(self.path, timeout=self.timeout)
+            try:
+                self._owner = json.loads(db.execute("SELECT value FROM meta WHERE key='owner'").fetchone()[0])
+            finally:
+                db.close()
         return self._owner
 
     @staticmethod
@@ -98,14 +102,16 @@ class Ledger:
         return bool(input_ack._native_socket())
 
     # The meta keys of a new ledger; on the native store a key never written has this value.
-    INITIAL_META = {"revision": 0, "mode": "godelclaw", "paused": False, "next_sample": 0, "pending": None}
+    INITIAL_META = {"revision": 0, "mode": "godelclaw", "paused": False, "next_sample": 0, "pending": None,
+                    "context_focus": None}
 
     def _native_meta(self):
         """The meta keys of the native store as the SQLite meta table holds them (decoded)."""
         import input_ack
         meta = dict(self.INITIAL_META)
         meta.update(input_ack.ledger_state())
-        meta.pop("clock", None)
+        for counter in ("clock", "notes", "attempts"):  # the store's own numbering, not meta keys
+            meta.pop(counter, None)
         if "owner" not in meta:  # no turn was captured yet: the owner the first capture takes
             meta["owner"] = self._owner_candidate()
         if "router_revision" in meta:
@@ -290,6 +296,11 @@ class Ledger:
     def link_inputs(self, request, inputs):
         """Record which arrivals a request was formed from."""
         inputs = {str(i) for i in inputs}
+        if self._native():
+            import input_ack
+            if not input_ack.link_inputs(request, inputs):
+                raise IdentityConflict("input envelope identity reused for different occurrences")
+            return
         with self.transaction() as db:
             prior = {r[0] for r in db.execute("SELECT input FROM request_inputs WHERE request=?", (request,))}
             if request.startswith("input:") and prior and prior != inputs:
@@ -298,6 +309,9 @@ class Ledger:
                            [(request, str(i)) for i in inputs])
 
     def requests_with_input(self, input_id):
+        if self._native():
+            import input_ack
+            return input_ack.linked(input_id)
         with self.transaction() as db:
             requests = [r for (r,) in db.execute("SELECT request FROM request_inputs WHERE input=?", (input_id,))]
             return [dict(request=r, inputs=[i for (i,) in db.execute(

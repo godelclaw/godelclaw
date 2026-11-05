@@ -58,7 +58,9 @@
 ; the answer of the first commit instead of applying twice.
 
 (= (input-ledger:ensure $db)
-   (db:ensure $db inputs ((SpaceIndexV1 3 1) (SpaceIndexV1 11 1) (SpaceIndexV1 11 2)
+   (db:ensure $db inputs ((SpaceIndexV1 3 0) (SpaceIndexV1 4 0) (SpaceIndexV1 5 0) (SpaceIndexV1 6 0)
+                          (SpaceIndexV1 9 0) (SpaceIndexV1 10 0) (SpaceIndexV1 11 0)
+                          (SpaceIndexV1 3 1) (SpaceIndexV1 11 1) (SpaceIndexV1 11 2)
                           (SpaceIndexV1 11 4) (SpaceIndexV1 11 8)
                           (SpaceIndexV1 10 1) (SpaceIndexV1 10 5) (SpaceIndexV1 4 1)
                           (SpaceIndexV1 5 1) (SpaceIndexV1 9 1) (SpaceIndexV1 9 2)
@@ -1231,6 +1233,37 @@
          (|-> ($space) (input-ledger:attempt-result-in $space $ticket $position $command $result))))
       (("actions" ($which)) (input-ledger:actions $db $which))
       (("attempts" ($which)) (input-ledger:attempts $db $which))
+      (("link-inputs" ($request $inputs $request-id))
+       (input-ledger:turn-write $db input-ledger:link-inputs
+         (input-ledger:fields ($request $inputs)) $request-id ok
+         (|-> ($space) (input-ledger:link-in $space $request $inputs))))
+      (("linked" ($input)) (input-ledger:linked $db $input))
+      (("task-begin" ($request $trigger $previous $chat $parent $request-id))
+       (input-ledger:turn-write $db input-ledger:task-begin
+         (input-ledger:fields ($request $trigger $previous $chat $parent)) $request-id ok
+         (|-> ($space) (input-ledger:begin-in $space $request $trigger $previous $chat $parent))))
+      (("task-focus" ($request $request-id))
+       (input-ledger:turn-write $db input-ledger:task-focus (input-ledger:field $request) $request-id ok
+         (|-> ($space) (input-ledger:focus-in $space $request))))
+      (("task-proposal" ($serial $request $commands $disposition $request-id))
+       (input-ledger:turn-write $db input-ledger:task-proposal
+         (input-ledger:fields ($serial $request $commands $disposition)) $request-id ok
+         (|-> ($space) (input-ledger:proposal-in $space $serial $request $commands $disposition))))
+      (("task-note" ($request $text $sources $request-id))
+       (input-ledger:turn-write $db input-ledger:task-note
+         (input-ledger:fields ($request $text $sources)) $request-id unknown
+         (|-> ($space) (input-ledger:note-in $space $request $text $sources))))
+      (("task-resume" ($request))
+       (input-ledger:task-read $db input-ledger:task-resume (|-> ($view) (input-ledger:resume-walk $view $request ()))))
+      (("task-family" ($request))
+       (input-ledger:task-read $db input-ledger:task-family (|-> ($view) (input-ledger:family $view $request))))
+      (("task-view" ($which)) (input-ledger:task-view $db $which))
+      (("request-context" ($request))
+       (input-ledger:task-read $db input-ledger:request-context
+         (|-> ($view) (context (case (input-ledger:frame-of $view $request) (((frame $p $t $chat) $chat) ($none none)))
+                               (input-ledger:inputs-of $view $request)))))
+      (("task-call" ($serial $ticket))
+       (input-ledger:task-read $db input-ledger:task-call (|-> ($view) (input-ledger:call-request $view $serial $ticket))))
       ($other (Error input-ledger:run (unknown-request $other))))))
 
 (= (input-ledger:attempt $socket $verb $arguments)
@@ -1283,7 +1316,7 @@
 ;                                  observing or attesting rewrites only the small action
 ;   (ledger:attempt <ticket> <position> <command> <result> <order>)
 ;                                  command_attempts: <result> none until recorded, <order>
-;                                  the clock at the attempt (the rowid order)
+;                                  its rowid (the "attempts" counter)
 ;   (ledger:arrival <id> <position>)
 ;                                  the clock when a request was accepted
 ;
@@ -1563,7 +1596,7 @@
 
 (= (input-ledger:attempt-begin-in $space $ticket $position $command)
    (if (== (input-ledger:attempts-at $space $ticket $position) ())
-       (let* (($order (input-ledger:tick $space))
+       (let* (($order (input-ledger:count $space "attempts"))
               ($_ (add-atom $space (ledger:attempt $ticket $position $command none $order))))
          created)
        (empty)))
@@ -1623,3 +1656,300 @@
        (((Error $where $why) (Error $where $why))
         ((db:uncertain $r $c $o) (Error $verb (db:uncertain $r $c $o)))
         ($answer $answer)))))
+
+; ---- the task context (task_frames, task_proposals, task_notes, input_supersessions, request_inputs) ----
+
+; The task_context tables of the SQLite ledger, in the same collection. A link that is
+; read from both ends is two atoms, each indexed by its first field:
+;
+;   (ledger:frame <request> <parent> <trigger> <chat>)      task_frames (parent none at a root)
+;   (ledger:child <parent> <request>)                       the same edge, from the parent
+;   (ledger:input-of <request> <input>)                     request_inputs
+;   (ledger:requests-of <input> <request> <position>)       the same link from the input; the clock
+;                                                           at linking gives the rowid order
+;   (ledger:covered <request> <covering>)                   input_supersessions
+;   (ledger:covers <covering> <request>)                    the same, from the covering batch
+;   (ledger:proposal <serial> <request> <commands> <disposition>)   task_proposals
+;   (ledger:proposal-of <request> <serial>)                 the same, from the request
+;   (ledger:note <request> <sequence> <text> <sources>)     task_notes, <sequence> numbered by "notes"
+;   (ledger:state "context_focus" <request or none>)        meta 'context_focus'
+
+(= (input-ledger:initial "context_focus") none)
+(= (input-ledger:initial "notes") 0)
+(= (input-ledger:initial "attempts") 0)
+
+; The next value of a counter that numbers one table's rows as SQLite numbers them
+; (AUTOINCREMENT, rowid): a note's sequence and an attempt's rowid are seen by the agent.
+(= (input-ledger:count $space $key)
+   (let* (($count (input-ledger:state-of $space $key))
+          ($next (+ $count 1))
+          ($_ (input-ledger:state-put $space $key $next)))
+     $next))
+
+(= (input-ledger:member-all $items $set)
+   (if (== $items ())
+       True
+       (let* ((($head $tail) (decons-atom $items)))
+         (if (input-ledger:member $head $set) (input-ledger:member-all $tail $set) False))))
+
+(= (input-ledger:inputs-of $space $request)
+   (collapse (match $space (ledger:input-of $request $input) $input)))
+
+; Ledger.link_inputs: an input: envelope keeps the inputs it was formed from (another set is
+; a conflict); any request gains the inputs it does not have yet.
+(= (input-ledger:link-each $space $request $inputs $prior $added)
+   (if (== $inputs ())
+       $added
+       (let* ((($input $rest) (decons-atom $inputs)))
+         (if (input-ledger:member $input $prior)
+             (input-ledger:link-each $space $request $rest $prior $added)
+             (let* (($position (input-ledger:tick $space))
+                    ($_ (add-atom $space (ledger:input-of $request $input)))
+                    ($_ (add-atom $space (ledger:requests-of $input $request $position)))
+                    ($next (+ $added 1)))
+               (input-ledger:link-each $space $request $rest (cons-atom $input $prior) $next))))))
+
+(= (input-ledger:link-in $space $request $inputs)
+   (let $prior (input-ledger:inputs-of $space $request)
+     (if (and (str:starts-with $request "input:")
+              (and (not (== $prior ()))
+                   (not (and (== (size-atom $prior) (size-atom $inputs)) (input-ledger:member-all $inputs $prior)))))
+         conflict
+         (if (== (input-ledger:link-each $space $request $inputs $prior 0) 0) (empty) ok))))
+
+(= (input-ledger:linked-row $view ($request $position))
+   ($request (list:sort (input-ledger:inputs-of $view $request))))
+
+(= (input-ledger:position-first-link $left $right)
+   (let* ((($r1 $p1) $left) (($r2 $p2) $right)) (<= $p1 $p2)))
+
+;   ((<request> (<input> ...)) ...) for Ledger.requests_with_input, in linking order, inputs sorted
+(= (input-ledger:linked $db $input)
+   (case (db:snapshot $db inputs)
+     (((Error $where $why) (Error $where $why))
+      ($view (let* (($links (list:sort-by input-ledger:position-first-link
+                              (collapse (match $view (ledger:requests-of $input $r $p) ($r $p)))))
+                    ($answer (map-atom $links $link (input-ledger:linked-row $view $link)))
+                    ($_ (db:close $view)))
+               $answer)))))
+
+; A request record's fields: (<seq> <kind> <checker> <status>) or none.
+(= (input-ledger:request-fields $space $id)
+   (case (input-ledger:heads $space $id)
+     ((((request $i $q $k $c $st $p $n $sm $dg)) ($q $k $c $st))
+      ($other none))))
+
+(= (input-ledger:frame-of $space $request)
+   (case (collapse (match $space (ledger:frame $request $parent $trigger $chat) (frame $parent $trigger $chat)))
+     ((($frame) $frame)
+      ($other none))))
+
+; cover_inputs: a raw input envelope of an operator message or notification with a chat and
+; inputs supersedes the older envelopes of the same kind and chat whose inputs are a subset
+; of its own; each becomes covered and the revision advances once.
+(= (input-ledger:cover-candidate $space $old $seq $kind $chat $mine)
+   (case (input-ledger:request-fields $space $old)
+     ((($q $k $c $st)
+       (and (and (< $q $seq) (str:starts-with $old "input:"))
+            (and (and (== $c "operator") (or (== $st "active") (== $st "processed")))
+                 (and (== $k $kind)
+                      (and (case (input-ledger:frame-of $space $old)
+                             (((frame $p $t $ch) (== $ch $chat)) ($none False)))
+                           (input-ledger:member-all (input-ledger:inputs-of $space $old) $mine))))))
+      ($other False))))
+
+(= (input-ledger:cover-each $space $request $olds)
+   (if (== $olds ())
+       ()
+       (let* ((($old $rest) (decons-atom $olds))
+              ($_ (add-atom $space (ledger:covered $old $request)))
+              ($_ (add-atom $space (ledger:covers $request $old)))
+              ($_ (input-ledger:move-in $space $old ("active" "processed") "covered")))
+         (cons-atom $old (input-ledger:cover-each $space $request $rest)))))
+
+(= (input-ledger:cover-in $space $request)
+   (case (input-ledger:request-fields $space $request)
+     ((($seq $kind $checker $status)
+       (let* (($mine (input-ledger:inputs-of $space $request))
+              ($chat (case (input-ledger:frame-of $space $request) (((frame $p $t $ch) $ch) ($none "")))))
+         (if (and (and (str:starts-with $request "input:") (or (== $status "active") (== $status "processed")))
+                  (and (and (== $checker "operator") (or (== $kind "message") (== $kind "notification")))
+                       (and (not (== $chat "")) (not (== $mine ())))))
+             (let* (($sharing (unique-atom (collapse (let $input (superpose $mine)
+                                  (match $space (ledger:requests-of $input $sharer $at) $sharer)))))
+                    ($olds (collapse (let $candidate (superpose $sharing)
+                              (if (and (not (== $candidate $request))
+                                       (input-ledger:cover-candidate $space $candidate $seq $kind $chat $mine))
+                                  $candidate (empty)))))
+                    ($covered (input-ledger:cover-each $space $request $olds))
+                    ($_ (if (== $covered ()) done (input-ledger:advance $space))))
+               $covered)
+             ())))
+      ($other ()))))
+
+(= (input-ledger:selectable $space $request)
+   (case (input-ledger:request-fields $space $request)
+     ((($q $k $c $st) (or (== $st "active") (and (== $st "processed") (or (== $k "message") (== $k "notification")))))
+      ($other False))))
+
+(= (input-ledger:no-parent $parent) (or (== $parent none) (== $parent "")))
+
+; task_context.begin: a frame (kept if the request has one), coverage, and the focus. A
+; request that follows one awaiting the user's reply is its child; a named parent must exist.
+(= (input-ledger:begin-in $space $request $trigger $previous $chat $parent)
+   (let* (($inferred
+           (if (and (== $parent none)
+                    (and (not (== $previous $request))
+                         (and (not (== $previous "autonomous"))
+                              (not (and (== (get-type $previous) String) (str:starts-with $previous "goal:"))))))
+               (case (input-ledger:request-fields $space $previous)
+                 ((($q $k $c "waiting-user") $previous) ($other none)))
+               $parent))
+          ($own (if (== $inferred $request) none $inferred)))
+     (if (and (not (input-ledger:no-parent $own)) (== (input-ledger:request-fields $space $own) none))
+         (refused "unknown parent task")
+         (let* (($_ (if (== (input-ledger:frame-of $space $request) none)
+                        (let* (($_ (add-atom $space (ledger:frame $request $own $trigger $chat)))
+                               ($_ (if (input-ledger:no-parent $own) done (add-atom $space (ledger:child $own $request)))))
+                          done)
+                        done))
+                ($_ (input-ledger:cover-in $space $request))
+                ($_ (input-ledger:state-put $space "context_focus" $request)))
+           ok))))
+
+(= (input-ledger:focus-in $space $request)
+   (if (input-ledger:same (input-ledger:state-of $space "context_focus") $request)
+       (empty)
+       (let $_ (input-ledger:state-put $space "context_focus" $request) ok)))
+
+; task_context.proposal: a serial names one proposal; its disposition may change.
+(= (input-ledger:proposal-in $space $serial $request $commands $disposition)
+   (case (collapse (match $space (ledger:proposal $serial $r $c $d) (ledger:proposal $serial $r $c $d)))
+     ((() (let* (($_ (add-atom $space (ledger:proposal $serial $request $commands $disposition)))
+                 ($_ (add-atom $space (ledger:proposal-of $request $serial))))
+            ok))
+      (((ledger:proposal $s $r $c $d))
+       (if (and (== $r $request) (== $c $commands))
+           (if (== $d $disposition)
+               (empty)
+               (let $_ (input-ledger:replace $space (ledger:proposal $s $r $c $d) (ledger:proposal $s $r $c $disposition)) ok))
+           conflict))
+      ($other (Error input-ledger:proposal (several $serial (size-atom $other)))))))
+
+; task_context.note: a note on a known request, in clock order.
+(= (input-ledger:note-in $space $request $text $sources)
+   (if (== (input-ledger:request-fields $space $request) none)
+       (empty)
+       (let* (($sequence (input-ledger:count $space "notes"))
+              ($_ (add-atom $space (ledger:note $request $sequence $text $sources))))
+         ok)))
+
+; task_context.resume: from a request, through coverings and parents, to the first one
+; still selectable; none when the walk ends or returns to a request it saw.
+(= (input-ledger:resume-walk $space $request $seen)
+   (if (or (input-ledger:no-parent $request) (input-ledger:member $request $seen))
+       none
+       (case (collapse (match $space (ledger:covered $request $covering) $covering))
+         ((($covering) (input-ledger:resume-walk $space $covering (cons-atom $request $seen)))
+          ($none (if (input-ledger:selectable $space $request)
+                     $request
+                     (case (input-ledger:frame-of $space $request)
+                       (((frame $parent $t $c) (input-ledger:resume-walk $space $parent (cons-atom $request $seen)))
+                        ($other none)))))))))
+
+; _root: the ancestor without a parent; cyclic on a cycle (a refusal of the caller, not a
+; failure of the store).
+(= (input-ledger:root-walk $space $request $seen)
+   (if (input-ledger:member $request $seen)
+       cyclic
+       (case (input-ledger:frame-of $space $request)
+         (((frame $parent $t $c)
+           (if (input-ledger:no-parent $parent) $request (input-ledger:root-walk $space $parent (cons-atom $request $seen))))
+          ($other $request)))))
+
+; _members: the root and everything reached through child frames and covered batches.
+(= (input-ledger:family-step $space $frontier $seen)
+   (if (== $frontier ())
+       $seen
+       (let* ((($node $rest) (decons-atom $frontier))
+              ($next (unique-atom (union-atom (collapse (match $space (ledger:child $node $child) $child))
+                                              (collapse (match $space (ledger:covers $node $batch) $batch)))))
+              ($new (collapse (let $reached (superpose $next) (if (input-ledger:member $reached $seen) (empty) $reached)))))
+         (input-ledger:family-step $space (union-atom $rest $new) (union-atom $seen $new)))))
+
+(= (input-ledger:family $view $request)
+   (let $root (input-ledger:root-walk $view $request ())
+     (if (== $root cyclic) cyclic (family $root (input-ledger:family-step $view ($root) ($root))))))
+
+; Everything a task projection or the conversation reads, from one snapshot, for a list
+; of requests or for "all":
+;   (view <owner> <requests> <coverings> <notes> <proposals> <actions> <attempts> <arrivals> <captures>)
+; <requests> as request-rows answers them; <coverings> ((<request> <covering>) ...);
+; <notes> ((<request> <sequence> <text> <sources>) ...); <proposals> ((<serial> <request>
+; <commands> <disposition>) ...); <actions> ((<serial> <ticket> <request> <command>) ...);
+; <attempts> ((<ticket> <position> <result or none>) ...); <arrivals> ((<request> <position>) ...);
+; <captures> ((<serial> <position>) ...) of the turns of these actions and proposals.
+(= (input-ledger:of-requests $view $ids $pattern-of)
+   (collapse (let $id (superpose $ids) ($pattern-of $view $id))))
+
+(= (input-ledger:notes-of $view $id) (match $view (ledger:note $id $s $t $src) ($id $s $t $src)))
+(= (input-ledger:covering-of $view $id) (match $view (ledger:covered $id $c) ($id $c)))
+(= (input-ledger:proposals-of $view $id)
+   (let $serial (match $view (ledger:proposal-of $id $serial) $serial)
+     (match $view (ledger:proposal $serial $id $c $d) ($serial $id $c $d))))
+(= (input-ledger:request-actions $view $id)
+   (match $view (ledger:action $t $id $s $tool $c $st $o $rc) ($s $t $id $c)))
+(= (input-ledger:arrival-of $view $id) (match $view (ledger:arrival $id $p) ($id $p)))
+
+(= (input-ledger:attempts-of-actions $view $actions)
+   (collapse (let ($s $t $r $c) (superpose $actions)
+     (match $view (ledger:attempt $t $p $cmd $result $o) ($t $p $result)))))
+
+(= (input-ledger:captures-of $view $serials)
+   (collapse (let $serial (superpose (unique-atom $serials))
+     (match $view (ledger:turn $serial $st $sn $p) ($serial $p)))))
+
+(= (input-ledger:first-of ($first $second $third $fourth)) $first)
+
+(= (input-ledger:serials-of $proposals $actions)
+   (union-atom (map-atom $proposals $proposal (input-ledger:first-of $proposal))
+               (map-atom $actions $action (input-ledger:first-of $action))))
+
+(= (input-ledger:rows-of $view $which)
+   (let $heads (if (== $which all) (input-ledger:all-heads $view) (input-ledger:heads-of-ids $view $which))
+     (map-atom (list:sort-by input-ledger:seq-first $heads) $head (input-ledger:row-of $view $head))))
+
+(= (input-ledger:view-of $view $which)
+   (let* (($owner (input-ledger:state-of $view "owner"))
+          ($all (== $which all))
+          ($requests (input-ledger:rows-of $view $which))
+          ($coverings (if $all (collapse (match $view (ledger:covered $r $c) ($r $c)))
+                              (input-ledger:of-requests $view $which input-ledger:covering-of)))
+          ($notes (if $all (collapse (match $view (ledger:note $r $s $t $src) ($r $s $t $src)))
+                          (input-ledger:of-requests $view $which input-ledger:notes-of)))
+          ($proposals (if $all (collapse (match $view (ledger:proposal $s $r $c $d) ($s $r $c $d)))
+                              (input-ledger:of-requests $view $which input-ledger:proposals-of)))
+          ($actions (if $all (collapse (match $view (ledger:action $t $r $s $tool $c $st $o $rc) ($s $t $r $c)))
+                            (input-ledger:of-requests $view $which input-ledger:request-actions)))
+          ($attempts (input-ledger:attempts-of-actions $view $actions))
+          ($arrivals (if $all (collapse (match $view (ledger:arrival $r $p) ($r $p)))
+                             (input-ledger:of-requests $view $which input-ledger:arrival-of)))
+          ($captures (input-ledger:captures-of $view (input-ledger:serials-of $proposals $actions))))
+     (view $owner $requests $coverings $notes $proposals $actions $attempts $arrivals $captures)))
+
+(= (input-ledger:task-view $db $which)
+   (case (db:snapshot $db inputs)
+     (((Error $where $why) (Error $where $why))
+      ($view (let* (($answer (input-ledger:view-of $view $which)) ($_ (db:close $view))) $answer)))))
+
+(= (input-ledger:task-read $db $verb $body)
+   (case (db:snapshot $db inputs)
+     (((Error $where $why) (Error $where $why))
+      ($view (let* (($answer ($body $view)) ($_ (db:close $view))) $answer)))))
+
+; read(): the request of a call's serial (its proposal's, else its action's), or none.
+(= (input-ledger:call-request $view $serial $ticket)
+   (case (collapse (match $view (ledger:proposal $serial $r $c $d) $r))
+     ((($request) $request)
+      ($none (case (collapse (match $view (ledger:action $ticket $r $serial $tool $c $st $o $rc) $r))
+               ((($request) $request) ($other none)))))))

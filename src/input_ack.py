@@ -488,15 +488,17 @@ def request_rows(which="all"):
     answer = _ledger_call("request-rows", (selector,))
     if not isinstance(answer, tuple):
         raise LedgerUnavailable("input ledger request-rows: unexpected answer %s" % _show(answer))
-    rows = []
-    for row in answer:
-        if not (isinstance(row, tuple) and len(row) == 8 and row[0] == S("row")):
-            raise LedgerUnavailable("input ledger request-rows: unexpected row %s" % _show(row))
-        _, identity, content, status, checker, kind, processed, note = row
-        rows.append(dict(id=_checked_text(identity, "id"), content=_checked_text(content, "content"),
-                         status=_checked_text(status, "status"), checker=_checked_text(checker, "checker"),
-                         kind=_checked_text(kind, "kind"), processed=_flag_of(processed), note=_checked_text(note, "note")))
-    return rows
+    return [_request_row(row) for row in answer]
+
+
+def _request_row(row):
+    from execution_gateway.cetta_worker import S
+    if not (isinstance(row, tuple) and len(row) == 8 and row[0] == S("row")):
+        raise LedgerUnavailable("input ledger request-rows: unexpected row %s" % _show(row))
+    _, identity, content, status, checker, kind, processed, note = row
+    return dict(id=_checked_text(identity, "id"), content=_checked_text(content, "content"),
+                status=_checked_text(status, "status"), checker=_checked_text(checker, "checker"),
+                kind=_checked_text(kind, "kind"), processed=_flag_of(processed), note=_checked_text(note, "note"))
 
 
 # ---- the turns and their actions: observed_strategy.Ledger's turn and effect methods ----
@@ -664,6 +666,114 @@ def turn_dump():
              for t in _entries(answer[2], "turn-dump")]
     arrivals = {entry[0]: entry[1] for entry in _entries(answer[3], "turn-dump")}
     return state, sorted(turns, key=lambda turn: turn["serial"]), arrivals
+
+
+# ---- the task context: task_context's frames, proposals, notes, coverage and request inputs ----
+
+def _answer_name(verb, answer, names):
+    from execution_gateway.cetta_worker import Symbol
+    if isinstance(answer, Symbol) and answer.name in names:
+        return answer.name
+    raise LedgerUnavailable("input ledger %s: unexpected answer %s" % (verb, _show(answer)))
+
+
+def link_inputs(request, inputs, request_id=None):
+    """Ledger.link_inputs: False when an input: envelope already names another set of inputs."""
+    inputs = tuple(sorted({str(i) for i in inputs}))
+    answer = _ledger_call("link-inputs", (str(request), inputs, str(request_id or _rid())))
+    return _answer_name("link-inputs", answer, ("ok", "conflict")) == "ok"
+
+
+def linked(input_id):
+    """Ledger.requests_with_input: [{request, inputs (sorted)}] in linking order."""
+    return [dict(request=_checked_text(entry[0], "request"), inputs=list(entry[1]))
+            for entry in _entries(_ledger_call("linked", (str(input_id),)), "linked")]
+
+
+def task_begin(request, trigger, previous, chat, parent, request_id=None):
+    """task_context.begin: None, or the refusal text."""
+    from execution_gateway.cetta_worker import S
+    answer = _ledger_call("task-begin", (str(request), str(trigger), _symbol_none(None if previous is None else str(previous)),
+                                         str(chat or ""), _symbol_none(None if parent is None else str(parent)),
+                                         str(request_id or _rid())))
+    if answer == S("ok"):
+        return None
+    if isinstance(answer, tuple) and len(answer) == 2 and answer[0] == S("refused") and isinstance(answer[1], str):
+        return answer[1]
+    raise LedgerUnavailable("input ledger task-begin: unexpected answer %s" % _show(answer))
+
+
+def task_focus(request, request_id=None):
+    _answer_name("task-focus", _ledger_call("task-focus", (_symbol_none(request), str(request_id or _rid()))), ("ok",))
+
+
+def task_proposal(serial, request, commands_text, disposition, request_id=None):
+    """False when the serial already names another request or other commands."""
+    answer = _ledger_call("task-proposal", (int(serial), str(request), str(commands_text), str(disposition),
+                                            str(request_id or _rid())))
+    return _answer_name("task-proposal", answer, ("ok", "conflict")) == "ok"
+
+
+def task_note(request, text, sources_text, request_id=None):
+    """False when the request is unknown."""
+    answer = _ledger_call("task-note", (str(request), str(text), str(sources_text), str(request_id or _rid())))
+    return _answer_name("task-note", answer, ("ok", "unknown")) == "ok"
+
+
+def task_resume(request):
+    answer = _ledger_call("task-resume", (_symbol_none(request),))
+    return None if _is_none(answer) else _checked_text(answer, "request")
+
+
+def task_family(request):
+    """(root, members) of a task; ValueError on cyclic ancestry."""
+    from execution_gateway.cetta_worker import S
+    answer = _ledger_call("task-family", (str(request),))
+    if answer == S("cyclic"):
+        raise ValueError("cyclic task ancestry")
+    if isinstance(answer, tuple) and len(answer) == 3 and answer[0] == S("family"):
+        return answer[1], list(answer[2])
+    raise LedgerUnavailable("input ledger task-family: unexpected answer %s" % _show(answer))
+
+
+def request_context(request):
+    """(the chat of the request's frame or None, its inputs)."""
+    from execution_gateway.cetta_worker import S
+    answer = _ledger_call("request-context", (str(request),))
+    if not (isinstance(answer, tuple) and len(answer) == 3 and answer[0] == S("context") and isinstance(answer[2], tuple)):
+        raise LedgerUnavailable("input ledger request-context: unexpected answer %s" % _show(answer))
+    return (None if _is_none(answer[1]) else answer[1]), list(answer[2])
+
+
+def task_call(serial, ticket):
+    """The request of a call's serial (its proposal's, else its action's), or None."""
+    answer = _ledger_call("task-call", (int(serial), str(ticket)))
+    return None if _is_none(answer) else _checked_text(answer, "request")
+
+
+def task_view(which):
+    """Everything a task projection reads, for a list of requests or "all", from one snapshot."""
+    from execution_gateway.cetta_worker import S
+    selection = S("all") if which == "all" else tuple(str(item) for item in dict.fromkeys(which))
+    answer = _ledger_call("task-view", (selection,))
+    if not (isinstance(answer, tuple) and len(answer) == 10 and answer[0] == S("view")):
+        raise LedgerUnavailable("input ledger task-view: unexpected answer %s" % _show(answer))
+    _, owner, requests, coverings, notes, proposals, actions, attempts, arrivals, captures = answer
+    attempts_by_ticket = {}
+    for ticket, position, result in _entries(attempts, "task-view"):
+        attempts_by_ticket.setdefault(ticket, {})[position] = None if _is_none(result) else result
+    return dict(owner=None if owner == S("absent") else owner,
+                requests=[_request_row(row) for row in requests],
+                coverings={entry[0]: entry[1] for entry in _entries(coverings, "task-view")},
+                notes=sorted((dict(sequence=n[1], request=n[0], text=n[2], sources=n[3])
+                              for n in _entries(notes, "task-view")), key=lambda note: note["sequence"]),
+                proposals={p[0]: dict(serial=p[0], request=p[1], commands=p[2], disposition=p[3])
+                           for p in _entries(proposals, "task-view")},
+                actions={a[0]: dict(serial=a[0], ticket=a[1], request=a[2], command=a[3])
+                         for a in _entries(actions, "task-view")},
+                attempts=attempts_by_ticket,
+                arrivals={entry[0]: entry[1] for entry in _entries(arrivals, "task-view")},
+                captures={entry[0]: entry[1] for entry in _entries(captures, "task-view")})
 
 
 def processed_update_ids(ids):
