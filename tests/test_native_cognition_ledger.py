@@ -51,6 +51,7 @@ def scenario(store, native):
     legacy = store.capture("input:b", "legacy", ROUTER, 0)
     old = store.decide(legacy["serial"], {"kind": "command", "tool": "shell", "command": ["echo", "old"]}, 0)
     record_attempt(store, native, old, 0, ["echo", "old"], {"disposition": "returned", "result": "old"})
+    store.accept("input:late", "after the calls", kind="message")  # ordered after the calls by their captures
     task_context.note(store, "task-1", "a note on the child")
     task_context.focus(store, "task-1")
     return legacy["serial"]

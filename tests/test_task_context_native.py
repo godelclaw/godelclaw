@@ -68,6 +68,8 @@ def contexts(store, native, note):
     store.report(ticket, "batch done")
     later = store.capture("input:b", "b2", ROUTER, 0)
     task_context.proposal(store, later["serial"], "input:b", [["echo", "hi"]], "deferred")
+    # An input that arrives after the calls: the conversation orders the calls before it by their captures.
+    note("late", store.accept("input:late", "after the calls", kind="message"))
     owner = store.projection()["meta"]["owner"]
     first_call = "%s:%s:0" % (owner, snap["serial"])
     note("note", [raises(task_context.note, store, "task-1", "it listed", '["%s"]' % first_call),

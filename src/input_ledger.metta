@@ -2020,7 +2020,8 @@
      (match $view (ledger:turn $key $serial $st $sn $p) (if (== $p none) (empty) ($serial $p)))))
 
 (= (input-ledger:captures-of $view $serials)
-   (collapse (let $serial (superpose (unique-atom $serials)) (input-ledger:capture-of $view $serial))))
+   (let $unique (unique-atom $serials)
+     (collapse (let $serial (superpose $unique) (input-ledger:capture-of $view $serial)))))
 
 (= (input-ledger:first-of ($first $second $third $fourth)) $first)
 
