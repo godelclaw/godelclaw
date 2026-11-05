@@ -6,6 +6,30 @@ import time
 import agent_checkpoint
 import observed_strategy as strategy
 
+def _native():
+    """With the native ledger the topics and the historical jobs are its records (src/input_ledger.metta)."""
+    import input_ack
+    return bool(input_ack._native_socket())
+
+
+def _call(verb, arguments=()):
+    import input_ack
+    return input_ack._ledger_call(verb, tuple(arguments))
+
+
+def _nonce():
+    import uuid
+    return uuid.uuid4().hex
+
+
+def _native_topics():
+    from execution_gateway.cetta_worker import S
+    answer = _call("topics")
+    if not (isinstance(answer, tuple) and len(answer) == 3 and answer[0] == S("ledger:topics")):
+        raise RuntimeError("input ledger topics: unexpected answer %r" % (answer,))
+    return answer[1], [dict(name=row[0], revision=row[1]) for row in answer[2]]
+
+
 def _store():
     store = agent_checkpoint.ledger()
     with store.transaction() as db:
@@ -32,6 +56,9 @@ def _name(value):
 
 def select(name):
     name = _name(name)
+    if _native():
+        _call("topic-select", (name, _nonce()))
+        return "active topic: " + name
     store = _store()
     with store.transaction() as db:
         db.execute("INSERT OR IGNORE INTO topic_contexts VALUES (?,0,'')", (name,))
@@ -41,6 +68,9 @@ def select(name):
 
 def note(text):
     text = str(text)
+    if _native():
+        name = _call("topic-note", (text, _nonce()))
+        return "saved topic notes: " + (name if isinstance(name, str) else _native_topics()[0])
     store = _store()
     with store.transaction() as db:
         name = store.get(db, "active_topic")
@@ -49,12 +79,18 @@ def note(text):
 
 
 def topics():
+    if _native():
+        active, rows = _native_topics()
+        return strategy.encoded({"active": active, "topics": rows})
     store = _store()
     with store.transaction() as db:
         return strategy.encoded({"active": store.get(db, "active_topic"), "topics": [dict(row) for row in db.execute("SELECT name,revision FROM topic_contexts ORDER BY name")]})
 
 
 def foreground_revision():
+    if _native():
+        active, rows = _native_topics()
+        return next(([row["name"], row["revision"]] for row in rows if row["name"] == active), None)
     store = _store()
     with store.transaction() as db:
         active = store.get(db, "active_topic")
@@ -62,6 +98,10 @@ def foreground_revision():
 
 
 def context():
+    if _native():
+        row = _call("topic-context")
+        return ("TOPIC_NOTES " + strategy.encoded(dict(name=row[0], notes=row[1]))
+                if isinstance(row, tuple) and len(row) == 2 and row[1] else "")
     store = _store()
     with store.transaction() as db:
         active = store.get(db, "active_topic")
@@ -70,12 +110,18 @@ def context():
 
 
 def results(job):
+    if _native():
+        row = _call("model-job", (str(job),))
+        return (strategy.encoded(dict(id=row[0], topic=row[1], state=row[2], result=row[3]))
+                if isinstance(row, tuple) and len(row) == 4 else "unknown historical model job")
     with _store().transaction() as db:
         row = db.execute("SELECT id,topic,state,result FROM model_jobs WHERE id=?",(str(job),)).fetchone()
     return strategy.encoded(dict(row)) if row else "unknown historical model job"
 
 
 def status():
+    if _native():
+        return strategy.encoded([dict(id=row[0], topic=row[1], state=row[2]) for row in _call("model-jobs")])
     with _store().transaction() as db:
         rows = [dict(row) for row in db.execute("SELECT id,topic,state FROM model_jobs ORDER BY rowid DESC")]
     return strategy.encoded(rows)

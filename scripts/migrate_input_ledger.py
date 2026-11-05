@@ -32,8 +32,9 @@ It then copies the rest of the turn core (read_core, core_atoms): the meta keys,
 the request inputs, the input supersessions, the task proposals and notes. The events table
 stays in SQLite: its two orderings, each request's first deliver and each turn's first capture,
 become the clock positions of the arrivals and turns, and the clock continues after its last
-sequence. Topics (meta active_topic, topic_contexts, model_jobs) and provider notices stay in
-SQLite. The copy is checked by reading every reader of observed_strategy, task_context and
+sequence. The topics (meta active_topic, topic_contexts), the historical model jobs and the
+provider notices are copied too; --add-families copies only these into a store that holds the
+rest already (the agents' turn core moved before they did). The copy is checked by reading every reader of observed_strategy, task_context and
 strategy_host on the source and on the target and comparing them (verify_readers).
 It refuses a target that holds any atom, and never merges into one. The copy is
 made in batches, each atomic: if it stops half way, discard the target store
@@ -206,7 +207,7 @@ def request_links(requests):
 # ---- the rest of the turn core ----
 
 TYPED_META = ("owner", "revision", "mode", "paused", "next_sample", "pending", "router_revision", "context_focus")
-SQLITE_META = ("working_set", "active_topic", "input_supersessions_v1")  # copied above, kept by SQLite, or SQLite's own
+SQLITE_META = ("working_set", "input_supersessions_v1")  # copied above, or SQLite's own
 
 
 def core_rows(db, tables):
@@ -234,7 +235,40 @@ def core_rows(db, tables):
                       + [row[0] for row in rows("sqlite_sequence", "SELECT seq FROM sqlite_sequence WHERE name='task_notes'")]
                       + [0]),
         last_attempt=(rows("command_attempts", "SELECT MAX(rowid) FROM command_attempts") or [(0,)])[0][0] or 0)
+    core.update(family_rows(db, tables))
     return core
+
+
+def family_rows(db, tables):
+    """The topics, the historical model jobs and the provider notices, read in the caller's transaction."""
+    rows = lambda table, sql: db.execute(sql).fetchall() if table in tables else []
+    return dict(
+        topics=rows("topic_contexts", "SELECT name, revision, notes FROM topic_contexts ORDER BY name"),
+        jobs=rows("model_jobs", "SELECT id, topic, state, result, rowid FROM model_jobs ORDER BY rowid"),
+        provider_notices=rows("provider_notices", "SELECT episode, intent, queued FROM provider_notices ORDER BY episode"),
+        active_topic=[row for row in rows("meta", "SELECT key, value FROM meta WHERE key='active_topic'")])
+
+
+def family_atoms(core):
+    """The records of the topics, the historical model jobs and the provider notices."""
+    from execution_gateway.cetta_worker import E, S
+    atoms = []
+    for name, revision, notes in core["topics"]:
+        where = "topic_contexts %r" % name
+        if type(revision) is not int:
+            raise MigrationError("%s revision is %s, not an integer" % (where, type(revision).__name__))
+        atoms.append(E("ledger:topic", _text(name, where), revision, _text(notes, where + " notes")))
+    for identity, topic, state, result, order in core["jobs"]:
+        where = "model_jobs %r" % identity
+        atoms.append(E("ledger:model-job", _text(identity, where), _text(topic, where + " topic"),
+                       _text(state, where + " state"), S("none") if result is None else _text(result, where + " result"),
+                       int(order)))
+    for episode, intent, queued in core["provider_notices"]:
+        where = "provider_notices %r" % episode
+        if queued not in (0, 1):
+            raise MigrationError("%s queued is not 0 or 1" % where)
+        atoms.append(E("ledger:provider-notice", _text(episode, where), _text(intent, where + " intent"), int(queued)))
+    return atoms
 
 
 def _json(text, where):
@@ -316,7 +350,7 @@ def core_atoms(core):
                   E("ledger:proposal-of", request, int(serial))]
     for sequence, request, text, sources in core["notes"]:
         atoms.append(E("ledger:note", request, int(sequence), text, sources))
-    return atoms
+    return atoms + family_atoms(core)
 
 
 def _value_batches(items, size, limit=32 * 1024 * 1024):
@@ -459,6 +493,95 @@ def migrate(source, socket, *, batch=BATCH, after_copy=None):
             "turn_core_records": len(core), "batches": batches, "verified": True}
 
 
+def add_families(source, socket):
+    """Copy only the topics, the historical model jobs, the provider notices and the active topic into a store
+    that holds the turn core already; refuse a store that holds any of them. Answers the report."""
+    from execution_gateway.cetta_worker import E, S
+    import input_ack
+    if not socket:
+        raise MigrationError("no target socket")
+
+    def call(verb, arguments, timeout=60):
+        return input_ack._ledger_call(verb, arguments, timeout, socket=socket)
+
+    census = call("families-census", ())
+    if census != (S("families"), 0, 0, 0, 0):
+        raise MigrationError("the target holds topics, model jobs, provider notices or an active topic already "
+                             "(%s): nothing was copied" % input_ack._show(census))
+    path = Path(source)
+    if not path.is_file():
+        raise MigrationError("the source ledger is not a file: %s" % path)
+    with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=10)) as db:
+        db.execute("PRAGMA query_only=1")
+        db.execute("BEGIN")
+        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        family = family_rows(db, tables)
+    atoms = family_atoms(family) + [E("ledger:meta", key, _text(text, "meta active_topic"))
+                                    for key, text in family["active_topic"]]
+    for chunk in _value_batches(atoms, BATCH):
+        answer = call("import", (S("any"), tuple(chunk)))
+        if answer is not True:
+            raise MigrationError("unexpected answer to a batch of the families: %s" % input_ack._show(answer))
+    census = call("families-census", ())
+    expected = (S("families"), len(family["topics"]), len(family["jobs"]), len(family["provider_notices"]),
+                len(family["active_topic"]))
+    if census != expected:
+        raise MigrationError("the families copied are not those read: %s, not %s"
+                             % (input_ack._show(census), input_ack._show(expected)))
+    return {"source": str(source), "socket": str(socket), "topics": len(family["topics"]), "model_jobs": len(family["jobs"]),
+            "provider_notices": len(family["provider_notices"]), "active_topic": bool(family["active_topic"]), "verified": True}
+
+
+def family_readers(source):
+    """What the agent reads of the families, on the ledger it is configured for: the topics, the active topic's
+    notes, the historical jobs and, for each provider notice episode of the source, its intent and queued flag."""
+    import input_ack
+    import topic_jobs
+    with closing(sqlite3.connect(Path(source).resolve().as_uri() + "?mode=ro", uri=True, timeout=10)) as db:
+        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        episodes = [row[0] for row in db.execute("SELECT episode FROM provider_notices ORDER BY episode")] \
+            if "provider_notices" in tables else []
+    found = {"topics": topic_jobs.topics(), "topic_context": topic_jobs.context(), "model_jobs": topic_jobs.status()}
+    notices = {}
+    for episode in episodes:
+        if input_ack._native_socket():
+            row = input_ack._ledger_call("provider-notice", (episode,), 30)
+            notices[episode] = list(row) if isinstance(row, tuple) else None
+        else:
+            with closing(sqlite3.connect(Path(source).resolve().as_uri() + "?mode=ro", uri=True, timeout=10)) as db:
+                row = db.execute("SELECT intent, queued FROM provider_notices WHERE episode=?", (episode,)).fetchone()
+            notices[episode] = list(row) if row else None
+    found["provider_notices"] = notices
+    return found
+
+
+def verify_families(source, socket):
+    """The families' readers (family_readers) on a scratch copy of the source and on the target: the names of
+    those that differ. The turn core is not compared: a store the agent has used since its own copy differs."""
+    import os
+    import shutil
+    import tempfile
+    import input_ack
+    saved = {key: os.environ.get(key) for key in (input_ack.LEDGER_SOCKET, "METTACLAW_STRATEGY_PATH")}
+    with tempfile.TemporaryDirectory(prefix="ledger-families-") as scratch:
+        copy = Path(scratch) / "source.sqlite3"
+        shutil.copyfile(source, copy)
+        try:
+            os.environ.pop(input_ack.LEDGER_SOCKET, None)
+            os.environ["METTACLAW_STRATEGY_PATH"] = str(copy)
+            oracle = family_readers(copy)
+            os.environ[input_ack.LEDGER_SOCKET] = str(socket)
+            native = family_readers(copy)
+        finally:
+            input_ack.close_ledger()
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+    return [name for name in oracle if native[name] != oracle[name]]
+
+
 def verify_readers(source, socket, *, progress=None):
     """Compare what the agent reads on the source and on the target: the Ledger's views, each request's record,
     status, protected view and task projection, the conversation, the request inputs, the context focus and
@@ -507,11 +630,15 @@ def verify_readers(source, socket, *, progress=None):
         saved = os.environ.get(input_ack.LEDGER_SOCKET)
         try:
             os.environ.pop(input_ack.LEDGER_SOCKET, None)
+            saved_path = os.environ.get("METTACLAW_STRATEGY_PATH")
+            os.environ["METTACLAW_STRATEGY_PATH"] = str(copy)
             oracle = views(observed_strategy.Ledger(copy))
+            oracle["families"] = family_readers(copy)
             if progress:
                 progress("read the source")
             os.environ[input_ack.LEDGER_SOCKET] = str(socket)
             native = views(observed_strategy.Ledger(Path(scratch) / "gate.sqlite3"))
+            native["families"] = family_readers(copy)
             if progress:
                 progress("read the target")
         finally:
@@ -520,6 +647,11 @@ def verify_readers(source, socket, *, progress=None):
                 os.environ.pop(input_ack.LEDGER_SOCKET, None)
             else:
                 os.environ[input_ack.LEDGER_SOCKET] = saved
+            if "saved_path" in locals():
+                if saved_path is None:
+                    os.environ.pop("METTACLAW_STRATEGY_PATH", None)
+                else:
+                    os.environ["METTACLAW_STRATEGY_PATH"] = saved_path
     differing = []
     for name in oracle:
         if isinstance(oracle[name], dict) and name in ("records", "protected", "projections"):
@@ -537,14 +669,19 @@ def main(argv=None):
     parser.add_argument("--batch", type=int, default=BATCH, help="rows per transaction (default %d)" % BATCH)
     parser.add_argument("--verify-readers", action="store_true",
                         help="after the copy, compare every reader on the source and on the target")
+    parser.add_argument("--add-families", action="store_true",
+                        help="copy only the topics, model jobs and provider notices into a store that holds the turn "
+                             "core already")
     args = parser.parse_args(argv)
     if not 1 <= args.batch <= 1000:
         parser.error("--batch must be between 1 and 1000")
     try:
-        report = migrate(args.source, args.socket, batch=args.batch)
+        report = (add_families(args.source, args.socket) if args.add_families
+                  else migrate(args.source, args.socket, batch=args.batch))
         if args.verify_readers:
-            differing = verify_readers(args.source, args.socket,
-                                       progress=lambda what: print(what, file=sys.stderr, flush=True))
+            differing = (verify_families(args.source, args.socket) if args.add_families else
+                         verify_readers(args.source, args.socket,
+                                        progress=lambda what: print(what, file=sys.stderr, flush=True)))
             report["readers_differing"] = differing
             if differing:
                 raise MigrationError("the target reads differently from the source: %s" % ", ".join(differing[:20]))

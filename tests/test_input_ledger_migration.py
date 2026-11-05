@@ -167,6 +167,49 @@ class MigrationTest(NativeCase):
         self.assertGreater(report["turn_core_records"], 30)
         self.assertEqual(migration.verify_readers(source, str(self.server.socket)), [])
 
+    def families_source(self):
+        """A SQLite ledger with two topics (one active, with notes), a historical model job and two provider notices."""
+        from observed_strategy import Ledger
+        import topic_jobs
+        with oracle_environment() as directory:
+            oracle = Oracle.create(directory)
+            Ledger(oracle.path)
+            topic_jobs.select("research"); topic_jobs.note("notes é \"q\"")
+            topic_jobs.select("design"); topic_jobs.select("research")
+            with closing(sqlite3.connect(oracle.path)) as db:
+                db.execute("INSERT INTO model_jobs(id, topic, revision, snapshot, question, state, result, boot) "
+                           "VALUES ('job-1', 'research', 1, '{}', 'q', 'completed', 'the answer', 'boot-1')")
+                db.execute("CREATE TABLE IF NOT EXISTS provider_notices (episode TEXT PRIMARY KEY, intent TEXT NOT NULL, "
+                           "queued INTEGER NOT NULL DEFAULT 0)")
+                db.executemany("INSERT INTO provider_notices VALUES (?,?,?)",
+                               [("episode-1", '{"key":"42.0.1","commands":[["send","x","plain"]]}', 1),
+                                ("episode-2", '{"key":"42.0.2","commands":[["send","y","plain"]]}', 0)])
+                db.commit()
+            source = self.directory / "families.db"
+            shutil.copyfile(oracle.path, source)
+        return source
+
+    def test_the_topics_jobs_and_provider_notices_are_copied_with_the_core(self):
+        source = self.families_source()
+        report = self.migrate_here(source)
+        self.assertTrue(report["verified"])
+        self.assertEqual(migration.verify_readers(source, str(self.server.socket)), [])
+        self.assertEqual(input_ack._ledger_call("families-census", (), 30, socket=str(self.server.socket))[1:],
+                         (3, 1, 2, 1))
+        input_ack.close_ledger()
+
+    def test_add_families_copies_them_into_a_store_that_holds_the_core(self):
+        source = self.families_source()
+        done = self.run_script("--source", str(source), "--socket", str(self.server.socket), "--add-families",
+                               "--verify-readers")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        report = json.loads(done.stdout)
+        self.assertEqual((report["topics"], report["model_jobs"], report["provider_notices"], report["active_topic"],
+                          report["readers_differing"]), (3, 1, 2, True, []))
+        again = self.run_script("--source", str(source), "--socket", str(self.server.socket), "--add-families")
+        self.assertEqual(again.returncode, 1)
+        self.assertIn("already", again.stderr)
+
     def test_a_large_ledger_is_copied_in_batches(self):
         operations = [("mark", ["id-%04d" % n for n in range(300)], float(n)) for n in range(1)]
         operations += [("register", "task-%03d" % n, "id-%04d" % n if n % 2 else "free-%d" % n, LANE, 100.0 + n)

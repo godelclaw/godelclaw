@@ -215,6 +215,28 @@ def presentations(store, native, note):
     note("observed", {a["ticket"]: a["observed"] for a in store.projection()["actions"]})
 
 
+def topics(store, native, note):
+    """topic_jobs on either ledger: the implicit conversation topic, select, notes, the context and the
+    historical model jobs (none)."""
+    import topic_jobs
+    def attempt(function, *arguments):
+        try:
+            return ("returned", function(*arguments))
+        except ValueError as error:
+            return ("raised", str(error))
+    note("initial", [topic_jobs.topics(), topic_jobs.context(), topic_jobs.foreground_revision(),
+                     topic_jobs.status(), topic_jobs.results("nobody")])
+    note("select", attempt(topic_jobs.select, "research"))
+    note("note", attempt(topic_jobs.note, "first notes é \"quoted\""))
+    note("again", attempt(topic_jobs.note, "second notes"))
+    note("after", [topic_jobs.topics(), topic_jobs.context(), topic_jobs.foreground_revision()])
+    note("back", attempt(topic_jobs.select, "conversation"))
+    note("quiet", [topic_jobs.context(), topic_jobs.foreground_revision()])
+    note("reselect", attempt(topic_jobs.select, "research"))
+    note("kept", [topic_jobs.topics(), topic_jobs.context()])
+    note("bad-name", attempt(topic_jobs.select, "bad name!"))
+
+
 class NativeSides(NativeCase):
     """A scenario (a function of a Ledger, whether it is native, and a note function) on SQLite and on
     the native store, compared step by step with the owner normalized."""
@@ -268,6 +290,15 @@ class TurnEffectNativeTest(NativeSides):
         self.assertNotIn(one, steps["view-after"] + steps["view-between"])
         observed = steps["observed"]
         self.assertEqual(sorted(t for t, v in observed.items() if v), sorted([one, two]))
+
+    def test_topics_match_sqlite(self):
+        oracle, _ = self.compare(topics)
+        steps = dict(oracle)
+        self.assertIn('"active":"conversation"', steps["initial"][0])
+        self.assertEqual(steps["after"][2], ["research", 2])
+        self.assertEqual(steps["quiet"], ["", ["conversation", 0]])
+        self.assertIn("second notes", steps["kept"][1])
+        self.assertEqual(steps["bad-name"][0], "raised")
 
     def test_the_receipts_page_and_the_reservations_match_sqlite(self):
         import strategy_host as host

@@ -1050,6 +1050,107 @@
                              (input-ledger:deletable-entry (input-notice $t $u $l $s $c $m $p $d $st $ch))))
      (map-atom (sort-atom $entries) $entry (input-ledger:second $entry))))
 
+; ---- topics, historical model jobs and provider notices ----
+;   (ledger:topic <name> <revision> <notes>)                  topic_contexts; the active topic is
+;                                                             the meta key active_topic (JSON text)
+;   (ledger:model-job <id> <topic> <state> <result> <order>)  model_jobs, read only (nothing writes
+;                                                             them; <order> is the row's rowid)
+;   (ledger:provider-notice <episode> <intent> <queued>)      provider_notices (<queued> 0 or 1)
+; As the SQLite path makes them on first use, the topic conversation and active_topic
+; "conversation" exist before anything is stored: reads supply them, writes add them.
+
+(= (input-ledger:topic-write $db $verb $fields $body)
+   (input-ledger:write $db $verb (input-ledger:request $verb (input-ledger:fields $fields)) $body
+     (input-ledger:attempts) none))
+
+(= (input-ledger:topic-of $view $name)
+   (case (collapse (match $view (ledger:topic $name $r $n) ($r $n)))
+     (((($revision $notes)) ($name $revision $notes))
+      ($other (if (== $name "conversation") ($name 0 "") none)))))
+
+(= (input-ledger:active-topic-of $view)
+   (case (collapse (match $view (ledger:meta "active_topic" $text) $text))
+     ((($text) (case (catch (json-parse $text)) (((JsonString $name) $name) ($other none))))
+      ($other "conversation"))))
+
+(= (input-ledger:set-meta-in $space $key $new)
+   (case (collapse (match $space (ledger:meta $key $text) $text))
+     ((() (add-atom $space (ledger:meta $key $new)))
+      (($text) (if (== $text $new) done (input-ledger:replace $space (ledger:meta $key $text) (ledger:meta $key $new))))
+      ($other (Error input-ledger:meta (several $key))))))
+
+; INSERT OR IGNORE INTO topic_contexts VALUES ('conversation',0,'');
+; INSERT OR IGNORE INTO meta VALUES ('active_topic','"conversation"')
+(= (input-ledger:topic-init-in $space)
+   (let* (($_ (if (== (collapse (match $space (ledger:topic "conversation" $r $n) $r)) ())
+                  (add-atom $space (ledger:topic "conversation" 0 "")) done))
+          ($_ (if (== (collapse (match $space (ledger:meta "active_topic" $t) $t)) ())
+                  (add-atom $space (ledger:meta "active_topic" "\"conversation\"")) done)))
+     done))
+
+; topic-select: the topic is added (revision 0, no notes) unless it exists, and made active.
+(= (input-ledger:topic-select-in $space $name)
+   (let* (($_ (input-ledger:topic-init-in $space))
+          ($_ (if (== (collapse (match $space (ledger:topic $name $r $n) $r)) ())
+                  (add-atom $space (ledger:topic $name 0 "")) done))
+          ($_ (input-ledger:set-meta-in $space "active_topic" (json-stringify (JsonString $name)))))
+     True))
+
+; topic-note: the active topic's notes replaced and its revision raised; its name, or none.
+(= (input-ledger:topic-note-in $space $text)
+   (let* (($_ (input-ledger:topic-init-in $space))
+          ($name (input-ledger:active-topic-of $space)))
+     (case (collapse (match $space (ledger:topic $name $r $n) ($r $n)))
+       (((($revision $notes))
+         (let $_ (input-ledger:replace $space (ledger:topic $name $revision $notes) (ledger:topic $name (+ $revision 1) $text))
+           $name))
+        ($other none)))))
+
+; (ledger:topics <active name> ((<name> <revision>) ...)), names in order. The head is the
+; ledger's own: the agent's (topics) is a function, which an answer (topics ...) would call.
+(= (input-ledger:topics-of $view)
+   (let* (($stored (collapse (match $view (ledger:topic $name $r $n) ($name $r))))
+          ($all (if (== (collapse (match $view (ledger:topic "conversation" $r $n) $r)) ())
+                    (cons-atom ("conversation" 0) $stored) $stored)))
+     (ledger:topics (input-ledger:active-topic-of $view) (sort-atom $all))))
+
+; The active topic's (<name> <notes>), or none.
+(= (input-ledger:topic-context-of $view)
+   (case (input-ledger:topic-of $view (input-ledger:active-topic-of $view))
+     ((($name $r $n) ($name $n)) ($other none))))
+
+; ((<id> <topic> <state>) ...), newest first; one job's (<id> <topic> <state> <result>), or none.
+(= (input-ledger:job-order ($order $row)) $order)
+(= (input-ledger:model-jobs-of $view)
+   (let $rows (collapse (match $view (ledger:model-job $id $t $st $res $o) ($o ($id $t $st))))
+     (list:reverse (map-atom (sort-atom $rows) $row (input-ledger:second $row)))))
+(= (input-ledger:model-job-of $view $id)
+   (case (collapse (match $view (ledger:model-job $id $t $st $res $o) ($id $t $st $res)))
+     ((($row) $row) ($other none))))
+
+; (families <topics> <model jobs> <provider notices> <active topic records>): how many are stored.
+(= (input-ledger:families-census-of $view)
+   (families (size-atom (collapse (match $view (ledger:topic $n $r $t) $n)))
+             (size-atom (collapse (match $view (ledger:model-job $i $t $st $res $o) $i)))
+             (size-atom (collapse (match $view (ledger:provider-notice $e $i $q) $e)))
+             (size-atom (collapse (match $view (ledger:meta "active_topic" $text) $text)))))
+
+; (<intent> <queued>) of an episode's notice, or none.
+(= (input-ledger:provider-notice-of $view $episode)
+   (case (collapse (match $view (ledger:provider-notice $episode $i $q) ($i $q)))
+     ((($row) $row) ($other none))))
+
+; The episode's intent is written once: the stored one is answered, else this one is stored.
+(= (input-ledger:provider-reserve-in $space $episode $intent)
+   (case (input-ledger:provider-notice-of $space $episode)
+     ((none (let $_ (add-atom $space (ledger:provider-notice $episode $intent 0)) ($intent 0)))
+      ($row $row))))
+
+(= (input-ledger:provider-queued-in $space $episode)
+   (case (collapse (match $space (ledger:provider-notice $episode $i $q) ($i $q)))
+     (((($i 0)) (let $_ (input-ledger:replace $space (ledger:provider-notice $episode $i 0) (ledger:provider-notice $episode $i 1)) True))
+      ($other True))))
+
 ; ---- the store half of input_ack.pump() ----
 
 ; Notices in state registered or submitted, ordered by processed descending,
@@ -1335,6 +1436,25 @@
       (("notice-withdraw" ($task $nonce)) (input-ledger:notice-withdraw $db $task $nonce))
       (("notice-delivery" ($key $outcome $nonce)) (input-ledger:notice-delivery $db $key $outcome $nonce))
       (("notice-cleanup-key" ($task $candidate $nonce)) (input-ledger:notice-cleanup-key $db $task $candidate $nonce))
+      (("topic-select" ($name $nonce)) (input-ledger:topic-write $db input-ledger:topic-select ($name $nonce)
+                                         (|-> ($space) (input-ledger:topic-select-in $space $name))))
+      (("topic-note" ($text $nonce)) (input-ledger:topic-write $db input-ledger:topic-note ($text $nonce)
+                                       (|-> ($space) (input-ledger:topic-note-in $space $text))))
+      (("topics" ()) (input-ledger:task-read $db input-ledger:topics (|-> ($view) (input-ledger:topics-of $view))))
+      (("topic-context" ()) (input-ledger:task-read $db input-ledger:topic-context
+                              (|-> ($view) (input-ledger:topic-context-of $view))))
+      (("families-census" ()) (input-ledger:task-read $db input-ledger:families-census
+                                (|-> ($view) (input-ledger:families-census-of $view))))
+      (("model-jobs" ()) (input-ledger:task-read $db input-ledger:model-jobs (|-> ($view) (input-ledger:model-jobs-of $view))))
+      (("model-job" ($id)) (input-ledger:task-read $db input-ledger:model-job (|-> ($view) (input-ledger:model-job-of $view $id))))
+      (("provider-notice" ($episode)) (input-ledger:task-read $db input-ledger:provider-notice
+                                        (|-> ($view) (input-ledger:provider-notice-of $view $episode))))
+      (("provider-notice-reserve" ($episode $intent $nonce))
+       (input-ledger:topic-write $db input-ledger:provider-notice-reserve ($episode $intent $nonce)
+         (|-> ($space) (input-ledger:provider-reserve-in $space $episode $intent))))
+      (("provider-notice-queued" ($episode $nonce))
+       (input-ledger:topic-write $db input-ledger:provider-notice-queued ($episode $nonce)
+         (|-> ($space) (input-ledger:provider-queued-in $space $episode))))
       (("notice-deletable" ())
        (input-ledger:task-read $db input-ledger:notice-deletable (|-> ($view) (input-ledger:deletable-of $view))))
       (("due" ($limit)) (input-ledger:due $db $limit))

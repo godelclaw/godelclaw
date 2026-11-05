@@ -374,6 +374,40 @@ def _failure_notice(episode):
             "\nYour messages are retained. No model was switched automatically. /activity shows the current state.")
 
 
+def _notify_failure_native(episode):
+    """notify_failure on the native ledger: the same reserve, publish and mark steps, each one ledger call.
+    The control loop calls this every cycle, so a slow or absent ledger answers 0 rather than blocking."""
+    import input_ack
+    import mode_channel
+    import durable_telegram
+    import uuid
+    try:
+        found = input_ack._ledger_call("provider-notice", (episode["id"],), 2)
+        if isinstance(found, tuple) and len(found) == 2 and found[1]:
+            return 0
+        folder = mode_channel.state() / "channel-outbox"
+        if isinstance(found, tuple) and len(found) == 2:
+            intent = json.loads(found[0])
+        else:
+            route = mode_channel.resolve("telegram")
+            folder.mkdir(parents=True, exist_ok=True)
+            key = durable_telegram.Channel("", str(folder / "sequence")).key(route["chat"], route["thread"])
+            intent = dict(key=key, commands=[["send", _failure_notice(episode), "plain"]])
+            stored = input_ack._ledger_call("provider-notice-reserve",
+                                            (episode["id"], json.dumps(intent, ensure_ascii=False), uuid.uuid4().hex), 2)
+            if not (isinstance(stored, tuple) and len(stored) == 2):
+                return 0
+            if stored[1]:
+                return 0
+            intent = json.loads(stored[0])  # the stored intent wins over this one
+        # The immutable identity and body are stored before the outbox publication, as on SQLite.
+        mode_channel.store(folder / (intent["key"] + ".json"), intent)
+        input_ack._ledger_call("provider-notice-queued", (episode["id"], uuid.uuid4().hex), 2)
+        return 1
+    except (input_ack.LedgerUnavailable, OSError, ValueError, KeyError, TypeError, RuntimeError):
+        return 0
+
+
 def notify_failure():
     """Reserve immutable notice bytes before enqueueing; retry the same identity.
 
@@ -382,6 +416,12 @@ def notify_failure():
     """
     episode = snapshot().get("failure_episode", {})
     if not episode or episode.get("resolved_at"):
+        return 0
+    try:
+        import input_ack
+        if input_ack._native_socket():
+            return _notify_failure_native(episode)
+    except Exception:
         return 0
     try:
         import agent_checkpoint

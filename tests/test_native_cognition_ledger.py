@@ -75,9 +75,15 @@ def program(legacy):
         '(task:history "conversation:%s" 3 4)' % OWNER,
         '(task:history "task-1" 0 0)',
     ]
+    # The topics (state_sqlite.metta's topic-select, topic-note, topics, topics:context).
+    topic_lines = ['(topics)', '(topics:context)', '(topic-select "research é")', '(topic-note "notes \\"q\\" é")',
+                   '(topics)', '(topics:context)', '(topic-select "conversation")', '(topics:context)',
+                   '(topic-select "research é")', '(topic-note "second")', '(topics)', '(topics:context)']
     code = ['!(import! &self ./src/task_context_views)', '!(import! &self ./src/context_compaction)']
     for number, line in enumerate(lines):
         code.append('!(println! (OUT %d (state:encoded %s)))' % (number, line))
+    for number, line in enumerate(topic_lines):
+        code.append('!(println! (TOPIC %d %s))' % (number, line))
     code += [
         '!(println! (START (task:initial-start 100000 4.0) (task:initial-start 600 4.0) (task:initial-start 1 4.0)))',
         '!(println! (NOTE (task-note "noted from the cognition side")))',
@@ -140,6 +146,12 @@ class CognitionLedgerTest(NativeCase):
         carried = re.findall(r'"OWNER:(\d+):(\d+)"', lines["(CARRIED"].replace(OWNER, "OWNER"))
         self.assertEqual(sorted(carried), sorted([("0", "0"), ("1", "0"), ("2", "0"), (str(self.legacy), "0")]))
         self.assertEqual(lines["(REPORTED"], "(REPORTED 1)")
+        topic = [line for line in oracle if line.startswith("(TOPIC ")]
+        self.assertEqual(len(topic), 12)
+        self.assertIn('active topic: research', topic[2])
+        self.assertIn('saved topic notes', topic[3])
+        self.assertIn('TOPIC_NOTES', topic[5])
+        self.assertEqual(topic[7], '(TOPIC 7 "")')
 
 
 if __name__ == "__main__":
