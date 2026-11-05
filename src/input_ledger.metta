@@ -1575,18 +1575,29 @@
 ; attempt of which has its result among the carried calls, as (ticket digest) pairs for
 ; observe (lean/pettaclaw/ObservedReceipts.lean: presents, send).
 (= (input-ledger:presented-receipts-of $view $calls)
-   (let $tickets (unique-atom (map-atom $calls $call (input-ledger:first-of-two $call)))
-     (collapse (let $ticket (superpose $tickets) (input-ledger:presented-receipt $view $ticket $calls)))))
+   (input-ledger:presented-groups $view (sort-atom $calls) none () ()))
 
-(= (input-ledger:presented-receipt $view $ticket $calls)
+; The calls sorted, walked once: each ticket's carried positions are gathered, then checked.
+(= (input-ledger:presented-groups $view $calls $ticket $positions $out)
+   (if (== $calls ())
+       (input-ledger:presented-flush $view $ticket $positions $out)
+       (let* ((($head $rest) (decons-atom $calls)) (($t $p) $head))
+         (if (== $t $ticket)
+             (input-ledger:presented-groups $view $rest $ticket (cons-atom $p $positions) $out)
+             (input-ledger:presented-groups $view $rest $t ($p)
+               (input-ledger:presented-flush $view $ticket $positions $out))))))
+
+(= (input-ledger:presented-flush $view $ticket $positions $out)
+   (if (== $ticket none) $out
+     (let $found (input-ledger:presented-receipt $view $ticket $positions)
+       (if (== $found none) $out (cons-atom $found $out)))))
+
+(= (input-ledger:presented-receipt $view $ticket $carried)
    (case (input-ledger:actions-of $view $ticket)
      ((((ledger:action $t $r $s $tool $c $st unobserved (ledger:receipt $d $dm $dg $n)))
-       (let* (($attempts (collapse (match $view (ledger:attempt $ticket $p $cmd $result $o) ($p $result))))
-              ($carried (foldl-atom $calls () $kept $call (input-ledger:carried-position $ticket $call $kept))))
-         (if (and (not (== $attempts ())) (input-ledger:all-carried $attempts $carried)) ($ticket $dg) (empty))))
-      ($other (empty)))))
-
-(= (input-ledger:carried-position $ticket ($t $p) $kept) (if (== $t $ticket) (cons-atom $p $kept) $kept))
+       (let $attempts (collapse (match $view (ledger:attempt $ticket $p $cmd $result $o) ($p $result)))
+         (if (and (not (== $attempts ())) (input-ledger:all-carried $attempts $carried)) ($ticket $dg) none)))
+      ($other none))))
 
 (= (input-ledger:all-carried $attempts $carried)
    (if (== $attempts ()) True

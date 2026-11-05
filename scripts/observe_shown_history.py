@@ -64,7 +64,14 @@ def main(argv=None):
     try:
         key, start = window_start(input_ack)
         calls = carried_before(input_ack, start)
-        pairs = input_ack.presented_receipts(calls)
+        by_ticket = {}
+        for ticket, position in calls:
+            by_ticket.setdefault(ticket, []).append(position)
+        tickets = sorted(by_ticket)
+        pairs = []
+        for begin in range(0, len(tickets), CHUNK):  # bounded reads: CHUNK actions each
+            chunk = [(ticket, position) for ticket in tickets[begin:begin + CHUNK] for position in by_ticket[ticket]]
+            pairs += input_ack.presented_receipts(chunk, input_ack.WHOLE_READ_SECONDS)
         if args.apply:
             for start_at in range(0, len(pairs), CHUNK):  # each chunk is one transaction
                 input_ack.action_observe(pairs[start_at:start_at + CHUNK])

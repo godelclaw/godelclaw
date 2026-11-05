@@ -632,7 +632,7 @@ def action_report(ticket, payload, disposition, domain, payload_digest, request_
                                  len(payload), str(request_id or _rid())))
 
 
-def presented_receipts(calls):
+def presented_receipts(calls, timeout=10):
     """Of the actions some of whose calls an answered prompt carried with their results ((ticket, position)
     pairs), those not yet observed whose receipt exists and every attempt of which was carried: (ticket, digest)
     pairs for action_observe."""
@@ -640,7 +640,7 @@ def presented_receipts(calls):
     if not calls:
         return []
     return [(_checked_text(entry[0], "ticket"), _checked_text(entry[1], "digest"))
-            for entry in _entries(_ledger_call("presented-receipts", (calls,)), "presented-receipts")]
+            for entry in _entries(_ledger_call("presented-receipts", (calls,), timeout), "presented-receipts")]
 
 
 def action_observe(pairs, request_id=None):
