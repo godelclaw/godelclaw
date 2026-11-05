@@ -403,7 +403,10 @@ class ProviderRoutingTest(unittest.TestCase):
             elapsed = time.monotonic() - started
             self.assertLess(elapsed, 0.1)
             self.assertIn("provider-model", ids)
-            self.assertIn("hf:zai-org/GLM-5.2", ids)
+            # Only the observed catalog and the selected model: no built-in names.
+            selected = synthetic_llm.current_model()
+            self.assertEqual([i for i in ids if not i.startswith(("chatgpt:", "claude"))],
+                             ["provider-model"] + ([selected] if selected != "provider-model" else []))
             self.assertTrue(entered.wait(1))
             # A second control remains local while the one refresh is stalled.
             started = time.monotonic()
