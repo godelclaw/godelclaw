@@ -68,6 +68,14 @@ class ObserveShownHistoryTest(NativeCase):
             observed = {a["ticket"]: a["observed"] for a in store.projection()["actions"]}
             self.assertEqual(observed, {tickets[0]: True, tickets[1]: False, tickets[2]: False, tickets[3]: False})
             self.assertEqual(self.run_script("--apply")["tickets"], [])   # nothing left to mark
+            # A start inside the third batch: its first call lies before the start, its second is the
+            # window's first entry. Its results were carried, across two prompts.
+            input_ack._ledger_call("meta-put", (key, json.dumps({"version": 1, "start": 6, "summary": ""}),
+                                                "window-2"))
+            input_ack.close_ledger()
+            self.assertEqual(self.run_script("--apply")["tickets"], [tickets[2]])
+            observed = {a["ticket"]: a["observed"] for a in store.projection()["actions"]}
+            self.assertEqual(observed, {tickets[0]: True, tickets[1]: False, tickets[2]: True, tickets[3]: False})
             input_ack.close_ledger()
 
 

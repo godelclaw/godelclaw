@@ -10,7 +10,9 @@ carried again.
 The window only moves forward, and a compaction keeps its newest entries, so every entry before the
 saved start was carried by an earlier prompt. This treats the calls of those entries as carried and
 marks their actions by the rule an answered prompt uses (Ledger.observe_presented): the receipt exists
-and every attempt has its result among the carried calls.
+and every attempt has its result among the carried calls. An action whose calls straddle the start
+(its calls are consecutive entries) has the rest in the window, which every answered prompt since the
+start was saved carried: those count as carried too.
 
 Without --apply it lists what it would mark. With --apply it marks them and lists them, so the change
 can be undone.
@@ -38,17 +40,29 @@ def window_start(input_ack):
     return None, 0
 
 
-def carried_before(input_ack, start):
-    """The (ticket, position) calls with a recorded result among the entries before `start`."""
-    if start <= 0:
-        return []
-    answer = input_ack._ledger_call("conversation-history", (0, int(start)), input_ack.WHOLE_READ_SECONDS)
+def _calls(input_ack, offset, count):
+    """The (ticket, position) calls with a recorded result among `count` entries from `offset` (0: all)."""
+    answer = input_ack._ledger_call("conversation-history", (int(offset), int(count)), input_ack.WHOLE_READ_SECONDS)
     if not (isinstance(answer, tuple) and len(answer) == 3):
         raise RuntimeError("unexpected conversation history: %s" % input_ack._show(answer))
-    calls = []
-    for serial, request, position, command, record, ticket, disposition in answer[2]:
-        if serial != -1 and not input_ack._is_none(ticket) and not input_ack._is_none(record):
-            calls.append((str(ticket), int(position)))
+    return [(str(ticket), int(position))
+            for serial, request, position, command, record, ticket, disposition in answer[2]
+            if serial != -1 and not input_ack._is_none(ticket) and not input_ack._is_none(record)]
+
+
+STRADDLE = 64  # entries read past the start for the calls of an action that straddles it
+
+
+def carried_before(input_ack, start):
+    """The calls before `start`, and the window calls of the action whose calls straddle it."""
+    if start <= 0:
+        return []
+    calls = _calls(input_ack, 0, start)
+    before = {ticket for ticket, _ in calls}
+    for ticket, position in _calls(input_ack, start, STRADDLE):
+        if ticket not in before:
+            break  # calls of one action are consecutive: the straddler's come first
+        calls.append((ticket, position))
     return calls
 
 
