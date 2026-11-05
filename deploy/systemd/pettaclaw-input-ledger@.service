@@ -5,14 +5,18 @@ StartLimitBurst=5
 
 [Service]
 Type=exec
-WorkingDirectory=%h/pettaclaw-%i
+# %i is the agent's instance: its state is %S/%i, as run.sh derives it.
 Environment=CETTA_DB_SOURCE=%S/%i/input-ledger/store
 Environment=CETTA_DB_SOCKET=%S/%i/input-ledger/ledger.sock
-EnvironmentFile=%h/.config/pettaclaw/%i-runtime.env
-ExecStart=/bin/sh -c 'worker="$CETTA_VALUE_WORKER_BIN"; [ -n "$worker" ] || worker="$(dirname "$CETTA_BIN")/cetta-value-worker"; exec "$worker" --value-bytes 268435456 --serve --lang petta %h/pettaclaw-%i/src/input_ledger_server.metta db-server:configuration'
+# The agent's deployed code; an instance whose code lives elsewhere sets LEDGER_CODE in a drop-in.
+Environment=LEDGER_CODE=%h/pettaclaw-%i
+# The runtime the agents run (CETTA_BIN, CETTA_VALUE_WORKER_BIN); the updater keeps it on the selected bundle.
+EnvironmentFile=%h/.config/godelclaw/runtime.env
+WorkingDirectory=%S/%i/input-ledger
+ExecStart=/bin/sh -c 'worker="$CETTA_VALUE_WORKER_BIN"; [ -n "$worker" ] || worker="$(dirname "$CETTA_BIN")/cetta-value-worker"; exec "$worker" --value-bytes 268435456 --serve --lang petta "$LEDGER_CODE/src/input_ledger_server.metta" db-server:configuration'
 StateDirectory=%i/input-ledger
-StateDirectoryMode=0700
-UMask=0077
+StateDirectoryMode=0770
+UMask=0007
 LimitCORE=0
 Restart=always
 RestartSec=2

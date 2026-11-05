@@ -844,31 +844,33 @@ class LocationTest(unittest.TestCase):
         paths = dict(item.split("=", 1) for item in values["Environment"])
         self.assertEqual(specifiers(paths["CETTA_DB_SOURCE"], self.directory / "state", self.directory), str(store))
         self.assertEqual(specifiers(paths["CETTA_DB_SOCKET"], self.directory / "state", self.directory), str(sock))
-        self.assertEqual(set(paths), {"CETTA_DB_SOURCE", "CETTA_DB_SOCKET"})
-        # systemd creates the directory the socket lives in, under the state directory, private.
+        self.assertEqual(set(paths), {"CETTA_DB_SOURCE", "CETTA_DB_SOCKET", "LEDGER_CODE"})
+        self.assertEqual(specifiers(paths["LEDGER_CODE"], self.directory / "state", self.directory), str(ROOT))
+        # systemd creates the directory the socket lives in, under the state directory: the owner's group (the
+        # accounts this home is shared with) may use it, nobody else.
         self.assertEqual(values["StateDirectory"], ["%i/input-ledger"])
         self.assertEqual(self.directory / "state" / "t" / "input-ledger", sock.parent)
         self.assertNotIn("cetta-telegram", UNIT.read_text())
-        self.assertEqual(values["StateDirectoryMode"], ["0700"])
-        self.assertEqual(values["UMask"], ["0077"])
+        self.assertEqual(values["StateDirectoryMode"], ["0770"])
+        self.assertEqual(values["UMask"], ["0007"])
 
     def test_the_unit_is_a_user_template_like_the_other_pettaclaw_units(self):
         text = UNIT.read_text()
         values = unit_values()
         for key, value in (("Type", ["exec"]), ("Restart", ["always"]), ("KillMode", ["control-group"]),
                            ("WantedBy", ["default.target"]),
-                           ("EnvironmentFile", ["%h/.config/pettaclaw/%i-runtime.env"]),
-                           ("WorkingDirectory", ["%h/pettaclaw-%i"])):
+                           ("EnvironmentFile", ["%h/.config/godelclaw/runtime.env"]),
+                           ("WorkingDirectory", ["%S/%i/input-ledger"])):
             self.assertEqual(values[key], value, key)
         self.assertEqual(values["Description"], ["Native input ledger server for %i"])
         self.assertTrue(values["ExecStart"][0].startswith("/bin/sh -c '"))
-        self.assertIn("%h/pettaclaw-%i/src/input_ledger_server.metta", values["ExecStart"][0])
+        self.assertIn('"$LEDGER_CODE/src/input_ledger_server.metta"', values["ExecStart"][0])
         self.assertTrue((ROOT / "src/input_ledger_server.metta").is_file())
         for name in ("[Unit]", "[Service]", "[Install]"):
             self.assertIn(name, text)
         # Nothing in the unit or the server is specific to one agent.
         for source in (text, (ROOT / "src/input_ledger_server.metta").read_text()):
-            self.assertNotIn("godel", source.lower())
+            self.assertNotIn("godel", source.lower().replace("godelclaw", ""))  # the project's name is not an agent's
 
     def test_socket_paths_of_the_sample_instances_fit_a_unix_socket(self):
         for home in ("/home/agent", "/home/a-rather-long-user-name"):

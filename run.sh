@@ -129,6 +129,11 @@ fi
 export METTACLAW_ENGINE_STATE_PATH="${METTACLAW_ENGINE_STATE_PATH:-$STATE_HOME/$INSTANCE/engine}"
 export METTACLAW_ENGINE_FAILURE_PATH="${METTACLAW_ENGINE_FAILURE_PATH:-$STATE_HOME/$INSTANCE/engine-failure}"
 export METTACLAW_RECYCLE_REQUEST_PATH="${METTACLAW_RECYCLE_REQUEST_PATH:-$STATE_HOME/$INSTANCE/recycle.requested}"
+# With [agent] native_ledger, the turn's records live in the native ledger whose server
+# (pettaclaw-input-ledger@<instance>) listens next to this instance's state.
+if [ "${METTACLAW_NATIVE_LEDGER:-0}" = 1 ] && [ -z "${METTACLAW_INPUT_LEDGER_SOCKET:-}" ]; then
+    export METTACLAW_INPUT_LEDGER_SOCKET="$(dirname "$METTACLAW_ENGINE_STATE_PATH")/input-ledger/ledger.sock"
+fi
 # Acknowledge before capturing either selection. Anything requested during
 # startup belongs to this process and must survive until its boundary.
 if [ "$REQUESTED_TARGET" = run.metta ] || [ "$REQUESTED_TARGET" = "$ROOT/run.metta" ]; then
