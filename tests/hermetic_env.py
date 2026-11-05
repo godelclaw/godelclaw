@@ -20,7 +20,8 @@ makes the running process hermetic:
   imports this module again reuses its parent's directory and does not remove it);
 * sqlite3.connect and AF_UNIX connect refuse (LiveStateRefused) a path that is, or
   lies under, the real home's state / data / config / cache directories, a value a
-  removed variable had, or anywhere else in the real home outside this checkout.
+  removed variable had, or anywhere else in the real home outside this checkout; the
+  checkout's own .runtime scratch tree is allowed wherever the checkout lies.
 
 A test that forgets its own fixture therefore finds no ledger path (agent_checkpoint
 raises RuntimeError, input_ack finds no socket) or writes into the temporary home.
@@ -28,7 +29,8 @@ raises RuntimeError, input_ack finds no socket) or writes into the temporary hom
 Left alone on purpose: CETTA_BIN and the other engine locations (CETTA_ROOT,
 CETTA_VALUE_WORKER_BIN, CETTA_TELEGRAM_SERVICE_ROOT/BIN, CETTA_DB_SERVER_MODULE,
 PETTA_ROOT, PETTA_PY_ENV, PETTA_*), the two read-only test data locations
-METTACLAW_LEAN_MODEL_DIR and METTACLAW_ATLAS_TEST_ROOT (the only METTACLAW_* a test reads from the invoking shell), PATH, LD_LIBRARY_PATH, LEAN_*, PYTHON*, LANG, TZ,
+METTACLAW_LEAN_MODEL_DIR and METTACLAW_ATLAS_TEST_ROOT (the only METTACLAW_* a test reads from the invoking shell),
+METTACLAW_MODE_CETTA_BIN (the modes' engine), PATH, LD_LIBRARY_PATH, LEAN_*, PYTHON*, LANG, TZ,
 the *_BASE_URL and model-name settings, and XDG_DATA_DIRS/XDG_CONFIG_DIRS (read-only
 search lists). tests/test_hermetic_guard.py lists every other variable the sources read.
 
@@ -69,7 +71,8 @@ SCRUBBED_EXACT = frozenset({
 SCRUBBED_SUFFIXES = re.compile(r"_(SOCKET|SOCK|STATE|STATE_DIR|STATE_PATH|STATE_HOME|STATE_ROOT|STORE|LEDGER|LEDGER_PATH|TOKEN|API_KEY|SECRET|PASSWORD)$")
 KEPT = frozenset({"CETTA_DB_SERVER_MODULE", HARNESS_SOCKET, "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME",
                   "XDG_CACHE_HOME", "XDG_RUNTIME_DIR",    # a code location; the harness opt-in; XDG_* are replaced, not removed
-                  "METTACLAW_LEAN_MODEL_DIR", "METTACLAW_ATLAS_TEST_ROOT"})  # read-only locations a test opts in to (verify() refuses a live one)
+                  "METTACLAW_LEAN_MODEL_DIR", "METTACLAW_ATLAS_TEST_ROOT",  # read-only locations a test opts in to (verify() refuses a live one)
+                  "METTACLAW_MODE_CETTA_BIN"})  # the modes' engine, an engine location like CETTA_BIN
 LEAVES = (("HOME", "h"), ("XDG_STATE_HOME", "s"), ("XDG_CONFIG_HOME", "c"), ("XDG_CACHE_HOME", "k"),
           ("XDG_DATA_HOME", "d"), ("XDG_RUNTIME_DIR", "r"), ("TMPDIR", "t"))
 
@@ -116,6 +119,8 @@ def refuse_if_live(path):
     resolved = _real(os.path.abspath(os.fsdecode(path)))
     if ROOT is not None and _under(resolved, _real(ROOT)):
         return
+    if _under(resolved, _real(CHECKOUT / ".runtime")):
+        return  # the tests' own scratch tree, also when the checkout lies inside a state directory
     for zone in _captured_zones:
         if _under(resolved, _real(zone)):
             raise LiveStateRefused("refusing %s: inside the real state, data, config or cache directory" % resolved)
