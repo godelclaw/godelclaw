@@ -256,12 +256,12 @@ cd "$ROOT"
 # loop's lifecycle: no recycle acknowledgement, no engine fallback.
 if [ "$REQUESTED_TARGET" = telegram-control ]; then
     CETTA_BIN="${CETTA_BIN:-$CETTA_ROOT/cetta}"
-    exec "$CETTA_BIN" --lang petta --import-mode ancestor-walk \
+    exec "$CETTA_BIN" --value-bytes 268435456 --lang petta --import-mode ancestor-walk \
         "$ROOT/channels/telegram_control_main.metta" default
 fi
 if [ "$REQUESTED_TARGET" = terminal-control ]; then
     CETTA_BIN="${CETTA_BIN:-$CETTA_ROOT/cetta}"
-    exec "$CETTA_BIN" --lang petta --import-mode ancestor-walk \
+    exec "$CETTA_BIN" --value-bytes 268435456 --lang petta --import-mode ancestor-walk \
         "$ROOT/channels/terminal_control_main.metta" default
 fi
 
@@ -375,7 +375,7 @@ case "$METTACLAW_ENGINE" in
         fi
         if [ "$TARGET" != "$ROOT/run.metta" ]; then
             status=0
-            run_probe "$CETTA_BIN" --lang petta --import-mode ancestor-walk "$TARGET" default || status=$?
+            run_probe "$CETTA_BIN" --value-bytes 268435456 --lang petta --import-mode ancestor-walk "$TARGET" default || status=$?
             exit "$status"
         fi
         # systemd stops the launcher and its CeTTa child as one control group.
@@ -389,7 +389,10 @@ case "$METTACLAW_ENGINE" in
         set +e
         # The bootstrap imports the whole program exactly as run.metta does;
         # listing its modules here as well would load every equation twice.
-        "$CETTA_BIN" --lang petta --import-mode ancestor-walk \
+        # --value-bytes gives this process the wire allowance of the ledger's
+        # own workers: a ledger answer larger than the default (about 1 MiB,
+        # a long conversation window) otherwise arrives as "uncertain".
+        "$CETTA_BIN" --value-bytes 268435456 --lang petta --import-mode ancestor-walk \
             "$ROOT/cetta_bootstrap.metta" \
             "$ROOT/cetta_run.metta" \
             default
