@@ -262,7 +262,7 @@ PAGE_ROWS = 2000
 # The reads input-ledger:pageable names: their answers grow with the ledger, and the worker passes each answer on
 # as one value, so they are always read in pages.
 PAGED_READS = frozenset({"request-rows", "actions", "attempts", "task-view", "task-rows", "conversation-rows",
-                         "conversation-history", "turn-dump", "meta-prefix"})
+                         "conversation-history", "turn-dump", "meta-prefix", "llm-usage", "llm-records"})
 
 
 def _ledger_read(verb, arguments, timeout=10, socket=None):

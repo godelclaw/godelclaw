@@ -32,8 +32,7 @@ def _grade(call):
     return result
 
 
-def report(path, *, since=0, until=None, zone="UTC"):
-    """Group calls by admission time; use a consistent, non-writing snapshot."""
+def _window(since, until, zone):
     until = time.time() if until is None else float(until)
     since = float(since)
     if until < since:
@@ -42,6 +41,27 @@ def report(path, *, since=0, until=None, zone="UTC"):
     value = dict(schema=1, scope="local call history; not account-wide billing",
                  since=since, until=until, timezone=zone, window="admission time",
                  billing_reconciled=False, monetary_cost=None, groups=[], totals={})
+    return since, until, tz, value
+
+
+def report_native(*, since=0, until=None, zone="UTC"):
+    """report() over the native LLM ledger of METTACLAW_INPUT_LEDGER_SOCKET (one snapshot per page),
+    or None while the SQLite file is still the ledger."""
+    import llm_policy
+    since, until, tz, value = _window(since, until, zone)
+    answer = llm_policy.native("llm-usage", (since, until))
+    if answer is llm_policy.LEGACY:
+        return None
+    started, legacy, rows = answer[1], answer[2], answer[3]
+    value.update(history_available=True, recording_started=started,
+                 legacy_request_rows_without_history=legacy,
+                 coverage_complete=bool(started is not None and since >= started and not legacy))
+    return _graded(value, rows, tz)
+
+
+def report(path, *, since=0, until=None, zone="UTC"):
+    """Group calls by admission time; use a consistent, non-writing snapshot."""
+    since, until, tz, value = _window(since, until, zone)
     conn = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
     try:
         conn.execute("BEGIN")
@@ -63,31 +83,36 @@ def report(path, *, since=0, until=None, zone="UTC"):
             "SELECT h.call_id,h.event,h.detail,a.observed FROM llm_call_history h "
             "JOIN llm_call_history a ON a.call_id=h.call_id AND a.event='admitted' "
             "WHERE a.observed>=? AND a.observed<? ORDER BY h.sequence", (since, until))
-        calls = {}
-        for identity, event, detail, admitted in rows:
-            call = calls.setdefault(identity, {"admitted": admitted})
-            detail = json.loads(detail)
-            if event in ("admitted", "request"):
-                call.update(detail)
-            elif event == "usage":
-                call["usage"] = detail
-            elif event in ("completed", "failed", "unknown"):
-                call["status"] = event
-                if event == "failed":
-                    call["failure"] = detail
-        groups = {}
-        totals = Counter()
-        for call in calls.values():
-            key = (datetime.fromtimestamp(call["admitted"], tz).date().isoformat(),
-                   call.get("instance", "unrecorded"), call.get("session", ""),
-                   call.get("provider", "unrecorded"), call.get("model", "unrecorded"),
-                   call.get("purpose", "unspecified"), call.get("trigger", "unrecorded"))
-            grade = _grade(call)
-            groups.setdefault(key, Counter()).update(grade)
-            totals.update(grade)
-        fields = ("day", "instance", "session", "provider", "model", "purpose", "trigger")
-        value["groups"] = [dict(zip(fields, key), **counts) for key, counts in sorted(groups.items())]
-        value["totals"] = dict(totals)
-        return value
+        return _graded(value, rows, tz)
     finally:
         conn.close()
+
+
+def _graded(value, rows, tz):
+    """The groups and totals of `value` from (call, event, detail, admitted) rows in history order."""
+    calls = {}
+    for identity, event, detail, admitted in rows:
+        call = calls.setdefault(identity, {"admitted": admitted})
+        detail = json.loads(detail)
+        if event in ("admitted", "request"):
+            call.update(detail)
+        elif event == "usage":
+            call["usage"] = detail
+        elif event in ("completed", "failed", "unknown"):
+            call["status"] = event
+            if event == "failed":
+                call["failure"] = detail
+    groups = {}
+    totals = Counter()
+    for call in calls.values():
+        key = (datetime.fromtimestamp(call["admitted"], tz).date().isoformat(),
+               call.get("instance", "unrecorded"), call.get("session", ""),
+               call.get("provider", "unrecorded"), call.get("model", "unrecorded"),
+               call.get("purpose", "unspecified"), call.get("trigger", "unrecorded"))
+        grade = _grade(call)
+        groups.setdefault(key, Counter()).update(grade)
+        totals.update(grade)
+    fields = ("day", "instance", "session", "provider", "model", "purpose", "trigger")
+    value["groups"] = [dict(zip(fields, key), **counts) for key, counts in sorted(groups.items())]
+    value["totals"] = dict(totals)
+    return value

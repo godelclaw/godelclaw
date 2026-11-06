@@ -50,6 +50,11 @@
            (import! &self proc) (Error $where $why))))
       ($loaded $loaded)))
 !(import! &self ./usage_evidence_cetta.metta)
+; The native ledger's client needs (library db), which the HE dialect lacks; there the
+; ledger socket is never set and nothing calls it.
+!(case (import! &self ./ledger_client.metta)
+     (((Error $where $why) ())
+      ($loaded $loaded)))
 
 (: lp:env (-> %Undefined% %Undefined% %Undefined%))
 (= (lp:env $key $default) (system:getenv-or-default $key $default))
@@ -107,6 +112,25 @@
 (: lp:owner-live (-> %Undefined% %Undefined%))
 (= (lp:owner-live $owner)
    (process:alive? $owner))
+
+; The native ledger (src/llm_ledger.metta, in the agent's ledger store) answers each
+; operation once the LLM ledger has been migrated there. Until then it answers llm-legacy
+; and the SQLite code below runs as before; without a ledger socket nothing is asked.
+; A failure to reach a configured server is a LedgerError, never a fallback to SQLite.
+(: lp:socket (-> %Undefined%))
+(= (lp:socket) (lp:env "METTACLAW_INPUT_LEDGER_SOCKET" ""))
+(: lp:request-id (-> %Undefined%))
+(= (lp:request-id) (str:concat "rq1." (system:uuid4-hex)))
+(: lp:native (-> %Undefined% %Undefined% %Undefined%))
+(= (lp:native $verb $arguments)
+   (if (ue:equal (lp:socket) "") llm-legacy
+     (case (ledger-client:call (lp:socket) $verb $arguments)
+       (((Error $where $why) (LedgerError (Error $where $why)))
+        ($answer $answer)))))
+(: lp:legacy (-> %Undefined% %Undefined%))
+(= (lp:legacy $answer) (ue:equal $answer llm-legacy))
+(: lp:none (-> %Undefined% %Undefined%))
+(= (lp:none $value) (if (ue:equal $value JsonNull) none $value))
 
 ; Python stores each history detail as json.dumps(detail, sort_keys=True,
 ; separators=(",", ":")): sorted keys, no spaces, non-ASCII escaped.
@@ -602,12 +626,15 @@
    ((sqlite:statement "INSERT INTO requests(id,started,reserved,status,output,provider,mode,finish,owner,fingerprint) SELECT ?,?,?,'pending',NULL,?,?,NULL,?,? WHERE ?='upstream' OR NOT EXISTS(SELECT 1 FROM cooldowns WHERE provider=? AND until>?)"
                        ($ticket $now $maximum $provider (lp:mode) $owner $fingerprint $profile $provider $now))
     (sqlite:statement "INSERT OR IGNORE INTO llm_call_history(call_id,event,observed,detail) SELECT ?,'admitted',?,? WHERE EXISTS(SELECT 1 FROM requests WHERE id=?)"
-                      ($ticket $now (lp:detail (JsonObject
-                        ((JsonPair "provider" $provider) (JsonPair "mode" (lp:mode))
-                         (JsonPair "instance" (lp:env "METTACLAW_INSTANCE" "default"))
-                         (JsonPair "session" (lp:env "METTACLAW_ACTIVITY_CALL_SCOPE" ""))))) $ticket))
+                      ($ticket $now (lp:admitted-detail $provider) $ticket))
     (sqlite:statement "SELECT EXISTS(SELECT 1 FROM requests WHERE id=?),MAX(0,COALESCE((SELECT until FROM cooldowns WHERE provider=?),?)-?)"
                       ($ticket $provider $now $now))))
+(: lp:admitted-detail (-> %Undefined% %Undefined%))
+(= (lp:admitted-detail $provider)
+   (lp:detail (JsonObject
+     ((JsonPair "provider" $provider) (JsonPair "mode" (lp:mode))
+      (JsonPair "instance" (lp:env "METTACLAW_INSTANCE" "default"))
+      (JsonPair "session" (lp:env "METTACLAW_ACTIVITY_CALL_SCOPE" ""))))))
 (: lp:admit (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (lp:admit $ticket $provider $offered $fingerprint $now)
    ; Python reads the configuration before it converts max_output.
@@ -626,12 +653,16 @@
         ($error $error)))))
 (: lp:admit-configured (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (lp:admit-configured $ticket $provider $maximum $fingerprint $profile $now)
-   (case (lp:recover $now)
-     (((sqlite:committed $recovery)
-       (lp:admit-result $ticket
-         (lp:db-transaction (lp:path) immediate
-           (lp:admit-statements $ticket $provider $maximum $fingerprint $profile (lp:owner) $now) 5000)))
-      ($error $error))))
+   (let* (($mode (lp:mode)) ($owner (lp:owner)) ($detail (lp:admitted-detail $provider)) ($request (lp:request-id))
+          ($native (lp:native "llm-admit" ($ticket $provider $maximum $fingerprint $profile $mode $owner $detail $now $request))))
+     (if (lp:legacy $native)
+       (case (lp:recover $now)
+         (((sqlite:committed $recovery)
+           (lp:admit-result $ticket
+             (lp:db-transaction (lp:path) immediate
+               (lp:admit-statements $ticket $provider $maximum $fingerprint $profile (lp:owner) $now) 5000)))
+          ($error $error)))
+       $native)))
 (: lp:admit-result (-> %Undefined% %Undefined% %Undefined%))
 (= (lp:admit-result $ticket $answer)
    (case $answer
@@ -661,9 +692,13 @@
                      (lp:append $fields ((JsonPair "cache_layout" $layout))))))))
 (: lp:describe-origin (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (lp:describe-origin $ticket $model $protocol $purpose $transport $origin $now)
-   (lp:statement-changed (lp:transaction
-     ((sqlite:statement "INSERT OR IGNORE INTO llm_call_history(call_id,event,observed,detail) SELECT ?,'request',?,? WHERE EXISTS(SELECT 1 FROM requests WHERE id=?)"
-       ($ticket $now (lp:detail (lp:request-detail $model $protocol $purpose $transport $origin)) $ticket))))))
+   (let* (($detail (lp:detail (lp:request-detail $model $protocol $purpose $transport $origin))) ($request (lp:request-id))
+          ($native (lp:native "llm-describe" ($ticket $detail $now $request))))
+     (if (lp:legacy $native)
+       (lp:statement-changed (lp:transaction
+         ((sqlite:statement "INSERT OR IGNORE INTO llm_call_history(call_id,event,observed,detail) SELECT ?,'request',?,? WHERE EXISTS(SELECT 1 FROM requests WHERE id=?)"
+           ($ticket $now $detail $ticket)))))
+       $native)))
 (: lp:statement-changed (-> %Undefined% %Undefined%))
 (= (lp:statement-changed $answer)
    (case $answer
@@ -705,10 +740,12 @@
 (: lp:complete (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (lp:complete $ticket $usage $finish $now)
    (let* (($evidence (ue:evidence $usage)) ($output (lp:output $evidence))
-          ($reason (lp:text $finish)))
-     (lp:complete-with $ticket $evidence
-         (str:char-slice $reason 0 (math:min 64 (str:char-length $reason)))
-         $output $now ())))
+          ($reason (lp:text $finish))
+          ($short (str:char-slice $reason 0 (math:min 64 (str:char-length $reason))))
+          ($usage-detail (lp:detail $evidence)) ($stored (lp:none $output))
+          ($completed (lp:detail (JsonObject ((JsonPair "finish" $short))))) ($request (lp:request-id))
+          ($native (lp:native "llm-complete" ($ticket none $usage-detail $stored $short $completed none none 0 "turn" $now $request))))
+     (if (lp:legacy $native) (lp:complete-with $ticket $evidence $short $output $now ()) $native)))
 (: lp:output (-> %Undefined% %Undefined%))
 (= (lp:output $evidence)
    ; Only the legacy INTEGER column has this representation bound. The
@@ -772,4 +809,31 @@
       ($error $error))))
 (: lp:fail (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (lp:fail $ticket $sent $status $retry $now)
-   (lp:fail-with $ticket $sent $status $retry $now ()))
+   (let $native (lp:fail-native $ticket $sent $status $retry JsonNull "failed" none 0 "turn" $now)
+     (if (lp:legacy $native) (lp:fail-with $ticket $sent $status $retry $now ()) $native)))
+
+; The native fail: the pending request's mode chooses the policy as in lp:fail-owned, then
+; one transition fails the request, records its event and the cooldown, and settles the
+; call of $epoch (none: no call) as $state with $reason.
+(: lp:fail-native (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
+(= (lp:fail-native $ticket $sent $status $retry $epoch $state $reason $soft $purpose $now)
+   (let $mode (lp:native "llm-pending-mode" ($ticket))
+     (if (lp:legacy $mode) llm-legacy
+       (case $mode
+         (((LedgerError $error) (LedgerError $error))
+          (none (LedgerChanged False))
+          ($pending
+            (case (lp:configuration-for $pending)
+              (((LedgerConfig $profile $configured)
+                (case (lp:fail-delay $profile $status $retry $configured)
+                  (((PythonException $class $message) (lp:python-error $class $message))
+                   ($delay
+                     (let* (($cools (and (ue:equal $profile "managed")
+                                         (and (ue:equal (get-type $status) Number) (or (== $status 402) (== $status 429)))))
+                            ($until (if $cools (lp:after $now $delay) none))
+                            ($output (if (ue:truthy $sent) none 0))
+                            ($failed (lp:detail (JsonObject ((JsonPair "http_status" (if (lp:exact-int $status) $status JsonNull))
+                                                             (JsonPair "sent" (ue:truthy $sent))))))
+                            ($owned (lp:none $epoch)) ($request (lp:request-id)))
+                       (lp:native "llm-fail" ($ticket $owned $pending $output $failed $until $state $reason $soft $purpose $now $request)))))))
+               ($error $error)))))))))

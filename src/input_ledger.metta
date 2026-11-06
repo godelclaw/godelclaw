@@ -3,6 +3,7 @@
 !(import! &self (library list))
 !(import! &self (library json))
 !(import! &self (library math))
+!(import! &self ./llm_ledger)
 
 ; Input ledger in the native library db: collection `inputs` holds two kinds
 ; of record, ported from the tables of input_ack.py.
@@ -59,7 +60,13 @@
 ; what the write does (see "writes" below), so that running it again replays
 ; the answer of the first commit instead of applying twice.
 
+; Both collections of the store: `inputs` here, `provider` in src/llm_ledger.metta.
 (= (input-ledger:ensure $db)
+   (case (input-ledger:ensure-inputs $db)
+     ((True (llm-ledger:ensure $db))
+      ($other $other))))
+
+(= (input-ledger:ensure-inputs $db)
    (db:ensure $db inputs ((SpaceIndexV1 3 0) (SpaceIndexV1 4 0) (SpaceIndexV1 5 0) (SpaceIndexV1 6 0)
                           (SpaceIndexV1 8 0) (SpaceIndexV1 9 0) (SpaceIndexV1 10 0) (SpaceIndexV1 11 0)
                           (SpaceIndexV1 3 1) (SpaceIndexV1 11 1) (SpaceIndexV1 11 2)
@@ -1371,7 +1378,7 @@
    (case $verb
      (("request-rows" True) ("actions" True) ("attempts" True) ("task-view" True) ("task-rows" True)
       ("conversation-rows" True) ("conversation-history" True) ("turn-dump" True) ("meta-prefix" True)
-      ($other False))))
+      ($other (llm-ledger:pageable $other)))))
 
 (= (input-ledger:rows-answer $answer)
    (if (== $answer ()) True (== (get-metatype (car-atom $answer)) Expression)))
@@ -1560,7 +1567,7 @@
                                (input-ledger:inputs-of $view $request)))))
       (("task-call" ($serial $ticket))
        (input-ledger:task-read $db input-ledger:task-call (|-> ($view) (input-ledger:call-request $view $serial $ticket))))
-      ($other (Error input-ledger:run (unknown-request $other))))))
+      ($other (llm-ledger:perform $db $verb $arguments)))))
 
 (= (input-ledger:attempt $socket $verb $arguments)
    (case (db:connect $socket)

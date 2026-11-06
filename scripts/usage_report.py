@@ -3,6 +3,7 @@
 import argparse
 from datetime import datetime
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -19,13 +20,22 @@ def timestamp(text):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--ledger", required=True, type=Path)
+    parser.add_argument("--ledger", type=Path,
+                        help="the SQLite ledger; needed unless --socket names a migrated native ledger")
+    parser.add_argument("--socket", help="the agent's ledger socket; its native LLM ledger once migrated")
     parser.add_argument("--since", type=timestamp, default=0)
     parser.add_argument("--until", type=timestamp)
     parser.add_argument("--timezone", default="UTC")
     args = parser.parse_args()
-    print(json.dumps(usage_history.report(args.ledger, since=args.since,
-          until=args.until, zone=args.timezone), indent=2, sort_keys=True))
+    value = None
+    if args.socket:
+        os.environ["METTACLAW_INPUT_LEDGER_SOCKET"] = args.socket
+        value = usage_history.report_native(since=args.since, until=args.until, zone=args.timezone)
+    if value is None:
+        if args.ledger is None:
+            parser.error("the LLM ledger is not native there; give --ledger")
+        value = usage_history.report(args.ledger, since=args.since, until=args.until, zone=args.timezone)
+    print(json.dumps(value, indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":

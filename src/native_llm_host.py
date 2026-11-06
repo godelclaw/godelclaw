@@ -733,11 +733,9 @@ def finish(plan, epoch, correlation, encoded, canonical):
                 plan.native_publication = "published"
         if not accounted:
             return failed(plan, correlation, "uncommitted-native-accounting")
-    elif not llm_policy.complete(plan.correlation, result):
+    elif not native_lifetime.complete(plan, result, str(canonical)):
         return failed(plan, correlation, "duplicate-completion")
     import strategy_host
-    if not getattr(plan, "native_ledger", False):
-        native_lifetime.settle(plan, "completed", str(canonical))
     result["transport"] = "native"
     try:
         if not _compaction(plan):
@@ -848,10 +846,7 @@ def failed(plan, correlation, kind, status=0):
     stream_sink.final(plan, reason=str(kind))
     _record_failure(plan, kind, status)
     if getattr(plan, "ready", "false") == "true" and not getattr(plan, "native_ledger", False):
-        llm_policy.fail(plan.correlation, status=int(status) or None, sent=plan.sent,
-                        retry_after=getattr(plan, "retry_after", None))
-        uncertain = plan.sent and str(kind) == "transport-error"
-        native_lifetime.settle(plan, "uncertain" if uncertain else "failed", reason=str(kind)[:64])
+        native_lifetime.fail(plan, kind, status=int(status) or None, retry_after=getattr(plan, "retry_after", None))
     error = getattr(plan, "error", TimeoutError(str(kind)) if str(kind) == "transport-error" else RuntimeError(str(kind)))
     error.status = int(status) or None
     if getattr(plan, "retry_after", None) is not None:

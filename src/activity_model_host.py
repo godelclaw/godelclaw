@@ -29,9 +29,7 @@ def prepare():
 def finish(plan, content):
     import native_lifetime
     import llm_policy
-    with native_lifetime.transaction() as db:
-        row = db.execute("SELECT state,reason FROM native_calls WHERE id=? AND epoch=?",
-                         (plan.correlation, getattr(plan, "epoch", ""))).fetchone()
+    row = native_lifetime.call_state(plan)
     state = row[0] if row else "not-started"
     reason = row[1] if row else "provider-not-started"
     if row is None and hasattr(plan, "error"):

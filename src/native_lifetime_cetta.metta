@@ -147,8 +147,38 @@
               ($error $error)))))))
 (: nl:claim (-> %Undefined% %Undefined% %Undefined%))
 (= (nl:claim $metadata $now)
-   (case (nl:recover $now)
-     (((sqlite:committed $ignored2) (nl:claim-ready $metadata $now)) ($error $error))))
+   (let $native (nl:claim-native $metadata $now)
+     (if (lp:legacy $native)
+       (case (nl:recover $now)
+         (((sqlite:committed $ignored2) (nl:claim-ready $metadata $now)) ($error $error)))
+       $native)))
+
+; The native claim: recovery, then the validation nl:claim-ready makes (its result travels
+; with the claim, so recovery commits even when it refuses), eligibility and the purpose.
+(: nl:claim-native (-> %Undefined% %Undefined% %Undefined%))
+(= (nl:claim-native $metadata $now)
+   (if (ue:equal (lp:socket) "") llm-legacy
+     (let* (($activity (nl:field $metadata "activity" "")) ($lane (nl:field $metadata "lane" ""))
+            ($unscoped (not (lp:python-truthy $activity)))
+            ($plan (if $unscoped (NativeCapacity 0 0)
+                     (if (nl:valid-activity $activity $lane) (nl:capacity) invalid-activity))))
+       (case $plan
+         (((NativeCapacity $capacity $reserve) (nl:claim-call $metadata $activity $lane $unscoped $capacity $reserve ok $now))
+          (invalid-activity (nl:claim-call $metadata $activity $lane $unscoped 0 0 invalid-activity $now))
+          ((LedgerError $error) (nl:claim-call $metadata $activity $lane $unscoped 0 0 (capacity-error $error) $now)))))))
+(: nl:claim-call (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
+(= (nl:claim-call $metadata $activity $lane $unscoped $capacity $reserve $check $now)
+   (let* (($identity (nl:field $metadata "id" "")) ($epoch (nl:field $metadata "epoch" ""))
+          ($purpose (nl:field $metadata "purpose" "turn")) ($guard (lp:none (nl:field $metadata "guard" JsonNull)))
+          ($pid (system:pid)) ($start (lp:none (lp:process-start $pid)))
+          ($textual (ue:equal (get-type $activity) String))
+          ($detail (lp:detail (JsonObject ((JsonPair "epoch" $epoch))))) ($request (lp:request-id)))
+     (case (lp:native "llm-claim" ($identity $epoch $pid $start $guard $activity $lane $purpose $unscoped $textual
+                                   $capacity $reserve $check $detail $now $request))
+       (((LedgerClaimRefused invalid-activity) (lp:python-error ValueError "invalid native call activity"))
+        ((LedgerClaimRefused invalid-purpose) (lp:python-error ValueError "invalid native call purpose"))
+        ((LedgerClaimRefused (capacity-error $error)) (LedgerError $error))
+        ($answer $answer)))))
 
 ; Python's submitted and progress store int(value) in these columns. It
 ; converts the arguments in order, and the first exception is the answer;
@@ -181,19 +211,26 @@
    (case (nl:stored-integers ($transport))
      (((LedgerError $error) (LedgerError $error))
       (($stored)
-        (let* (($id (nl:field $metadata "id" "")) ($epoch (nl:field $metadata "epoch" "")))
-          (nl:transaction
-            ((sqlite:statement "UPDATE native_calls SET state='submitted',transport=?,updated=? WHERE id=? AND epoch=? AND state='claimed'"
-                                ($stored $now $id $epoch))
-             (sqlite:statement "INSERT OR IGNORE INTO llm_call_history(call_id,event,observed,detail) SELECT ?,'submitted',?,'{}' WHERE changes()=1" ($id $now))) $now))))))
+        (let* (($id (nl:field $metadata "id" "")) ($epoch (nl:field $metadata "epoch" "")) ($request (lp:request-id))
+               ($native (lp:native "llm-submitted" ($id $epoch $stored $now $request))))
+          (if (lp:legacy $native)
+            (nl:transaction
+              ((sqlite:statement "UPDATE native_calls SET state='submitted',transport=?,updated=? WHERE id=? AND epoch=? AND state='claimed'"
+                                  ($stored $now $id $epoch))
+               (sqlite:statement "INSERT OR IGNORE INTO llm_call_history(call_id,event,observed,detail) SELECT ?,'submitted',?,'{}' WHERE changes()=1" ($id $now))) $now)
+            $native))))))
 (: nl:progress (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (nl:progress $metadata $bytes $quiet $soft $now)
    (case (nl:stored-integers ($bytes $quiet $soft))
      (((LedgerError $error) (LedgerError $error))
       (($count $wait $elapsed)
-        (nl:transaction
-          ((sqlite:statement "UPDATE native_calls SET bytes=?,quiet_ms=?,soft_elapsed=?,updated=? WHERE id=? AND epoch=? AND state='submitted'"
-            ($count $wait $elapsed $now (nl:field $metadata "id" "") (nl:field $metadata "epoch" "")))) $now)))))
+        (let* (($id (nl:field $metadata "id" "")) ($epoch (nl:field $metadata "epoch" "")) ($request (lp:request-id))
+               ($native (lp:native "llm-progress" ($id $epoch $count $wait $elapsed $now $request))))
+          (if (lp:legacy $native)
+            (nl:transaction
+              ((sqlite:statement "UPDATE native_calls SET bytes=?,quiet_ms=?,soft_elapsed=?,updated=? WHERE id=? AND epoch=? AND state='submitted'"
+                ($count $wait $elapsed $now $id $epoch))) $now)
+            $native))))))
 
 (: nl:settle-statements (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (nl:settle-statements $metadata $state $result $reason $soft $now $require-completion)
@@ -221,17 +258,28 @@
 (: nl:settle (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (nl:settle $metadata $state $result $reason $soft $now)
    (case (nl:valid-settlement $metadata $state $result)
-     ((True (lp:changed-result (nl:transaction
-       (lp:append ((sqlite:statement "CREATE TEMP TABLE nl_transition(changed INTEGER NOT NULL)" ()))
-         (lp:append (nl:settle-statements $metadata $state $result $reason $soft $now False)
-                    ((sqlite:statement "SELECT changed FROM nl_transition" ())))) $now)))
+     ((True
+       (let* (($id (nl:field $metadata "id" "")) ($epoch (nl:field $metadata "epoch" ""))
+              ($purpose (nl:field $metadata "purpose" "turn")) ($kept (lp:none $result)) ($why (lp:none $reason))
+              ($request (lp:request-id))
+              ($native (lp:native "llm-settle" ($id $epoch $purpose $state $kept $why $soft $now $request))))
+         (if (lp:legacy $native)
+           (lp:changed-result (nl:transaction
+             (lp:append ((sqlite:statement "CREATE TEMP TABLE nl_transition(changed INTEGER NOT NULL)" ()))
+               (lp:append (nl:settle-statements $metadata $state $result $reason $soft $now False)
+                          ((sqlite:statement "SELECT changed FROM nl_transition" ())))) $now))
+           $native)))
       ($error $error))))
 
 ; Request, usage receipt and native settlement commit together. Epoch checks
 ; apply to both the usage observation and the authority to complete a turn.
 (: nl:completion-state (-> %Undefined% %Undefined% %Undefined%))
 (= (nl:completion-state $metadata $canonical)
-   (let* (($id (nl:field $metadata "id" "")) ($epoch (nl:field $metadata "epoch" "")))
+   (let* (($id (nl:field $metadata "id" "")) ($epoch (nl:field $metadata "epoch" ""))
+          ($native (lp:native "llm-completion-state" ($id $epoch $canonical))))
+     (if (lp:legacy $native) (nl:completion-state-sqlite $id $epoch $canonical) $native)))
+(: nl:completion-state-sqlite (-> %Undefined% %Undefined% %Undefined% %Undefined%))
+(= (nl:completion-state-sqlite $id $epoch $canonical)
      ; A fresh read resolves an ambiguous local commit. A receipt is authority
      ; only for this call, epoch and exact canonical answer, committed together.
      (case (sqlite:observe (lp:path)
@@ -240,29 +288,41 @@
        (((sqlite:result $columns (("committed")) $changes $row-id) (LedgerCompletion committed))
         ((sqlite:result $columns (("pending")) $changes $row-id) (LedgerCompletion pending))
         ((sqlite:result $columns $rows $changes $row-id) (LedgerCompletion conflict))
-        ($error (LedgerError $error))))))
+        ($error (LedgerError $error)))))
 
 (: nl:complete (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (nl:complete $metadata $usage $finish $canonical $soft $now)
    (let* (($evidence (ue:evidence $usage)) ($output (lp:output $evidence)) ($reason (lp:text $finish)))
        (case (nl:valid-settlement $metadata "completed" $canonical)
          ((True
-           (lp:complete-owned (nl:field $metadata "id" "") $evidence
-             (str:char-slice $reason 0 (math:min 64 (str:char-length $reason)))
-             $output (nl:field $metadata "epoch" "") $now
-             (lp:append (nl:prune $now)
-               (lp:append ((sqlite:statement "CREATE TEMP TABLE nl_transition(changed INTEGER NOT NULL)" ()))
-                 (nl:settle-statements $metadata "completed" $canonical JsonNull $soft $now True)))))
+           (let* (($id (nl:field $metadata "id" "")) ($epoch (nl:field $metadata "epoch" ""))
+                  ($short (str:char-slice $reason 0 (math:min 64 (str:char-length $reason))))
+                  ($usage-detail (lp:detail $evidence)) ($stored (lp:none $output))
+                  ($completed (lp:detail (JsonObject ((JsonPair "finish" $short)))))
+                  ($claimed (lp:detail (JsonObject ((JsonPair "epoch" $epoch)))))
+                  ($purpose (nl:field $metadata "purpose" "turn")) ($request (lp:request-id))
+                  ($native (lp:native "llm-complete" ($id $epoch $usage-detail $stored $short $completed $claimed
+                                                      $canonical $soft $purpose $now $request))))
+             (if (lp:legacy $native)
+               (lp:complete-owned $id $evidence $short $output $epoch $now
+                 (lp:append (nl:prune $now)
+                   (lp:append ((sqlite:statement "CREATE TEMP TABLE nl_transition(changed INTEGER NOT NULL)" ()))
+                     (nl:settle-statements $metadata "completed" $canonical JsonNull $soft $now True))))
+               $native)))
           ($error $error)))))
 (: nl:fail (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (nl:fail $metadata $kind $status $retry $soft $now)
    (let* (($sent (nl:field $metadata "sent" False))
           ($state (if (and $sent (ue:equal $kind "transport-error")) "uncertain" "failed")))
-     (case (lp:fail-owned (nl:field $metadata "id" "") $sent $status $retry
-             (nl:field $metadata "epoch" "") $now
-             (lp:append (nl:prune $now)
-               (lp:append ((sqlite:statement "CREATE TEMP TABLE nl_transition(changed INTEGER NOT NULL)" ()))
-                 (nl:settle-statements $metadata $state JsonNull $kind $soft $now True))))
+     (case (let $native (lp:fail-native (nl:field $metadata "id" "") $sent $status $retry (nl:field $metadata "epoch" "")
+                                         $state $kind $soft (nl:field $metadata "purpose" "turn") $now)
+             (if (lp:legacy $native)
+               (lp:fail-owned (nl:field $metadata "id" "") $sent $status $retry
+                 (nl:field $metadata "epoch" "") $now
+                 (lp:append (nl:prune $now)
+                   (lp:append ((sqlite:statement "CREATE TEMP TABLE nl_transition(changed INTEGER NOT NULL)" ()))
+                     (nl:settle-statements $metadata $state JsonNull $kind $soft $now True))))
+               $native))
        ; A known terminal request may still have an unsettled old-peer lease.
        ; This is not a replay of a failed/unknown commit: only an authoritative
        ; unchanged result permits the separate lifetime reconciliation.
@@ -275,6 +335,10 @@
                (or (ue:equal $code "invalid-native-tool")
                    (or (ue:equal $code "incomplete-output") (ue:equal $code "refused-or-structured-output")))))
      (lp:python-error ValueError "invalid command rejection code")
-     (lp:statement-changed (nl:transaction
-       ((sqlite:statement "UPDATE native_calls SET reason=? WHERE id=? AND epoch=? AND state='completed' AND purpose='turn'"
-          ((str:concat "command-output:" $code) (nl:field $metadata "id" "") (nl:field $metadata "epoch" "")))) $now))))
+     (let* (($id (nl:field $metadata "id" "")) ($epoch (nl:field $metadata "epoch" "")) ($request (lp:request-id))
+            ($native (lp:native "llm-rejected" ($id $epoch $code $request))))
+       (if (lp:legacy $native)
+         (lp:statement-changed (nl:transaction
+           ((sqlite:statement "UPDATE native_calls SET reason=? WHERE id=? AND epoch=? AND state='completed' AND purpose='turn'"
+              ((str:concat "command-output:" $code) $id $epoch))) $now))
+         $native))))
