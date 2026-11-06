@@ -258,7 +258,7 @@ class NativeContextBundleTest(unittest.TestCase):
                     self.assertEqual(statuses, ["unavailable", "known", "stale-known", "stale-known",
                                                 "known", "absent", "unavailable", "known"])
                     for row in rows:
-                        self.assertEqual(row["text"].count("SOURCE["), 13)
+                        self.assertEqual(row["text"].count("SOURCE["), len(context_sources.SOURCE_SPECS))
         print("Compared 192 real-caller decode-fault steps, with four retained Python loaders called once per step")
 
     def test_all_python_whitespace_and_near_misses_at_real_caller(self):
@@ -369,12 +369,12 @@ class NativeContextBundleTest(unittest.TestCase):
         first = self.compare([{key: {"raises": True} for key in base}])[0]["text"]
         self.assertNotIn("stale-known", first)
         statuses = dict(re.findall(r"^SOURCE\[([^]]+)\] status=([^ ]+)", first, re.M))
-        retained = {"pins", "recent-proposals", "relevant-files", "conversation"}
+        retained = {"pins", "recent-proposals", "relevant-files", "coding-sessions", "conversation"}
         self.assertEqual({key for key in retained if statuses[key] == "unavailable"}, retained)
         self.assertEqual(statuses["effect-receipts"], "absent")
 
     def test_text_conversion_failure_aborts_bundle_without_fallback(self):
-        for failed_index in (5, 8, 12):
+        for failed_index in (5, 8, 13):
             values = {s.source_id: "known" for s in context_sources.SOURCE_SPECS
                       if s.source_id not in NATIVE_SOURCES}
             values[context_sources.SOURCE_SPECS[failed_index].source_id] = {"broken_text": True}

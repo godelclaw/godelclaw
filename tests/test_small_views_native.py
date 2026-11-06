@@ -126,7 +126,7 @@ class SmallViewsTest(unittest.TestCase):
             retained = {s.source_id for s in context_sources.SOURCE_SPECS} - set(SOURCES) - {"work-state", "affect-gestalt", "effect-receipts"}
             self.assertEqual(actual[-1]["calls"], {key: len(steps) for key in retained})
             self.assertEqual(actual[-1]["engine_calls"], len(steps))
-            boundaries = {"prepare": len(steps), "retained-load": 4 * len(steps),
+            boundaries = {"prepare": len(steps), "retained-load": len(retained) * len(steps),
                           "engine-command": len(steps),
                           "action-strategy": 2 * len(steps)}
             if boot:
@@ -460,7 +460,7 @@ print(mode.get("version", "fixture 日 r1") if sys.argv[-1] == "--version" else 
                       if key != "project-capabilities"} for row in rows]
         self.assertTrue(all(row["forbidden"] == 0 for row in rows))
         self.assertEqual(neighbors, [neighbors[0]] * 3)
-        self.assertEqual(len(neighbors[0]), 12)
+        self.assertEqual(len(neighbors[0]), len(context_sources.SOURCE_SPECS) - 1)
         self.assertEqual(len(count.read_text().splitlines()), 2)
 
     def test_empty_directory_paths_keep_each_sources_outcome(self):

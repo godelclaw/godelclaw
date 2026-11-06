@@ -259,7 +259,7 @@ class GoalViewsTest(unittest.TestCase):
                  self.step(""), self.step(goal(note="changed")), self.step(goal(note="changed"))]
         rows = self.compare("work_state_view", steps, caller=True)
         self.assertEqual(rows[-1]["calls"], {name: len(steps) for name in
-                         ("pins", "recent-proposals", "relevant-files", "conversation")})
+                         ("pins", "recent-proposals", "relevant-files", "coding-sessions", "conversation")})
         self.assertIn("work state unavailable", rows[2]["text"])
         self.assertIn("SOURCE[work-state] status=stale-known", rows[3]["text"])
 

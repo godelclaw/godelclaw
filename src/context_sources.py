@@ -70,6 +70,7 @@ SOURCE_SPECS = (
     SourceSpec("recent-proposals", 10000, True),
     SourceSpec("relevant-files", 4000),
     SourceSpec("project-evidence", 8000),
+    SourceSpec("coding-sessions", 2000),
     SourceSpec("project-capabilities", 5000),
     SourceSpec("conversation", 30000, True),
 )
@@ -82,7 +83,7 @@ SOURCE_SPECS = (
 # expected to differ from turn to turn.
 CACHE_BOUNDARY = "_cache_boundary_"
 STABLE_SOURCE_IDS = ("project-capabilities", "development-state",
-                     "project-evidence")
+                     "project-evidence", "coding-sessions")
 MESSAGE_SOURCE_IDS = ("conversation",)
 
 
@@ -192,6 +193,7 @@ def _supplied(views):
 
 def _loaders(conversation=None, views=None):
     import active_queries
+    import coding_estate
     import commitment_projection
     import development_state
     import effect_receipts
@@ -231,6 +233,7 @@ def _loaders(conversation=None, views=None):
         (specs["relevant-files"],
          lambda: views["relevant-files"] if "relevant-files" in views else helper.relevant_files(history, limit=turns)),
         (specs["project-evidence"], project_evidence.view),
+        (specs["coding-sessions"], coding_estate.context_view),
         (specs["project-capabilities"], project_capabilities.view),
         # The MeTTa Telegram client renders the conversation itself.
         (specs["conversation"],

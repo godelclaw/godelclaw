@@ -8,6 +8,7 @@ turn that asks for it, and the checker answers format questions for free
 ARITY = {
     "work": (1, 4), "work-status": (0, 1), "work-steer": (2, 2),
     "work-resume": (1, 1), "work-stop": (1, 1),
+    "work-hold": (2, 3), "work-archive": (2, 2),
     "memory-node": (4, 6), "memory-link": (2, 2), "memory-summary": (2, 2),
     "memory-open": (1, 2), "memory-find": (1, 2), "memory-original": (2, 2),
     "memory-focus": (1, 2), "memory-window": (1, 1),
@@ -59,6 +60,8 @@ PAGES = {
     "work-steer": 'usage: (work-steer "id" "guidance")\nAppend guidance to the same coding transcript. Guidance arriving during a final reply continues the task before it is marked done.',
     "work-resume": 'usage: (work-resume "id")\nExplicitly resume an inactive session with its existing task, transcript, plan and inbox. An active session is not launched again. Interrupted tool effects remain uncertain and are never automatically replayed.',
     "work-stop": 'usage: (work-stop "id")\nStop the session, keeping its evidence and plan. Only explicit work-resume clears its stop request.',
+    "work-hold": 'usage: (work-hold "id" "why" ["YYYY-MM-DD"])\nRecord a hold on the session in lifecycle.json, either until the local review date YYYY-MM-DD or indefinitely when omitted. Held sessions stay out of the open context list until due; work-resume clears the hold.',
+    "work-archive": 'usage: (work-archive "id" "why")\nMark the session archived in lifecycle.json so it is excluded from the open context list while keeping its folder and evidence intact. Explicit work-resume clears the archive.',
     "settings": 'usage: (settings ["namespace"])\nLive native catalogue of module-registered settings, including current/default value, units, domain, description and persistence. New registrations appear immediately. An empty namespace lists all.',
     "setting": 'usage: (setting "namespace" "key" [value])\nInspect one setting or invoke its registered writer. Numeric strings are accepted for numeric domains. The module retains ownership of validation and storage.',
     "remember": ('usage: (remember "text")\n'

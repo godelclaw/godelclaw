@@ -151,6 +151,7 @@
   "src/chatgpt_plan_cetta.metta",
   "src/claude_bridge.py",
   "src/coding_delivery.metta",
+  "src/coding_estate.py",
   "src/coding_io.py",
   "src/coding_guidance.metta",
   "src/coding_session.metta",

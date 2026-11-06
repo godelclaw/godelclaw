@@ -689,7 +689,7 @@ class CodingSessionTests(unittest.TestCase):
                                                           "binary": str(self.directory / "engine-gone"),
                                                           "binary_sha256": "0" * 64}))
         result = self.run_probe('!(println! (work-resume "work-engine-fixture"))\n', module="coding_work.metta", cwd=runner)
-        self.assertIn("the engine this session started on is gone", result.stdout)
+        self.assertIn("its engine binary is gone", result.stdout)
         self.assertFalse(launches.exists())
 
     def dead_session_fixture(self):
