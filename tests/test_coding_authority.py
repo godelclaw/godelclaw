@@ -31,14 +31,26 @@ Correspondence with the Lean 4 models in MeTTapedia (`lean/pettaclaw/`):
   Single `coding_io.settle_ending` handover report implementation shared across MeTTa and Python.
 - `test_work_stop_revokes_reserved_launch_without_recording_ending`:
   `CodingSessionAuthority` `work-stop` revokes `"reserved"` launch token (`phase = "ended"`).
+- `test_delayed_launch_keeps_own_descriptor_and_worker_checks_bundle_binding`:
+  `CodingSessionLaunch.delayedLaunch`, `current_launch_takes_other_token`, `fixed_launch_keeps_own_token`,
+  `fixed_live_authority_is_bound` (P1-1: atomic reservation descriptor + worker bundle binding check).
+- `test_resume_and_repin_refuse_while_worker_alive_or_scope_active`:
+  `CodingSessionLaunch.staleSecondResume`, `current_resume_revokes_live_worker`,
+  `fixed_resume_spares_live_worker`, `fixed_preserves_inv` (P1-2: liveness check inside `.ending.lock`).
+- `test_checkpoint_check_parses_strict_typed_verdict_and_rejects_ready_substring_in_failure`:
+  Strict typed verdict parser for `coding_check.metta` stdout (P2-3).
+- `test_durability_fsync_errors_propagate_and_refuse_consume_with_post_rename_recovery`:
+  Directory `fsync` error propagation, uncertain publication refusal, and post-rename recovery (P2-4).
 """
 
+import errno
 import hashlib
 import http.server
 import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -253,7 +265,13 @@ class CodingAuthorityAndRepinTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return result
 
-    def run_worker(self, session, token):
+    def run_worker(self, session, token, *, cwd=None):
+        worker_cwd = Path(cwd) if cwd is not None else Path(coding_io.runtime_root(session) or ROOT)
+        if not worker_cwd.is_dir():
+            worker_cwd = ROOT
+        main_metta = worker_cwd / "coding_main.metta"
+        if not main_metta.is_file():
+            main_metta = ROOT / "coding_main.metta"
         env = {**self.env, "METTACLAW_CODING_RUN_TOKEN": str(token)}
         with open(session / "run.log", "a", encoding="utf-8") as log_stream:
             result = subprocess.run(
@@ -263,10 +281,10 @@ class CodingAuthorityAndRepinTests(unittest.TestCase):
                     "petta",
                     "--import-mode",
                     "ancestor-walk",
-                    str(ROOT / "coding_main.metta"),
+                    str(main_metta),
                     str(session),
                 ],
-                cwd=ROOT,
+                cwd=worker_cwd,
                 env=env,
                 stdout=log_stream,
                 stderr=subprocess.STDOUT,
@@ -400,7 +418,7 @@ class CodingAuthorityAndRepinTests(unittest.TestCase):
         )
         self.assertFalse((live_session / "report.txt").exists())
         repin_status, _ = coding_io.repin_session(ROOT, live_session)
-        self.assertEqual(repin_status, "same")
+        self.assertEqual(repin_status, "running")
         self.assertEqual(
             json.loads((live_session / "state.json").read_text(encoding="utf-8"))["status"],
             "running",
@@ -1083,6 +1101,382 @@ class CodingAuthorityAndRepinTests(unittest.TestCase):
         view_after = coding_estate.context_view(self.directory, world=world)
         self.assertNotIn("launching", view_after)
         self.assertNotIn("launching", res.stdout)
+
+    def test_delayed_launch_keeps_own_descriptor_and_worker_checks_bundle_binding(self):
+        """`CodingSessionLaunch.delayedLaunch`, `current_launch_takes_other_token`,
+        `fixed_launch_keeps_own_token`, `fixed_live_authority_is_bound` (P1-1):
+        1. Create two distinct runtime sources `src_a` and `src_b` with different frozen bundle digests.
+        2. In MeTTa, `freeze_runtime` reserves run A (`desc_a`, `token_a`, `bundle_a`); before
+           `work:launch-at` runs, a concurrent `repin_session` reserves run B (`token_b`, `bundle_b`).
+        3. Delayed `work:launch-at` for A must launch `bundle_a` with `token_a` (never `token_b`),
+           so worker A exits as superseded while `token_b` remains `"reserved"` for worker B.
+        4. Even if a mis-assembled launcher invokes `coding_main.metta` from `bundle_a` with `token_b`,
+           `consume_run` checks that `manifest["root"]` matches the worker's bundle root and refuses (`0`).
+        5. Resume file preparation (`stop`, `recycle.requested`, `report.txt`, `clear_lifecycle`,
+           `inbox.jsonl` note) happens inside `.ending.lock` during reservation, never after releasing it.
+        """
+        session = self.make_session("work-launch-race", status="stopped", owner="840:1")
+        (session / "messages.jsonl").write_text(
+            json.dumps({"role": "system", "content": "sys"}) + "\n"
+            + json.dumps({"role": "user", "content": "Complete task"}) + "\n",
+            encoding="utf-8",
+        )
+
+        def _make_runtime_source(name, marker):
+            src = self.directory / name
+            src.mkdir(parents=True, exist_ok=True)
+            manifest_rel = Path("config/runtime-files.json")
+            names = json.loads((ROOT / manifest_rel).read_text(encoding="utf-8"))
+            if isinstance(names, dict):
+                names = names["files"]
+            for rel in [str(manifest_rel), *names]:
+                target = ROOT / rel
+                dest = src / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(target, dest)
+            with open(src / "coding_main.metta", "a", encoding="utf-8") as stream:
+                stream.write(f"\n; bundle-marker: {marker}\n")
+            return src
+
+        src_a = _make_runtime_source("runtime_src_a", "bundle-A")
+        src_b = _make_runtime_source("runtime_src_b", "bundle-B")
+
+        self.launches.unlink(missing_ok=True)
+        # Execute the exact MeTTa race: freeze A, then repin to B before work:launch-at runs with A's return value
+        probe_forms = (
+            f'!(let $desc_a (py-call (coding_io.freeze_runtime "{src_a}" "{session}"))\n'
+            f'   (let $_ (py-call (coding_io.repin_session "{src_b}" "{session}"))\n'
+            f'     (println! (work:launch-at "work-launch-race" $desc_a))))\n'
+        )
+        self.run_work_probe(probe_forms)
+        for _ in range(100):
+            if self.launches.is_file() and self.launches.read_text(encoding="utf-8").strip():
+                break
+            time.sleep(0.05)
+
+        manifest_b = json.loads((session / "runtime.json").read_text(encoding="utf-8"))
+        token_b = manifest_b["run"]
+        bundle_b = manifest_b["root"]
+
+        launches = [
+            json.loads(line)
+            for line in self.launches.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(len(launches), 1)
+        launched_cmd = " ".join(launches[0])
+        # Delayed launch A must NOT carry B's run token!
+        self.assertNotIn(f"METTACLAW_CODING_RUN_TOKEN={token_b}", launched_cmd)
+
+        # Extract token_a and bundle_a from the launched command and verify worker A exits without consuming B
+        bundle_a, _ = coding_io.freeze_bundle(src_a, self.directory / "memory" / "coding-runtimes")
+        self.assertNotEqual(str(bundle_a), str(bundle_b))
+        self.assertIn(str(bundle_a), launched_cmd)
+        import re as _re
+        m_tok = _re.search(r"METTACLAW_CODING_RUN_TOKEN=([0-9a-f]+)", launched_cmd)
+        self.assertIsNotNone(m_tok)
+        token_a = m_tok.group(1)
+        self.assertNotEqual(token_a, token_b)
+
+        # Running delayed worker A with its own (bundle_a, token_a) exits cleanly and leaves B reserved
+        self.run_worker(session, token_a, cwd=bundle_a)
+        manifest_after_a = json.loads((session / "runtime.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest_after_a["run"], token_b)
+        self.assertEqual(manifest_after_a["phase"], "reserved")
+
+        # Even a mis-assembled worker running from bundle_a with token_b is refused by consume_run's bundle check
+        self.run_worker(session, token_b, cwd=bundle_a)
+        manifest_after_misassembled = json.loads((session / "runtime.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest_after_misassembled["run"], token_b)
+        self.assertEqual(manifest_after_misassembled["phase"], "reserved")
+
+        # Worker B running from bundle_b with token_b succeeds and completes the session
+        self.server.replies.append(
+            {
+                "id": "r-b",
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "Completed by bundle B."},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 4},
+            }
+        )
+        self.run_worker(session, token_b, cwd=bundle_b)
+        final_state = json.loads((session / "state.json").read_text(encoding="utf-8"))
+        self.assertEqual(final_state["status"], "done")
+        self.assertIn("Completed by bundle B.", (session / "report.txt").read_text(encoding="utf-8"))
+
+        # Single delivery:preserve implementation: with a pending ending, two resumes (one of them
+        # superseded) leave exactly one outbox message for that ending, byte-identical to what
+        # (delivery:preserve $dir) alone writes.
+        self.assertFalse(hasattr(coding_io, "_preserve_pending_delivery_unlocked"))
+        outbox_dir = session / "report-outbox"
+        shutil.rmtree(outbox_dir, ignore_errors=True)
+        self.run_work_probe(f'!(println! (delivery:preserve "{session}"))\n')
+        expected_files = sorted(outbox_dir.glob("*.json"))
+        self.assertEqual(len(expected_files), 1)
+        expected_name = expected_files[0].name
+        expected_bytes = expected_files[0].read_bytes()
+        shutil.rmtree(outbox_dir)
+
+        self.run_work_probe(
+            '!(println! (work-resume "work-launch-race"))\n'
+            '!(println! (work-resume "work-launch-race" "current"))\n'
+        )
+        actual_files = sorted(outbox_dir.glob("*.json"))
+        self.assertEqual([p.name for p in actual_files], [expected_name])
+        self.assertEqual(actual_files[0].read_bytes(), expected_bytes)
+
+    def test_resume_and_repin_refuse_while_worker_alive_or_scope_active(self):
+        """`CodingSessionLaunch.staleSecondResume`, `current_resume_revokes_live_worker`,
+        `fixed_resume_spares_live_worker`, `fixed_preserves_inv` (P1-2):
+        1. When a worker is live (`phase == "started"` and `_owner_alive(worker_owner)`),
+           calling `freeze_runtime` or `repin_session` (including the same-bundle fast path)
+           returns `status == "running"` without rotating `run`, changing `phase`, or mutating
+           `stop`, `recycle.requested`, `report.txt`, `lifecycle.json`, or `inbox.jsonl`.
+        2. The live worker's subsequent `write_worker_state` with `token1` still returns `1`.
+        3. When the worker process is not yet in `state.json` (or has exited) but the systemd scope
+           is active (`scope_active=True` or `systemctl --user is-active`), `freeze_runtime`,
+           `repin_session`, and `(work-resume ...)` inside `.ending.lock` refuse with `status == "running"`
+           and preserve the existing manifest and session files.
+        """
+        live_owner = f"{os.getpid()}:{native_lifetime.process_start(os.getpid())}"
+        session = self.make_session("work-live-worker", status="stopped", owner="850:1")
+        coding_io.freeze_runtime(ROOT, session)
+        token1 = _manifest_token(session)
+        self.assertEqual(coding_io.consume_run(session, token1, live_owner), 1)
+
+        # Place session artifacts that a non-refused resume would clear/move
+        (session / "stop").write_text("stop\n", encoding="utf-8")
+        (session / "recycle.requested").write_text("recycle\n", encoding="utf-8")
+        (session / "report.txt").write_text("live report\n", encoding="utf-8")
+        coding_estate.hold_session(session, "keep hold", "2026-12-01")
+        before_runtime = (session / "runtime.json").read_bytes()
+
+        # 1. freeze_runtime while worker is alive must refuse without rotating token1 or touching files
+        res_freeze = coding_io.freeze_runtime(ROOT, session)
+        self.assertEqual(_manifest_token(session), token1)
+        self.assertEqual((session / "runtime.json").read_bytes(), before_runtime)
+        self.assertEqual(res_freeze["status"], "running")
+        res_freeze_note = coding_io.freeze_runtime(ROOT, session, note="must not append")
+        self.assertEqual(res_freeze_note["status"], "running")
+        self.assertTrue((session / "stop").is_file())
+        self.assertTrue((session / "recycle.requested").is_file())
+        self.assertTrue((session / "report.txt").is_file())
+        self.assertIsInstance(coding_estate.read_lifecycle(session).get("hold"), dict)
+        self.assertFalse((session / "inbox.jsonl").exists())
+
+        # Live worker still owns the session and can write state
+        self.assertEqual(
+            coding_io.write_worker_state(session, token1, live_owner, "running", 3, "still alive", 0),
+            1,
+        )
+
+        # 2. Same-bundle repin_session while worker is alive must also refuse without rotating token1
+        res_repin = coding_io.repin_session(ROOT, session)
+        self.assertEqual(res_repin["status"], "running")
+        self.assertEqual(_manifest_token(session), token1)
+        self.assertEqual(
+            coding_io.write_worker_state(
+                session, token1, live_owner, "running", 4, "still alive after repin attempt", 0
+            ),
+            1,
+        )
+
+        # 3. Dead worker owner in state.json, but scope_active=True -> both freeze_runtime and repin_session refuse
+        coding_io.mark_state(session, "stopped", expected_owner=live_owner)
+        before_stopped_runtime = (session / "runtime.json").read_bytes()
+        res_scope_freeze = coding_io.freeze_runtime(ROOT, session, scope_active=True)
+        self.assertEqual(res_scope_freeze["status"], "running")
+        self.assertEqual((session / "runtime.json").read_bytes(), before_stopped_runtime)
+
+        res_scope_repin = coding_io.repin_session(ROOT, session, scope_active=True)
+        self.assertEqual(res_scope_repin["status"], "running")
+        self.assertEqual((session / "runtime.json").read_bytes(), before_stopped_runtime)
+
+        # 4. MeTTa (work-resume ...) when worker is alive (even with scope.active absent) returns WORK_RUNNING
+        # and does not mutate stop, report.txt, lifecycle.json, or inbox.jsonl
+        self.active.unlink(missing_ok=True)
+        coding_io.freeze_runtime(ROOT, session)
+        token2 = _manifest_token(session)
+        self.assertEqual(coding_io.consume_run(session, token2, live_owner), 1)
+        (session / "stop").write_text("stop\n", encoding="utf-8")
+        (session / "report.txt").write_text("keep report\n", encoding="utf-8")
+        coding_estate.hold_session(session, "keep hold", "2026-12-01")
+
+        probe = self.run_work_probe(
+            '!(println! (work-resume "work-live-worker"))\n'
+            '!(println! (work-resume "work-live-worker" "current"))\n'
+        )
+        self.assertEqual(probe.stdout.count("WORK_RUNNING work-live-worker"), 2)
+        self.assertEqual(_manifest_token(session), token2)
+        self.assertTrue((session / "stop").is_file())
+        self.assertTrue((session / "report.txt").is_file())
+        self.assertIsInstance(coding_estate.read_lifecycle(session).get("hold"), dict)
+        self.assertFalse((session / "inbox.jsonl").exists())
+
+    def test_checkpoint_check_parses_strict_typed_verdict_and_rejects_ready_substring_in_failure(self):
+        """P2-3: `check_checkpoint_copy` parses only the last non-empty stdout line against
+        `^\\(CheckpointReady (\\d+)\\)$` (with exit status 0) or `^\\(CheckpointFailed (".*")\\)$`.
+        1. Codex's counterexample: a workspace path containing `CheckpointReady-workspace` with an
+           unreadable `AGENTS.md` produces `(CheckpointFailed "Cannot read coding guidance: .../CheckpointReady-workspace/AGENTS.md")`
+           and MUST return `(False, "Cannot read coding guidance: ...")`, never `True`.
+        2. Exit status != 0 with `(CheckpointReady 3)` on stdout returns `(False, "the check produced no valid verdict")`.
+        3. `(CheckpointReady 3)` on stderr only with empty stdout returns `(False, "the check produced no valid verdict")`.
+        """
+        bad_ws = self.directory / "CheckpointReady-workspace"
+        (bad_ws / ".git").mkdir(parents=True, exist_ok=True)
+        bad_agents = bad_ws / "AGENTS.md"
+        bad_agents.write_text("secret guidance\n", encoding="utf-8")
+        bad_agents.chmod(0)
+        self.addCleanup(lambda: bad_agents.chmod(stat.S_IRUSR | stat.S_IWUSR) if bad_agents.exists() else None)
+
+        session = self.make_session("work-substr-check", status="stopped", owner="860:1")
+        (session / "task.json").write_text(
+            json.dumps(
+                {
+                    "task": "Inspect workspace",
+                    "workdir": str(bad_ws),
+                    "requester": "requester-agent",
+                    "requester_space": "test-space",
+                    "model": "fixture-model",
+                    "effort": "default",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (session / "messages.jsonl").write_text(
+            json.dumps({"role": "system", "content": "sys"}) + "\n"
+            + json.dumps({"role": "user", "content": "hello"}) + "\n",
+            encoding="utf-8",
+        )
+
+        ok, detail = coding_io.check_checkpoint_copy(session, ROOT, binary=os.environ["CETTA_BIN"])
+        self.assertFalse(ok, f"Expected CheckpointFailed to be rejected, got ok=True: {detail!r}")
+        self.assertIn("Cannot read coding guidance:", detail)
+        self.assertNotIn("(CheckpointFailed", detail)
+
+        # Fake binary exiting non-zero despite printing (CheckpointReady 3) on stdout
+        fake_nonzero = self.directory / "fake-cetta-nonzero"
+        fake_nonzero.write_text(
+            "#!" + sys.executable + "\nimport sys\nprint('(CheckpointReady 3)')\nsys.exit(1)\n",
+            encoding="utf-8",
+        )
+        fake_nonzero.chmod(0o755)
+        ok_nz, detail_nz = coding_io.check_checkpoint_copy(session, ROOT, binary=fake_nonzero)
+        self.assertFalse(ok_nz)
+        self.assertEqual(detail_nz, "the check produced no valid verdict")
+
+        # Fake binary printing (CheckpointReady 3) on stderr only
+        fake_stderr = self.directory / "fake-cetta-stderr"
+        fake_stderr.write_text(
+            "#!" + sys.executable + "\nimport sys\nsys.stderr.write('(CheckpointReady 3)\\n')\nsys.exit(0)\n",
+            encoding="utf-8",
+        )
+        fake_stderr.chmod(0o755)
+        ok_err, detail_err = coding_io.check_checkpoint_copy(session, ROOT, binary=fake_stderr)
+        self.assertFalse(ok_err)
+        self.assertEqual(detail_err, "the check produced no valid verdict")
+
+    def test_durability_fsync_errors_propagate_and_refuse_consume_with_post_rename_recovery(self):
+        """P2-4: `_fsync_dir` in `src/coding_io.py` and `src/coding_estate.py` propagates `OSError`.
+        1. Injecting `EIO` into `os.fsync` for directory fds causes `_fsync_dir` and `_write_json_atomic`
+           to raise `OSError`.
+        2. During `consume_run`, a directory `fsync` `EIO` after `os.replace` on `runtime.json` logs
+           `"uncertain publication"` to `run.log` and returns `0` (worker refuses to start).
+        3. Although `runtime.json` on disk now has `"phase": "started"` (with dead/non-running `state.json`),
+           the next `freeze_runtime` / `repin_session` after `EIO` clears recovers cleanly and issues a fresh token.
+        4. `write_worker_state` returns `0` on `OSError`; `repin_session` returns `status == "failed"` on `OSError`;
+           `mark_state` and `settle_ending` propagate `OSError`, while `(work:reap-one)` catches it, logs to `run.log`,
+           and returns `0`.
+        """
+        session = self.make_session("work-fsync-eio", status="stopped", owner="870:1")
+        coding_io.freeze_runtime(ROOT, session)
+        token1 = _manifest_token(session)
+
+        real_fsync = os.fsync
+
+        def _dir_eio_fsync(fd):
+            st = os.fstat(fd)
+            if stat.S_ISDIR(st.st_mode):
+                raise OSError(errno.EIO, "Simulated directory fsync I/O error")
+            return real_fsync(fd)
+
+        # 1. _fsync_dir and _write_json_atomic propagate OSError
+        with mock.patch("os.fsync", side_effect=_dir_eio_fsync):
+            with self.assertRaises(OSError):
+                coding_io._fsync_dir(session)
+            with self.assertRaises(OSError):
+                coding_estate._fsync_dir(session)
+            with self.assertRaises(OSError):
+                coding_io._write_json_atomic(session / "probe.json", {"k": "v"})
+
+            # 2. consume_run catches OSError on publication, logs "uncertain publication", and returns 0
+            live_owner = f"{os.getpid()}:{native_lifetime.process_start(os.getpid())}"
+            self.assertEqual(coding_io.consume_run(session, token1, live_owner), 0)
+
+        run_log = (session / "run.log").read_text(encoding="utf-8")
+        self.assertIn("uncertain publication", run_log)
+        # os.replace on runtime.json already happened before _fsync_dir raised EIO, so phase is "started"
+        # while state.json is still "stopped"
+        manifest_mid = json.loads((session / "runtime.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest_mid["phase"], "started")
+        state_mid = json.loads((session / "state.json").read_text(encoding="utf-8"))
+        self.assertEqual(state_mid["status"], "stopped")
+
+        # 3. Next resume recovers cleanly from the half-published ("started", "stopped") state
+        res_recover = coding_io.freeze_runtime(ROOT, session)
+        self.assertEqual(res_recover["status"], "reserved")
+        token2 = _manifest_token(session)
+        self.assertNotEqual(token2, token1)
+        self.assertEqual(coding_io.consume_run(session, token2, live_owner), 1)
+
+        # 4. write_worker_state returns 0 when directory fsync raises EIO
+        with mock.patch("os.fsync", side_effect=_dir_eio_fsync):
+            self.assertEqual(
+                coding_io.write_worker_state(session, token2, live_owner, "running", 5, "step 5", 0),
+                0,
+            )
+
+        # 5. mark_state and settle_ending propagate OSError, and repin_session returns status="failed"
+        dead_running_state = json.dumps(
+            {
+                "status": "running",
+                "steps": 5,
+                "progress": "step 5",
+                "delivery": "none",
+                "delivery_version": 2,
+                "worker_owner": "999998:111",
+                "inbox": 0,
+                "updated": time.time(),
+            }
+        )
+        with mock.patch("os.fsync", side_effect=_dir_eio_fsync):
+            (session / "state.json").write_text(dead_running_state, encoding="utf-8")
+            with self.assertRaises(OSError):
+                coding_io.mark_state(session, "interrupted", expected_owner="999998:111")
+            (session / "state.json").write_text(dead_running_state, encoding="utf-8")
+            with self.assertRaises(OSError):
+                coding_io.settle_ending(session, expected_owner="999998:111")
+            repin_res = coding_io.repin_session(ROOT, session)
+            self.assertEqual(repin_res["status"], "failed")
+            self.assertIn("Simulated directory fsync I/O error", repin_res["detail"])
+
+        # 6. (work:reap-one ...) catches an OSError from settle_ending, logs to run.log, and returns 0
+        (session / "state.json").write_text(dead_running_state, encoding="utf-8")
+        rt_started = json.loads((session / "runtime.json").read_text(encoding="utf-8"))
+        rt_started["phase"] = "started"
+        (session / "runtime.json").write_text(json.dumps(rt_started), encoding="utf-8")
+        report_file = session / "report.txt"
+        report_file.unlink(missing_ok=True)
+        report_file.mkdir()
+        self.addCleanup(lambda: shutil.rmtree(report_file, ignore_errors=True))
+        reap_probe = self.run_work_probe('!(println! (ReapEio (work:reap-one "work-fsync-eio")))\n')
+        self.assertIn("(ReapEio 0)", reap_probe.stdout)
+        self.assertIn("reap error", (session / "run.log").read_text(encoding="utf-8"))
+        shutil.rmtree(report_file, ignore_errors=True)
 
 
 if __name__ == "__main__":

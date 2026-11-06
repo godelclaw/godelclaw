@@ -105,9 +105,9 @@
                    "(work-stop \"" $id "\") stops it."))))
 
 (= (work:launch $id)
-   (let $runtime (py-call (coding_io.freeze_runtime (system:cwd) (work:dir $id)))
-     (work:launch-at $id $runtime)))
-(= (work:launch-at $id $runtime)
+   (let $desc (py-call (coding_io.freeze_runtime (system:cwd) (work:dir $id)))
+     (work:launch-at $id $desc)))
+(= (work:launch-at $id $desc)
    (let* (($dir (work:dir $id))
           ($tmp (path:join $dir "tmp"))
           ($_ (proc:run ("mkdir" "-p" "--" $tmp) (system:cwd) inherit 10000 0 "merged"))
@@ -115,8 +115,9 @@
           ;; agent's; a session from before models were recorded keeps the
           ;; agent's model of the moment it resumes.
           ($model (format-args "{}" ((py-call (coding_io.session_model $dir (work:agent-model))))))
-          ($binary (py-call (coding_io.runtime_binary $dir)))
-          ($token (format-args "{}" ((py-call (coding_io.current_run_token $dir)))))
+          ($runtime (format-args "{}" ((py-call (coding_io.descriptor_field $desc "root")))))
+          ($binary (format-args "{}" ((py-call (coding_io.descriptor_field $desc "binary")))))
+          ($token (format-args "{}" ((py-call (coding_io.descriptor_field $desc "run")))))
           ($pythonpath (py-call (coding_io.runtime_pythonpath $runtime (system:cwd))))
           ($ledger (py-call (builtins.str (py-call (llm_policy.ledger_path)))))
           ;; The session shares the account's ledger and usage tally, as
@@ -155,21 +156,10 @@
 (= (work:running? $id) (== (work:scope-state $id) active))
 
 ; Resumption keeps this session's task, transcript, plan and inbox identities.
-; The named systemd scope prevents a second worker for the same session.
-(= (work:finish-resume $id $dir $runtime $note)
-   (let* (($stop (path:join $dir "stop"))
-          ($recycle (path:join $dir "recycle.requested"))
-          ($_ (delivery:preserve $dir))
-          ($_ (if (fs:exists $stop) (proc:run ("rm" "--" $stop) $dir inherit 10000 0 "merged") ()))
-          ($_ (if (fs:exists $recycle) (proc:run ("rm" "--" $recycle) $dir inherit 10000 0 "merged") ()))
-          ;; The last ending's report stays as evidence, out of the way
-          ;; of this run's own report.
-          ($report (path:join $dir "report.txt"))
-          ($_ (if (fs:is-file $report) (proc:run ("mv" "--" $report (path:join $dir "report.previous.txt")) $dir inherit 10000 0 "merged") ()))
-          ($_ (py-call (coding_estate.clear_lifecycle $dir)))
-          ($line (json-stringify (JsonString $note)))
-          ($_ (py-call (coding_io.append_line (path:join $dir "inbox.jsonl") $line)))
-          ($_ (work:launch-at $id $runtime)))
+; Resume file preparation happens inside .ending.lock when the reservation is made.
+(= (work:finish-resume $id $dir $desc)
+   (let* (($_ (delivery:preserve $dir))
+          ($_ (work:launch-at $id $desc)))
      (str:concat "WORK_RESUMING " $id)))
 
 (= (work-resume $id)
@@ -184,24 +174,26 @@
                (if (str:ends-with $problem "Try again later.")
                  (str:concat "work-resume: " $problem)
                  (str:join "" ("work-resume: " $problem "; this session cannot resume on its pin. Move it to the current runtime with (work-resume \"" $id "\" \"current\"), start a new session with (work \"...\"), or set it aside with (work-archive \"" $id "\" \"why\").")))
-               (let $runtime (py-call (coding_io.freeze_runtime (system:cwd) $dir))
-                 (work:finish-resume $id $dir $runtime
-                   "Resume this session from its existing evidence and plan. Verify uncertain effects before choosing new actions."))))
+               (let* (($_ (delivery:preserve $dir))
+                      ($desc (py-call (coding_io.freeze_runtime (system:cwd) $dir
+                               "Resume this session from its existing evidence and plan. Verify uncertain effects before choosing new actions.")))
+                      ($status (format-args "{}" ((py-call (coding_io.descriptor_field $desc "status"))))))
+                 (if (== $status "running")
+                   (str:concat "WORK_RUNNING " $id)
+                   (work:finish-resume $id $dir $desc)))))
            (if (== $mode "current")
-             (let* (($raw (format-args "{}" ((py-call (coding_io.repin_session_json (system:cwd) $dir)))))
+             (let* (($_ (delivery:preserve $dir))
+                    ($raw (format-args "{}" ((py-call (coding_io.repin_session_json (system:cwd) $dir)))))
                     ($outcome (json-parse $raw))
                     ($status (work:text (work:field $outcome "status")))
-                    ($detail (work:text (work:field $outcome "detail")))
-                    ($runtime (work:text (work:field $outcome "root"))))
-               (if (== $status "failed")
-                 (str:join "" ("work-resume: the current runtime cannot read this session's checkpoint: " $detail "; its pin is unchanged. Start a new session for the task with (work \"...\") or set it aside with (work-archive \"" $id "\" \"why\")."))
-                 (if (== $status "changed")
-                   (str:concat "work-resume: " $detail)
-                   (if (== $status "same")
-                     (work:finish-resume $id $dir $runtime
-                       "Resume this session from its existing evidence and plan. Verify uncertain effects before choosing new actions.")
-                     (work:finish-resume $id $dir $runtime
-                       "Resume this session from its existing evidence and plan. It now runs on a newer runtime than its last run. Verify uncertain effects before choosing new actions.")))))
+                    ($detail (work:text (work:field $outcome "detail"))))
+               (if (== $status "running")
+                 (str:concat "WORK_RUNNING " $id)
+                 (if (== $status "failed")
+                   (str:join "" ("work-resume: the current runtime cannot read this session's checkpoint: " $detail "; its pin is unchanged. Start a new session for the task with (work \"...\") or set it aside with (work-archive \"" $id "\" \"why\")."))
+                   (if (== $status "changed")
+                     (str:concat "work-resume: " $detail)
+                     (work:finish-resume $id $dir $raw)))))
              (str:join "" ("work-resume: unknown resume mode \"" $mode "\"; use \"pinned\" or \"current\"."))))))))
 
 (= (work:line $id)
@@ -279,6 +271,14 @@
    (if (== $ids ()) $count
      (let $id (str:trim (car-atom $ids))
        (work:reap-ids (cdr-atom $ids) (+ $count (if (== $id "") 0 (work:reap-one $id)))))))
+(= (work:reap-error $dir $where $why)
+   (case $where
+     (((python_error $type $exc)
+        (let $msg (case (catch (py-call (builtins.str $exc)))
+                    (((Error $a $b) (repr $where))
+                     ($m (format-args "{}: {}" ($type $m)))))
+          (py-call (coding_io.log_reap_error $dir $msg (repr $why)))))
+      ($other (py-call (coding_io.log_reap_error $dir (repr $where) (repr $why)))))))
 (= (work:reap-one $id)
    (let* (($dir (work:dir $id))
           ($state (work:json (path:join $dir "state.json")))
@@ -289,10 +289,13 @@
      (if (== $status "running")
          (if (or (!= (work:scope-state $id) inactive)
                  (process:alive? $owner)) 0
-           (let $ending (work:ended $id $dir $owner)
-             (if (!= $ending "")
-               (let $_ (work:notify $id $dir $ending) 1)
-               0)))
+           (case (catch (work:ended $id $dir $owner))
+             (((Error $where $why)
+               (let $_ (work:reap-error $dir $where $why) 0))
+              ($ending
+               (if (!= $ending "")
+                 (let $_ (work:notify $id $dir $ending) 1)
+                 0)))))
        0)))
 (= (work:ended $id $dir)
    (format-args "{}" ((py-call (coding_io.settle_ending $dir)))))

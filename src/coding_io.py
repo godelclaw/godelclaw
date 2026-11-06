@@ -86,16 +86,110 @@ def _ending_lock(directory):
 
 
 def _fsync_dir(directory):
-    try:
-        dfd = os.open(str(directory), os.O_RDONLY)
-    except OSError:
-        return
+    dfd = os.open(str(directory), os.O_RDONLY)
     try:
         os.fsync(dfd)
-    except OSError:
-        pass
     finally:
         os.close(dfd)
+
+
+_RESUME_NOTE_PINNED = (
+    "Resume this session from its existing evidence and plan. Verify uncertain effects before choosing new actions."
+)
+_RESUME_NOTE_REPINNED = (
+    "Resume this session from its existing evidence and plan. It now runs on a newer runtime than its last run. "
+    "Verify uncertain effects before choosing new actions."
+)
+
+
+class LaunchDescriptor:
+    """Immutable launch reservation returned by freeze_runtime and repin_session.
+
+    Supports dict-style access (`desc["status"]`, `desc["root"]`, `desc["run"]`,
+    `desc["binary"]`, `desc["detail"]`), 2-element unpacking `(status, run_or_detail)`
+    for `repin_session` callers, and path/string conversion returning `root`.
+    """
+
+    def __init__(self, status, *, root="", binary="", binary_sha256=None, digest="", run="", detail=""):
+        self.status = str(status or "")
+        self.root = str(root or "")
+        self.binary = str(binary or "")
+        self.binary_sha256 = binary_sha256
+        self.digest = str(digest or "")
+        self.run = str(run or "")
+        self.detail = str(detail or "")
+
+    def to_dict(self):
+        return {
+            "status": self.status,
+            "root": self.root,
+            "binary": self.binary,
+            "binary_sha256": self.binary_sha256,
+            "digest": self.digest,
+            "run": self.run,
+            "detail": self.detail,
+        }
+
+    def to_json(self):
+        return json.dumps(self.to_dict())
+
+    def get(self, key, default=None):
+        return self.to_dict().get(key, default)
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            pair = (
+                self.status,
+                self.run if self.status in ("reserved", "same", "repinned") else self.detail,
+            )
+            return pair[key]
+        return self.to_dict()[key]
+
+    def __len__(self):
+        return 2
+
+    def __fspath__(self):
+        return self.root
+
+    def __str__(self):
+        return self.root if self.root else self.status
+
+    def __repr__(self):
+        return f"LaunchDescriptor({self.to_dict()!r})"
+
+    def __eq__(self, other):
+        if isinstance(other, LaunchDescriptor):
+            return self.to_dict() == other.to_dict()
+        if isinstance(other, str):
+            return (self.root if self.root else self.status) == other
+        if isinstance(other, tuple):
+            return (self[0], self[1]) == other
+        if isinstance(other, dict):
+            return self.to_dict() == other
+        return False
+
+
+def descriptor_field(descriptor, key):
+    """Extract one string field from a LaunchDescriptor, dict, JSON string, or legacy root string."""
+    key = str(key)
+    if isinstance(descriptor, LaunchDescriptor):
+        val = descriptor.get(key, "")
+        return "" if val is None else str(val)
+    if isinstance(descriptor, dict):
+        val = descriptor.get(key, "")
+        return "" if val is None else str(val)
+    text = str(descriptor or "")
+    if text.startswith("{"):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                val = parsed.get(key, "")
+                return "" if val is None else str(val)
+        except ValueError:
+            pass
+    if key == "root":
+        return text
+    return ""
 
 
 def _write_json_atomic(path, payload):
@@ -307,27 +401,107 @@ def freeze_bundle(root, cache=None):
     return str(target), digest
 
 
-def freeze_runtime(root, directory):
+def _scope_is_active(directory, scope_active=False):
+    if scope_active:
+        return True
+    directory = Path(str(directory))
+    instance = os.environ.get("METTACLAW_INSTANCE", "mettaclaw")
+    unit = f"{instance}-{directory.name}.scope"
+    try:
+        res = subprocess.run(
+            ["systemctl", "--user", "is-active", "--quiet", unit],
+            capture_output=True,
+            timeout=5,
+        )
+        return res.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _is_live_session_unlocked(directory, old_manifest=None, *, scope_active=False, check_scope=True):
+    directory = Path(str(directory))
+    state = _read_json(directory / "state.json")
+    if state.get("status") == "running" and _owner_alive(state.get("worker_owner")):
+        return True
+    if scope_active:
+        return True
+    if check_scope and _scope_is_active(directory):
+        return True
+    return False
+
+
+def _prepare_resume_unlocked(directory, note=None):
+    import coding_estate
+    directory = Path(str(directory))
+    for flag_name in ("stop", "recycle.requested"):
+        flag_path = directory / flag_name
+        if flag_path.exists():
+            try:
+                flag_path.unlink()
+            except FileNotFoundError:
+                pass
+    report_path = directory / "report.txt"
+    if report_path.is_file():
+        os.replace(report_path, directory / "report.previous.txt")
+        _fsync_dir(directory)
+    coding_estate.clear_lifecycle(directory)
+    if note:
+        append_line(directory / "inbox.jsonl", json.dumps(str(note)))
+
+
+def freeze_runtime(root, directory, note=None, *, scope_active=False):
     """Pin imports and instructions for a session, including across resumes."""
     root, directory = Path(str(root)), Path(str(directory))
     if not (root / "config/runtime-files.json").is_file():
         root = Path(__file__).resolve().parents[1]
     record = directory / "runtime.json"
     with _ending_lock(directory):
+        old_manifest = _read_json(record) if record.is_file() else {}
+        is_existing = (
+            record.exists()
+            or (directory / "state.json").exists()
+            or (directory / "messages.jsonl").exists()
+            or (note is not None)
+        )
+        if _is_live_session_unlocked(
+            directory,
+            old_manifest,
+            scope_active=scope_active,
+            check_scope=is_existing,
+        ):
+            return LaunchDescriptor(
+                "running",
+                root=old_manifest.get("root", ""),
+                binary=old_manifest.get("binary", ""),
+                binary_sha256=old_manifest.get("binary_sha256"),
+                digest=old_manifest.get("digest", ""),
+                run=old_manifest.get("run", ""),
+                detail="session is already running",
+            )
         _settle_ending_unlocked(directory, require_dead_owner=True)
         if record.exists():
             value = json.loads(record.read_text(encoding="utf-8"))
             if not (Path(value["root"]) / "coding_main.metta").is_file():
                 raise RuntimeError("session runtime is missing; restore it before resuming")
+            token = secrets.token_hex(16)
             value.setdefault("checkpoint", None)
             value.setdefault("previous", None)
-            value["run"] = secrets.token_hex(16)
+            value["run"] = token
             value["phase"] = "reserved"
             value["at"] = time.time()
             _write_json_atomic(record, value)
-            return str(value["root"])
+            _prepare_resume_unlocked(directory, note=note)
+            return LaunchDescriptor(
+                "reserved",
+                root=value["root"],
+                binary=value.get("binary", ""),
+                binary_sha256=value.get("binary_sha256"),
+                digest=value.get("digest", ""),
+                run=token,
+            )
         target, digest = freeze_bundle(root, directory.parent.parent / "coding-runtimes")
         binary, engine = _resolve_engine_binary()
+        token = secrets.token_hex(16)
         # The engine is pinned by its resolved file and content: a resume after
         # an upgrade or a link flip must not run a different engine.
         manifest = dict(
@@ -337,12 +511,21 @@ def freeze_runtime(root, directory):
             binary_sha256=engine,
             checkpoint=None,
             previous=None,
-            run=secrets.token_hex(16),
+            run=token,
             phase="reserved",
             at=time.time(),
         )
         _write_json_atomic(record, manifest)
-        return str(target)
+        if is_existing:
+            _prepare_resume_unlocked(directory, note=note)
+        return LaunchDescriptor(
+            "reserved",
+            root=str(target),
+            binary=binary,
+            binary_sha256=engine,
+            digest=digest,
+            run=token,
+        )
 
 
 def current_run_token(directory):
@@ -380,7 +563,17 @@ def mark_state(directory, status, report=None, identity=None, expected_owner=Non
         return _mark_state_unlocked(directory, status, report=report, identity=identity, expected_owner=expected_owner)
 
 
-def consume_run(directory, token, owner):
+def log_reap_error(directory, where, why):
+    """Append a non-fatal reap durability error to run.log so reap loops keep going."""
+    directory = Path(str(directory))
+    try:
+        append_line(directory / "run.log", f"reap error ({where}): {why}")
+    except OSError:
+        pass
+    return 0
+
+
+def consume_run(directory, token, owner, root=None):
     """Consume a single-use reserved run token at worker start under .ending.lock."""
     directory = Path(str(directory))
     token = str(token or "")
@@ -390,13 +583,31 @@ def consume_run(directory, token, owner):
     with _ending_lock(directory):
         runtime = _read_json(runtime_path)
         if not token or runtime.get("run") != token or runtime.get("phase") != "reserved":
-            append_line(
-                directory / "run.log",
-                f"refused run token {token or '<empty>'}: manifest run={runtime.get('run')} phase={runtime.get('phase')}",
-            )
+            try:
+                append_line(
+                    directory / "run.log",
+                    f"refused run token {token or '<empty>'}: manifest run={runtime.get('run')} phase={runtime.get('phase')}",
+                )
+            except OSError:
+                pass
             return 0
+        if root is not None and runtime.get("root"):
+            try:
+                expected_root = Path(str(runtime["root"])).resolve()
+                actual_root = Path(str(root)).resolve()
+            except OSError:
+                expected_root = Path(str(runtime["root"]))
+                actual_root = Path(str(root))
+            if expected_root != actual_root:
+                try:
+                    append_line(
+                        directory / "run.log",
+                        f"refused run token {token}: bundle mismatch manifest root={runtime.get('root')} worker root={root}",
+                    )
+                except OSError:
+                    pass
+                return 0
         runtime["phase"] = "started"
-        _write_json_atomic(runtime_path, runtime)
         prior = _read_json(state_path)
         steps = prior.get("steps", 0)
         inbox = prior.get("inbox", 0)
@@ -411,7 +622,18 @@ def consume_run(directory, token, owner):
             inbox=inbox if isinstance(inbox, int) else 0,
             updated=time.time(),
         )
-        _write_json_atomic(state_path, state)
+        try:
+            _write_json_atomic(runtime_path, runtime)
+            _write_json_atomic(state_path, state)
+        except OSError as exc:
+            try:
+                append_line(
+                    directory / "run.log",
+                    f"uncertain publication for run token {token}: {exc}",
+                )
+            except OSError:
+                pass
+            return 0
         return 1
 
 
@@ -435,8 +657,6 @@ def write_worker_state(directory, token, owner, status, steps, progress, inbox, 
                 or str(state.get("worker_owner") or "") != owner
             ):
                 return 0
-        if report is not None:
-            (directory / "report.txt").write_text(str(report), encoding="utf-8")
         updated = time.time()
         next_state = dict(
             status=status,
@@ -456,10 +676,15 @@ def write_worker_state(directory, token, owner, status, steps, progress, inbox, 
                     json.dumps([directory.name, status, "", updated, int(steps)]).encode("utf-8")
                 ).hexdigest()[:32]
             next_state["delivery_id"] = resolved_id
-        _write_json_atomic(state_path, next_state)
-        if status != "running" and runtime_path.is_file() and runtime:
-            runtime["phase"] = "ended"
-            _write_json_atomic(runtime_path, runtime)
+        try:
+            if report is not None:
+                (directory / "report.txt").write_text(str(report), encoding="utf-8")
+            _write_json_atomic(state_path, next_state)
+            if status != "running" and runtime_path.is_file() and runtime:
+                runtime["phase"] = "ended"
+                _write_json_atomic(runtime_path, runtime)
+        except OSError:
+            return 0
         return 1
 
 
@@ -483,6 +708,10 @@ def checkpoint_revision(directory):
         digest.update(data)
         digest.update(b"\0")
     return digest.hexdigest()
+
+
+_CHECKPOINT_READY_RE = re.compile(r"^\(CheckpointReady (\d+)\)$")
+_CHECKPOINT_FAILED_RE = re.compile(r'^\(CheckpointFailed (".*")\)$')
 
 
 def check_checkpoint_copy(directory, bundle_root, binary=None, timeout=120):
@@ -540,25 +769,22 @@ def check_checkpoint_copy(directory, bundle_root, binary=None, timeout=120):
             text=True,
             timeout=timeout,
         )
-        combined = "\n".join(part for part in (result.stdout, result.stderr) if part)
-        for raw_line in combined.splitlines():
-            line = raw_line.strip()
-            if "CheckpointReady" in line:
-                return True, line
-            if "CheckpointFailed" in line:
-                if line.startswith("(CheckpointFailed ") and line.endswith(")"):
-                    inner = line[len("(CheckpointFailed "):-1].strip()
-                    if inner.startswith('"') and inner.endswith('"'):
-                        try:
-                            inner = json.loads(inner)
-                        except ValueError:
-                            inner = inner.strip('"')
-                    return False, inner
-                idx = line.find("CheckpointFailed")
-                return False, line[idx + len("CheckpointFailed"):].strip(" ()\"")
-        if result.returncode != 0:
-            return False, (combined.strip() or f"check exited {result.returncode}")
-        return False, (combined.strip() or "check produced no verdict")
+        stdout_lines = [raw.strip() for raw in (result.stdout or "").splitlines() if raw.strip()]
+        verdict = stdout_lines[-1] if stdout_lines else ""
+        m_ready = _CHECKPOINT_READY_RE.fullmatch(verdict)
+        if m_ready:
+            if result.returncode == 0:
+                return True, verdict
+            return False, "the check produced no valid verdict"
+        m_failed = _CHECKPOINT_FAILED_RE.fullmatch(verdict)
+        if m_failed:
+            raw_reason = m_failed.group(1)
+            try:
+                reason = json.loads(raw_reason)
+            except ValueError:
+                reason = raw_reason.strip('"')
+            return False, str(reason)
+        return False, "the check produced no valid verdict"
     except subprocess.TimeoutExpired:
         return False, "checkpoint check timed out"
     except OSError as exc:
@@ -605,7 +831,16 @@ def _append_run_record_unlocked(directory, record):
                 pass
 
 
-def repin_session(root, directory, *, scope_active=False, check_hook=None, before_rename_hook=None):
+def repin_session(
+    root,
+    directory,
+    *,
+    scope_active=False,
+    check_hook=None,
+    before_rename_hook=None,
+    note_same=_RESUME_NOTE_PINNED,
+    note_repinned=_RESUME_NOTE_REPINNED,
+):
     """Re-pin a session to the current runtime after checking a copy of its checkpoint."""
     root, directory = Path(str(root)), Path(str(directory))
     if not (root / "config/runtime-files.json").is_file():
@@ -616,6 +851,16 @@ def repin_session(root, directory, *, scope_active=False, check_hook=None, befor
 
     with _ending_lock(directory):
         old_manifest = _read_json(record_path) if record_path.is_file() else {}
+        if _is_live_session_unlocked(directory, old_manifest, scope_active=scope_active, check_scope=True):
+            return LaunchDescriptor(
+                "running",
+                root=old_manifest.get("root", ""),
+                binary=old_manifest.get("binary", ""),
+                binary_sha256=old_manifest.get("binary_sha256"),
+                digest=old_manifest.get("digest", ""),
+                run=old_manifest.get("run", ""),
+                detail="session is already running",
+            )
         if (
             old_manifest
             and old_manifest.get("digest") == digest
@@ -624,15 +869,27 @@ def repin_session(root, directory, *, scope_active=False, check_hook=None, befor
             and old_manifest.get("phase") in ("reserved", "started", "ended")
             and (Path(str(old_manifest.get("root") or "")) / "coding_main.metta").is_file()
         ):
-            _settle_ending_unlocked(directory, require_dead_owner=True)
-            token = secrets.token_hex(16)
-            old_manifest.setdefault("checkpoint", None)
-            old_manifest.setdefault("previous", None)
-            old_manifest["run"] = token
-            old_manifest["phase"] = "reserved"
-            old_manifest["at"] = time.time()
-            _write_json_atomic(record_path, old_manifest)
-            return "same", token
+            try:
+                _settle_ending_unlocked(directory, require_dead_owner=True)
+                token = secrets.token_hex(16)
+                old_manifest.setdefault("checkpoint", None)
+                old_manifest.setdefault("previous", None)
+                old_manifest["run"] = token
+                old_manifest["phase"] = "reserved"
+                old_manifest["at"] = time.time()
+                _write_json_atomic(record_path, old_manifest)
+                _prepare_resume_unlocked(directory, note=note_same)
+            except OSError as exc:
+                return LaunchDescriptor("failed", detail=str(exc))
+            return LaunchDescriptor(
+                "same",
+                root=old_manifest["root"],
+                binary=old_manifest.get("binary", ""),
+                binary_sha256=old_manifest.get("binary_sha256"),
+                digest=old_manifest.get("digest", ""),
+                run=token,
+                detail=token,
+            )
         seen_rev = checkpoint_revision(directory)
         seen_manifest_state = (old_manifest.get("run"), old_manifest.get("phase"))
 
@@ -640,51 +897,70 @@ def repin_session(root, directory, *, scope_active=False, check_hook=None, befor
     if check_hook is not None:
         check_hook(directory)
     if not ok:
-        return "failed", detail
+        return LaunchDescriptor("failed", detail=detail)
 
     with _ending_lock(directory):
         current_old = _read_json(record_path) if record_path.is_file() else {}
+        if _is_live_session_unlocked(directory, current_old, scope_active=scope_active, check_scope=True):
+            return LaunchDescriptor(
+                "running",
+                root=current_old.get("root", ""),
+                binary=current_old.get("binary", ""),
+                binary_sha256=current_old.get("binary_sha256"),
+                digest=current_old.get("digest", ""),
+                run=current_old.get("run", ""),
+                detail="session is already running",
+            )
         if (
-            scope_active
-            or checkpoint_revision(directory) != seen_rev
+            checkpoint_revision(directory) != seen_rev
             or (current_old.get("run"), current_old.get("phase")) != seen_manifest_state
         ):
-            return "changed", "the session changed during the check; try again."
-        _settle_ending_unlocked(directory, require_dead_owner=True)
-        current_old = _read_json(record_path) if record_path.is_file() else {}
-        previous = {k: v for k, v in current_old.items() if k != "previous"} if current_old else None
-        token = secrets.token_hex(16)
-        now = time.time()
-        manifest = dict(
+            return LaunchDescriptor("changed", detail="the session changed during the check; try again.")
+        try:
+            _settle_ending_unlocked(directory, require_dead_owner=True)
+            current_old = _read_json(record_path) if record_path.is_file() else {}
+            previous = {k: v for k, v in current_old.items() if k != "previous"} if current_old else None
+            token = secrets.token_hex(16)
+            now = time.time()
+            manifest = dict(
+                root=str(target),
+                digest=digest,
+                binary=binary,
+                binary_sha256=engine,
+                checkpoint=seen_rev,
+                previous=previous,
+                run=token,
+                phase="reserved",
+                at=now,
+            )
+            if before_rename_hook is not None:
+                before_rename_hook(directory)
+            _write_json_atomic(record_path, manifest)
+            _append_run_record_unlocked(
+                directory,
+                dict(
+                    at=now,
+                    **{"from": current_old.get("digest") if current_old else None},
+                    to=digest,
+                    run=token,
+                ),
+            )
+            _prepare_resume_unlocked(directory, note=note_repinned)
+        except OSError as exc:
+            return LaunchDescriptor("failed", detail=str(exc))
+        return LaunchDescriptor(
+            "repinned",
             root=str(target),
-            digest=digest,
             binary=binary,
             binary_sha256=engine,
-            checkpoint=seen_rev,
-            previous=previous,
+            digest=digest,
             run=token,
-            phase="reserved",
-            at=now,
+            detail=token,
         )
-        if before_rename_hook is not None:
-            before_rename_hook(directory)
-        _write_json_atomic(record_path, manifest)
-        _append_run_record_unlocked(
-            directory,
-            dict(
-                at=now,
-                **{"from": current_old.get("digest") if current_old else None},
-                to=digest,
-                run=token,
-            ),
-        )
-        return "repinned", token
 
 
 def repin_session_json(root, directory):
-    status, detail = repin_session(root, directory)
-    bundle = runtime_root(directory) if status in ("same", "repinned") else ""
-    return json.dumps({"status": status, "detail": detail, "root": bundle})
+    return repin_session(root, directory).to_json()
 
 
 def session_model(directory, fallback):

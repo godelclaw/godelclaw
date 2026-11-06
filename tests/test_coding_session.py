@@ -185,9 +185,12 @@ class CodingSessionTests(unittest.TestCase):
             manifest["at"] = time.time()
             runtime_path.write_text(json.dumps(manifest))
         env = {**self.env, "METTACLAW_CODING_RUN_TOKEN": str(manifest["run"])}
+        bundle_dir = Path(str(manifest.get("root") or ROOT))
+        if not (bundle_dir / "coding_main.metta").is_file():
+            bundle_dir = ROOT
         result = subprocess.run([os.environ["CETTA_BIN"], "--lang", "petta", "--import-mode", "ancestor-walk",
-                                 str(ROOT / "coding_main.metta"), str(session)],
-                                cwd=ROOT, env=env, capture_output=True, text=True, timeout=120)
+                                 str(bundle_dir / "coding_main.metta"), str(session)],
+                                cwd=bundle_dir, env=env, capture_output=True, text=True, timeout=120)
         self.assertEqual(result.returncode, 0, result.stdout[-2000:] + result.stderr[-2000:])
         return result
 

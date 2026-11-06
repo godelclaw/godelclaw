@@ -10,7 +10,7 @@
 ; configured, noted there for the public view.
 !(let* (($dir (system:arg (- (system:argc) 1)))
         ($token (coding:run-token))
-        ($claimed (py-call (coding_io.consume_run $dir $token (process:owner)))))
+        ($claimed (py-call (coding_io.consume_run $dir $token (process:owner) (system:cwd)))))
    (if (== $claimed 1)
      (case (coding:start $dir)
        (((CodingFinished $status) (println! (coding:notify $dir $status)))

@@ -5,4 +5,4 @@
 !(import! &self (library system))
 !(import! &self ./src/coding_checkpoint.metta)
 !(let $dir (system:arg (- (system:argc) 1))
-   (println! (coding:check-checkpoint $dir)))
+   (coding:check-checkpoint $dir))
