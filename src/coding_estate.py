@@ -7,6 +7,8 @@ Invariants and unknown-state policy:
 - A legacy pin that recorded no engine hash (`binary_sha256`) is allowed to
   resume by policy and is labelled `unverified` ("engine not recorded"), never
   `resumable`.
+- Pins frozen before run-token authority lack `"phase"` in `runtime.json` and
+  are classified `needs-current` ("its runtime predates run tokens").
 - A live backend selection that cannot be read (`importing`, `unsupported`,
   `unreachable`, or `timeout`) never claims retirement. When such an unknown
   selection meets a bundle that depends on the backend, the view and
@@ -32,11 +34,25 @@ import tempfile
 import time
 
 
-STATUS_ORDER = ("done", "failed", "stopped", "interrupted", "running", "unknown", "held", "archived")
+STATUS_ORDER = (
+    "done",
+    "failed",
+    "stopped",
+    "interrupted",
+    "running",
+    "launching",
+    "unknown",
+    "held",
+    "archived",
+)
 VERDICT_ORDER = ("needs-current", "unverified", "resumable", "unpinned")
-VERBS_LINE = 'verbs: (work-status "id") (work-resume "id") (work-hold "id" "why" ["YYYY-MM-DD"]) (work-archive "id" "why")'
+VERBS_LINE = (
+    'verbs: (work-status "id") (work-resume "id" ["current"]) '
+    '(work-hold "id" "why" ["YYYY-MM-DD"]) (work-archive "id" "why")'
+)
 VIEW_MAX_CHARS = 2000
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_VALID_PHASES = ("reserved", "started", "ended")
 
 _engine_digest_cache = {}
 _runtime_blocks_cache = {}
@@ -46,9 +62,10 @@ _runtime_blocks_cache = {}
 class World:
     """Optional overrides for pure testing and per-listing snapshots.
 
-    A None field means read the live system fact.
+    A None field means read the live system fact. `selection` is a map from
+    retirement name to its outcome, e.g. `{"llm-ledger-sqlite": "native"}`.
     """
-    selection: object = None
+    selection: dict[str, object] | None = None
     engines: object = None
     today: str | None = None
 
@@ -174,6 +191,29 @@ def _read_json(path):
         return {}
 
 
+def read_runs(session_dir):
+    """Read valid JSON object lines from runs.jsonl, dropping a torn last line."""
+    runs_path = Path(session_dir) / "runs.jsonl"
+    if not runs_path.is_file():
+        return []
+    try:
+        raw_lines = runs_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    nonempty = [line.strip() for line in raw_lines if line.strip()]
+    entries = []
+    for index, line in enumerate(nonempty):
+        try:
+            item = json.loads(line)
+        except ValueError:
+            if index == len(nonempty) - 1:
+                break
+            continue
+        if isinstance(item, dict):
+            entries.append(item)
+    return entries
+
+
 def _engine_sha256(path):
     if not path:
         return None
@@ -202,47 +242,50 @@ def _engine_sha256(path):
 
 
 def _retirement_outcome(entry, world):
-    if isinstance(world, World) and world.selection is not None:
-        return world.selection
+    if isinstance(world, World) and isinstance(world.selection, dict):
+        if entry.name in world.selection:
+            return world.selection[entry.name]
     return entry.live_fact()
 
 
-def _resolve_world(world=None):
+def _resolve_world(world=None, matched_entries=None):
     base = world if isinstance(world, World) else World()
-    if base.selection is not None:
-        return base
-    selection = RETIREMENTS[0].live_fact() if RETIREMENTS else "legacy"
-    return World(selection=selection, engines=base.engines, today=base.today)
+    existing = dict(base.selection) if isinstance(base.selection, dict) else {}
+    entries = RETIREMENTS if matched_entries is None else matched_entries
+    for entry in entries:
+        if entry.name not in existing:
+            existing[entry.name] = entry.live_fact()
+    return World(selection=existing, engines=base.engines, today=base.today)
 
 
-def _session_matches_retirement(session_path):
+def _matched_retirements(session_path):
     runtime_path = Path(session_path) / "runtime.json"
     if not runtime_path.is_file():
-        return False
+        return ()
     runtime = _read_json(runtime_path)
     rt_root = runtime.get("root")
     if not isinstance(rt_root, str) or not rt_root:
-        return False
+        return ()
     bundle = Path(rt_root)
-    return bundle.is_dir() and any(entry.bundle_test(bundle) for entry in RETIREMENTS)
+    if not bundle.is_dir():
+        return ()
+    return tuple(entry for entry in RETIREMENTS if entry.bundle_test(bundle))
 
 
 def snapshot_session_world(session_dir, world=None):
-    """Snapshot the world for one session, calling live selection at most once."""
+    """Snapshot the world for one session, calling live selection at most once per matched retirement."""
     base = world if isinstance(world, World) else World()
-    if base.selection is not None:
-        return base
-    if _session_matches_retirement(session_dir):
-        return _resolve_world(base)
+    matched = _matched_retirements(session_dir)
+    if matched:
+        return _resolve_world(base, matched)
     return base
 
 
 def snapshot_world(coding_dir=None, world=None):
-    """Snapshot the world across a coding directory, calling live selection at most once."""
+    """Snapshot the world across a coding directory, calling live selection at most once per matched retirement."""
     base = world if isinstance(world, World) else World()
-    if base.selection is not None:
-        return base
     target = Path(coding_dir) if coding_dir is not None else (Path(os.getcwd()) / "memory" / "coding")
+    matched_by_name = {}
     if target.is_dir():
         try:
             sessions = sorted(
@@ -252,9 +295,47 @@ def snapshot_world(coding_dir=None, world=None):
         except OSError:
             sessions = []
         for session in sessions:
-            if _session_matches_retirement(session):
-                return _resolve_world(base)
+            for entry in _matched_retirements(session):
+                matched_by_name[entry.name] = entry
+    if matched_by_name:
+        return _resolve_world(base, tuple(matched_by_name.values()))
     return base
+
+
+def _coerce_bool(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() in ("true", "1", "active")
+
+
+def is_launching(session_dir, *, scope_active=False):
+    if _coerce_bool(scope_active):
+        return False
+    runtime_path = Path(session_dir) / "runtime.json"
+    if not runtime_path.is_file():
+        return False
+    runtime = _read_json(runtime_path)
+    return runtime.get("phase") == "reserved"
+
+
+def launching_date(session_dir):
+    session_path = Path(session_dir)
+    runtime = _read_json(session_path / "runtime.json")
+    at = runtime.get("at")
+    if isinstance(at, (int, float)):
+        return _local_date(at)
+    state = _read_json(session_path / "state.json")
+    return _status_date(session_path, state)
+
+
+def effective_status(session_dir, scope_active=False):
+    session_path = Path(session_dir)
+    if is_launching(session_path, scope_active=_coerce_bool(scope_active)):
+        return "launching since %s" % launching_date(session_path)
+    state = _read_json(session_path / "state.json")
+    return str(state.get("status") or "")
 
 
 def classify(session_dir, world=None):
@@ -268,13 +349,16 @@ def classify(session_dir, world=None):
        ("needs-current", "it uses <text>").
     4. Engine file (runtime.json "binary") missing ->
        ("needs-current", "its engine binary is gone").
-    5. No binary_sha256 -> ("unverified", "engine not recorded"), unless a
+    5. Engine hash recorded and differs from current ->
+       ("needs-current", "its engine binary has changed").
+    6. Manifest lacks "phase" (predates run tokens) ->
+       ("needs-current", "its runtime predates run tokens").
+    7. No binary_sha256 -> ("unverified", "engine not recorded"), unless a
        matched retirement's backend selection is unknown, which reports
        ("unverified", "the LLM ledger's backend selection is unavailable (<outcome>)").
-    6. Engine hash differs -> ("needs-current", "its engine binary has changed").
-    7. Matched retirement's backend selection is unknown ->
+    8. Matched retirement's backend selection is unknown ->
        ("unverified", "the LLM ledger's backend selection is unavailable (<outcome>)").
-    8. Otherwise -> ("resumable", "").
+    9. Otherwise -> ("resumable", "").
     """
     session_path = Path(session_dir)
     runtime_path = session_path / "runtime.json"
@@ -306,13 +390,16 @@ def classify(session_dir, world=None):
         return ("needs-current", "its engine binary is gone")
 
     recorded_hash = runtime.get("binary_sha256")
+    if isinstance(recorded_hash, str) and recorded_hash and current_hash != recorded_hash:
+        return ("needs-current", "its engine binary has changed")
+
+    if runtime.get("phase") not in _VALID_PHASES:
+        return ("needs-current", "its runtime predates run tokens")
+
     if not isinstance(recorded_hash, str) or not recorded_hash:
         if unknown_outcome is not None:
             return ("unverified", "the LLM ledger's backend selection is unavailable (%s)" % unknown_outcome)
         return ("unverified", "engine not recorded")
-
-    if current_hash != recorded_hash:
-        return ("needs-current", "its engine binary has changed")
 
     if unknown_outcome is not None:
         return ("unverified", "the LLM ledger's backend selection is unavailable (%s)" % unknown_outcome)
@@ -401,6 +488,8 @@ def _today_str(world=None):
 def listed(session_dir, world=None):
     """Whether a session appears in the open-session list of context_view()."""
     session_path = Path(session_dir)
+    if is_launching(session_path):
+        return True
     state = _read_json(session_path / "state.json")
     status = str(state.get("status") or "unknown")
     if status == "running":
@@ -445,6 +534,15 @@ def _status_date(session_path, state):
     return _local_date(time.time())
 
 
+def _repin_summary_part(session_path, default_date):
+    runs = read_runs(session_path)
+    if not runs:
+        return ""
+    last_at = runs[-1].get("at")
+    repin_date = _local_date(last_at) if isinstance(last_at, (int, float)) else default_date
+    return " · run %d · re-pinned %s" % (len(runs) + 1, repin_date)
+
+
 def _pin_summary(session_path, verdict, reason, *, unpinned_reason=True):
     runtime_path = session_path / "runtime.json"
     if not runtime_path.is_file():
@@ -455,8 +553,9 @@ def _pin_summary(session_path, verdict, reason, *, unpinned_reason=True):
         pin_date = _local_date(runtime_path.stat().st_mtime)
     except OSError:
         pin_date = _local_date(time.time())
+    repin_part = _repin_summary_part(session_path, pin_date)
     verdict_text = "%s: %s" % (verdict, reason) if reason else verdict
-    return "pin %s %s · %s" % (digest, pin_date, verdict_text)
+    return "pin %s %s%s · %s" % (digest, pin_date, repin_part, verdict_text)
 
 
 def status_line_suffix(session_dir, world=None):
@@ -484,9 +583,14 @@ def status_detail(session_dir, world=None):
             current = current or "missing"
         else:
             current = _engine_sha256(binary) or "missing"
+        try:
+            pin_date = _local_date(runtime_path.stat().st_mtime)
+        except OSError:
+            pin_date = _local_date(time.time())
+        repin_part = _repin_summary_part(session_path, pin_date)
         verdict_text = "%s: %s" % (verdict, reason) if reason else verdict
-        pin_line = "pin: bundle %s · engine %s (recorded %s, current %s) · %s" % (
-            bundle_digest, basename, recorded, current, verdict_text)
+        pin_line = "pin: bundle %s · engine %s (recorded %s, current %s)%s · %s" % (
+            bundle_digest, basename, recorded, current, repin_part, verdict_text)
     else:
         pin_line = "pin: unpinned (%s)" % reason
 
@@ -513,10 +617,14 @@ def settings_path(root=None):
 
 def work_setting(root=None, key="context"):
     data = _read_json(settings_path(root))
-    value = data.get(str(key), "open" if str(key) == "context" else "")
-    if str(key) == "context" and value not in ("open", "summary", "off"):
-        return "open"
-    return str(value)
+    key_str = str(key)
+    if key_str == "context":
+        value = data.get("context", "open")
+        return str(value) if value in ("open", "summary", "off") else "open"
+    if key_str == "resume":
+        value = data.get("resume", "pinned")
+        return str(value) if value in ("pinned", "current") else "pinned"
+    return str(data.get(key_str, ""))
 
 
 def set_work_setting(root=None, key="context", value="open"):
@@ -594,25 +702,27 @@ def context_view(root=None, *, world=None):
     verdict_counts = Counter()
     open_runtime_ids = set()
     session_lines = []
-    # resolved_world makes at most one live selection call per view, and only
-    # when some session's frozen bundle matches a retirement test.
-    resolved_world = None
+    # resolved_world makes at most one live selection call per matched retirement
+    # across the view, and only when some session's frozen bundle matches.
+    base_world = world if isinstance(world, World) else World()
+    resolved_selection = dict(base_world.selection) if isinstance(base_world.selection, dict) else {}
 
     for session in sessions:
         state = _read_json(session / "state.json")
-        status = str(state.get("status") or "unknown")
+        launching = is_launching(session)
+        status = "launching" if launching else str(state.get("status") or "unknown")
         lifecycle = read_lifecycle(session)
         is_archived = isinstance(lifecycle.get("archive"), dict)
         is_held = isinstance(lifecycle.get("hold"), dict)
 
-        if is_archived:
+        if is_archived and not launching:
             status_counts["archived"] += 1
-        elif is_held:
+        elif is_held and not launching:
             status_counts["held"] += 1
         else:
             status_counts[status] += 1
 
-        is_open = status != "done" and not is_archived
+        is_open = launching or (status != "done" and not is_archived)
         runtime_path = session / "runtime.json"
         if runtime_path.is_file():
             runtime = _read_json(runtime_path)
@@ -623,21 +733,29 @@ def context_view(root=None, *, world=None):
                 rt_root = runtime.get("root")
                 if isinstance(rt_root, str) and rt_root:
                     open_runtime_ids.add(Path(rt_root).name)
-            if resolved_world is None:
-                rt_root = runtime.get("root")
-                if isinstance(rt_root, str) and rt_root and Path(rt_root).is_dir():
-                    if any(entry.bundle_test(Path(rt_root)) for entry in RETIREMENTS):
-                        resolved_world = _resolve_world(world)
+            for entry in _matched_retirements(session):
+                if entry.name not in resolved_selection:
+                    resolved_selection[entry.name] = entry.live_fact()
 
-        verdict, reason = classify(session, world=resolved_world if resolved_world is not None else world)
+        session_world = World(
+            selection=resolved_selection if resolved_selection else base_world.selection,
+            engines=base_world.engines,
+            today=base_world.today,
+        )
+        verdict, reason = classify(session, world=session_world)
         verdict_counts[verdict] += 1
 
-        if mode == "open" and listed(session, world=world):
-            s_date = _status_date(session, state)
+        if mode == "open" and listed(session, world=session_world):
             pin_part = _pin_summary(session, verdict, reason, unpinned_reason=True)
             label_part = _label_suffix(lifecycle)
-            session_lines.append("%s %s %s · %s%s" % (
-                session.name, status, s_date, pin_part, label_part))
+            if launching:
+                l_date = launching_date(session)
+                session_lines.append("%s launching since %s · %s%s" % (
+                    session.name, l_date, pin_part, label_part))
+            else:
+                s_date = _status_date(session, state)
+                session_lines.append("%s %s %s · %s%s" % (
+                    session.name, status, s_date, pin_part, label_part))
 
     rt_count, rt_mb, rt_unused = _runtimes_summary(base / "memory" / "coding-runtimes", open_runtime_ids)
     parts = ["%d %s" % (status_counts[name], name) for name in STATUS_ORDER if status_counts[name] > 0]

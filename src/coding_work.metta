@@ -18,10 +18,13 @@
 (SettingSpec 1 "work" "context" "open" "mode" (Choice ("open" "summary" "off")) "persistent"
   "Coding-session context source mode: open lists due open sessions, summary shows counts and verbs, off omits the source."
   work-setting work-setting)
+(SettingSpec 1 "work" "resume" "pinned" "mode" (Choice ("pinned" "current")) "persistent"
+  "Coding-session default resume mode: pinned resumes on the session's pin, current re-pins to the current runtime after checking a copy of the checkpoint."
+  work-setting work-setting)
 
 (= (work-setting) (settings "work"))
 (= (work-setting $key)
-   (if (== $key "context")
+   (if (or (== $key "context") (== $key "resume"))
      (format-args "{}" ((py-call (coding_estate.work_setting (system:cwd) $key))))
      (settings:validate "work" $key "")))
 (= (work-setting $key $raw)
@@ -102,15 +105,18 @@
                    "(work-stop \"" $id "\") stops it."))))
 
 (= (work:launch $id)
+   (let $runtime (py-call (coding_io.freeze_runtime (system:cwd) (work:dir $id)))
+     (work:launch-at $id $runtime)))
+(= (work:launch-at $id $runtime)
    (let* (($dir (work:dir $id))
           ($tmp (path:join $dir "tmp"))
           ($_ (proc:run ("mkdir" "-p" "--" $tmp) (system:cwd) inherit 10000 0 "merged"))
-          ($runtime (py-call (coding_io.freeze_runtime (system:cwd) $dir)))
           ;; The session reads its model from its own state file, never the
           ;; agent's; a session from before models were recorded keeps the
           ;; agent's model of the moment it resumes.
           ($model (format-args "{}" ((py-call (coding_io.session_model $dir (work:agent-model))))))
           ($binary (py-call (coding_io.runtime_binary $dir)))
+          ($token (format-args "{}" ((py-call (coding_io.current_run_token $dir)))))
           ($pythonpath (py-call (coding_io.runtime_pythonpath $runtime (system:cwd))))
           ($ledger (py-call (builtins.str (py-call (llm_policy.ledger_path)))))
           ;; The session shares the account's ledger and usage tally, as
@@ -130,11 +136,12 @@
                                     (work:quote (str:concat "TMPDIR=" $tmp))
                                     (work:quote (str:concat "SYNTHETIC_MODEL=" $model))
                                     (work:quote (str:concat "METTACLAW_MODEL_STATE_PATH=" (path:join $dir "model.metta")))
+                                    (work:quote (str:concat "METTACLAW_CODING_RUN_TOKEN=" $token))
                                     "METTACLAW_CODING_SESSION=1"
                                     "METTACLAW_OBSERVED_STRATEGY=0")))
           ($launch (str:join "" ("cd " (work:quote $runtime) " || exit 1; systemd-run --user --scope --quiet --collect --unit=" (work:quote (work:unit $id)) " -- " $own " "
                                  (work:quote $binary) " --lang petta --import-mode ancestor-walk coding_main.metta -- " (work:quote $dir)
-                                 " > " (work:quote (path:join $dir "run.log")) " 2>&1 &")))
+                                 " >> " (work:quote (path:join $dir "run.log")) " 2>&1 &")))
           ($_ (work:shell $launch)))
      (WorkLaunched $id)))
 
@@ -149,38 +156,63 @@
 
 ; Resumption keeps this session's task, transcript, plan and inbox identities.
 ; The named systemd scope prevents a second worker for the same session.
+(= (work:finish-resume $id $dir $runtime $note)
+   (let* (($stop (path:join $dir "stop"))
+          ($recycle (path:join $dir "recycle.requested"))
+          ($_ (delivery:preserve $dir))
+          ($_ (if (fs:exists $stop) (proc:run ("rm" "--" $stop) $dir inherit 10000 0 "merged") ()))
+          ($_ (if (fs:exists $recycle) (proc:run ("rm" "--" $recycle) $dir inherit 10000 0 "merged") ()))
+          ;; The last ending's report stays as evidence, out of the way
+          ;; of this run's own report.
+          ($report (path:join $dir "report.txt"))
+          ($_ (if (fs:is-file $report) (proc:run ("mv" "--" $report (path:join $dir "report.previous.txt")) $dir inherit 10000 0 "merged") ()))
+          ($_ (py-call (coding_estate.clear_lifecycle $dir)))
+          ($line (json-stringify (JsonString $note)))
+          ($_ (py-call (coding_io.append_line (path:join $dir "inbox.jsonl") $line)))
+          ($_ (work:launch-at $id $runtime)))
+     (str:concat "WORK_RESUMING " $id)))
+
 (= (work-resume $id)
+   (work-resume $id (work-setting "resume")))
+(= (work-resume $id $mode)
    (let* (($dir (work:dir $id)) ($task-path (path:join $dir "task.json")))
      (if (not (fs:is-file $task-path)) (str:concat "work-resume: no session " $id)
        (if (work:running? $id) (str:concat "WORK_RUNNING " $id)
-       (let $problem (format-args "{}" ((py-call (coding_estate.resume_problem $dir))))
-       (if (not (== $problem ""))
-         (if (str:ends-with $problem "Try again later.")
-           (str:concat "work-resume: " $problem)
-           (str:join "" ("work-resume: " $problem "; this session cannot resume on its pin. Start a new session for the task with (work \"...\") or set it aside with (work-archive \"" $id "\" \"why\").")))
-         (let* (($stop (path:join $dir "stop"))
-                ($recycle (path:join $dir "recycle.requested"))
-                ($_ (delivery:preserve $dir))
-                ($_ (if (fs:exists $stop) (proc:run ("rm" "--" $stop) $dir inherit 10000 0 "merged") ()))
-                ($_ (if (fs:exists $recycle) (proc:run ("rm" "--" $recycle) $dir inherit 10000 0 "merged") ()))
-                ;; The last ending's report stays as evidence, out of the way
-                ;; of this run's own report.
-                ($report (path:join $dir "report.txt"))
-                ($_ (if (fs:is-file $report) (proc:run ("mv" "--" $report (path:join $dir "report.previous.txt")) $dir inherit 10000 0 "merged") ()))
-                ($_ (py-call (coding_estate.clear_lifecycle $dir)))
-                ($line (json-stringify (JsonString "Resume this session from its existing evidence and plan. Verify uncertain effects before choosing new actions.")))
-                ($_ (py-call (coding_io.append_line (path:join $dir "inbox.jsonl") $line)))
-                ($_ (work:launch $id)))
-           (str:concat "WORK_RESUMING " $id))))))))
+         (if (== $mode "pinned")
+           (let $problem (format-args "{}" ((py-call (coding_estate.resume_problem $dir))))
+             (if (not (== $problem ""))
+               (if (str:ends-with $problem "Try again later.")
+                 (str:concat "work-resume: " $problem)
+                 (str:join "" ("work-resume: " $problem "; this session cannot resume on its pin. Move it to the current runtime with (work-resume \"" $id "\" \"current\"), start a new session with (work \"...\"), or set it aside with (work-archive \"" $id "\" \"why\").")))
+               (let $runtime (py-call (coding_io.freeze_runtime (system:cwd) $dir))
+                 (work:finish-resume $id $dir $runtime
+                   "Resume this session from its existing evidence and plan. Verify uncertain effects before choosing new actions."))))
+           (if (== $mode "current")
+             (let* (($raw (format-args "{}" ((py-call (coding_io.repin_session_json (system:cwd) $dir)))))
+                    ($outcome (json-parse $raw))
+                    ($status (work:text (work:field $outcome "status")))
+                    ($detail (work:text (work:field $outcome "detail")))
+                    ($runtime (work:text (work:field $outcome "root"))))
+               (if (== $status "failed")
+                 (str:join "" ("work-resume: the current runtime cannot read this session's checkpoint: " $detail "; its pin is unchanged. Start a new session for the task with (work \"...\") or set it aside with (work-archive \"" $id "\" \"why\")."))
+                 (if (== $status "changed")
+                   (str:concat "work-resume: " $detail)
+                   (if (== $status "same")
+                     (work:finish-resume $id $dir $runtime
+                       "Resume this session from its existing evidence and plan. Verify uncertain effects before choosing new actions.")
+                     (work:finish-resume $id $dir $runtime
+                       "Resume this session from its existing evidence and plan. It now runs on a newer runtime than its last run. Verify uncertain effects before choosing new actions.")))))
+             (str:join "" ("work-resume: unknown resume mode \"" $mode "\"; use \"pinned\" or \"current\"."))))))))
 
 (= (work:line $id)
    (work:line $id (py-call (coding_estate.snapshot_session_world (work:dir $id)))))
 (= (work:line $id $world)
    (let* (($dir (work:dir $id))
           ($state (work:json (path:join $dir "state.json")))
+          ($status (format-args "{}" ((py-call (coding_estate.effective_status $dir (work:running? $id))))))
           ($task (work:text (work:field (work:json (path:join $dir "task.json")) "task")))
           ($estate (format-args "{}" ((py-call (coding_estate.status_line_suffix $dir $world))))))
-     (str:join "" ($id " · " (work:text (work:field $state "status")) " · " (work:text (work:field $state "steps"))
+     (str:join "" ($id " · " $status " · " (work:text (work:field $state "steps"))
                    " steps · " (work:session-model $id) " · report=" (delivery:status $dir) $estate " · " (work:clip $task 120)
                    "\n    " (work:clip (work:text (work:field $state "progress")) 240)))))
 (= (work:session-model $id)
@@ -226,13 +258,13 @@
 (= (work-stop $id)
    (let* (($dir (work:dir $id)))
      (if (fs:is-file (path:join $dir "task.json"))
-       (let* (($_ (fs:update-text (path:join $dir "stop") "replace" "" "" ""))
+       (let* (($_ (py-call (coding_io.stop_session $dir)))
               ($_ (proc:run ("systemctl" "--user" "stop" (str:concat (work:unit $id) ".scope"))
                             (system:cwd) inherit 10000 0 "merged"))
               ;; Every ending has the same report handover, including a stop
               ;; that ends the scope before its worker can write a report.
               ($_ (if (fs:is-file (path:join $dir "report.txt")) ()
-                    (work:ended $id $dir "stopped" "Stopped by the requester."))))
+                    (work:ended $id $dir))))
          (str:concat "WORK_STOPPED " $id))
        (str:concat "work-stop: no session " $id))))
 
@@ -252,28 +284,20 @@
           ($state (work:json (path:join $dir "state.json")))
           ($_ (delivery:preserve $dir))
           ($_ (delivery:flush $dir))
-          ($status (work:text (work:field $state "status"))))
+          ($status (work:text (work:field $state "status")))
+          ($owner (work:text (work:field $state "worker_owner"))))
      (if (== $status "running")
          (if (or (!= (work:scope-state $id) inactive)
-                 (process:alive? (work:text (work:field $state "worker_owner")))) 0
-           (let* (($ending (if (fs:is-file (path:join $dir "stop")) "stopped" "interrupted"))
-                  ($_ (work:ended $id $dir $ending
-                        (if (== $ending "stopped") "Stopped by the requester."
-                          "The session ended without finishing its recorded ending: its process is gone (it was stopped, killed or crashed).")))
-                  ($_ (work:notify $id $dir $ending)))
-             1))
+                 (process:alive? $owner)) 0
+           (let $ending (work:ended $id $dir $owner)
+             (if (!= $ending "")
+               (let $_ (work:notify $id $dir $ending) 1)
+               0)))
        0)))
-(= (work:ended $id $dir $status $why)
-   (let* (($state (work:json (path:join $dir "state.json")))
-          ($progress (work:text (work:field $state "progress")))
-          ($plan (if (fs:is-file (path:join $dir "plan.json")) (work:clip (fs:read-text (path:join $dir "plan.json")) 2000) "none recorded"))
-          ($saved (if (fs:is-file (path:join $dir "report.txt")) (fs:read-text (path:join $dir "report.txt")) ""))
-          ($report (str:join "" ($why "\n\nLast progress:\n" (if (== $progress "") "none recorded" $progress)
-                                 (if (== $saved "") "" (str:concat "\n\nSaved report:\n" $saved))
-                                 "\n\nPlan:\n" $plan "\n\nResume without replaying uncertain effects:\n(work-resume \"" $id "\")")))
-          ($identity (delivery:identity $dir $state $status))
-          ($_ (py-call (coding_io.mark_state $dir $status $report $identity))))
-     $status))
+(= (work:ended $id $dir)
+   (format-args "{}" ((py-call (coding_io.settle_ending $dir)))))
+(= (work:ended $id $dir $owner)
+   (format-args "{}" ((py-call (coding_io.settle_ending $dir $owner)))))
 ; The same announcement coding:notify (coding_session.metta) makes when a
 ; session ends by itself.
 (= (work:notify $id $dir $status)

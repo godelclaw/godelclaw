@@ -117,6 +117,8 @@ def coding_session():
 
 
 def gate():
+    if os.environ.get("METTACLAW_CODING_CHECK") == "1":
+        raise RuntimeError("provider calls are refused under METTACLAW_CODING_CHECK=1")
     if os.environ.get("METTACLAW_MODE_RUNTIME"):
         import runtime_host
         runtime_host.gate()
@@ -442,11 +444,15 @@ def for_compaction(plan):
     This also works with subscription command plans: their wire encoding stays
     unchanged, while their complete plain-text reply is returned as a message.
     """
+    if os.environ.get("METTACLAW_CODING_CHECK") == "1":
+        raise RuntimeError("provider calls are refused under METTACLAW_CODING_CHECK=1")
     plan.purpose = "compaction"
     return plan
 
 
 def for_coding(plan):
+    if os.environ.get("METTACLAW_CODING_CHECK") == "1":
+        raise RuntimeError("provider calls are refused under METTACLAW_CODING_CHECK=1")
     plan.purpose = "coding"
     return plan
 

@@ -172,6 +172,8 @@ def _discard(staged, created):
 def apply(patch, workdir="."):
     """Apply the patch and return a receipt; 'Patch failed: reason' means nothing
     was written, and 'Patch partly applied' names what was and was not applied."""
+    if os.environ.get("METTACLAW_CODING_CHECK") == "1":
+        raise RuntimeError("apply_patch is refused under METTACLAW_CODING_CHECK=1")
     try:
         base = Path(str(workdir)).expanduser()
         resolve = lambda name: (Path(name).expanduser() if os.path.isabs(os.path.expanduser(name))

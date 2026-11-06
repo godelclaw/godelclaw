@@ -111,6 +111,7 @@ class CodingEstateFixture(unittest.TestCase):
         digest=None,
         binary="default",
         binary_sha256="default",
+        phase="ended",
         pin_mtime=None,
         write_state=True,
     ):
@@ -153,6 +154,8 @@ class CodingEstateFixture(unittest.TestCase):
                 record["binary_sha256"] = self.engine_hash
             elif binary_sha256 is not None:
                 record["binary_sha256"] = binary_sha256
+            if phase is not None:
+                record["phase"] = phase
             rt_path = session / "runtime.json"
             rt_path.write_text(json.dumps(record), encoding="utf-8")
             pts = self.pin_ts if pin_mtime is None else pin_mtime
@@ -169,9 +172,9 @@ class CodingEstateTests(CodingEstateFixture):
 
         # World is a single frozen dataclass where None means live
         self.assertTrue(dataclasses.is_dataclass(coding_estate.World))
-        w = coding_estate.World(selection="native", engines={}, today="2026-10-25")
+        w = coding_estate.World(selection={"llm-ledger-sqlite": "native"}, engines={}, today="2026-10-25")
         with self.assertRaises(dataclasses.FrozenInstanceError):
-            w.selection = "legacy"
+            w.selection = {"llm-ledger-sqlite": "legacy"}
 
         # 1. No runtime.json -> unpinned
         s_unpinned = self.make_session("work-01-unpinned", pin=False)
@@ -344,7 +347,7 @@ class CodingEstateTests(CodingEstateFixture):
             "work-05-resumable running 2026-10-23 · pin aaaa1111 2026-10-22 · resumable",
             "work-07-held-past stopped 2026-10-23 · pin aaaa1111 2026-10-22 · resumable · held until 2026-10-20: check after release",
             "work-10-nostate unknown 2026-10-23 · pin aaaa1111 2026-10-22 · resumable",
-            'verbs: (work-status "id") (work-resume "id") (work-hold "id" "why" ["YYYY-MM-DD"]) (work-archive "id" "why")',
+            'verbs: (work-status "id") (work-resume "id" ["current"]) (work-hold "id" "why" ["YYYY-MM-DD"]) (work-archive "id" "why")',
         ])
         self.assertEqual(first, expected)
 
@@ -402,28 +405,28 @@ class CodingEstateTests(CodingEstateFixture):
             name = "lean-classify-%s" % pin_kind
             if pin_kind == "unpinned":
                 s = self.make_session(name, pin=False)
-                world = coding_estate.World(selection="legacy")
+                world = coding_estate.World(selection={"llm-ledger-sqlite": "legacy"})
             elif pin_kind == "bundle_missing":
                 s = self.make_session(name, bundle=self.directory / "absent-bundle")
-                world = coding_estate.World(selection="legacy")
+                world = coding_estate.World(selection={"llm-ledger-sqlite": "legacy"})
             elif pin_kind == "retired":
                 s = self.make_session(name, bundle=self.bundle_old)
-                world = coding_estate.World(selection="native")
+                world = coding_estate.World(selection={"llm-ledger-sqlite": "native"})
             elif pin_kind == "unknown":
                 s = self.make_session(name, bundle=self.bundle_old)
-                world = coding_estate.World(selection=("unknown", "unreachable"))
+                world = coding_estate.World(selection={"llm-ledger-sqlite": ("unknown", "unreachable")})
             elif pin_kind == "engine_gone":
                 s = self.make_session(name)
-                world = coding_estate.World(selection="legacy", engines={})
+                world = coding_estate.World(selection={"llm-ledger-sqlite": "legacy"}, engines={})
             elif pin_kind == "no_hash":
                 s = self.make_session(name, binary_sha256=None)
-                world = coding_estate.World(selection="legacy")
+                world = coding_estate.World(selection={"llm-ledger-sqlite": "legacy"})
             elif pin_kind == "hash_diff":
                 s = self.make_session(name)
-                world = coding_estate.World(selection="legacy", engines={str(self.engine): "b" * 64})
+                world = coding_estate.World(selection={"llm-ledger-sqlite": "legacy"}, engines={str(self.engine): "b" * 64})
             else:
                 s = self.make_session(name)
-                world = coding_estate.World(selection="legacy")
+                world = coding_estate.World(selection={"llm-ledger-sqlite": "legacy"})
 
             verdict, _ = coding_estate.classify(s, world=world)
             problem = coding_estate.resume_problem(s, world=world)
@@ -591,7 +594,8 @@ class CodingEstateProbeAndBundleTests(CodingEstateFixture):
         )
         self.assertIn(
             'work-resume: its engine binary has changed; this session cannot resume on its pin. '
-            'Start a new session for the task with (work \\"...\\") or set it aside with (work-archive \\"work-changed\\" \\"why\\").',
+            'Move it to the current runtime with (work-resume \\"work-changed\\" \\"current\\"), '
+            'start a new session with (work \\"...\\"), or set it aside with (work-archive \\"work-changed\\" \\"why\\").',
             result.stdout,
         )
         self.assertIn(
@@ -681,7 +685,10 @@ class CodingEstateProbeAndBundleTests(CodingEstateFixture):
         self.assertEqual(prev["hold"]["review"], "2026-11-15")
 
         view_after = coding_estate.context_view(self.directory, world=world_today)
-        self.assertIn("\nwork-hold-target stopped 2026-10-23 · pin aaaa1111 2026-10-22 · resumable\n", view_after)
+        self.assertRegex(
+            view_after,
+            r"\nwork-hold-target launching since \d{4}-\d{2}-\d{2} · pin aaaa1111 \d{4}-\d{2}-\d{2} · resumable\n",
+        )
 
     def test_python_and_cetta_context_bundles_include_coding_sessions_identically(self):
         self.make_session("work-bundle-1", status="stopped")

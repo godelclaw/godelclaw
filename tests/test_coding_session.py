@@ -173,9 +173,21 @@ class CodingSessionTests(unittest.TestCase):
         return session
 
     def run_session(self, session):
+        import secrets
+        runtime_path = session / "runtime.json"
+        if runtime_path.is_file():
+            manifest = json.loads(runtime_path.read_text())
+        else:
+            manifest = {"root": str(ROOT), "digest": "fixture", "binary": os.environ["CETTA_BIN"], "binary_sha256": None}
+        if manifest.get("phase") != "reserved" or not manifest.get("run"):
+            manifest["run"] = secrets.token_hex(16)
+            manifest["phase"] = "reserved"
+            manifest["at"] = time.time()
+            runtime_path.write_text(json.dumps(manifest))
+        env = {**self.env, "METTACLAW_CODING_RUN_TOKEN": str(manifest["run"])}
         result = subprocess.run([os.environ["CETTA_BIN"], "--lang", "petta", "--import-mode", "ancestor-walk",
                                  str(ROOT / "coding_main.metta"), str(session)],
-                                cwd=ROOT, env=self.env, capture_output=True, text=True, timeout=120)
+                                cwd=ROOT, env=env, capture_output=True, text=True, timeout=120)
         self.assertEqual(result.returncode, 0, result.stdout[-2000:] + result.stderr[-2000:])
         return result
 

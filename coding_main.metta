@@ -4,8 +4,15 @@
 !(import! &self ./src/native_llm.metta)
 !(import! &self ./src/coding_session.metta)
 ; The session folder is the last argument, with or without a preceding --.
-; When the session ends, its report is mailed to the requester and, when a
-; worklog command is configured, noted there for the public view.
+; The single-use run token must be consumed under .ending.lock before any
+; stream event, state write, provider call or tool execution. When the session
+; ends, its report is mailed to the requester and, when a worklog command is
+; configured, noted there for the public view.
 !(let* (($dir (system:arg (- (system:argc) 1)))
-        ((CodingFinished $status) (coding:start $dir)))
-   (println! (coding:notify $dir $status)))
+        ($token (coding:run-token))
+        ($claimed (py-call (coding_io.consume_run $dir $token (process:owner)))))
+   (if (== $claimed 1)
+     (case (coding:start $dir)
+       (((CodingFinished $status) (println! (coding:notify $dir $status)))
+        ($aborted (println! $aborted))))
+     (println! (CodingSuperseded $token))))

@@ -7,7 +7,7 @@ turn that asks for it, and the checker answers format questions for free
 # skill -> (min_args, max_args). None = variadic tail.
 ARITY = {
     "work": (1, 4), "work-status": (0, 1), "work-steer": (2, 2),
-    "work-resume": (1, 1), "work-stop": (1, 1),
+    "work-resume": (1, 2), "work-stop": (1, 1),
     "work-hold": (2, 3), "work-archive": (2, 2),
     "memory-node": (4, 6), "memory-link": (2, 2), "memory-summary": (2, 2),
     "memory-open": (1, 2), "memory-find": (1, 2), "memory-original": (2, 2),
@@ -58,7 +58,7 @@ PAGES = {
     "work": 'usage: (work "task" ["workdir" ["model" ["effort"]]])\nStart an independent coding session with its own transcript and plan. It runs until a complete reply calls no tools, or you stop it, and mails its report back. You can continue talking while it works. It keeps the model and effort it starts with: yours and "high" unless you name others; switching your own model later does not change it.',
     "work-status": 'usage: (work-status ["id"])\nList sessions or inspect one session\'s progress, plan and final report.',
     "work-steer": 'usage: (work-steer "id" "guidance")\nAppend guidance to the same coding transcript. Guidance arriving during a final reply continues the task before it is marked done.',
-    "work-resume": 'usage: (work-resume "id")\nExplicitly resume an inactive session with its existing task, transcript, plan and inbox. An active session is not launched again. Interrupted tool effects remain uncertain and are never automatically replayed.',
+    "work-resume": 'usage: (work-resume "id" ["pinned"|"current"])\nExplicitly resume an inactive session with its existing task, transcript, plan and inbox. "pinned" (default, or configured via (setting "work" "resume" ...)) resumes on its pinned runtime; "current" checks a copy of the checkpoint against the current runtime and re-pins before launching. An active session is not launched again. Interrupted tool effects remain uncertain and are never automatically replayed.',
     "work-stop": 'usage: (work-stop "id")\nStop the session, keeping its evidence and plan. Only explicit work-resume clears its stop request.',
     "work-hold": 'usage: (work-hold "id" "why" ["YYYY-MM-DD"])\nRecord a hold on the session in lifecycle.json, either until the local review date YYYY-MM-DD or indefinitely when omitted. Held sessions stay out of the open context list until due; work-resume clears the hold.',
     "work-archive": 'usage: (work-archive "id" "why")\nMark the session archived in lifecycle.json so it is excluded from the open context list while keeping its folder and evidence intact. Explicit work-resume clears the archive.',
