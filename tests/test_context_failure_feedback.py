@@ -319,6 +319,7 @@ class ContextFailureFeedbackTests(unittest.TestCase):
                 HOME=str(tmp_dir / "home"),
                 TMPDIR=str(tmp_dir),
                 METTACLAW_OBSERVED_STRATEGY="1",
+                METTACLAW_INPUT_LEDGER_SOCKET=str(tmp_dir / "stub.sock"),
                 METTACLAW_STRATEGY_PATH=str(tmp_dir / "strategy.sqlite3"),
                 METTACLAW_ENGINE_STATE_PATH=str(tmp_dir / "engine"),
                 METTACLAW_COGNITIVE_HEALTH_PATH=str(tmp_dir / "health.json"),
@@ -339,7 +340,7 @@ class ContextFailureFeedbackTests(unittest.TestCase):
             return done.stdout
 
     def test_state_single_prepared_converts_empty_and_error_from_context_prepare(self):
-        """Layer 1 unit test: when `context:prepare` yields no result (`(empty)`) or yields an `Error`,
+        """When `context:prepare` yields no result (`(empty)`) or yields an `Error`,
         `state:prepare-context` returns exactly one `(ContextPreparationFailed "context-preparation-failed")`."""
         out = self._run_cetta_probe(
             "!(import! &self ./src/helper.py)\n"
@@ -357,7 +358,7 @@ class ContextFailureFeedbackTests(unittest.TestCase):
         self.assertIn('(ERROR_PREP 1 ((ContextPreparationFailed "context-preparation-failed")))', out)
 
     def test_store_remote_failed_limit_pages_reads_and_never_pages_writes(self):
-        """Layer 2 unit test: when a session outcome is `(Error ledger-client:call (unanswered ((StoreRemoteFailed limit))))`
+        """When a session outcome is `(Error ledger-client:call (unanswered ((StoreRemoteFailed limit))))`
         (the client decode-capacity path), `ledger-client:call` pages a pageable read and never pages a write."""
         out = self._run_cetta_probe(
             "!(import! &self ./src/ledger_client.metta)\n"
@@ -390,7 +391,7 @@ class ContextFailureFeedbackTests(unittest.TestCase):
         self.assertEqual(len(page_attempts), 1, page_attempts)
 
     def test_native_conversation_projection_rejects_non_conversation_rows_answers(self):
-        """Layer 3 unit test: when `state:ledger` for `conversation-rows` returns an `Error` or another atom
+        """When `state:ledger` for `conversation-rows` returns an `Error` or another atom
         that is not `(conversation-rows ...)`, `task:native-conversation-projection` returns
         `(ContextPreparationFailed "context-conversation-read-failed")`, never the answer itself."""
         out = self._run_cetta_probe(
@@ -411,7 +412,7 @@ class ContextFailureFeedbackTests(unittest.TestCase):
         self.assertIn('(PROJ_ATOM (ContextPreparationFailed "context-conversation-read-failed"))', out)
 
     def test_state_json_set_on_non_object_returns_value_with_count_one(self):
-        """Layer 4 unit test: `state:json-set` on a non-object (an `Error`) returns that value
+        """`state:json-set` on a non-object (an `Error`) returns that value
         and does not reduce to `(empty)` (result count is 1 via `collapse`)."""
         out = self._run_cetta_probe(
             "!(import! &self ./src/helper.py)\n"
