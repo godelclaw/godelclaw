@@ -83,9 +83,11 @@
        (if (== $key $name) (state:json-without (cdr-atom $pairs) $key)
          (cons-atom (car-atom $pairs) (state:json-without (cdr-atom $pairs) $key))))))
 (= (state:json-set $value $key $item)
-   (let (JsonObject $pairs) $value
-     (let $next (cons-atom (JsonPair $key $item) (state:json-without $pairs $key))
-       (JsonObject $next))))
+   (case $value
+     (((JsonObject $pairs)
+       (let $next (cons-atom (JsonPair $key $item) (state:json-without $pairs $key))
+         (JsonObject $next)))
+      ($other $value))))
 (= (context:path)
    (let $state (system:getenv-or-default "METTACLAW_ENGINE_STATE_PATH"
                   (system:getenv-or-default "METTACLAW_STRATEGY_PATH" "memory/observed-strategy.sqlite3"))

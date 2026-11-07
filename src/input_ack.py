@@ -284,7 +284,16 @@ def _ledger_read(verb, arguments, timeout=10, socket=None):
         merged = page[2] if merged is None else _joined(merged, page[2])
         if page[1] != S("more"):
             return merged
-        start += count
+        start += _page_taken(page[2], count)
+
+
+def _page_taken(value, fallback):
+    if not isinstance(value, tuple) or not value:
+        return fallback
+    if isinstance(value[0], tuple):
+        return len(value)
+    lengths = [len(field) for field in value[1:] if isinstance(field, tuple)]
+    return max(lengths) if lengths else fallback
 
 
 def _joined(merged, value):

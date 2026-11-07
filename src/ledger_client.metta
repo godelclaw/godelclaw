@@ -4,23 +4,41 @@
 ; worker) is (ledger <socket> <verb> <arguments>) and its answer (answer <value>).
 !(import! &self (library db))
 !(import! &self (library list))
+!(import! &self (library system))
 
 (= (ledger-client:sessions) 3)
+
+(= (ledger-client:pageable $verb)
+   (case $verb
+     (("request-rows" True) ("actions" True) ("attempts" True) ("task-view" True) ("task-rows" True)
+      ("conversation-rows" True) ("conversation-history" True) ("turn-dump" True) ("meta-prefix" True)
+      ("llm-usage" True) ("llm-records" True)
+      ($other False))))
 
 ; A call whose reply was lost or whose server was not reachable is made again: a write
 ; carries its request id, so a repeat replays the answer of the first commit. An answer
 ; larger than one wire value is not lost: a read's is then read in pages.
 (= (ledger-client:too-large $outcome)
-   (== $outcome (Error ledger-client:call (unanswered ((ServiceFailedV1 reply-limit))))))
+   (case $outcome
+     (((Error ledger-client:call (unanswered ((ServiceFailedV1 reply-limit)))) True)
+      ((Error ledger-client:call (unanswered ((ServiceRefusedV1 reply-limit)))) True)
+      ((Error ledger-client:call (unanswered ((StoreRemoteFailed limit)))) True)
+      ((Error ledger-client:call (unanswered ((StoreRemoteFailed reply-limit)))) True)
+      ((Error ledger-client:call (unanswered (reply-limit))) True)
+      ((Error $where reply-limit) True)
+      ((Error $where limit) True)
+      ($other False))))
 
 (= (ledger-client:lost $outcome)
-   (case $outcome
-     (((Error ledger-client:call (unanswered ((ServiceFailedV1 reply-limit)))) False)
-      ((Error $where unavailable) True)
-      ((Error $where uncertain) True)
-      ((Error ledger-client:call (unanswered $why)) True)
-      ((Error db:connect $why) True)
-      ($other False))))
+   (if (ledger-client:too-large $outcome)
+       False
+       (case $outcome
+         (((Error ledger-client:call (unanswered ((StoreRemoteFailed $_)))) False)
+          ((Error $where unavailable) True)
+          ((Error $where uncertain) True)
+          ((Error ledger-client:call (unanswered $why)) True)
+          ((Error db:connect $why) True)
+          ($other False)))))
 
 (= (ledger-client:answer $reply)
    (case $reply
@@ -51,27 +69,62 @@
 
 (= (ledger-client:call $socket $verb $arguments)
    (let $outcome (ledger-client:session $socket LedgerCall (LedgerCallV1 $verb $arguments) (ledger-client:sessions))
-     (if (ledger-client:too-large $outcome)
+     (if (and (ledger-client:too-large $outcome) (ledger-client:pageable $verb))
          (ledger-client:pages $socket $verb $arguments 0 (ledger-client:page-rows) none)
          $outcome)))
 
 ; One page of a read (input-ledger:page): (page more|last <value>).
 (= (ledger-client:page $socket $verb $arguments $start $count)
-   (ledger-client:session $socket LedgerPage (LedgerPageV1 $verb $arguments $start $count) (ledger-client:sessions)))
+   (ledger-client:session $socket LedgerPage
+     (LedgerPageV1 $verb $arguments $start $count (store:value-byte-limit))
+     (ledger-client:sessions)))
+
+(= (ledger-client:page-with-id $socket $read-id $verb $arguments $start $count)
+   (ledger-client:session $socket LedgerPage
+     (LedgerPageV1 $verb $arguments $start $count (store:value-byte-limit) $read-id)
+     (ledger-client:sessions)))
 
 (= (ledger-client:page-rows) 2000)
 
-; A page too large for the wire is asked again with half its rows.
+(= (ledger-client:fields-max-size $fields $best)
+   (if (== $fields ()) $best
+     (let ($field $rest) (decons-atom $fields)
+       (if (== (get-metatype $field) Expression)
+           (let* (($n (size-atom $field))
+                  ($next (if (> $n $best) $n $best)))
+             (ledger-client:fields-max-size $rest $next))
+           (ledger-client:fields-max-size $rest $best)))))
+
+(= (ledger-client:page-taken $value $fallback)
+   (if (== (get-metatype $value) Expression)
+       (if (ledger-client:rows-answer $value)
+           (let $n (size-atom $value) (if (> $n 0) $n $fallback))
+           (let* ((($head $fields) (decons-atom $value))
+                  ($n (ledger-client:fields-max-size $fields 0)))
+             (if (> $n 0) $n $fallback)))
+       $fallback))
+
+(= (ledger-client:grow $count $cap)
+   (let $doubled (* $count 2)
+     (if (< $doubled $cap) $doubled $cap)))
+
+; A page too large for the wire is asked again with half its rows; after a successful
+; slice, a halved count can grow back up to its initial cap.
 (= (ledger-client:pages $socket $verb $arguments $start $count $merged)
-   (let $outcome (ledger-client:page $socket $verb $arguments $start $count)
+   (ledger-client:pages-run $socket (system:uuid4-hex) $verb $arguments $start $count $count $merged))
+
+(= (ledger-client:pages-run $socket $read-id $verb $arguments $start $count $cap $merged)
+   (let $outcome (ledger-client:page-with-id $socket $read-id $verb $arguments $start $count)
      (case $outcome
        (((page $more $value)
-         (let $joined (ledger-client:merge $merged $value)
+         (let* (($joined (ledger-client:merge $merged $value))
+                ($taken (ledger-client:page-taken $value $count))
+                ($next-count (ledger-client:grow $taken $cap)))
            (if (== $more more)
-               (ledger-client:pages $socket $verb $arguments (+ $start $count) $count $joined)
+               (ledger-client:pages-run $socket $read-id $verb $arguments (+ $start $taken) $next-count $cap $joined)
                $joined)))
         ($other (if (and (ledger-client:too-large $other) (> $count 1))
-                    (ledger-client:pages $socket $verb $arguments $start (ledger-client:half $count) $merged)
+                    (ledger-client:pages-run $socket $read-id $verb $arguments $start (ledger-client:half $count) $cap $merged)
                     $other))))))
 
 (= (ledger-client:half $count) (let $odd (% $count 2) (/ (- $count $odd) 2)))

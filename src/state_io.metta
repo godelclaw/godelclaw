@@ -19,6 +19,11 @@
      (pins:cetta-view) (pins:python-view)))
 (= (pins) (pins:view))
 
+(= (state:single-prepared $answers)
+   (if (== $answers ()) (ContextPreparationFailed "context-preparation-failed")
+     (case (car-atom $answers)
+       (((Error $_ $_) (ContextPreparationFailed "context-preparation-failed"))
+        ($first $first)))))
 (= (state:prepare-context $prompt $tokens)
    (if (state:cetta? (engine:active))
      (if (== (py-call (strategy_host.context_input "enabled")) 1)
@@ -31,5 +36,7 @@
               ($capacity (format-args "{}" ($capacity-value)))
               ($model (py-call (strategy_host.context_input "model")))
               ($effort (system:getenv-or-default "METTACLAW_REASONING_EFFORT" "default")))
-         (context:prepare $base $focus $trigger $capacity $model $tokens $effort)) (request:render $prompt))
+         (state:single-prepared
+           (collapse (catch (context:prepare $base $focus $trigger $capacity $model $tokens $effort)))))
+       (request:render $prompt))
      (py-call (strategy_host.prepare $prompt $tokens))))

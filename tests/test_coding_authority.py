@@ -1440,7 +1440,8 @@ class CodingAuthorityAndRepinTests(unittest.TestCase):
                 0,
             )
 
-        # 5. mark_state and settle_ending propagate OSError, and repin_session returns status="failed"
+        # 5. mark_state and settle_ending propagate OSError; repin_session returns status="failed" when OSError
+        #    occurs before os.replace on runtime.json, and status="uncertain" when OSError occurs after os.replace.
         dead_running_state = json.dumps(
             {
                 "status": "running",
@@ -1460,9 +1461,52 @@ class CodingAuthorityAndRepinTests(unittest.TestCase):
             (session / "state.json").write_text(dead_running_state, encoding="utf-8")
             with self.assertRaises(OSError):
                 coding_io.settle_ending(session, expected_owner="999998:111")
+            # Restore dead_running_state so _settle_ending_unlocked inside repin_session raises EIO BEFORE
+            # os.replace on runtime.json -> status="failed" (pin is unchanged).
+            (session / "state.json").write_text(dead_running_state, encoding="utf-8")
             repin_res = coding_io.repin_session(ROOT, session)
             self.assertEqual(repin_res["status"], "failed")
             self.assertIn("Simulated directory fsync I/O error", repin_res["detail"])
+
+        # 5b. When durability fails AFTER os.replace on runtime.json, repin_session returns status="uncertain"
+        #     and (work-resume "<id>" "current") reports that the pin may have changed and the next resume will
+        #     recheck it (never claiming "its pin is unchanged").
+        settled_state = json.dumps(
+            {
+                "status": "stopped",
+                "steps": 5,
+                "progress": "step 5",
+                "delivery": "none",
+                "delivery_version": 2,
+                "worker_owner": "999998:111",
+                "inbox": 0,
+                "updated": time.time(),
+            }
+        )
+        (session / "state.json").write_text(settled_state, encoding="utf-8")
+        rt_stale = json.loads((session / "runtime.json").read_text(encoding="utf-8"))
+        rt_stale["digest"] = "0" * 64
+        rt_stale["phase"] = "ended"
+        (session / "runtime.json").write_text(json.dumps(rt_stale), encoding="utf-8")
+        with mock.patch("coding_io.check_checkpoint_copy", return_value=(True, "ok")), \
+             mock.patch("os.fsync", side_effect=_dir_eio_fsync):
+            repin_uncertain = coding_io.repin_session(ROOT, session)
+        self.assertEqual(repin_uncertain["status"], "uncertain")
+        self.assertIn("Simulated directory fsync I/O error", repin_uncertain["detail"])
+        # Verify runtime.json actually received the new digest before _fsync_dir raised EIO
+        rt_after_rename = json.loads((session / "runtime.json").read_text(encoding="utf-8"))
+        self.assertNotEqual(rt_after_rename["digest"], "0" * 64)
+
+        inbox_dir = session / "inbox.jsonl"
+        inbox_dir.unlink(missing_ok=True)
+        inbox_dir.mkdir()
+        self.addCleanup(lambda: shutil.rmtree(inbox_dir, ignore_errors=True))
+        probe_uncertain = self.run_work_probe(
+            '!(println! (ResumeUncertain (work-resume "work-fsync-eio" "current")))\n'
+        )
+        shutil.rmtree(inbox_dir, ignore_errors=True)
+        self.assertIn("its pin may have changed and the next resume will recheck it", probe_uncertain.stdout)
+        self.assertNotIn("its pin is unchanged", probe_uncertain.stdout)
 
         # 6. (work:reap-one ...) catches an OSError from settle_ending, logs to run.log, and returns 0
         (session / "state.json").write_text(dead_running_state, encoding="utf-8")
@@ -1477,6 +1521,73 @@ class CodingAuthorityAndRepinTests(unittest.TestCase):
         self.assertIn("(ReapEio 0)", reap_probe.stdout)
         self.assertIn("reap error", (session / "run.log").read_text(encoding="utf-8"))
         shutil.rmtree(report_file, ignore_errors=True)
+
+    def test_systemctl_stub_on_path_guards_reserved_manifest_until_scope_inactive(self):
+        """Stub `systemctl` first on `PATH` in `os.environ` exercises `_scope_is_active` directly:
+        - When the stub exits 0 (active) for `<instance>-<id>.scope`, `freeze_runtime` and `repin_session`
+          (with default `scope_active=False`) answer `"running"` with no mutation to a reserved manifest
+          whose `state.json` is not running.
+        - When the stub exits 3 (inactive), both `freeze_runtime` and `repin_session` supersede the
+          reservation and issue a new run token.
+        """
+        session = self.make_session("work-scope-stub", status="stopped", owner="880:1")
+        res0 = coding_io.freeze_runtime(ROOT, session)
+        self.assertEqual(res0["status"], "reserved")
+        token0 = _manifest_token(session)
+        manifest0 = (session / "runtime.json").read_text(encoding="utf-8")
+
+        bin_dir = self.directory / "stub-bin"
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        args_log = self.directory / "systemctl-args.log"
+        stub = bin_dir / "systemctl"
+        stub.write_text(
+            "#!/bin/sh\n"
+            f'printf "%s\\n" "$*" >> "{args_log}"\n'
+            'if [ "$STUB_SCOPE_EXIT" = "0" ] && [ "$*" = "--user is-active --quiet testinst-work-scope-stub.scope" ]; then\n'
+            "    exit 0\n"
+            "fi\n"
+            "exit 3\n",
+            encoding="utf-8",
+        )
+        stub.chmod(0o755)
+
+        env_active = {
+            "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+            "METTACLAW_INSTANCE": "testinst",
+            "STUB_SCOPE_EXIT": "0",
+        }
+        with mock.patch.dict(os.environ, env_active):
+            res_freeze_active = coding_io.freeze_runtime(ROOT, session)
+            self.assertEqual(res_freeze_active["status"], "running")
+            self.assertEqual(res_freeze_active["run"], token0)
+            self.assertEqual((session / "runtime.json").read_text(encoding="utf-8"), manifest0)
+
+            res_repin_active = coding_io.repin_session(ROOT, session)
+            self.assertEqual(res_repin_active["status"], "running")
+            self.assertEqual(res_repin_active["run"], token0)
+            self.assertEqual((session / "runtime.json").read_text(encoding="utf-8"), manifest0)
+
+        logged = args_log.read_text(encoding="utf-8").splitlines()
+        self.assertTrue(
+            any("--user is-active --quiet testinst-work-scope-stub.scope" in line for line in logged),
+            logged,
+        )
+
+        env_inactive = {
+            "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+            "METTACLAW_INSTANCE": "testinst",
+            "STUB_SCOPE_EXIT": "3",
+        }
+        with mock.patch.dict(os.environ, env_inactive):
+            res_freeze_inactive = coding_io.freeze_runtime(ROOT, session)
+            self.assertEqual(res_freeze_inactive["status"], "reserved")
+            token1 = _manifest_token(session)
+            self.assertNotEqual(token1, token0)
+
+            res_repin_inactive = coding_io.repin_session(ROOT, session)
+            self.assertIn(res_repin_inactive["status"], ("same", "repinned"))
+            token2 = _manifest_token(session)
+            self.assertNotEqual(token2, token1)
 
 
 if __name__ == "__main__":

@@ -88,7 +88,7 @@
         ))))
 
 (= (getContextObservations $periphery)
-   (string-safe (py-str
+   (string-safe (utils:py-str
        (" CONTEXT_SOURCES: " (addition-context-sources)
         " " (fuel:context-view (loop-budget $periphery))
         " SLEEP_INTERVAL_SECONDS: " (loop-sleep $periphery)

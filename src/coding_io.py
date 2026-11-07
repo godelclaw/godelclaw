@@ -192,7 +192,7 @@ def descriptor_field(descriptor, key):
     return ""
 
 
-def _write_json_atomic(path, payload):
+def _write_json_atomic(path, payload, *, after_replace=None):
     path = Path(str(path))
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix="." + path.name + "-", dir=path.parent)
@@ -203,6 +203,8 @@ def _write_json_atomic(path, payload):
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
+        if after_replace is not None:
+            after_replace()
         _fsync_dir(path.parent)
     finally:
         if os.path.exists(temporary):
@@ -869,6 +871,12 @@ def repin_session(
             and old_manifest.get("phase") in ("reserved", "started", "ended")
             and (Path(str(old_manifest.get("root") or "")) / "coding_main.metta").is_file()
         ):
+            manifest_replaced = False
+
+            def _mark_same_replaced():
+                nonlocal manifest_replaced
+                manifest_replaced = True
+
             try:
                 _settle_ending_unlocked(directory, require_dead_owner=True)
                 token = secrets.token_hex(16)
@@ -877,10 +885,10 @@ def repin_session(
                 old_manifest["run"] = token
                 old_manifest["phase"] = "reserved"
                 old_manifest["at"] = time.time()
-                _write_json_atomic(record_path, old_manifest)
+                _write_json_atomic(record_path, old_manifest, after_replace=_mark_same_replaced)
                 _prepare_resume_unlocked(directory, note=note_same)
             except OSError as exc:
-                return LaunchDescriptor("failed", detail=str(exc))
+                return LaunchDescriptor("uncertain" if manifest_replaced else "failed", detail=str(exc))
             return LaunchDescriptor(
                 "same",
                 root=old_manifest["root"],
@@ -916,6 +924,12 @@ def repin_session(
             or (current_old.get("run"), current_old.get("phase")) != seen_manifest_state
         ):
             return LaunchDescriptor("changed", detail="the session changed during the check; try again.")
+        manifest_replaced = False
+
+        def _mark_manifest_replaced():
+            nonlocal manifest_replaced
+            manifest_replaced = True
+
         try:
             _settle_ending_unlocked(directory, require_dead_owner=True)
             current_old = _read_json(record_path) if record_path.is_file() else {}
@@ -935,7 +949,7 @@ def repin_session(
             )
             if before_rename_hook is not None:
                 before_rename_hook(directory)
-            _write_json_atomic(record_path, manifest)
+            _write_json_atomic(record_path, manifest, after_replace=_mark_manifest_replaced)
             _append_run_record_unlocked(
                 directory,
                 dict(
@@ -947,7 +961,7 @@ def repin_session(
             )
             _prepare_resume_unlocked(directory, note=note_repinned)
         except OSError as exc:
-            return LaunchDescriptor("failed", detail=str(exc))
+            return LaunchDescriptor("uncertain" if manifest_replaced else "failed", detail=str(exc))
         return LaunchDescriptor(
             "repinned",
             root=str(target),

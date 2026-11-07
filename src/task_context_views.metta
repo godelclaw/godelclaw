@@ -6,7 +6,9 @@
 !(import! &self ./src/task_idle_views)
 
 (= (task:items $record $key)
-   (let (JsonArray $items) (state:json-field $record $key) $items))
+   (case (state:json-field $record $key)
+     (((JsonArray $items) $items)
+      ($other ()))))
 (= (task:number $value) (JsonNumber (repr $value)))
 (= (task:drop $items $count)
    (if (or (<= $count 0) (== $items ())) $items (task:drop (cdr-atom $items) (- $count 1))))
@@ -32,11 +34,15 @@
      (state:rows (state:query "SELECT content FROM requests WHERE id=?" ($request)))))
 (= (task:input $request)
    (let $rows (task:input-rows $request)
-     (if (== $rows ()) (Error task-read unknown-input-identity)
-       (JsonObject ((JsonPair "id" (JsonString (str:concat "task-input:" $request)))
-         (JsonPair "request" (JsonString $request)) (JsonPair "command" JsonNull)
-         (JsonPair "disposition" (JsonString "input"))
-         (JsonPair "result" (JsonString (car-atom (car-atom $rows)))))))))
+     (case $rows
+       (((Error $where $why) (Error $where $why))
+        (() (Error task-read unknown-input-identity))
+        ((($content))
+         (JsonObject ((JsonPair "id" (JsonString (str:concat "task-input:" $request)))
+           (JsonPair "request" (JsonString $request)) (JsonPair "command" JsonNull)
+           (JsonPair "disposition" (JsonString "input"))
+           (JsonPair "result" (JsonString $content)))))
+        ($other (Error task-read $other))))))
 (= (task:command-call $identity)
    (let $parts (task:reverse (str:split ":" $identity) ())
      (if (< (length $parts) 3) (Error task-read invalid-call-identity)
@@ -44,15 +50,28 @@
 (= (task:call-request-rows $serial $owner)
    (if (state:native-ledger)
      (case (state:ledger "task-call" ($serial (str:join ":" ($owner (repr $serial)))))
-       ((none ()) ($request (($request)))))
+       (((Error $where $why) (Error $where $why))
+        (none ())
+        ($request (($request)))))
      (state:rows (state:query "SELECT request FROM task_proposals WHERE serial=? UNION ALL SELECT request FROM actions WHERE serial=? LIMIT 1" ($serial $serial)))))
 (= (task:call-parts $identity $parts)
    (let* (($position (car-atom $parts)) ($serial (parse (car-atom (cdr-atom $parts))))
           ($owner (str:join ":" (task:reverse (cdr-atom (cdr-atom $parts)) ())))
           ($rows (task:call-request-rows $serial $owner)))
-     (if (not (== $owner (state:text (state:meta "owner")))) (Error task-read another-ledger)
-       (if (== $rows ()) (Error task-read unknown-call-identity)
-         (task:find (task:items (task:projection (car-atom (car-atom $rows)) "retrieval") "transcript") $identity)))))
+     (case (state:meta "owner")
+       (((Error $where $why) (Error $where $why))
+        ($actual-owner
+          (if (not (== $owner (state:text $actual-owner))) (Error task-read another-ledger)
+            (case $rows
+              (((Error $where $why) (Error $where $why))
+               (() (Error task-read unknown-call-identity))
+               ((($request))
+                (let $view (task:projection $request "retrieval")
+                  (case $view
+                    (((Error $where $why) (Error $where $why))
+                     ((ContextPreparationFailed $why) (Error task-read $why))
+                     ($ok (task:find (task:items $ok "transcript") $identity))))))
+               ($other (Error task-read $other))))))))))
 (= (task:page-end $raw $offset $end $size)
    (if (<= (str:byte-length (str:char-slice $raw $offset $end)) $size) $end
      (task:page-end $raw $offset (+ $offset (math:floor (/ (- $end $offset) 2))) $size)))
@@ -71,8 +90,11 @@
 (= (task:read $id $offset $size)
    (let $value (if (str:starts-with $id "task-frame:")
                   (let $full (task:projection (str:char-slice $id 11 (str:char-length $id)) "continuation-tick")
-                    (let (JsonObject $fields) $full
-                      (let $remaining (state:json-without $fields "transcript") (JsonObject $remaining))))
+                    (case $full
+                      (((JsonObject $fields)
+                        (let $remaining (state:json-without $fields "transcript") (JsonObject $remaining)))
+                       ((ContextPreparationFailed $reason) (Error task-read $reason))
+                       ($error $error))))
                   (task:call $id))
      (case $value (((Error $where $reason) $value) ($other (task:page $id $value $offset $size))))))
 (= (task-read $id) (task-read $id 0 8192))
@@ -253,15 +275,20 @@
    (let* (($target (context:target))
           ($available (if (== $capacity "") $target
                         (min $target (max 0 (- (- (str:string->number $capacity) (math:ceil (/ (request:bytes $base) $ratio))) 128)))))
-          ($selected (task:compact (task:conversation-view $focus $trigger) $available $ratio))
-          ($carried (task:report-carried (task:items $selected "transcript")))
-          ($candidate (state:json-set $selected "transcript"
-                        (JsonArray (task:idle-pairs
-                          (task:items $selected "transcript")))))
-          ($view (if (<= (str:byte-length (state:encoded $candidate))
-                         (str:byte-length (state:encoded $selected)))
-                    $candidate $selected)))
-     (request:append (task:place-transcript $base ()) (str:concat "TASK_CONTEXT " (state:encoded $view)))))
+          ($initial (task:conversation-view $focus $trigger)))
+     (case $initial
+       (((ContextPreparationFailed $_) $initial)
+        ((Error $_ $_) (ContextPreparationFailed "context-conversation-read-failed"))
+        ($ok
+          (let* (($selected (task:compact $ok $available $ratio))
+                 ($carried (task:report-carried (task:items $selected "transcript")))
+                 ($candidate (state:json-set $selected "transcript"
+                               (JsonArray (task:idle-pairs
+                                 (task:items $selected "transcript")))))
+                 ($view (if (<= (str:byte-length (state:encoded $candidate))
+                                (str:byte-length (state:encoded $selected)))
+                           $candidate $selected)))
+            (request:append (task:place-transcript $base ()) (str:concat "TASK_CONTEXT " (state:encoded $view)))))))))
 
 ; The whole-window view spans task frames. The transcript is append-only from a
 ; saved start and is compacted when it passes 90% of the available window;
@@ -299,8 +326,15 @@
 (= (task:saved-start $root)
    (task:checkpoint-start (state:meta (task:window-key $root))))
 (= (task:conversation-view $focus $trigger)
-   (task:conversation-projection $focus $trigger
-     (task:saved-start (task:conversation-root)) (task:result-chars)))
+   (case (state:meta "owner")
+     (((Error $_ $_) (ContextPreparationFailed "context-conversation-read-failed"))
+      ($owner
+        (let $root (str:concat "conversation:" (state:text $owner))
+          (case (state:meta (task:window-key $root))
+            (((Error $_ $_) (ContextPreparationFailed "context-conversation-read-failed"))
+             ($checkpoint
+               (task:conversation-projection $focus $trigger
+                 (task:checkpoint-start $checkpoint) (task:result-chars))))))))))
 (= (task:handoff-text $root)
    (task:checkpoint-handoff $root (state:meta (task:window-key $root))))
 (= (task:checkpoint-handoff $root $checkpoint)
@@ -474,7 +508,11 @@
                           (if (== $index "") "" (str:concat $index "\n_cache_chunk_\n"))
                           $facts $conversation $turn)))))))))))))))
 (= (task:full-context $base $focus $trigger $capacity $ratio)
-   (task:full-context-view $base (task:conversation-view $focus $trigger) $capacity $ratio))
+   (let $view (task:conversation-view $focus $trigger)
+     (case $view
+       (((ContextPreparationFailed $_) $view)
+        ((Error $_ $_) (ContextPreparationFailed "context-conversation-read-failed"))
+        ($ok (task:full-context-view $base $ok $capacity $ratio))))))
 ; The calls a render carries with their results, reported to the host, which binds them to
 ; the rendered prompt (strategy_host.context_presented, context_prepared): call ids of the rows
 ; whose disposition is not not_run, uncertain or input. A cut, repeated or collapsed result

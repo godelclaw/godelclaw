@@ -45,12 +45,26 @@
 (= (ledger-server:call (ServiceCallV1 (DbConfigurationV1 $owner $identity $incarnation $kind $artifacts) $peer $source
     (LedgerCallV1 $verb $arguments)))
   (if (== $kind directory)
-      (LedgerAnswersV1 (collapse (input-ledger:perform $owner $verb $arguments)))
+      (LedgerAnswersV1 (collapse (input-ledger:call $owner $verb $arguments)))
       (DbRefusedV1 read-only)))
+(= (ledger-server:budget $client-budget)
+  (let $server-budget (store:value-byte-limit)
+    (if (and (> $client-budget 0) (< $client-budget $server-budget))
+        $client-budget
+        $server-budget)))
 (= (ledger-server:page (ServiceCallV1 (DbConfigurationV1 $owner $identity $incarnation $kind $artifacts) $peer $source
-    (LedgerPageV1 $verb $arguments $start $count)))
+    $request))
   (if (== $kind directory)
-      (LedgerAnswersV1 (collapse (input-ledger:page $owner $verb $arguments $start $count)))
+      (case $request
+        (((LedgerPageV1 $verb $arguments $start $count)
+          (LedgerAnswersV1 (collapse (input-ledger:page-read $owner $verb $arguments $start $count
+                                       (store:value-byte-limit) none))))
+         ((LedgerPageV1 $verb $arguments $start $count $client-budget)
+          (LedgerAnswersV1 (collapse (input-ledger:page-read $owner $verb $arguments $start $count
+                                       (ledger-server:budget $client-budget) none))))
+         ((LedgerPageV1 $verb $arguments $start $count $client-budget $read-id)
+          (LedgerAnswersV1 (collapse (input-ledger:page-read $owner $verb $arguments $start $count
+                                       (ledger-server:budget $client-budget) $read-id))))))
       (DbRefusedV1 read-only)))
 (= (db-server:service $owner $socket)
   (let* (($incarnation (system:uuid4-hex))
@@ -96,7 +110,7 @@
        (ServiceRouteV1 DbRangeRead Read db-server:range-read)
        (ServiceRouteV1 DbRangeCancel Read db-server:range-cancel)
        (ServiceRouteV1 LedgerCall Write ledger-server:call)
-       (ServiceRouteV1 LedgerPage Write ledger-server:page))
+       (ServiceRouteV1 LedgerPage Read ledger-server:page))
       (ServiceLimitsV2 64 1024 $frame 30000 268435456 2147483647 0)
       (ServiceMaintenanceV1 db-server:maintenance (DbMaintenanceIdleV1 $memory True) $work))))
 (= (db-server:configuration-data $owner $incarnation $artifacts)
