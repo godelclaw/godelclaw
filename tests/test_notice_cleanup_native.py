@@ -13,6 +13,7 @@ import tempfile
 import time
 import threading
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 CHANNEL_ROOT = Path(os.environ.get("CETTA_CHANNEL_ROOT", ROOT))
@@ -249,7 +250,10 @@ def main():
 @unittest.skipUnless(SERVICE and CETTA, "set CETTA_SERVICE_BIN and CETTA_BIN (and CETTA_CHANNEL_ROOT to the bundle)")
 class OwnedNoticeTest(unittest.TestCase):
     def test_on_the_native_ledger(self):
-        main()
+        # main() points this process's input_ack at the fixture's ledger; later tests must not inherit it.
+        self.addCleanup(input_ack.close_ledger)
+        with mock.patch.dict(os.environ):
+            main()
 
 
 if __name__ == "__main__":
