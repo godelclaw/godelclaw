@@ -197,7 +197,7 @@ def observe(args, deployment, now=None):
                        if args.canonical_memory.exists() else 0)
     if canonical_bytes < int(deployment.get("baseline_canonical_bytes", 0)):
         problems.append("canonical-memory-regressed")
-    if facts["memories"] < int(deployment.get("baseline_memories", 0)):
+    if facts["memories"] is not None and facts["memories"] < int(deployment.get("baseline_memories", 0)):
         problems.append("memory-count-regressed")
     return {
         "observed_at": now, "active": active, "head": head,

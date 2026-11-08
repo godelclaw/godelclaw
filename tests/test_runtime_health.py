@@ -54,6 +54,20 @@ class RuntimeHealthTest(unittest.TestCase):
         self.assertIn("failure-streak=0", report)
         self.assertNotIn("activity: working", report)
 
+    def test_health_reports_native_memory_without_chroma_counts(self):
+        self.write(self.channel, {"last_poll_ok_at": 995, "menu_status": "ok"})
+        self.write(self.working, {"saved_at": 999})
+        self.write(self.cognitive, {"schema": 2, "last_completed_at": 997, "last_settled_at": 998})
+        native = {"mode": "native", "name": "memories-test", "socket": "/nonexistent/memory.sock"}
+        for reachable in (True, False):
+            with self.subTest(reachable=reachable), \
+                 mock.patch.object(runtime_health.memory_health, "backend", return_value=native), \
+                 mock.patch.object(runtime_health.memory_health, "native_reachable", return_value=reachable), \
+                 mock.patch.object(runtime_health.time, "time", return_value=1000):
+                report = runtime_health.report()
+                self.assertIn("memory=native |", report)
+                self.assertEqual("memory-service-unreachable" in report, not reachable)
+
     def test_external_control_and_upstream_checkpoint_replace_legacy_client_health(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)

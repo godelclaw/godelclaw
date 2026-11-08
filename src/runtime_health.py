@@ -127,6 +127,8 @@ def status(now=None):
         if started_at and now - started_at > stale_after:
             problems.append("model-turn-receipt-missing")
     configured = memory_health.backend()
+    # Chroma's index counts; the native memory service has none to report.
+    docs = behind = threshold = None
     if configured["mode"] == "native":
         if not memory_health.native_reachable(configured["socket"]):
             problems.append("memory-service-unreachable")
@@ -171,7 +173,7 @@ def report():
         "generation={generation} | menu={menu} | "
         "telegram={transport} | loop={loop} | working-set-age={working}s | "
         "model-turn-age={turn}s | model-turn-pending={pending}s | "
-        "memory={memories} ({behind}/{threshold} behind) | problems={problems}"
+        "memory={memory} | problems={problems}"
     ).format(
         state=value["state"], lifecycle=value["lifecycle"],
         generation=value["generation"],
@@ -182,8 +184,10 @@ def report():
         loop=value["loop"], working=value["working_set_age_seconds"],
         turn=value["model_turn_age_seconds"],
         pending=value["model_turn_pending_age_seconds"],
-        memories=value["memories"], behind=value["memory_index_behind"],
-        threshold=value["memory_flush_threshold"], problems=problems,
+        memory=(memory_health.backend()["mode"] if value["memories"] is None else
+                "%s (%s/%s behind)" % (value["memories"], value["memory_index_behind"],
+                                       value["memory_flush_threshold"])),
+        problems=problems,
     )
 
 
