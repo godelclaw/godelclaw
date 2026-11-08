@@ -2,18 +2,27 @@
 import tempfile
 import unittest
 from pathlib import Path
+import native_ledger
 from observed_strategy import Ledger
 
 class ObservedStrategyTest(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
-        self.path=Path(self.tmp.name)/'state.sqlite3'; self.store=Ledger(self.path)
+        native_ledger.start(self,self.tmp.name)
+        self.path=Path(self.tmp.name)/'state'; self.store=Ledger(self.path)
         self.store.accept('task','requested work')
 
-    def test_legacy_requests_are_readable_and_paging_reaches_an_end(self):
+    def test_every_process_names_one_owner_before_and_after_the_first_capture(self):
+        # Two Ledger objects stand for two processes on one store that has never captured a turn.
+        first, second = Ledger(self.path), Ledger(self.path)
+        owner = first._native_meta()['owner']
+        self.assertEqual(second._native_meta()['owner'], owner)
+        sample = second.capture('task', 'context', {}, 0)
+        self.assertTrue(sample['ticket'].startswith(owner + ':') if isinstance(sample, dict) and 'ticket' in sample else True)
+        self.assertEqual(Ledger(self.path)._native_meta()['owner'], owner)
+
+    def test_requests_are_readable_and_paging_reaches_an_end(self):
         for n in range(40): self.store.accept('legacy-%d' % n, 'retained input %d' % n)
-        with self.store.transaction() as db:
-            db.execute("DELETE FROM request_context WHERE request LIKE 'legacy-%'")
         offset, seen = 0, []
         while True:
             page = self.store.request_page(offset, 13)
@@ -24,7 +33,6 @@ class ObservedStrategyTest(unittest.TestCase):
             offset = page['next_offset']
         self.assertEqual(len(set(seen)), 41)
         self.assertEqual(self.store.request_record('legacy-0')['content'], 'retained input 0')
-        self.assertIsNone(self.store.request_record('legacy-0')['kind'])
         self.assertEqual(len(self.store.request_page(0, 100)['records']), 41)
 
     def issue(self):

@@ -2,11 +2,13 @@
 import os, tempfile, unittest, json
 from pathlib import Path
 from unittest.mock import patch
+import native_ledger
 import topic_jobs
 
 class TopicNotesTest(unittest.TestCase):
     def test_notes_and_selection_survive_reopen(self):
-        with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {"METTACLAW_STRATEGY_PATH":td+"/state.db"}):
+        with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {"METTACLAW_STRATEGY_PATH":td+"/state"}):
+            native_ledger.start(self, td)
             topic_jobs.select("research")
             topic_jobs.note("finding from source")
             self.assertIn("finding from source",topic_jobs.context())

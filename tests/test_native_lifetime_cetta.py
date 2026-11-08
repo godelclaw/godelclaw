@@ -1,19 +1,21 @@
-"""Native call ownership matches Python, including its recovery boundaries."""
-from contextlib import closing
+"""The MeTTa call-lifetime client (nl:*) and the Python one (native_lifetime) make the same native ledger
+records, including at the recovery boundaries."""
 import json
 import os
 from pathlib import Path
-import sqlite3
 import subprocess
 import sys
 import time
 from types import SimpleNamespace
+import uuid
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from execution_gateway.cetta_worker import S
+import input_ack
 import llm_policy
+import native_ledger
 import native_lifetime
-import usage_history
 import test_llm_policy_cetta as policy_tests
 
 
@@ -25,7 +27,7 @@ def meta(identity, **fields):
 
 
 class NativeLifetimeTests(policy_tests.NativeLedgerFixture):
-    def replay_lifetime(self, steps, metadata):
+    def replay_lifetime(self, steps, metadata, records=True):
         forms, expected, plans = [], [], {}
         for key, data in metadata.items():
             plans[key] = SimpleNamespace(correlation=data['id'], epoch=data['epoch'],
@@ -51,11 +53,12 @@ class NativeLifetimeTests(policy_tests.NativeLedgerFixture):
                             forms.append('(nl:claim %s %s)' % (native, now))
                             expected.append(['changed', native_lifetime.claim(plans[key])])
                         elif kind == 'submitted':
-                            forms.append('(nl:submitted %s (json:parse %s) %s)'
+                            # A statement on both sides: its effect is in the records (agree()).
+                            forms.append('(let $_ (nl:submitted %s (json:parse %s) %s) ok)'
                                          % (native, policy_tests.quoted(json.dumps(args[0])), now))
                             native_lifetime.submitted(plans[key], args[0]); expected.append(['ok'])
                         elif kind == 'progress':
-                            forms.append('(nl:progress %s %s %s)' % (native, ' '.join(
+                            forms.append('(let $_ (nl:progress %s %s %s) ok)' % (native, ' '.join(
                                 '(json:parse %s)' % policy_tests.quoted(json.dumps(value)) for value in args), now))
                             native_lifetime.progress(plans[key], *args); expected.append(['ok'])
                         elif kind == 'settle':
@@ -107,40 +110,51 @@ class NativeLifetimeTests(policy_tests.NativeLedgerFixture):
                                 changed = native_lifetime.settle(plan, state, reason=reason)
                             expected.append(['changed', changed])
                         elif kind == 'recover':
-                            forms.append('(nl:recover %s)' % now)
+                            forms.append('(let $_ (lp:native "llm-recover" (%s (lp:request-id))) ok)' % now)
                             native_lifetime.recover(); expected.append(['ok'])
                         else:
                             self.fail('unknown lifetime operation ' + kind)
-                    except sqlite3.IntegrityError as error:
+                    except llm_policy.IntegrityError as error:
                         # A constraint answer is exact; storage faults stay coarse.
                         expected.append(policy_tests.python_error(error))
-                    except sqlite3.Error:
+                    except input_ack.LedgerUnavailable:
                         expected.append(['error'])
                     except (ValueError, TypeError, OverflowError) as error:
                         expected.append(policy_tests.python_error(error))
         actual = self.native(forms, module='native_lifetime_cetta.metta')
         self.assertEqual(actual, expected)
-        self.assertEqual(policy_tests.snapshot(self.native_db), policy_tests.snapshot(self.python_db))
-        self.assertEqual(policy_tests.stored_details(self.native_db), policy_tests.stored_details(self.python_db))
+        if records:
+            self.agree()
 
     def seed(self, rows):
-        """Seed identical preexisting rows; these are never live agent ledgers."""
-        for path in (self.python_db, self.native_db):
-            with closing(sqlite3.connect(path)) as conn:
-                for row in rows:
-                    identity = row['id']
-                    conn.execute("INSERT INTO requests(id,started,reserved,status,provider,mode,owner,fingerprint) "
-                                 "VALUES(?,900,10,?,'synthetic','godelclaw',?,'')",
-                                 (identity, row.get('request', 'pending'), row.get('owner', llm_policy._owner)))
-                    conn.execute("INSERT INTO native_calls(id,epoch,pid,process_start,created,updated,state,guard,result,purpose) "
-                                 "VALUES(?,'epoch',?,?,900,?,?,'revision',?,?)",
-                                 (identity, row.get('pid', os.getpid()),
-                                  row.get('start', native_lifetime.process_start(os.getpid())),
-                                  row.get('updated', 1000), row.get('state', 'claimed'),
-                                  row.get('result'), row.get('purpose', 'turn')))
-                    conn.execute("INSERT INTO llm_call_history(call_id,event,observed,detail) VALUES(?,'admitted',900,?)",
-                                 (identity, '{"provider":"synthetic"}'))
-                conn.commit()
+        """Identical preexisting records on both ledgers, made with the ledger's own verbs: an admission at 900
+        (unless admitted=False), a claim by the row's process (a scoped call, so that several may be active), the
+        call's state and then the request's status at `updated`. These are never live agent ledgers."""
+        for socket in (self.python_socket, self.native_socket):
+            def call(verb, *arguments):
+                arguments = tuple(llm_policy._argument(item) for item in arguments)
+                return input_ack._ledger_call(verb, arguments + ("rq1." + uuid.uuid4().hex,), 30, socket)
+            for number, row in enumerate(rows):
+                identity, updated, purpose = row['id'], float(row.get('updated', 1000)), row.get('purpose', 'turn')
+                if row.get('admitted', True):
+                    call("llm-admit", identity, "synthetic", 10, "", "managed", "godelclaw",
+                         row.get('owner', llm_policy._owner), '{"provider":"synthetic"}', 900.0)
+                pid = row.get('pid', os.getpid())
+                start = row['start'] if 'start' in row else native_lifetime.process_start(os.getpid())
+                call("llm-claim", identity, "epoch", pid, start, "revision", "seed-%d" % number, "background", purpose,
+                     False, True, 100000, 1, S("ok"), '{"epoch":"epoch"}', updated)
+                state = row.get('state', 'claimed')
+                if state == 'submitted':
+                    call("llm-submitted", identity, "epoch", 0, updated)
+                elif state != 'claimed':
+                    call("llm-settle", identity, "epoch", purpose, state, row.get('result'), None, 0, updated)
+                request = row.get('request', 'pending')
+                with patch.dict(os.environ, {input_ack.LEDGER_SOCKET: socket}), \
+                        patch.object(llm_policy.time, 'time', return_value=updated):
+                    if request == 'completed':
+                        llm_policy.complete_native(identity, dict(usage={}, choices=[dict(finish_reason='stop')]))
+                    elif request == 'failed':
+                        llm_policy.fail_native(identity, sent=False, now=updated)
 
     def test_claim_submit_progress_wrong_epoch_and_uncertain_settlement(self):
         self.replay_lifetime([
@@ -152,22 +166,6 @@ class NativeLifetimeTests(policy_tests.NativeLedgerFixture):
             ('settle', 'a', 'completed', 'late', None, 1, 1005),
         ], dict(a=meta('a', activity='one', lane='interactive'),
                 wrong=meta('a', activity='one', lane='interactive', epoch='wrong')))
-
-    def test_submitted_and_progress_store_pythons_int(self):
-        # Python stores int(value); an int() refusal or a value past SQLite's
-        # 64-bit integers raises before any statement runs.
-        transports = [7.75, True, ' 7 ', '７', '7.5', 1e30, 2 ** 63, -2 ** 63, None]
-        steps, metadata = [], {}
-        for i, transport in enumerate(transports):
-            key = 'call-%d' % i
-            metadata[key] = meta(key)
-            steps += [('admit', key, 1000 + 4 * i), ('claim', key, 1000 + 4 * i),
-                      ('submitted', key, transport, 1001 + 4 * i)]
-        steps += [('progress', 'call-0', 30.9, True, False, 1100), ('progress', 'call-0', '1_024', '-3', 0.5, 1101),
-                  ('progress', 'call-0', 12, 'x', 1, 1102), ('progress', 'call-0', 12, 4, 2 ** 64, 1103),
-                  # Every argument converts before any is bound: int('x') wins over 2**64.
-                  ('progress', 'call-0', 2 ** 64, 'x', 1, 1104), ('progress', 'call-0', 1e30, 4, None, 1105)]
-        self.replay_lifetime(steps, metadata)
 
     def test_combined_completion_commits_usage_request_and_receipt_together(self):
         usage = dict(input_tokens=10, cache_read_input_tokens=20,
@@ -188,75 +186,30 @@ class NativeLifetimeTests(policy_tests.NativeLedgerFixture):
 
     def test_combined_settlement_fault_cannot_leave_usage_or_request_half_committed(self):
         self.seed([dict(id='a', state='submitted')])
-        with closing(sqlite3.connect(self.native_db)) as db:
-            db.execute("CREATE TRIGGER fixture_abort BEFORE UPDATE OF state ON native_calls "
-                       "WHEN NEW.state IN ('completed','failed') BEGIN SELECT RAISE(ABORT,'fixture fault'); END")
-            db.commit()
-        before = policy_tests.snapshot(self.native_db)
+        before = policy_tests.snapshot(self.native_socket, self.native_owners)
+        proxy, faults = native_ledger.faulty(self, self.root, self.native_socket, b'llm-complete')
+        refusing_fail, more = native_ledger.faulty(self, self.root, proxy, b'llm-fail')
+        self.native_socket, real = refusing_fail, self.native_socket
         metadata = '(json:parse %s)' % policy_tests.quoted(json.dumps(meta('a', sent=True)))
-        self.assertEqual(self.native([
-            '(nl:complete %s (json:parse "{\\\"output_tokens\\\":4}") "stop" "receipt" 0 1001)' % metadata,
-            '(nl:fail %s "http-status" 429 10 0 1002)' % metadata,
-        ], module='native_lifetime_cetta.metta'), [['error', 'IntegrityError', 'fixture fault']] * 2)
-        self.assertEqual(policy_tests.snapshot(self.native_db), before)
+        try:
+            self.assertEqual(self.native([
+                '(nl:complete %s (json:parse "{\\\"output_tokens\\\":4}") "stop" "receipt" 0 1001)' % metadata,
+                '(nl:fail %s "http-status" 429 10 0 1002)' % metadata,
+            ], module='native_lifetime_cetta.metta'), [['error']] * 2)
+        finally:
+            self.native_socket = real
+        self.assertTrue(faults and more)
+        self.assertEqual(policy_tests.snapshot(self.native_socket, self.native_owners), before)
 
     def test_wrong_epoch_cannot_add_usage_or_fail_someone_elses_request(self):
         self.seed([dict(id='a', state='submitted')])
-        before = policy_tests.snapshot(self.native_db)
+        before = policy_tests.snapshot(self.native_socket, self.native_owners)
         metadata = '(json:parse %s)' % policy_tests.quoted(json.dumps(meta('a', epoch='wrong', sent=True)))
         self.assertEqual(self.native([
             '(nl:complete %s (json:parse "{\\\"output_tokens\\\":4}") "stop" "receipt" 0 1001)' % metadata,
             '(nl:fail %s "http-status" 429 10 0 1002)' % metadata,
         ], module='native_lifetime_cetta.metta'), [['changed', False], ['changed', False]])
-        self.assertEqual(policy_tests.snapshot(self.native_db), before)
-
-    def test_pruned_terminal_call_still_accepts_only_its_own_late_usage(self):
-        self.seed([dict(id='a', state='failed', request='failed')])
-        for path in (self.python_db, self.native_db):
-            with closing(sqlite3.connect(path)) as db:
-                db.execute("INSERT INTO llm_call_history(call_id,event,observed,detail) VALUES('a','claimed',900,?)",
-                           (json.dumps(dict(epoch='epoch')),))
-                db.execute("DELETE FROM native_calls WHERE id='a'")
-                db.commit()
-        wrong = '(json:parse %s)' % policy_tests.quoted(json.dumps(meta('a', epoch='wrong')))
-        self.assertEqual(self.native(['(nl:complete %s (json:parse "{\\\"output_tokens\\\":900}") "stop" "foreign" 0 1001)' % wrong],
-                                     module='native_lifetime_cetta.metta'), [['changed', False]])
-        self.assertEqual(policy_tests.snapshot(self.native_db), policy_tests.snapshot(self.python_db))
-        self.replay_lifetime([('complete-owned', 'a', dict(output_tokens=4), 'stop', 'late receipt', 0, 1002)],
-                             dict(a=meta('a')))
-
-    def test_existing_ledger_migration_preserves_rows_and_notification_compatibility(self):
-        self.seed([dict(id='old-terminal', state='completed', request='completed'), dict(id='active')])
-        for path in (self.python_db, self.native_db):
-            with closing(sqlite3.connect(path)) as db:
-                for name in ('owner', 'fingerprint'):
-                    db.execute('ALTER TABLE requests DROP COLUMN ' + name)
-                for name in ('activity', 'lane', 'purpose', 'notified'):
-                    db.execute('DROP INDEX IF EXISTS native_call_recent')
-                    db.execute('ALTER TABLE native_calls DROP COLUMN ' + name)
-                db.commit()
-        with patch.dict(os.environ, self.env, clear=True), patch.object(llm_policy.time, 'time', return_value=1000):
-            with native_lifetime.transaction():
-                pass
-        self.assertEqual(self.native(['(lp:init)'], module='native_lifetime_cetta.metta'), [['ok']])
-        self.assertEqual(policy_tests.snapshot(self.native_db), policy_tests.snapshot(self.python_db))
-        with closing(sqlite3.connect(self.native_db)) as db:
-            self.assertEqual(db.execute('SELECT id,notified FROM native_calls ORDER BY id').fetchall(),
-                             [('active', 0), ('old-terminal', 1)])
-
-    def test_upgrading_an_unrecorded_ledger_does_not_invent_historical_usage(self):
-        self.seed([dict(id='old-terminal', state='completed', request='completed'), dict(id='active')])
-        with closing(sqlite3.connect(self.native_db)) as db:
-            db.execute('DROP TABLE llm_call_history')
-            db.commit()
-        before = time.time()
-        self.assertEqual(self.native(['(lp:init)'], module='native_lifetime_cetta.metta'), [['ok']])
-        after = time.time()
-        report = usage_history.report(self.native_db)
-        self.assertFalse(report['coverage_complete'])
-        self.assertEqual(report['legacy_request_rows_without_history'], 2)
-        self.assertEqual(report['totals'], {})
-        self.assertTrue(before <= report['recording_started'] <= after)
+        self.assertEqual(policy_tests.snapshot(self.native_socket, self.native_owners), before)
 
     def test_scoped_claims_preserve_capacity_and_interactive_reserve(self):
         metadata = dict(a=meta('a', activity='one', lane='interactive'),
@@ -270,12 +223,11 @@ class NativeLifetimeTests(policy_tests.NativeLedgerFixture):
                     meta('b', activity='foreground', lane='interactive'),
                     meta('c', activity='background-one', lane='background'),
                     meta('d', activity='background-two', lane='background')]
-        self.seed([dict(id=data['id'], state='completed') for data in metadata])
-        with closing(sqlite3.connect(self.native_db)) as db:
-            db.execute('DELETE FROM native_calls')
-            db.commit()
+        for data in metadata:
+            input_ack._ledger_call("llm-admit", (data['id'], "synthetic", 10, "", "managed", "godelclaw", llm_policy._owner,
+                                                 '{"provider":"synthetic"}', 900.0, "rq1." + uuid.uuid4().hex), 30, self.native_socket)
         children = []
-        env = dict(self.env, METTACLAW_LLM_LEDGER_PATH=str(self.native_db))
+        env = dict(self.env, METTACLAW_INPUT_LEDGER_SOCKET=self.native_socket)
         try:
             for data in metadata:
                 script, output = self.root / (data['id'] + '.metta'), self.root / (data['id'] + '.out')
@@ -298,12 +250,11 @@ class NativeLifetimeTests(policy_tests.NativeLedgerFixture):
             answers = [output.read_text().lower() for _, output in children]
             self.assertEqual(answers.count('(ledgerchanged true)'), 2, answers)
             self.assertEqual(answers.count('(ledgerchanged false)'), 2, answers)
-            with closing(sqlite3.connect(self.native_db)) as db:
-                self.assertEqual(db.execute('SELECT lane,COUNT(*) FROM native_calls '
-                    "WHERE state='claimed' GROUP BY lane ORDER BY lane").fetchall(),
-                    [('background', 1), ('interactive', 1)])
-                self.assertEqual(db.execute("SELECT COUNT(DISTINCT activity) FROM native_calls WHERE state='claimed'").fetchone()[0], 2)
-                self.assertEqual(db.execute("SELECT COUNT(*) FROM requests WHERE status='pending'").fetchone()[0], 4)
+            claimed = [row for row in native_ledger.llm_records('calls', self.native_socket) if row['state'] == 'claimed']
+            self.assertEqual(sorted(row['lane'] for row in claimed), ['background', 'interactive'])
+            self.assertEqual(len({row['activity'] for row in claimed}), 2)
+            self.assertEqual(sum(1 for row in native_ledger.llm_records('requests', self.native_socket)
+                                 if row['status'] == 'pending'), 4)
         finally:
             for child, _ in children:
                 try:
@@ -349,21 +300,24 @@ class NativeLifetimeTests(policy_tests.NativeLedgerFixture):
         self.seed([dict(id='live'), dict(id='dead', pid=0, start='old', owner='0:0'),
                    dict(id='reused', start='wrong-birth-stamp'), dict(id='unknown-start', start=None)])
         self.replay_lifetime([('recover', 1003)], {})
-        with closing(sqlite3.connect(self.native_db)) as conn:
-            self.assertEqual(conn.execute("SELECT state FROM native_calls WHERE id='live'").fetchone()[0], 'claimed')
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM native_calls WHERE state='uncertain'").fetchone()[0], 3)
+        calls = native_ledger.llm_records('calls', self.native_socket)
+        self.assertEqual([row['state'] for row in calls if row['id'] == 'live'], ['claimed'])
+        self.assertEqual(sum(1 for row in calls if row['state'] == 'uncertain'), 3)
 
-    def test_mid_settlement_sql_failure_rolls_both_ledgers_back(self):
-        for path in (self.python_db, self.native_db):
-            with closing(sqlite3.connect(path)) as conn:
-                conn.execute("CREATE TRIGGER fixture_abort BEFORE UPDATE OF status ON requests "
-                             "WHEN NEW.status='unknown' BEGIN SELECT RAISE(ABORT,'fixture fault'); END")
-                conn.commit()
+    def test_a_failed_settlement_changes_nothing_on_either_ledger_and_the_next_one_commits(self):
+        refused = []
+        for name in ('python_socket', 'native_socket'):
+            (self.root / name).mkdir()
+            proxy, faults = native_ledger.faulty(self, self.root / name, getattr(self, name), b'uncertain', count=3)
+            setattr(self, name, proxy)
+            refused.append(faults)
+        self.env['METTACLAW_INPUT_LEDGER_SOCKET'] = self.python_socket
         self.replay_lifetime([
             ('admit', 'a', 1000), ('claim', 'a', 1000), ('submitted', 'a', 7, 1001),
             ('settle', 'a', 'uncertain', None, 'transport-error', 0, 1002),
             ('settle', 'a', 'completed', 'receipt', None, 0, 1003),
         ], dict(a=meta('a')))
+        self.assertEqual([len(faults) for faults in refused], [3, 3])
 
     def test_purpose_is_validated_only_after_refusal_checks(self):
         self.replay_lifetime([
@@ -385,26 +339,10 @@ class NativeLifetimeTests(policy_tests.NativeLedgerFixture):
                     c=meta('c', activity='valid', lane='sideways'))
         self.replay_lifetime([(kind, key, 1000) for key in data for kind in ('admit', 'claim')], data)
 
-    def test_text_timestamps_recover_as_python_reads_them(self):
-        # Recovery computes now - float(updated) only for a terminal request;
-        # NaN and infinities compare as Python's floats do.
-        values = ['NaN', 'Infinity', '-Infinity', ' +١_٢.٥ ', 'invalid']
-        rows = [dict(id='pending-%d' % i, updated=value) for i, value in enumerate(values)]
-        rows += [dict(id='done-%d' % i, request='completed', updated=value)
-                 for i, value in enumerate(values[:-1])]
-        self.seed(rows)
-        self.replay_lifetime([('recover', 1001)], {})
-
-    def test_an_unreadable_timestamp_rolls_the_whole_recovery_back(self):
-        # float('invalid') raises inside the transaction: no row changes,
-        # including a row the same recovery would otherwise reconcile.
-        self.seed([dict(id='due', request='completed', updated=' +١_٢.٥ '),
-                   dict(id='bad', request='completed', updated='invalid')])
-        self.replay_lifetime([('recover', 1001)], {})
-
     def test_activity_values_claim_as_python_sees_them(self):
-        # `not activity` decides the unscoped path; the regex reads
-        # str(activity); TEXT affinity stores what the binding gives.
+        # `not activity` decides the unscoped path and the regex reads str(activity): both clients decide
+        # alike. An activity that is not text is stored as each client holds it (Python its str()), so the
+        # records are not compared here.
         data, steps = {}, []
         cases = [(activity, 'interactive') for activity in (False, 0, None, True, 7, 7.5, -1.5, 1e30)]
         # The unscoped path never reads the lane.
@@ -415,7 +353,7 @@ class NativeLifetimeTests(policy_tests.NativeLedgerFixture):
             now = 1000 + 3 * i
             steps += [('admit', key, now), ('claim', key, now + 1),
                       ('settle', key, 'completed', 'receipt', None, 0, now + 2)]
-        self.replay_lifetime(steps, data)
+        self.replay_lifetime(steps, data, records=False)
 
     def test_a_boolean_identity_binds_as_an_integer(self):
         # True binds as 1, and TEXT affinity matches the stored id '1'.
@@ -429,11 +367,7 @@ class NativeLifetimeTests(policy_tests.NativeLedgerFixture):
         self.replay_lifetime([('recover', stamp + 1.9999), ('recover', stamp + 2.0)], {})
 
     def test_dead_orphan_without_a_request_row_is_recovered(self):
-        self.seed([dict(id='orphan', pid=0, start='old', owner='0:0')])
-        for path in (self.python_db, self.native_db):
-            with closing(sqlite3.connect(path)) as conn:
-                conn.execute("DELETE FROM requests WHERE id='orphan'")
-                conn.commit()
+        self.seed([dict(id='orphan', pid=0, start='old', admitted=False)])
         self.replay_lifetime([('recover', 1003)], {})
 
     def test_settlement_records_expired_soft_wait_without_a_progress_poll(self):
@@ -441,16 +375,4 @@ class NativeLifetimeTests(policy_tests.NativeLedgerFixture):
             ('admit', 'a', 1000), ('claim', 'a', 1000), ('submitted', 'a', 7, 1001),
             ('settle', 'a', 'completed', 'receipt', None, 1, 1002),
         ], dict(a=meta('a')))
-        with closing(sqlite3.connect(self.native_db)) as conn:
-            self.assertEqual(conn.execute("SELECT soft_elapsed FROM native_calls WHERE id='a'").fetchone()[0], 1)
-            self.assertEqual(conn.execute("SELECT typeof(process_start) FROM native_calls WHERE id='a'").fetchone()[0], 'text')
-
-    def test_receipts_and_evidence_survive_the_old_retention_ceiling(self):
-        self.seed([dict(id='terminal-%03d' % i, state='completed', request='completed',
-                        updated=900 + i / 10, result='receipt') for i in range(260)] +
-                  [dict(id='active', updated=0)])
-        self.replay_lifetime([('recover', 1000)], {})
-        with closing(sqlite3.connect(self.native_db)) as conn:
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM native_calls WHERE state='completed'").fetchone()[0], 260)
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM native_calls WHERE result IS NOT NULL").fetchone()[0], 260)
-            self.assertEqual(conn.execute("SELECT state FROM native_calls WHERE id='active'").fetchone()[0], 'claimed')
+        self.assertEqual(native_ledger.llm_call('a', socket=self.native_socket)['soft'], 1)

@@ -9,7 +9,7 @@
    (let $saved (state:meta-text (task:window-key $root))
      (case $saved
        (((Error $_ $_) (ContextPreparationFailed "context-conversation-read-failed"))
-        (sqlite:null (Checkpoint sqlite:null 0 ""))
+        (none (Checkpoint none 0 ""))
         ($raw
           (let* (($value (json-parse $raw))
                  ($start (task:checkpoint-start $value))
@@ -17,26 +17,16 @@
             (Checkpoint $raw $start $summary)))))))
 
 (= (context:old-checkpoint $raw)
-   (if (== $raw sqlite:null) (JsonObject ()) (task:checkpoint-record (json-parse $raw))))
+   (if (== $raw none) (JsonObject ()) (task:checkpoint-record (json-parse $raw))))
 (= (context:write-checkpoint $root $old $checkpoint)
-   (if (state:native-ledger) (context:native-write-checkpoint $root $old $checkpoint)
-     (context:sql-write-checkpoint $root $old $checkpoint)))
-; The checkpoint is set only where it still holds <old> (absent for sqlite:null).
+   (context:native-write-checkpoint $root $old $checkpoint))
+; The checkpoint is set only where it still holds <old> (absent for none).
 (= (context:native-write-checkpoint $root $old $checkpoint)
-   (case (state:ledger "meta-cas" ((task:window-key $root) (if (== $old sqlite:null) none $old)
+   (case (state:ledger "meta-cas" ((task:window-key $root) (if (== $old none) none $old)
                                    (state:encoded $checkpoint) (state:request-id)))
      ((published ContextPublished)
       (changed (ContextPreparationFailed "context-checkpoint-changed"))
       ($other (ContextPreparationFailed "context-checkpoint-write-failed")))))
-(= (context:sql-write-checkpoint $root $old $checkpoint)
-   (let* (($key (task:window-key $root)) ($value (state:encoded $checkpoint))
-          ($result (state:transaction immediate (
-            (sqlite:statement "INSERT INTO meta(key,value) SELECT ?,? WHERE ? IS NULL ON CONFLICT(key) DO NOTHING" ($key $value $old))
-            (sqlite:statement "UPDATE meta SET value=? WHERE key=? AND value IS ?" ($value $key $old))))))
-     (case $result
-       (((sqlite:committed ((sqlite:result $_ $_ $inserted $_) (sqlite:result $_ $_ $updated $_)))
-          (if (== (+ $inserted $updated) 1) ContextPublished (ContextPreparationFailed "context-checkpoint-changed")))
-        ($other (ContextPreparationFailed "context-checkpoint-write-failed"))))))
 (= (context:publish $root $old $start $summary $call $first $last $digest)
    (let* (($gap (state:json-field (context:old-checkpoint $old) "archive_gap"))
           ($checkpoint (JsonObject (
@@ -123,7 +113,7 @@
        (((ContextPreparationFailed $_) $planned)
         ($ready
           (let* (($plan (py-call (native_llm_host.for_compaction $ready)))
-                 ($path (str:concat (state:checkpoint) ".compaction-reply.json")))
+                 ($path (path:join (path:dirname (system:getenv-or-default "METTACLAW_ENGINE_STATE_PATH" "memory/engine")) "compaction-reply.json")))
             (case (catch (llm:run $plan))
               (((Error $kind $detail) (context:failed-reply $plan $path))
                ((Error $detail) (context:failed-reply $plan $path))
@@ -224,9 +214,7 @@
                              (JsonPair "reason" (JsonString $reason))
                              (JsonPair "streak" (task:number $streak))
                              (JsonPair "retry_at" (task:number $retry))))
-     (if (state:native-ledger)
-       (state:ledger "meta-put" ($key (state:encoded $failure) (state:request-id)))
-       (state:query "INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value" ($key (state:encoded $failure))))))
+     (state:ledger "meta-put" ($key (state:encoded $failure) (state:request-id)))))
 
 ; The checkpoint denotes only a validated handoff. An omitted working range
 ; lives in the prompt, never in that checkpoint: it remains eligible for a
@@ -277,15 +265,15 @@
                  ($available (max 0 (- (- $capacity (task:working-cost $frame $ratio))
                                          (math:ceil (/ (str:byte-length $summary) $ratio)))))
                  ((Window $start $_) (task:window-from $root (task:items $view "transcript") $offset $available $ratio)))
-            (if (and (== $raw sqlite:null) (> (task:checkpoint-number $view "offset") 0))
+            (if (and (== $raw none) (> (task:checkpoint-number $view "offset") 0))
               (context:accept-first-window $view $capacity $ratio)
             (if (> $start $offset)
-              (if (== $raw sqlite:null) (context:initial-view $view $capacity $ratio)
+              (if (== $raw none) (context:initial-view $view $capacity $ratio)
                 (context:after-fold $view $capacity $ratio
                   (context:consume $view $start $capacity $model $tokens $effort $ratio)))
               (if (or (<= $available 0) (> (task:sum-tokens (task:items $view "transcript") $ratio 0) $available))
                 (ContextPreparationFailed "context-record-or-metadata-exceeds-window")
-                (let $_ (if (== $raw sqlite:null)
+                (let $_ (if (== $raw none)
                           (context:write-checkpoint $root $raw
                             (JsonObject ((JsonPair "version" (JsonNumber "1")) (JsonPair "start" (JsonNumber "0")) (JsonPair "summary" (JsonString "")))))
                           ContextPublished)
@@ -347,7 +335,7 @@
         (let* (($root (task:string $fit "root"))
                ($start (task:checkpoint-number $fit "offset"))
                ($next (context:migration-checkpoint (JsonObject ()) 0 $start ""))
-               ($written (context:write-checkpoint $root sqlite:null $next)))
+               ($written (context:write-checkpoint $root none $next)))
           (case $written
             ((ContextPublished (ContextReady (state:json-set $fit "pending_history" JsonNull)))
              ($error $error)))))

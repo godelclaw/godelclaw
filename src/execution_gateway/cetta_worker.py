@@ -127,7 +127,10 @@ def encode(value, *, maximum_bytes: int = MAX_BYTES) -> bytes:
         elif isinstance(v, bool):
             append(b"Y" if v else b"N")
         elif isinstance(v, int):
-            append(b"I" + struct.pack("<q", v))
+            if -2 ** 63 <= v < 2 ** 63:
+                append(b"I" + struct.pack("<q", v))
+            else:  # the engine's arbitrary-precision integer
+                text(b"J", str(v))
         elif isinstance(v, float):
             append(b"F" + struct.pack("<d", v))
         elif isinstance(v, FloatBits):

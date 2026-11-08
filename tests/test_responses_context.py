@@ -5,7 +5,6 @@ to satisfy the independent limit on the provider's instructions field.
 """
 import json
 import os
-import sqlite3
 import unittest
 
 import test_native_llm_boundary as boundary
@@ -47,6 +46,9 @@ class NativeResponsesContextTests(unittest.TestCase):
     setUp = boundary.NativeBoundaryTests.setUp
     tearDown = boundary.NativeBoundaryTests.tearDown
     run_guest = boundary.NativeBoundaryTests.run_guest
+    fresh_ledger = boundary.NativeBoundaryTests.fresh_ledger
+    records = boundary.NativeBoundaryTests.records
+    column = boundary.NativeBoundaryTests.column
 
     def prepare(self):
         self.peer.delay = .01
@@ -66,16 +68,15 @@ class NativeResponsesContextTests(unittest.TestCase):
         self.assertEqual(path, "/v1/responses")
         self.assertNotIn("instructions", body)
         self.assertEqual(body["input"], expected)
-        with sqlite3.connect(self.env["METTACLAW_LLM_LEDGER_PATH"]) as db:
-            self.assertEqual(db.execute("SELECT status FROM requests").fetchall(), [("completed",)])
-            self.assertEqual(db.execute("SELECT state FROM native_calls").fetchall(), [("completed",)])
+        self.assertEqual(self.column("requests", "status"), [("completed",)])
+        self.assertEqual(self.column("calls", "state"), [("completed",)])
 
     def test_native_api_command_with_and_without_commentary(self):
         for commentary in ("0", "1"):
             with self.subTest(commentary=commentary):
                 self.peer.requests.clear()
-                self.env.update(METTACLAW_MODEL_COMMENTARY=commentary, SYNTHETIC_MODEL="openai:fixture-model",
-                                METTACLAW_LLM_LEDGER_PATH=str(self.directory / (commentary + ".db")))
+                self.env.update(METTACLAW_MODEL_COMMENTARY=commentary, SYNTHETIC_MODEL="openai:fixture-model")
+                self.fresh_ledger(commentary)
                 forms, path = self.prepare()
                 self.run_guest(forms + f'!(let $prompt (fs:read-text {json.dumps(str(path))}) '
                     '(println! (RESULT (llm:command "openai:fixture-model" 100 "high" $prompt))))\n', timeout=40)
@@ -93,8 +94,8 @@ class NativeResponsesContextTests(unittest.TestCase):
         for commentary in ("0", "1"):
             with self.subTest(commentary=commentary):
                 self.peer.requests.clear()
-                self.env.update(METTACLAW_MODEL_COMMENTARY=commentary,
-                                METTACLAW_LLM_LEDGER_PATH=str(self.directory / (commentary + ".db")))
+                self.env.update(METTACLAW_MODEL_COMMENTARY=commentary)
+                self.fresh_ledger(commentary)
                 forms, path = self.prepare()
                 session = self.subscription_session()
                 self.run_guest(forms +
@@ -108,8 +109,8 @@ class NativeResponsesContextTests(unittest.TestCase):
         for subscription in (False, True):
             with self.subTest(subscription=subscription):
                 self.peer.requests.clear()
-                self.env.update(SYNTHETIC_MODEL="openai:fixture-model",
-                                METTACLAW_LLM_LEDGER_PATH=str(self.directory / (str(subscription) + ".db")))
+                self.env.update(SYNTHETIC_MODEL="openai:fixture-model")
+                self.fresh_ledger(str(subscription))
                 forms, _ = self.prepare()
                 messages = [{"role": "system", "content": LARGE},
                             {"role": "developer", "content": "policy"}, {"role": "user", "content": "task"}]

@@ -1,4 +1,4 @@
-; The native call path owns its SQLite policy and lifecycle transactions.
+; The native call path records its policy and lifecycle in the native LLM ledger.
 ; Host calls here only read interop facts or publish existing host effects.
 !(import! &self ./native_lifetime_cetta.metta)
 !(import! &self ./native_llm_host.py)
@@ -64,7 +64,7 @@
 (= (account:submitted $plan $id)
    (let* (($ignored6 (py-call (native_llm_host.submitted $plan $id))) ($metadata (account:metadata $plan)))
      (case (nl:submitted $metadata $id (system:wall-time))
-       (((sqlite:committed $ignored7) 1)
+       (
         ((LedgerChanged $changed) 1)
         ($error (py-call (native_llm_host.accounting_observation_error $plan "submitted")))))))
 (: account:progress (-> %Undefined% %Undefined% %Undefined% %Undefined%))
@@ -73,7 +73,7 @@
      (if (host:flag (py-call (native_llm_host.field $plan "progress_record_due")))
        (let $metadata (account:metadata $plan)
          (case (nl:progress $metadata $bytes $quiet (lp:field $metadata "progress_soft" 0) (system:wall-time))
-           (((sqlite:committed $ignored9) 1)
+           (
             ((LedgerChanged $changed) 1)
             ($error (py-call (native_llm_host.accounting_observation_error $plan "progress")))))) 1)))
 (: account:failed (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))

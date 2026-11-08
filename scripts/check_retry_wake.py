@@ -12,10 +12,6 @@ import os
 import re
 from pathlib import Path
 import subprocess
-import sys
-import sqlite3
-import tempfile
-from unittest import mock
 
 from generate_retry_wake import artifacts
 from retry_wake_compiler import (ROOT, App, HolProof, apply, equality, mg_claim,
@@ -150,43 +146,52 @@ def check_execution(binary, lane, model, work, symbol, string, parse):
     return len(rows)
 
 
-def check_host(model, work):
-    sys.path.insert(0, str(ROOT/'src'))
-    import native_lifetime as host
+
+
+HOST_PROGRAM = """(= (host:snapshot $space)
+   (let $reserved (case (llm-ledger:request-of $space "fixture")
+                    ((((llm:request $ri $rst $rv $rs $ro $rp $rm $rf $row $rfp)) $rv) ($none none)))
+     ; A case pattern's variables stay bound for the rest of the rule: each pattern names its own.
+     (case (llm-ledger:call-of $space "fixture")
+       ((() (absent $reserved))
+        (((llm:call $ci $ce $cpid $cs $cc $cu $cst $cg $ct $cso $cb $cq $cr $ca $cl $cpu $cn))
+         ($cst $ct $cb (llm-ledger:result-of $space "fixture") $reserved))))))
+(= (host:case $request $call $updated)
+   (let* (($space (new-space)) ($pid (system:pid)) ($birth (process:birth $pid))
+          ($_ (add-atom $space (llm:request "fixture" 900 37 $request none "synthetic" "fixture" none "" "")))
+          ($_ (if (== $call "absent") done
+                  (let $_ (add-atom $space (llm:call "fixture" "epoch" $pid $birth 900 $updated $call none 7 0 19 0
+                                                     none none none "turn" 0))
+                    (add-atom $space (llm:result "fixture" "retained evidence")))))
+          ($first (llm-ledger:recover-calls-in $space 1000)) ($one (host:snapshot $space))
+          ($again (llm-ledger:recover-calls-in $space 1000)) ($two (host:snapshot $space)))
+     (HOST $one $two)))
+"""
+
+
+def check_host(binary, model, work):
+    """The ledger's own call recovery (llm-ledger:recover-calls-in, which llm-recover runs on the
+    store) reproduces every model transition on records owned by a live process: a stale call
+    takes the model's state, a recent one (inside the 2 s grace) keeps its own, the evidence and
+    the request's reservation are untouched, and a second recovery changes nothing."""
     spec = importlib.util.spec_from_file_location('retry_wake_executable', ROOT/'src/retry_wake_model.py')
     executable = importlib.util.module_from_spec(spec); spec.loader.exec_module(executable)
-    count = 0
-    with tempfile.TemporaryDirectory(dir=work, prefix='host-') as temporary:
-        environment = {'METTACLAW_LLM_LEDGER_PATH': str(Path(temporary)/'ledger.sqlite3'),
-                       'METTACLAW_LLM_POLICY': 'upstream', 'METTACLAW_LLM_POLICY_PATH': ''}
-        with mock.patch.dict(os.environ, environment), mock.patch('time.time', return_value=1000), \
-                mock.patch.object(host, 'process_start', return_value='alive'):
-            for request, call, output, _ in model['transitions']:
-                r, c, v = map(short, (request, call, output))
-                if executable.reconcile(r, c) != v: raise ValueError('generated host model differs')
-                for recent in (False, True):
-                    with host.transaction() as db:
-                        db.execute('DELETE FROM native_calls'); db.execute('DELETE FROM requests')
-                        db.execute('INSERT INTO requests(id,started,reserved,status,output,provider,mode,finish,owner,fingerprint) VALUES (?,?,?,?,?,?,?,?,?,?)',
-                            ('fixture', 900, 37, r, None, 'synthetic', 'fixture', None, '', ''))
-                        if c != 'absent':
-                            db.execute('INSERT INTO native_calls(id,epoch,pid,process_start,created,updated,state,transport,bytes,result) VALUES (?,?,?,?,?,?,?,?,?,?)',
-                                ('fixture', 'epoch', os.getpid(), 'alive', 900, 999 if recent else 990, c, 7, 19, 'retained evidence'))
-                    host.recover()
-                    def snapshot():
-                        with host.transaction() as db:
-                            row = db.execute('SELECT state,transport,bytes,result FROM native_calls').fetchone()
-                            reserved = db.execute('SELECT reserved FROM requests').fetchone()[0]
-                        return row, reserved
-                    observed, reserved = snapshot()
-                    expected = c if recent else v
-                    expected_row = None if c == 'absent' else (expected, 7, 19, 'retained evidence')
-                    if observed != expected_row or reserved != 37:
-                        raise ValueError('actual recovery differs from model or changes unrelated evidence')
-                    host.recover()
-                    if snapshot() != (observed, reserved): raise ValueError('recovery is not idempotent')
-                    count += 1
-    return count
+    cases = []
+    # The module the ledger server runs (it imports llm_ledger.metta).
+    source = '!(import! &self ' + json.dumps(str(ROOT/'src/input_ledger.metta')) + ')\n' + HOST_PROGRAM
+    for request, call, output, _ in model['transitions']:
+        r, c, v = map(short, (request, call, output))
+        if executable.reconcile(r, c) != v: raise ValueError('generated host model differs')
+        for recent in (False, True):
+            expected = c if recent else v
+            row = '(absent 37)' if c == 'absent' else f'("{expected}" 7 19 "retained evidence" 37)'
+            cases.append(f'(HOST {row} {row})')
+            source += f'!(println! (host:case "{r}" "{c}" {999 if recent else 990}))\n'
+    lines = [line.strip() for line in execute(binary, 'petta', source, work, 'host').splitlines()
+             if line.strip().startswith('(HOST ')]
+    if lines != cases:
+        raise ValueError('actual recovery differs from model, changes unrelated evidence, or is not idempotent')
+    return len(cases)
 
 
 def check_lean(model, models, toolchain, work):
@@ -226,7 +231,7 @@ def check(binary, work, lanes=('he', 'petta', 'prime'), models=None, toolchain='
     work.mkdir(parents=True, exist_ok=True)
     sources = ('verification/RetryWake.module', 'verification/RetryWakeKernels.metta',
                'verification/RetryWakeModel.metta', 'verification/RetryWake.model.json',
-               'src/native_lifetime.py', 'src/retry_wake_model.py',
+               'src/llm_ledger.metta', 'src/input_ledger.metta', 'src/retry_wake_model.py',
                'scripts/retry_wake_compiler.py', 'scripts/generate_retry_wake.py',
                'scripts/check_retry_wake.py')
     source_hashes = {name: hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in sources}
@@ -265,14 +270,14 @@ def check(binary, work, lanes=('he', 'petta', 'prime'), models=None, toolchain='
                         'module_executions': executions, 'transition_proofs': 24, 'inactive_proofs': 18,
                         'megalodon_proofs': 42 if with_mg else 0,
                         'repeated_cases': 2, 'wrong_result_refused': True}
-    host_cases = check_host(model, work)
+    host_cases = check_host(binary, model, work)
     lean = check_lean(model, models, toolchain, work) if models else {'status': 'not-requested'}
     if source_hashes != {name: hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in sources}:
         raise ValueError('model sources changed during qualification')
     receipt = {'schema': 2, 'source_sha256':source_hashes, 'host_cases':host_cases, 'lean':lean, 'scope': 'finite model checking; not whole-host verification',
                'module_sha256': model['module_sha256'], 'lanes': result,
                'engine_sha256': hashlib.sha256(Path(binary).read_bytes()).hexdigest(),
-               'host_sha256': hashlib.sha256((ROOT/'src/native_lifetime.py').read_bytes()).hexdigest(),
+               'host_sha256': hashlib.sha256((ROOT/'src/llm_ledger.metta').read_bytes()).hexdigest(),
                'generator_sha256': hashlib.sha256((ROOT/'scripts/retry_wake_compiler.py').read_bytes()).hexdigest(),
                'mm0': 'unsupported: audited transition theory required',
                'live_policy_changed': False}

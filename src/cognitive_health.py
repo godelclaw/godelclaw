@@ -12,8 +12,6 @@ import tempfile
 import threading
 import time
 import uuid
-import sqlite3
-from contextlib import closing
 
 
 _lock = threading.RLock()
@@ -419,47 +417,6 @@ def notify_failure():
         return 0
     try:
         import input_ack
-        if input_ack._native_socket():
-            return _notify_failure_native(episode)
+        return _notify_failure_native(episode)
     except Exception:
-        return 0
-    try:
-        import agent_checkpoint
-        import mode_channel
-        import durable_telegram
-        # A queued notice needs only a read, even while cognition holds the
-        # writer. First publication retries nonblocking rather than delaying
-        # operator controls behind a checkpoint lock or schema migration.
-        path = agent_checkpoint.path()
-        with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True, timeout=0)) as db:
-            exists = db.execute("SELECT 1 FROM sqlite_master WHERE name='provider_notices'").fetchone()
-            if exists:
-                row = db.execute("SELECT queued FROM provider_notices WHERE episode=?", (episode["id"],)).fetchone()
-                if row and row[0]:
-                    return 0
-        store = agent_checkpoint.ledger(initialize=False, timeout=0)
-        with store.transaction() as db:
-            db.execute("""CREATE TABLE IF NOT EXISTS provider_notices (
-                episode TEXT PRIMARY KEY, intent TEXT NOT NULL,
-                queued INTEGER NOT NULL DEFAULT 0)""")
-            row = db.execute("SELECT intent,queued FROM provider_notices WHERE episode=?", (episode["id"],)).fetchone()
-            if row and row[1]:
-                return 0
-            folder = mode_channel.state() / "channel-outbox"
-            if row:
-                intent = json.loads(row[0])
-            else:
-                route = mode_channel.resolve("telegram")
-                folder.mkdir(parents=True, exist_ok=True)
-                key = durable_telegram.Channel("", str(folder / "sequence")).key(route["chat"], route["thread"])
-                intent = dict(key=key, commands=[["send", _failure_notice(episode), "plain"]])
-                db.execute("INSERT INTO provider_notices(episode,intent) VALUES (?,?)",
-                           (episode["id"], json.dumps(intent, ensure_ascii=False)))
-        # This separate transaction is intentional: the immutable identity and
-        # body must survive a crash before, during or after outbox publication.
-        mode_channel.store(folder / (intent["key"] + ".json"), intent)
-        with store.transaction() as db:
-            db.execute("UPDATE provider_notices SET queued=1 WHERE episode=?", (episode["id"],))
-        return 1
-    except (OSError, ValueError, KeyError, TypeError, RuntimeError, sqlite3.Error):
         return 0

@@ -119,12 +119,10 @@
           ($binary (format-args "{}" ((py-call (coding_io.descriptor_field $desc "binary")))))
           ($token (format-args "{}" ((py-call (coding_io.descriptor_field $desc "run")))))
           ($pythonpath (py-call (coding_io.runtime_pythonpath $runtime (system:cwd))))
-          ($ledger (py-call (builtins.str (py-call (llm_policy.ledger_path)))))
           ;; The session shares the account's ledger and usage tally, as
           ;; Codex sub-agents share rate limits, but keeps its own health,
           ;; last-completion and restart files: its calls are not the agent's turns.
-          ($own (str:join " " ("env" (work:quote (str:concat "METTACLAW_LLM_LEDGER_PATH=" $ledger))
-                                    (work:quote (str:concat "PYTHONPATH=" $pythonpath))
+          ($own (str:join " " ("env" (work:quote (str:concat "PYTHONPATH=" $pythonpath))
                                     (work:quote (str:concat "METTACLAW_ACTIVITY_CALL_SCOPE=" $id))
                                     (work:quote (str:concat "METTACLAW_STREAM_PARENT="
                                       (system:getenv-or-default "METTACLAW_INSTANCE" "agent")))

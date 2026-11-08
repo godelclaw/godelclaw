@@ -8,7 +8,6 @@ import re
 import threading
 import time
 import uuid
-import sqlite3
 
 import requests
 
@@ -2245,10 +2244,7 @@ def handover_ack(ids):
     import input_ack
     try:
         input_ack.processed_update_ids(values)
-    except sqlite3.OperationalError as error:
-        if getattr(error, "sqlite_errorcode", None) not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
-            if not any(word in str(error).lower() for word in ("locked", "busy")):
-                raise
+    except input_ack.LedgerUnavailable:
         # The durable handover remains settled; retry this idempotent metadata
         # transition at the next boundary, never replay the cognitive actions.
         return 0

@@ -1,4 +1,4 @@
-"""Compare native projections with the existing checkpoint representation."""
+"""Compare native projections with the Python projection of the same native ledger."""
 import json
 import os
 from pathlib import Path
@@ -6,18 +6,21 @@ import subprocess
 import tempfile
 import unittest
 import test_command_dispatch_engine as dispatch
+import native_ledger
 import test_task_context as reference
 import provider_protocol
 ROOT = dispatch.ROOT
 
 class NativeTaskContext(unittest.TestCase):
     def test_covered_batches_match_reference_without_shifting_source_slots(self):
-        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
         for name, size in (("input:a", 128), ("input:b", 146), ("input:c", 147)):
             fixture.store.accept(name, name + " full body", kind="message")
             fixture.store.link_inputs(name, range(size))
             reference.task_context.begin(fixture.store, name, "operator-event", chat="private")
             reference.task_context.note(fixture.store, name, "Retain progress for " + name)
+        # The native ledger takes its owner at the first captured turn; the conversation's root names it.
+        fixture.call([["read-file", "source"]], ["a captured turn gives the ledger its owner"], "input:c")
         expected = reference.task_context.conversation_projection(fixture.store, "input:c")
         expected_family = reference.task_context.projection(fixture.store, "input:c")
         output = fixture.path.parent / "covered.json"
@@ -33,7 +36,7 @@ class NativeTaskContext(unittest.TestCase):
 
     def test_model_calibration_accepts_the_live_python_text_carrier(self):
         fixture = reference.TaskContextTests(); fixture.setUp()
-        self.addCleanup(fixture.tmp.cleanup)
+        self.addCleanup(fixture.doCleanups)
         (fixture.path.parent / "context-token-calibration.json").write_text(
             json.dumps({"fixture-model": {"bytes_per_token": 4.0}}))
         output = self.guest(fixture.path, '''!(import! &self ./src/task_context_views)
@@ -46,9 +49,11 @@ class NativeTaskContext(unittest.TestCase):
 
     def guest(self, database, code):
         harness = dispatch.CommandDispatchEngineTest(); binary = harness._cetta_binary()
-        if not binary.is_file(): self.skipTest('set CETTA_BIN to shared-SQLite build')
+        if not binary.is_file(): self.skipTest('set CETTA_BIN to the native build')
         env = harness._cetta_env()
-        env.update(METTACLAW_STRATEGY_PATH=str(database), METTACLAW_ENGINE_STATE_PATH=str(database.parent / 'engine'))
+        env.pop('METTACLAW_LLM_LEDGER_PATH', None)
+        env.update(METTACLAW_STRATEGY_PATH=str(database), METTACLAW_ENGINE_STATE_PATH=str(database.parent / 'engine'),
+                   METTACLAW_INPUT_LEDGER_SOCKET=os.environ[native_ledger.VARIABLE])
         with tempfile.NamedTemporaryFile('w', dir=ROOT, suffix='.metta') as source:
             source.write('!(import! &self (library lib_import))\n!(import! &self ./src/task_context_cetta)\n'+code)
             source.flush()
@@ -61,7 +66,7 @@ class NativeTaskContext(unittest.TestCase):
 
     def test_projection_retains_commands_results_corrections_and_null_outcomes(self):
         fixture = reference.TaskContextTests(); fixture.setUp()
-        self.addCleanup(fixture.tmp.cleanup)
+        self.addCleanup(fixture.doCleanups)
         fixture.call([['read-file','source']], ['EARLY λ; not a compilation check'])
         fixture.store.accept('correction', 'Retain the original qualification λ', kind='message')
         reference.task_context.begin(fixture.store, 'correction', 'operator-event', parent='guide')
@@ -77,7 +82,7 @@ class NativeTaskContext(unittest.TestCase):
 
     def test_foreign_string_focus_renders_full_context_with_its_identity(self):
         fixture = reference.TaskContextTests(); fixture.setUp()
-        self.addCleanup(fixture.tmp.cleanup)
+        self.addCleanup(fixture.doCleanups)
         fixture.call([["read-file", "source"]], ["inspected evidence λ"])
         expected = fixture.path.parent / "text-focus.txt"
         actual = fixture.path.parent / "foreign-focus.txt"
@@ -101,21 +106,23 @@ class NativeTaskContext(unittest.TestCase):
             self.assertEqual(actual_view[key], expected_view[key])
         self.assertEqual(actual_view["focus"], "guide")
 
-    def test_unicode_topic_names_and_notes_use_existing_schema(self):
-        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+    def test_unicode_topic_names_and_notes_are_kept(self):
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
         self.guest(fixture.path, '''!(println! (topic-select "Café / PLN λ"))
 !(println! (topic-note "inspect the original source; correction preserved"))
 !(println! (topics))
 !(println! TASK_CONTEXT_OK)
 ''')
-        with fixture.store.transaction() as db:
-            self.assertEqual(json.loads(db.execute("SELECT value FROM meta WHERE key='active_topic'").fetchone()[0]), 'Café / PLN λ')
-            self.assertEqual(tuple(db.execute("SELECT name,revision,notes FROM topic_contexts WHERE name=?", ('Café / PLN λ',)).fetchone()),
-                             ('Café / PLN λ', 1, 'inspect the original source; correction preserved'))
+        import topic_jobs
+        name, notes = 'Café / PLN λ', 'inspect the original source; correction preserved'
+        listed = json.loads(topic_jobs.topics())
+        self.assertEqual(listed['active'], name)
+        self.assertEqual([row for row in listed['topics'] if row['name'] == name], [{'name': name, 'revision': 1}])
+        self.assertEqual(topic_jobs.context(), 'TOPIC_NOTES ' + reference.encoded({'name': name, 'notes': notes}))
 
 
     def test_compaction_and_fresh_process_recover_exact_unicode_source(self):
-        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
         text = "ž🙂 inspected source " * 120
         fixture.call([["read-file", "large"]], [text])
         fixture.call([["read-file", "later"], ["send", "unexecuted"]], ["newest observation"])
@@ -143,7 +150,7 @@ class NativeTaskContext(unittest.TestCase):
         self.assertEqual(json.loads(out.read_text())['result'], text)
 
     def test_long_history_fit_check_and_encoding_match_the_full_measure(self):
-        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
         for i in range(40): fixture.call([["read-file", str(i)]], [("λ result %d " % i) * 3000])
         expected = reference.encoded(reference.task_context.projection(fixture.store, 'guide'))
         out = fixture.path.parent / 'long.json'
@@ -159,7 +166,7 @@ class NativeTaskContext(unittest.TestCase):
 
     def test_idle_view_collapses_only_identical_confirmed_rest_receipts(self):
         fixture = reference.TaskContextTests(); fixture.setUp()
-        self.addCleanup(fixture.tmp.cleanup)
+        self.addCleanup(fixture.doCleanups)
         result = "(RESTING budget-banked sleep-interval-seconds 60)"
         pairs = [
             dict(id="a", request="guide", command=["rest", 60],
@@ -198,7 +205,7 @@ class NativeTaskContext(unittest.TestCase):
         return text, json.loads(text[text.rindex("TASK_CONTEXT ") + len("TASK_CONTEXT "):])
 
     def test_new_frame_keeps_prior_evidence_in_the_working_window(self):
-        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
         for i in range(9): fixture.call([["read-file", str(i)]], ["A_FINDING_%d" % i])
         before, first = self.full_view(fixture, 400000, fixture.path.parent / "before.txt")
         fixture.store.accept("group-post", "B_UNRELATED_INPUT", kind="notification")
@@ -218,41 +225,31 @@ class NativeTaskContext(unittest.TestCase):
         self.assertEqual(reference.task_context.history(fixture.store, "group-post")["total"], 1)
 
     def test_working_metadata_does_not_grow_with_closed_requests(self):
-        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
         for name, status in (("wait", "waiting-user"), ("later", "deferred"), ("handed-over", "processed")):
             fixture.store.accept(name, "OPEN_" + name, kind="message")
-            with fixture.store.transaction() as db:
-                db.execute("UPDATE requests SET status=? WHERE id=?", (status, name))
+            if status == "processed":
+                self.assertTrue(fixture.store.processed(name))
+            else:
+                self.assertTrue(fixture.store.disposition(name, "waiting-user" if status == "waiting-user" else "defer", "set aside"))
         def working(name, offset):
             out = fixture.path.parent / (name + ".json")
             self.guest(fixture.path, '!(fs:update-text ' + json.dumps(str(out)) +
                 ' "replace" (state:encoded (task:conversation-projection "guide" "tick" ' + str(offset) + ' 40000)) "" "")\n!(println! TASK_CONTEXT_OK)\n')
             return json.loads(out.read_text())
         before = working("before", 4)
-        with fixture.store.transaction() as db:
-            db.executemany("INSERT INTO requests(id,content,status,checker) VALUES(?,?,'addressed','operator')",
-                           [("closed-" + str(i), "CLOSED_BODY" * 100) for i in range(2000)])
-            db.executemany("INSERT INTO request_context(request,kind) VALUES(?,'message')",
-                           [("closed-" + str(i),) for i in range(2000)])
+        for i in range(2000):
+            fixture.store.accept("closed-" + str(i), "CLOSED_BODY" * 100, kind="message")
+            self.assertTrue(fixture.store.processed("closed-" + str(i)))
+            self.assertTrue(fixture.store.disposition("closed-" + str(i), "addressed", "answered"))
         after = working("after", 2004)
         self.assertEqual(before["requests"], after["requests"])
         self.assertEqual({r["id"] for r in after["requests"]}, {"guide", "wait", "later", "handed-over"})
         self.assertNotIn("CLOSED_BODY", json.dumps(after["requests"]))
         self.assertTrue(all("content" not in r and "retrieve" not in r for r in after["requests"]))
 
-    def test_ordering_lookup_uses_both_partial_indexes(self):
-        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
-        fixture.call([["read-file", "a"]], ["finding"])
-        out = fixture.path.parent / "ordering.sql"
-        self.guest(fixture.path, '!(fs:update-text ' + json.dumps(str(out)) +
-                   ' "replace" (task:conversation-sql (task:limited-result-sql 40000) 40000 "") "" "")\n!(println! TASK_CONTEXT_OK)\n')
-        with fixture.store.transaction() as db:
-            plan = "\n".join(str(tuple(row)) for row in db.execute("EXPLAIN QUERY PLAN " + out.read_text()))
-        self.assertIn("USING INDEX events_capture", plan)
-        self.assertIn("USING INDEX events_deliver", plan)
-
     def test_native_conversation_projection_matches_python_and_preserves_occurrences(self):
-        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
         fixture.call([["read-file", "a"]], ["same observation"])
         fixture.store.accept("other", "Other input")
         reference.task_context.begin(fixture.store, "other", "channel-event", previous="guide")
@@ -265,7 +262,7 @@ class NativeTaskContext(unittest.TestCase):
         self.assertEqual(len(json.loads(out.read_text())["transcript"]), 4)
 
     def test_whole_window_view_is_append_only_ahead_of_the_turn(self):
-        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
         fixture.call([["read-file", "big"]], ["H" * 30000 + "MIDDLE" + "T" * 30000])
         fixture.call([["read-file", "marker"]], ["a _cache_boundary_ and a _cache_chunk_ in content"])
         for i in range(20): fixture.call([["read-file", str(i)]], [("step %d λ " % i) * 40])
@@ -297,7 +294,7 @@ class NativeTaskContext(unittest.TestCase):
 
     def test_project_revision_preserves_the_completed_history_cache_prefix(self):
         import provider_protocol
-        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
         for i in range(20):
             fixture.call([["read-file", str(i)]], ["inspected source " + str(i)])
         first, _ = self.full_view(fixture, 400000, fixture.path.parent / "before-revision.txt")
@@ -317,12 +314,14 @@ class NativeTaskContext(unittest.TestCase):
             self.assertIn("CONV", text)
 
     def test_pending_index_precedes_volatile_state_without_losing_request_values(self):
-        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
         for i in range(25):
             fixture.store.accept('pending-' + str(i), 'λ _cache_boundary_ _cache_chunk_ _cache-boundary_ _cache-chunk_ \\_cache_chunk_ ' + str(i), kind='message')
-        with fixture.store.transaction() as db:
-            db.execute("UPDATE requests SET status='processed' WHERE id LIKE 'pending-%'")
-            expected = [dict(row) for row in db.execute("SELECT r.id,r.status,c.kind,c.note,substr(r.content,1,160) AS excerpt FROM requests r JOIN request_context c ON c.request=r.id ORDER BY r.rowid")]
+        for i in range(25):
+            self.assertTrue(fixture.store.processed('pending-' + str(i)))
+        import input_ack
+        expected = [dict(id=row['id'], status=row['status'], kind=row['kind'], note=row['note'], excerpt=row['content'][:160])
+                    for row in input_ack.request_rows()]
         before, view = self.full_view(fixture, 400000, fixture.path.parent / 'indexed-before.txt')
         after, _ = self.full_view(fixture, 400000, fixture.path.parent / 'indexed-after.txt', facts='CHANGED_STATE')
         def blocks(prompt):
@@ -344,7 +343,7 @@ class NativeTaskContext(unittest.TestCase):
         self.assertIn('new-pending', newer[-1])
 
     def test_index_rearrangement_keeps_inline_metadata_when_layout_is_unstructured(self):
-        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
         target = fixture.path.parent / 'plain-view.txt'
         self.guest(fixture.path, '!(import! &self ./src/task_context_views)\n' +
             '!(fs:update-text ' + json.dumps(str(target)) +
@@ -355,7 +354,7 @@ class NativeTaskContext(unittest.TestCase):
         self.assertTrue(any(row['id']=='guide' for row in view['requests']))
 
     def test_whole_window_points_to_an_identical_earlier_result(self):
-        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
         same = "the same long file body " * 100
         fixture.call([["read-file", "a"]], [same])
         fixture.call([["read-file", "b"]], ["different"])
@@ -366,7 +365,7 @@ class NativeTaskContext(unittest.TestCase):
         self.assertIn("(same result as step 1)", recent)
 
     def test_overflow_cannot_advance_without_a_durable_handoff(self):
-        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
         for i in range(60): fixture.call([["read-file", str(i)]], [("step %d " % i) * 200])
         # Pure rendering is not permission to discard history. The live driver
         # must first generate and atomically publish a successful handoff.
@@ -374,15 +373,14 @@ class NativeTaskContext(unittest.TestCase):
             '!(println! (task:append-context "prompt" "guide" "continuation-tick" "20000" "model"))\n'
             '!(println! TASK_CONTEXT_OK)\n')
         self.assertIn('ContextPreparationFailed "context-compaction-required"', output)
-        with fixture.store.transaction() as db:
-            self.assertEqual(db.execute("SELECT count(*) FROM meta WHERE key LIKE 'task_window:%'").fetchone()[0], 0)
+        import input_ack
+        self.assertEqual(input_ack.meta_prefix('task_window:'), [])
         self.assertEqual(reference.task_context.history(fixture.store, "guide")["total"], 60)
 
     def test_legacy_history_keeps_numeric_order_and_original_identities(self):
-        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
-        for i in range(13): fixture.call([["read-file", str(i)]], ["result " + str(i)])
-        with fixture.store.transaction() as db:
-            db.execute("DELETE FROM task_proposals WHERE serial IN (0,2,10)")
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        # Older journals lack some proposals: those turns were decided without recording one.
+        for i in range(13): fixture.call([["read-file", str(i)]], ["result " + str(i)], propose=i not in (0, 2, 10))
         expected = reference.encoded(reference.task_context.projection(fixture.store, 'guide'))
         out = fixture.path.parent / 'legacy.json'
         self.guest(fixture.path, '!(fs:update-text '+json.dumps(str(out))+
@@ -391,10 +389,12 @@ class NativeTaskContext(unittest.TestCase):
 
 
     def test_full_driver_uses_native_context_without_the_python_projection(self):
-        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
         fixture.call([["read-file", "source"]], ["ORIGINAL_FINDING_RETAINED"])
         harness = dispatch.CommandDispatchEngineTest(); env = harness._cetta_env()
+        env.pop("METTACLAW_LLM_LEDGER_PATH", None)
         env.update(METTACLAW_OBSERVED_STRATEGY="1", METTACLAW_STRATEGY_PATH=str(fixture.path),
+                   METTACLAW_INPUT_LEDGER_SOCKET=fixture.socket,
                    METTACLAW_ENGINE_STATE_PATH=str(fixture.path.parent / "engine"),
                    METTACLAW_CONTEXT_WINDOW_TOKENS="100000", METTACLAW_HISTORY_PATH=str(fixture.path.parent / "history"),
                    METTACLAW_MODEL_COMMENTARY="1",

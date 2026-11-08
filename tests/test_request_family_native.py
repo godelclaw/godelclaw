@@ -3,9 +3,8 @@
 observed_strategy.Ledger's request methods (accept, processed, disposition, request_record, request_page,
 protected, active, cancel, retire, finish, attest, finish_exact_results, projection, selectable ...) and the
 turn checkpoint's request-status write are records of ONE native store: with the variable set the requests are
-not rows of the SQLite tables any more. The oracle is the same sequence of calls through the SQLite path
-(variable unset): return values, the refusal texts, every reader's answer after every step and the final records
-are compared; the native ones are also read by an independent cetta client straight from the atoms. Every
+records of the native store only. Each scenario asserts its return values, refusal texts and readers' answers;
+the final records are also read by an independent cetta client straight from the atoms. Every
 METTACLAW_* variable a test relies on is set here (the rest is removed), child processes get an environment built
 from scratch (no inherited variable, so no token), every wait has a deadline and every case starts its own
 server on a fresh temporary store.
@@ -18,12 +17,10 @@ from pathlib import Path
 import re
 import shutil
 import signal
-import sqlite3
 import subprocess
 import sys
 import time
 import unittest
-from contextlib import closing
 from unittest import mock
 
 HERE = Path(__file__).resolve().parent
@@ -35,7 +32,7 @@ from observed_strategy import IdentityConflict, Ledger, digest
 from execution_gateway.cetta_worker import CettaValueWorker, E, S
 from native_ledger_client import NativeRunner
 from test_input_ack_native import DbServerAt, NativeCase, RecordingProxy, SKIP
-from test_input_ledger_remote import ENGINE, Oracle, WORKER, available, oracle_environment
+from test_input_ledger_remote import ENGINE, WORKER, available, oracle_environment
 from test_turn_checkpoint_native import AWKWARD, native_dump_program, parse_native_full, sha, working
 
 ROUTER = dict(advertised=["tool"], executable=["tool"], permitted=["tool"])
@@ -43,28 +40,10 @@ BIG = "".join("line %05d \u00e9\u65e5\u672c\U0001d11e \"q\" \\ \n" % n for n in 
 ASCII_CHECKER = "sha256:" + hashlib.sha256(b"x").hexdigest()
 
 
-def sqlite_records(path):
-    """The request rows of a SQLite ledger, oldest first, with their context."""
-    with closing(sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)) as db:
-        return [dict(zip(("id", "content", "status", "checker", "kind", "processed", "note"), row))
-                for row in db.execute("""SELECT r.id,r.content,r.status,r.checker,c.kind,c.processed,c.note
-                    FROM requests r JOIN request_context c ON c.request=r.id ORDER BY r.rowid""")]
-
-
-def sqlite_counts(path):
-    with closing(sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)) as db:
-        return (db.execute("SELECT COUNT(*) FROM requests").fetchone()[0],
-                db.execute("SELECT COUNT(*) FROM request_context").fetchone()[0],
-                db.execute("SELECT COUNT(*) FROM events").fetchone()[0])
-
 
 def seen(store, focus="input:1"):
     """Everything the readers say about the ledger, through the public methods."""
     page_all = store.request_page(0, 1000)
-    # SQLite's substr() stops at an embedded NUL; the native summary keeps the characters (see
-    # test_a_summary_with_a_nul_is_the_one_listed_divergence). Compared up to the NUL.
-    for record in page_all["records"]:
-        record["summary"] = record["summary"].split("\x00")[0]
     view = store.protected(focus)
     view.pop("owner")
     return {"page": page_all, "protected": view, "active": store.active(),
@@ -73,30 +52,19 @@ def seen(store, focus="input:1"):
 
 
 class Sides:
-    """The same scenario (a function of a Ledger and a note function) on SQLite and on the native store."""
+    """A scenario (a function of a Ledger and a note function) on the native store: its noted steps, every
+    reader's answer at the end, the raw first page and the request rows."""
     def __init__(self, case):
         self.case = case
 
     def run(self, scenario):
-        outcomes = {}
-        for native in (False, True):
-            with oracle_environment() as directory:
-                runner = NativeRunner.create(directory, self.case.server.socket) if native else Oracle.create(directory)
-                store = Ledger(runner.path)
-                steps = []
-                scenario(store, lambda name, value: steps.append((name, value)))
-                outcomes[native] = dict(steps=steps, final=seen(store), path=runner.path, records=sqlite_records(runner.path),
-                                        tables=sqlite_counts(runner.path), raw_page=store.request_page(0, 1000))
-        return outcomes[False], outcomes[True]
-
-    def compare(self, scenario):
-        oracle, native = self.run(scenario)
-        self.case.assertEqual(len(native["steps"]), len(oracle["steps"]))
-        for number, (want, got) in enumerate(zip(oracle["steps"], native["steps"])):
-            self.case.assertEqual(got, want, (number, want[0]))
-        for part in oracle["final"]:
-            self.case.assertEqual(native["final"][part], oracle["final"][part], part)
-        return oracle, native
+        with oracle_environment() as directory:
+            runner = NativeRunner.create(directory, self.case.server.socket)
+            store = Ledger(runner.path)
+            steps = []
+            scenario(store, lambda name, value: steps.append((name, value)))
+            return dict(steps=steps, final=seen(store), raw_page=store.request_page(0, 1000),
+                        records=input_ack.request_rows())
 
 
 def raises(function, *arguments, **options):
@@ -167,10 +135,10 @@ def lifecycle(store, note):
 class OracleTest(NativeCase):
     maxDiff = None
 
-    def test_every_writer_and_reader_of_the_requests_answers_as_sqlite_does(self):
-        oracle, native = Sides(self).compare(lifecycle)
+    def test_every_writer_and_reader_of_the_requests(self):
+        outcome = Sides(self).run(lifecycle)
         # Guards against a scenario that compares nothing:
-        steps = dict(oracle["steps"])
+        steps = dict(outcome["steps"])
         self.assertEqual(steps["accept"][:3], [True, False, True])
         # a message settles once; a task, an unknown id and a goal do not; a task with an input: id is settled
         # (its flag) but its status stays active
@@ -179,11 +147,11 @@ class OracleTest(NativeCase):
         self.assertIn("a message is addressed only after a turn has processed it", [row[3] for row in steps["refusals"]])
         self.assertEqual(steps["retire"][0], ["goal:o:1:0", "goal:o:1:1"])
         self.assertEqual(steps["cancel"][:4], [False, True, False, False])
-        self.assertEqual([row["id"] for row in oracle["final"]["page"]["records"]][:3], ["grp:5", "grp:4", "grp:3"])
+        self.assertEqual([row["id"] for row in outcome["final"]["page"]["records"]][:3], ["grp:5", "grp:4", "grp:3"])
 
-    def test_the_final_native_records_are_what_the_sqlite_rows_are(self):
-        oracle, native = Sides(self).run(lifecycle)
-        rows = oracle["records"]
+    def test_the_final_atoms_are_what_the_readers_give(self):
+        outcome = Sides(self).run(lifecycle)
+        rows = outcome["records"]
         full = parse_native_full(self.run_client("dump", native_dump_program(self.server.socket)))
         self.assertEqual(len(full["requests"]), len(rows))
         # One record per request, numbered 1..n in acceptance order, a content atom and a link to the previous one
@@ -215,13 +183,7 @@ class OracleTest(NativeCase):
             self.assertEqual([(r["id"], r["content"]) for r in store.active()],
                              [(r["id"], r["content"]) for r in rows if r["status"] == "active"])
 
-    def test_native_requests_are_not_rows_of_the_sqlite_tables(self):
-        oracle, native = Sides(self).run(lifecycle)
-        self.assertEqual(native["records"], [])
-        self.assertEqual(native["tables"], (0, 0, 0), "no request row, no context row and no event in SQLite")
-        self.assertGreater(oracle["tables"][0], 5)
-
-    def test_content_pages_summaries_and_the_listing_match_sqlite(self):
+    def test_content_pages_summaries_and_the_listing(self):
         def scenario(store, note):
             for number in range(25):
                 store.accept("task:%02d" % number, ("%02d " % number) + BIG[:(number + 1) * 1100], kind="task")
@@ -250,8 +212,8 @@ class OracleTest(NativeCase):
             note("protected-long-focus", store.protected("input:1")["request_truncated"])
             note("protected-none", store.protected(None)["unfinished"][0]["id"])
             note("protected-unknown", store.protected("nope")["request"])
-        oracle, native = Sides(self).compare(scenario)
-        steps = dict(oracle["steps"])
+        outcome = Sides(self).run(scenario)
+        steps = dict(outcome["steps"])
         self.assertEqual(len(steps["walk"]), 31)
         self.assertEqual([steps[("exact-protected", n)][0] for n in (3999, 4000, 4001)], [False, False, True])
         self.assertEqual([steps[("exact", n, 0)]["next_offset"] for n in (3999, 4000, 4001, 8000)], [None, None, 4000, 4000])
@@ -273,8 +235,8 @@ class OracleTest(NativeCase):
                 note(("disposition", number), (store.disposition("id:" + text, "defer", text[:800] or "x"), store.refusal))
             note("repeat", [store.accept("id:" + text, text + "|content", text + "|checker", kind="task") for text in awkward])
             note("conflict", [raises(store.accept, "id:" + text, "different", text + "|checker") for text in awkward[:3]])
-        oracle, native = Sides(self).compare(scenario)
-        self.assertEqual(oracle["final"]["page"]["total"], len(awkward))
+        outcome = Sides(self).run(scenario)
+        self.assertEqual(outcome["final"]["page"]["total"], len(awkward))
         with oracle_environment() as directory:
             NativeRunner.create(directory, self.server.socket)
             store = Ledger(directory / "x.db")
@@ -283,22 +245,18 @@ class OracleTest(NativeCase):
                 self.assertEqual((record["id"], record["content"], record["checker"]),
                                  ("id:" + text, text + "|content", text + "|checker"))
 
-    def test_a_summary_with_a_nul_is_the_one_listed_divergence(self):
+    def test_a_summary_keeps_an_embedded_nul(self):
         content = "nul\x00byte " + "y" * 300
 
         def scenario(store, note):
             store.accept("t", content, kind="task")
-        oracle, native = Sides(self).run(scenario)
-        self.assertEqual(oracle["raw_page"]["records"][0]["summary"], "nul", "SQLite substr() stops at the NUL")
-        self.assertEqual(native["raw_page"]["records"][0]["summary"], content[:180], "the native summary is the first 180 characters")
-        self.assertEqual(oracle["final"]["records"], native["final"]["records"], "the content itself is exact on both")
+        outcome = Sides(self).run(scenario)
+        self.assertEqual(outcome["raw_page"]["records"][0]["summary"], content[:180], "the summary is the first 180 characters, NUL included")
+        self.assertEqual(outcome["final"]["records"][0]["content"], content[:4000], "the content itself is exact")
 
-    def test_selectable_is_the_same_rule_on_both_paths(self):
+    def test_selectable(self):
         def selectable(store, key):
-            if input_ack._native_socket():
-                return Ledger.selectable(None, key)
-            with store.transaction() as db:
-                return Ledger.selectable(db, key)
+            return Ledger.selectable(None, key)
 
         def scenario(store, note):
             store.accept("m", "m", kind="message")
@@ -320,10 +278,10 @@ class OracleTest(NativeCase):
             store.accept("m2", "m", kind="message")
             store.processed("m2")
             note("processed-message", selectable(store, "m2"))
-        oracle, native = Sides(self).compare(scenario)
-        self.assertEqual(dict(oracle["steps"])["fresh"], [True, True, True, True, True, False])
-        self.assertEqual(dict(oracle["steps"])["later"], [False, True, True, True, False, False, False])
-        self.assertIs(dict(oracle["steps"])["processed-message"], True)
+        outcome = Sides(self).run(scenario)
+        self.assertEqual(dict(outcome["steps"])["fresh"], [True, True, True, True, True, False])
+        self.assertEqual(dict(outcome["steps"])["later"], [False, True, True, True, False, False, False])
+        self.assertIs(dict(outcome["steps"])["processed-message"], True)
 
     def test_a_covered_request_keeps_the_rules_of_ledger_disposition(self):
         # Nothing makes a request covered natively (covering is the task-context family, see
@@ -354,8 +312,8 @@ class OracleTest(NativeCase):
                            store.request_record("input:1")["status"], store.processed("input:1"),
                            [r["status"] for r in store.projection()["requests"]]])
             note("status", [store.status_of(k) for k in ("input:1", "input:2", "nope")])
-        oracle, native = Sides(self).compare(scenario)
-        self.assertEqual(dict(oracle["steps"])["after"][:3], [True, None, ["input:2"]])
+        outcome = Sides(self).run(scenario)
+        self.assertEqual(dict(outcome["steps"])["after"][:3], [True, None, ["input:2"]])
 
 
 def observed_receipt(store, key, payload, domain="success"):
@@ -373,7 +331,7 @@ class CheckerTest(NativeCase):
     """finish, attest and finish_exact_results read and move a request (native) next to its actions (SQLite)."""
     maxDiff = None
 
-    def test_attest_finish_and_the_exact_output_checkers_match_sqlite(self):
+    def test_attest_finish_and_the_exact_output_checkers(self):
         always = lambda work, receipt: True
         seen_work = []
 
@@ -403,8 +361,8 @@ class CheckerTest(NativeCase):
             note("work-dict", [store.attest("w5", t5, spy), store.finish("w5", t5, {"operator": spy})])
             note("done", [store.request_record("w5")["status"], store.disposition("w5", "reopen", "x"), store.refusal,
                           store.cancel("w5", True)])
-        oracle, native = Sides(self).compare(scenario)
-        steps = dict(oracle["steps"])
+        outcome = Sides(self).run(scenario)
+        steps = dict(outcome["steps"])
         self.assertEqual(steps["early-finish"], [False, False])
         self.assertEqual(steps["attest"], [True, False, False, False])
         self.assertEqual(steps["finish"][2:5], [True, False, "achieved"])
@@ -413,19 +371,15 @@ class CheckerTest(NativeCase):
         self.assertEqual(steps["exact"][0], 1)
         self.assertEqual(steps["exact"][1], 0)
 
-    def test_the_checker_is_given_the_request_row_as_sqlite_gives_it(self):
-        got = {}
-        for native in (False, True):
-            with oracle_environment() as directory:
-                runner = NativeRunner.create(directory, self.server.socket) if native else Oracle.create(directory)
-                store = Ledger(runner.path)
-                store.accept("w", "content \u00e9 \n x", kind="task")
-                ticket = observed_receipt(store, "w", "p", "unknown")
-                seen_work = []
-                store.attest("w", ticket, lambda work, receipt: seen_work.append((dict(work), dict(receipt, ticket="t"))) or True)
-                got[native] = seen_work
-        self.assertEqual(got[True], got[False])
-        self.assertEqual(got[False][0][0], {"id": "w", "content": "content \u00e9 \n x", "status": "active", "checker": "operator"})
+    def test_the_checker_is_given_the_request_row(self):
+        with oracle_environment() as directory:
+            runner = NativeRunner.create(directory, self.server.socket)
+            store = Ledger(runner.path)
+            store.accept("w", "content \u00e9 \n x", kind="task")
+            ticket = observed_receipt(store, "w", "p", "unknown")
+            seen_work = []
+            store.attest("w", ticket, lambda work, receipt: seen_work.append((dict(work), dict(receipt, ticket="t"))) or True)
+        self.assertEqual(seen_work[0][0], {"id": "w", "content": "content \u00e9 \n x", "status": "active", "checker": "operator"})
 
 
 @unittest.skipUnless(available(), SKIP)
@@ -433,7 +387,7 @@ class TaskContextTest(NativeCase):
     """The Python readers of the task-context family that ask for requests (the rest of that family is SQLite)."""
     maxDiff = None
 
-    def test_begin_resume_read_note_and_the_projections_match_sqlite(self):
+    def test_begin_resume_read_note_and_the_projections(self):
         import task_context
 
         def scenario(store, note):
@@ -460,8 +414,8 @@ class TaskContextTest(NativeCase):
             conversation = task_context.conversation_projection(store, "input:b")
             conversation["root"] = "conversation:<owner>"  # the owner is random per ledger
             note("conversation", conversation)
-        oracle, native = Sides(self).compare(scenario)
-        steps = dict(oracle["steps"])
+        outcome = Sides(self).run(scenario)
+        steps = dict(outcome["steps"])
         self.assertEqual(steps["begin-child"][2], "input:b")
         self.assertEqual([item["id"] for item in steps["projection"][0]["requests"]], ["input:b", "task-x"])
         self.assertEqual(steps["unknown-parent"][:2], ("raised", "ValueError"))
@@ -476,10 +430,9 @@ class TaskContextTest(NativeCase):
                 store.link_inputs(key, ids)
                 task_context.begin(store, key, "operator-event", None, "chat")
             note("statuses", [store.status_of("input:a"), store.status_of("input:b"), [r["id"] for r in store.active()]])
-        oracle, native = Sides(self).run(scenario)
-        self.assertEqual(dict(oracle["steps"])["statuses"], ["covered", "active", ["input:b"]], "SQLite covers input:a")
-        # The frames, the inputs and the coverage are native records too: the same batch is covered.
-        self.assertEqual(dict(native["steps"])["statuses"], dict(oracle["steps"])["statuses"])
+        outcome = Sides(self).run(scenario)
+        # The frames, the inputs and the coverage are native records: the earlier batch is covered.
+        self.assertEqual(dict(outcome["steps"])["statuses"], ["covered", "active", ["input:b"]])
 
     def test_the_strategy_host_closes_an_answered_message_and_disposes_through_the_same_store(self):
         import strategy_host as host
@@ -515,8 +468,8 @@ class TaskContextTest(NativeCase):
                 with mock.patch.object(host, "_message_focus", "input:two"):
                     note("input-processed", [host.input_processed(), store.request_record("input:two")["processed"]])
                 note("focus", [host.focus_request("input:c"), host.focus_request("nope"), host.focus_request("input:a")])
-        oracle, native = Sides(self).compare(scenario)
-        steps = dict(oracle["steps"])
+        outcome = Sides(self).run(scenario)
+        steps = dict(outcome["steps"])
         self.assertEqual(steps["closed"][0], ("input:a", "addressed"))
         self.assertEqual(steps["closed"][1], ("input:two", "processed"))
         self.assertEqual(steps["closed"][2], ("input:c", "processed"))
@@ -642,21 +595,18 @@ class ReplayTest(NativeCase):
                 self.assertTrue(store.disposition(key, "addressed", "ok"))
         self.assertEqual(Ledger(self.directory / "x.db").request_page(0, 10)["total"], 4)
 
-    def test_an_unreachable_server_fails_every_reader_and_writer_and_never_falls_back_to_sqlite(self):
-        path = self.directory / "ledger.db"
-        with oracle_environment():
-            os.environ["METTACLAW_STRATEGY_PATH"] = str(path)
-            sqlite_store = Ledger(path)
-            sqlite_store.accept("input:1", "in sqlite", kind="message")
-            sqlite_store.accept("w", "work", kind="task")
-            ticket = observed_receipt(sqlite_store, "w", "p", "success")
-        before = hashlib.sha256(path.read_bytes()).hexdigest()
+    def test_an_unreachable_server_fails_every_reader_and_writer_and_keeps_the_records(self):
+        with oracle_environment() as directory:
+            NativeRunner.create(directory, self.server.socket)
+            seeded = Ledger(directory / "x.db")
+            seeded.accept("input:1", "before the outage", kind="message")
+            seeded.accept("w", "work", kind="task")
+            ticket = observed_receipt(seeded, "w", "p", "success")
         self.server.stop()
         failures = {}
-        with oracle_environment():
-            os.environ["METTACLAW_STRATEGY_PATH"] = str(path)
+        with oracle_environment() as directory:
             os.environ[input_ack.LEDGER_SOCKET] = str(self.server.socket)
-            store = Ledger(path)
+            store = Ledger(directory / "x.db")
             calls = {
                 "accept": lambda: store.accept("x", "c"),
                 "processed": lambda: store.processed("input:1"),
@@ -679,38 +629,29 @@ class ReplayTest(NativeCase):
             for name, call in calls.items():
                 try:
                     call()
-                except sqlite3.OperationalError as error:
+                except input_ack.LedgerUnavailable as error:
                     failures[name] = error
-            self.assertEqual(sorted(failures), sorted(calls), "every one raises; none answers from the SQLite file")
-            self.assertTrue(all(isinstance(error, input_ack.LedgerUnavailable) for error in failures.values()))
+            self.assertEqual(sorted(failures), sorted(calls), "every one raises; none answers")
             self.assertTrue(all("db:connect" in str(error) for error in failures.values()), {k: str(v) for k, v in failures.items()})
-        self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), before, "the SQLite ledger was written")
         self.server.start()
-        with oracle_environment():
-            os.environ["METTACLAW_STRATEGY_PATH"] = str(path)
+        with oracle_environment() as directory:
             os.environ[input_ack.LEDGER_SOCKET] = str(self.server.socket)
-            store = Ledger(path)
-            # The native store is another, empty ledger: the SQLite record is not in it.
-            self.assertEqual(store.request_record("input:1"), {"id": "input:1", "status": "unknown"})
-            self.assertEqual(store.request_page()["total"], 0)
+            store = Ledger(directory / "x.db")
+            self.assertEqual(store.request_record("input:1")["content"], "before the outage")
+            self.assertEqual(store.request_page()["total"], 2)
 
-    def test_with_the_variable_unset_or_empty_no_request_method_touches_the_native_path(self):
+    def test_with_the_variable_unset_or_empty_every_request_method_fails_without_a_worker(self):
         for value in (None, ""):
             with oracle_environment() as directory:
+                os.environ.pop(input_ack.LEDGER_SOCKET, None)
                 if value is not None:
                     os.environ[input_ack.LEDGER_SOCKET] = value
                 store = Ledger(directory / "l.db")
-                os.environ["METTACLAW_STRATEGY_PATH"] = str(directory / "l.db")
-                with mock.patch.object(input_ack, "_ledger_call", side_effect=AssertionError("native path used")), \
-                        mock.patch.object(input_ack, "_ledger_worker", side_effect=AssertionError("native worker used")):
-                    lifecycle(store, lambda name, value: None)
-                    store.accept("w", "work", kind="task")
-                    ticket = observed_receipt(store, "w", "p", "unknown")
-                    store.attest("w", ticket, lambda w, r: True)
-                    store.finish("w", ticket, {"operator": lambda w, r: True})
-                    store.finish_exact_results()
-                    store.status_of("w")
-                    self.assertEqual(sqlite_counts(directory / "l.db")[0], 17)
+                with mock.patch.object(input_ack, "_ledger_worker", side_effect=AssertionError("a ledger worker was started")):
+                    for call in (lambda: store.accept("w", "work", kind="task"), lambda: store.request_record("w"),
+                                 lambda: store.active(), lambda: store.status_of("w"), lambda: store.finish_exact_results()):
+                        with self.assertRaisesRegex(input_ack.LedgerUnavailable, "METTACLAW_INPUT_LEDGER_SOCKET is not set"):
+                            call()
         self.assertIsNone(input_ack._ledger, "a worker was started with the variable unset")
 
     def test_a_stale_request_processed_atom_of_the_task_5_layout_cannot_make_a_new_request_born_settled(self):

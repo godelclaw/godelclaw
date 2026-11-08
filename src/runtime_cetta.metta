@@ -11,7 +11,6 @@
 !(import! &self (library math))
 !(import! &self (library path))
 !(import! &self (library proc))
-!(import! &self (library sqlite))
 !(import! &self (library str))
 !(import! &self (library system))
 !(import! &self ./src/memory_health.py)
@@ -353,24 +352,8 @@
        (if (== (rt:get-or $config "mode" (JsonString "chroma")) (JsonString "native"))
          (Val (JsonObject ((JsonPair "backend" (JsonString "native")) (JsonPair "collection" (rt:get $config "name"))
                            (JsonPair "reachable" (JsonBool (rt:reachable (rt:get $config "socket")))))))
-         (rt:chroma)))))
-(= (rt:chroma-dir)
-   (let $first (system:getenv-or-default "METTACLAW_CHROMA_DIR" "")
-     (if (!= $first "") $first
-       (let $second (system:getenv-or-default "OMEGACLAW_CHROMA_DIR" "")
-         (if (!= $second "") $second "./chroma_db")))))
-; Rows of a read-only query; a failed or unavailable query is None.
-(= (rt:rows $db $sql $parameters)
-   (case (sqlite:observe $db $sql $parameters 20)
-     (((sqlite:result $columns $rows $changes $rowid) (Val $rows)) ($other None))))
-(= (rt:sql-nat $value)
-   (if (== (get-type $value) Number) (if (and (>= $value 0) (<= $value (rt:number-limit))) (Val $value) None) None))
-(= (rt:segment $rows $scope)
-   (if (== $rows ()) None
-     (let ($id $kind) (car-atom $rows) (if (== $kind $scope) (Val $id) (rt:segment (cdr-atom $rows) $scope)))))
-(= (rt:sequence $rows $segment)
-   (if (== $rows ()) None
-     (let ($id $seq) (car-atom $rows) (if (== $id $segment) (rt:sql-nat $seq) (rt:sequence (cdr-atom $rows) $segment)))))
+         (Val (JsonObject ((JsonPair "backend" (rt:get-or $config "mode" (JsonString "chroma")))
+                           (JsonPair "supported" (JsonBool False)))))))))
 ; The first sync_threshold number found depth-first, as memory_health does.
 (= (rt:threshold $value)
    (case $value
@@ -388,63 +371,6 @@
 (= (rt:threshold-items $items)
    (if (== $items ()) None
      (case (rt:threshold (car-atom $items)) ((None (rt:threshold-items (cdr-atom $items))) ($found $found)))))
-(= (rt:column-threshold $db $collection $columns $names)
-   (if (== $columns ()) None
-     (let $column (car-atom $columns)
-       (let $found (if (rt:member $column $names)
-                     (case (rt:rows $db (str:join "" ("SELECT " $column " FROM collections WHERE id=?")) ($collection))
-                       (((Val (($raw))) (if (== (get-type $raw) String)
-                                          (if (and (!= $raw "") (<= (str:char-length $raw) 65536))
-                                            (case (json-parse $raw)
-                                              (((JsonFailureV1 $a $b $c $d) Broken)
-                                               ($parsed (case (rt:threshold $parsed) (((Val $n) (rt:sql-nat $n)) ($none None))))))
-                                            None)
-                                          None))
-                        ($other None)))
-                     None)
-         (if (== $found Broken) Broken
-           (let $later (rt:column-threshold $db $collection (cdr-atom $columns) $names)
-             (if (== $later None) $found $later)))))))
-(= (rt:column-names $rows)
-   (if (== $rows ()) ()
-     (let ($cid $name $type $notnull $default $pk) (car-atom $rows)
-       (let $rest (rt:column-names (cdr-atom $rows)) (cons-atom $name $rest)))))
-; Staged in small definitions: one deeply nested case does not reduce here.
-(= (rt:chroma)
-   (let* (($db (path:join (rt:chroma-dir) "chroma.sqlite3"))
-          ($name (system:getenv-or-default "METTACLAW_CHROMA_COLLECTION" "memories")))
-     (if (not (fs:is-file $db)) None
-       (case (rt:rows $db "SELECT id FROM collections WHERE name=?" ($name))
-         (((Val (($collection))) (rt:chroma-segments $db $collection))
-          ($missing None))))))
-(= (rt:chroma-segments $db $collection)
-   (case (rt:rows $db "SELECT id,scope FROM segments WHERE collection=?" ($collection))
-     (((Val $segments) (rt:chroma-watermarks $db $collection (rt:segment $segments "METADATA") (rt:segment $segments "VECTOR")))
-      ($failed None))))
-(= (rt:chroma-watermarks $db $collection $meta $vector)
-   (if (or (== $meta None) (== $vector None)) None
-     (let* (((Val $m) $meta) ((Val $v) $vector))
-       (case (rt:rows $db "SELECT segment_id,seq_id FROM max_seq_id WHERE segment_id IN (?,?)" ($m $v))
-         (((Val $sequences) (rt:chroma-facts $db $collection $m (rt:sequence $sequences $m) (rt:sequence $sequences $v)))
-          ($failed None))))))
-; The vector index may trail the metadata, never lead it.
-(= (rt:chroma-facts $db $collection $meta $before $after)
-   (if (or (== $before None) (== $after None)) None
-     (let* (((Val $b) $before) ((Val $a) $after))
-       (if (> $a $b) None
-         (rt:chroma-result (rt:chroma-documents $db $meta) (- $b $a)
-           (rt:column-threshold $db $collection ("config_json_str" "schema_str") (rt:chroma-columns $db)))))))
-(= (rt:chroma-documents $db $meta)
-   (case (rt:rows $db "SELECT COUNT(*) FROM embeddings WHERE segment_id=?" ($meta))
-     (((Val (($count))) (rt:sql-nat $count)) ($failed None))))
-(= (rt:chroma-columns $db)
-   (case (rt:rows $db "PRAGMA table_info(collections)" ()) (((Val $rows) (rt:column-names $rows)) ($failed ()))))
-(= (rt:chroma-result $documents $gap $threshold)
-   (if (or (== $threshold None) (== $threshold Broken)) None
-     (let (Val $t) $threshold
-       (Val (JsonObject ((JsonPair "documents" (rt:opt-json $documents))
-                         (JsonPair "persistedSequenceGap" (rt:int-json $gap))
-                         (JsonPair "threshold" (rt:int-json $t))))))))
 
 ; ---- process and model -----------------------------------------------------
 (= (rt:btime $lines)

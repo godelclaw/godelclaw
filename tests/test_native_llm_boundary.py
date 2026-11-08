@@ -4,7 +4,6 @@ from isolated_env import isolated_environ  # noqa: E402
 import json
 import os
 from pathlib import Path
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -16,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 import provider_protocol
 import bridge_text
+import native_ledger
 
 # Values the probes print that Python returned (a model answer, a flag). Only
 # the PeTTa lane's printing changed; HE has always printed them quoted.
@@ -45,6 +45,7 @@ class Peer(http.server.BaseHTTPRequestHandler):
 class NativeBoundaryTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name)
         # Iter's data helper imports its upstream SDK, even though this client
         # must never construct or call one. Make that boundary executable.
@@ -69,7 +70,7 @@ class NativeBoundaryTests(unittest.TestCase):
             "METTACLAW_LOOP_MODE_PATH": str(self.directory / "loop-mode.json"),
             "METTACLAW_ACTIVE_LOOP_MODE": "godelclaw", "METTACLAW_LLM_POLICY": "managed",
             "METTACLAW_MODEL_COMMENTARY": "0", "METTACLAW_LLM_STREAM": "0",
-            "METTACLAW_LLM_POLICY_PATH": "", "METTACLAW_LLM_LEDGER_PATH": str(self.directory / "ledger.db"),
+            "METTACLAW_LLM_POLICY_PATH": "", "METTACLAW_STRATEGY_PATH": str(self.directory / "strategy"),
             "METTACLAW_COGNITIVE_HEALTH_PATH": str(self.directory / "health.json"),
             "METTACLAW_ANTHROPIC_USAGE_PATH": str(self.directory / "anthropic-usage.json"),
             "METTACLAW_RECYCLE_REQUEST_PATH": str(self.directory / "recycle"),
@@ -78,11 +79,34 @@ class NativeBoundaryTests(unittest.TestCase):
             "SYNTHETIC_BASE_URL": f"http://127.0.0.1:{self.peer.server_port}/v1",
             "SYNTHETIC_API_KEY": "fixture-secret", "SYNTHETIC_EMPTY_BACKOFF": "0"}
         self.env.pop("METTACLAW_MODE_RUNTIME", None)
+        # Other suites borrow this setUp; call through the class so they need no method of their own.
+        NativeBoundaryTests.fresh_ledger(self, "ledger")
 
     def tearDown(self):
         self.peer.shutdown()
         self.peer.server_close()
-        self.temporary.cleanup()
+
+    def fresh_ledger(self, name):
+        """A ledger server on a fresh store for the guests that follow; the previous one stops."""
+        previous = getattr(self, "ledger_server", None)
+        if previous is not None:
+            previous.stop()
+        self.socket = native_ledger.start(self, self.directory / name)
+        self.env["METTACLAW_INPUT_LEDGER_SOCKET"] = self.socket
+        return self.socket
+
+    def records(self, kind):
+        return native_ledger.llm_records(kind, self.socket)
+
+    def column(self, kind, *names, order=None):
+        rows = self.records(kind)
+        if order is not None:
+            rows = sorted(rows, key=lambda row: row[order])
+        return [tuple(row[name] for name in names) for row in rows]
+
+    def events(self, event=None):
+        return [row for row in native_ledger.llm_events(socket=self.socket)
+                if event is None or row["event"] == event]
 
     def run_guest(self, forms, lang="petta", timeout=20):
         entry = self.directory / "probe.metta"
@@ -121,13 +145,13 @@ def draft():
     return plan
 
 def abort_description():
-    import os, sqlite3, native_llm_host
+    # From the wire body on, the ledger refuses the request's description (the test's
+    # proxy drops every llm-describe connection once this file exists).
+    import os, native_llm_host
     original = native_llm_host.wire_body
     def wire(plan, body):
         result = original(plan, body)
-        with sqlite3.connect(os.environ["METTACLAW_LLM_LEDGER_PATH"]) as db:
-            db.execute("CREATE TRIGGER fixture_abort BEFORE INSERT ON llm_call_history "
-                       "WHEN NEW.event='request' BEGIN SELECT RAISE(ABORT,'fixture metadata fault'); END")
+        open(os.environ["FIXTURE_DESCRIBE_FAULT"], "w").close()
         return result
     native_llm_host.wire_body = wire
     return 1
@@ -163,7 +187,7 @@ def retained():
         self.env["PYTHONPATH"] += os.pathsep + str(ROOT / "channels")
         for kind in ("observation", "effect"):
             with self.subTest(kind=kind):
-                self.env["METTACLAW_STRATEGY_PATH"] = str(self.directory / (kind + ".sqlite3"))
+                self.fresh_ledger(kind)
                 out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n'
                     f'!(import! &self "{self.directory}/fixture_modules/frontier_probe.py")\n'
                     f'!(let $prompt (py-call (frontier_probe.prepare "{kind}")) '
@@ -200,8 +224,7 @@ def error(plan):
         self.env.update(METTACLAW_ACTIVITY_CALL_CAPACITY='2', METTACLAW_ACTIVITY_INTERACTIVE_RESERVE='1')
         for kind in ('native', 'host'):
             with self.subTest(kind=kind):
-                dbpath = self.directory / ('capacity-' + kind + '.db')
-                self.env['METTACLAW_LLM_LEDGER_PATH'] = str(dbpath)
+                self.fresh_ledger('capacity-' + kind)
                 out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n'
                     f'!(import! &self "{module}")\n'
                     f'!(let* (($owner (py-call (capacity_fixture.draft "{kind}" "holder")))\n'
@@ -213,9 +236,8 @@ def error(plan):
                 self.assertIn('AdmissionDenied: native-call-capacity', out)
                 self.assertIn('; reason=native-call-capacity', self.last_stderr)
                 self.assertIn('(REPLAY (llm:v1:failed duplicate duplicate duplicate-plan not-started))', out)
-                with sqlite3.connect(dbpath) as db:
-                    self.assertEqual(db.execute('SELECT activity,state FROM native_calls').fetchall(), [('holder', 'claimed')])
-                    self.assertEqual(sorted(row[0] for row in db.execute('SELECT status FROM requests')), ['failed', 'pending'])
+                self.assertEqual(self.column('calls', 'activity', 'state'), [('holder', 'claimed')])
+                self.assertEqual(sorted(row['status'] for row in self.records('requests')), ['failed', 'pending'])
         self.assertEqual(self.peer.requests, [])
 
     def test_invalid_activity_is_not_capacity_and_settles_its_unsent_request(self):
@@ -232,17 +254,15 @@ def draft(kind, scope, lane):
         for kind in ('native', 'host'):
             for index, (scope, lane) in enumerate(cases):
                 with self.subTest(kind=kind, scope=scope, lane=lane):
-                    dbpath = self.directory / ('invalid-' + kind + '-' + str(index) + '.db')
-                    self.env['METTACLAW_LLM_LEDGER_PATH'] = str(dbpath)
+                    self.fresh_ledger('invalid-' + kind + '-' + str(index))
                     out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n'
                         f'!(import! &self "{module}")\n'
                         f'!(let $plan (py-call (invalid_activity_fixture.draft "{kind}" {json.dumps(scope)} {json.dumps(lane)})) '
                         '(println! (REFUSED (llm:run $plan))))\n')
                     self.assertNotIn('native-call-capacity', out + self.last_stderr)
                     self.assertNotIn('duplicate native plan', out + self.last_stderr)
-                    with sqlite3.connect(dbpath) as db:
-                        self.assertEqual(db.execute('SELECT status FROM requests').fetchall(), [('failed',)])
-                        self.assertEqual(db.execute('SELECT COUNT(*) FROM native_calls').fetchone()[0], 0)
+                    self.assertEqual(self.column('requests', 'status'), [('failed',)])
+                    self.assertEqual(self.records('calls'), [])
         self.assertEqual(self.peer.requests, [])
 
     def test_native_owns_success_usage_and_duplicate_delivery_without_python(self):
@@ -255,15 +275,14 @@ def draft(kind, scope, lane):
         self.assertIn('(FIRST (nop))', out)
         self.assertIn('(SECOND ())', out)
         self.assertEqual(len(self.peer.requests), 1)
-        with sqlite3.connect(self.directory / 'ledger.db') as db:
-            self.assertEqual(db.execute('SELECT status,output FROM requests').fetchall(), [('completed', 2)])
-            self.assertEqual(db.execute('SELECT state FROM native_calls').fetchall(), [('completed',)])
-            events = dict(db.execute('SELECT event,detail FROM llm_call_history'))
-            self.assertEqual(set(events), {'recording-started', 'admitted', 'claimed', 'request', 'submitted', 'usage', 'completed'})
-            self.assertEqual(json.loads(events['usage'])['counts'],
-                             dict(input_tokens=10, cached_tokens=4, output_tokens=2))
-            self.assertEqual((json.loads(events['request'])['trigger'], json.loads(events['request'])['turn_id']),
-                             ('heartbeat-event', 'wake-7'))
+        self.assertEqual(self.column('requests', 'status', 'output'), [('completed', 2)])
+        self.assertEqual(self.column('calls', 'state'), [('completed',)])
+        events = {row['event']: row['detail'] for row in self.events()}
+        self.assertEqual(set(events), {'recording-started', 'admitted', 'claimed', 'request', 'submitted', 'usage', 'completed'})
+        self.assertEqual(json.loads(events['usage'])['counts'],
+                         dict(input_tokens=10, cached_tokens=4, output_tokens=2))
+        self.assertEqual((json.loads(events['request'])['trigger'], json.loads(events['request'])['turn_id']),
+                         ('heartbeat-event', 'wake-7'))
 
     def test_native_owns_failure_and_cooldown_without_python(self):
         self.peer.delay, self.peer.status, self.peer.retry_after = .01, 429, 30
@@ -273,12 +292,11 @@ def draft(kind, scope, lane):
             '!(llm:command "fixture-model" 42 "low" "again")\n')
         self.assertNotIn('(nop)', out)
         self.assertEqual(len(self.peer.requests), 1)
-        with sqlite3.connect(self.directory / 'ledger.db') as db:
-            self.assertEqual(db.execute('SELECT status FROM requests').fetchall(), [('failed',)])
-            self.assertEqual(db.execute('SELECT state FROM native_calls').fetchall(), [('failed',)])
-            self.assertEqual(db.execute('SELECT provider FROM cooldowns').fetchall(), [('synthetic',)])
-            self.assertEqual(db.execute("SELECT COUNT(*) FROM llm_call_history WHERE event='admitted'").fetchone()[0], 1)
-            self.assertEqual(db.execute("SELECT COUNT(*) FROM llm_call_history WHERE event='usage'").fetchone()[0], 0)
+        self.assertEqual(self.column('requests', 'status'), [('failed',)])
+        self.assertEqual(self.column('calls', 'state'), [('failed',)])
+        self.assertEqual(self.column('cooldowns', 'provider'), [('synthetic',)])
+        self.assertEqual(len(self.events('admitted')), 1)
+        self.assertEqual(len(self.events('usage')), 0)
 
     def test_unknown_commit_is_read_back_before_retrying_the_local_write(self):
         legacy = json.dumps(json.dumps(self.peer.reply))
@@ -290,15 +308,14 @@ def draft(kind, scope, lane):
             '        ($id (py-call (native_llm_host.field $plan "correlation"))))\n'
             '   (println! (RESULT (account:finished $plan (account:metadata $plan) $epoch $id\n'
             f'       {legacy} "{{}}" (JsonObject ((JsonPair "prompt_tokens" 10) (JsonPair "completion_tokens" 2)))\n'
-            '       (LedgerError (sqlite:error io 10 "fixture commit fault" unknown-outcome))))))\n')
+            '       (LedgerError (Error ledger-client:call uncertain))))))\n')
         self.assertIn('(nop)', out)
         self.assertEqual(self.peer.requests, [])
-        with sqlite3.connect(self.directory / 'ledger.db') as db:
-            self.assertEqual(db.execute('SELECT status FROM requests').fetchall(), [('completed',)])
-            self.assertEqual(db.execute('SELECT state FROM native_calls').fetchall(), [('completed',)])
-            self.assertEqual(db.execute("SELECT COUNT(*) FROM llm_call_history WHERE event='usage'").fetchone()[0], 1)
-            usage = json.loads(db.execute("SELECT detail FROM llm_call_history WHERE event='usage'").fetchone()[0])
-            self.assertEqual((usage['counts']['input_tokens'], usage['counts']['output_tokens']), (10, 2))
+        self.assertEqual(self.column('requests', 'status'), [('completed',)])
+        self.assertEqual(self.column('calls', 'state'), [('completed',)])
+        self.assertEqual(len(self.events('usage')), 1)
+        usage = json.loads(self.events('usage')[0]['detail'])
+        self.assertEqual((usage['counts']['input_tokens'], usage['counts']['output_tokens']), (10, 2))
 
     def test_precommit_evidence_rejection_releases_the_call(self):
         out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n' +
@@ -307,10 +324,9 @@ def draft(kind, scope, lane):
             '        ($pending (llm:begin $plan)) ($injected (py-call (builtins.setattr $plan "cap" 1))))\n'
             '   (println! (RESULT (llm:after-submit $plan $pending))))\n')
         self.assertIn('(RESULT ())', out)
-        with sqlite3.connect(self.env['METTACLAW_LLM_LEDGER_PATH']) as db:
-            self.assertEqual(db.execute('SELECT status FROM requests').fetchall(), [('failed',)])
-            self.assertEqual(db.execute('SELECT state FROM native_calls').fetchall(), [('failed',)])
-            self.assertEqual(db.execute("SELECT COUNT(*) FROM llm_call_history WHERE event='usage'").fetchone()[0], 0)
+        self.assertEqual(self.column('requests', 'status'), [('failed',)])
+        self.assertEqual(self.column('calls', 'state'), [('failed',)])
+        self.assertEqual(len(self.events('usage')), 0)
         self.assertEqual(len(self.peer.requests), 1)
 
     def test_malformed_wire_usage_fails_cleanly_without_stranding_a_call(self):
@@ -325,23 +341,24 @@ def draft(kind, scope, lane):
             out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n' +
                 self.disable_python_accounting() + f'!(llm:command "{model}" 42 "low" "input")\n')
             self.assertNotIn('(nop)', out, self.last_stderr)
-        with sqlite3.connect(self.directory / 'ledger.db') as db:
-            self.assertEqual(db.execute('SELECT status,output FROM requests ORDER BY started').fetchall(),
-                             [('failed', None), ('failed', None)])
-            self.assertEqual(db.execute('SELECT state FROM native_calls ORDER BY created').fetchall(),
-                             [('failed',), ('failed',)])
+        self.assertEqual(self.column('requests', 'status', 'output', order='started'),
+                         [('failed', None), ('failed', None)])
+        self.assertEqual(self.column('calls', 'state', order='created'), [('failed',), ('failed',)])
         self.assertEqual(len(self.peer.requests), 2)
 
     def test_description_rollback_releases_the_claim_before_any_http(self):
+        armed = self.directory / 'describe-fault'
+        proxy, refusals = native_ledger.faulty(self, self.directory, self.socket, b'llm-describe', armed)
+        self.env.update(METTACLAW_INPUT_LEDGER_SOCKET=proxy, FIXTURE_DESCRIBE_FAULT=str(armed))
         out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n' +
             self.disable_python_accounting() +
             '!(py-call (accounting_fixture.abort_description))\n'
             '!(llm:command "fixture-model" 42 "low" "input")\n')
         self.assertNotIn('(nop)', out)
         self.assertEqual(self.peer.requests, [])
-        with sqlite3.connect(self.directory / 'ledger.db') as db:
-            self.assertEqual(db.execute('SELECT status,output FROM requests').fetchall(), [('failed', 0)])
-            self.assertEqual(db.execute('SELECT state FROM native_calls').fetchall(), [('failed',)])
+        self.assertTrue(refusals, self.last_stderr[-1000:])
+        self.assertEqual(self.column('requests', 'status', 'output'), [('failed', 0)])
+        self.assertEqual(self.column('calls', 'state'), [('failed',)])
 
     def test_native_owns_coding_and_compaction_metadata_without_python(self):
         self.peer.delay = .01
@@ -354,11 +371,10 @@ def draft(kind, scope, lane):
             '!(let $plan (py-call (native_llm_host.native_command_plan "fixture-model" 42 "low" "input"))\n'
             '   (let $_ (py-call (native_llm_host.for_compaction $plan)) (llm:run $plan)))\n')
         self.assertEqual(len(self.peer.requests), 2, out + self.last_stderr)
-        with sqlite3.connect(self.directory / 'ledger.db') as db:
-            self.assertEqual(db.execute('SELECT purpose,state FROM native_calls ORDER BY created').fetchall(),
-                             [('coding', 'completed'), ('compaction', 'completed')])
-            contexts = [json.loads(r[0]) for r in db.execute("SELECT detail FROM llm_call_history WHERE event='request' ORDER BY sequence")]
-            self.assertEqual([c['purpose'] for c in contexts], ['coding', 'compaction'])
+        self.assertEqual(self.column('calls', 'purpose', 'state', order='created'),
+                         [('coding', 'completed'), ('compaction', 'completed')])
+        contexts = [json.loads(row['detail']) for row in self.events('request')]
+        self.assertEqual([c['purpose'] for c in contexts], ['coding', 'compaction'])
 
     def test_subscription_structured_plan_roundtrips_tools_and_reasoning(self):
         # The native credential alias is a fixture scoped to this local HTTP
@@ -459,16 +475,10 @@ def draft(kind, scope, lane):
                 actual_path, _, body = self.peer.requests[-1]
                 self.assertEqual(actual_path, "/v1" + path)
                 self.assertEqual(body, expected)
-                conn = sqlite3.connect(self.directory / "ledger.db")
-                try:
-                    context = json.loads(conn.execute("SELECT detail FROM llm_call_history "
-                        "WHERE event='request' ORDER BY sequence DESC LIMIT 1").fetchone()[0])
-                    self.assertEqual((context["model"], context["protocol"], context["purpose"]),
-                                     (effective, protocol, "turn"))
-                    self.assertEqual(conn.execute("SELECT COUNT(*) FROM llm_call_history "
-                        "WHERE event='usage'").fetchone()[0], len(self.peer.requests))
-                finally:
-                    conn.close()
+                context = json.loads(self.events("request")[-1]["detail"])
+                self.assertEqual((context["model"], context["protocol"], context["purpose"]),
+                                 (effective, protocol, "turn"))
+                self.assertEqual(len(self.events("usage")), len(self.peer.requests))
 
     def test_a_plan_can_be_submitted_only_once(self):
         self.peer.delay = .01
@@ -498,9 +508,7 @@ def draft(kind, scope, lane):
                                 for b in body["system"] if "cache_control" in b))
             self.assertEqual(body["messages"], [{"role": "user", "content": [{"type": "text", "text": "input"}]}])
             self.assertEqual(body["output_config"], {"effort": "high"})
-            with sqlite3.connect(self.directory / "ledger.db") as db:
-                context = json.loads(db.execute("SELECT detail FROM llm_call_history WHERE event='request' "
-                                                "ORDER BY sequence DESC LIMIT 1").fetchone()[0])
+            context = json.loads(self.events("request")[-1]["detail"])
             self.assertEqual(context["cache_layout"], {**provider_protocol.anthropic_cache_observation(body), "regions": [0, 1, 4]})
             self.assertNotIn("stable", json.dumps(context))
 
@@ -640,9 +648,7 @@ def draft(kind, scope, lane):
         before=time.time()
         self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n'
                        '!(llm:command "fixture-model" 42 "default" "input")\n')
-        import sqlite3
-        with sqlite3.connect(self.directory/'ledger.db') as db:
-            until=db.execute('SELECT until FROM cooldowns').fetchone()[0]
+        until = self.records('cooldowns')[0]['until']
         self.assertGreaterEqual(until,before+2)
         self.assertLess(until,time.time()+2.1)
         self.assertIn('retry in 2s',self.last_stderr)

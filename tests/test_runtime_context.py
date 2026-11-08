@@ -3,7 +3,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import sqlite3
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -12,6 +11,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT / "channels")]
+import native_ledger
 import runtime_context as view
 import strategy_host as host
 import topic_jobs
@@ -22,20 +22,21 @@ class RuntimeContextTest(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
+        native_ledger.start(self, self.root)
         self.now = 2000000000
         self.modes = self.root / "modes"; self.modes.mkdir()
         (self.modes / "channel-handover").mkdir()
         env = {"METTACLAW_COGNITIVE_HEALTH_PATH": str(self.root / "health.json"),
                "METTACLAW_ENGINE_STATE_PATH": str(self.root / "engine"),
                "METTACLAW_MODE_STATE_ROOT": str(self.modes),
-               "METTACLAW_STRATEGY_PATH": str(self.root / "strategy.db"),
+               "METTACLAW_STRATEGY_PATH": str(self.root / "strategy"),
                "METTACLAW_EFFECT_RECEIPT_PATH": str(self.root / "receipts.jsonl"),
                "METTACLAW_CHROMA_DIR": str(self.root), "METTACLAW_CHROMA_COLLECTION": "memories",
                "METTACLAW_LLM_POLICY_PATH": "", "METTACLAW_LLM_POLICY": "managed",
-               "METTACLAW_LLM_LEDGER_PATH": str(self.root / "budget.db"),
                "METTACLAW_LLM_REQUESTS_PER_HOUR": "0", "METTACLAW_LLM_OUTPUT_TOKENS_PER_DAY": "0",
                "METTACLAW_OBSERVED_STRATEGY": "1", "METTACLAW_FAIR_GOALS": "0"}
         patch = mock.patch.dict(os.environ, env); patch.start(); self.addCleanup(patch.stop)
+        os.environ.pop("METTACLAW_LLM_LEDGER_PATH", None)
         self.write("health.json", dict(schema=2, obligation_since=self.now-10,
             in_flight_since=0, retry_at=0, last_outcome="completed", last_completed_at=self.now-4,
             irrelevant_secret="CANARY_PRIVATE"))
@@ -44,34 +45,6 @@ class RuntimeContextTest(unittest.TestCase):
 
     def write(self, name, value):
         (self.root / name).write_text(json.dumps(value))
-
-    def database(self, name, script):
-        with sqlite3.connect(self.root / name) as db:
-            db.executescript(script)
-
-    def memory(self):
-        self.database("chroma.sqlite3", """
-            CREATE TABLE collections(id TEXT,name TEXT,config_json_str TEXT);
-            INSERT INTO collections VALUES('c','memories','{"hnsw":{"sync_threshold":20}}');
-            CREATE TABLE segments(id TEXT,scope TEXT,collection TEXT);
-            INSERT INTO segments VALUES('m','METADATA','c'),('v','VECTOR','c');
-            CREATE TABLE max_seq_id(segment_id TEXT,seq_id INTEGER);
-            INSERT INTO max_seq_id VALUES('m',20),('v',17);
-            CREATE TABLE embeddings(segment_id TEXT);
-            INSERT INTO embeddings VALUES('m'),('m');
-        """)
-
-    def background(self, legacy=False):
-        column = "" if legacy else ",finished_at REAL"
-        self.database("strategy.db", "CREATE TABLE model_jobs(state TEXT,observed INTEGER,adopted INTEGER" + column + ");")
-        with sqlite3.connect(self.root / "strategy.db") as db:
-            if legacy:
-                db.execute("INSERT INTO model_jobs VALUES('returned',0,0)")
-            else:
-                db.executemany("INSERT INTO model_jobs VALUES(?,?,?,?)", [
-                    ("returned", 0, 0, self.now-45), ("failed", 0, 0, self.now-10),
-                    ("running", 0, 0, None), ("uncertain", 0, 0, None),
-                    ("returned", 1, 0, self.now-90), ("returned", 0, 1, self.now-900)])
 
     def test_returned_provider_preserves_unsettled_obligation(self):
         facts = view.read(self.now)
@@ -147,19 +120,6 @@ class RuntimeContextTest(unittest.TestCase):
             input_ack.begin_scan([["task", json.dumps(body)]])
             self.assertIsNone(input_ack.input_view())
 
-    def test_memory_watermarks_do_not_claim_missing_document_count(self):
-        self.assertIsNone(view.read(self.now)["memory"])
-        self.memory()
-        self.assertEqual(view.read(self.now)["memory"],
-                         {"documents": 2, "persistedSequenceGap": 3, "threshold": 20})
-        with sqlite3.connect(self.root / "chroma.sqlite3") as db:
-            db.execute("UPDATE max_seq_id SET seq_id=21 WHERE segment_id='v'")
-        self.assertIsNone(view.read(self.now)["memory"])
-
-    def test_legacy_background_results_are_not_prompt_bookkeeping(self):
-        self.background(legacy=True)
-        self.assertIsNone(view.read(self.now)["background"])
-
     def test_recent_receipt_window_and_closed_reason_labels(self):
         records = [{"command": "CANARY_PRIVATE", "result": "CANARY_PRIVATE", "disposition": "returned"}] * 20
         records += [{"commands": "CANARY_PRIVATE", "disposition": "withheld", "reason": '{"reason":"stale"}'},
@@ -183,7 +143,6 @@ class RuntimeContextTest(unittest.TestCase):
             self.assertNotIn('budget',facts)
 
     def test_reading_cannot_write_checkpoint_or_call_provider(self):
-        self.memory(); self.background()
         before = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in self.root.iterdir() if p.is_file()}
         with mock.patch.object(host, "ledger", side_effect=AssertionError("writer opened")), \
              mock.patch("socket.socket", side_effect=AssertionError("network opened")), \
@@ -191,18 +150,15 @@ class RuntimeContextTest(unittest.TestCase):
             facts = view.read(self.now)
         after = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in self.root.iterdir() if p.is_file()}
         self.assertEqual(before, after)
-        self.assertEqual(facts["memory"]["persistedSequenceGap"], 3)
         self.assertIsNone(facts["background"])
-        with view._database(self.root / "strategy.db") as db:
-            with self.assertRaises(sqlite3.OperationalError):
-                db.execute("DELETE FROM model_jobs")
 
     def test_missing_databases_are_not_created(self):
         facts = view.read(self.now)
-        self.assertIsNone(facts["memory"])
+        # With no native memory service the fact claims nothing about documents or sequence gaps.
+        self.assertEqual(set(facts["memory"]), {"backend", "supported"})
+        self.assertIs(facts["memory"]["supported"], False)
         self.assertIsNone(facts["background"])
-        self.assertFalse((self.root / "chroma.sqlite3").exists())
-        self.assertFalse((self.root / "strategy.db").exists())
+        self.assertEqual(list(self.root.rglob("*.sqlite3")), [])
 
     def test_compact_projection_is_bounded_and_structured(self):
         packet = view.render(view.read(self.now))

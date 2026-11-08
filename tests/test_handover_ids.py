@@ -54,16 +54,17 @@ class HandoverIdsTest(unittest.TestCase):
             channel.return_value.iter_pending.return_value = interrupted()
             self.assertIsNone(telegram._metta_unread_chats())
 
-    def test_settlement_metadata_retries_after_a_transient_lock(self):
-        import sqlite3
+    def test_settlement_metadata_retries_after_the_ledger_was_unavailable(self):
         with mock.patch.object(mode_channel, "acknowledge_handover", return_value=True) as ack, \
-             mock.patch.object(input_ack, "processed_update_ids", side_effect=[sqlite3.OperationalError("database is locked"), 1]):
+             mock.patch.object(input_ack, "processed_update_ids",
+                               side_effect=[input_ack.LedgerUnavailable("input ledger: worker unavailable"), 1]):
             self.assertEqual(telegram.handover_ack("1,2"), 0)
             self.assertEqual(telegram.handover_ack("1,2"), 1)
             self.assertEqual(ack.call_args_list, [mock.call(["1", "2"]), mock.call(["1", "2"])])
+        # Only an unavailable ledger is retried at the next boundary; any other failure surfaces.
         with mock.patch.object(mode_channel, "acknowledge_handover", return_value=True), \
-             mock.patch.object(input_ack, "processed_update_ids", side_effect=sqlite3.OperationalError("database is corrupt")):
-            with self.assertRaises(sqlite3.OperationalError): telegram.handover_ack("1")
+             mock.patch.object(input_ack, "processed_update_ids", side_effect=RuntimeError("unexpected")):
+            with self.assertRaises(RuntimeError): telegram.handover_ack("1")
 
     def test_durable_ack_precedes_notice_processing(self):
         events = []

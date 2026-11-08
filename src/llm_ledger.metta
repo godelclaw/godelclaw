@@ -1,8 +1,7 @@
 ; The LLM call ledger in the native store: collection `provider` of the agent's ledger store,
-; served by the same server as the input ledger (src/input_ledger_server.metta). It holds what
-; llm-budget.sqlite3 holds, and its writes are the transitions of the live SQLite code
-; (src/llm_policy_cetta.metta, src/native_lifetime_cetta.metta, src/llm_policy.py,
-; src/native_lifetime.py), each one transaction:
+; served by the same server as the input ledger (src/input_ledger_server.metta). Its writes are
+; the transitions of the call policy and lifecycle (src/llm_policy_cetta.metta,
+; src/native_lifetime_cetta.metta), each one transaction:
 ;
 ;   (llm:request <id> <started> <reserved> <status> <output> <provider> <mode> <finish> <owner> <fingerprint>)
 ;                                                     requests
@@ -26,19 +25,8 @@
 ; history keeps one event per (call, event): the first write of a pair wins, as INSERT OR
 ; IGNORE does under UNIQUE(call_id,event).
 ;
-; Selection. The SQLite file stays the ledger of an instance until a migration completes:
-;   no "selected" record                              legacy: callers keep using the SQLite file
-;   (llm:state "selected" (llm-ledger-v1 <source> <at>))  native: this collection is the ledger
-;   (llm:state "selected" (llm-ledger-legacy <why>))  legacy again, after a rollback
-; Any other value (an import in progress included) answers an Error, never legacy. Every verb
-; answers llm-legacy on a legacy store before it reads or writes anything else, so a caller
-; asks the server once per operation and falls back to SQLite only on that answer.
-;
-; Writes carry a request id made by the caller once per operation (rq1.<uuid>): a repeat after
-; a lost reply replays the first answer; the same id with other fields is refused by the
-; engine. Reads open one snapshot. Process liveness (the owner of a pending request, the
-; incarnation of a claimed call) is observed here, inside the transaction, through
-; src/process_identity_cetta.metta: the server runs on the agent's host as the agent's user.
+; Selection. A store with no "selected" record, or with (llm-ledger-v1 <source> <at>) from an
+; earlier import, is the ledger. Any other value answers an Error.
 
 !(import! &self (library db))
 !(import! &self (library str))
@@ -71,9 +59,8 @@
 
 (= (llm-ledger:selection $space)
    (case (collapse (match $space (llm:state "selected" $value) $value))
-     ((() legacy)
+     ((() native)
       (((llm-ledger-v1 $source $at)) native)
-      (((llm-ledger-legacy $why)) legacy)
       ($other (Error llm-ledger:selection (unsupported $other))))))
 
 (= (llm-ledger:reason-detail $reason) (str:concat "{\"reason\":\"" (str:concat $reason "\"}")))
@@ -274,7 +261,8 @@
 ; ---- the transitions ----
 
 ; lp:admit-configured / admit: recovery of dead owners, then the cooldown test of a managed
-; provider, then the request and its admitted event.
+; provider, then the request and its admitted event. A store's first admission also records
+; when its recording began (usage-of reads it: coverage is complete from then on).
 (= (llm-ledger:admit-in $space $ticket $provider $maximum $fingerprint $profile $mode $owner $detail $now)
    (let* (($_ (llm-ledger:recover-requests-in $space $now))
           ($until (llm-ledger:cooldown-of $space $provider)))
@@ -282,7 +270,8 @@
          (LedgerDenied "provider-cooldown" (- $until $now))
          (if (not (== (llm-ledger:request-of $space $ticket) ()))
              (LedgerError (PythonException IntegrityError "UNIQUE constraint failed: requests.id"))
-             (let* (($_ (add-atom $space (llm:request $ticket $now $maximum "pending" none $provider $mode none $owner $fingerprint)))
+             (let* (($_ (llm-ledger:event-in $space "" "recording-started" $now "{\"schema\":1}"))
+                    ($_ (add-atom $space (llm:request $ticket $now $maximum "pending" none $provider $mode none $owner $fingerprint)))
                     ($_ (llm-ledger:event-in $space $ticket "admitted" $now $detail)))
                (LedgerAdmitted $ticket))))))
 
@@ -538,7 +527,7 @@
    (let $rows (collapse (match $view (llm:request $id $st $rv "unknown" $o $p $m $f $ow $fp) ($st ($id $p $m))))
      (list:take 5 (list:reverse (map-atom (sort-atom $rows) $entry (input-ledger:second $entry))))))
 
-; scripts/inspect_retry_wake.metta: the active calls with their request status.
+; The active calls with their request status.
 (= (llm-ledger:active-of $view)
    (let $rows (llm-ledger:active-calls $view)
      (collapse (let $row (superpose $rows)
@@ -546,7 +535,7 @@
                  (((llm:call $i $e $pid $s $c $u $st $g $t $so $b $q $r $a $l $pu $n)
                    ($i $e $pid $s $st $u (llm-ledger:request-status $view $i) $pu))))))))
 
-; ---- migration (scripts/migrate_llm_ledger.py) ----
+; ---- census and records (read-only) ----
 
 ; (census <requests> <cooldowns> <calls> <results> <events> <recent> <recoveries> <states> <all>), from one snapshot.
 (= (llm-ledger:census-of $view)
@@ -560,7 +549,7 @@
            (size-atom (collapse (match $view (llm:state $a $b) $a)))
            (size-atom (collapse (match $view $atom $atom)))))
 
-; Every record of one kind, for the reader check and the reverse export: requests, cooldowns,
+; Every record of one kind: requests, cooldowns,
 ; calls, results, events, recent, recoveries or states.
 (= (llm-ledger:records-of $view $kind)
    (case $kind
@@ -574,51 +563,6 @@
       ("recoveries" (collapse (match $view (llm:recovery $a $b $c $d) (llm:recovery $a $b $c $d))))
       ("states" (collapse (match $view (llm:state $a $b) (llm:state $a $b))))
       ($other (Error llm-ledger:records (unknown-kind $other))))))
-
-; An import adds whole records. The first batch ($phase begin) needs a collection without any
-; atom and marks it (llm-ledger-importing <source>): every verb then answers an Error until the
-; last batch ($phase finish) replaces that mark with (llm-ledger-v1 <source> <at>), and only if
-; the census then equals $expect. Other batches ($phase more) need the importing mark.
-(= (llm-ledger:import-in $space $phase $source $rows $expect $at)
-   (let $mark (collapse (match $space (llm:state "selected" $value) $value))
-     (case $phase
-       ((begin (if (== (collapse (match $space $atom $atom)) ())
-                   (let* (($_ (add-atom $space (llm:state "selected" (llm-ledger-importing $source))))
-                          ($_ (input-ledger:add-all $space $rows)))
-                     imported)
-                   refused))
-        (more (if (== $mark ((llm-ledger-importing $source)))
-                  (let $_ (input-ledger:add-all $space $rows) imported)
-                  refused))
-        (finish (if (== $mark ((llm-ledger-importing $source)))
-                    (let* (($_ (input-ledger:add-all $space $rows))
-                           ($census (llm-ledger:census-of $space)))
-                      (if (== $census $expect)
-                          (let $_ (input-ledger:replace $space (llm:state "selected" (llm-ledger-importing $source))
-                                                               (llm:state "selected" (llm-ledger-v1 $source $at)))
-                            imported)
-                          (mismatch $census)))
-                    refused))
-        ($other refused)))))
-
-; An import that stopped half way is discarded whole: every record goes, the importing mark
-; with them, and the collection is empty (legacy) again.
-(= (llm-ledger:discard-in $space)
-   (case (collapse (match $space (llm:state "selected" $value) $value))
-     ((((llm-ledger-importing $source))
-       (let* (($all (collapse (match $space $atom $atom)))
-              ($gone (collapse (let $atom (superpose $all) (remove-atom $space $atom)))))
-         discarded))
-      ($other refused))))
-
-; A rollback to the SQLite file (after scripts/migrate_llm_ledger.py --export): callers answer
-; from SQLite again; the records stay as evidence.
-(= (llm-ledger:rollback-in $space $why)
-   (case (collapse (match $space (llm:state "selected" $value) $value))
-     ((((llm-ledger-v1 $source $at))
-       (input-ledger:replace $space (llm:state "selected" (llm-ledger-v1 $source $at))
-                                    (llm:state "selected" (llm-ledger-legacy $why))))
-      ($other refused))))
 
 ; ---- the verbs ----
 
@@ -641,10 +585,9 @@
       ((Error $where $why) (input-ledger:remember $prior (Error $where $why)))
       ($other (Error $verb $other)))))
 
-; A write reads the selection first: a legacy store answers llm-legacy and writes nothing, an
-; unsupported one answers its Error. The transaction checks it again (an import or a rollback
-; in between answers an Error, unpublished). A native body always answers a value, so an
-; empty outcome is a failure, never legacy.
+; A write reads the selection first: an unsupported one answers its Error. The transaction
+; checks it again, so a selection changed in between answers an Error, unpublished. A body
+; always answers a value, so an empty outcome is a failure.
 (= (llm-ledger:selected-write $db $verb $fields $request-id $body)
    (case (llm-ledger:selection-read $db)
      ((native
@@ -653,7 +596,6 @@
          (case $outcome
            ((($answer) $answer)
             ($other (Error $verb (answers $other)))))))
-      (legacy llm-legacy)
       ($failure $failure))))
 
 (= (llm-ledger:still-native $space $body)
@@ -673,7 +615,6 @@
            ((() $unchanged)
             (($answer) $answer)
             ($other (Error $verb (answers $other)))))))
-      (legacy llm-legacy)
       ($failure $failure))))
 
 (= (llm-ledger:read $db $body)
@@ -681,7 +622,6 @@
      (((Error $where $why) (Error $where $why))
       ($view (let* (($answer (case (llm-ledger:selection $view)
                                ((native ($body $view))
-                                (legacy llm-legacy)
                                 ($failure $failure))))
                     ($_ (db:close $view)))
                $answer)))))
@@ -749,7 +689,7 @@
       (("llm-requests" ()) (llm-ledger:read $db (|-> ($view) (llm-ledger:requests-of $view))))
       (("llm-unknown" ()) (llm-ledger:read $db (|-> ($view) (llm-ledger:unknown-of $view))))
       (("llm-active" ()) (llm-ledger:read $db (|-> ($view) (llm-ledger:active-of $view))))
-      ; migration and its checks read whatever the selection is
+      ; the census and the records read whatever the selection is
       (("llm-census" ())
        (case (db:snapshot $db provider)
          (((Error $where $why) (Error $where $why))
@@ -758,17 +698,4 @@
        (case (db:snapshot $db provider)
          (((Error $where $why) (Error $where $why))
           ($view (let* (($answer (llm-ledger:records-of $view $kind)) ($_ (db:close $view))) $answer)))))
-      (("llm-import" ($phase $source $rows $expect $at $rq))
-       (let $outcome (collapse (llm-ledger:write $db llm-import ($phase $source $rows $expect $at) $rq
-                                 (|-> ($space) (case (llm-ledger:import-in $space $phase $source $rows $expect $at)
-                                                 ((imported imported) ($refusal (empty)))))))
-         (case $outcome ((() refused) (($answer) $answer) ($other (Error llm-import (answers $other)))))))
-      (("llm-discard" ($rq))
-       (let $outcome (collapse (llm-ledger:write $db llm-discard () $rq
-                                 (|-> ($space) (case (llm-ledger:discard-in $space) ((refused (empty)) ($done discarded))))))
-         (case $outcome ((() refused) (($answer) $answer) ($other (Error llm-discard (answers $other)))))))
-      (("llm-rollback" ($why $rq))
-       (let $outcome (collapse (llm-ledger:write $db llm-rollback ($why) $rq
-                                 (|-> ($space) (case (llm-ledger:rollback-in $space $why) ((refused (empty)) ($done rolled-back))))))
-         (case $outcome ((() refused) (($answer) $answer) ($other (Error llm-rollback (answers $other)))))))
       ($other (Error input-ledger:run (unknown-request $other))))))

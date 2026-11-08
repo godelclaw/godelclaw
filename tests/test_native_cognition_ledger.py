@@ -1,11 +1,10 @@
 """The cognition side's readers on the native ledger (METTACLAW_INPUT_LEDGER_SOCKET).
 
-task_context_cetta, task_context_views and context_compaction read the turn's records with SQL on
-the SQLite path; on the native path they ask the ledger's server. The same scenario is written
-through observed_strategy.Ledger on both paths (one owner on both), and the same MeTTa program reads
-it back: the task and conversation projections (whole, from an offset with results cut, and the
-first window's start), task-read of calls and inputs, task-history, task-note and the window
-checkpoint's compare-and-set print the same text on both.
+task_context_cetta, task_context_views and context_compaction ask the ledger's server for the turn's
+records. A scenario is written through observed_strategy.Ledger (with a fixed owner) and a MeTTa
+program reads it back: the task and conversation projections (whole, from an offset with results
+cut, and the first window's start), task-read of calls and inputs, task-history, task-note and the
+window checkpoint's compare-and-set, each with its expected text.
 """
 import hermetic_env  # noqa: F401,E402  (first, before any src module: see hermetic_env.py)
 import json
@@ -20,17 +19,17 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path[:0] = [str(HERE), str(ROOT / "src"), str(ROOT / "channels")]
 import input_ack
-from observed_strategy import Ledger, encoded
+from observed_strategy import Ledger
 import task_context
 from native_ledger_client import NativeRunner
 from test_input_ack_native import NativeCase, SKIP
-from test_input_ledger_remote import ENGINE, Oracle, available, oracle_environment
+from test_input_ledger_remote import ENGINE, available, oracle_environment
 from test_turn_effect_native import ROUTER, record_attempt
 
 OWNER = "owner-of-both"
 
 
-def scenario(store, native):
+def scenario(store):
     store.accept("input:a", "first message " + "x" * 300, kind="message")
     store.link_inputs("input:a", ["u1"])
     task_context.begin(store, "input:a", "operator-event", None, "chat")
@@ -46,12 +45,12 @@ def scenario(store, native):
                                                "command": {"commands": commands, "limit": 2}}, 0)
         task_context.proposal(store, snap["serial"], "task-1", commands, "admitted")
         long = "line %d é\n" % number * 400
-        record_attempt(store, native, ticket, 0, commands[0], {"disposition": "returned", "result": long})
-        record_attempt(store, native, ticket, 1, commands[1], None)
+        record_attempt(store, ticket, 0, commands[0], {"disposition": "returned", "result": long})
+        record_attempt(store, ticket, 1, commands[1], None)
         store.report(ticket, "batch %d" % number)
     legacy = store.capture("input:b", "legacy", ROUTER, 0)
     old = store.decide(legacy["serial"], {"kind": "command", "tool": "shell", "command": ["echo", "old"]}, 0)
-    record_attempt(store, native, old, 0, ["echo", "old"], {"disposition": "returned", "result": "old"})
+    record_attempt(store, old, 0, ["echo", "old"], {"disposition": "returned", "result": "old"})
     store.accept("input:late", "after the calls", kind="message")  # ordered after the calls by their captures
     task_context.note(store, "task-1", "a note on the child")
     task_context.focus(store, "task-1")
@@ -75,7 +74,7 @@ def program(legacy):
         '(task:history "conversation:%s" 3 4)' % OWNER,
         '(task:history "task-1" 0 0)',
     ]
-    # The topics (state_sqlite.metta's topic-select, topic-note, topics, topics:context).
+    # The topics (state_ledger.metta's topic-select, topic-note, topics, topics:context).
     topic_lines = ['(topics)', '(topics:context)', '(topic-select "research é")', '(topic-note "notes \\"q\\" é")',
                    '(topics)', '(topics:context)', '(topic-select "conversation")', '(topics:context)',
                    '(topic-select "research é")', '(topic-note "second")', '(topics)', '(topics:context)']
@@ -89,9 +88,9 @@ def program(legacy):
         '!(println! (NOTE (task-note "noted from the cognition side")))',
         '!(println! (OUT-NOTES (state:encoded (task:projection "task-1" "continuation-tick"))))',
         '!(println! (CHECK-0 (context:checkpoint "task-1")))',
-        '!(println! (WRITE-1 (context:write-checkpoint "task-1" sqlite:null '
+        '!(println! (WRITE-1 (context:write-checkpoint "task-1" none '
         '(JsonObject ((JsonPair "version" (JsonNumber "1")) (JsonPair "start" (JsonNumber "2")) (JsonPair "summary" (JsonString "s")))))))',
-        '!(println! (WRITE-2 (context:write-checkpoint "task-1" sqlite:null (JsonObject ((JsonPair "start" (JsonNumber "3")))))))',
+        '!(println! (WRITE-2 (context:write-checkpoint "task-1" none (JsonObject ((JsonPair "start" (JsonNumber "3")))))))',
         '!(println! (CHECK-1 (context:checkpoint "task-1")))',
         '!(println! (SAVED (task:saved-start "task-1") (state:encoded (state:meta (task:window-key "task-1")))))',
         # The calls the renderer reports carrying (strategy_host.context_presented): rows with a result.
@@ -122,23 +121,18 @@ class CognitionLedgerTest(NativeCase):
         self.assertIn("COGNITION_OK", done.stdout, done.stdout[-3000:] + done.stderr[-3000:])
         return [line for line in done.stdout.splitlines() if line.startswith("(")]
 
-    def side(self, native):
+    def side(self):
         with oracle_environment() as directory:
-            runner = NativeRunner.create(directory, self.server.socket) if native else Oracle.create(directory)
+            runner = NativeRunner.create(directory, self.server.socket)
             store = Ledger(runner.path)
-            with store.transaction() as db:
-                db.execute("UPDATE meta SET value=? WHERE key='owner'", (encoded(OWNER),))
-            store._owner = None
-            legacy = self.legacy = scenario(store, native)
+            store._owner = OWNER  # the store takes it at its first capture
+            legacy = self.legacy = scenario(store)
             input_ack.close_ledger()
-            return self.run_guest(directory, runner.path, self.server.socket if native else None, program(legacy))
+            return self.run_guest(directory, runner.path, self.server.socket, program(legacy))
 
-    def test_the_cognition_side_reads_the_same_on_both_paths(self):
-        oracle, native = self.side(False), self.side(True)
-        self.assertEqual(len(native), len(oracle), (oracle[-3:], native[-3:]))
-        for want, got in zip(oracle, native):
-            self.assertEqual(got, want)
-        lines = {line.split(" ", 1)[0]: line for line in oracle}
+    def test_the_cognition_side_reads_its_records(self):
+        printed = self.side()
+        lines = {line.split(" ", 1)[0]: line for line in printed}
         self.assertIn("ContextPublished", lines["(WRITE-1"])
         self.assertIn("context-checkpoint-changed", lines["(WRITE-2"])
         self.assertIn("TASK_NOTE_SAVED", lines["(NOTE"])
@@ -146,7 +140,7 @@ class CognitionLedgerTest(NativeCase):
         carried = re.findall(r'"OWNER:(\d+):(\d+)"', lines["(CARRIED"].replace(OWNER, "OWNER"))
         self.assertEqual(sorted(carried), sorted([("0", "0"), ("1", "0"), ("2", "0"), (str(self.legacy), "0")]))
         self.assertEqual(lines["(REPORTED"], "(REPORTED 1)")
-        topic = [line for line in oracle if line.startswith("(TOPIC ")]
+        topic = [line for line in printed if line.startswith("(TOPIC ")]
         self.assertEqual(len(topic), 12)
         self.assertIn('active topic: research', topic[2])
         self.assertIn('saved topic notes', topic[3])

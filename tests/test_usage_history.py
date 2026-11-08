@@ -1,11 +1,8 @@
 """Measured usage survives retries, late results and admission-window pruning."""
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import closing
-import hashlib
 import json
 import os
 from pathlib import Path
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -14,13 +11,17 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-import llm_policy
-import native_llm_host
-import synthetic_llm
-import usage_history
-
 CETTA = os.environ.get("CETTA_BIN")
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from isolated_env import isolated_environ  # noqa: E402
+import input_ack  # noqa: E402
+import llm_policy  # noqa: E402
+import native_ledger  # noqa: E402
+import native_llm_host  # noqa: E402
+import synthetic_llm  # noqa: E402
+import usage_history  # noqa: E402
 
 
 def result(incoming=12, cached=4, outgoing=3):
@@ -34,9 +35,11 @@ class UsageHistoryTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        self.ledger = self.root / "ledger.db"
-        env = patch.dict(os.environ, {
-            "METTACLAW_LLM_LEDGER_PATH": str(self.ledger), "METTACLAW_LLM_POLICY": "managed",
+        self.socket = native_ledger.start(self, self.root)
+        # Only this test's own settings: the invoking agent's METTACLAW_* stay out, the
+        # engine locations the ledger client needs stay in.
+        env = patch.dict(os.environ, {**isolated_environ(),
+            "METTACLAW_INPUT_LEDGER_SOCKET": self.socket, "METTACLAW_LLM_POLICY": "managed",
             "METTACLAW_INSTANCE": "fixture-agent", "METTACLAW_ACTIVITY_CALL_SCOPE": "work-fixture",
             "METTACLAW_LLM_COMPLETION_PATH": str(self.root / "completion.json"),
         }, clear=True)
@@ -49,8 +52,12 @@ class UsageHistoryTests(unittest.TestCase):
         llm_policy.describe(ticket, model=model, protocol="chat-completions", purpose=purpose)
         return ticket
 
-    def report(self):
-        return usage_history.report(self.ledger)
+    def report(self, **window):
+        return usage_history.report_native(**window)
+
+    def request(self, ticket):
+        rows = [row for row in native_ledger.llm_records("requests") if row["id"] == ticket]
+        return rows[0] if rows else None
 
     def test_distinct_calls_accumulate_and_remain_attributable(self):
         first = self.call(model="first", purpose="turn")
@@ -110,8 +117,7 @@ class UsageHistoryTests(unittest.TestCase):
         llm_policy.complete(old, result())
         fresh = self.call(now=300000)
         llm_policy.complete(fresh, result())
-        with closing(sqlite3.connect(self.ledger)) as conn:
-            self.assertIsNone(conn.execute("SELECT id FROM requests WHERE id=?", (old,)).fetchone())
+        # Admission long after the first call: both calls' usage is still reported.
         self.assertEqual(self.report()["totals"]["known_input_tokens"], 24)
 
     def test_dead_owner_remains_unknown_in_history(self):
@@ -134,8 +140,7 @@ class UsageHistoryTests(unittest.TestCase):
         response["usage"].update(api_key="credential sentinel", content="private prompt sentinel")
         response["usage"]["prompt_tokens_details"]["content"] = "private nested sentinel"
         llm_policy.complete(ticket, response)
-        with closing(sqlite3.connect(self.ledger)) as conn:
-            history = json.dumps(conn.execute("SELECT detail FROM llm_call_history").fetchall())
+        history = json.dumps([row["detail"] for row in native_ledger.llm_events()])
         for text in ("private reply sentinel", "credential sentinel", "private prompt sentinel", "private nested sentinel"):
             self.assertNotIn(text, history)
 
@@ -172,18 +177,16 @@ class UsageHistoryTests(unittest.TestCase):
                 ticket = self.call()
                 response = result(); response['usage']['completion_tokens'] = value
                 self.assertTrue(llm_policy.complete(ticket, response))
-                with closing(sqlite3.connect(self.ledger)) as db:
-                    self.assertEqual(db.execute('SELECT status,output FROM requests WHERE id=?', (ticket,)).fetchone(),
-                                     ('completed', None))
+                row = self.request(ticket)
+                self.assertEqual((row['status'], row['output']), ('completed', None))
 
-    def test_exact_usage_can_exceed_the_legacy_sqlite_integer_column(self):
+    def test_exact_usage_is_reported_beyond_the_64_bit_request_counter(self):
         ticket = self.call()
         huge = 10**30
         self.assertTrue(llm_policy.complete(ticket, result(outgoing=huge)))
         self.assertEqual(self.report()['totals']['known_output_tokens'], huge)
-        with closing(sqlite3.connect(self.ledger)) as db:
-            self.assertEqual(db.execute('SELECT status,output FROM requests WHERE id=?', (ticket,)).fetchone(),
-                             ('completed', None))
+        row = self.request(ticket)
+        self.assertEqual((row['status'], row['output']), ('completed', None))
 
     def test_native_wire_records_subscription_billing_and_compaction_purpose(self):
         ticket = llm_policy.admit("chatgpt", 100, now=100)
@@ -220,75 +223,48 @@ class UsageHistoryTests(unittest.TestCase):
              patch('cognitive_health.turn_started'), patch('process_supervision.provider_wait'):
             answer = synthetic_llm._exchange(provider, '/messages', dict(model='fixture'), 100)
         self.assertEqual(answer['choices'][0]['message']['content'], '(nop)')
-        with closing(sqlite3.connect(self.ledger)) as db:
-            self.assertEqual(db.execute('SELECT status,output FROM requests').fetchall(), [('completed', None)])
+        self.assertEqual([(row['status'], row['output']) for row in native_ledger.llm_records('requests')],
+                         [('completed', None)])
         self.assertEqual(self.report()['totals']['output_tokens_unknown_calls'], 1)
 
-    def test_report_does_not_write_or_create_a_database(self):
+    def test_report_writes_nothing_and_needs_a_ledger(self):
         llm_policy.complete(self.call(), result())
-        before = hashlib.sha256(self.ledger.read_bytes()).digest()
+        kinds = ("requests", "cooldowns", "calls", "results", "events")
+        before = {kind: native_ledger.llm_records(kind) for kind in kinds}
         self.report()
-        self.assertEqual(hashlib.sha256(self.ledger.read_bytes()).digest(), before)
-        missing = self.root / "missing.db"
-        with self.assertRaises(sqlite3.OperationalError):
-            usage_history.report(missing)
-        self.assertFalse(missing.exists())
-
-    def test_legacy_ledger_reports_missing_history_instead_of_zero_spend(self):
-        with closing(sqlite3.connect(self.ledger)) as conn:
-            conn.execute("CREATE TABLE legacy_fixture(id TEXT)")
-        report = self.report()
-        self.assertFalse(report["history_available"])
-        self.assertFalse(report["coverage_complete"])
-        self.assertIsNone(report["monetary_cost"])
-        self.assertEqual(report["totals"], {})
+        self.assertEqual({kind: native_ledger.llm_records(kind) for kind in kinds}, before)
+        with patch.dict(os.environ, {"METTACLAW_INPUT_LEDGER_SOCKET": ""}):
+            with self.assertRaises(input_ack.LedgerUnavailable):
+                self.report()
 
     def test_cost_projection_adds_across_time_windows(self):
         llm_policy.complete(self.call(now=100), result())
         llm_policy.complete(self.call(now=200), result(24, 8, 6))
-        first = usage_history.report(self.ledger, since=0, until=150)["totals"]
-        second = usage_history.report(self.ledger, since=150, until=300)["totals"]
-        whole = usage_history.report(self.ledger, since=0, until=300)["totals"]
+        first = self.report(since=0, until=150)["totals"]
+        second = self.report(since=150, until=300)["totals"]
+        whole = self.report(since=0, until=300)["totals"]
         self.assertEqual({k: first.get(k, 0) + second.get(k, 0) for k in whole}, whole)
 
+    @unittest.skipUnless(CETTA, "set CETTA_BIN to run the ledger's usage reader")
     def test_older_untracked_calls_do_not_poison_a_fully_recorded_new_window(self):
-        llm_policy.complete(self.call(), result())
-        boundary = time.time()
-        llm_policy.complete(self.call(now=boundary), result())
-        with closing(sqlite3.connect(self.ledger)) as conn:
-            conn.execute("INSERT INTO requests(id,started,reserved,status,provider,mode) "
-                         "VALUES('legacy',50,10,'completed','fixture','godelclaw')")
-            conn.commit()
-        current = usage_history.report(self.ledger, since=boundary)
-        self.assertEqual(current["totals"]["calls"], 1)
-        self.assertEqual(current["legacy_request_rows_without_history"], 0)
-        self.assertTrue(current["coverage_complete"])
-        self.assertFalse(self.report()["coverage_complete"])
-
-    @unittest.skipUnless(CETTA, "set CETTA_BIN to exercise the native MeTTa reader")
-    def test_metta_reads_the_same_history_without_python_or_writes(self):
-        llm_policy.complete(self.call(), result())
-        # The reader's final 1000 argument is a busy timeout, never a row cap.
-        with llm_policy.transaction() as db:
-            db.executemany("INSERT INTO llm_call_history(call_id,event,observed,detail) VALUES(?,'admitted',101,'{}')",
-                           [('fixture-%d' % i,) for i in range(1001)])
-        before = self.ledger.read_bytes()
+        """A request row without an admitted event (one migrated from a ledger that predates
+        the history) counts against coverage only in a window that contains it: the ledger's
+        own reader (llm-ledger:usage-of), over records built for the case."""
         entry = self.root / "probe.metta"
-        entry.write_text('!(import! &self ' + json.dumps(str(ROOT / 'src/usage_history.metta')) + ')\n'
-            '!(case (usage:events ' + json.dumps(str(self.ledger)) + ' 0 1000)\n'
-            ' (((sqlite:result $columns $rows $changes $last) (println! (size-atom $rows)))\n'
-            '  ($other (println! $other))))\n')
-        env = dict(os.environ, PYTHONHOME=sys.prefix, LD_LIBRARY_PATH=str(Path(sys.prefix) / "lib"))
+        entry.write_text('!(import! &self ' + json.dumps(str(ROOT / 'src/input_ledger.metta')) + ')\n'
+            '!(bind! &usage (new-space))\n'
+            '!(add-atom &usage (llm:event 1 "" "recording-started" 40 "{}"))\n'
+            '!(add-atom &usage (llm:request "legacy" 50 10 "completed" none "fixture" "godelclaw" none "" ""))\n'
+            '!(add-atom &usage (llm:request "new" 200 10 "completed" 2 "fixture" "godelclaw" none "" ""))\n'
+            '!(add-atom &usage (llm:event 2 "new" "admitted" 200 "{}"))\n'
+            '!(println! (WINDOW (llm-ledger:usage-of &usage 150 300)))\n'
+            '!(println! (WHOLE (llm-ledger:usage-of &usage 0 300)))\n')
         run = subprocess.run([CETTA, "--lang", "petta", "--import-mode", "ancestor-walk", "--quiet", str(entry)],
-                             cwd=ROOT, env=env, capture_output=True, text=True, timeout=20)
-        self.assertEqual(run.returncode, 0, run.stderr)
-        # The CLI also prints top-level import/println acknowledgements.
-        # Retain every substantive result so a duplicated answer cannot hide.
-        lines = [line.strip() for line in run.stdout.splitlines()
-                 if line.strip() and line.strip().lower() != "true"]
-        self.assertEqual(lines, ["1005"])
-        self.assertEqual(self.ledger.read_bytes(), before)
-
+                             cwd=ROOT, capture_output=True, text=True, timeout=60)
+        self.assertEqual(run.returncode, 0, run.stderr[-2000:])
+        lines = [line.strip() for line in run.stdout.splitlines() if line.strip().startswith("(W")]
+        self.assertEqual(lines, ['(WINDOW (usage 40 0 (("new" "admitted" "{}" 200))))',
+                                 '(WHOLE (usage 40 1 (("new" "admitted" "{}" 200))))'])
 
 if __name__ == "__main__":
     unittest.main()

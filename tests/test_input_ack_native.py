@@ -3,10 +3,9 @@
 Every case starts a native db server on a fresh temporary store (the server
 module of the product, src/input_ledger_server.metta; CETTA_DB_SERVER_MODULE
 overrides it) and runs the public functions of input_ack.py in-process through
-the native path. The oracle is the same operation sequence through the SQLite
-path (variable unset), as in the 4a tests: answers and the final contents of
-the tables are compared, the latter read from the server by an independent
-cetta client. Clocks are mocked and every METTACLAW_* variable the tests rely
+the native path. The sequential model is the same operation sequence on a
+native ledger of its own: answers and the final records are compared, the
+latter read from the server by an independent cetta client. Clocks are mocked and every METTACLAW_* variable the tests rely
 on is set here (the rest is removed), so the result does not depend on the
 caller's environment. Every wait has a deadline and each test has a SIGALRM
 limit; the server, the clients and the ledger workers are stopped and their
@@ -23,7 +22,6 @@ import shlex
 import shutil
 import signal
 import socket
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -133,10 +131,8 @@ class NativeCase(RemoteCase):
         self.assertEqual([pid for pid in self.worker_pids if is_running(pid)], [], "a ledger worker is still running")
 
     def run_native(self, operations, socket_path=None):
-        """The answers of input_ack.py on the native path, with SQLite made unusable."""
-        with oracle_environment() as directory, \
-                mock.patch.object(input_ack, "_store", side_effect=AssertionError("the SQLite ledger was opened")), \
-                mock.patch.object(input_ack.sqlite3, "connect", side_effect=AssertionError("SQLite was used")):
+        """The answers of input_ack.py on the native ledger."""
+        with oracle_environment() as directory:
             runner = NativeRunner.create(directory, socket_path or self.server.socket)
             return [runner.apply(operation) for operation in operations]
 
@@ -186,57 +182,27 @@ print("ok")
 
 @unittest.skipUnless(available(), SKIP)
 class OracleTest(NativeCase):
-    def test_the_scenario_of_cognition_and_control_gives_the_answers_and_tables_of_sqlite(self):
+    def test_the_scenario_of_cognition_and_control_gives_the_sequential_answers_and_records(self):
         rows, ids = self.check_sequence([operation for _, operation in SCENARIO])
         self.assertTrue(rows and ids)
         self.assertIsNotNone(input_ack._ledger, "the native path never started its worker")
 
-    def test_every_state_of_a_notice_and_quotes_and_non_ascii_ids_match_sqlite(self):
+    def test_every_state_of_a_notice_and_quotes_and_non_ascii_ids(self):
         rows, ids = self.check_sequence(EVERY_STATE)
         self.assertEqual({row[8] for row in rows}, {"registered", "submitted", "deleted", "expired"})
         self.assertIn(UNI_UPDATE, ids)
         self.assertIn("back\\slash", ids)
 
-    def test_the_gates_of_the_sqlite_path_decide_alike_without_a_managed_ledger(self):
-        def calls():
-            return [input_ack.processed_update_ids(["x"]), input_ack.committed(["x"]),
-                    input_ack.already_committed("x"), input_ack.submitted("t"),
-                    input_ack.receipt(["delivery", "k", 0, 1, ["delivered", 1]]),
-                    input_ack.pump(base.FakeChannel([], None))]
-        cases = [
-            {"METTACLAW_OBSERVED_STRATEGY": "1"},  # no ledger configured
-            {"METTACLAW_OBSERVED_STRATEGY": "0", "METTACLAW_STRATEGY_PATH": "/nonexistent-dir/ledger.db"},  # no checkpoint
-            {"METTACLAW_OBSERVED_STRATEGY": "0"},
-        ]
-        for values in cases:
-            with self.subTest(values=values), oracle_environment():
-                os.environ.pop("METTACLAW_STRATEGY_PATH", None)
-                os.environ.update(values)
-                expected = calls()
-                with mock.patch.dict(os.environ, {input_ack.LEDGER_SOCKET: str(self.server.socket)}):
-                    self.assertEqual(calls(), expected)
-                self.assertIsNone(input_ack._ledger, "a ledger worker was started where SQLite would have opened nothing")
-
     def test_a_processed_update_leaves_no_pending_entry_and_a_later_one_does(self):
-        def run():
-            with oracle_environment() as directory:
-                os.environ["METTACLAW_STRATEGY_PATH"] = str(directory / "ledger.db")
-                os.environ.pop("METTACLAW_INPUT_LEDGER_SOCKET", None)
-                if native:
-                    os.environ[input_ack.LEDGER_SOCKET] = str(self.server.socket)
-                else:
-                    base.Ledger(directory / "ledger.db")
-                input_ack.processed_update_ids(["u1"] if not native else ["u1"])
-                done = input_ack.key("t1", LANE, "message", "operator", '{"update_id": "u1"}')
-                kept = dict(input_ack._pending)
-                other = input_ack.key("t2", LANE, "message", "operator", '{"update_id": "u2"}')
-                return done, kept, other, sorted(input_ack._pending)
-        native = False
-        expected = run()
-        native = True
-        self.assertEqual(run(), expected)
-        self.assertEqual(expected[:3], ("", {}, ""))
-        self.assertEqual(expected[3], ["t2"])
+        with oracle_environment():
+            os.environ[input_ack.LEDGER_SOCKET] = str(self.server.socket)
+            input_ack.processed_update_ids(["u1"])
+            done = input_ack.key("t1", LANE, "message", "operator", '{"update_id": "u1"}')
+            kept = dict(input_ack._pending)
+            other = input_ack.key("t2", LANE, "message", "operator", '{"update_id": "u2"}')
+            pending = sorted(input_ack._pending)
+        self.assertEqual((done, kept, other), ("", {}, ""))
+        self.assertEqual(pending, ["t2"])
 
     def test_receipts_with_keys_and_ids_that_are_not_what_the_service_sends(self):
         with oracle_environment() as directory:
@@ -269,9 +235,8 @@ class OracleTest(NativeCase):
     def test_an_empty_socket_variable_means_unset(self):
         with oracle_environment() as directory:
             runner = NativeRunner.create(directory, "")
-            with mock.patch.object(input_ack, "_store", return_value=None):
-                self.assertEqual(runner.apply(("mark", ["a"], 1.0)), True)
-            self.assertIsNone(input_ack._ledger)
+            self.assertEqual(runner.apply(("mark", ["a"], 1.0)), True)
+            self.assertIsNone(input_ack._ledger, "no ledger, no worker")
 
     def test_the_worker_serves_many_calls_and_keeps_no_connection(self):
         before = set(worker_processes())
@@ -392,7 +357,7 @@ class DbServerAt:
 
 @unittest.skipUnless(available(), SKIP)
 class FailureTest(NativeCase):
-    def test_an_unreachable_server_raises_in_every_function_as_an_unopenable_sqlite_ledger_does(self):
+    def test_an_unreachable_server_raises_in_every_function(self):
         self.server.stop()
         self.session()
         errors = []
@@ -406,52 +371,21 @@ class FailureTest(NativeCase):
             with self.assertRaises(input_ack.LedgerUnavailable) as raised:
                 call()
             errors.append(raised.exception)
-        self.assertTrue(all(isinstance(error, sqlite3.OperationalError) for error in errors))
         self.assertTrue(all("db:connect" in str(error) for error in errors), [str(error) for error in errors])
-        # pump opens the ledger before it looks for a channel, as with SQLite: no channel, still an error.
+        # pump opens the ledger before it looks for a channel: no channel, still an error.
         with mock.patch.object(input_ack, "_last_pump", -1e9):
             with self.assertRaises(input_ack.LedgerUnavailable):
                 input_ack.pump()
-        # Not a lock: callers that wait out a busy database (handover_ack) must not wait out a missing server.
-        self.assertTrue(all(getattr(error, "sqlite_errorcode", None) is None for error in errors))
-        # committed on an unopenable SQLite ledger raises the same family: never "not processed".
-        with oracle_environment() as directory:
-            os.environ["METTACLAW_STRATEGY_PATH"] = str(directory / "missing.db")
-            with self.assertRaises(sqlite3.OperationalError):
-                input_ack.committed(["u1"])
+        # An unreachable server is not a lost race: none of these is LedgerBusy.
+        self.assertFalse(any(isinstance(error, input_ack.LedgerBusy) for error in errors))
 
-    def test_the_memory_of_submitted_is_updated_before_the_store_fails_as_with_sqlite(self):
+    def test_the_memory_of_submitted_is_updated_before_the_store_fails(self):
         self.server.stop()
         self.session()
         input_ack._pending["t"] = [1.0, False, LANE]
         with self.assertRaises(input_ack.LedgerUnavailable):
             input_ack.submitted("t")
         self.assertTrue(input_ack._pending["t"][1])
-
-    def test_there_is_no_fallback_to_sqlite_and_the_two_ledgers_stay_separate(self):
-        path = self.directory / "ledger.db"
-        with oracle_environment():
-            os.environ["METTACLAW_STRATEGY_PATH"] = str(path)
-            base.Ledger(path)
-            input_ack.processed_update_ids(["u1"])  # the SQLite path: recorded in the file
-            self.assertEqual(input_ack.already_committed("u1"), 1)
-        before = digest(path)
-        self.server.stop()
-        with oracle_environment():
-            os.environ["METTACLAW_STRATEGY_PATH"] = str(path)
-            os.environ[input_ack.LEDGER_SOCKET] = str(self.server.socket)
-            with self.assertRaises(input_ack.LedgerUnavailable):
-                input_ack.committed(["u1"])  # the file would say 1
-            with self.assertRaises(input_ack.LedgerUnavailable):
-                input_ack.processed_update_ids(["u2"])
-            self.assertEqual(digest(path), before, "the SQLite ledger was written while the server was down")
-            self.server.start()
-            # The native store is another, empty ledger: u1 is not in it, and u2 never reached SQLite.
-            self.assertEqual(input_ack.committed(["u1"]), 0)
-            self.assertEqual(input_ack.processed_update_ids(["u2"]), 1)
-            self.assertEqual(input_ack.committed(["u2"]), 1)
-        self.assertEqual(digest(path), before)
-        self.assertEqual(set(self.dump()[1]), {"u2"})
 
     def restart_case(self, crash):
         self.session()
@@ -522,7 +456,7 @@ class FailureTest(NativeCase):
                 self.assertIn("108 bytes", str(raised.exception))
                 self.assertEqual(len(self.worker_pids), before, "no worker for a path that cannot work")
 
-    def test_a_write_that_lost_every_race_is_busy_like_a_locked_database_and_the_rest_is_not(self):
+    def test_a_write_that_lost_every_race_is_busy_and_the_rest_is_unavailable(self):
         import mode_channel
         import telegram
 
@@ -545,15 +479,14 @@ class FailureTest(NativeCase):
             with mock.patch.object(input_ack, "_ledger_worker", return_value=Stub(conflict)):
                 with self.assertRaises(input_ack.LedgerBusy) as raised:
                     input_ack.processed_update_ids(["a"])
-                self.assertEqual(raised.exception.sqlite_errorcode, sqlite3.SQLITE_BUSY)
                 self.assertEqual(telegram.handover_ack("1,2"), 0)  # retried at the next boundary, no exception
             for reply in (refused, uncertain):
                 with mock.patch.object(input_ack, "_ledger_worker", return_value=Stub(reply)):
                     with self.assertRaises(input_ack.LedgerUnavailable) as raised:
                         input_ack.processed_update_ids(["a"])
                     self.assertNotIsInstance(raised.exception, input_ack.LedgerBusy)
-                    with self.assertRaises(sqlite3.OperationalError):
-                        telegram.handover_ack("1,2")  # loud, as an unopenable SQLite ledger
+                    # An unavailable ledger is retried at the next boundary too; nothing is replayed.
+                    self.assertEqual(telegram.handover_ack("1,2"), 0)
 
     def test_a_reply_lost_between_python_and_the_worker_is_repeated_with_the_same_request(self):
         self.session()
@@ -711,7 +644,7 @@ class TwoProcessTest(NativeCase):
         self.children.append(process)
         return process
 
-    def test_cognition_and_control_processes_share_the_store_and_match_sqlite(self):
+    def test_cognition_and_control_processes_share_the_store_and_match_the_sequential_model(self):
         turns = self.directory / "turns"
         turns.mkdir()
         numbered = list(enumerate(SCENARIO))
@@ -809,7 +742,7 @@ class LocationTest(unittest.TestCase):
         with self.assertRaises(TypeError):
             input_ack.ledger_paths()  # no default: it is not the Telegram service's directory
         # The caller derives the directory as the rest of the agent does: the parent of METTACLAW_ENGINE_STATE_PATH
-        # (run.sh: <XDG_STATE_HOME or ~/.local/state>/<instance>/engine), which also holds observed-strategy.sqlite3.
+        # (run.sh: <XDG_STATE_HOME or ~/.local/state>/<instance>/engine).
         import agent_checkpoint
         with self.assertRaises(RuntimeError):
             agent_checkpoint.state_dir()

@@ -320,7 +320,7 @@ class ContextFailureFeedbackTests(unittest.TestCase):
                 TMPDIR=str(tmp_dir),
                 METTACLAW_OBSERVED_STRATEGY="1",
                 METTACLAW_INPUT_LEDGER_SOCKET=str(tmp_dir / "stub.sock"),
-                METTACLAW_STRATEGY_PATH=str(tmp_dir / "strategy.sqlite3"),
+                METTACLAW_STRATEGY_PATH=str(tmp_dir / "strategy"),
                 METTACLAW_ENGINE_STATE_PATH=str(tmp_dir / "engine"),
                 METTACLAW_COGNITIVE_HEALTH_PATH=str(tmp_dir / "health.json"),
                 METTACLAW_LOOP_MODE_PATH=str(tmp_dir / "loop-mode.json"),

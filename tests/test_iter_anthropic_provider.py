@@ -3,6 +3,7 @@ import http.server
 import json
 from pathlib import Path
 import sys
+import tempfile
 import threading
 import unittest
 from unittest.mock import patch
@@ -10,6 +11,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "modes"), str(ROOT / "src")]
 import runtime_host
+import native_ledger
 
 
 class ClaudePeer(http.server.BaseHTTPRequestHandler):
@@ -29,6 +31,9 @@ class ClaudePeer(http.server.BaseHTTPRequestHandler):
 
 class IterAnthropicTests(unittest.TestCase):
     def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        native_ledger.start(self, temporary.name)
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), ClaudePeer)
         self.server.received = []
         self.server.reply = {"content": [

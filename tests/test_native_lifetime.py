@@ -3,24 +3,42 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import time
 from types import SimpleNamespace
 import unittest
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import llm_policy
+import native_ledger
 import native_lifetime
 
 
 class NativeLifetimeTest(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(); self.addCleanup(temporary.cleanup)
-        patch = mock.patch.dict(os.environ, {"METTACLAW_LLM_LEDGER_PATH": str(Path(temporary.name) / "budget.db"),
-                                "METTACLAW_LLM_POLICY": "upstream", "METTACLAW_LLM_POLICY_PATH": ""})
+        patch = mock.patch.dict(os.environ, {"METTACLAW_LLM_POLICY": "upstream", "METTACLAW_LLM_POLICY_PATH": ""})
         patch.start(); self.addCleanup(patch.stop)
+        native_ledger.start(self, temporary.name)
 
-    def plan(self):
-        return SimpleNamespace(correlation=llm_policy.admit("synthetic", 10), epoch="session", guard="revision", cap=1024)
+    def plan(self, fingerprint=None):
+        ticket = (llm_policy.admit("synthetic", 10, request_fingerprint=fingerprint) if fingerprint
+                  else llm_policy.admit("synthetic", 10))
+        return SimpleNamespace(correlation=ticket, epoch="session", guard="revision", cap=1024)
+
+    def claim_for_a_dead_owner(self, plan):
+        """Claim as a process whose birth stamp no longer matches: the ledger sees the owner gone."""
+        with mock.patch.object(native_lifetime, "process_start", return_value="gone"):
+            return native_lifetime.claim(plan)
+
+    def recover_later(self, seconds=10):
+        """Recovery after the calls' 2 s grace has passed."""
+        with mock.patch.object(native_lifetime.time, "time", return_value=time.time() + seconds):
+            native_lifetime.recover()
+
+    def request(self, identity):
+        [row] = [row for row in native_ledger.llm_records("requests") if row["id"] == identity]
+        return row
 
     def test_soft_wait_does_not_allow_second_main_call(self):
         plan = self.plan()
@@ -43,48 +61,35 @@ class NativeLifetimeTest(unittest.TestCase):
                     native_lifetime.progress(plan, 0, 0, 1)
                 with mock.patch.object(native_lifetime.time, "monotonic", return_value=100.0 + elapsed):
                     self.assertTrue(native_lifetime.settle(plan, "completed", "reply"))
-                with native_lifetime.transaction() as db:
-                    self.assertEqual(db.execute("SELECT soft_elapsed FROM native_calls WHERE id=?", (plan.correlation,)).fetchone()[0], expected)
+                self.assertEqual(native_ledger.llm_call(plan.correlation)["soft"], expected)
 
     def test_killed_sent_call_records_uncertainty_and_keeps_reservation(self):
-        plan = self.plan(); native_lifetime.claim(plan); native_lifetime.submitted(plan, 3)
-        with mock.patch.object(native_lifetime, "process_start", return_value=None):
-            native_lifetime.recover()
+        plan = self.plan(); self.claim_for_a_dead_owner(plan); native_lifetime.submitted(plan, 3)
+        native_lifetime.recover()
         self.assertEqual(native_lifetime.status()[0]["state"], "uncertain")
         self.assertIn("remote-outcome-unknown", native_lifetime.result(plan.correlation))
         self.assertEqual(llm_policy.snapshot()["accounted_output_tokens"], 10)
-        with llm_policy.transaction() as db:
-            self.assertEqual(db.execute("SELECT status FROM requests WHERE id=?", (plan.correlation,)).fetchone()[0], "unknown")
+        self.assertEqual(self.request(plan.correlation)["status"], "unknown")
 
     def test_failed_submitted_request_cannot_keep_live_process_lease(self):
         plan = self.plan()
         self.assertTrue(native_lifetime.claim(plan))
         native_lifetime.submitted(plan, 7)
         self.assertTrue(llm_policy.fail(plan.correlation, sent=True))
-        with native_lifetime.transaction() as db:
-            db.execute("UPDATE native_calls SET updated=0 WHERE id=?",
-                       (plan.correlation,))
-        native_lifetime.recover()
+        self.recover_later()
         row = native_lifetime.status()[0]
         self.assertEqual(row["state"], "uncertain")
         self.assertEqual(row["reason"],
                          "terminal-request-remote-outcome-unknown")
-        with llm_policy.transaction() as db:
-            request = db.execute(
-                "SELECT status,finish FROM requests WHERE id=?",
-                (plan.correlation,),
-            ).fetchone()
-        self.assertEqual(request, ("unknown", "transport-unknown"))
+        request = self.request(plan.correlation)
+        self.assertEqual((request["status"], request["finish"]), ("unknown", "transport-unknown"))
         self.assertTrue(native_lifetime.claim(self.plan()))
 
     def test_failed_unsubmitted_request_releases_claim_as_failed(self):
         plan = self.plan()
         self.assertTrue(native_lifetime.claim(plan))
         self.assertTrue(llm_policy.fail(plan.correlation, sent=False))
-        with native_lifetime.transaction() as db:
-            db.execute("UPDATE native_calls SET updated=0 WHERE id=?",
-                       (plan.correlation,))
-        native_lifetime.recover()
+        self.recover_later()
         row = native_lifetime.status()[0]
         self.assertEqual(row["state"], "failed")
         self.assertEqual(row["reason"], "request-failed-before-submission")
@@ -96,10 +101,7 @@ class NativeLifetimeTest(unittest.TestCase):
         result = {"choices": [{"finish_reason": "stop"}],
                   "usage": {"output_tokens": 1}}
         self.assertTrue(llm_policy.complete(plan.correlation, result))
-        with native_lifetime.transaction() as db:
-            db.execute("UPDATE native_calls SET updated=0 WHERE id=?",
-                       (plan.correlation,))
-        native_lifetime.recover()
+        self.recover_later()
         self.assertEqual(native_lifetime.status()[0]["state"], "completed")
 
     def test_scoped_calls_reserve_interactive_capacity(self):
@@ -119,9 +121,7 @@ class NativeLifetimeTest(unittest.TestCase):
 
     def test_transport_uncertainty_does_not_block_fresh_request(self):
         with mock.patch.dict(os.environ, {"METTACLAW_LLM_POLICY": "managed"}):
-            plan = self.plan()
-            with llm_policy.transaction() as db:
-                db.execute("UPDATE requests SET fingerprint='captured-request' WHERE id=?", (plan.correlation,))
+            plan = self.plan("captured-request")
             self.assertTrue(native_lifetime.claim(plan)); native_lifetime.submitted(plan, 3)
             self.assertTrue(native_lifetime.settle(plan, "uncertain", reason="transport-error"))
             new=llm_policy.admit("synthetic",10,request_fingerprint="captured-request")
@@ -149,14 +149,12 @@ class NativeLifetimeTest(unittest.TestCase):
             plan = self.plan(); native_lifetime.claim(plan)
             native_lifetime.settle(plan, "completed", "fixture evidence")
         pending = self.plan(); native_lifetime.claim(pending)
-        with native_lifetime.transaction() as db:
-            self.assertEqual(db.execute("SELECT COUNT(*) FROM native_calls WHERE result IS NOT NULL").fetchone()[0],
-                             35)
-            db.execute("UPDATE native_calls SET updated=0 WHERE state='completed'")
-            db.execute("UPDATE native_calls SET updated=0 WHERE id=?", (pending.correlation,))
-        with native_lifetime.transaction() as db:
-            self.assertEqual(db.execute("SELECT COUNT(*) FROM native_calls").fetchone()[0], 36)
-            self.assertEqual(db.execute("SELECT state FROM native_calls WHERE id=?", (pending.correlation,)).fetchone()[0], "claimed")
+        calls = native_ledger.llm_records("calls")
+        self.assertEqual(sum(1 for row in calls if row["result"] is not None), 35)
+        self.recover_later(seconds=30 * 86400)  # a month on: age prunes nothing
+        calls = native_ledger.llm_records("calls")
+        self.assertEqual(len(calls), 36)
+        self.assertEqual(native_ledger.llm_call(pending.correlation)["state"], "claimed")
 
     def test_late_evidence_has_bounded_view_and_one_durable_wake(self):
         plan = self.plan(); native_lifetime.claim(plan)
@@ -179,36 +177,26 @@ class NativeLifetimeTest(unittest.TestCase):
         # input that was already addressed. The context listing stays.
         self.assertIn(plan.correlation, native_lifetime.evidence_context())
 
-    def test_outcomes_from_before_the_notified_column_count_as_announced(self):
-        late = self.plan(); native_lifetime.claim(late)
-        native_lifetime.settle(late, "late", "evidence")
-        pending = self.plan()
-        with native_lifetime.transaction() as db:
-            db.execute("ALTER TABLE native_calls DROP COLUMN notified")
-            db.execute("INSERT INTO native_calls(id,epoch,pid,process_start,created,updated,state) "
-                       "VALUES (?,?,0,'gone',1,1,'submitted')", (pending.correlation, "old"))
+    def test_a_call_interrupted_by_a_dead_owner_is_announced_once_as_uncertain(self):
+        pending = self.plan(); self.claim_for_a_dead_owner(pending); native_lifetime.submitted(pending, 3)
         enqueue = mock.Mock(return_value=True)
         with mock.patch.dict(sys.modules, {"telegram": SimpleNamespace(enqueue_runtime_event=enqueue)}):
-            native_lifetime.notify()
-        # Only the call interrupted by the dead process is announced.
+            native_lifetime.notify(); native_lifetime.notify()
         enqueue.assert_called_once()
         self.assertIn(pending.correlation, enqueue.call_args[0][0])
         self.assertIn("uncertain", enqueue.call_args[0][0])
 
     def test_compaction_purpose_is_durable_but_not_agent_evidence(self):
         plan = self.plan(); plan.purpose = "compaction"
-        self.assertTrue(native_lifetime.claim(plan))
+        self.assertTrue(self.claim_for_a_dead_owner(plan))
         native_lifetime.submitted(plan, 3)
-        with mock.patch.object(native_lifetime, "process_start", return_value=None):
-            native_lifetime.recover()
+        native_lifetime.recover()
         self.assertEqual(native_lifetime.status(), [])
         self.assertEqual(native_lifetime.evidence_context(), "")
         receipt = __import__("json").loads(native_lifetime.result(plan.correlation))
         self.assertEqual((receipt["state"], receipt["purpose"], receipt["result"]),
                          ("abandoned", "compaction", None))
-        with native_lifetime.transaction() as db:
-            self.assertEqual(db.execute("SELECT status FROM requests WHERE id=?", (plan.correlation,)).fetchone()[0], "unknown")
-            self.assertEqual(db.execute("SELECT count(*) FROM requests WHERE id=?", (plan.correlation,)).fetchone()[0], 1)
+        self.assertEqual(self.request(plan.correlation)["status"], "unknown")
         enqueue = mock.Mock()
         with mock.patch.dict(sys.modules, {"telegram": SimpleNamespace(enqueue_runtime_event=enqueue)}):
             native_lifetime.notify()

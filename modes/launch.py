@@ -326,7 +326,6 @@ def standalone_environment(mode, state, runtime, environment):
                   METTACLAW_MODEL_STATE_PATH=str(state / "model.metta"),
                   METTACLAW_LIFECYCLE_PATH=str(state / "lifecycle.json"),
                   METTACLAW_COGNITIVE_HEALTH_PATH=str(runtime / "health.json"),
-                  METTACLAW_LLM_LEDGER_PATH=str(runtime / "llm-budget.sqlite3"),
                   METTACLAW_LLM_POLICY="upstream", METTACLAW_LLM_TRANSPORT="python",
                   METTACLAW_OBSERVED_STRATEGY="0", METTACLAW_FAIR_GOALS="0",
                   ITER_PYTHON=sys.executable,

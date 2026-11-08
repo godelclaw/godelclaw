@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from observed_strategy import Ledger
 import helper
 import input_ack
+import native_ledger
 
 
 class TurnCheckpointTests(unittest.TestCase):
@@ -33,7 +34,8 @@ class TurnCheckpointTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        self.path = self.root / "state.sqlite3"
+        native_ledger.start(self, self.root)
+        self.path = self.root / "strategy"
         env = mock.patch.dict(os.environ, METTACLAW_OBSERVED_STRATEGY="1",
             METTACLAW_STRATEGY_PATH=str(self.path), METTACLAW_WORKING_SET_PATH=str(self.root / "working.json"))
         env.start(); self.addCleanup(env.stop)
@@ -43,12 +45,12 @@ class TurnCheckpointTests(unittest.TestCase):
         self.store.accept("input:one", "message", kind="message")
 
     def test_fault_rolls_back_successor_and_input_settlement_together(self):
-        event = self.store.event
-        def fault(db, kind, **fields):
-            if kind == "turn-checkpoint":
+        call = input_ack._ledger_call
+        def fault(verb, *arguments, **options):
+            if verb == "checkpoint":
                 raise RuntimeError("commit fault")
-            event(db, kind, **fields)
-        with mock.patch.object(self.store, "event", side_effect=fault):
+            return call(verb, *arguments, **options)
+        with mock.patch.object(input_ack, "_ledger_call", side_effect=fault):
             with self.assertRaisesRegex(RuntimeError, "commit fault"):
                 self.store.checkpoint({"saved_at": 1, "loops": 9}, ["101"], "input:one")
         self.assertIsNone(self.store.working_checkpoint())

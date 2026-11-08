@@ -8,8 +8,10 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-import strategy_host as host
 import effect_receipts
+import input_ack
+import native_ledger
+import strategy_host as host
 
 
 class StrategyHostTest(unittest.TestCase):
@@ -17,9 +19,10 @@ class StrategyHostTest(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
+        native_ledger.start(self, self.root)
         self.environment = mock.patch.dict(os.environ, {
             "METTACLAW_OBSERVED_STRATEGY": "1",
-            "METTACLAW_STRATEGY_PATH": str(self.root / "strategy.sqlite3"),
+            "METTACLAW_STRATEGY_PATH": str(self.root / "strategy"),
             "METTACLAW_EFFECT_RECEIPT_PATH": str(self.root / "effects.jsonl"),
         })
         self.environment.start(); self.addCleanup(self.environment.stop)
@@ -54,24 +57,27 @@ class StrategyHostTest(unittest.TestCase):
 
     def test_answer_status_preserves_other_arrivals_and_chat_destinations(self):
         store = host.ledger()
-        store.accept("arrival", "work", kind="message")
-        host._focus = "arrival"
         import task_context
-        task_context.begin(store, "arrival", "operator-event", None, "room")
+        for name in ("arrival", "single"):
+            store.accept(name, "work", kind="message")
+            task_context.begin(store, name, "operator-event", None, "room")
         store.link_inputs("arrival", ["telegram-one", "telegram-two"])
-        def status():
-            with store.transaction() as db:
-                return db.execute("SELECT status FROM requests WHERE id='arrival'").fetchone()[0]
+        store.link_inputs("single", ["telegram-three"])
+        def status(name):
+            return input_ack.request_get(name)["status"]
         channel = SimpleNamespace(_reply_target=lambda chat="": chat or "primary")
         with mock.patch.dict(sys.modules, {"telegram": channel}):
+            # An arrival with other inputs than the answered one stays open.
+            host._focus = "arrival"
             host._close_answered_message(["send-telegram-chat", "room", "answer"], "sent message 1")
-            self.assertEqual(status(), "active")
-            with store.transaction() as db:
-                db.execute("DELETE FROM request_inputs WHERE input='telegram-two'")
+            self.assertEqual(status("arrival"), "active")
+            # A single input answered in another chat stays open; in its own chat it is addressed.
+            host._focus = "single"
             host._close_answered_message(["send", "answer"], "sent message 2")
-            self.assertEqual(status(), "active")
+            self.assertEqual(status("single"), "active")
             host._close_answered_message(["send-telegram-chat", "room", "answer"], "sent message 3")
-            self.assertEqual(status(), "addressed")
+            self.assertEqual(status("single"), "addressed")
+            self.assertEqual(status("arrival"), "active")
 
     def test_degraded_history_reply_cannot_automatically_close_work(self):
         store = host.ledger()
@@ -282,16 +288,14 @@ class StrategyHostTest(unittest.TestCase):
             host.ledger().control(router_revision='changed')
             self.assertEqual(host.reserve_command(1, command), 1)
             host.command_result(1, 'returned', command, 'result')
-        with host.ledger().transaction() as db:
-            self.assertEqual(db.execute('SELECT count(*) FROM command_attempts').fetchone()[0], 3)
+        self.assertEqual(len(input_ack.attempts(host._ticket)), 3)
 
     def test_receipts_page_large_results_without_losing_content(self):
         store = host.ledger()
         original = {"disposition": "returned", "result": '🧪 "quoted"\\n' * 3000}
-        with store.transaction() as db:
-            db.execute("CREATE TABLE command_attempts (ticket TEXT,position INTEGER,command TEXT,result TEXT,PRIMARY KEY(ticket,position))")
-            db.execute("INSERT INTO command_attempts VALUES ('receipt',0,?,?)",
-                       (host.strategy.encoded(["help", "shell"]), host.strategy.encoded(original)))
+        command = host.strategy.encoded(["help", "shell"])
+        self.assertTrue(input_ack.attempt_begin("receipt", 0, command))
+        self.assertTrue(input_ack.attempt_result("receipt", 0, command, host.strategy.encoded(original)))
         cursor, pieces = "", []
         while True:
             response = host.command_receipts(cursor)
@@ -308,15 +312,12 @@ class StrategyHostTest(unittest.TestCase):
 
     def test_receipt_cursor_does_not_include_newer_arrivals(self):
         store = host.ledger()
-        with store.transaction() as db:
-            db.execute("CREATE TABLE command_attempts (ticket TEXT,position INTEGER,command TEXT,result TEXT,PRIMARY KEY(ticket,position))")
-            for index in range(2):
-                db.execute("INSERT INTO command_attempts VALUES (?,0,'[\"help\"]',?)",
-                    (str(index), host.strategy.encoded({"result": "x" * 10000})))
+        for index in range(2):
+            self.assertTrue(input_ack.attempt_begin(str(index), 0, '["help"]'))
+            self.assertTrue(input_ack.attempt_result(str(index), 0, '["help"]', host.strategy.encoded({"result": "x" * 10000})))
         first = json.loads(host.command_receipts())
         self.assertTrue(first["next_cursor"])
-        with store.transaction() as db:
-            db.execute("INSERT INTO command_attempts VALUES ('new',0,'[\"help\"]',NULL)")
+        self.assertTrue(input_ack.attempt_begin("new", 0, '["help"]'))
         page = json.loads(host.command_receipts(first["next_cursor"]))
         self.assertTrue(all(row["id"] != "new:0" for row in page["receipts"]))
 
@@ -336,12 +337,9 @@ class StrategyHostTest(unittest.TestCase):
         self.assertEqual(host.broker_begin(1, [[]]), 0)
         self.assertEqual(json.loads(host.broker_feedback())["reason"],
                          "capture-already-settled")
-        store = host.ledger()
-        with store.transaction() as db:
-            self.assertEqual(db.execute(
-                "SELECT count(*) FROM task_proposals").fetchone()[0], 0)
-            self.assertEqual(db.execute(
-                "SELECT count(*) FROM actions").fetchone()[0], 0)
+        view = input_ack.task_view("all")
+        self.assertEqual(view["proposals"], {})
+        self.assertEqual(input_ack.actions(), [])
 
     def test_host_fault_reenters_same_iteration_with_fresh_broker_identity(self):
         self.capture()

@@ -1,12 +1,5 @@
-; Provider policy and its usage history, owned by native SQLite transactions.
-; The Python implementation remains the oracle and non-CeTTa fallback.
+; Provider policy and its usage history, kept in the native LLM ledger (src/llm_ledger.metta).
 !(import! &self ./process_identity_cetta.metta)
-!(case (import! &self (library sqlite))
-     (((Error $where $why)
-       (let $reason (format-args "{}" ($why))
-         (if (== $reason "import! expects a module name")
-           (import! &self sqlite) (Error $where $why))))
-      ($loaded $loaded)))
 !(case (import! &self (library json))
      (((Error $where $why)
        (let $reason (format-args "{}" ($why))
@@ -72,34 +65,11 @@
        (cons-atom $head $rest))))
 ; SQL parameters are values in either dialect. HE leaves expressions inside
 ; a data tuple unevaluated; evaluate each parameter before giving it to SQLite.
-(: lp:values (-> %Undefined% %Undefined%))
-(= (lp:values $items)
-   (if (ue:equal $items ()) ()
-     (let* (($value (lp:bind (eval (car-atom $items)))) ($rest (lp:values (cdr-atom $items))))
-       (cons-atom $value $rest))))
-(: lp:statements (-> %Undefined% %Undefined%))
-(= (lp:statements $items)
-   (if (ue:equal $items ()) ()
-     (let* (((sqlite:statement $sql $parameters) (eval (car-atom $items)))
-            ($text (eval $sql)) ($values (lp:values $parameters))
-            ($rest (lp:statements (cdr-atom $items))))
-       (cons-atom (sqlite:statement $text $values) $rest))))
-(: lp:db-transaction (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
-(= (lp:db-transaction $db $mode $statements $busy)
-   (let $bound (lp:statements $statements) (sqlite:transaction $db $mode $bound $busy)))
 (: lp:field (-> %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (lp:field $object $key $default)
    (ue:field $object $key $default))
 (: lp:mode (-> %Undefined%))
 (= (lp:mode) (lp:env "METTACLAW_ACTIVE_LOOP_MODE" "godelclaw"))
-(: lp:path (-> %Undefined%))
-(= (lp:path)
-   (let $explicit (lp:env "METTACLAW_LLM_LEDGER_PATH" "")
-     (if (not (ue:equal $explicit "")) $explicit
-       (let $health (lp:env "METTACLAW_COGNITIVE_HEALTH_PATH" "")
-         (if (not (ue:equal $health "")) (path:join (path:dirname $health) "llm-budget.sqlite3")
-           (path:join (path:join (lp:env "XDG_STATE_HOME" (path:join (lp:env "HOME" ".") ".local/state"))
-                                 (lp:env "METTACLAW_INSTANCE" "default")) "llm-budget.sqlite3"))))))
 
 ; Linux birth stamps prevent PID reuse from transferring call ownership.
 ; Portable owners use the existing signal-zero liveness observation.
@@ -114,21 +84,18 @@
    (process:alive? $owner))
 
 ; The native ledger (src/llm_ledger.metta, in the agent's ledger store) answers each
-; operation once the LLM ledger has been migrated there. Until then it answers llm-legacy
-; and the SQLite code below runs as before; without a ledger socket nothing is asked.
-; A failure to reach a configured server is a LedgerError, never a fallback to SQLite.
+; operation. Without a ledger socket, or when the server cannot be reached, the answer is a
+; LedgerError.
 (: lp:socket (-> %Undefined%))
 (= (lp:socket) (lp:env "METTACLAW_INPUT_LEDGER_SOCKET" ""))
 (: lp:request-id (-> %Undefined%))
 (= (lp:request-id) (str:concat "rq1." (system:uuid4-hex)))
 (: lp:native (-> %Undefined% %Undefined% %Undefined%))
 (= (lp:native $verb $arguments)
-   (if (ue:equal (lp:socket) "") llm-legacy
+   (if (ue:equal (lp:socket) "") (LedgerError (Error lp:native "METTACLAW_INPUT_LEDGER_SOCKET is not set"))
      (case (ledger-client:call (lp:socket) $verb $arguments)
        (((Error $where $why) (LedgerError (Error $where $why)))
         ($answer $answer)))))
-(: lp:legacy (-> %Undefined% %Undefined%))
-(= (lp:legacy $answer) (ue:equal $answer llm-legacy))
 (: lp:none (-> %Undefined% %Undefined%))
 (= (lp:none $value) (if (ue:equal $value JsonNull) none $value))
 
@@ -137,112 +104,14 @@
 (: lp:detail (-> %Undefined% %Undefined%))
 (= (lp:detail $detail)
    (json:stringify-python-with $detail ((sort-keys True) (separators "," ":"))))
-(: lp:event (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
-(= (lp:event $ticket $event $detail $now)
-   (sqlite:statement "INSERT OR IGNORE INTO llm_call_history(call_id,event,observed,detail) VALUES(?,?,?,?)"
-                     ($ticket $event $now (lp:detail $detail))))
-(: lp:columns (-> %Undefined% %Undefined% %Undefined%))
-(= (lp:columns $db $table)
-   (case (sqlite:observe $db (str:concat "PRAGMA table_info(" (str:concat $table ")")) () 5000)
-     (((sqlite:result $columns $rows $changes $row-id) $rows) ($error (LedgerError $error)))))
-(: lp:has-column (-> %Undefined% %Undefined% %Undefined%))
-(= (lp:has-column $rows $name)
-   (if (ue:equal $rows ()) False
-     (if (ue:equal (lp:nth (car-atom $rows) 1) $name) True (lp:has-column (cdr-atom $rows) $name))))
-(: lp:add-column (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
-(= (lp:add-column $rows $table $name $declaration)
-   (if (lp:has-column $rows $name) ()
-     ((sqlite:statement (str:join "" ("ALTER TABLE " $table " ADD COLUMN " $name " " $declaration)) ()))))
-(: lp:migration-statements (-> %Undefined% %Undefined% %Undefined%))
-(= (lp:migration-statements $requests $calls)
-   (lp:append (lp:add-column $requests "requests" "owner" "TEXT NOT NULL DEFAULT ''")
-    (lp:append (lp:add-column $requests "requests" "fingerprint" "TEXT NOT NULL DEFAULT ''")
-     (lp:append (lp:add-column $calls "native_calls" "activity" "TEXT NOT NULL DEFAULT ''")
-      (lp:append (lp:add-column $calls "native_calls" "lane" "TEXT NOT NULL DEFAULT ''")
-       (lp:append (lp:add-column $calls "native_calls" "purpose" "TEXT NOT NULL DEFAULT 'turn'")
-        (if (lp:has-column $calls "notified") ()
-          ((sqlite:statement "ALTER TABLE native_calls ADD COLUMN notified INTEGER NOT NULL DEFAULT 0" ())
-           (sqlite:statement "UPDATE native_calls SET notified=1 WHERE state NOT IN ('claimed','submitted')" ())))))))))
-(: lp:migrate (-> %Undefined% %Undefined%))
-(= (lp:migrate $db)
-   (let* (($requests (lp:columns $db "requests")) ($calls (lp:columns $db "native_calls")))
-     (case ($requests $calls)
-       ((((LedgerError $error) $ignored0) (LedgerError $error))
-        (($ignored1 (LedgerError $error)) (LedgerError $error))
-        ($valid (lp:db-transaction $db immediate (lp:migration-statements $requests $calls) 5000))))))
-(: lp:index-statements (-> %Undefined%))
-(= (lp:index-statements)
-   ((sqlite:statement "CREATE INDEX IF NOT EXISTS llm_requests_started ON requests(started)" ())
-    (sqlite:statement "CREATE INDEX IF NOT EXISTS llm_requests_state ON requests(status)" ())
-    (sqlite:statement "CREATE INDEX IF NOT EXISTS native_call_state ON native_calls(state)" ())
-    (sqlite:statement "CREATE INDEX IF NOT EXISTS native_call_recent ON native_calls(purpose,created DESC)" ())))
-(: lp:initialized (-> %Undefined% %Undefined% %Undefined%))
-(= (lp:initialized $db $answer)
-   (case $answer
-     (((sqlite:committed $ignored2)
-       (case (lp:migrate $db)
-         (((sqlite:error $category $code $message failed)
-           (if (str:starts-with $message "duplicate column name:")
-             (lp:migrate $db) (LedgerError (sqlite:error $category $code $message failed))))
-          ((sqlite:committed $migrated) (lp:db-transaction $db immediate (lp:index-statements) 5000))
-          ($result $result))))
-      ($error (LedgerError $error)))))
-(: lp:init-schema (-> %Undefined% %Undefined%))
-(= (lp:init-schema $db)
-   (lp:initialized $db (lp:db-transaction $db immediate
-     ((sqlite:statement "CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY,started REAL NOT NULL,reserved INTEGER NOT NULL,status TEXT NOT NULL,output INTEGER,provider TEXT NOT NULL,mode TEXT NOT NULL,finish TEXT,owner TEXT NOT NULL DEFAULT '',fingerprint TEXT NOT NULL DEFAULT '')" ())
-      (sqlite:statement "CREATE TABLE IF NOT EXISTS cooldowns (provider TEXT PRIMARY KEY,until REAL NOT NULL)" ())
-      (sqlite:statement "CREATE TABLE IF NOT EXISTS llm_call_history (sequence INTEGER PRIMARY KEY,call_id TEXT NOT NULL,event TEXT NOT NULL,observed REAL NOT NULL,detail TEXT NOT NULL,UNIQUE(call_id,event))" ())
-      (sqlite:statement "CREATE INDEX IF NOT EXISTS llm_call_history_time ON llm_call_history(event,observed)" ())
-      (sqlite:statement "CREATE TABLE IF NOT EXISTS native_calls (id TEXT PRIMARY KEY,epoch TEXT NOT NULL,pid INTEGER NOT NULL,process_start TEXT,created REAL NOT NULL,updated REAL NOT NULL,state TEXT NOT NULL,guard TEXT,transport INTEGER,soft_elapsed INTEGER NOT NULL DEFAULT 0,bytes INTEGER NOT NULL DEFAULT 0,quiet_ms INTEGER NOT NULL DEFAULT 0,result TEXT,reason TEXT,activity TEXT NOT NULL DEFAULT '',lane TEXT NOT NULL DEFAULT '',purpose TEXT NOT NULL DEFAULT 'turn',notified INTEGER NOT NULL DEFAULT 0)" ())
-      (lp:event "" "recording-started" (JsonObject ((JsonPair "schema" 1))) (system:wall-time))) 5000)))
-(: lp:init (-> %Undefined%))
-(= (lp:init)
-   (if (fs:exists (lp:path)) (lp:check-schema)
-     (lp:initialize)))
 ; Verify the durable schema through one read-only connection. Reopening it
 ; for DDL and per-table PRAGMA transactions on every progress event is waste.
 ; Missing migration columns or the recording marker take the ordinary init.
-(: lp:check-schema (-> %Undefined%))
-(= (lp:check-schema)
-   (case (sqlite:observe (lp:path)
-     "SELECT (SELECT COUNT(*) FROM pragma_table_info('requests') WHERE name IN ('owner','fingerprint'))=2 AND (SELECT COUNT(*) FROM pragma_table_info('native_calls') WHERE name IN ('activity','lane','purpose','notified'))=4 AND EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='cooldowns') AND EXISTS(SELECT 1 FROM sqlite_master WHERE type='index' AND name='llm_call_history_time') AND EXISTS(SELECT 1 FROM sqlite_master WHERE type='index' AND name='llm_requests_started') AND EXISTS(SELECT 1 FROM sqlite_master WHERE type='index' AND name='llm_requests_state') AND EXISTS(SELECT 1 FROM sqlite_master WHERE type='index' AND name='native_call_state') AND EXISTS(SELECT 1 FROM sqlite_master WHERE type='index' AND name='native_call_recent') AND EXISTS(SELECT 1 FROM llm_call_history WHERE call_id='' AND event='recording-started')" () 5000)
-     (((sqlite:result $columns ((1)) $changes $row-id) (sqlite:committed ()))
-      ((sqlite:result $columns ((0)) $changes $row-id) (lp:initialize))
-      ((sqlite:error $category $code $message failed)
-       (if (str:starts-with $message "no such table:") (lp:initialize)
-         (LedgerError (sqlite:error $category $code $message failed))))
-      ($error (LedgerError $error)))))
-(: lp:initialize (-> %Undefined%))
-(= (lp:initialize)
-   (let* (($db (lp:path)) ($directory (path:dirname $db)))
-     (if (fs:exists $directory) (lp:init-schema $db)
-       (case (proc:run ("mkdir" "-p" "--" $directory) (system:cwd)
-                       (("PATH" (lp:env "PATH" "/usr/bin:/bin"))) 0 0)
-         (((proc:exited 0 $ignored3 $ignored4) (lp:init-schema $db))
-          ($error (LedgerError $error)))))))
-(: lp:transaction (-> %Undefined% %Undefined%))
-(= (lp:transaction $statements)
-   (case (lp:init)
-     (((sqlite:committed $ignored5) (lp:db-transaction (lp:path) immediate $statements 5000))
-      ($error $error))))
-(: lp:rows (-> %Undefined% %Undefined%))
-(= (lp:rows $answer)
-   (case $answer (((sqlite:result $columns $rows $changes $row-id) $rows)
-                 ((LedgerError $existing) (LedgerError $existing))
-                 ($error (LedgerError $error)))))
 
 ; Policy configuration remains an explicit choice, with unchanged defaults.
 ; Where the Python source raises, the reference answers
 ; (PythonException CLASS MESSAGE), the message formatted as Python formats it.
-; Python's sqlite3 raises IntegrityError, with SQLite's own message, for every
-; constraint failure, a trigger's RAISE(ABORT) included. Other failures keep
-; their sqlite:error payload.
-(: lp:failure (-> %Undefined% %Undefined%))
-(= (lp:failure $error)
-   (case $error
-     (((sqlite:error constraint $code $message $outcome) (PythonException IntegrityError $message))
-      ($other $other))))
+; A constraint the ledger refuses answers (PythonException IntegrityError <its message>).
 (: lp:python-error (-> %Undefined% %Undefined% %Undefined%))
 (= (lp:python-error $class $message) (LedgerError (PythonException $class $message)))
 ; Native float predicates read an arbitrarily large integer as infinite, so a
@@ -414,12 +283,6 @@
 ; A caller's value bound as Python's sqlite3 binds it: a Boolean is the integer
 ; 0 or 1 (it can arrive as the dialect's truth symbol, which would bind as its
 ; name), None is NULL, and (SqlBlobV1 PAYLOAD) is a BLOB.
-(: lp:bind (-> %Undefined% %Undefined%))
-(= (lp:bind $value)
-   (case $value
-     ((True 1) (False 0) (JsonNull sqlite:null)
-      ((SqlBlobV1 $payload) (sqlite:blob $payload))
-      ($other $other))))
 ; bool(value) as Python reads it.
 (: lp:python-truthy (-> %Undefined% %Undefined%))
 (= (lp:python-truthy $value)
@@ -602,33 +465,7 @@
 
 ; Recovery carries an owner test into the UPDATE, so another writer cannot
 ; change the owner/state between the observation and this transaction.
-(: lp:recover-statements (-> %Undefined% %Undefined% %Undefined%))
-(= (lp:recover-statements $rows $now)
-   (if (ue:equal $rows ()) ()
-     (let* ((($ticket $owner) (car-atom $rows)) ($rest (lp:recover-statements (cdr-atom $rows) $now)))
-       (if (lp:owner-live $owner) $rest
-         (cons-atom
-           (sqlite:statement "UPDATE requests SET status='unknown' WHERE id=? AND owner=? AND status='pending'" ($ticket $owner))
-           (cons-atom
-             (sqlite:statement "INSERT OR IGNORE INTO llm_call_history(call_id,event,observed,detail) SELECT ?,'unknown',?,? WHERE changes()=1"
-                               ($ticket $now "{\"reason\":\"owner-exited\"}")) $rest))))))
-(: lp:recover (-> %Undefined% %Undefined%))
-(= (lp:recover $now)
-   (case (lp:init)
-     (((sqlite:committed $ignored6)
-       (case (lp:rows (sqlite:observe (lp:path) "SELECT id,owner FROM requests WHERE status='pending'" () 5000))
-         (((LedgerError $error) (LedgerError $error))
-          ($rows (lp:db-transaction (lp:path) immediate (lp:recover-statements $rows $now) 5000)))))
-      ($error $error))))
 
-(: lp:admit-statements (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
-(= (lp:admit-statements $ticket $provider $maximum $fingerprint $profile $owner $now)
-   ((sqlite:statement "INSERT INTO requests(id,started,reserved,status,output,provider,mode,finish,owner,fingerprint) SELECT ?,?,?,'pending',NULL,?,?,NULL,?,? WHERE ?='upstream' OR NOT EXISTS(SELECT 1 FROM cooldowns WHERE provider=? AND until>?)"
-                       ($ticket $now $maximum $provider (lp:mode) $owner $fingerprint $profile $provider $now))
-    (sqlite:statement "INSERT OR IGNORE INTO llm_call_history(call_id,event,observed,detail) SELECT ?,'admitted',?,? WHERE EXISTS(SELECT 1 FROM requests WHERE id=?)"
-                      ($ticket $now (lp:admitted-detail $provider) $ticket))
-    (sqlite:statement "SELECT EXISTS(SELECT 1 FROM requests WHERE id=?),MAX(0,COALESCE((SELECT until FROM cooldowns WHERE provider=?),?)-?)"
-                      ($ticket $provider $now $now))))
 (: lp:admitted-detail (-> %Undefined% %Undefined%))
 (= (lp:admitted-detail $provider)
    (lp:detail (JsonObject
@@ -655,23 +492,7 @@
 (= (lp:admit-configured $ticket $provider $maximum $fingerprint $profile $now)
    (let* (($mode (lp:mode)) ($owner (lp:owner)) ($detail (lp:admitted-detail $provider)) ($request (lp:request-id))
           ($native (lp:native "llm-admit" ($ticket $provider $maximum $fingerprint $profile $mode $owner $detail $now $request))))
-     (if (lp:legacy $native)
-       (case (lp:recover $now)
-         (((sqlite:committed $recovery)
-           (lp:admit-result $ticket
-             (lp:db-transaction (lp:path) immediate
-               (lp:admit-statements $ticket $provider $maximum $fingerprint $profile (lp:owner) $now) 5000)))
-          ($error $error)))
-       $native)))
-(: lp:admit-result (-> %Undefined% %Undefined% %Undefined%))
-(= (lp:admit-result $ticket $answer)
-   (case $answer
-     (((sqlite:committed $results)
-       (case (lp:rows (lp:last $results))
-         ((((1 $remaining)) (LedgerAdmitted $ticket))
-          (((0 $delay)) (LedgerDenied "provider-cooldown" $delay))
-          ($error (LedgerError $error)))))
-      ($error (LedgerError $error)))))
+     $native))
 
 (: lp:describe (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (lp:describe $ticket $model $protocol $purpose $transport $now)
@@ -694,48 +515,10 @@
 (= (lp:describe-origin $ticket $model $protocol $purpose $transport $origin $now)
    (let* (($detail (lp:detail (lp:request-detail $model $protocol $purpose $transport $origin))) ($request (lp:request-id))
           ($native (lp:native "llm-describe" ($ticket $detail $now $request))))
-     (if (lp:legacy $native)
-       (lp:statement-changed (lp:transaction
-         ((sqlite:statement "INSERT OR IGNORE INTO llm_call_history(call_id,event,observed,detail) SELECT ?,'request',?,? WHERE EXISTS(SELECT 1 FROM requests WHERE id=?)"
-           ($ticket $now $detail $ticket)))))
-       $native)))
-(: lp:statement-changed (-> %Undefined% %Undefined%))
-(= (lp:statement-changed $answer)
-   (case $answer
-     (((LedgerError $existing) (LedgerError $existing))
-      ((sqlite:committed $results)
-       (case (lp:last $results)
-         (((sqlite:result $columns $rows $changes $row-id) (LedgerChanged (> $changes 0)))
-          ($error (LedgerError $error)))))
-      ($error (LedgerError (lp:failure $error))))))
+     $native))
 
 ; Call transitions use a connection-local flag. It captures UPDATE's change
 ; count before any history INSERT can replace SQLite's changes() observation.
-(: lp:changed-result (-> %Undefined% %Undefined%))
-(= (lp:changed-result $answer)
-   (case $answer
-     (((LedgerError $existing) (LedgerError $existing))
-      ((sqlite:committed $results)
-       (case (lp:rows (lp:last $results))
-         ((((1)) (LedgerChanged True)) (((0)) (LedgerChanged False)) ($error (LedgerError $error)))))
-      ($error (LedgerError (lp:failure $error))))))
-(: lp:complete-with (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
-(= (lp:complete-with $ticket $evidence $finish $output $now $extra)
-   (lp:complete-owned $ticket $evidence $finish $output JsonNull $now $extra))
-(: lp:complete-owned (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
-(= (lp:complete-owned $ticket $evidence $finish $output $epoch $now $extra)
-   (lp:changed-result (lp:transaction (lp:append
-     ((sqlite:statement "CREATE TEMP TABLE lp_transition(changed INTEGER NOT NULL)" ())
-      (sqlite:statement "INSERT OR IGNORE INTO llm_call_history(call_id,event,observed,detail) SELECT ?,'usage',?,? WHERE EXISTS(SELECT 1 FROM llm_call_history WHERE call_id=? AND event='admitted') AND (? IS NULL OR EXISTS(SELECT 1 FROM native_calls WHERE id=? AND epoch=?) OR EXISTS(SELECT 1 FROM llm_call_history WHERE call_id=? AND event='claimed' AND json_extract(detail,'$.epoch')=?))"
-                        ($ticket $now (lp:detail $evidence) $ticket (lp:sql-null $epoch) $ticket (lp:sql-null $epoch) $ticket (lp:sql-null $epoch)))
-      (sqlite:statement "UPDATE requests SET status='completed',output=?,finish=? WHERE id=? AND status='pending' AND (? IS NULL OR EXISTS(SELECT 1 FROM native_calls WHERE id=? AND epoch=? AND state IN ('claimed','submitted')))"
-                        ((lp:sql-null $output) $finish $ticket (lp:sql-null $epoch) $ticket (lp:sql-null $epoch)))
-      (sqlite:statement "INSERT INTO lp_transition VALUES(changes())" ())
-      (sqlite:statement "INSERT OR IGNORE INTO llm_call_history(call_id,event,observed,detail) SELECT ?,'completed',?,? WHERE (SELECT changed FROM lp_transition)=1"
-                        ($ticket $now (lp:detail (JsonObject ((JsonPair "finish" $finish)))))))
-      (lp:append $extra ((sqlite:statement "SELECT changed FROM lp_transition" ())))))))
-(: lp:sql-null (-> %Undefined% %Undefined%))
-(= (lp:sql-null $value) (if (ue:equal $value JsonNull) sqlite:null $value))
 
 (: lp:complete (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (lp:complete $ticket $usage $finish $now)
@@ -745,7 +528,7 @@
           ($usage-detail (lp:detail $evidence)) ($stored (lp:none $output))
           ($completed (lp:detail (JsonObject ((JsonPair "finish" $short))))) ($request (lp:request-id))
           ($native (lp:native "llm-complete" ($ticket none $usage-detail $stored $short $completed none none 0 "turn" $now $request))))
-     (if (lp:legacy $native) (lp:complete-with $ticket $evidence $short $output $now ()) $native)))
+     $native))
 (: lp:output (-> %Undefined% %Undefined%))
 (= (lp:output $evidence)
    ; Only the legacy INTEGER column has this representation bound. The
@@ -763,27 +546,6 @@
 (: lp:exact-int (-> %Undefined% %Undefined%))
 (= (lp:exact-int $value)
    (and (ue:equal (get-type $value) Number) (ue:equal (lp:number-kind $value) NumberInt)))
-(: lp:fail-statements (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
-(= (lp:fail-statements $ticket $sent $status $profile $delay $epoch $now)
-   ((sqlite:statement "CREATE TEMP TABLE lp_transition(changed INTEGER NOT NULL)" ())
-    (sqlite:statement "UPDATE requests SET status='failed',output=? WHERE id=? AND status='pending' AND (? IS NULL OR NOT EXISTS(SELECT 1 FROM native_calls WHERE id=?) OR EXISTS(SELECT 1 FROM native_calls WHERE id=? AND epoch=?))"
-                      ((if (ue:truthy $sent) sqlite:null 0) $ticket (lp:sql-null $epoch) $ticket $ticket (lp:sql-null $epoch)))
-    (sqlite:statement "INSERT INTO lp_transition VALUES(changes())" ())
-    (sqlite:statement "INSERT OR IGNORE INTO llm_call_history(call_id,event,observed,detail) SELECT ?,'failed',?,? WHERE (SELECT changed FROM lp_transition)=1"
-                      ($ticket $now (lp:detail (JsonObject ((JsonPair "http_status" (if (lp:exact-int $status) $status JsonNull))
-                                                           (JsonPair "sent" (ue:truthy $sent)))))))
-    (sqlite:statement "INSERT INTO cooldowns(provider,until) SELECT provider,? FROM requests WHERE id=? AND ?='managed' AND ? IN (402,429) AND (SELECT changed FROM lp_transition)=1 ON CONFLICT(provider) DO UPDATE SET until=MAX(until,excluded.until)"
-                      ((lp:after $now $delay) $ticket $profile (lp:sql-null $status)))))
-(: lp:fail-ready (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
-(= (lp:fail-ready $ticket $sent $status $retry $mode $epoch $now $extra)
-   (case (lp:configuration-for $mode)
-     (((LedgerConfig $profile $configured)
-       (case (lp:fail-delay $profile $status $retry $configured)
-         (((PythonException $class $message) (lp:python-error $class $message))
-          ($delay (lp:changed-result (lp:transaction
-            (lp:append (lp:fail-statements $ticket $sent $status $profile $delay $epoch $now)
-              (lp:append $extra ((sqlite:statement "SELECT changed FROM lp_transition" ()))))))))))
-      ($error $error))))
 ; Python evaluates max(0, float(retry_after)) only for a managed provider
 ; answering 402 or 429 (by value, so 429.0 counts). max keeps the 0 for a NaN.
 (: lp:fail-delay (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
@@ -795,22 +557,10 @@
          (((PythonException $class $message) (PythonException $class $message))
           ($float (if (> $float 0) $float 0)))))
      $configured))
-(: lp:fail-with (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
-(= (lp:fail-with $ticket $sent $status $retry $now $extra)
-   (lp:fail-owned $ticket $sent $status $retry JsonNull $now $extra))
-(: lp:fail-owned (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
-(= (lp:fail-owned $ticket $sent $status $retry $epoch $now $extra)
-   (case (lp:init)
-     (((sqlite:committed $ignored10)
-       (case (sqlite:observe (lp:path) "SELECT mode FROM requests WHERE id=? AND status='pending'" ($ticket) 5000)
-         (((sqlite:result $columns (($mode)) $changes $row-id) (lp:fail-ready $ticket $sent $status $retry $mode $epoch $now $extra))
-          ((sqlite:result $columns () $changes $row-id) (LedgerChanged False))
-          ($error (LedgerError $error)))))
-      ($error $error))))
 (: lp:fail (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (lp:fail $ticket $sent $status $retry $now)
    (let $native (lp:fail-native $ticket $sent $status $retry JsonNull "failed" none 0 "turn" $now)
-     (if (lp:legacy $native) (lp:fail-with $ticket $sent $status $retry $now ()) $native)))
+     $native))
 
 ; The native fail: the pending request's mode chooses the policy as in lp:fail-owned, then
 ; one transition fails the request, records its event and the cooldown, and settles the
@@ -818,8 +568,7 @@
 (: lp:fail-native (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (lp:fail-native $ticket $sent $status $retry $epoch $state $reason $soft $purpose $now)
    (let $mode (lp:native "llm-pending-mode" ($ticket))
-     (if (lp:legacy $mode) llm-legacy
-       (case $mode
+     (case $mode
          (((LedgerError $error) (LedgerError $error))
           (none (LedgerChanged False))
           ($pending
@@ -836,4 +585,4 @@
                                                              (JsonPair "sent" (ue:truthy $sent))))))
                             ($owned (lp:none $epoch)) ($request (lp:request-id)))
                        (lp:native "llm-fail" ($ticket $owned $pending $output $failed $until $state $reason $soft $purpose $now $request)))))))
-               ($error $error)))))))))
+               ($error $error))))))))

@@ -5,12 +5,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 import llm_policy
+import native_ledger
 
 class AdmissionTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
-        env=patch.dict(os.environ,METTACLAW_LLM_POLICY='managed',METTACLAW_LLM_LEDGER_PATH=str(Path(self.tmp.name)/'llm.sqlite3'))
+        env=patch.dict(os.environ,METTACLAW_LLM_POLICY='managed')
         env.start();self.addCleanup(env.stop)
+        native_ledger.start(self,self.tmp.name)
         self.hook=patch('strategy_host.provider_admitted',return_value=1)
         self.hook.start();self.addCleanup(self.hook.stop)
 

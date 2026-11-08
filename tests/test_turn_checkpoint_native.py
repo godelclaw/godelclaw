@@ -1,12 +1,11 @@
 """The turn checkpoint in the native input ledger (METTACLAW_INPUT_LEDGER_SOCKET).
 
 observed_strategy.Ledger.checkpoint is the unit of a turn: the working set, the settled input ids (with their
-notices' processed flags) and the request's processed status commit together. With the variable set one native
-transaction (input-ledger:checkpoint) is the only writer of all of it; unset, nothing changes (SQLite is the
-oracle). Every case starts a native db server on a fresh store and compares the native path with the SQLite path
-on the SAME sequence of turns: the answers of Ledger.checkpoint / working_checkpoint / input_ack.committed and
-the final contents (working set, processed ids, notices, request status), the native ones read by an independent
-cetta client. Every METTACLAW_* variable a test relies on is set here (the rest is removed), child processes get
+notices' processed flags) and the request's processed status commit together: one native transaction
+(input-ledger:checkpoint) is the only writer of all of it. Every case starts a native db server on a fresh store,
+runs a sequence of turns and checks the answers of Ledger.checkpoint / working_checkpoint / input_ack.committed
+and the final contents (working set, processed ids, notices, request status), read by an independent cetta
+client. Every METTACLAW_* variable a test relies on is set here (the rest is removed), child processes get
 an environment built from scratch (no inherited variable, so no token), and every wait has a deadline.
 """
 import hermetic_env  # noqa: F401,E402  (first, before any src module: see hermetic_env.py)
@@ -16,13 +15,11 @@ import os
 from pathlib import Path
 import re
 import signal
-import sqlite3
 import subprocess
 import sys
 import threading
 import time
 import unittest
-from contextlib import closing
 from unittest import mock
 
 HERE = Path(__file__).resolve().parent
@@ -35,7 +32,7 @@ from execution_gateway.cetta_worker import CettaValueWorker, E, S, WorkerReplyUn
 from native_ledger_client import NativeRunner
 import test_input_ledger as base
 from test_input_ack_native import NativeCase, RecordingProxy, SKIP
-from test_input_ledger_remote import (DbServer, ENGINE, LANE, PRELUDE, Oracle, WORKER, available, literal, noise_program,
+from test_input_ledger_remote import (DbServer, ENGINE, LANE, PRELUDE, WORKER, available, literal, noise_program,
                                       oracle_environment)
 
 AWKWARD = ('q"uote \\back \nnew\tline \u00e9\u65e5\u672c \U0001d11e \u2028\u2029 {"a":[1,2]} \x7f \x00\x01\x1f '
@@ -153,7 +150,7 @@ class Turns:
     def run(self, steps, accepted=REQUESTS):
         observed = []
         with oracle_environment() as directory:
-            runner = Oracle.create(directory) if self.socket is None else NativeRunner.create(directory, self.socket)
+            runner = NativeRunner.create(directory, self.socket)
             self.path = runner.path
             store = Ledger(self.path)
             for key, kind in accepted:
@@ -185,68 +182,29 @@ class Turns:
         raise ValueError(step)
 
     def finish(self):
-        if self.socket is None:
-            notices, processed = self.runner.state()
-            with closing(sqlite3.connect(self.path)) as db:
-                requests = {row[0]: row[1] for row in db.execute("SELECT request,processed FROM request_context WHERE processed=1")}
-                statuses = dict(db.execute("SELECT id,status FROM requests"))
-                raw = [row[0] for row in db.execute("SELECT value FROM meta WHERE key='working_set'")]
-                events = [json.loads(row[0])["kind"] for row in db.execute("SELECT event FROM events ORDER BY sequence")]
-            return {"notices": notices, "processed": processed, "requests": requests, "statuses": statuses,
-                    "working": [(sha(text), len(text.encode("utf-8"))) for text in raw], "events": events}
-        with closing(sqlite3.connect(self.path)) as db:
-            tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            sqlite_state = {
-                "processed_inputs_rows": db.execute("SELECT COUNT(*) FROM processed_inputs").fetchone()[0],
-                "notice_table": "input_notices" in tables,
-                "working_set_rows": db.execute("SELECT COUNT(*) FROM meta WHERE key='working_set'").fetchone()[0],
-                "request_flags": db.execute("SELECT COUNT(*) FROM request_context WHERE processed=1").fetchone()[0],
-                "statuses": dict(db.execute("SELECT id,status FROM requests")),
-                "events": [json.loads(row[0])["kind"] for row in db.execute("SELECT event FROM events ORDER BY sequence")]}
         full = parse_native_full(self.case.run_client("dump", native_dump_program(self.socket)))
         notices, ids, stored, atoms = full["notices"], full["processed"], full["working"], full["atoms"]
         requests = {key: value[3] for key, value in full["requests"].items() if value[3] is not None}
         return {"notices": notices, "processed": ids, "requests": requests, "working": stored, "atoms": atoms,
                 "arrivals": full["arrivals"], "states": full["states"],
-                "statuses": {key: value[2] for key, value in full["requests"].items()}, "full": full,
-                "sqlite": sqlite_state}
+                "statuses": {key: value[2] for key, value in full["requests"].items()}, "full": full}
 
 
 @unittest.skipUnless(available(), SKIP)
 class OracleTest(NativeCase):
     maxDiff = None
 
-    def both(self, steps, accepted=REQUESTS):
-        sqlite_side = Turns(self)
-        expected = sqlite_side.run(steps, accepted)
-        native_side = Turns(self, self.server.socket)
-        actual = native_side.run(steps, accepted)
-        return expected, actual, sqlite_side.final, native_side.final
-
     def check(self, steps, accepted=REQUESTS):
-        expected, actual, oracle, native = self.both(steps, accepted)
-        self.assertEqual(len(actual), len(expected))
-        for number, (want, got) in enumerate(zip(expected, actual)):
-            self.assertEqual(got, want, (number, steps[number][0]))
-        lf = lambda text: text.replace("\r\n", "\n").replace("\r", "\n")
-        self.assertEqual(native["notices"], [(row[0], lf(row[1])) + tuple(row[2:]) for row in oracle["notices"]])
-        # The empty id is the one divergence in the records: SQLite stores a row for it, the native store (as
-        # mark-processed does in both paths) skips it. committed ignores it everywhere (compared per step above).
-        # (The dump's text is read with universal newlines, which turns a CR LF inside an id into LF: the exact
-        # ids are checked through committed in the tests that use them.)
-        self.assertEqual({lf(k): v for k, v in oracle["processed"].items() if k != ""}, native["processed"])
-        self.assertEqual(set(native["requests"]), set(oracle["requests"]))
-        self.assertEqual(native["statuses"], oracle["statuses"], "the status of every request is the oracle's")
-        self.assertEqual(native["working"], oracle["working"])
-        return oracle, native
+        """The turns on the native ledger: (the answer of every step, the final records)."""
+        side = Turns(self, self.server.socket)
+        answers = side.run(steps, accepted)
+        return answers, side.final
 
-    def test_several_turns_repeated_empty_and_awkward_ids_notices_before_and_after_match_sqlite(self):
-        oracle, native = self.check(TURNS)
-        # What the sequence actually exercised (guards against a test that compares nothing):
-        self.assertEqual(oracle["processed"]["u1"], 10.0, "the first time of a repeated id is kept")
-        self.assertEqual(oracle["processed"]["after-mark"], 150.0, "a mark before the checkpoint keeps its time")
-        self.assertIn("", oracle["processed"])
-        self.assertNotIn("", native["processed"])
+    def test_several_turns_repeated_empty_and_awkward_ids_and_notices_before_and_after(self):
+        _, native = self.check(TURNS)
+        self.assertEqual(native["processed"]["u1"], 10.0, "the first time of a repeated id is kept")
+        self.assertEqual(native["processed"]["after-mark"], 150.0, "a mark before the checkpoint keeps its time")
+        self.assertNotIn("", native["processed"], "the empty id is no input")
         self.assertEqual(set(native["requests"]), {"input:one", "input:two", "input:three", "note-1"},
                          "message and notification settle; task, goal, autonomous and unknown do not")
         self.assertEqual(len(native["working"]), 1)
@@ -255,7 +213,7 @@ class OracleTest(NativeCase):
         self.assertEqual(flags["u1"], 1)
         self.assertEqual(flags["u3"], 1)
         self.assertEqual(flags[AWKWARD.replace("\r\n", "\n")], 1)
-        self.assertEqual(oracle["statuses"]["input:one"], "processed")
+        self.assertEqual(native["statuses"]["input:one"], "processed")
         # The exact awkward id (CR LF, NUL, U+2028 included) is what the native store holds.
         with oracle_environment() as directory:
             NativeRunner.create(directory, self.server.socket)
@@ -263,7 +221,7 @@ class OracleTest(NativeCase):
             self.assertEqual(input_ack.committed([AWKWARD.replace("\r\n", "\n")]), 0)
 
     def test_a_large_working_set_is_stored_and_read_back_byte_for_byte(self):
-        oracle, native = self.check(LARGE)
+        self.check(LARGE)
         self.assertGreater(len(encoded(large_working(80.0)).encode("utf-8")), 500000)
         with oracle_environment() as directory:
             NativeRunner.create(directory, self.server.socket)
@@ -272,18 +230,10 @@ class OracleTest(NativeCase):
             self.assertEqual(input_ack.working_set(), encoded(large_working(90.0)))
             self.assertEqual(store.working_checkpoint(), large_working(90.0))
 
-    def test_native_checkpoints_are_the_only_writer_of_all_four_facts_and_sqlite_gets_none(self):
-        _, _, oracle, native = self.both(TURNS)
-        sqlite_side = native["sqlite"]
-        self.assertEqual(sqlite_side["processed_inputs_rows"], 0)
-        self.assertEqual(sqlite_side["working_set_rows"], 0)
-        self.assertEqual(sqlite_side["request_flags"], 0)
-        self.assertEqual(sqlite_side["statuses"], {}, "the requests are native records: no request row in SQLite")
-        self.assertEqual(oracle["statuses"]["input:one"], "processed")
-        self.assertEqual(oracle["statuses"]["note-1"], "processed")
-        self.assertNotIn("turn-checkpoint", sqlite_side["events"])
-        self.assertNotIn("input-processed", sqlite_side["events"])
-        self.assertIn("turn-checkpoint", oracle["events"])
+    def test_the_checkpoint_writes_all_four_facts_and_nothing_else(self):
+        _, native = self.check(TURNS)
+        self.assertEqual(native["statuses"]["input:one"], "processed")
+        self.assertEqual(native["statuses"]["note-1"], "processed")
         # the working set, the processed ids, the notices, and per request a record, a content, a link and an
         # arrival, plus the tail atom and the meta keys an acceptance writes (the revision and the clock)
         self.assertEqual(set(native["arrivals"]), {key for key, _ in REQUESTS})
@@ -291,13 +241,11 @@ class OracleTest(NativeCase):
         self.assertEqual(native["atoms"], 1 + len(native["processed"]) + len(native["notices"]) + 4 * len(REQUESTS) + 1 + 2)
 
     def test_after_a_native_checkpoint_the_message_can_be_addressed_and_is_no_longer_active(self):
-        # Task 5 pinned the opposite (a known gap): the requests were SQLite rows, so a native checkpoint's status
-        # was invisible to disposition/active/protected/request_record. The requests are native records now, the
-        # checkpoint's status write and those readers see one store, and the SQLite path is the oracle.
+        # The checkpoint's status write and disposition/active/protected/request_record see one store.
         seen = {}
-        for socket_path in (None, self.server.socket):
+        for socket_path in (self.server.socket,):
             with oracle_environment() as directory:
-                runner = Oracle.create(directory) if socket_path is None else NativeRunner.create(directory, socket_path)
+                runner = NativeRunner.create(directory, socket_path)
                 store = Ledger(runner.path)
                 store.accept("input:one", "m", kind="message")
                 before = (store.disposition("input:one", "addressed", "too early"), store.refusal,
@@ -310,39 +258,37 @@ class OracleTest(NativeCase):
                                                  [row["id"] for row in store.active()],
                                                  store.protected("input:one")["counts"], store.request_record("input:one")["status"],
                                                  store.request_record("input:one")["note"], store.processed("input:one"))
-        self.assertEqual(seen[True], seen[False])
-        self.assertEqual(seen[False], ((False, "a message is addressed only after a turn has processed it", ["input:one"]),
+        self.assertEqual(seen[True], ((False, "a message is addressed only after a turn has processed it", ["input:one"]),
                                        1, "processed", {"processed": 1}, True, [], {"addressed": 1}, "addressed", "done", False))
 
-    def test_with_the_variable_unset_or_empty_nothing_changes(self):
+    def test_with_the_variable_unset_or_empty_a_checkpoint_fails_loudly_without_a_worker(self):
         for value in (None, ""):
             with oracle_environment() as directory:
-                os.environ["METTACLAW_STRATEGY_PATH"] = str(directory / "l.db")
+                os.environ.pop(input_ack.LEDGER_SOCKET, None)
                 if value is not None:
                     os.environ[input_ack.LEDGER_SOCKET] = value
-                store = Ledger(directory / "l.db")
-                store.accept("input:one", "m", kind="message")
-                with mock.patch.object(input_ack, "_ledger_call", side_effect=AssertionError("native path used")):
-                    store.checkpoint(working(1.0), ["a"], "input:one")
-                    self.assertEqual(store.working_checkpoint(), working(1.0))
-                self.assertEqual(store.request_record("input:one")["processed"], 1)
+                store = Ledger(directory / "l")
+                with self.assertRaisesRegex(input_ack.LedgerUnavailable, "METTACLAW_INPUT_LEDGER_SOCKET is not set"):
+                    store.checkpoint(working(1.0), ["a"], None)
+                with self.assertRaises(input_ack.LedgerUnavailable):
+                    store.working_checkpoint()
         self.assertIsNone(input_ack._ledger, "a worker was started with the variable unset")
 
-    def test_a_missing_saved_at_with_ids_fails_alike_and_writes_nothing(self):
-        for socket_path in (None, self.server.socket):
+    def test_a_missing_saved_at_with_ids_fails_and_writes_nothing(self):
+        for socket_path in (self.server.socket,):
             with oracle_environment() as directory:
-                runner = Oracle.create(directory) if socket_path is None else NativeRunner.create(directory, socket_path)
+                runner = NativeRunner.create(directory, socket_path)
                 store = Ledger(runner.path)
                 with self.assertRaises(KeyError):
                     store.checkpoint({"loops": 1}, ["a"], None)
                 self.assertIsNone(store.working_checkpoint())
 
-    def test_a_working_set_that_is_not_utf8_encodable_fails_in_both_paths_and_writes_nothing(self):
+    def test_a_working_set_that_is_not_utf8_encodable_fails_and_writes_nothing(self):
         value = working(5.0, lastresults="\ud800")
         outcomes = []
-        for socket_path in (None, self.server.socket):
+        for socket_path in (self.server.socket,):
             with oracle_environment() as directory:
-                runner = Oracle.create(directory) if socket_path is None else NativeRunner.create(directory, socket_path)
+                runner = NativeRunner.create(directory, socket_path)
                 store = Ledger(runner.path)
                 with self.assertRaises(Exception) as raised:
                     store.checkpoint(value, ["a"], None)
@@ -445,8 +391,9 @@ STEPS = [(working(1.0, lastresults="first"), ["a1"], "input:one"),
 @unittest.skipUnless(available(), SKIP)
 class RetryTest(NativeCase):
     def run_steps(self, socket_path, drop_at=None, proxy=None):
+        """The working set and the settled requests after STEPS on the ledger at socket_path."""
         with oracle_environment() as directory:
-            runner = Oracle.create(directory) if socket_path is None else NativeRunner.create(directory, socket_path)
+            runner = NativeRunner.create(directory, socket_path)
             store = Ledger(runner.path)
             for key, kind in REQUESTS:
                 store.accept(key, "c", kind=kind)
@@ -454,13 +401,16 @@ class RetryTest(NativeCase):
                 if proxy is not None and number == drop_at:
                     proxy.armed.set()
                 store.checkpoint(value, ids, request)
-            with closing(sqlite3.connect(runner.path)) as db:
-                flags = {row[0] for row in db.execute("SELECT request FROM request_context WHERE processed=1")}
+            flags = {row["id"] for row in input_ack.request_rows() if row["processed"]}
             return store.working_checkpoint(), flags
 
-    def test_a_checkpoint_whose_reply_is_lost_after_the_commit_is_replayed_once_and_ends_as_the_oracle(self):
+    def test_a_checkpoint_whose_reply_is_lost_after_the_commit_is_replayed_once_and_ends_as_without_the_loss(self):
         self.ensure()
-        expected_working, expected_flags = self.run_steps(None)
+        fresh = DbServer(self.directory / "fresh")
+        (self.directory / "fresh").mkdir()
+        fresh.start()
+        self.addCleanup(fresh.stop)
+        expected_working, expected_flags = self.run_steps(fresh.socket)
         proxy = ProxyCheckpoint(self.directory / "proxy.sock", self.server.socket)
         self.addCleanup(proxy.close)
         got_working, _ = self.run_steps(proxy.path, drop_at=1, proxy=proxy)
@@ -537,10 +487,9 @@ class RetryTest(NativeCase):
 
 @unittest.skipUnless(available(), SKIP)
 class ContentionTest(NativeCase):
-    def test_checkpoints_racing_a_noisy_writer_commit_once_each_and_end_as_the_oracle(self):
+    def test_checkpoints_racing_a_noisy_writer_commit_once_each(self):
         # The count-driven noise writer of the free-running test commits to another collection (14 commits, the
-        # last 12 back to back) while this process checkpoints: each checkpoint commits once and the store ends as
-        # the oracle. The server runs the checkpoints next to the store, between the noise writer's publishes;
+        # last 12 back to back) while this process checkpoints: each checkpoint commits once. The server runs the checkpoints next to the store, between the noise writer's publishes;
         # a client-side transaction that lost a race would run again with the same request id. The proxy counts
         # the writes: at least one per checkpoint.
         self.ensure()
@@ -608,7 +557,7 @@ class CrashTest(NativeCase):
         env = {"PATH": os.environ["PATH"], "HOME": str(directory), "LANG": "C.UTF-8",
                "CETTA_BIN": str(ENGINE), "CETTA_VALUE_WORKER_BIN": str(WORKER),
                "METTACLAW_INSTANCE": "default", "METTACLAW_OBSERVED_STRATEGY": "1",
-               "METTACLAW_STRATEGY_PATH": str(directory / "ledger.sqlite3"),
+               "METTACLAW_STRATEGY_PATH": str(directory / "strategy"),
                "METTACLAW_WORKING_SET_PATH": str(directory / "working.json"),
                "METTACLAW_TELEGRAM_SERVICE_SOCKET": "", "METTACLAW_TELEGRAM_SERVICE_STATE_DIR": str(directory / "state"),
                "METTACLAW_ENGINE_STATE_PATH": str(directory / "engine"), "METTACLAW_TELEGRAM_LOG_PATH": str(directory / "u.jsonl")}
@@ -622,13 +571,11 @@ class CrashTest(NativeCase):
                               capture_output=True, text=True, timeout=120)
 
     def crash_and_restart(self, native):
-        directory = self.directory / ("crash-native" if native else "crash-sqlite")
+        directory = self.directory / "crash-native"
         directory.mkdir()
-        if native:  # the request is a record of the native store the child checkpoints into
-            with mock.patch.dict(os.environ, {input_ack.LEDGER_SOCKET: str(self.server.socket)}):
-                Ledger(directory / "ledger.sqlite3").accept("input:one", "m", kind="message")
-        else:
-            Ledger(directory / "ledger.sqlite3").accept("input:one", "m", kind="message")
+        # the request is a record of the native store the child checkpoints into
+        with mock.patch.dict(os.environ, {input_ack.LEDGER_SOCKET: str(self.server.socket)}):
+            Ledger(directory / "strategy").accept("input:one", "m", kind="message")
         first = self.child(CHILD_CHECKPOINT, directory, native)
         self.assertEqual(first.returncode, -signal.SIGKILL, first.stderr[-2000:])
         report = json.loads(first.stdout.strip().splitlines()[-1])
@@ -637,11 +584,9 @@ class CrashTest(NativeCase):
         self.assertEqual(second.returncode, 0, second.stderr[-2000:])
         return report, json.loads(second.stdout.strip().splitlines()[-1])
 
-    def test_a_crash_between_checkpoint_and_ack_leaves_the_input_processed_on_either_path(self):
-        results = {}
-        for native in (False, True):
+    def test_a_crash_between_checkpoint_and_ack_leaves_the_input_processed(self):
+        for native in (True,):
             report, restarted = self.crash_and_restart(native)
-            results[native] = (report, restarted)
             # The working set is the checkpointed one, read at boot; the inputs count as processed (so the service
             # acknowledges them from the journal and never presents them again), the gate for the ack opens for the
             # settled ids and stays shut for an unsettled one.
@@ -651,13 +596,7 @@ class CrashTest(NativeCase):
             self.assertEqual(restarted["gate"], [1, 0])
             self.assertEqual(restarted["queued"], ["runtime:never-settled"], "a settled runtime event was presented again")
             self.assertEqual(restarted["ack_runtime"], 1)
-        for native in (False, True):  # the clock differs between runs
-            results[native][1]["working"].pop("saved_at")
-            results[native][1]["working"].pop("last_heartbeat", None)
-        self.assertEqual(results[True], results[False], "native and SQLite restart differently")
-        # In the native run SQLite never saw the checkpoint; the native store holds all four facts.
-        with closing(sqlite3.connect(self.directory / "crash-native" / "ledger.sqlite3")) as db:
-            self.assertEqual(db.execute("SELECT COUNT(*) FROM meta WHERE key='working_set'").fetchone()[0], 0)
+        # The native store holds all four facts.
         notices, ids, stored, requests, atoms = parse_native(self.run_client("dump", native_dump_program(self.server.socket)))
         self.assertEqual(set(ids), {"runtime:101", "102"})
         self.assertEqual(set(requests), {"input:one"})
@@ -666,7 +605,8 @@ class CrashTest(NativeCase):
     def test_the_restarted_process_finds_the_checkpoint_even_when_the_server_restarted_too(self):
         directory = self.directory / "crash-server"
         directory.mkdir()
-        Ledger(directory / "ledger.sqlite3").accept("input:one", "m", kind="message")
+        with mock.patch.dict(os.environ, {input_ack.LEDGER_SOCKET: str(self.server.socket)}):
+            Ledger(directory / "strategy").accept("input:one", "m", kind="message")
         first = self.child(CHILD_CHECKPOINT, directory, True)
         self.assertEqual(first.returncode, -signal.SIGKILL, first.stderr[-2000:])
         self.assertEqual(self.server.stop(crash=True), -9)
@@ -686,10 +626,8 @@ class FailureMappingTest(NativeCase):
         store.accept("input:one", "m", kind="message")
         os.environ["METTACLAW_WORKING_SET_PATH"] = str(self.directory / "working.json")
         self.server.stop()
-        digest_before = hashlib.sha256((self.directory / "gate.db").read_bytes()).hexdigest()
         with self.assertRaises(input_ack.LedgerUnavailable) as raised:
             store.checkpoint(working(1.0), ["a"], "input:one")
-        self.assertIsInstance(raised.exception, sqlite3.OperationalError)
         self.assertNotIsInstance(raised.exception, input_ack.LedgerBusy)
         self.assertIn("db:connect", str(raised.exception))
         # The boot read raises: an unavailable store is not an empty working set (and not the file's content).
@@ -698,15 +636,13 @@ class FailureMappingTest(NativeCase):
             store.working_checkpoint()
         with self.assertRaises(input_ack.LedgerUnavailable):
             helper._working_read()
-        # working_set_save swallows every Exception (as with a locked SQLite): 0, so no ack follows, and the file
-        # projection is not written either, as when checkpoint raises on SQLite.
+        # working_set_save swallows every Exception: 0, so no ack follows, and the file projection is not
+        # written either.
         helper._turn_commit = (("a",), "input:one")
         self.addCleanup(setattr, helper, "_turn_commit", None)
         with mock.patch.object(helper, "_working_read", return_value={}):
             self.assertEqual(helper.working_set_save(1, 1, "x", 1.0), 0)
         self.assertEqual(json.loads((self.directory / "working.json").read_text()), {"loops": 99})
-        self.assertEqual(hashlib.sha256((self.directory / "gate.db").read_bytes()).hexdigest(), digest_before,
-                         "the SQLite ledger was written while the server was down")
         # Back up: nothing was half applied, and the first checkpoint now commits.
         self.server.start()
         self.assertIsNone(input_ack.working_set())
@@ -714,7 +650,7 @@ class FailureMappingTest(NativeCase):
         store.checkpoint(working(2.0), ["a"], "input:one")
         self.assertEqual(input_ack.committed(["a"]), 1)
 
-    def test_a_lost_race_is_busy_like_a_locked_database_and_other_failures_are_not(self):
+    def test_a_lost_race_is_busy_and_other_failures_are_unavailable(self):
         class Stub:
             lock = threading.RLock()
             timeout = 1
@@ -734,7 +670,6 @@ class FailureMappingTest(NativeCase):
         with mock.patch.object(input_ack, "_ledger_worker", return_value=Stub(conflict)):
             with self.assertRaises(input_ack.LedgerBusy) as raised:
                 store.checkpoint(working(1.0), [], None)
-            self.assertEqual(raised.exception.sqlite_errorcode, sqlite3.SQLITE_BUSY)
         for reply in (refused, uncertain):
             with mock.patch.object(input_ack, "_ledger_worker", return_value=Stub(reply)):
                 with self.assertRaises(input_ack.LedgerUnavailable) as raised:

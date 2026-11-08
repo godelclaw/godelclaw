@@ -2,9 +2,9 @@
 import json
 import os
 from pathlib import Path
-import sqlite3
 import time
 import unittest
+import native_ledger
 import test_native_llm_boundary as boundary
 from test_provider_stream import frame
 
@@ -48,8 +48,8 @@ class NativeStreamingTest(unittest.TestCase):
                         METTACLAW_LLM_FIRST_BYTE_SECONDS="1", METTACLAW_LLM_IDLE_SECONDS=".5")
 
     def journal(self):
-        with sqlite3.connect(self.directory / "ledger.db") as db:
-            return db.execute("SELECT state,soft_elapsed,result,reason FROM native_calls").fetchall()
+        return [(row["state"], row["soft"], row["result"], row["reason"])
+                for row in native_ledger.llm_records("calls", self.socket)]
 
     def test_silent_first_wait_and_soft_deadline_keep_one_request(self):
         output = self.run_guest(f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'
@@ -68,12 +68,7 @@ class NativeStreamingTest(unittest.TestCase):
             '!(println! (RESULT (llm:command "fixture-model" 42 "xhigh" "input")))\n')
         self.assertIn("(RESULT ())", output)
         self.assertEqual(len(self.peer.requests), 0)
-        path = self.directory / "ledger.db"
-        if path.exists():
-            with sqlite3.connect(path) as db:
-                tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master")}
-                if "requests" in tables:
-                    self.assertEqual(db.execute("SELECT COUNT(*) FROM requests").fetchone()[0], 0)
+        self.assertEqual(native_ledger.llm_records("requests", self.socket), [])
 
     def test_conflicting_synthetic_extension_is_refused_before_admission(self):
         fixture = self.directory / "effort_fixture.py"
@@ -86,7 +81,7 @@ class NativeStreamingTest(unittest.TestCase):
             f'!(import! &self "{fixture}")\n!(println! (READY (py-call (effort_fixture.ready))))\n')
         self.assertIn('(READY false)', output)
         self.assertEqual(len(self.peer.requests), 0)
-        self.assertFalse((self.directory / "ledger.db").exists())
+        self.assertEqual(native_ledger.llm_records("requests", self.socket), [])
 
     def test_long_reasoning_stream_survives_sse_envelope_overhead(self):
         self.peer.reasoning_deltas = 14000

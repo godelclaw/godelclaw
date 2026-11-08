@@ -12,9 +12,6 @@ import os
 import threading
 import time
 import uuid
-import sqlite3
-from contextlib import closing
-import agent_checkpoint
 
 
 TEXT = "Received. Your message is queued; /activity shows whether I'm waiting, retrying, or resting."
@@ -57,19 +54,6 @@ def telegram_service_state_dir():
     return Path(state)
 
 
-def ledger_paths(state):
-    """(store directory, socket) of the native input ledger: <state>/input-ledger/store
-    and <state>/input-ledger/ledger.sock, where `state` is the AGENT's own state
-    directory, the one that holds its engine selection, observed-strategy.sqlite3 and
-    modes/ (agent_checkpoint.state_dir(): the parent of METTACLAW_ENGINE_STATE_PATH,
-    <XDG_STATE_HOME or ~/.local/state>/<instance> by run.sh). The caller passes it; there
-    is no default. The unit pettaclaw-input-ledger@.service serves these paths;
-    METTACLAW_INPUT_LEDGER_SOCKET carries the socket to the processes that use it."""
-    from pathlib import Path
-    root = Path(state) / "input-ledger"
-    return root / "store", root / "ledger.sock"
-
-
 def arm_changes():
     global _changes
     if _changes is None:
@@ -86,30 +70,6 @@ def wait_changes():
     # New tasks wake immediately; the deadline also reconciles delivery
     # receipts and delayed notices, even if a notification was unavailable.
     return _changes.wait(2) if _changes is not None else 0
-
-
-def _store(timeout=10):
-    if not (os.environ.get("METTACLAW_STRATEGY_PATH") or
-            os.environ.get("METTACLAW_ENGINE_STATE_PATH")):
-        return None
-    # Without the managed ledger, cognition never creates one: no notice was
-    # registered and no input needs a processed mark.
-    if (os.environ.get("METTACLAW_OBSERVED_STRATEGY", "0") != "1"
-            and not agent_checkpoint.path().exists()):
-        return None
-    # Schema/legacy migrations belong to cognition's boot. Notices must never
-    # wait for its writer, nor repeatedly scan retained request history.
-    store = agent_checkpoint.ledger(initialize=False, timeout=timeout)
-    with store.transaction() as db:
-        db.execute("""CREATE TABLE IF NOT EXISTS input_notices (
-            task TEXT PRIMARY KEY, update_id TEXT NOT NULL, lane TEXT NOT NULL,
-            send_key TEXT UNIQUE NOT NULL, created REAL NOT NULL,
-            message_id INTEGER, processed INTEGER NOT NULL DEFAULT 0,
-            delete_key TEXT, state TEXT NOT NULL DEFAULT 'registered', checked REAL NOT NULL DEFAULT 0)""")
-        if "checked" not in {row[1] for row in db.execute("PRAGMA table_info(input_notices)")}:
-            db.execute("ALTER TABLE input_notices ADD COLUMN checked REAL NOT NULL DEFAULT 0")
-        db.execute("CREATE TABLE IF NOT EXISTS processed_inputs (id TEXT PRIMARY KEY, processed REAL NOT NULL)")
-    return store
 
 
 # ---- the native input ledger (METTACLAW_INPUT_LEDGER_SOCKET) ----
@@ -131,19 +91,17 @@ _ledger = None
 _ledger_lock = threading.RLock()
 
 
-class LedgerUnavailable(sqlite3.OperationalError):
+class LedgerUnavailable(RuntimeError):
     """The native ledger cannot answer: nobody listens, the answer was lost for
-    good, or the store refused. What an unopenable SQLite file raises, and handled
-    the same by callers (channels/telegram.py handover_ack re-raises it)."""
+    good, or the store refused."""
 
 
 class LedgerBusy(LedgerUnavailable):
-    """The write kept losing races to other writers; nothing was applied. Looks
-    like a locked SQLite database to callers, who return 0 and retry later."""
+    """The write kept losing races to other writers; nothing was applied. Callers
+    return 0 and retry later."""
 
     def __init__(self, message):
-        super().__init__("database is locked: " + message)
-        self.sqlite_errorcode = sqlite3.SQLITE_BUSY
+        super().__init__("ledger busy: " + message)
 
 
 def _native_socket():
@@ -151,12 +109,8 @@ def _native_socket():
 
 
 def _managed():
-    """Whether _store() would open a ledger at all: the same two conditions, without opening one."""
-    if not (os.environ.get("METTACLAW_STRATEGY_PATH") or
-            os.environ.get("METTACLAW_ENGINE_STATE_PATH")):
-        return False
-    return not (os.environ.get("METTACLAW_OBSERVED_STRATEGY", "0") != "1"
-                and not agent_checkpoint.path().exists())
+    """Whether this agent keeps a ledger: its native ledger socket is configured."""
+    return bool(_native_socket())
 
 
 def _worker_binary():
@@ -229,6 +183,8 @@ def _ledger_call(verb, arguments, timeout=10, socket=None, page=None):
     if page is None and verb in PAGED_READS:
         return _ledger_read(verb, arguments, timeout, socket)
     socket_path = _native_socket() if socket is None else str(socket)
+    if not socket_path:
+        raise LedgerUnavailable("input ledger %s: METTACLAW_INPUT_LEDGER_SOCKET is not set" % verb)
     if len(os.fsencode(socket_path)) > SOCKET_BYTES:
         raise LedgerUnavailable("input ledger socket path is %d bytes; a unix socket path may hold %d: %s"
                                 % (len(os.fsencode(socket_path)), SOCKET_BYTES, socket_path))
@@ -433,11 +389,6 @@ def request_cancel(key, request_id=None):
     return _request_move("request-cancel", key, request_id)
 
 
-def request_finish(key, request_id=None):
-    """active -> achieved: True when it moved."""
-    return _request_move("request-finish", key, request_id)
-
-
 def request_answered(key, request_id=None):
     """active or processed -> addressed: True when it moved."""
     return _request_move("request-answered", key, request_id)
@@ -574,6 +525,15 @@ def _entries(answer, verb):
     if not (isinstance(answer, tuple) and all(isinstance(item, tuple) for item in answer)):
         raise LedgerUnavailable("input ledger %s: unexpected answer %s" % (verb, _show(answer)))
     return answer
+
+
+def ledger_owner(candidate):
+    """The store's owner: `candidate` when the store had none, else the one it keeps."""
+    _ledger_call("owner", (str(candidate), _rid()))
+    owner = ledger_state().get("owner")
+    if not isinstance(owner, str):
+        raise LedgerUnavailable("input ledger owner: unexpected %s" % _show(owner))
+    return owner
 
 
 def ledger_state():
@@ -725,20 +685,6 @@ def attempts(ticket=None, recent=None):
     return rows
 
 
-def turn_dump():
-    """(meta keys, turns, arrivals): every turn as a dict and every request's arrival position."""
-    from execution_gateway.cetta_worker import S
-    answer = _ledger_call("turn-dump", (), WHOLE_READ_SECONDS)
-    if not (isinstance(answer, tuple) and len(answer) == 4 and answer[0] == S("dump")):
-        raise LedgerUnavailable("input ledger turn-dump: unexpected answer %s" % _show(answer))
-    state = {entry[0]: None if _is_none(entry[1]) else entry[1] for entry in _entries(answer[1], "turn-dump")}
-    turns = [dict(serial=t[1], status=t[2], revision=t[3], mode=t[4], owner=t[5], focus=t[6],
-                  boundary_digest=t[7], router=t[8], guard=t[9], position=t[10])
-             for t in _entries(answer[2], "turn-dump")]
-    arrivals = {entry[0]: entry[1] for entry in _entries(answer[3], "turn-dump")}
-    return state, sorted(turns, key=lambda turn: turn["serial"]), arrivals
-
-
 # ---- the task context: task_context's frames, proposals, notes, coverage and request inputs ----
 
 def _answer_name(verb, answer, names):
@@ -858,18 +804,9 @@ def processed_update_ids(ids):
     values = [str(value) for value in ids if str(value)]
     if not values:
         return 1
-    if _native_socket():
-        if _managed():
-            # One $now for the whole batch and for every retry of it.
-            _ledger_flag("mark-processed", (time.time(), tuple(values)))
-        return 1
-    store = _store()
-    if store is None:
-        return 1
-    with store.transaction() as db:
-        for identity in values:
-            db.execute("INSERT OR IGNORE INTO processed_inputs VALUES (?,?)", (identity, time.time()))
-            db.execute("UPDATE input_notices SET processed=1 WHERE update_id=?", (identity,))
+    if _managed():
+        # One $now for the whole batch and for every retry of it.
+        _ledger_flag("mark-processed", (time.time(), tuple(values)))
     return 1
 
 
@@ -878,18 +815,9 @@ def committed(ids):
     if os.environ.get("METTACLAW_OBSERVED_STRATEGY", "0") != "1":
         return 1
     values = [str(value) for value in (ids.split(",") if isinstance(ids, str) else ids) if str(value)]
-    if not (os.environ.get("METTACLAW_STRATEGY_PATH") or os.environ.get("METTACLAW_ENGINE_STATE_PATH")):
-        return 0
-    if _native_socket():
-        # An unreachable ledger raises: it must not mean "not processed" either.
-        return int(bool(_ledger_call("committed", (tuple(values),))))
-    # Read a committed snapshot without acquiring the cognitive writer. Errors
-    # propagate: an unavailable checkpoint must not mean "not processed".
-    with closing(sqlite3.connect(agent_checkpoint.path().resolve().as_uri() + '?mode=ro',
-                                 uri=True, timeout=10)) as db:
-        db.execute("BEGIN")
-        return int(all(db.execute("SELECT 1 FROM processed_inputs WHERE id=?", (identity,)).fetchone()
-                       for identity in values))
+    if not _managed():
+        return 0  # no ledger: nothing durable can authorize it
+    return int(bool(_ledger_call("committed", (tuple(values),))))
 
 
 def already_committed(identity):
@@ -995,17 +923,9 @@ def key(task, lane, kind, role, update="{}"):
     attention.ingress(task, role, update)
     value = json.loads(str(update)) if isinstance(update, str) else update
     update_id = str(value.get("update_id", "")) if isinstance(value, dict) else ""
-    native = bool(_native_socket()) and _managed()
-    if native:
-        if update_id and _ledger_call("committed", ((update_id,),), 0):
-            return ""
-        store = None
-    else:
-        store = _store(timeout=0)
-    if store is not None:
-        with store.transaction() as db:
-            if db.execute("SELECT 1 FROM processed_inputs WHERE id=?", (update_id,)).fetchone():
-                return ""
+    native = _managed()
+    if native and update_id and _ledger_call("committed", ((update_id,),), 0):
+        return ""
     if task not in _pending:
         _pending[task] = [time.monotonic(), False, lane]
     since, submitted, captured_lane = _pending[task]
@@ -1025,15 +945,6 @@ def key(task, lane, kind, role, update="{}"):
         if answer not in ("", send_key):
             raise LedgerUnavailable("input ledger register: unexpected answer %r" % (answer,))
         return answer
-    if store is not None:
-        with store.transaction() as db:
-            if db.execute("SELECT 1 FROM processed_inputs WHERE id=?", (update_id,)).fetchone():
-                return ""
-            old = db.execute("SELECT * FROM input_notices WHERE task=?", (task,)).fetchone()
-            if old and (old["lane"] != lane or old["send_key"] != send_key or old["processed"]):
-                return ""
-            db.execute("INSERT OR IGNORE INTO input_notices(task,update_id,lane,send_key,created) VALUES (?,?,?,?,?)",
-                       (task, update_id, lane, send_key, time.time()))
     return send_key
 
 
@@ -1042,14 +953,8 @@ def submitted(task):
     if entry is not None:
         entry[1] = True
         _last_notice[entry[2]] = time.monotonic()
-    if _native_socket():
-        if _managed():
-            _ledger_flag("submitted", (str(task),), 0)
-        return 1
-    store = _store(timeout=0)
-    if store is not None:
-        with store.transaction() as db:
-            db.execute("UPDATE input_notices SET state='submitted' WHERE task=? AND state='registered'", (str(task),))
+    if _managed():
+        _ledger_flag("submitted", (str(task),), 0)
     return 1
 
 
@@ -1059,28 +964,7 @@ def receipt(observation, timeout=10):
     if (not isinstance(value, list) or len(value) != 5 or value[0] != "delivery"
             or value[2] != 0 or value[3] != 1):
         return 0
-    if _native_socket():
-        return _native_receipt(value, timeout) if _managed() else 0
-    store = _store(timeout=timeout)
-    if store is None:
-        return 0
-    key, outcome = value[1], value[4]
-    with store.transaction() as db:
-        row = db.execute("SELECT * FROM input_notices WHERE send_key=? OR delete_key=?", (key, key)).fetchone()
-        if not row:
-            return 0
-        if (not isinstance(outcome, list) or len(outcome) != 2 or outcome[0] != "delivered"
-                or type(outcome[1]) is not int):
-            return 1  # known failed/uncertain evidence grants no deletion
-        if key == row["send_key"] and outcome[1] > 0:
-            if row["message_id"] is not None and row["message_id"] != outcome[1]:
-                return 0
-            db.execute("UPDATE input_notices SET message_id=? WHERE task=?", (outcome[1], row["task"]))
-        elif key == row["delete_key"] and row["processed"] and outcome[1] in (0, row["message_id"]):
-            db.execute("UPDATE input_notices SET state='deleted' WHERE task=?", (row["task"],))
-        else:
-            return 0
-    return 1
+    return _native_receipt(value, timeout) if _managed() else 0
 
 
 def _native_receipt(value, timeout):
@@ -1149,45 +1033,36 @@ def pump(channel=None):
     if channel is None and now - _last_pump < 2:
         return 0
     _last_pump = now
-    if _native_socket():
-        return _pump_native(channel)
-    store = _store(timeout=0)
-    if store is None:
-        return 0
-    import durable_telegram as protocol
-    if channel is None:
-        path = os.environ.get("METTACLAW_TELEGRAM_SERVICE_SOCKET")
-        if not path:
-            return 0
-        channel = protocol.Channel(path, os.devnull, timeout=1)
-    def collect():
-        for task, observation in channel.pending(64):
-            if receipt(observation, timeout=0):
-                channel.acknowledge(task)
-    count = 0
-    try:
-        collect()
-        with store.transaction() as db:
-            rows = [dict(row) for row in db.execute("SELECT * FROM input_notices WHERE state IN ('registered','submitted') ORDER BY processed DESC,checked,created LIMIT 32")]
-        for row in rows:
-            with store.transaction() as db:
-                db.execute("UPDATE input_notices SET checked=? WHERE task=?", (time.time(), row["task"]))
-            if time.time() - row["created"] > 172800:
-                with store.transaction() as db:
-                    db.execute("UPDATE input_notices SET state='expired' WHERE task=?", (row["task"],))
-                continue
-            if row["message_id"] is None or not row["processed"]:
-                continue
-            identity = "notice-delete:" + row["send_key"]
-            number = int.from_bytes(hashlib.sha256(identity.encode()).digest()[:8], "big")
-            delete_key = row["lane"] + ".%020d" % number
-            with store.transaction() as db:
-                db.execute("UPDATE input_notices SET delete_key=? WHERE task=?", (delete_key, row["task"]))
-            code, _, _ = channel.rpc(protocol.SUBMIT, delete_key,
-                                      json.dumps([["delete", row["message_id"]]], separators=(",", ":")))
-            if code == protocol.STORED:
-                count += 1
-        collect()
-    except (OSError, ValueError, protocol.ChannelError):
-        pass  # durable intentions and unacknowledged receipt tasks remain
-    return count
+    return _pump_native(channel)
+
+
+def ledger_paths(state):
+    """(store directory, socket) of the native input ledger: <state>/input-ledger/store
+    and <state>/input-ledger/ledger.sock, where `state` is the AGENT's own state
+    directory, the one that holds its engine selection, observed-strategy.sqlite3 and
+    modes/ (agent_checkpoint.state_dir(): the parent of METTACLAW_ENGINE_STATE_PATH,
+    <XDG_STATE_HOME or ~/.local/state>/<instance> by run.sh). The caller passes it; there
+    is no default. The unit pettaclaw-input-ledger@.service serves these paths;
+    METTACLAW_INPUT_LEDGER_SOCKET carries the socket to the processes that use it."""
+    from pathlib import Path
+    root = Path(state) / "input-ledger"
+    return root / "store", root / "ledger.sock"
+
+
+def request_finish(key, request_id=None):
+    """active -> achieved: True when it moved."""
+    return _request_move("request-finish", key, request_id)
+
+
+def turn_dump():
+    """(meta keys, turns, arrivals): every turn as a dict and every request's arrival position."""
+    from execution_gateway.cetta_worker import S
+    answer = _ledger_call("turn-dump", (), WHOLE_READ_SECONDS)
+    if not (isinstance(answer, tuple) and len(answer) == 4 and answer[0] == S("dump")):
+        raise LedgerUnavailable("input ledger turn-dump: unexpected answer %s" % _show(answer))
+    state = {entry[0]: None if _is_none(entry[1]) else entry[1] for entry in _entries(answer[1], "turn-dump")}
+    turns = [dict(serial=t[1], status=t[2], revision=t[3], mode=t[4], owner=t[5], focus=t[6],
+                  boundary_digest=t[7], router=t[8], guard=t[9], position=t[10])
+             for t in _entries(answer[2], "turn-dump")]
+    arrivals = {entry[0]: entry[1] for entry in _entries(answer[3], "turn-dump")}
+    return state, sorted(turns, key=lambda turn: turn["serial"]), arrivals

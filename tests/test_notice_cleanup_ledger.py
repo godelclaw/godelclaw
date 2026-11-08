@@ -1,20 +1,17 @@
 """The receipt-driven notice cleanup (channels/telegram_notice_cleanup.metta) on the native ledger.
 
-The cleanup's statements run as SQL on the SQLite path and as the ledger's notice-* verbs on the native
-one. The same notices are registered through input_ack on both paths, the same MeTTa program then drives
-the cleanup's send and delete receipts, withdrawal, delete-key adoption, a definite non-delivery and the
-deletion selection, and every printed answer and the final notice rows must agree. Delete keys are made
-per attempt from the clock, so only their shape and their reuse are compared.
+The cleanup's statements are the ledger's notice-* verbs. Notices are registered through input_ack, a
+MeTTa program then drives the cleanup's send and delete receipts, withdrawal, delete-key adoption, a
+definite non-delivery and the deletion selection, and every printed answer and the final notice rows
+are checked. Delete keys are made per attempt from the clock, so only their shape and reuse are checked.
 """
 import hermetic_env  # noqa: F401,E402  (first, before any src module: see hermetic_env.py)
 import json
 import os
 from pathlib import Path
-import sqlite3
 import subprocess
 import sys
 import unittest
-from contextlib import closing
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -22,7 +19,7 @@ sys.path[:0] = [str(HERE), str(ROOT / "src"), str(ROOT / "channels")]
 import input_ack
 from native_ledger_client import NativeRunner
 from test_input_ack_native import NativeCase, SKIP
-from test_input_ledger_remote import ENGINE, LANE, Oracle, available, oracle_environment
+from test_input_ledger_remote import ENGINE, LANE, available, oracle_environment
 import test_input_ledger as base
 
 
@@ -87,9 +84,9 @@ class NoticeCleanupNativeTest(NativeCase):
         self.assertIn("NOTICES_OK", done.stdout, done.stdout[-3000:] + done.stderr[-3000:])
         return [line for line in done.stdout.splitlines() if line.startswith("(")]
 
-    def side(self, native):
+    def side(self):
         with oracle_environment() as directory:
-            runner = NativeRunner.create(directory, self.server.socket) if native else Oracle.create(directory)
+            runner = NativeRunner.create(directory, self.server.socket)
             keys = {}
             for number, task in enumerate(("t1", "t2", "t3", "t4", "t5")):
                 keys[task] = runner.apply(("register", task, "u%d" % number, LANE, 1000.0 + number))
@@ -97,32 +94,25 @@ class NoticeCleanupNativeTest(NativeCase):
                 self.assertTrue(runner.apply(("submitted", task)))
             runner.apply(("mark", ["u0", "u1", "u4"], 1100.0))    # t1, t2 and t5 processed
             input_ack.close_ledger()
-            lines = self.run_guest(runner.path, self.server.socket if native else None, program(keys))
-            if native:
-                rows, _ = self.dump()
-            else:
-                with closing(sqlite3.connect(runner.path)) as db:
-                    rows = sorted(tuple(row) for row in db.execute("SELECT %s FROM input_notices" % ", ".join(base.COLUMNS)))
+            lines = self.run_guest(runner.path, self.server.socket, program(keys))
+            rows, _ = self.dump()
             # Delete keys are made from the clock: compare whether one is held, not its digits.
             key = base.COLUMNS.index("delete_key")
             rows = [row[:key] + (row[key] is not None,) + row[key + 1:] for row in rows]
             return lines, rows
 
-    def test_the_cleanup_reads_and_writes_the_same_on_both_paths(self):
-        oracle_lines, oracle_rows = self.side(False)
-        native_lines, native_rows = self.side(True)
-        self.assertEqual(native_lines, oracle_lines)
-        self.assertEqual(native_rows, oracle_rows)
+    def test_the_cleanup_reads_and_writes_its_notices(self):
+        printed, rows = self.side()
         lines = {line.split(" ", 2)[0] + (" " + line.split(" ", 2)[1] if line.startswith("(OUT") else ""): line
-                 for line in oracle_lines}
+                 for line in printed}
         self.assertEqual(lines["(OUT 0"], "(OUT 0 true)")
         self.assertEqual(lines["(OUT 5"], "(OUT 5 false)")             # a second message id is refused
         self.assertEqual(lines["(KEY1"], "(KEY1 true true true)")       # adopted, the lane's, deleted
         self.assertEqual(lines["(KEY2"], "(KEY2 true false)")           # not sent: a new key next time
         self.assertEqual(lines["(KEY4"], "(KEY4 false true)")           # only its own message
-        self.assertEqual(lines["(KEY5"], "(KEY5 true sqlite:null)")
+        self.assertEqual(lines["(KEY5"], "(KEY5 true none)")
         self.assertEqual(lines["(AFTER"], '(AFTER (("t2" "%s" 102)))' % LANE)   # t1, t4 deleted; t3 unprocessed
-        states = {row[0]: row[base.COLUMNS.index("state")] for row in oracle_rows}
+        states = {row[0]: row[base.COLUMNS.index("state")] for row in rows}
         self.assertEqual(states, {"t1": "deleted", "t2": "submitted", "t3": "submitted",
                                   "t4": "deleted", "t5": "withdrawing"})
 

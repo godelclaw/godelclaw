@@ -8,6 +8,8 @@ import tempfile
 import unittest
 from unittest import mock
 
+import native_ledger
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT / "channels")]
 from observed_strategy import Ledger, encoded
@@ -15,26 +17,33 @@ import task_context
 
 
 class TaskContextTests(unittest.TestCase):
+    socket = None  # a suite that already runs a native ledger sets it before setUp
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.path = Path(self.tmp.name) / "ledger.sqlite3"
+        # The records live in a native ledger; the path only names the state directory.
+        if self.socket is None:
+            self.socket = native_ledger.start(self, self.tmp.name)
+        self.path = Path(self.tmp.name) / "state"
         self.store = Ledger(self.path)
         self.store.accept("guide", "Explain the API conditions; distinguish source inspection from compilation.")
         task_context.begin(self.store, "guide", "operator-event", chat="research")
 
-    def call(self, commands, outputs, request="guide"):
+    def call(self, commands, outputs, request="guide", propose=True):
         router = dict(advertised=[c[0] for c in commands], executable=[c[0] for c in commands],
                       permitted=[c[0] for c in commands])
         snap = self.store.capture(request, "context", router, 0)
-        task_context.proposal(self.store, snap["serial"], request, commands, "not run; reconsider")
+        if propose:
+            task_context.proposal(self.store, snap["serial"], request, commands, "not run; reconsider")
         ticket = self.store.decide(snap["serial"], dict(kind="command", request=request,
             owner=snap["owner"], tool=commands[0][0], command=dict(commands=commands, limit=len(commands))), 0)
-        with self.store.transaction() as db:
-            db.execute("CREATE TABLE IF NOT EXISTS command_attempts(ticket TEXT,position INTEGER,command TEXT,result TEXT,PRIMARY KEY(ticket,position))")
-            for i, result in enumerate(outputs):
-                db.execute("INSERT INTO command_attempts VALUES (?,?,?,?)", (ticket, i, encoded(commands[i]),
-                           None if result is None else encoded(dict(disposition="returned", result=result))))
+        import input_ack
+        for i, result in enumerate(outputs):
+            self.assertTrue(input_ack.attempt_begin(ticket, i, encoded(commands[i])))
+            if result is not None:
+                self.assertTrue(input_ack.attempt_result(ticket, i, encoded(commands[i]),
+                                encoded(dict(disposition="returned", result=result))))
         if all(result is not None for result in outputs):
             self.store.report(ticket, encoded(outputs))
             receipt = self.store.protected(request)["results"][-1]
@@ -133,15 +142,13 @@ class TaskContextTests(unittest.TestCase):
 
     def test_correction_during_wait_survives_until_correlated_resumption(self):
         self.call([["read-file","contract"]],["earlier finding"])
-        with self.store.transaction() as db:
-            db.execute("UPDATE requests SET status='waiting-user' WHERE id='guide'")
+        self.assertTrue(self.store.disposition("guide", "waiting-user", "awaiting the operator"))
         self.store.accept("correction","Keep the source-inspection qualification.")
         task_context.begin(self.store,"correction","operator-event","guide")
         self.store.disposition("correction","addressed","retained the correction")
         fresh=Ledger(self.path)
         self.assertIsNone(task_context.resume(fresh,"correction"))  # don't run an open wait
-        with fresh.transaction() as db:
-            db.execute("UPDATE requests SET status='active' WHERE id='guide'")
+        self.assertTrue(fresh.disposition("guide", "reopen", "the operator answered"))
         self.store.accept("review","peer review")
         task_context.begin(fresh,"review","channel-event",parent="guide")
         view=task_context.projection(fresh,"review")

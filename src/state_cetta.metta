@@ -89,8 +89,7 @@
          (JsonObject $next)))
       ($other $value))))
 (= (context:path)
-   (let $state (system:getenv-or-default "METTACLAW_ENGINE_STATE_PATH"
-                  (system:getenv-or-default "METTACLAW_STRATEGY_PATH" "memory/observed-strategy.sqlite3"))
+   (let $state (system:getenv-or-default "METTACLAW_ENGINE_STATE_PATH" "memory/engine")
      (path:join (path:dirname $state) "context-policy.json")))
 (= (context:default-tokens) 32768)
 ; The task view defaults to the model's whole window, as Codex keeps its whole

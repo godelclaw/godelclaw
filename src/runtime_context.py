@@ -5,13 +5,11 @@ observes a command receipt, spends a budget or dispatches an effect. Missing,
 stale and unsupported sources remain unknown. The measurements are sampled
 independently, not an atomic snapshot of the whole agent.
 """
-import contextlib
 import hashlib
 import json
 import math
 import os
 from pathlib import Path
-import sqlite3
 import subprocess
 import time
 
@@ -49,21 +47,6 @@ def _json(path, limit=65536):
     if not isinstance(value, dict):
         raise ValueError("metadata must be an object")
     return value
-
-
-@contextlib.contextmanager
-def _database(path):
-    # mode=ro cannot create the database or mutate its tables. A deadline also
-    # bounds reads of large or locked stores; unavailable is a valid reading.
-    connection = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro",
-                                 uri=True, timeout=.02)
-    try:
-        deadline = time.monotonic() + .025
-        connection.set_progress_handler(lambda: int(time.monotonic() > deadline), 1000)
-        connection.execute("PRAGMA query_only=ON")
-        yield connection
-    finally:
-        connection.close()
 
 
 def _provider(now):
@@ -194,59 +177,7 @@ def _memory():
     if configured["mode"] == "native":
         return {"backend": "native", "collection": configured["name"],
                 "reachable": memory_health.native_reachable(configured["socket"])}
-    with _database(Path(memory_health._chroma_dir()) / "chroma.sqlite3") as db:
-        row = db.execute("SELECT id FROM collections WHERE name=?",
-                         (memory_health._collection(),)).fetchone()
-        if row is None:
-            raise ValueError("memory collection absent")
-        cid = row[0]
-        segments = dict((scope, sid) for sid, scope in db.execute(
-            "SELECT id,scope FROM segments WHERE collection=?", (cid,)))
-        meta, vector = segments.get("METADATA"), segments.get("VECTOR")
-        if meta is None or vector is None:
-            raise ValueError("index segment unavailable")
-        seqs = dict(db.execute("SELECT segment_id,seq_id FROM max_seq_id WHERE segment_id IN (?,?)",
-                               (meta, vector)))
-        before, after = _nat(seqs.get(meta)), _nat(seqs.get(vector))
-        if before is None or after is None or after > before:
-            raise ValueError("index watermarks unavailable or inconsistent")
-        docs = _nat(db.execute("SELECT COUNT(*) FROM embeddings WHERE segment_id=?", (meta,)).fetchone()[0])
-        threshold = None
-        columns = {row[1] for row in db.execute("PRAGMA table_info(collections)")}
-        for column in ("config_json_str", "schema_str"):
-            if column in columns:
-                raw = db.execute("SELECT " + column + " FROM collections WHERE id=?", (cid,)).fetchone()[0]
-                if raw and len(raw) <= 65536:
-                    found = memory_health._threshold_from_value(json.loads(raw))
-                    if _nat(found) is not None:
-                        threshold = found
-        if threshold is None:
-            raise ValueError("persisted index threshold unavailable")
-        return {"documents": docs, "persistedSequenceGap": before - after, "threshold": threshold}
-
-
-def _background(now):
-    import agent_checkpoint
-    with _database(agent_checkpoint.path()) as db:
-        columns = {row[1] for row in db.execute("PRAGMA table_info(model_jobs)")}
-        stamp = "finished_at" if "finished_at" in columns else "NULL"
-        rows = db.execute("SELECT state,observed,COUNT(*),MIN(" + stamp + "),COUNT(" + stamp + ") "
-                          "FROM model_jobs WHERE adopted=0 GROUP BY state,observed").fetchall()
-    pending = review = uncertain = 0
-    oldest, known = [], True
-    for state, observed, count, finished, dated in rows:
-        if state in ("queued", "running"):
-            pending += count
-        elif state == "uncertain":
-            uncertain += count
-        elif state in ("returned", "failed") and not observed:
-            review += count
-            age = _age(finished, now)
-            known = known and dated == count and age is not None
-            if age is not None:
-                oldest.append(age)
-    return {"pending": pending, "review": review, "uncertain": uncertain,
-            "oldestReviewSeconds": max(oldest) if oldest and known else None}
+    return {"backend": configured["mode"], "supported": False}
 
 
 def _budget(now):
@@ -289,7 +220,7 @@ def read(now=None):
              "turnPending": None, "localChannelReady": None, "humanInbox": None,
              "commands": None, "memory": None, "background": None, "budgetStatus": "unknown"}
     unavailable = []
-    failures = (OSError, ValueError, TypeError, KeyError, sqlite3.Error, RuntimeError, RecursionError)
+    failures = (OSError, ValueError, TypeError, KeyError, RuntimeError, RecursionError)
     try:
         facts["call"], facts["turnPending"] = _provider(now)
     except failures:

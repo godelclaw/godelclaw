@@ -1,10 +1,6 @@
-"""The native processed-inputs ledger answers like input_ack's SQLite one.
-
-Each case runs one operation sequence through input_ack.processed_update_ids
-and input_ack.committed (a temporary observed_strategy.Ledger) and through
-src/input_ledger.metta (one cetta process, a temporary library-db store), then
-compares every answer and the final id->time sets.
-"""
+"""The native input ledger module, src/input_ledger.metta, run directly: each case runs one
+operation sequence in one cetta process on a temporary library-db store and checks every
+answer and the final records."""
 import hermetic_env  # noqa: F401,E402  (first, before any src module: see hermetic_env.py)
 import hashlib
 import json
@@ -17,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import contextlib
 from contextlib import closing
 from unittest import mock
 
@@ -67,25 +64,6 @@ class sqlite_environment(mock.patch.dict):
         os.environ.pop("METTACLAW_INPUT_LEDGER_SOCKET", None)
         return result
 
-
-def run_oracle(operations):
-    """Answers of the mark/committed operations, and the final id->time rows."""
-    answers, clock = [], [0.0]
-    with tempfile.TemporaryDirectory() as directory, \
-            sqlite_environment({"METTACLAW_OBSERVED_STRATEGY": "1",
-                                         "METTACLAW_STRATEGY_PATH": str(Path(directory) / "ledger.db")}), \
-            mock.patch.object(input_ack.time, "time", side_effect=lambda: clock[0]):
-        store = Ledger(Path(directory) / "ledger.db")
-        for operation in operations:
-            if operation[0] == "mark":
-                clock[0] = operation[2]
-                answers.append(bool(input_ack.processed_update_ids(list(operation[1]))))
-            elif operation[0] == "committed":
-                answers.append(bool(input_ack.committed(list(operation[1]))))
-        with closing(sqlite3.connect(store.path)) as db:
-            rows = {identity: processed for identity, processed in
-                    db.execute("SELECT id, processed FROM processed_inputs")}
-    return answers, rows
 
 
 def idlist(ids):
@@ -143,11 +121,8 @@ class InputLedgerTest(unittest.TestCase):
         return [answers[n] == "true" for n in wanted], rows
 
     def same(self, operations):
-        expected = run_oracle(operations)
-        actual = self.cetta(operations)
-        self.assertEqual(actual[0], expected[0])
-        self.assertEqual(actual[1], expected[1])
-        return expected
+        """The answers and the final id->time rows of one native run."""
+        return self.cetta(operations)
 
     def closed_handle_answers(self):
         """Answers of mark-processed and committed on a closed handle, then on a reopened one."""
@@ -226,12 +201,10 @@ class InputLedgerTest(unittest.TestCase):
 
     def test_a_second_process_sees_the_first_ones_records(self):
         first = [mark(["one", "two", "ünï"], 10.0)]
-        self.assertEqual(self.cetta(first, "first")[1], run_oracle(first)[1])
+        self.assertEqual(self.cetta(first, "first")[1], {"one": 10.0, "two": 10.0, "ünï": 10.0})
         second = [committed(["one", "ünï"]), committed(["one", "three"]), mark(["two", "three"], 30.0)]
-        expected = run_oracle(first + second)
         actual = self.cetta(second, "second", ensure=False)
-        self.assertEqual(actual[0], expected[0][1:])
-        self.assertEqual(actual[1], expected[1])
+        self.assertEqual(actual[0], [True, False, True])
         self.assertEqual(actual[1], {"one": 10.0, "two": 10.0, "ünï": 10.0, "three": 30.0})
 
     def test_two_hundred_ids_in_one_batch(self):
@@ -281,75 +254,45 @@ class FakeHash:
         return bytes(range(1, 33))
 
 
-def run_notice_oracle(operations, *, collide=False):
-    """input_ack's answers and final tables, plus the operations with their derived keys filled in."""
-    answers, native, clock, monotonic = [], [], [0.0], [1000.0]
+def send_key_for(task, lane):
+    """The send key input_ack derives for a task's receipt (key_identity: instance and task)."""
+    identity = os.environ.get("METTACLAW_INSTANCE", "default") + ":input-receipt:" + task
+    number = int.from_bytes(hashlib.sha256(identity.encode()).digest()[:8], "big")
+    return lane + ".%020d" % number
 
-    def send_key(task, lane):
-        identity = os.environ.get("METTACLAW_INSTANCE", "default") + ":input-receipt:" + task
-        number = int.from_bytes(input_ack.hashlib.sha256(identity.encode()).digest()[:8], "big")
-        return lane + ".%020d" % number
 
-    patches = [mock.patch.object(input_ack.time, "time", side_effect=lambda: clock[0]),
-               mock.patch.object(input_ack.time, "monotonic", side_effect=lambda: monotonic[0]),
-               mock.patch.object(input_ack, "_pending", {}), mock.patch.object(input_ack, "_last_notice", {}),
-               mock.patch("cognitive_health.failure_pending", return_value=False)]
-    if collide:
-        patches.append(mock.patch.object(input_ack.hashlib, "sha256", FakeHash))
-    with tempfile.TemporaryDirectory() as directory, \
-            sqlite_environment({"METTACLAW_OBSERVED_STRATEGY": "1", "METTACLAW_INPUT_ACK_SECONDS": "15",
-                                         "METTACLAW_STRATEGY_PATH": str(Path(directory) / "ledger.db")}):
-        for patch in patches:
-            patch.start()
-        try:
-            store = Ledger(Path(directory) / "ledger.db")
-            input_ack.processed_update_ids([])
-            with closing(sqlite3.connect(store.path)) as db:
-                db.execute("CREATE TABLE IF NOT EXISTS input_notices (task TEXT PRIMARY KEY, update_id TEXT NOT NULL,"
-                           " lane TEXT NOT NULL, send_key TEXT UNIQUE NOT NULL, created REAL NOT NULL,"
-                           " message_id INTEGER, processed INTEGER NOT NULL DEFAULT 0, delete_key TEXT,"
-                           " state TEXT NOT NULL DEFAULT 'registered', checked REAL NOT NULL DEFAULT 0)")
-                db.commit()
-            for operation in operations:
-                kind = operation[0]
-                if kind == "register":
-                    _, task, update_id, lane, now = operation
-                    input_ack._pending.clear()
-                    input_ack._last_notice.clear()
-                    update = json.dumps({"update_id": update_id} if update_id else {})
-                    clock[0] = now
-                    monotonic[0] += 100
-                    self_check = input_ack.key(task, lane, "message", "operator", update)
-                    assert self_check == "", "the delay has not passed on the first call"
-                    monotonic[0] += 15
-                    answers.append(input_ack.key(task, lane, "message", "operator", update))
-                    native.append(("register", task, update_id, lane, send_key(task, lane), now))
-                elif kind == "submitted":
-                    answers.append(input_ack.submitted(operation[1]) == 1)
-                    native.append(operation)
-                elif kind == "receipt":
-                    key = send_key(operation[1][1], operation[1][2]) if isinstance(operation[1], tuple) else operation[1]
-                    answers.append(input_ack.receipt(["delivery", key, 0, 1, operation[2]]))
-                    native.append(("receipt", key, operation[2]))
-                elif kind == "mark":
-                    clock[0] = operation[2]
-                    answers.append(bool(input_ack.processed_update_ids(list(operation[1]))))
-                    native.append(operation)
-                elif kind in ("set-delete-key", "set-state"):
-                    column = "delete_key" if kind == "set-delete-key" else "state"
-                    with closing(sqlite3.connect(store.path)) as db:
-                        db.execute("UPDATE input_notices SET %s=? WHERE task=?" % column, (operation[2], operation[1]))
-                        db.commit()
-                    native.append(operation)
-                else:
-                    native.append(operation)
-            with closing(sqlite3.connect(store.path)) as db:
-                notices = sorted(db.execute("SELECT %s FROM input_notices" % ", ".join(COLUMNS)))
-                processed = {identity: seen for identity, seen in db.execute("SELECT id, processed FROM processed_inputs")}
-        finally:
-            for patch in reversed(patches):
-                patch.stop()
-    return answers, notices, processed, native
+def register_through_input_ack(testcase, task, update_id, lane, instance):
+    """The send key input_ack.key returns for a task, registered on a native ledger: its first
+    call only starts the delay, the call after METTACLAW_INPUT_ACK_SECONDS registers."""
+    import native_ledger
+    directory = tempfile.mkdtemp(prefix="il-key-")
+    testcase.addCleanup(shutil.rmtree, directory, True)
+    clock, monotonic = [1.0], [1000.0]
+    environment = {"METTACLAW_OBSERVED_STRATEGY": "1", "METTACLAW_INPUT_ACK_SECONDS": "15",
+                   "METTACLAW_INSTANCE": instance}
+    with mock.patch.dict(os.environ, environment), \
+            mock.patch.object(input_ack.time, "time", side_effect=lambda: clock[0]), \
+            mock.patch.object(input_ack.time, "monotonic", side_effect=lambda: monotonic[0]), \
+            mock.patch.object(input_ack, "_pending", {}), mock.patch.object(input_ack, "_last_notice", {}), \
+            mock.patch("cognitive_health.failure_pending", return_value=False):
+        native_ledger.start(testcase, directory)
+        update = json.dumps({"update_id": update_id})
+        assert input_ack.key(task, lane, "message", "operator", update) == ""
+        monotonic[0] += 15
+        return input_ack.key(task, lane, "message", "operator", update)
+
+
+def native_operations(operations, *, collide=False):
+    """The operations as the native module takes them: a register carries its send key, and a
+    receipt names its key itself where the test wrote ("send", task, lane)."""
+    def native(op):
+        if op[0] == "register":
+            return ("register", op[1], op[2], op[3], send_key_for(op[1], op[3]), op[4])
+        if op[0] == "receipt" and isinstance(op[1], tuple):
+            return ("receipt", send_key_for(op[1][1], op[1][2]), op[2])
+        return op
+    with mock.patch.object(hashlib, "sha256", FakeHash) if collide else contextlib.nullcontext():
+        return [native(op) for op in operations]
 
 
 def atom(value):
@@ -480,13 +423,10 @@ class InputNoticeTest(unittest.TestCase):
         return values, notices, processed
 
     def same(self, operations, *, collide=False):
-        answers, notices, processed, native = run_notice_oracle(operations, collide=collide)
-        self.assertEqual(len(answers), sum(1 for op in operations if op[0] in ("register", "submitted", "receipt", "mark")))
-        values, actual_notices, actual_processed = self.cetta(native)
-        self.assertEqual(values, answers)
-        self.assertEqual(actual_notices, notices)
-        self.assertEqual(actual_processed, processed)
-        return answers, notices
+        """The answers and the final notices of one native run."""
+        values, notices, _ = self.cetta(native_operations(operations, collide=collide))
+        self.assertEqual(len(values), sum(1 for op in operations if op[0] in ("register", "submitted", "receipt", "mark")))
+        return values, notices
 
     def test_a_registered_notice_returns_its_key_and_keeps_the_first_creation_time(self):
         answers, notices = self.same([register("t1", "u1", "42.0", 100.5), register("t1", "u1", "42.0", 200.5)])
@@ -706,8 +646,7 @@ class InputKeyTest(unittest.TestCase):
 
     def test_a_send_key_is_the_one_input_ack_key_returns(self):
         lane, task = "42.0 é", "tâsk 日本 🙂"
-        with mock.patch.dict(os.environ, {"METTACLAW_INSTANCE": "inst é"}):
-            answers = run_notice_oracle([register(task, "u1", lane, 1.0)])[0]
+        answers = [register_through_input_ack(self, task, "u1", lane, "inst é")]
         self.assertTrue(answers[0].startswith(lane + "."))
         self.assertEqual(self.derive([("inst é", lane, task)], [])[0], answers)
 
@@ -796,7 +735,7 @@ class OutcomeNormalizationTest(unittest.TestCase):
                           ("d", "((Error db:snapshot (StoreRefused closed-or-busy)))")])
 
 
-# ---- due and check against input_ack.pump() with a fake channel ----
+# ---- due and check, in input_ack.pump()'s order ----
 
 NOTICE_TABLE = ("CREATE TABLE IF NOT EXISTS input_notices (task TEXT PRIMARY KEY, update_id TEXT NOT NULL,"
                 " lane TEXT NOT NULL, send_key TEXT UNIQUE NOT NULL, created REAL NOT NULL,"
@@ -844,47 +783,6 @@ class FakeChannel:
         if len(self.submits) == 1 and self.on_first_submit:
             self.on_first_submit()
         return (protocol.STORED, "", "")
-
-
-def run_pump_oracle(rows, pending, edits, clock):
-    """pump() itself: its SUBMITs, receipt answers (by collect), acknowledged tasks and final rows."""
-    ticks, receipts = [0], []
-
-    def now():
-        if clock[0] == "ticks":
-            ticks[0] += 1
-            return clock[1] + ticks[0]
-        return clock[1]
-
-    real_receipt = input_ack.receipt
-
-    def spy(observation, timeout=10):
-        result = real_receipt(observation, timeout)
-        receipts.append((observation[1], result))
-        return result
-
-    with tempfile.TemporaryDirectory() as directory, \
-            sqlite_environment({"METTACLAW_OBSERVED_STRATEGY": "1",
-                                         "METTACLAW_STRATEGY_PATH": str(Path(directory) / "ledger.db")}), \
-            mock.patch.object(input_ack.time, "time", side_effect=now), \
-            mock.patch.object(input_ack, "receipt", spy):
-        store = Ledger(Path(directory) / "ledger.db")
-        with closing(sqlite3.connect(store.path)) as db:
-            db.execute(NOTICE_TABLE)
-            db.executemany("INSERT INTO input_notices VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
-            db.commit()
-
-        def edit():
-            with closing(sqlite3.connect(store.path)) as db:
-                for task, column, value in edits:
-                    db.execute("UPDATE input_notices SET %s=? WHERE task=?" % column, (value, task))
-                db.commit()
-        channel = FakeChannel(pending, edit)
-        count = input_ack.pump(channel)
-        with closing(sqlite3.connect(store.path)) as db:
-            final = sorted(db.execute("SELECT %s FROM input_notices" % ", ".join(COLUMNS)))
-    assert count == len(channel.submits), (count, channel.submits)
-    return {"submits": channel.submits, "receipts": receipts, "acknowledged": channel.acknowledged, "rows": final}
 
 
 PUMP_HELPERS = SET_FIELD_HELPERS + """
@@ -968,16 +866,19 @@ class PumpStoreHalfTest(unittest.TestCase):
         return receipts, sorted(checks), due, sorted(notice_values(record) for record in final)
 
     def same(self, rows, pending=(), edits=(), clock=("const", NOW)):
-        oracle = run_pump_oracle(rows, pending, edits, clock)
-        outcome_of = {item[1][1]: item[1][4] for item in pending}
+        """pump's steps on the native module: collect the pending receipts (a truthy answer
+        acknowledges its task), check every due notice, collect what is still pending. Answers
+        the outcome (submits, receipts, acknowledged, rows), the checks and due."""
         collect_one = [(item[1][1], item[1][4]) for item in pending]
-        collect_two = [(key, outcome_of[key]) for key, _ in oracle["receipts"][len(pending):]]
+        first, _, _, _ = self.native(rows, collect_one, [], edits, clock)
+        acknowledged = [item[0] for n, item in enumerate(pending) if first["one"][n]]
+        left = [item for n, item in enumerate(pending) if not first["one"][n]]
+        collect_two = [(item[1][1], item[1][4]) for item in left]
         receipts, checks, due, final = self.native(rows, collect_one, collect_two, edits, clock)
-        # receipt answers: collect one, then the second collect over what was not acknowledged
-        self.assertEqual([receipts["one"][n] for n in range(len(pending))],
-                         [result for _, result in oracle["receipts"][:len(pending)]])
-        self.assertEqual([receipts["two"][n] for n in range(len(collect_two))],
-                         [result for _, result in oracle["receipts"][len(pending):]])
+        acknowledged += [item[0] for n, item in enumerate(left) if receipts["two"][n]]
+        outcome = {"receipts": [(key, receipts["one"][n]) for n, (key, _) in enumerate(collect_one)]
+                               + [(key, receipts["two"][n]) for n, (key, _) in enumerate(collect_two)],
+                   "acknowledged": acknowledged, "rows": final}
         # due answered whole input-notice records, checked in due's order
         self.assertEqual([record[1] for record in due], [task for _, task, _ in checks])
         self.assertTrue(all(len(record) == 11 and record[0] == ("symbol", "input-notice") for record in due))
@@ -987,9 +888,8 @@ class PumpStoreHalfTest(unittest.TestCase):
             if isinstance(answer, list):
                 self.assertEqual(answer[0], ("symbol", "delete"))
                 submits.append((answer[1], json.dumps([["delete", answer[2]]], separators=(",", ":"))))
-        self.assertEqual(submits, oracle["submits"])
-        self.assertEqual(final, oracle["rows"])
-        return oracle, checks, due
+        outcome["submits"] = submits
+        return outcome, checks, due
 
     def test_due_orders_by_processed_then_checked_then_created(self):
         rows = [row("a", created=999000.0, message=11, processed=1, checked=50.0),
@@ -1002,23 +902,23 @@ class PumpStoreHalfTest(unittest.TestCase):
                 row("h", created=999200.0, message=18, processed=1, checked=10.0, state="submitted"),
                 row("i", created=999000.0, message=19, processed=1, state="deleted"),
                 row("j", created=999000.0, message=20, processed=1, state="expired")]
-        oracle, checks, due = self.same(rows, clock=("ticks", NOW))
+        outcome, checks, due = self.same(rows, clock=("ticks", NOW))
         self.assertEqual([record[1] for record in due], ["c", "b", "h", "a", "g", "e", "d", "f"])
-        # the oracle's own order: its checked stamps rise in that order, i and j untouched
-        stamps = {record[0]: record[9] for record in oracle["rows"]}
+        # pump's own order: the checked stamps rise in that order, i and j untouched
+        stamps = {record[0]: record[9] for record in outcome["rows"]}
         self.assertEqual(sorted(stamps, key=stamps.get)[:2], ["i", "j"])
         self.assertEqual(sorted((t for t in stamps if t not in "ij"), key=stamps.get),
                          ["c", "b", "h", "a", "g", "e", "d", "f"])
-        self.assertEqual([key for key, _ in oracle["submits"]],
+        self.assertEqual([key for key, _ in outcome["submits"]],
                          [delete_key_of("42.0", send_key_of("default", "42.0", t)) for t in "cbha"])
 
     def test_at_most_thirty_two_notices_are_checked_oldest_first(self):
         rows = [row("t%02d" % n, created=999000.0 + n, message=100 + n, processed=1) for n in range(40)]
         rows += [row("u%d" % n, created=998000.0 + n, processed=0) for n in range(5)]
-        oracle, checks, due = self.same(rows)
+        outcome, checks, due = self.same(rows)
         self.assertEqual([record[1] for record in due], ["t%02d" % n for n in range(32)])
-        self.assertEqual(len(oracle["submits"]), 32)
-        self.assertEqual(sum(1 for record in oracle["rows"] if record[9] == NOW), 32)
+        self.assertEqual(len(outcome["submits"]), 32)
+        self.assertEqual(sum(1 for record in outcome["rows"] if record[9] == NOW), 32)
         self.assertEqual(self.limit_of(5), 5)
 
     def limit_of(self, limit):
@@ -1052,8 +952,8 @@ class PumpStoreHalfTest(unittest.TestCase):
                 row("exact-unprocessed", created=NOW - MAX_AGE),
                 row("past-unprocessed", created=NOW - MAX_AGE - 1.0, state="submitted"),
                 row("past-no-message", created=NOW - MAX_AGE - 1.0, processed=1)]
-        oracle, checks, due = self.same(rows)
-        states = {record[0]: record[8] for record in oracle["rows"]}
+        outcome, checks, due = self.same(rows)
+        states = {record[0]: record[8] for record in outcome["rows"]}
         self.assertEqual(states, {"exact": "registered", "past": "expired", "barely-past": "expired",
                                   "barely-inside": "registered", "exact-unprocessed": "registered",
                                   "past-unprocessed": "expired", "past-no-message": "expired"})
@@ -1061,17 +961,17 @@ class PumpStoreHalfTest(unittest.TestCase):
         self.assertEqual(answers["exact"][0], ("symbol", "delete"))
         self.assertEqual(answers["past"], ("symbol", "expired"))
         self.assertEqual(answers["exact-unprocessed"], ("symbol", "wait"))
-        self.assertEqual(len(oracle["submits"]), 2)
+        self.assertEqual(len(outcome["submits"]), 2)
 
     def test_wait_without_a_message_id_and_when_not_processed(self):
         rows = [row("neither", created=NOW - 10), row("no-message", created=NOW - 10, processed=1),
                 row("unprocessed", created=NOW - 10, message=5), row("ready", created=NOW - 10, message=6, processed=1),
                 row("ready-submitted", created=NOW - 10, message=7, processed=1, state="submitted", checked=3.5)]
-        oracle, checks, _ = self.same(rows)
+        outcome, checks, _ = self.same(rows)
         answers = {task: answer for _, task, answer in checks}
         self.assertEqual([answers[t] for t in ("neither", "no-message", "unprocessed")], [("symbol", "wait")] * 3)
-        self.assertEqual(len(oracle["submits"]), 2)
-        waiting = [record for record in oracle["rows"] if record[0] in ("neither", "no-message", "unprocessed")]
+        self.assertEqual(len(outcome["submits"]), 2)
+        waiting = [record for record in outcome["rows"] if record[0] in ("neither", "no-message", "unprocessed")]
         self.assertTrue(all(record[7] is None and record[9] == NOW and record[8] == "registered" for record in waiting))
 
     def test_the_delete_path_with_receipts_served_before_and_after(self):
@@ -1088,22 +988,22 @@ class PumpStoreHalfTest(unittest.TestCase):
                    ("c4", delivery(send("r4"), ["failed", "x"])), ("c5", delivery(send("r5"), ["delivered", 56])),
                    ("c6", delivery("nobody", ["delivered", 1])),
                    ("c7", delivery(delete_key_of(lane, send("r6")), ["delivered", 0]))]
-        oracle, checks, _ = self.same(rows, pending)
-        states = {record[0]: (record[5], record[8]) for record in oracle["rows"]}
+        outcome, checks, _ = self.same(rows, pending)
+        states = {record[0]: (record[5], record[8]) for record in outcome["rows"]}
         self.assertEqual(states["r1"], (77, "registered"))
         self.assertEqual(states["r2"], (88, "registered"))
         self.assertEqual(states["r3"], (33, "deleted"))
         self.assertEqual(states["r6"], (66, "deleted"))
-        self.assertEqual(sorted(oracle["acknowledged"]), ["c1", "c2", "c3", "c4", "c7"])
-        self.assertEqual(len(oracle["submits"]), 4)
+        self.assertEqual(sorted(outcome["acknowledged"]), ["c1", "c2", "c3", "c4", "c7"])
+        self.assertEqual(len(outcome["submits"]), 4)
 
     def test_awkward_strings_and_long_lanes_in_the_delete_path(self):
         lanes = ['é日本"x', "l" * 128, "back\\slash", "42.0"]
         tasks = ['ünï "t" \\', "🙂" * 40, "t" * 128, "plain"]
         rows = [row(task, created=NOW - 10 - n, message=1000 + n, processed=1, lane=lane,
                     update="é\\" + str(n)) for n, (lane, task) in enumerate(zip(lanes, tasks))]
-        oracle, checks, _ = self.same(rows)
-        self.assertEqual(len(oracle["submits"]), 4)
+        outcome, checks, _ = self.same(rows)
+        self.assertEqual(len(outcome["submits"]), 4)
 
     def test_rows_changed_between_the_read_and_the_check_are_mirrored(self):
         # The first delete's submission edits rows that due already returned: pump goes on from its
@@ -1116,22 +1016,22 @@ class PumpStoreHalfTest(unittest.TestCase):
                 row("f", created=NOW - 600, message=6, processed=1, delete="fresh")]      # delete key replaced
         edits = [("b", "state", "deleted"), ("e", "state", "expired"), ("d", "state", "deleted"),
                  ("f", "delete_key", "other")]
-        oracle, checks, due = self.same(rows, edits=edits)
-        states = {record[0]: (record[7] == delete_key_of("42.0", record[3]), record[8]) for record in oracle["rows"]}
+        outcome, checks, due = self.same(rows, edits=edits)
+        states = {record[0]: (record[7] == delete_key_of("42.0", record[3]), record[8]) for record in outcome["rows"]}
         self.assertEqual(states["b"], (True, "deleted"))
         self.assertEqual(states["e"], (True, "expired"))
         self.assertEqual(states["d"], (False, "expired"))
         self.assertEqual(states["f"], (True, "registered"))
-        self.assertEqual(len(oracle["submits"]), 4)
+        self.assertEqual(len(outcome["submits"]), 4)
 
     def test_only_finished_notices_leave_nothing_due(self):
-        oracle, checks, due = self.same([row("a", created=NOW - 1, message=1, processed=1, state="deleted"),
+        outcome, checks, due = self.same([row("a", created=NOW - 1, message=1, processed=1, state="deleted"),
                                          row("b", created=NOW - 1, message=1, processed=1, state="expired")])
-        self.assertEqual((checks, due, oracle["submits"]), ([], [], []))
+        self.assertEqual((checks, due, outcome["submits"]), ([], [], []))
         self.assertEqual(self.same([])[2], [])
 
     def test_a_task_without_a_notice_changes_nothing_and_waits(self):
-        # pump never reaches this (its rows come from the table); no oracle row exists to mirror.
+        # pump never reaches this (its rows come from due); here a check names a task with no notice.
         out = run_cetta(self.directory, "missing", (
             "!(import! &self %s)\n%s"
             "!(let* (($db (db:open %s))\n        ($_ (input-ledger:ensure $db))\n"
@@ -1147,9 +1047,9 @@ class PumpStoreHalfTest(unittest.TestCase):
 
     def test_a_delete_answer_leaves_the_checked_stamp_and_the_delete_key_in_the_notice(self):
         rows = [row("t", created=NOW - 5, message=9, processed=1)]
-        oracle, _, due = self.same(rows)
+        outcome, _, due = self.same(rows)
         self.assertEqual(len(due), 1)
-        final = oracle["rows"][0]
+        final = outcome["rows"][0]
         self.assertEqual((final[7], final[9]), (delete_key_of("42.0", final[3]), NOW))
 
 

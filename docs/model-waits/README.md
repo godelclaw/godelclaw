@@ -80,18 +80,9 @@ python -m unittest discover -s tests -p 'test_native_lifetime.py'
 CETTA_BIN=/path/to/http-python-cetta python -m unittest discover -s tests -p 'test_native_llm*.py'
 ```
 
-The repair contracts have a separate kernel conformance gate. Use
-`godelclaw/MeTTapedia` `main`, whose agent models live in `lean/pettaclaw`,
-install the repository's Lean toolchain, and use a CeTTa build with Python and
-HTTP support:
-
-```sh
-python scripts/check_repair_contracts.py \
-  --models ../MeTTapedia/lean/pettaclaw \
-  --toolchain leanprover/lean4:v4.33.1 \
-  --cetta "$CETTA_BIN" \
-  --output-dir ./qualification/repair-contracts
-```
+The repair contracts had a kernel conformance gate over the SQLite ledgers. It
+was retired with them; checking the native ledger's transitions against these
+contracts needs a harness around a native ledger server.
 
 `RepairArchitecture.lean` strengthens the coarse delivery and wait models with
 the actual host's processing, promotion, goal/checker guards, correlated notice

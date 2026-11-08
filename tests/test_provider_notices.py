@@ -4,14 +4,16 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import time
 import unittest
-from contextlib import closing
 from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from observed_strategy import Ledger
 import cognitive_health as health
 import input_ack
 import mode_channel
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import native_ledger  # noqa: E402
 
 class ProviderNotices(unittest.TestCase):
     def setUp(self):
@@ -19,13 +21,14 @@ class ProviderNotices(unittest.TestCase):
         self.root = Path(self.tmp.name)
         env = mock.patch.dict(os.environ, {
             "METTACLAW_COGNITIVE_HEALTH_PATH": str(self.root / "health.json"),
-            "METTACLAW_STRATEGY_PATH": str(self.root / "ledger.db"),
+            "METTACLAW_STRATEGY_PATH": str(self.root / "strategy"),
             "METTACLAW_ENGINE_STATE_PATH": str(self.root / "engine"),
             "METTACLAW_MODE_STATE_ROOT": str(self.root / "modes"),
             "METTACLAW_TELEGRAM_PRIMARY_CHAT_ID": "42",
             "METTACLAW_OBSERVED_STRATEGY": "1"})
         env.start(); self.addCleanup(env.stop)
-        Ledger(self.root / "ledger.db")
+        self.socket = native_ledger.start(self, self.root)
+        Ledger(self.root / "strategy")
 
     def fail(self, now):
         health.turn_started("fixture", now=now, model="chosen-model")
@@ -57,27 +60,27 @@ class ProviderNotices(unittest.TestCase):
         self.fail(100)
         with mock.patch.object(mode_channel, "store", side_effect=OSError("disk full")):
             self.assertEqual(health.notify_failure(), 0)
-        import agent_checkpoint
-        store = agent_checkpoint.ledger()
-        with store.transaction() as db:
-            reserved = db.execute("SELECT intent,queued FROM provider_notices").fetchone()
-        self.assertEqual(reserved[1], 0)
+        episode = health.snapshot()["failure_episode"]["id"]
+        reserved = input_ack._ledger_call("provider-notice", (episode,), 2)
+        self.assertFalse(reserved[1], "reserved, not queued")
         self.fail(150)
         self.assertEqual(health.notify_failure(), 1)
         self.assertEqual(json.loads(self.intents()[0].read_text()), json.loads(reserved[0]))
 
-    def test_notices_do_not_wait_for_cognitions_writer_or_repeat_schema_work(self):
-        import sqlite3
+    def test_an_unreachable_ledger_does_not_hold_the_responder_or_reinitialize_anything(self):
         self.fail(100)
-        with closing(sqlite3.connect(self.root / "ledger.db")) as writer:
-            writer.execute("BEGIN IMMEDIATE")
+        down = self.root / "ledger-down"; down.touch()
+        proxy, faults = native_ledger.faulty(self, self.root, self.socket, None, down)
+        with mock.patch.dict(os.environ, {"METTACLAW_INPUT_LEDGER_SOCKET": proxy}), \
+                mock.patch("agent_checkpoint.ledger", side_effect=AssertionError("reinitialized ledger")):
+            started = time.monotonic()
             # The first notice cannot publish yet; the responder returns now.
             self.assertEqual(health.notify_failure(), 0)
-        self.assertEqual(health.notify_failure(), 1)
-        with closing(sqlite3.connect(self.root / "ledger.db")) as writer:
-            writer.execute("BEGIN IMMEDIATE")
-            with mock.patch("agent_checkpoint.ledger", side_effect=AssertionError("reinitialized ledger")):
-                self.assertEqual(health.notify_failure(), 0)
+            self.assertLess(time.monotonic() - started, 10)
+            self.assertTrue(faults)
+            down.unlink()
+            self.assertEqual(health.notify_failure(), 1)
+            self.assertEqual(health.notify_failure(), 0)
 
     def test_recovery_ends_episode_and_next_outage_can_notify_again(self):
         self.fail(100); health.notify_failure()

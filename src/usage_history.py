@@ -6,8 +6,6 @@ remain unknown; this projection never changes admission or agent settings.
 from collections import Counter
 from datetime import datetime
 import json
-from pathlib import Path
-import sqlite3
 import time
 from zoneinfo import ZoneInfo
 
@@ -50,42 +48,11 @@ def report_native(*, since=0, until=None, zone="UTC"):
     import llm_policy
     since, until, tz, value = _window(since, until, zone)
     answer = llm_policy.native("llm-usage", (since, until))
-    if answer is llm_policy.LEGACY:
-        return None
     started, legacy, rows = answer[1], answer[2], answer[3]
     value.update(history_available=True, recording_started=started,
                  legacy_request_rows_without_history=legacy,
                  coverage_complete=bool(started is not None and since >= started and not legacy))
     return _graded(value, rows, tz)
-
-
-def report(path, *, since=0, until=None, zone="UTC"):
-    """Group calls by admission time; use a consistent, non-writing snapshot."""
-    since, until, tz, value = _window(since, until, zone)
-    conn = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
-    try:
-        conn.execute("BEGIN")
-        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        if "llm_call_history" not in tables:
-            value.update(history_available=False, coverage_complete=False,
-                         note="No call history: historical usage is unrecorded, not zero.")
-            return value
-        started = conn.execute("SELECT observed FROM llm_call_history "
-                               "WHERE call_id='' AND event='recording-started'").fetchone()
-        legacy = (conn.execute("SELECT COUNT(*) FROM requests r WHERE r.started>=? AND r.started<? "
-                  "AND NOT EXISTS (SELECT 1 FROM llm_call_history h "
-                  "WHERE h.call_id=r.id AND h.event='admitted')", (since, until))
-                  .fetchone()[0] if "requests" in tables else 0)
-        value.update(history_available=True, recording_started=started[0] if started else None,
-                     legacy_request_rows_without_history=legacy,
-                     coverage_complete=bool(started and since >= started[0] and not legacy))
-        rows = conn.execute(
-            "SELECT h.call_id,h.event,h.detail,a.observed FROM llm_call_history h "
-            "JOIN llm_call_history a ON a.call_id=h.call_id AND a.event='admitted' "
-            "WHERE a.observed>=? AND a.observed<? ORDER BY h.sequence", (since, until))
-        return _graded(value, rows, tz)
-    finally:
-        conn.close()
 
 
 def _graded(value, rows, tz):

@@ -1685,6 +1685,10 @@
       (("meta-cas" ($key $old $new $request-id))
        (input-ledger:turn-write $db input-ledger:meta-cas (input-ledger:fields ($key $old $new)) $request-id changed
          (|-> ($space) (input-ledger:meta-cas-in $space $key $old $new))))
+      ; The store's owner, set by the first caller when it has none; every caller reads the same.
+      (("owner" ($candidate $request-id))
+       (input-ledger:turn-write $db input-ledger:owner (input-ledger:fields ($candidate)) $request-id none
+         (|-> ($space) (input-ledger:owner-or $space $candidate))))
       (("meta-put" ($key $new $request-id))
        (input-ledger:turn-write $db input-ledger:meta-put (input-ledger:fields ($key $new)) $request-id ok
          (|-> ($space) (input-ledger:meta-put-in $space $key $new))))
@@ -1804,8 +1808,8 @@
           ($_ (input-ledger:state-put $space "clock" $next)))
      $next))
 
-; The store's owner, which names its tickets: the first capture sets it to the caller's
-; (the owner of the SQLite ledger it replaces), and it never changes.
+; The store's owner, which names its tickets: the first caller that needs one (a capture, or a
+; reader through the owner verb) sets it, and it never changes.
 (= (input-ledger:owner-or $space $candidate)
    (let $kept (input-ledger:state-of $space "owner")
      (if (== $kept absent)

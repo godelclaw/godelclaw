@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import unittest
 from unittest.mock import patch
+import native_ledger
 import test_native_llm_boundary as boundary
 
 sys.path.insert(0, str(boundary.ROOT / 'src'))
@@ -109,14 +110,12 @@ class NativeCommentaryTest(unittest.TestCase):
         self.assertEqual(body['tool_choice'], 'auto')
 
     def test_rejected_prose_is_retained_and_next_turn_receives_actionable_feedback(self):
-        import sqlite3
         text = "A substantive review that has not been sent to its requester."
         self.peer.reply['choices'][0]['message']['content'] = text
         output = self.call()
         self.assertIn('(RESULT ())', output)
-        with sqlite3.connect(self.directory / 'ledger.db') as db:
-            identity, state, reason = db.execute(
-                "SELECT id,state,reason FROM native_calls ORDER BY created DESC LIMIT 1").fetchone()
+        newest = max(native_ledger.llm_records('calls', self.socket), key=lambda row: row['created'])
+        identity, state, reason = newest['id'], newest['state'], newest['reason']
         self.assertEqual((state, reason), ('completed', 'command-output:invalid-envelope'))
         self.assertEqual(self.notes(), [])
         feedback = self.run_guest(f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'

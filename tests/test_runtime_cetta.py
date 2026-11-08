@@ -7,7 +7,6 @@ import json
 import os
 from pathlib import Path
 import socket
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -84,32 +83,8 @@ SCENARIOS = {
     "unreachable-memory": scenario(backend={"mode": "native", "name": None, "socket": "/nonexistent/socket"}),
     "invalid-backend": scenario(backend="{not json"),
     "nothing": {"health": None, "completion": None, "control": None, "receipts": None, "backend": None},
-    "chroma": scenario(backend={"mode": "chroma"}, chroma={"threshold": 25, "meta": 40, "vector": 35, "documents": 7}),
-    "chroma-nested-threshold": scenario(backend={"mode": "chroma"}, chroma={"threshold": None, "nested": 9, "meta": 5,
-                                                                           "vector": 5, "documents": 2}),
-    "chroma-index-ahead": scenario(backend={"mode": "chroma"}, chroma={"threshold": 25, "meta": 3, "vector": 4, "documents": 1}),
-    "chroma-no-threshold": scenario(backend={"mode": "chroma"}, chroma={"threshold": None, "meta": 3, "vector": 3, "documents": 1}),
     "chroma-missing": scenario(backend={"mode": "chroma"}),
 }
-
-
-def chroma_database(directory, spec):
-    """A minimal Chroma store with the tables the memory facts read."""
-    directory.mkdir(parents=True, exist_ok=True)
-    path = directory / "chroma.sqlite3"
-    config = {"hnsw": {"sync_threshold": spec["threshold"]}} if spec["threshold"] is not None else {"hnsw": {"space": "cosine"}}
-    if spec.get("nested") is not None:
-        config = {"wrapper": [{"x": 1}, {"deeper": {"sync_threshold": spec["nested"]}}]}
-    with sqlite3.connect(path) as db:
-        db.executescript("CREATE TABLE collections(id TEXT, name TEXT, config_json_str TEXT);"
-                         "CREATE TABLE segments(id TEXT, scope TEXT, collection TEXT);"
-                         "CREATE TABLE max_seq_id(segment_id TEXT, seq_id INTEGER);"
-                         "CREATE TABLE embeddings(id INTEGER, segment_id TEXT);")
-        db.execute("INSERT INTO collections VALUES ('c1', 'memories', ?)", (json.dumps(config),))
-        db.executemany("INSERT INTO segments VALUES (?, ?, 'c1')", [("m1", "METADATA"), ("v1", "VECTOR")])
-        db.executemany("INSERT INTO max_seq_id VALUES (?, ?)", [("m1", spec["meta"]), ("v1", spec["vector"])])
-        db.executemany("INSERT INTO embeddings VALUES (?, 'm1')", [(i,) for i in range(spec["documents"])])
-    return path
 
 
 @unittest.skipUnless(os.environ.get("CETTA_BIN"), "set CETTA_BIN to a CeTTa build with Python")
@@ -150,9 +125,6 @@ class NativeRuntimeProjectionTests(unittest.TestCase):
                  "receipts": "METTACLAW_EFFECT_RECEIPT_PATH", "backend": "METTACLAW_MEMORY_BACKEND_CONFIG"}
         for name, value in files.items():
             if value is None:
-                continue
-            if name == "chroma":
-                chroma_database(self.dir / "chroma", value)
                 continue
             if name == "control":
                 target = self.dir / "modes" / "control-status.json"
@@ -209,9 +181,6 @@ class NativeRuntimeProjectionTests(unittest.TestCase):
     def test_every_scenario_reads_and_renders_as_python_does(self):
         for name, files in SCENARIOS.items():
             with self.subTest(scenario=name):
-                if (self.dir / "chroma").exists():
-                    import shutil
-                    shutil.rmtree(self.dir / "chroma")
                 env = self.environment(files)
                 expected = self.python_facts(env)
                 started = time.time()
@@ -229,13 +198,15 @@ class NativeRuntimeProjectionTests(unittest.TestCase):
         import test_command_dispatch_engine as dispatch
         import test_task_context as reference
         fixture = reference.TaskContextTests(); fixture.setUp()
-        self.addCleanup(fixture.tmp.cleanup)
+        self.addCleanup(fixture.doCleanups)
         fixture.call([["read-file", "source"]], ["inspected evidence"])
         harness = dispatch.CommandDispatchEngineTest()
         env = {**harness._cetta_env(), **self.environment(SCENARIOS["waiting"])}
-        env.update(METTACLAW_STRATEGY_PATH=str(fixture.path), METTACLAW_ENGINE_STATE_PATH=str(fixture.path.parent / "engine"),
+        env.update(METTACLAW_STRATEGY_PATH=str(fixture.path), METTACLAW_INPUT_LEDGER_SOCKET=fixture.socket,
+                   METTACLAW_ENGINE_STATE_PATH=str(fixture.path.parent / "engine"),
                    METTACLAW_ACTIVE_ENGINE="cetta", METTACLAW_ENGINE="cetta", METTACLAW_OBSERVED_STRATEGY="1",
-                   METTACLAW_LLM_TRANSPORT="native", METTACLAW_LLM_LEDGER_PATH=str(self.dir / "ledger.sqlite3"))
+                   METTACLAW_LLM_TRANSPORT="native")
+        env.pop("METTACLAW_LLM_LEDGER_PATH", None)
         output = self.dir / "prepared.txt"
         program = ROOT / (".prepare_probe_%d.metta" % os.getpid())
         program.write_text('!(import! &self (library lib_import))\n!(import! &self (library fs))\n'

@@ -67,6 +67,7 @@ from isolated_env import isolated_environ  # noqa: E402
 import apply_patch  # noqa: E402
 import coding_estate  # noqa: E402
 import coding_io  # noqa: E402
+import native_ledger  # noqa: E402
 import native_lifetime  # noqa: E402
 import native_llm_host  # noqa: E402
 
@@ -112,6 +113,7 @@ class CodingAuthorityAndRepinTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name)
+        self.socket = native_ledger.start(self, self.directory)
         coding_estate._engine_digest_cache.clear()
         coding_estate._runtime_blocks_cache.clear()
 
@@ -156,7 +158,8 @@ class CodingAuthorityAndRepinTests(unittest.TestCase):
             "METTACLAW_ENGINE_STATE_PATH": str(self.directory / "engine"),
             "METTACLAW_LLM_POLICY": "managed",
             "METTACLAW_LLM_POLICY_PATH": "",
-            "METTACLAW_LLM_LEDGER_PATH": str(self.directory / "ledger.db"),
+            "METTACLAW_INPUT_LEDGER_SOCKET": self.socket,
+            "METTACLAW_STRATEGY_PATH": str(self.directory / "strategy"),
             "METTACLAW_COGNITIVE_HEALTH_PATH": str(self.directory / "health.json"),
             "METTACLAW_LLM_COMPLETION_PATH": str(self.directory / "completion.json"),
             "METTACLAW_PROVIDER_OBSERVATION_PATH": str(self.directory / "providers.json"),
@@ -891,7 +894,10 @@ class CodingAuthorityAndRepinTests(unittest.TestCase):
         # Live session files are byte-for-byte identical (the repaired 4th message was written only in the copy)
         self.assertEqual(_snapshot_tree(session), before_snap)
         self.assertEqual(len(self.server.requests), 0)
-        self.assertFalse((self.directory / "ledger.db").exists())
+        # The check made no ledger call that records anything: no request, call or event of the LLM ledger.
+        for kind in ("requests", "calls", "events"):
+            self.assertEqual(native_ledger.llm_records(kind, self.socket), [], kind)
+        self.assertEqual(list(self.directory.rglob("*.sqlite3")), [])
 
         # Direct provider and tool entry points refuse under METTACLAW_CODING_CHECK=1
         # and behave normally when the flag is absent (kills Survivor 6).

@@ -8,6 +8,8 @@ import unittest
 from unittest import mock
 
 import cognitive_health
+import input_ack
+import native_ledger
 import provider_rejection as rejection
 import test_native_llm_boundary as boundary
 
@@ -83,23 +85,20 @@ class RejectionTests(unittest.TestCase):
         self.context['operator_input'] = [1, 101, 101]
         self.assertFalse(rejection.blocked())
 
-    def test_real_context_tracks_policy_and_checkpoint_without_opening_missing_db(self):
-        import sqlite3
+    def test_real_context_tracks_policy_and_checkpoint(self):
+        import uuid
         self.facts.stop()
-        db_path = self.root / 'strategy.db'
-        with mock.patch.dict(os.environ, METTACLAW_STRATEGY_PATH=str(db_path)):
-            before = rejection.context()
-            self.assertFalse(db_path.exists())
-            (self.root / 'context-policy.json').write_text('{"mode":"full"}')
-            self.assertNotEqual(rejection.context()['configuration'], before['configuration'])
-            with sqlite3.connect(db_path) as db:
-                db.execute('CREATE TABLE meta (key TEXT PRIMARY KEY,value TEXT)')
-                db.execute('INSERT INTO meta VALUES (?,?)', ('task_window:conversation:fixture', 'old'))
-            before = rejection.context()
-            rejection.record(400, captured=before)
-            with sqlite3.connect(db_path) as db:
-                db.execute('UPDATE meta SET value=?', ('new checked handoff',))
-            self.assertFalse(rejection.blocked())
+        native_ledger.start(self, self.root)
+        def handoff(value):
+            input_ack._ledger_call('meta-put', ('task_window:conversation:fixture', value, uuid.uuid4().hex))
+        before = rejection.context()
+        (self.root / 'context-policy.json').write_text('{"mode":"full"}')
+        self.assertNotEqual(rejection.context()['configuration'], before['configuration'])
+        handoff('old')
+        before = rejection.context()
+        rejection.record(400, captured=before)
+        handoff('new checked handoff')
+        self.assertFalse(rejection.blocked())
 
     def test_unreadable_inbox_does_not_look_like_the_known_input_was_removed(self):
         self.facts.stop()

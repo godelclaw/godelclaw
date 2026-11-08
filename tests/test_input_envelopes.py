@@ -6,12 +6,15 @@ import unittest
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from observed_strategy import Ledger
+import input_ack
+import native_ledger
 import task_context
 
 class InputEnvelopes(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
-        self.path = Path(self.tmp.name) / "ledger.db"
+        native_ledger.start(self, self.tmp.name)
+        self.path = Path(self.tmp.name) / "strategy"
         self.store = Ledger(self.path)
 
     def batch(self, key, ids, text=None, chat="private", kind="message"):
@@ -37,9 +40,8 @@ class InputEnvelopes(unittest.TestCase):
         self.assertEqual(len(family["requests"]), 3)
         self.assertIn("Still need", family["notes"][0]["text"])
         self.assertEqual(json.loads(task_context.read(fresh, "task-input:input:a")["text"])["result"], "input:a: complete input")
-        with fresh.transaction() as db:
-            self.assertEqual(db.execute("SELECT count(DISTINCT input) FROM request_inputs").fetchone()[0], 147)
-            self.assertFalse(db.execute("SELECT 1 FROM requests WHERE status='achieved'").fetchone())
+        self.assertEqual([i for i in range(150) if input_ack.linked(str(i))], list(range(147)))
+        self.assertNotIn("achieved", {row["status"] for row in input_ack.request_rows()})
         self.assertEqual(task_context.resume(fresh, "input:a"), "input:c")
 
     def test_partial_overlap_duplicate_text_scope_and_explicit_task_do_not_cover(self):
@@ -51,8 +53,7 @@ class InputEnvelopes(unittest.TestCase):
         self.store.disposition("input:a", "keep", "An independent continuing task")
         self.batch("input:superset", [1, 2, 8])
         self.assertEqual(len(self.store.active()), 6)
-        with self.store.transaction() as db:
-            self.assertEqual(db.execute("SELECT count(*) FROM input_supersessions").fetchone()[0], 0)
+        self.assertNotIn("covered", {row["status"] for row in input_ack.request_rows()})
 
     def test_retries_are_idempotent_and_input_membership_immutable(self):
         self.batch("input:a", [1, 2]); self.batch("input:b", [1, 2, 3])
@@ -63,16 +64,6 @@ class InputEnvelopes(unittest.TestCase):
         self.batch("input:c", [1, 2, 3, 4])
         self.assertIn("input:a", {r["id"] for r in self.store.active()})
 
-    def test_upgrade_reconciles_older_batches_under_an_already_processed_cover(self):
-        self.batch("input:a", range(128)); self.batch("input:b", range(147))
-        self.store.processed("input:b")
-        with self.store.transaction() as db:
-            db.execute("DELETE FROM input_supersessions")
-            db.execute("UPDATE requests SET status='active' WHERE id='input:a'")
-            db.execute("DELETE FROM meta WHERE key='input_supersessions_v1'")
-        fresh = Ledger(self.path)
-        self.assertEqual(fresh.request_record("input:a")["status"], "covered")
-        self.assertEqual(fresh.request_record("input:b")["status"], "processed")
 
 if __name__ == "__main__":
     unittest.main()

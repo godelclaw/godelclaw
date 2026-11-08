@@ -3,12 +3,11 @@
 task_context's frames, coverage of input batches, proposals and notes, the request inputs of
 observed_strategy.Ledger and every task_context reader (current, resume, projection, the
 conversation, read, history, compact) keep their records in the same native collection as the
-requests and the turns. The oracle is the same sequence of calls on the SQLite path: every answer,
-refusal and projection is compared with the owner normalized.
+requests and the turns. The scenario asserts its answers, refusals and projections, with the
+owner normalized.
 """
 import hermetic_env  # noqa: F401,E402  (first, before any src module: see hermetic_env.py)
 from pathlib import Path
-import sqlite3
 import sys
 import unittest
 
@@ -32,7 +31,7 @@ def raises(function, *arguments, **options):
         return ("raised", type(error).__name__, str(error))
 
 
-def contexts(store, native, note):
+def contexts(store, note):
     """Frames, coverage, resumption, proposals, notes and every projection."""
     note("accept", [store.accept("input:a", "first message", kind="message"),
                     store.accept("input:b", "first and second", kind="message"),
@@ -63,8 +62,8 @@ def contexts(store, native, note):
     task_context.proposal(store, snap["serial"], "task-1", [["ls"], ["cat", "f"]], "admitted")
     task_context.proposal(store, snap["serial"], "task-1", [["ls"], ["cat", "f"]], "admitted")
     note("proposal-conflict", raises(task_context.proposal, store, snap["serial"], "task-1", [["rm"]], "admitted"))
-    record_attempt(store, native, ticket, 0, ["ls"], {"disposition": "returned", "result": "a b"})
-    record_attempt(store, native, ticket, 1, ["cat", "f"], None)
+    record_attempt(store, ticket, 0, ["ls"], {"disposition": "returned", "result": "a b"})
+    record_attempt(store, ticket, 1, ["cat", "f"], None)
     store.report(ticket, "batch done")
     later = store.capture("input:b", "b2", ROUTER, 0)
     task_context.proposal(store, later["serial"], "input:b", [["echo", "hi"]], "deferred")
@@ -92,9 +91,8 @@ def contexts(store, native, note):
 
 @unittest.skipUnless(available(), SKIP)
 class TaskContextNativeTest(NativeSides):
-    def test_every_task_context_reader_and_writer_matches_sqlite(self):
-        oracle, native = self.compare(contexts)
-        steps = dict(oracle)
+    def test_every_task_context_reader_and_writer(self):
+        steps = dict(self.steps(contexts))
         self.assertEqual(steps["covered"][:2], ["covered", "active"], "the same-chat batch is covered, the other is not")
         self.assertEqual(steps["proposal-conflict"][0], "raised")
 

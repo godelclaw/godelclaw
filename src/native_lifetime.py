@@ -3,7 +3,6 @@
 Metadata survives restart; an ephemeral HTTP handle does not. Claimed calls
 from a dead process become uncertain, never an automatic POST replay.
 """
-import contextlib
 import hashlib
 import json
 import os
@@ -26,93 +25,21 @@ def process_start(pid):
         return None
 
 
-@contextlib.contextmanager
-def transaction():
-    with llm_policy.transaction() as db:
-        db.execute("""CREATE TABLE IF NOT EXISTS native_calls (
-            id TEXT PRIMARY KEY, epoch TEXT NOT NULL, pid INTEGER NOT NULL, process_start TEXT,
-            created REAL NOT NULL, updated REAL NOT NULL, state TEXT NOT NULL,
-            guard TEXT, transport INTEGER, soft_elapsed INTEGER NOT NULL DEFAULT 0,
-            bytes INTEGER NOT NULL DEFAULT 0, quiet_ms INTEGER NOT NULL DEFAULT 0,
-            result TEXT, reason TEXT)""")
-        columns = {row[1] for row in db.execute("PRAGMA table_info(native_calls)")}
-        for name in ("activity", "lane"):
-            if name not in columns:
-                db.execute(f"ALTER TABLE native_calls ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
-        if "purpose" not in columns:
-            db.execute("ALTER TABLE native_calls ADD COLUMN purpose TEXT NOT NULL DEFAULT 'turn'")
-        if "notified" not in columns:
-            db.execute("ALTER TABLE native_calls ADD COLUMN notified INTEGER NOT NULL DEFAULT 0")
-            # Processes before this column announced the outcomes they saw.
-            db.execute("UPDATE native_calls SET notified=1 WHERE state NOT IN ('claimed','submitted')")
-        db.execute("CREATE INDEX IF NOT EXISTS native_call_state ON native_calls(state)")
-        db.execute("CREATE INDEX IF NOT EXISTS native_call_recent ON native_calls(purpose,created DESC)")
-        yield db
-
-
 # Natively (llm_policy.native) each operation below is one transition of src/llm_ledger.metta;
 # while the SQLite file is still the ledger they run the SQLite code as before.
-LEGACY = llm_policy.LEGACY
 
 
 def recover():
     answer = llm_policy.native("llm-recover", (time.time(), llm_policy._request()))
-    if answer is not LEGACY:
-        return
-    with transaction() as db:
-        now = time.time()
-        rows = db.execute(
-            "SELECT native_calls.id,native_calls.pid,native_calls.process_start,"
-            "native_calls.state,native_calls.updated,requests.status,native_calls.purpose "
-            "FROM native_calls LEFT JOIN requests ON requests.id=native_calls.id "
-            "WHERE native_calls.state IN ('claimed','submitted')"
-        ).fetchall()
-        for identity, pid, started, state, updated, request_state, purpose in rows:
-            # The request ledger and the transport ledger share one identity.
-            # A terminal request cannot continue to own admission authority.
-            # Give the ordinary completion path a tiny grace interval between
-            # its two durable writes; old contradictions are reconciled even
-            # when their owning process is still alive.
-            if request_state in ("completed", "failed", "unknown") and (
-                    now - float(updated) >= TERMINAL_RECONCILE_GRACE_SECONDS):
-                if request_state == "completed":
-                    outcome = "completed"
-                    reason = "request-completed-before-lifetime-settlement"
-                elif request_state == "failed" and state == "claimed":
-                    outcome = "failed"
-                    reason = "request-failed-before-submission"
-                else:
-                    outcome = "uncertain"
-                    reason = "terminal-request-remote-outcome-unknown"
-                if purpose == "compaction":
-                    outcome, reason = "abandoned", "compaction-publication-not-completed"
-                db.execute(
-                    "UPDATE native_calls SET state=?,reason=?,updated=? "
-                    "WHERE id=? AND state IN ('claimed','submitted')",
-                    (outcome, reason, now, identity),
-                )
-                if outcome == "uncertain":
-                    db.execute(
-                        "UPDATE requests SET status='unknown',output=NULL,"
-                        "finish='transport-unknown' WHERE id=?",
-                        (identity,),
-                    )
-                    llm_policy.history_event(db, identity, "unknown", {"reason": reason}, now=now)
-                continue
-            if started is not None and process_start(pid) == started:
-                continue
-            outcome = "abandoned" if purpose == "compaction" else "uncertain"
-            db.execute("UPDATE native_calls SET state=?,reason='process-interrupted-remote-outcome-unknown',updated=? WHERE id=?",
-                       (outcome, now, identity))
-            db.execute("UPDATE requests SET status='unknown',output=NULL,finish='interrupted-unknown' WHERE id=? AND status='pending'", (identity,))
-            llm_policy.history_event(db, identity, "unknown", {"reason": "process-interrupted"}, now=now)
+    return
 
 
 def _claim_native(plan):
-    """The native claim, or LEGACY. Recovery runs first in the same transition; the validation
+    """The native claim. Recovery runs first in the same transition; the validation
     the SQLite path makes travels with it, so recovery commits even when the claim is refused."""
     if not os.environ.get("METTACLAW_INPUT_LEDGER_SOCKET"):
-        return LEGACY
+        import input_ack
+        raise input_ack.LedgerUnavailable("METTACLAW_INPUT_LEDGER_SOCKET is not set")
     from execution_gateway.cetta_worker import E, S
     activity = getattr(plan, "activity", "")
     lane = getattr(plan, "lane", "")
@@ -135,8 +62,6 @@ def _claim_native(plan):
         activity if isinstance(activity, str) else str(activity), lane, getattr(plan, "purpose", "turn"),
         not activity, isinstance(activity, str), capacity, reserve, check,
         json.dumps({"epoch": plan.epoch}, sort_keys=True, separators=(",", ":")), time.time(), llm_policy._request()))
-    if answer is LEGACY:
-        return LEGACY
     if isinstance(answer, tuple) and len(answer) == 2 and llm_policy._name(answer[0]) == "LedgerClaimRefused":
         if problem is not None:
             raise problem
@@ -146,57 +71,19 @@ def _claim_native(plan):
 
 def claim(plan):
     answer = _claim_native(plan)
-    if answer is not LEGACY:
-        return answer
-    recover()
-    with transaction() as db:
-        active = db.execute("SELECT activity,lane FROM native_calls WHERE state IN ('claimed','submitted')").fetchall()
-        activity = getattr(plan, "activity", "")
-        lane = getattr(plan, "lane", "")
-        if not activity:
-            if active:
-                return False
-        else:
-            if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", str(activity)) or lane not in ("interactive", "background"):
-                raise ValueError("invalid native call activity")
-            capacity = int(os.environ.get("METTACLAW_ACTIVITY_CALL_CAPACITY", "2"))
-            reserve = int(os.environ.get("METTACLAW_ACTIVITY_INTERACTIVE_RESERVE", "1"))
-            if not 1 <= reserve < capacity:
-                raise ValueError("invalid activity call capacity")
-            if any(not row[0] or row[0] == activity for row in active) or len(active) >= capacity:
-                return False
-            if lane == "background" and sum(row[1] == "background" for row in active) >= capacity - reserve:
-                return False
-        purpose = getattr(plan, "purpose", "turn")
-        if purpose not in ("turn", "compaction", "coding"):
-            raise ValueError("invalid native call purpose")
-        now = time.time()
-        db.execute("INSERT INTO native_calls(id,epoch,pid,process_start,created,updated,state,guard,activity,lane,purpose) VALUES (?,?,?,?,?,?,'claimed',?,?,?,?)",
-                   (plan.correlation, plan.epoch, os.getpid(), process_start(os.getpid()), now, now, getattr(plan, "guard", None), activity, lane, purpose))
-        llm_policy.history_event(db, plan.correlation, "claimed", {"epoch": plan.epoch}, now=now)
-    return True
+    return answer
 
 
 def submitted(plan, transport):
     answer = llm_policy.native("llm-submitted", (plan.correlation, plan.epoch, int(transport), time.time(),
                                                  llm_policy._request()))
-    if answer is not LEGACY:
-        return
-    with transaction() as db:
-        changed = db.execute("UPDATE native_calls SET state='submitted',transport=?,updated=? WHERE id=? AND epoch=? AND state='claimed'",
-                             (int(transport), time.time(), plan.correlation, plan.epoch)).rowcount
-        if changed:
-            llm_policy.history_event(db, plan.correlation, "submitted", {})
+    return
 
 
 def progress(plan, count, quiet, soft):
     answer = llm_policy.native("llm-progress", (plan.correlation, plan.epoch, int(count), int(quiet), int(soft),
                                                 time.time(), llm_policy._request()))
-    if answer is not LEGACY:
-        return
-    with transaction() as db:
-        db.execute("UPDATE native_calls SET bytes=?,quiet_ms=?,soft_elapsed=?,updated=? WHERE id=? AND epoch=? AND state='submitted'",
-                   (int(count), int(quiet), int(soft), time.time(), plan.correlation, plan.epoch))
+    return
 
 
 def settle(plan, state, result=None, reason=None):
@@ -207,19 +94,7 @@ def settle(plan, state, result=None, reason=None):
     soft = _soft(plan)
     answer = llm_policy.native("llm-settle", (plan.correlation, plan.epoch, getattr(plan, "purpose", "turn"), state,
                                               result, reason, soft, time.time(), llm_policy._request()))
-    if answer is not LEGACY:
-        return llm_policy.changed("llm-settle", answer)
-    accounting_uncertain = state == "uncertain"
-    if getattr(plan, "purpose", "turn") == "compaction" and state in ("uncertain", "late"):
-        state, result = "abandoned", None
-    with transaction() as db:
-        changed = db.execute("UPDATE native_calls SET state=?,result=?,reason=?,updated=?,soft_elapsed=MAX(soft_elapsed,?) WHERE id=? AND epoch=? AND state IN ('claimed','submitted')",
-                             (state, result, reason, time.time(), soft, plan.correlation, plan.epoch)).rowcount == 1
-        if changed and accounting_uncertain:
-            db.execute("UPDATE requests SET status='unknown',output=NULL,finish='transport-unknown' WHERE id=?",
-                       (plan.correlation,))
-            llm_policy.history_event(db, plan.correlation, "unknown", {"reason": "transport-unknown"})
-        return changed
+    return llm_policy.changed("llm-settle", answer)
 
 
 def _soft(plan):
@@ -238,12 +113,7 @@ def complete(plan, result, canonical):
         raise ValueError("native evidence exceeds its bound")
     answer = llm_policy.complete_native(plan.correlation, result, epoch=plan.epoch, canonical=canonical,
                                         soft=_soft(plan), purpose=getattr(plan, "purpose", "turn"))
-    if answer is not LEGACY:
-        return answer
-    if not llm_policy.complete(plan.correlation, result):
-        return False
-    settle(plan, "completed", canonical)
-    return True
+    return answer
 
 
 def fail(plan, kind, status=None, retry_after=None):
@@ -255,33 +125,15 @@ def fail(plan, kind, status=None, retry_after=None):
     answer = llm_policy.fail_native(plan.correlation, status=status, retry_after=retry_after, sent=plan.sent,
                                     epoch=plan.epoch, state=state, reason=reason, soft=_soft(plan),
                                     purpose=getattr(plan, "purpose", "turn"))
-    if answer is LEGACY:
-        llm_policy.fail(plan.correlation, status=status, sent=plan.sent, retry_after=retry_after)
+    if not answer:
         settle(plan, state, reason=reason)
-    elif not answer:
-        settle(plan, state, reason=reason)
-
-
-def call_state(plan):
-    """(state, reason) of this plan's call, or None."""
-    answer = llm_policy.native("llm-call-state", (plan.correlation, getattr(plan, "epoch", "")))
-    if answer is not LEGACY:
-        return answer
-    with transaction() as db:
-        return db.execute("SELECT state,reason FROM native_calls WHERE id=? AND epoch=?",
-                          (plan.correlation, getattr(plan, "epoch", ""))).fetchone()
 
 
 def status():
     recover()
     answer = llm_policy.native("llm-status", ())
-    if answer is not LEGACY:
-        keys = ("id", "state", "created", "updated", "soft_elapsed", "bytes", "quiet_ms", "reason")
-        return [dict(zip(keys, row)) for row in answer]
-    with transaction() as db:
-        rows = db.execute("SELECT id,state,created,updated,soft_elapsed,bytes,quiet_ms,reason FROM native_calls WHERE purpose='turn' ORDER BY created DESC LIMIT 12").fetchall()
     keys = ("id", "state", "created", "updated", "soft_elapsed", "bytes", "quiet_ms", "reason")
-    return [dict(zip(keys, row)) for row in rows]
+    return [dict(zip(keys, row)) for row in answer]
 
 
 def command_output_rejected(plan, code):
@@ -291,12 +143,7 @@ def command_output_rejected(plan, code):
     if code not in allowed:
         raise ValueError("invalid command rejection code")
     answer = llm_policy.native("llm-rejected", (plan.correlation, plan.epoch, code, llm_policy._request()))
-    if answer is not LEGACY:
-        return llm_policy.changed("llm-rejected", answer)
-    with transaction() as db:
-        return db.execute("UPDATE native_calls SET reason=? WHERE id=? AND epoch=? "
-                          "AND state='completed' AND purpose='turn'",
-                          ("command-output:" + code, plan.correlation, plan.epoch)).rowcount == 1
+    return llm_policy.changed("llm-rejected", answer)
 
 
 def result(identity, offset=0):
@@ -304,9 +151,6 @@ def result(identity, offset=0):
     if offset < 0:
         raise ValueError("result offset must be nonnegative")
     row = llm_policy.native("llm-result", (str(identity),))
-    if row is LEGACY:
-        with transaction() as db:
-            row = db.execute("SELECT state,result,reason,purpose FROM native_calls WHERE id=?", (str(identity),)).fetchone()
     if row is None:
         return None
     full = row[1] if row[3] == "turn" else None
@@ -365,10 +209,6 @@ def notify():
     # an input that was already addressed, and could not be taken up again.
     recover()
     rows = llm_policy.native("llm-notices", ())
-    if rows is LEGACY:
-        with transaction() as db:
-            rows = db.execute("SELECT id,state FROM native_calls WHERE state IN ('late','uncertain') "
-                              "AND notified=0 AND purpose='turn' ORDER BY created").fetchall()
     for identity, state in rows:
         try:
             import telegram
@@ -376,9 +216,7 @@ def notify():
                                            identity="runtime:model-call:" + identity + ":" + state)
         except Exception:
             continue  # the durable context listing remains available
-        if llm_policy.native("llm-notified", (identity, llm_policy._request())) is LEGACY:
-            with transaction() as db:
-                db.execute("UPDATE native_calls SET notified=1 WHERE id=?", (identity,))
+        llm_policy.native("llm-notified", (identity, llm_policy._request()))
 
 
 def jobs():
@@ -393,3 +231,9 @@ def model_result(identity, offset=0):
         return receipt
     import topic_jobs
     return topic_jobs.results(identity)
+
+
+def call_state(plan):
+    """(state, reason) of this plan's call, or None."""
+    answer = llm_policy.native("llm-call-state", (plan.correlation, getattr(plan, "epoch", "")))
+    return answer

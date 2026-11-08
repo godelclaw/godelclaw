@@ -1,10 +1,8 @@
 """Provider usage accounting and transport retry deadlines. No work quotas."""
-import contextlib
 import hashlib
 import json
 import os
 from pathlib import Path
-import sqlite3
 import struct
 import time
 import uuid
@@ -45,8 +43,9 @@ def _owner_live(owner):
 # The native ledger (src/llm_ledger.metta, in the agent's ledger store) answers each operation
 # once the LLM ledger has been migrated there. Until then it answers llm-legacy and the SQLite
 # code below runs as before; without a ledger socket nothing is asked. A configured server that
-# cannot be reached raises (input_ack.LedgerUnavailable), never a fallback to SQLite.
-LEGACY = object()
+# cannot be reached raises (input_ack.LedgerUnavailable).
+class IntegrityError(Exception):
+    """A write the ledger refused as a constraint (an existing id, an owned call)."""
 
 
 def _request():
@@ -79,14 +78,11 @@ def plain(value):
 
 
 def native(verb, arguments):
-    """One operation on the native LLM ledger: its answer, or LEGACY while SQLite is the ledger."""
-    if not os.environ.get("METTACLAW_INPUT_LEDGER_SOCKET"):
-        return LEGACY
+    """One operation on the native LLM ledger: its answer."""
     import input_ack
-    from execution_gateway.cetta_worker import S
+    if not os.environ.get("METTACLAW_INPUT_LEDGER_SOCKET"):
+        raise input_ack.LedgerUnavailable("METTACLAW_INPUT_LEDGER_SOCKET is not set")
     value = input_ack._ledger_call(verb, tuple(_argument(item) for item in arguments), 30)
-    if value == S("llm-legacy"):
-        return LEGACY
     return plain(value)
 
 
@@ -98,7 +94,7 @@ def _refuse(verb, answer):
     if isinstance(answer, tuple) and len(answer) == 2 and _name(answer[0]) == "LedgerError":
         error = answer[1]
         if isinstance(error, tuple) and len(error) == 3 and _name(error[0]) == "PythonException":
-            kind = {"IntegrityError": sqlite3.IntegrityError, "ValueError": ValueError,
+            kind = {"IntegrityError": IntegrityError, "ValueError": ValueError,
                     "OverflowError": OverflowError}.get(_name(error[1]), RuntimeError)
             raise kind(error[2])
     import input_ack
@@ -156,29 +152,6 @@ def configuration(mode=None):
     return result
 
 
-def ledger_path():
-    explicit = os.environ.get("METTACLAW_LLM_LEDGER_PATH")
-    if explicit:
-        return Path(explicit)
-    health = os.environ.get("METTACLAW_COGNITIVE_HEALTH_PATH")
-    if health:
-        return Path(health).with_name("llm-budget.sqlite3")
-    home = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state")))
-    return home / os.environ.get("METTACLAW_INSTANCE", "default") / "llm-budget.sqlite3"
-
-
-def history_event(conn, ticket, event, detail, *, now=None):
-    """Append one fact per call/event, in the transaction that owns the fact.
-
-    This history has no admission authority and is not pruned with requests.
-    Callers supply metadata/counters, never prompts, credentials or responses.
-    """
-    return conn.execute(
-        "INSERT OR IGNORE INTO llm_call_history(call_id,event,observed,detail) VALUES(?,?,?,?)",
-        (ticket, event, time.time() if now is None else now,
-         json.dumps(detail, sort_keys=True, separators=(",", ":")))).rowcount == 1
-
-
 def usage_evidence(usage):
     """Keep reported token counts; an absent counter is unknown, not zero."""
     def count(value):
@@ -228,57 +201,14 @@ def _request_detail(model, protocol, purpose, transport, origin):
 
 def describe(ticket, *, model, protocol, purpose="unspecified", transport="native", origin=None):
     """Pin the metadata of the actual wire request before it is submitted."""
-    if os.environ.get("METTACLAW_INPUT_LEDGER_SOCKET"):
-        detail = _detail(_request_detail(model, protocol, purpose, transport, origin))
-        answer = native("llm-describe", (ticket, detail, time.time(), _request()))
-        if answer is not LEGACY:
-            return changed("llm-describe", answer)
-    with transaction() as conn:
-        if not conn.execute("SELECT 1 FROM requests WHERE id=?", (ticket,)).fetchone():
-            return False
-        return history_event(conn, ticket, "request", _request_detail(model, protocol, purpose, transport, origin))
+    detail = _detail(_request_detail(model, protocol, purpose, transport, origin))
+    answer = native("llm-describe", (ticket, detail, time.time(), _request()))
+    return changed("llm-describe", answer)
 
 
 def submitted(ticket):
     answer = native("llm-request-submitted", (ticket, time.time(), _request()))
-    if answer is not LEGACY:
-        return changed("llm-request-submitted", answer)
-    with transaction() as conn:
-        if not conn.execute("SELECT 1 FROM requests WHERE id=? AND status='pending'", (ticket,)).fetchone():
-            return False
-        return history_event(conn, ticket, "submitted", {})
-
-
-@contextlib.contextmanager
-def transaction():
-    path = ledger_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path, timeout=5)
-    try:
-        conn.execute("CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, started REAL NOT NULL, "
-                     "reserved INTEGER NOT NULL, status TEXT NOT NULL, output INTEGER, "
-                     "provider TEXT NOT NULL, mode TEXT NOT NULL, finish TEXT)")
-        conn.execute("CREATE INDEX IF NOT EXISTS llm_requests_started ON requests(started)")
-        conn.execute("CREATE INDEX IF NOT EXISTS llm_requests_state ON requests(status)")
-        conn.execute("CREATE TABLE IF NOT EXISTS cooldowns (provider TEXT PRIMARY KEY, until REAL NOT NULL)")
-        conn.execute("CREATE TABLE IF NOT EXISTS llm_call_history (sequence INTEGER PRIMARY KEY, "
-                     "call_id TEXT NOT NULL, event TEXT NOT NULL, observed REAL NOT NULL, "
-                     "detail TEXT NOT NULL, UNIQUE(call_id,event))")
-        conn.execute("CREATE INDEX IF NOT EXISTS llm_call_history_time ON llm_call_history(event,observed)")
-        conn.commit()
-        conn.execute("BEGIN IMMEDIATE")
-        history_event(conn, "", "recording-started", {"schema": 1})
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(requests)")}
-        for name in ("owner", "fingerprint"):
-            if name not in columns:
-                conn.execute("ALTER TABLE requests ADD COLUMN " + name + " TEXT NOT NULL DEFAULT ''")
-        yield conn
-        conn.commit()
-    except BaseException:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    return changed("llm-request-submitted", answer)
 
 
 def recover_interrupted():
@@ -288,23 +218,12 @@ def recover_interrupted():
     process-start pairing prevents a reused PID from inheriting their calls.
     """
     answer = native("llm-recover-requests", (time.time(), _request()))
-    if answer is not LEGACY:
-        return
-    with transaction() as conn:
-        for ticket, owner in conn.execute("SELECT id,owner FROM requests WHERE status='pending'").fetchall():
-            if owner != _owner and not _owner_live(owner):
-                conn.execute("UPDATE requests SET status='unknown' WHERE id=?", (ticket,))
-                history_event(conn, ticket, "unknown", {"reason": "owner-exited"})
+    return
 
 
 def unknown_context():
     answer = native("llm-unknown", ())
-    if answer is not LEGACY:
-        rows = [dict(id=row[0], provider=row[1], mode=row[2], outcome="unknown") for row in answer]
-        return "" if not rows else "PROVIDER_RECOVERY " + json.dumps(rows, separators=(",", ":"))
-    with transaction() as conn:
-        rows = [dict(id=row[0], provider=row[1], mode=row[2], outcome="unknown") for row in conn.execute(
-            "SELECT id,provider,mode FROM requests WHERE status='unknown' ORDER BY started DESC LIMIT 5")]
+    rows = [dict(id=row[0], provider=row[1], mode=row[2], outcome="unknown") for row in answer]
     return "" if not rows else "PROVIDER_RECOVERY " + json.dumps(rows, separators=(",", ":"))
 
 
@@ -325,21 +244,10 @@ def admit(provider, max_output, *, now=None, mode=None, request_fingerprint="",
                   session=os.environ.get("METTACLAW_ACTIVITY_CALL_SCOPE", ""))
     answer = native("llm-admit", (ticket, provider, maximum, request_fingerprint, policy["profile"], mode, _owner,
                                   _detail(detail), now, _request()))
-    if answer is not LEGACY:
-        if isinstance(answer, tuple) and len(answer) == 3 and _name(answer[0]) == "LedgerDenied":
-            raise AdmissionDenied(answer[1], answer[2])
-        if not (isinstance(answer, tuple) and len(answer) == 2 and _name(answer[0]) == "LedgerAdmitted"):
-            _refuse("llm-admit", answer)
-    else:
-        recover_interrupted()
-        with transaction() as conn:
-            if policy["profile"] == "managed":
-                cooldown = conn.execute("SELECT until FROM cooldowns WHERE provider=?", (provider,)).fetchone()
-                if cooldown and cooldown[0] > now:
-                    raise AdmissionDenied("provider-cooldown", cooldown[0] - now)
-            conn.execute("INSERT INTO requests(id,started,reserved,status,output,provider,mode,finish,owner,fingerprint) VALUES(?,?,?,'pending',NULL,?,?,NULL,?,?)",
-                         (ticket, now, maximum, provider, mode, _owner, request_fingerprint))
-            history_event(conn, ticket, "admitted", detail, now=now)
+    if isinstance(answer, tuple) and len(answer) == 3 and _name(answer[0]) == "LedgerDenied":
+        raise AdmissionDenied(answer[1], answer[2])
+    if not (isinstance(answer, tuple) and len(answer) == 2 and _name(answer[0]) == "LedgerAdmitted"):
+        _refuse("llm-admit", answer)
             # Accounting windows filter admission; they do not erase durable receipts.
     try:
         import strategy_host
@@ -364,30 +272,17 @@ def _completion(result):
 
 def complete_native(ticket, result, *, epoch=None, canonical=None, soft=0, purpose="turn"):
     """The native completion: usage, the request, its completed event and (with an epoch) the
-    call's settlement with `canonical`, in one transition. LEGACY while SQLite is the ledger."""
+    call's settlement with `canonical`, in one transition."""
     evidence, output, finish = _completion(result)
     claimed = None if epoch is None else _detail({"epoch": epoch})
     answer = native("llm-complete", (ticket, epoch, _detail(evidence), output, finish, _detail({"finish": finish}),
                                      claimed, canonical, int(soft), purpose, time.time(), _request()))
-    return answer if answer is LEGACY else changed("llm-complete", answer)
+    return changed("llm-complete", answer)
 
 
 def complete(ticket, result):
     answer = complete_native(ticket, result)
-    if answer is not LEGACY:
-        return answer
-    evidence, output, finish = _completion(result)
-    with transaction() as conn:
-        if conn.execute("SELECT 1 FROM llm_call_history WHERE call_id=? AND event='admitted'",
-                        (ticket,)).fetchone():
-            # A late response can supply usage even when its commands cannot
-            # commit. Replayed observations still contribute only once.
-            history_event(conn, ticket, "usage", evidence)
-        changed = conn.execute("UPDATE requests SET status='completed',output=?,finish=? WHERE id=? AND status='pending'",
-                               (output, finish, ticket)).rowcount
-        if changed:
-            history_event(conn, ticket, "completed", {"finish": finish})
-    return changed == 1
+    return answer
 
 
 def fail_native(ticket, *, status=None, retry_after=None, sent=True, now=None, epoch=None,
@@ -398,8 +293,6 @@ def fail_native(ticket, *, status=None, retry_after=None, sent=True, now=None, e
     SQLite is the ledger."""
     now = time.time() if now is None else float(now)
     mode = native("llm-pending-mode", (ticket,))
-    if mode is LEGACY:
-        return LEGACY
     if mode is None:
         return False
     policy = configuration(mode)
@@ -418,34 +311,10 @@ def fail_native(ticket, *, status=None, retry_after=None, sent=True, now=None, e
 def fail(ticket, *, status=None, retry_after=None, sent=True, now=None):
     now = time.time() if now is None else float(now)
     answer = fail_native(ticket, status=status, retry_after=retry_after, sent=sent, now=now)
-    if answer is not LEGACY:
-        return answer
-    with transaction() as conn:
-        row = conn.execute("SELECT provider,mode FROM requests WHERE id=? AND status='pending'", (ticket,)).fetchone()
-        if not row:
-            return False
-        # A sent request without authoritative usage keeps its reservation:
-        # a network timeout cannot prove the provider did no billable work.
-        conn.execute("UPDATE requests SET status='failed',output=? WHERE id=?",
-                     (None if sent else 0, ticket))
-        history_event(conn, ticket, "failed", {
-            "sent": bool(sent), "http_status": status if type(status) is int else None}, now=now)
-        policy = configuration(row[1])
-        if policy["profile"] == "managed" and status in (402, 429):
-            delay = policy["quota_cooldown_seconds"]
-            if retry_after is not None:
-                delay = max(0, float(retry_after))
-            until = now + delay
-            conn.execute("INSERT INTO cooldowns VALUES(?,?) ON CONFLICT(provider) DO UPDATE SET until=MAX(until,excluded.until)", (row[0], until))
-    return True
+    return answer
 
 
 def snapshot():
     answer = native("llm-requests", ())
-    if answer is not LEGACY:
-        counts = {status: count for status, count in answer[1]}
-        return {"policy": configuration(), "requests": counts, "accounted_output_tokens": answer[2]}
-    with transaction() as conn:
-        counts = dict(conn.execute("SELECT status,COUNT(*) FROM requests GROUP BY status"))
-        output = conn.execute("SELECT COALESCE(SUM(COALESCE(output,reserved)),0) FROM requests").fetchone()[0]
-    return {"policy": configuration(), "requests": counts, "accounted_output_tokens": output}
+    counts = {status: count for status, count in answer[1]}
+    return {"policy": configuration(), "requests": counts, "accounted_output_tokens": answer[2]}

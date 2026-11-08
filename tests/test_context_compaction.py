@@ -1,4 +1,4 @@
-"""Continuous history and durable handoffs over real SQLite/native HTTP.
+"""Continuous history and durable handoffs over the native ledger and native HTTP.
 
 The provider is a local scripted fixture. No credentials or external models.
 """
@@ -7,11 +7,12 @@ import math
 import os
 import re
 from pathlib import Path
-import sqlite3
 import unittest
+import uuid
 
 import test_native_llm_boundary as boundary
 import test_task_context as reference
+import input_ack  # on the path once the boundary suite is imported
 
 BASE_PROMPT = "soul_cache_boundary_tools_cache_boundary_conversation_cache_boundary_now"
 
@@ -20,13 +21,16 @@ BASE_PROMPT = "soul_cache_boundary_tools_cache_boundary_conversation_cache_bound
 class ContextCompactionTests(unittest.TestCase):
     run_guest = boundary.NativeBoundaryTests.run_guest
     tearDown = boundary.NativeBoundaryTests.tearDown
+    records = boundary.NativeBoundaryTests.records
+    column = boundary.NativeBoundaryTests.column
 
     def setUp(self):
         boundary.NativeBoundaryTests.setUp(self)
         self.peer.delay = 0
         self.fixture = reference.TaskContextTests()
+        self.fixture.socket = self.socket  # the ledger the boundary's setUp started
         self.fixture.setUp()
-        self.addCleanup(self.fixture.tmp.cleanup)
+        self.addCleanup(self.fixture.doCleanups)
         self.env.update(METTACLAW_STRATEGY_PATH=str(self.fixture.path),
                         METTACLAW_LLM_COMPLETION_PATH=str(self.directory / "completion.json"))
         self.health = self.directory / "health.json"
@@ -36,13 +40,21 @@ class ContextCompactionTests(unittest.TestCase):
         self.original_health = self.health.read_bytes()
         self.original_completion = self.completion.read_bytes()
 
+    @staticmethod
+    def meta(key):
+        """The JSON text of one meta key of the native ledger, or None."""
+        return dict(input_ack.meta_prefix(key)).get(key)
+
+    @staticmethod
+    def meta_put(key, text):
+        input_ack._ledger_call("meta-put", (key, text, uuid.uuid4().hex))
+
     def populate(self, count=60, request="guide"):
         # This is a running continuity installation. Legacy first-start
         # migration is tested separately with no saved checkpoint.
-        with self.fixture.store.transaction() as db:
-            root = "conversation:" + self.fixture.store.get(db, "owner")
-            db.execute("INSERT OR IGNORE INTO meta VALUES(?,?)", ("task_window:" + root,
-                json.dumps({"version": 1, "start": 0, "summary": ""})))
+        root = "conversation:" + self.fixture.store._native_meta()["owner"]
+        if self.meta("task_window:" + root) is None:
+            self.meta_put("task_window:" + root, json.dumps({"version": 1, "start": 0, "summary": ""}))
         for n in range(count):
             self.fixture.call([["read-file", str(n)]], [("FINDING_%d λ " % n) * 200], request)
 
@@ -112,10 +124,8 @@ class ContextCompactionTests(unittest.TestCase):
             '(println! (SEED (context:seed-recent $view ' + str(available) + ' 2.5))))\n')
 
     def checkpoint(self):
-        with self.fixture.store.transaction() as db:
-            owner = self.fixture.store.get(db, "owner")
-            row = db.execute("SELECT value FROM meta WHERE key=?", ("task_window:conversation:" + owner,)).fetchone()
-            return json.loads(row[0]) if row else None
+        raw = self.meta("task_window:conversation:" + self.fixture.store._native_meta()["owner"])
+        return json.loads(raw) if raw else None
 
     def assert_parent_unchanged(self):
         self.assertEqual(self.health.read_bytes(), self.original_health)
@@ -207,8 +217,7 @@ class ContextCompactionTests(unittest.TestCase):
             prompt = "\n".join(m["content"] for m in request["messages"])
             self.assertLessEqual(len(prompt.encode()) / 2.5, 0.9 * 20000)
         self.assertNotIn("HANDOFF_ONE", self.peer.requests[0][2]["messages"][-1]["content"])
-        with sqlite3.connect(self.directory / "ledger.db") as db:
-            self.assertTrue(all(r[0] == "completed" for r in db.execute("SELECT state FROM native_calls")))
+        self.assertTrue(all(state == "completed" for state, in self.column("calls", "state")))
         self.assert_parent_unchanged()
 
         # New unrelated input and a fresh evaluator retain the earlier handoff.
@@ -232,8 +241,9 @@ class ContextCompactionTests(unittest.TestCase):
         self.populate(25)
         for finish, text in (("length", "partial handoff"), ("stop", "  ")):
             with self.subTest(finish=finish):
-                with self.fixture.store.transaction() as db:
-                    db.execute("DELETE FROM meta WHERE key LIKE 'context_failure:%'")
+                # The previous subtest's failure record must not stand for this batch: a record of another digest is none.
+                for key, _ in input_ack.meta_prefix("context_failure:"):
+                    self.meta_put(key, json.dumps({"digest": "", "reason": "cleared", "streak": 0, "retry_at": 0}))
                 self.peer.reply["choices"][0].update(finish_reason=finish,
                     message={"role": "assistant", "content": text})
                 result = self.render(finish, capacity=10000)
@@ -261,16 +271,14 @@ class ContextCompactionTests(unittest.TestCase):
         first = self.render(capacity=10000)
         self.assertIn("UNFOLDED_HISTORY", first)
         self.assertEqual(len(self.peer.requests), 1)
-        with self.fixture.store.transaction() as db:
-            key, raw = db.execute("SELECT key,value FROM meta WHERE key LIKE 'context_failure:%'").fetchone()
-            failure = json.loads(raw)
-            self.assertGreaterEqual(failure["retry_at"], began + 120)
+        [(key, raw)] = input_ack.meta_prefix("context_failure:")
+        failure = json.loads(raw)
+        self.assertGreaterEqual(failure["retry_at"], began + 120)
         second = self.render("still-waiting", capacity=10000)
         self.assertIn("UNFOLDED_HISTORY", second)
         self.assertEqual(len(self.peer.requests), 1)
-        with self.fixture.store.transaction() as db:
-            failure["retry_at"] = time.time() - 1
-            db.execute("UPDATE meta SET value=? WHERE key=?", (json.dumps(failure), key))
+        failure["retry_at"] = time.time() - 1
+        self.meta_put(key, json.dumps(failure))
         self.peer.status = 200
         self.peer.reply["choices"][0]["message"]["content"] = "RECOVERED_HANDOFF with original findings."
         third = self.render("recovered", capacity=10000)
@@ -296,10 +304,9 @@ class ContextCompactionTests(unittest.TestCase):
     def test_topic_notes_are_budgeted_once_before_compaction(self):
         self.populate(12)
         topic_note = "TOPIC_NOTE_START:" + "t" * 25000 + ":TOPIC_NOTE_END"
-        with self.fixture.store.transaction() as db:
-            db.execute("CREATE TABLE IF NOT EXISTS topic_contexts(name TEXT PRIMARY KEY,revision INTEGER,notes TEXT)")
-            db.execute("INSERT INTO topic_contexts VALUES('topic',1,?)", (topic_note,))
-            db.execute("INSERT OR REPLACE INTO meta VALUES('active_topic',?)", (json.dumps("topic"),))
+        import topic_jobs
+        topic_jobs.select("topic")
+        topic_jobs.note(topic_note)
         self.peer.reply["choices"][0]["message"]["content"] = "HANDOFF_WITH_TOPIC: preserve findings."
         result = self.render(capacity=20000)
         self.assertNotIn("WITHHELD:", result)
@@ -336,8 +343,7 @@ class ContextCompactionTests(unittest.TestCase):
     def test_failed_maintenance_does_not_acknowledge_or_repeat_paid_work(self):
         self.populate(25)
         self.peer.reply["choices"][0]["finish_reason"] = "length"
-        with self.fixture.store.transaction() as db:
-            processed = db.execute("SELECT processed FROM request_context WHERE request='guide'").fetchone()[0]
+        processed = input_ack.request_get("guide")["processed"]
         first = self.render(capacity=10000)
         self.assertIn("UNFOLDED_HISTORY", first)
         self.assertNotIn("WITHHELD", first)
@@ -346,8 +352,7 @@ class ContextCompactionTests(unittest.TestCase):
         self.assertIn("UNFOLDED_HISTORY", second)
         self.assertEqual(len(self.peer.requests), 1)
         self.assertEqual(self.checkpoint()["start"], 0)
-        with self.fixture.store.transaction() as db:
-            self.assertEqual(db.execute("SELECT processed FROM request_context WHERE request='guide'").fetchone()[0], processed)
+        self.assertEqual(input_ack.request_get("guide")["processed"], processed)
         # An older fact is not invented by the degraded window: its exact
         # source is still addressable before a task may depend on it.
         original = reference.task_context.conversation_projection(self.fixture.store, "guide")["transcript"][1]
@@ -357,10 +362,9 @@ class ContextCompactionTests(unittest.TestCase):
     def test_legacy_backlog_starts_without_provider_work(self):
         # Bulk source fixture: 10,000 distinct retained occurrences, without
         # making 10,000 fsyncs or executing any of the proposed commands.
-        with self.fixture.store.transaction() as db:
-            db.execute("INSERT INTO task_proposals VALUES(0,'guide',?,'not run; reconsider')",
-                       (json.dumps([["read-file", "legacy-" + str(i)] for i in range(10000)]),))
-            db.execute("DELETE FROM meta WHERE key LIKE 'task_window:%'")
+        reference.task_context.proposal(self.fixture.store, 0, "guide",
+            [["read-file", "legacy-" + str(i)] for i in range(10000)], "not run; reconsider")
+        self.assertEqual(input_ack.meta_prefix("task_window:"), [])  # a backlog with no saved checkpoint
         result = self.render(capacity=10000)
         self.assertNotIn("WITHHELD", result)
         self.assertIn("UNSUMMARIZED_ARCHIVE", result)
@@ -409,8 +413,8 @@ class ContextCompactionTests(unittest.TestCase):
     def test_stale_publication_cannot_separate_summary_and_cursor(self):
         root = reference.task_context.conversation_projection(self.fixture.store, "guide")["root"]
         output = self.run_guest('!(import! &self "' + str(boundary.ROOT / 'src/context_compaction.metta') + '")\n'
-            '!(println! (context:publish ' + json.dumps(root) + ' sqlite:null 10 "GOOD" "c1" "first" "last" "digest"))\n'
-            '!(println! (context:publish ' + json.dumps(root) + ' sqlite:null 20 "STALE" "c2" "x" "y" "z"))\n')
+            '!(println! (context:publish ' + json.dumps(root) + ' none 10 "GOOD" "c1" "first" "last" "digest"))\n'
+            '!(println! (context:publish ' + json.dumps(root) + ' none 20 "STALE" "c2" "x" "y" "z"))\n')
         self.assertIn("ContextPublished", output)
         self.assertIn("context-checkpoint-changed", output)
         checkpoint = self.checkpoint()
@@ -425,8 +429,7 @@ class ContextCompactionTests(unittest.TestCase):
                 "call_id": "paid-call", "first_source": original["transcript"][0]["id"],
                 "last_source": original["transcript"][2]["id"], "source_digest": "paid-digest"}
         old_raw = json.dumps(paid)
-        with self.fixture.store.transaction() as db:
-            db.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", ("task_window:" + root, old_raw))
+        self.meta_put("task_window:" + root, old_raw)
         output = self.seed_recent()
         self.assertIn("ContextPublished", output)
         checkpoint = self.checkpoint()
@@ -495,8 +498,7 @@ class ContextCompactionTests(unittest.TestCase):
                     {"from": 0, "until": 41, "status": "not-summarized"}):
             with self.subTest(gap=gap):
                 checkpoint = {"start": 42, "summary": "", "archive_gap": gap}
-                with self.fixture.store.transaction() as db:
-                    db.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", ("task_window:" + root, json.dumps(checkpoint)))
+                self.meta_put("task_window:" + root, json.dumps(checkpoint))
                 rendered = self.render(capacity=100000)
                 self.assertNotIn("WITHHELD:", rendered)
                 self.assertIn("UNSUMMARIZED_SOURCE_MUST_REMAIN_VISIBLE", rendered)
@@ -516,8 +518,7 @@ class ContextCompactionTests(unittest.TestCase):
     def test_old_numeric_trim_cursor_does_not_hide_unsummarized_evidence(self):
         self.fixture.call([["read-file", "first"]], ["ORIGINAL_UNSUMMARIZED_FINDING"])
         root = reference.task_context.conversation_projection(self.fixture.store, "guide")["root"]
-        with self.fixture.store.transaction() as db:
-            db.execute("INSERT INTO meta VALUES(?,?)", ("task_window:" + root, "42"))
+        self.meta_put("task_window:" + root, "42")
         rendered = self.render(capacity=100000)
         self.assertIn("ORIGINAL_UNSUMMARIZED_FINDING", rendered)
         self.assertIn("Explain the API conditions", rendered)

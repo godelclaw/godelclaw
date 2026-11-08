@@ -4,8 +4,9 @@ Cognition (mark-processed, committed) and the control process (register,
 submitted, receipt, due, check) are separate processes in the live agent, so
 neither can own the store: both reach it with db:connect on one server. Every
 case starts one server on a fresh temporary store, runs real cetta client
-processes against it, and compares the records with input_ack.py (the SQLite
-oracle) run sequentially in the order the commits happened.
+processes against it, and compares the records with the sequential model: input_ack.py
+on a native ledger of its own, run one operation at a time in the order the commits
+happened.
 
 How that order is known:
   * the turn tests make it the script: each client waits for the completion
@@ -14,7 +15,7 @@ How that order is known:
   * the free-running test lets two clients race, with a third process committing
     unrelated writes all the while (every such commit makes an in-flight
     transaction lose its race and run again). It then asks which of the
-    interleavings of the two operation lists, run through the oracle, give
+    interleavings of the two operation lists, run through the model, give
     every answer and the final records that were seen. Per-client order is
     known, so the interleavings are the whole space of commit orders; a result
     that no interleaving explains fails. The limit: when several interleavings
@@ -30,7 +31,6 @@ import re
 import shutil
 import signal
 import socket
-import sqlite3
 import struct
 import subprocess
 import sys
@@ -60,6 +60,10 @@ def available():
     return bool(ENGINE) and WORKER.is_file() and SERVER_MODULE.is_file()
 
 
+# The real clock, taken before any test patches time.monotonic (the sequential model drives input_ack's).
+REAL_MONOTONIC = time.monotonic
+
+
 class DbServer:
     """One native db server process on `directory`/store, listening on `directory`/s.sock."""
     def __init__(self, directory, value_bytes=input_ack.LEDGER_VALUE_BYTES):
@@ -82,9 +86,10 @@ class DbServer:
                  "db-server:configuration"],
                 env=environment, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
         self.pids.append(self.process.pid)
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline:
+        deadline = REAL_MONOTONIC() + 30
+        while REAL_MONOTONIC() < deadline:
             if self.process.poll() is not None:
+                process, self.process = self.process, None
                 raise AssertionError("the db server exited: %s" % (self.directory / ("server-%d.log" % self.starts)).read_text())
             try:
                 with closing(socket.socket(socket.AF_UNIX)) as probe:
@@ -93,6 +98,7 @@ class DbServer:
                 return
             except OSError:
                 time.sleep(0.02)
+        self.stop(crash=True)  # a server that never listened is not left running
         raise AssertionError("the db server did not listen within 30 seconds")
 
     def stop(self, crash=False):
@@ -233,17 +239,12 @@ def parse_state(output):
 CLOCK, MONOTONIC = [0.0], [1000.0]
 
 
-def scratch_root():
-    """A memory-backed directory for the oracle's SQLite files when there is one: it commits with fsync."""
-    shm = Path("/dev/shm")
-    return str(shm) if shm.is_dir() and os.access(shm, os.W_OK) else None
-
-
 @contextmanager
 def oracle_environment():
-    """The clocks and environment input_ack.py runs under, as run_notice_oracle sets them; yields a directory."""
-    with tempfile.TemporaryDirectory(prefix="il-oracle-", dir=scratch_root()) as directory, ExitStack() as stack:
-        for patch in (base.sqlite_environment({"METTACLAW_OBSERVED_STRATEGY": "1", "METTACLAW_INPUT_ACK_SECONDS": "15", "METTACLAW_INSTANCE": "default"}),
+    """The clocks and environment input_ack.py runs under in the sequential model; yields a directory."""
+    with tempfile.TemporaryDirectory(prefix="il-model-") as directory, ExitStack() as stack:
+        for patch in (mock.patch.dict(os.environ, {"METTACLAW_OBSERVED_STRATEGY": "1", "METTACLAW_INPUT_ACK_SECONDS": "15",
+                                                   "METTACLAW_INSTANCE": "default"}),
                       mock.patch.object(input_ack.time, "time", side_effect=lambda: CLOCK[0]),
                       mock.patch.object(input_ack.time, "monotonic", side_effect=lambda: MONOTONIC[0]),
                       mock.patch.object(input_ack, "_pending", {}), mock.patch.object(input_ack, "_last_notice", {}),
@@ -252,38 +253,102 @@ def oracle_environment():
         yield Path(directory)
 
 
-class Oracle:
-    """input_ack.py on one SQLite ledger file, an operation at a time; fork() copies the file, so a search can branch."""
-    numbers = itertools.count()
+def dump_native(socket_path, directory):
+    """(notices, processed ids) of the store at `socket_path`, read by one client process."""
+    path = Path(directory) / "dump.metta"
+    path.write_text(dump_program(socket_path), encoding="utf-8")
+    run = subprocess.run([ENGINE, "--lang", "petta", str(path)], stdin=subprocess.DEVNULL, capture_output=True,
+                         text=True, cwd=directory, timeout=90)
+    return parse_state(run.stdout)
 
-    def __init__(self, path):
-        self.path = path
+
+class Oracle:
+    """The sequential model: input_ack.py on a native ledger server of its own, an operation at a time.
+    fork() replays the operations so far on a fresh server, so a search can branch."""
+    numbers = itertools.count()
 
     @classmethod
     def create(cls, directory):
-        path = directory / ("ledger-%d.db" % next(cls.numbers))
-        oracle = cls(path)
-        oracle.select()
-        Ledger(path)
-        input_ack.processed_update_ids([])
-        with closing(sqlite3.connect(path)) as db:
-            db.execute(base.NOTICE_TABLE)
-            db.commit()
-        return oracle
+        model = cls.__new__(cls)
+        model.server, model.applied = cls.started(Path(directory)), []
+        model.directory = model.server.directory
+        model.select()
+        return model
+
+    # Servers started ahead of use (a search forks a model per node): taking one costs no start.
+    READY = 3
+    ready, lock, filling = [], threading.Lock(), []
+
+    @classmethod
+    def started(cls, parent):
+        def start():
+            directory = parent / ("model-%d" % next(cls.numbers))
+            directory.mkdir(parents=True)
+            server = DbServer(directory)
+            server.start()
+            return server
+        with cls.lock:
+            server = next((s for s in cls.ready if s.directory.parent == parent), None)
+            if server is not None:
+                cls.ready.remove(server)
+        if server is None:
+            server = start()
+
+        def fill():
+            while True:
+                with cls.lock:
+                    if sum(1 for s in cls.ready if s.directory.parent == parent) >= cls.READY or not parent.exists():
+                        return
+                try:
+                    ahead = start()
+                except (AssertionError, OSError):
+                    return  # a search takes a server of its own when none is ready
+                with cls.lock:
+                    cls.ready.append(ahead)
+        with cls.lock:
+            if not any(thread.is_alive() for thread in cls.filling):
+                filler = threading.Thread(target=fill, daemon=True)
+                filler.start()
+                cls.filling.append(filler)
+        return server
 
     def select(self):
-        os.environ["METTACLAW_STRATEGY_PATH"] = str(self.path)
+        os.environ[input_ack.LEDGER_SOCKET] = str(self.server.socket)
 
     def fork(self):
-        copy = Oracle(self.path.with_name("ledger-%d.db" % next(self.numbers)))
-        shutil.copyfile(self.path, copy.path)
+        copy = Oracle.create(self.directory.parent)
+        for operation in self.applied:
+            copy.apply(operation)
         return copy
 
+    stopping = []
+
     def discard(self):
-        self.path.unlink()
+        """Stop this model's server in the background (a search discards one per node)."""
+        if self.server.process is not None:
+            stop = threading.Thread(target=self.server.stop, daemon=True)
+            stop.start()
+            Oracle.stopping.append(stop)
+
+    @classmethod
+    def settle(cls):
+        """Stop the servers started ahead and wait until every discarded server has stopped."""
+        while cls.filling:
+            cls.filling.pop().join()
+        with cls.lock:
+            ready, cls.ready = cls.ready, []
+        for server in ready:
+            server.stop()
+        while cls.stopping:
+            cls.stopping.pop().join()
 
     def apply(self, operation):
         self.select()
+        answer = self.step(operation)
+        self.applied.append(operation)
+        return answer
+
+    def step(self, operation):
         kind = operation[0]
         if kind == "register":
             _, task, update_id, lane, now = operation
@@ -311,18 +376,20 @@ class Oracle:
         raise ValueError(operation)
 
     def state(self):
-        with closing(sqlite3.connect(self.path)) as db:
-            notices = sorted(db.execute("SELECT %s FROM input_notices" % ", ".join(base.COLUMNS)))
-            processed = {identity: seen for identity, seen in db.execute("SELECT id, processed FROM processed_inputs")}
-        return [tuple(row) for row in notices], processed
+        return dump_native(self.server.socket, self.directory)
 
 
 def run_oracle(operations):
-    """(answers by position, final notices, final processed ids) of the operations in this order."""
+    """(answers by position, final notices, final processed ids) of the operations in this order,
+    on the sequential model."""
     with oracle_environment() as directory:
-        oracle = Oracle.create(directory)
-        answers = [oracle.apply(operation) for operation in operations]
-        notices, processed = oracle.state()
+        model = Oracle.create(directory)
+        try:
+            answers = [model.apply(operation) for operation in operations]
+            notices, processed = model.state()
+        finally:
+            model.discard()
+            Oracle.settle()
     return answers, notices, processed
 
 
@@ -330,8 +397,9 @@ def explain(first, second, observed, rows, ids):
     """The interleavings of two operation lists that the oracle reproduces, and how many nodes the search visited.
 
     `observed(which, index)` is the answer one client got for its index-th operation. The search walks the
-    interleavings depth first, forking the oracle at every step, and drops a branch at the first operation whose
-    oracle answer differs (pump answers nothing); a complete order must also end with the observed records.
+    interleavings depth first, forking the model at every step but the last (which continues on the model
+    itself), and drops a branch at the first operation whose model answer differs (pump answers nothing); a
+    complete order must also end with the observed records.
     """
     matches, visited = [], [0]
     with oracle_environment() as directory:
@@ -340,11 +408,10 @@ def explain(first, second, observed, rows, ids):
                 if oracle.state() == (rows, ids):
                     matches.append(list(order))
                 return
-            for which, operations in enumerate((first, second)):
-                if taken[which] == len(operations):
-                    continue
-                operation = operations[taken[which]]
-                child = oracle.fork()
+            choices = [which for which, operations in enumerate((first, second)) if taken[which] < len(operations)]
+            for position, which in enumerate(choices):
+                operation = (first, second)[which][taken[which]]
+                child = oracle.fork() if position < len(choices) - 1 else oracle
                 visited[0] += 1
                 try:
                     if child.apply(operation) == observed(which, taken[which]) or operation[0] == "pump":
@@ -355,7 +422,12 @@ def explain(first, second, observed, rows, ids):
                         taken[which] -= 1
                 finally:
                     child.discard()
-        walk(Oracle.create(directory), [0, 0], [])
+        root = Oracle.create(directory)
+        try:
+            walk(root, [0, 0], [])
+        finally:
+            root.discard()
+            Oracle.settle()
     return matches, visited[0]
 
 
@@ -1335,22 +1407,13 @@ class RepeatTest(RemoteCase):
         wait = [[("symbol", "wait")]]
         self.assertEqual(outputs_of(out, "first"), wait)
         # The same $now is the same write: its first answer comes back though the notice is processed since.
-        # The oracle's second check, run again at that moment, would answer delete: the documented divergence.
         self.assertEqual(outputs_of(out, "same-now"), wait)
         answer = [[[("symbol", "delete"), delete, 5]]]
         self.assertEqual(outputs_of(out, "later"), answer)
         self.assertEqual(outputs_of(out, "later-again"), answer)
         self.assertEqual(outputs_of(out, "other-max-age"), answer)
-        with oracle_environment() as directory:
-            oracle = Oracle.create(directory)
-            for operation in [("register", "t1", "u1", LANE, 100.0), ("receipt", key, ["delivered", 5]),
-                              ("pump", 200.0), ("mark", ["u1"], 210.0)]:
-                oracle.apply(operation)
-            expected_same_now = oracle.fork()
-            expected_same_now.apply(("pump", 200.0))
-            self.assertEqual(expected_same_now.state()[0][0][7], delete, "the oracle would have stored the delete key")
-            oracle.apply(("pump", 201.0))
-            notices, processed = oracle.state()
+        _, notices, processed = run_oracle([("register", "t1", "u1", LANE, 100.0), ("receipt", key, ["delivered", 5]),
+                                            ("pump", 200.0), ("mark", ["u1"], 210.0), ("pump", 201.0)])
         rows, ids = self.dump()
         self.assertEqual((rows, ids), (notices, processed))
 

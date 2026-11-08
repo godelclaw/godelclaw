@@ -162,9 +162,10 @@ class NativeRoleTests(unittest.TestCase):
         self.assertEqual(marker, dict(type='ephemeral', ttl='1h'))
 
     def test_protected_turn_admission_sends_the_serialized_roles_to_http(self):
-        fixture = task_reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        fixture = task_reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
         fixture.call([['compile', 'fixture']], ['prior compiled result'])
         self.env.update(METTACLAW_OBSERVED_STRATEGY='1', METTACLAW_STRATEGY_PATH=str(fixture.path),
+                        METTACLAW_INPUT_LEDGER_SOCKET=fixture.socket,
                         METTACLAW_CONTEXT_WINDOW_TOKENS='100000', METTACLAW_MODEL_COMMENTARY='1',
                         METTACLAW_TELEGRAM_LOG_PATH=str(self.directory / 'updates.jsonl'),
                         METTACLAW_HISTORY_PATH=str(self.directory / 'history'))
@@ -195,7 +196,7 @@ class NativeProtectedContextRoles(unittest.TestCase):
     guest = task_native.NativeTaskContext.guest
 
     def test_final_compaction_bytes_bind_coverage_and_keep_output_contract_trusted(self):
-        fixture = task_reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        fixture = task_reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
         fixture.call([['compile', 'fixture']], ['final result retained'])
         output = fixture.path.parent / 'prepared.json'
         digest = fixture.path.parent / 'prepared-digest.txt'
@@ -212,8 +213,8 @@ class NativeProtectedContextRoles(unittest.TestCase):
                   '"tools" "" () "" "" "") "output-contract" 1 1 0))\n'
                   '!(println! TASK_CONTEXT_OK)\n')
         runner = boundary.NativeBoundaryTests()
-        runner.setUp(); self.addCleanup(runner.tearDown)
-        runner.env['METTACLAW_STRATEGY_PATH'] = str(fixture.path)
+        runner.setUp(); self.addCleanup(runner.tearDown); self.addCleanup(runner.doCleanups)
+        runner.env.update(METTACLAW_STRATEGY_PATH=str(fixture.path), METTACLAW_INPUT_LEDGER_SOCKET=fixture.socket)
         spy = runner.directory / 'role_receipt_fixture.py'
         spy.write_text('from pathlib import Path\nimport strategy_host\n'
                        'def install(path):\n'
@@ -236,7 +237,7 @@ class NativeProtectedContextRoles(unittest.TestCase):
         self.assertIn('ContextPreparationFailed "context-render-exceeds-window"', result)
 
     def test_full_context_keeps_history_and_latest_results_below_instruction_authority(self):
-        fixture = task_reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.tmp.cleanup)
+        fixture = task_reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
         for i in range(12):
             fixture.call([['read-file', str(i)]], ['observed-result-' + str(i)])
         output = fixture.path.parent / 'roles.json'

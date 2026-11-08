@@ -1,7 +1,6 @@
 """Delivery, retained commitments, workflow disposition and bounded context."""
 import json
 import os
-import sqlite3
 import sys
 import tempfile
 import unittest
@@ -9,6 +8,7 @@ from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+import native_ledger
 from observed_strategy import Ledger
 
 ROUTER = dict(advertised=["tool"], executable=["tool"], permitted=["tool"])
@@ -17,7 +17,8 @@ ROUTER = dict(advertised=["tool"], executable=["tool"], permitted=["tool"])
 class RequestLifecycleTest(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(); self.addCleanup(temporary.cleanup)
-        self.path = Path(temporary.name) / "ledger.db"
+        native_ledger.start(self, temporary.name)
+        self.path = Path(temporary.name) / "state"
         self.store = Ledger(self.path)
 
     def test_processing_drains_input_without_certifying_task(self):
@@ -88,13 +89,6 @@ class RequestLifecycleTest(unittest.TestCase):
         self.assertEqual(len(seen), 200)
         self.assertIn("unique:0", self.store.request_record("task:0")["content"])
 
-    def test_processing_is_not_auto_applied_to_unproven_legacy_inputs(self):
-        self.store.accept("input:legacy", "old unprocessed input")
-        with sqlite3.connect(self.path) as db: db.execute("DELETE FROM request_context")
-        reopened = Ledger(self.path)
-        self.assertEqual(reopened.request_record("input:legacy")["status"], "active")
-        self.assertEqual(reopened.request_record("input:legacy")["processed"], 0)
-
 
 if __name__ == "__main__": unittest.main()
 
@@ -103,7 +97,8 @@ class RequestIdentityTest(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
-        self.path = Path(directory.name) / "observed-strategy.sqlite3"
+        native_ledger.start(self, directory.name)
+        self.path = Path(directory.name) / "observed-strategy"
         self.store = Ledger(self.path)
 
     def run_host(self, *args):

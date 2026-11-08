@@ -5,10 +5,10 @@ import json
 import os
 from pathlib import Path
 import subprocess
-import sqlite3
 import tempfile
 import unittest
 
+import native_ledger
 import test_native_llm_boundary as boundary
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -232,8 +232,7 @@ class ResponsesHTTPTests(unittest.TestCase):
                              '!(println! (RESULT (llm:command "openai:fixture-model" 42 "high" "input")))\n')
         self.assertNotIn('(RESULT (nop))', out)
         self.assertEqual(len(self.peer.requests), 1)
-        with sqlite3.connect(self.directory / 'ledger.db') as db:
-            self.assertEqual(db.execute('SELECT state FROM native_calls').fetchall(), [('failed',)])
+        self.assertEqual([row['state'] for row in native_ledger.llm_records('calls', self.socket)], ['failed'])
 
     def test_native_http_empty_terminal_output_keeps_completed_answer_and_usage(self):
         self.prepare(); self.peer.omit_terminal_output = True
@@ -241,8 +240,8 @@ class ResponsesHTTPTests(unittest.TestCase):
                              '!(println! (RESULT (llm:command "openai:fixture-model" 42 "high" "input")))\n')
         self.assertIn('(RESULT (nop))', out)
         self.assertEqual(len(self.peer.requests), 1)
-        with sqlite3.connect(self.directory / 'ledger.db') as db:
-            state, canonical = db.execute('SELECT state,result FROM native_calls').fetchone()
+        [call] = native_ledger.llm_records('calls', self.socket)
+        state, canonical = call['state'], call['result']
         self.assertEqual(state, 'completed')
         self.assertEqual(json.loads(canonical)['native'], response())
 
@@ -252,8 +251,7 @@ class ResponsesHTTPTests(unittest.TestCase):
                              '!(println! (RESULT (llm:command "openai:fixture-model" 42 "high" "input")))\n')
         self.assertNotIn('(RESULT (nop))', out)
         self.assertEqual(len(self.peer.requests), 1)
-        with sqlite3.connect(self.directory / 'ledger.db') as db:
-            self.assertEqual(db.execute('SELECT state FROM native_calls').fetchall(), [('failed',)])
+        self.assertEqual([row['state'] for row in native_ledger.llm_records('calls', self.socket)], ['failed'])
 
     def test_chatgpt_profile_posts_through_native_http_without_a_python_client(self):
         self.prepare()

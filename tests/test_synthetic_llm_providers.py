@@ -15,6 +15,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 import synthetic_llm  # noqa: E402
+import native_ledger  # noqa: E402
 
 
 def ok_chat(content="((rest))"):
@@ -40,6 +41,9 @@ class ProviderRoutingTest(unittest.TestCase):
                 self.flag_dir, "provider-observations.json"),
         }, clear=False)
         self.env.start()
+        import shutil
+        self.addCleanup(shutil.rmtree, self.flag_dir, True)
+        native_ledger.start(self, self.flag_dir)
         synthetic_llm._refreshing_observations.clear()
         os.environ.pop("SYNTHETIC_MODEL", None)
         os.environ.pop("ANTHROPIC_API_KEY", None)

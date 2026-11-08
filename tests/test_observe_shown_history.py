@@ -47,9 +47,9 @@ class ObserveShownHistoryTest(NativeCase):
                 ticket = store.decide(snap["serial"], {"kind": "command", "tool": "batch",
                                                        "command": {"commands": commands, "limit": 2}}, 0)
                 task_context.proposal(store, snap["serial"], "r1", commands, "admitted")
-                record_attempt(store, True, ticket, 0, commands[0], {"disposition": "returned", "result": "a"})
+                record_attempt(store, ticket, 0, commands[0], {"disposition": "returned", "result": "a"})
                 second = None if number == 1 else {"disposition": "returned", "result": "b"}
-                record_attempt(store, True, ticket, 1, commands[1], second)   # batch 1 was interrupted
+                record_attempt(store, ticket, 1, commands[1], second)   # batch 1 was interrupted
                 store.report(ticket, "batch %d" % number)
                 tickets.append(ticket)
             owner = store.projection()["meta"]["owner"]

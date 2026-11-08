@@ -13,6 +13,8 @@ from types import SimpleNamespace
 import unittest
 from unittest import mock
 
+import native_ledger
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -133,6 +135,7 @@ class CodingSessionTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.directory = Path(self.temporary.name)
+        self.socket = native_ledger.start(self, self.directory)
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Script)
         self.server.requests, self.server.replies = [], []
         self.server.final = reply("Nothing more to do.")
@@ -148,7 +151,8 @@ class CodingSessionTests(unittest.TestCase):
             "METTACLAW_ACTIVE_ENGINE": "cetta", "METTACLAW_ENGINE": "cetta", "METTACLAW_LLM_TRANSPORT": "native",
             "METTACLAW_ENGINE_STATE_PATH": str(self.directory / "engine"),
             "METTACLAW_LLM_POLICY": "managed", "METTACLAW_LLM_POLICY_PATH": "",
-            "METTACLAW_LLM_LEDGER_PATH": str(self.directory / "ledger.db"),
+            "METTACLAW_INPUT_LEDGER_SOCKET": self.socket,
+            "METTACLAW_STRATEGY_PATH": str(self.directory / "strategy"),
             "METTACLAW_COGNITIVE_HEALTH_PATH": str(self.directory / "health.json"),
             "METTACLAW_LLM_COMPLETION_PATH": str(self.directory / "completion.json"),
             "METTACLAW_PROVIDER_OBSERVATION_PATH": str(self.directory / "providers.json"),
@@ -218,6 +222,8 @@ class CodingSessionTests(unittest.TestCase):
                            'except FileExistsError:\n'
                            '    sys.exit(1)\n'
                            'os.close(fd)\n'
+                           'with open(os.environ["FIXTURE_SCOPE_LAUNCHES"] + ".socket", "w") as stream:\n'
+                           '    stream.write(os.environ.get("METTACLAW_INPUT_LEDGER_SOCKET", ""))\n'
                            'with open(os.environ["FIXTURE_SCOPE_LAUNCHES"], "a") as stream:\n'
                            '    stream.write(json.dumps(sys.argv[1:]) + "\\n")\n'
         }
@@ -984,7 +990,9 @@ class CodingSessionTests(unittest.TestCase):
         self.assertIn("METTACLAW_COGNITIVE_HEALTH_PATH=" + str(session / "health.json"), args)
         self.assertIn("METTACLAW_LLM_COMPLETION_PATH=" + str(session / "completion.json"), args)
         self.assertIn("METTACLAW_PROVIDER_OBSERVATION_PATH=" + str(session / "providers.json"), args)
-        self.assertIn("METTACLAW_LLM_LEDGER_PATH=" + self.env["METTACLAW_LLM_LEDGER_PATH"], args)
+        # The session shares the agent's ledger: the scope inherits its socket, and no ledger path is passed.
+        self.assertEqual(Path(str(launches) + ".socket").read_text(), self.socket)
+        self.assertFalse([arg for arg in args if arg.startswith("METTACLAW_LLM_LEDGER_PATH=")])
         self.assertIn("METTACLAW_ACTIVITY_CALL_SCOPE=" + identity, args)
         self.assertIn("METTACLAW_ACTIVITY_CALL_LANE=background", args)
         self.assertIn("METTACLAW_CODING_SESSION=1", args)
@@ -1047,9 +1055,6 @@ class CodingSessionTests(unittest.TestCase):
         self.env.update(METTACLAW_ACTIVITY_CALL_SCOPE="parent-conversation", METTACLAW_ACTIVITY_CALL_LANE="interactive",
                         METTACLAW_ACTIVITY_CALL_CAPACITY="2", METTACLAW_ACTIVITY_INTERACTIVE_RESERVE="1",
                         METTACLAW_OBSERVED_STRATEGY="0")
-        # Preserve even a ledger selected indirectly by the parent's health path.
-        self.env.pop("METTACLAW_LLM_LEDGER_PATH", None)
-        parent_ledger = self.directory / "llm-budget.sqlite3"
         self.run_probe('!(println! (work-resume ' + json.dumps(identity) + '))\n',
                        module="coding_work.metta", cwd=self.directory)
         deadline = time.monotonic() + 5
@@ -1057,7 +1062,9 @@ class CodingSessionTests(unittest.TestCase):
             time.sleep(0.02)
         args = json.loads(launches.read_text())
         own = dict(arg.split("=", 1) for arg in args if arg.startswith("METTACLAW_") and "=" in arg)
-        self.assertEqual(own["METTACLAW_LLM_LEDGER_PATH"], str(parent_ledger))
+        # The child shares the parent's account ledger: its scope inherits the parent's socket.
+        self.assertEqual(Path(str(launches) + ".socket").read_text(), self.socket)
+        self.assertNotIn("METTACLAW_LLM_LEDGER_PATH", own)
         self.assertEqual((own["METTACLAW_ACTIVITY_CALL_SCOPE"], own["METTACLAW_ACTIVITY_CALL_LANE"]),
                          (identity, "background"))
         self.assertNotIn("METTACLAW_ACTIVITY_CALL_CAPACITY", own)
@@ -1071,8 +1078,8 @@ class CodingSessionTests(unittest.TestCase):
                                      activity="parent-conversation", lane="interactive", cap=1024)
             self.assertTrue(native_lifetime.claim(parent))
             def while_child_is_submitted(_):
-                with native_lifetime.transaction() as db:
-                    observed["active"] = db.execute("SELECT activity,lane FROM native_calls WHERE state IN ('claimed','submitted')").fetchall()
+                observed["active"] = [(row["activity"], row["lane"]) for row in native_ledger.llm_records("calls", self.socket)
+                                      if row["state"] in ("claimed", "submitted")]
                 # With the parent's slot free, a duplicate child still has no authority.
                 observed["parent_settled"] = native_lifetime.settle(parent, "completed", "parent evidence")
                 replay = SimpleNamespace(correlation=llm_policy.admit("synthetic", 32), epoch="fixture-replay",
@@ -1090,11 +1097,10 @@ class CodingSessionTests(unittest.TestCase):
             self.assertTrue(observed["parent_settled"])
             self.assertFalse(observed["replay_claimed"])
             self.assertFalse(observed["extra_background_claimed"])
-            with native_lifetime.transaction() as db:
-                row = db.execute("SELECT state FROM native_calls WHERE activity=?", (identity,)).fetchone()
-            self.assertEqual(row, ("completed",))
+            self.assertEqual([row["state"] for row in native_ledger.llm_records("calls", self.socket)
+                              if row["activity"] == identity], ["completed"])
         self.assertEqual(len(self.server.requests), 1)
-        self.assertFalse((session / "llm-budget.sqlite3").exists())
+        self.assertEqual(list(self.directory.rglob("*.sqlite3")), [])
         self.assertEqual(json.loads((session / "state.json").read_text())["status"], "done")
 
     def test_long_runs_have_no_step_cap(self):

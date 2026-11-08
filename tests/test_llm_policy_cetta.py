@@ -1,25 +1,25 @@
-"""Replay policy/usage traces through MeTTa and the Python oracle.
+"""Replay policy/usage traces through the MeTTa client (lp:*) and the Python client
+(llm_policy), each on its own native ledger server. Both clients are live; persistent
+records, not just return values, must agree.
 
-Every ledger, process and output file is a disposable fixture. No provider is
-contacted. Persistent rows, not just return values, must agree.
+Every ledger, process and output file is a disposable fixture. No provider is contacted.
 """
-from contextlib import closing
 import json
 import os
 from pathlib import Path
-import shutil
-import sqlite3
 import subprocess
 import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
-from isolated_env import isolated_environ
-import llm_policy
-import native_lifetime
-
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'src'))
+
+from isolated_env import isolated_environ  # noqa: E402
+import llm_policy  # noqa: E402
+import native_ledger  # noqa: E402
+
 CETTA = os.environ.get("CETTA_BIN")
 
 
@@ -39,20 +39,23 @@ def literal(value):
     return repr(value)
 
 
-def snapshot(path):
+LIVE = '<live-owner>'
+
+
+def snapshot(socket, owners=()):
+    """Every record of the LLM ledger at `socket`, with the live owners and process
+    identities (which differ between the two client processes) named, not compared."""
     result = {}
-    with closing(sqlite3.connect(Path(path).as_uri() + '?mode=ro', uri=True)) as conn:
-        for name in ('requests', 'cooldowns', 'llm_call_history', 'native_calls'):
-            conn.row_factory = sqlite3.Row
-            rows = [dict(r) for r in conn.execute('SELECT * FROM ' + name)]
-            for row in rows:
-                if name == 'requests' and row.get('owner') == llm_policy._owner:
-                    row['owner'] = '<live-owner>'
-                elif name == 'requests' and row.get('owner', '').startswith('native-owner:'):
-                    row['owner'] = '<live-owner>'
-                if name == 'llm_call_history':
-                    row['detail'] = json.loads(row['detail'])
-            result[name] = sorted(rows, key=lambda r: str(r.get('sequence', r.get('id', r.get('provider')))))
+    for kind in ('requests', 'cooldowns', 'events', 'calls'):
+        rows = native_ledger.llm_records(kind, socket)
+        for row in rows:
+            if kind == 'requests' and (row.get('owner') == llm_policy._owner or row.get('owner') in owners):
+                row['owner'] = LIVE
+            if kind == 'calls':
+                row['pid'], row['start'] = '<pid>', '<start>'
+            if kind == 'events':
+                row['detail'] = json.loads(row['detail'])
+        result[kind] = sorted(rows, key=lambda r: str(r.get('sequence', r.get('id', r.get('provider')))))
     return result
 
 
@@ -61,21 +64,23 @@ def python_error(error):
     return ['error', type(error).__name__, str(error)]
 
 
-def stored_details(path):
+def stored_details(socket):
     """The history details exactly as stored: snapshot() compares them parsed."""
-    with closing(sqlite3.connect(Path(path).as_uri() + '?mode=ro', uri=True)) as conn:
-        return conn.execute('SELECT call_id,event,detail FROM llm_call_history ORDER BY sequence').fetchall()
+    return [(row['call_id'], row['event'], row['detail']) for row in native_ledger.llm_events(socket=socket)]
 
 
-@unittest.skipUnless(CETTA, 'set CETTA_BIN to a SQLite-enabled CeTTa build')
+@unittest.skipUnless(CETTA, 'set CETTA_BIN to the native runtime')
 class NativeLedgerFixture(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        self.python_db = self.root / 'python.sqlite3'
-        self.native_db = self.root / 'native.sqlite3'
-        self.env = dict(isolated_environ(), METTACLAW_LLM_LEDGER_PATH=str(self.python_db),
+        # One ledger per client: the Python client's under os.environ (self.env), the
+        # MeTTa client's in the guest's environment.
+        self.native_socket = native_ledger.start(self, self.root / 'native')
+        self.python_socket = native_ledger.start(self, self.root / 'python')
+        self.native_owners = set()
+        self.env = dict(isolated_environ(), METTACLAW_INPUT_LEDGER_SOCKET=self.python_socket,
                         METTACLAW_LLM_POLICY='managed', METTACLAW_LLM_POLICY_PATH='',
                         METTACLAW_INSTANCE='fixture-agent', METTACLAW_ACTIVITY_CALL_SCOPE='work-fixture',
                         METTACLAW_ACTIVE_LOOP_MODE='godelclaw', PYTHONHOME=sys.prefix,
@@ -83,10 +88,6 @@ class NativeLedgerFixture(unittest.TestCase):
         self.env.pop('METTACLAW_LLM_QUOTA_COOLDOWN_SECONDS', None)
         self.hook = patch('strategy_host.provider_admitted', return_value=1)
         self.hook.start(); self.addCleanup(self.hook.stop)
-        with patch.dict(os.environ, self.env, clear=True), patch.object(llm_policy.time, 'time', return_value=1000):
-            with native_lifetime.transaction():
-                pass
-        shutil.copyfile(self.python_db, self.native_db)
 
     def native(self, forms, *, raw=False, module='llm_policy_cetta.metta'):
         entry = self.root / 'probe.metta'
@@ -97,7 +98,7 @@ class NativeLedgerFixture(unittest.TestCase):
             '(((LedgerAdmitted $id) (JsonArray ("admitted" $id))) '
             ' ((LedgerDenied $code $delay) (JsonArray ("denied" $code $delay))) '
             ' ((LedgerChanged $changed) (JsonArray ("changed" $changed))) '
-            ' ((sqlite:committed $results) (JsonArray ("ok"))) '
+            ' (ok (JsonArray ("ok"))) '
             ' ((LedgerError (PythonException $class $message)) (JsonArray ("error" (str:symbol->string $class) $message))) '
             ' ((LedgerError $error) (JsonArray ("error"))) '
             ' ((LedgerInvalid (PythonException $class $message)) (JsonArray ("error" (str:symbol->string $class) $message))) '
@@ -111,23 +112,21 @@ class NativeLedgerFixture(unittest.TestCase):
         # normalized while all actual liveness tests still run in MeTTa.
         lines.append('!(probe:emit (lp:owner))')
         entry.write_text('\n'.join(lines) + '\n')
-        env = dict(self.env, METTACLAW_LLM_LEDGER_PATH=str(self.native_db))
+        env = dict(self.env, METTACLAW_INPUT_LEDGER_SOCKET=self.native_socket)
         run = subprocess.run([CETTA, '--lang', 'petta', '--import-mode', 'ancestor-walk', '--quiet', str(entry)],
                              cwd=ROOT, env=env, capture_output=True, text=True, timeout=120)
         self.assertEqual(run.returncode, 0, run.stderr[-2000:])
         self.assertTrue(output.is_file(), run.stdout[-2000:] + run.stderr[-2000:])
         rows = [json.loads(line) for line in output.read_text().splitlines()]
         self.assertEqual(len(rows), len(forms) + 1, run.stdout[-2000:])
-        owner = rows.pop()
-        if self.native_db.exists():
-            with closing(sqlite3.connect(self.native_db)) as conn:
-                conn.execute("UPDATE requests SET owner='native-owner:'||owner WHERE owner=?", (owner,))
-                pid, stamp = owner.split(':', 1)
-                if stamp != 'portable':
-                    conn.execute("UPDATE native_calls SET pid=?,process_start=? WHERE pid=? AND process_start=?",
-                                 (os.getpid(), native_lifetime.process_start(os.getpid()), int(pid), stamp))
-                conn.commit()
+        self.native_owners.add(rows.pop())
         return rows
+
+    def agree(self):
+        """Both ledgers hold the same records and the same stored detail bytes."""
+        self.assertEqual(snapshot(self.native_socket, self.native_owners),
+                         snapshot(self.python_socket, self.native_owners))
+        self.assertEqual(stored_details(self.native_socket), stored_details(self.python_socket))
 
     def replay(self, actions):
         forms, expected = [], []
@@ -175,8 +174,7 @@ class NativeLedgerFixture(unittest.TestCase):
                     except (ValueError, TypeError, OverflowError) as error:
                         expected.append(python_error(error))
         self.assertEqual(self.native(forms), expected)
-        self.assertEqual(snapshot(self.native_db), snapshot(self.python_db))
-        self.assertEqual(stored_details(self.native_db), stored_details(self.python_db))
+        self.agree()
 
 class NativePolicyTests(NativeLedgerFixture):
     def test_old_terminal_receipts_survive_fresh_admission(self):
@@ -185,9 +183,9 @@ class NativePolicyTests(NativeLedgerFixture):
             ('complete', 'old', 3, 'stop', 1001),
             ('admit', 'new', 'synthetic', 10, '', 1000 + 172800 + 1),
         ])
-        for path in (self.python_db, self.native_db):
-            with closing(sqlite3.connect(path)) as db:
-                self.assertEqual(db.execute("SELECT status FROM requests WHERE id='old'").fetchone()[0], 'completed')
+        for socket in (self.python_socket, self.native_socket):
+            [old] = [row for row in native_ledger.llm_records('requests', socket) if row['id'] == 'old']
+            self.assertEqual(old['status'], 'completed')
 
     def test_invalid_accounting_counters_are_unknown_without_blocking_completion(self):
         steps = []
@@ -313,7 +311,7 @@ class NativePolicyTests(NativeLedgerFixture):
                 except (ValueError, TypeError, OverflowError) as error:
                     expected.append(python_error(error))
         self.assertEqual(self.native(forms), expected)
-        self.assertEqual(snapshot(self.native_db), snapshot(self.python_db))
+        self.agree()
 
     def test_history_details_are_pythons_json(self):
         # json.dumps(detail, sort_keys=True, separators=(",", ":")) escapes
@@ -323,7 +321,7 @@ class NativePolicyTests(NativeLedgerFixture):
             ('describe', 'a', 'modèle ✓', 'chat-completions', 'coding', 'native', 1001),
             ('complete', 'a', dict(prompt_tokens=2, completion_tokens=1), 'é' * 70 + '\U0001f600', 1002),
         ])
-        self.assertEqual(stored_details(self.native_db), stored_details(self.python_db))
+        self.agree()
 
     def test_native_caller_omits_an_empty_origin_as_the_host_does(self):
         # native_llm_host's Python route describes with `request_origin(plan) or None`.

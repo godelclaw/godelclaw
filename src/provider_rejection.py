@@ -9,8 +9,6 @@ import json
 import os
 from pathlib import Path
 import re
-import sqlite3
-from contextlib import closing
 
 import cognitive_health
 
@@ -88,21 +86,11 @@ def context():
     else:
         facts['mode_input'] = ''
     import input_ack
-    checkpoint = os.environ.get('METTACLAW_STRATEGY_PATH')
-    if input_ack._native_socket():
-        # The task windows are meta keys of the native ledger; an unreachable one leaves no fact.
-        try:
-            rows = [list(row) for row in input_ack.meta_prefix("task_window:")]
-            facts['checkpoint'] = hashlib.sha256(json.dumps(rows).encode()).hexdigest()
-        except sqlite3.Error:
-            pass
-    elif checkpoint:
-        try:
-            with closing(sqlite3.connect(Path(checkpoint).resolve().as_uri() + '?mode=ro', uri=True, timeout=.1)) as db:
-                rows = db.execute("SELECT key,value FROM meta WHERE key GLOB 'task_window:*' ORDER BY key").fetchall()
-            facts['checkpoint'] = hashlib.sha256(json.dumps(rows).encode()).hexdigest()
-        except (OSError, sqlite3.Error):
-            pass
+    try:
+        rows = [list(row) for row in input_ack.meta_prefix("task_window:")]
+        facts['checkpoint'] = hashlib.sha256(json.dumps(rows).encode()).hexdigest()
+    except input_ack.LedgerUnavailable:
+        pass
     return facts
 
 

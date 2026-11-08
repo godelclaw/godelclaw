@@ -10,6 +10,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT / "channels")]
+import native_ledger
 import telegram
 from observed_strategy import Ledger
 
@@ -17,7 +18,8 @@ from observed_strategy import Ledger
 class RuntimeIdentityTest(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory(); self.addCleanup(directory.cleanup)
-        self.ledger = Ledger(Path(directory.name) / "checkpoint.sqlite3")
+        native_ledger.start(self, directory.name)
+        self.ledger = Ledger(Path(directory.name) / "state")
         env = mock.patch.dict(os.environ, METTACLAW_OBSERVED_STRATEGY="1",
                               METTACLAW_STRATEGY_PATH=str(self.ledger.path),
                               METTACLAW_TELEGRAM_CLIENT="metta")

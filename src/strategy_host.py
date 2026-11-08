@@ -8,7 +8,6 @@ import json
 import os
 from pathlib import Path
 import re
-import sqlite3
 import sys
 import threading
 import time
@@ -53,21 +52,9 @@ def retire_goal(name, reason):
     """Close the open cycles of a goal the agent retired. Returns how many."""
     if not enabled():
         return 0
-    store = ledger()
-    with store.transaction() as db:
-        if not db.execute("SELECT 1 FROM sqlite_master WHERE name='goal_accounts'").fetchone():
-            return 0
-        row = db.execute("SELECT id FROM goal_accounts WHERE name=?", (str(name),)).fetchone()
-        owner = store.get(db, "owner")
-    if not row:
-        return 0
-    return len(store.retire("goal:%s:%s:" % (owner, row[0]), "composted: " + str(reason)))
-
-
-
-
-
-
+    # Goal accounts belonged to the retired rotating-goal scheduler; the native ledger has none,
+    # so no goal cycle is open to close.
+    return 0
 
 
 def ledger():
@@ -85,9 +72,6 @@ def ledger():
         _ledger.recover_recorded_actions()
         _booted = True
     return _ledger
-
-
-
 
 
 def guard(include_topic=True):
@@ -117,12 +101,8 @@ def begin(turn, source, message):
         _focus = task_context.resume(store, previous)
         if _focus is None and previous and str(source) not in ("operator-event", "channel-event"):
             import input_ack
-            if input_ack._native_socket():
-                state = store.status_of(previous)
-                state = None if state is None else (state,)
-            else:
-                with store.transaction() as db:
-                    state = db.execute("SELECT status FROM requests WHERE id=?", (previous,)).fetchone()
+            state = store.status_of(previous)
+            state = None if state is None else (state,)
             if state and state[0] == "addressed":
                 _focus = previous
         _context_trigger, _task_projection = str(source), None
@@ -183,7 +163,6 @@ def prepare(prompt, output_tokens=32768):
         _context_presented = presented_calls(view.get("transcript", []))
     context_prepared(hashlib.sha256(rendered.encode()).hexdigest(), int(bool(view.get("archive"))))
     return rendered
-
 
 
 def lifetime_context():
@@ -254,10 +233,6 @@ def task_history(request, offset=0, count=20):
 def task_note(text, sources="[]"):
     import task_context
     return task_context.note(ledger(), _focus, str(text), str(sources))
-
-
-def task_resolve(identity, reason):
-    return "No resolution bookkeeping is required. Calls and results remain in task-history."
 
 
 def description():
@@ -455,21 +430,17 @@ def broker_feedback():
 
 
 def reserve_command(turn, command):
+    """Record the batch's next command as attempted before it runs (the dispatch hook)."""
     global _position
     if not enabled():
         return 1
     with _lock:
         if str(turn) != _turn or not _ticket:
             return 0
-        store = ledger()
         import input_ack
-        if input_ack._native_socket():
-            if not input_ack.attempt_begin(_ticket, _position, strategy.encoded(command)):
-                raise sqlite3.IntegrityError("UNIQUE constraint failed: command_attempts.ticket, command_attempts.position")
-        else:
-            with store.transaction() as db:
-                db.execute("CREATE TABLE IF NOT EXISTS command_attempts (ticket TEXT, position INTEGER, command TEXT, result TEXT, PRIMARY KEY(ticket,position))")
-                db.execute("INSERT INTO command_attempts VALUES (?,?,?,NULL)", (_ticket, _position, strategy.encoded(command)))
+        if not input_ack.attempt_begin(_ticket, _position, strategy.encoded(command)):
+            import llm_policy
+            raise llm_policy.IntegrityError("command attempt %s/%d is already recorded" % (_ticket, _position))
         _position += 1
         try:
             import stream_sink
@@ -492,18 +463,11 @@ def command_result(turn, disposition, command, result):
         store = ledger()
         import input_ack
         outcome = strategy.encoded({"disposition": str(disposition), "result": str(result)})
-        if input_ack._native_socket():
-            input_ack.attempt_result(_ticket, _position - 1, strategy.encoded(command), outcome)
-        else:
-            with store.transaction() as db:
-                db.execute("UPDATE command_attempts SET result=? WHERE ticket=? AND position=? AND command=? AND result IS NULL",
-                           (outcome, _ticket, _position - 1, strategy.encoded(command)))
-                store.event(db, "command-result", ticket=_ticket, position=_position - 1)
+        input_ack.attempt_result(_ticket, _position - 1, strategy.encoded(command), outcome)
         _close_answered_message(command, str(result))
         import process_supervision
         process_supervision.progress("command-receipt")
     return 1
-
 
 
 def _close_answered_message(command, result):
@@ -523,41 +487,19 @@ def _close_answered_message(command, result):
         return
     store = ledger()
     import input_ack
-    if input_ack._native_socket():
-        # The request, its frame and its inputs are records of the native store.
-        found = store.native_request(_focus)
-        if not found or found["kind"] not in ("message", "notification"):
-            return
-        chat, inputs = input_ack.request_context(_focus)
-        frame = None if chat is None else (chat,)
-        if len(inputs) != 1:
-            return
-        import telegram
-        target = telegram._reply_target(command[1] if name == "send-telegram-chat" else "")
-        if not (frame and frame[0]) or str(target) != str(frame[0]):
-            return
-        input_ack.request_answered(_focus)  # the answer-delivered event is not written natively
+    found = store.native_request(_focus)
+    if not found or found["kind"] not in ("message", "notification"):
         return
-    with store.transaction() as db:
-        row = db.execute("SELECT c.kind,f.chat FROM request_context c LEFT JOIN task_frames f ON f.request=c.request WHERE c.request=?", (_focus,)).fetchone()
-        if not row or row[0] not in ("message", "notification"):
-            return
-        inputs = [r[0] for r in db.execute("SELECT input FROM request_inputs WHERE request=?", (_focus,))]
-        # One reply cannot settle an arrival batch with unrelated work.
-        # The frame records one chat, not a destination for every input.
-        if len(inputs) != 1:
-            return
-        import telegram
-        target = telegram._reply_target(command[1] if name == "send-telegram-chat" else "")
-        if not row[1] or str(target) != str(row[1]):
-            return
-        db.execute("UPDATE requests SET status='addressed' WHERE id=? AND status IN ('active','processed')", (_focus,))
-        store.event(db,"answer-delivered",request=_focus)
-
-
-def result_permits_suffix(command, record):
-    # Failure is a result for the agent to interpret, not a batch veto.
-    return 1
+    chat, inputs = input_ack.request_context(_focus)
+    frame = None if chat is None else (chat,)
+    if len(inputs) != 1:
+        return
+    import telegram
+    target = telegram._reply_target(command[1] if name == "send-telegram-chat" else "")
+    if not (frame and frame[0]) or str(target) != str(frame[0]):
+        return
+    input_ack.request_answered(_focus)  # the answer-delivered event is not written natively
+    return
 
 
 def broker_end(turn, records):
@@ -584,26 +526,15 @@ def command_receipts(cursor=""):
     page = {"receipts": [], "next_cursor": None}
     store = ledger()
     import input_ack
-    if input_ack._native_socket():
-        # The attempt's clock position is its rowid. One more row than the page tells whether older ones exist.
-        if bound is None:
-            newest = input_ack.attempts(recent=(2 ** 62, 1))
-            if not newest:
-                return strategy.encoded(page)
-            bound = newest[0]["order"]
-        fetched = [dict(rowid=a["order"], ticket=a["ticket"], position=a["position"], command=a["command"],
-                        result=a["result"]) for a in input_ack.attempts(recent=(bound, 33))]
-        rows = fetched[:32]
-        older = lambda after: any(row["rowid"] <= after for row in fetched)
-    else:
-        with store.transaction() as db:
-            if not db.execute("SELECT 1 FROM sqlite_master WHERE name='command_attempts'").fetchone():
-                return strategy.encoded(page)
-            if bound is None:
-                bound = db.execute("SELECT MAX(rowid) FROM command_attempts").fetchone()[0] or 0
-            rows = [dict(r) for r in db.execute("SELECT rowid,ticket,position,command,result FROM command_attempts WHERE rowid<=? ORDER BY rowid DESC LIMIT 32", (bound,))]
-            oldest = db.execute("SELECT MIN(rowid) FROM command_attempts").fetchone()[0]
-        older = lambda after: oldest is not None and oldest <= after
+    if bound is None:
+        newest = input_ack.attempts(recent=(2 ** 62, 1))
+        if not newest:
+            return strategy.encoded(page)
+        bound = newest[0]["order"]
+    fetched = [dict(rowid=a["order"], ticket=a["ticket"], position=a["position"], command=a["command"],
+                    result=a["result"]) for a in input_ack.attempts(recent=(bound, 33))]
+    rows = fetched[:32]
+    older = lambda after: any(row["rowid"] <= after for row in fetched)
     for row in rows:
         identity = row["ticket"] + ":" + str(row["position"])
         result = row["result"] or strategy.encoded({"disposition": "uncertain",
@@ -644,10 +575,6 @@ def command_receipts(cursor=""):
     return strategy.encoded(page)
 
 
-def annotate_result(command, result):
-    return result
-
-
 def view():
     if not enabled():
         return ""
@@ -683,19 +610,12 @@ def request_disposition(request, disposition, note):
         return "REQUEST_DISPOSITION_WITHHELD " + str(error)
 
 
-def input_processed():
-    if enabled() and _message_focus:
-        ledger().processed(_message_focus)
-    return 1
-
-
 def focus_request(request):
     global _focus
     request = str(request)
     if not enabled():
         return "PROTECTED_STRATEGY_DISABLED"
-    with ledger().transaction() as db:
-        available = ledger().selectable(db, request)
+    available = ledger().selectable(None, request)
     if not available:
         return "REQUEST_FOCUS_WITHHELD_UNKNOWN_OR_FINISHED"
     _focus = request
@@ -727,10 +647,27 @@ def fault():
         _ticket = None
         _runtime_projection = None
         import engine_modes
-        if engine_modes.recycle_requested():
-            with ledger().transaction() as db:
-                ledger().event(db, "recycle-requested")
-        else:
+        # A requested recycle is not a failed turn; the engine mode acts on the request.
+        if not engine_modes.recycle_requested():
             import cognitive_health
             cognitive_health.turn_failed("host-transition-error")
+    return 1
+
+
+def task_resolve(identity, reason):
+    return "No resolution bookkeeping is required. Calls and results remain in task-history."
+
+
+def result_permits_suffix(command, record):
+    # Failure is a result for the agent to interpret, not a batch veto.
+    return 1
+
+
+def annotate_result(command, result):
+    return result
+
+
+def input_processed():
+    if enabled() and _message_focus:
+        ledger().processed(_message_focus)
     return 1

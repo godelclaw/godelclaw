@@ -13,6 +13,8 @@ import threading
 import time
 import unittest
 
+import native_ledger
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -136,6 +138,7 @@ class ModeRuntimeTests(unittest.TestCase):
         Provider.requests = []
         with tempfile.TemporaryDirectory() as temporary:
             state = Path(temporary)
+            ledger = native_ledger.start(self, state)
             agent = state/'agent'
             (agent/'memory').mkdir(parents=True)
             (agent/'src').mkdir()
@@ -181,10 +184,12 @@ class ModeRuntimeTests(unittest.TestCase):
                         'SYNTHETIC_BASE_URL': f'http://127.0.0.1:{provider.server_port}/v1',
                         'SYNTHETIC_API_KEY': 'fixture-only',
                         'METTACLAW_LLM_TRANSPORT': transport,
-                        'METTACLAW_LLM_LEDGER_PATH': str(state/'ledger.db'),
+                        'METTACLAW_INPUT_LEDGER_SOCKET': ledger,
+                        'METTACLAW_STRATEGY_PATH': str(state/'strategy'),
                         'METTACLAW_LLM_POLICY': 'upstream',
                     })
                     environment.pop('METTACLAW_LOOP_MODE_PATH', None)
+                    environment.pop('METTACLAW_LLM_LEDGER_PATH', None)
                     command = [sys.executable, str(ROOT/'modes/launch.py'), '--repo', str(agent),
                                '--mode', mode, '--engine', engine]
                     for restart in range(2):
@@ -240,6 +245,7 @@ class ModeRuntimeTests(unittest.TestCase):
                 channel.close()
                 provider.shutdown()
                 provider.server_close()
+                self.ledger_server.stop()
 
 
 if __name__ == '__main__':

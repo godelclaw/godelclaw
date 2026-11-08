@@ -3,16 +3,13 @@
 observed_strategy.Ledger's turn and effect methods (control, restore, admission_denial, capture,
 decision_pending, decide, report, observe, attest, finish, finish_exact_results,
 recover_recorded_actions, protected, projection) and strategy_host's command attempts keep their
-records in the same native collection as the requests. The oracle is the same sequence of calls on
-the SQLite path: every return value, the protected view after every step and the final projection
-(meta keys, requests, actions) are compared. The two ledgers have different owners, so the owner is
-replaced by one name before comparing. A seeded generator adds random sequences of the same calls.
+records in the same native collection as the requests. Each scenario runs on the native ledger and
+asserts its return values, the protected view and the final projection (meta keys, requests,
+actions); the ledger's owner is replaced by one name in the recorded steps.
 """
 import hermetic_env  # noqa: F401,E402  (first, before any src module: see hermetic_env.py)
 import json
 from pathlib import Path
-import random
-import sqlite3
 import sys
 import unittest
 from unittest import mock
@@ -22,10 +19,11 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path[:0] = [str(HERE), str(ROOT / "src"), str(ROOT / "channels")]
 import input_ack
+import llm_policy
 from observed_strategy import Ledger, digest, encoded
 from native_ledger_client import NativeRunner
 from test_input_ack_native import NativeCase, SKIP
-from test_input_ledger_remote import Oracle, available, oracle_environment
+from test_input_ledger_remote import available, oracle_environment
 
 ROUTER = dict(advertised=["tool"], executable=["tool"], permitted=["tool"])
 
@@ -44,21 +42,12 @@ def presented(store, ticket):
     return {ticket: [r for r in store.protected("none")["results"] if r["ticket"] == ticket]}
 
 
-def record_attempt(store, native, ticket, position, command, result):
-    """strategy_host's reserve_command and command_result for one command, on either path."""
+def record_attempt(store, ticket, position, command, result):
+    """strategy_host's reserve_command and command_result for one command."""
     command_text, result_text = encoded(command), encoded(result)
-    if native:
-        input_ack.attempt_begin(ticket, position, command_text)
-        if result is not None:
-            input_ack.attempt_result(ticket, position, command_text, result_text)
-        return
-    with store.transaction() as db:
-        db.execute("CREATE TABLE IF NOT EXISTS command_attempts (ticket TEXT, position INTEGER, command TEXT, "
-                   "result TEXT, PRIMARY KEY(ticket,position))")
-        db.execute("INSERT INTO command_attempts VALUES (?,?,?,NULL)", (ticket, position, command_text))
-        if result is not None:
-            db.execute("UPDATE command_attempts SET result=? WHERE ticket=? AND position=? AND command=? "
-                       "AND result IS NULL", (result_text, ticket, position, command_text))
+    input_ack.attempt_begin(ticket, position, command_text)
+    if result is not None:
+        input_ack.attempt_result(ticket, position, command_text, result_text)
 
 
 def final(store):
@@ -69,7 +58,7 @@ def final(store):
                 protected=store.protected("task-1"))
 
 
-def lifecycle(store, native, note):
+def lifecycle(store, note):
     """Every turn and effect method once, with the refusals and repeats each one has."""
     note("accept", [store.accept("task-1", "do the thing"),
                     store.accept("verified", "exact", "sha256:" + digest("exact output")),
@@ -121,69 +110,17 @@ def lifecycle(store, native, note):
     half_turn = store.capture("input:1", "b6", ROUTER, 0)
     half = store.decide(half_turn["serial"], {"kind": "command", "tool": "batch",
                                               "command": {"commands": commands[:1], "limit": 1}}, 0)
-    record_attempt(store, native, batch, 0, commands[0], {"disposition": "ok", "result": "1"})
-    record_attempt(store, native, batch, 1, commands[1], {"disposition": "ok", "result": "2"})
-    record_attempt(store, native, half, 0, commands[0], None)
+    record_attempt(store, batch, 0, commands[0], {"disposition": "ok", "result": "1"})
+    record_attempt(store, batch, 1, commands[1], {"disposition": "ok", "result": "2"})
+    record_attempt(store, half, 0, commands[0], None)
     store.restore()
     note("recovered", [store.recover_recorded_actions(), store.recover_recorded_actions()])
     store.compact(3)
     note("final", final(store))
 
 
-def generated(seed):
-    """A random sequence of the turn and effect calls, seeded."""
-    def scenario(store, native, note):
-        rng = random.Random(seed)
-        requests, tickets, serials = [], [], []
-        for step in range(36):
-            choice = rng.randrange(11)
-            if choice == 0 or not requests:
-                key = "r%d" % len(requests)
-                requests.append(key)
-                note(step, ("accept", store.accept(key, "work %d" % len(requests))))
-            elif choice == 1:
-                snap = store.capture(rng.choice(requests), "b%d" % step, ROUTER, 0)
-                if snap:
-                    serials.append(snap["serial"])
-                note(step, ("capture", snap))
-            elif choice in (2, 3) and serials:
-                serial = rng.choice(serials + [serials[-1]] * 3)
-                kind = rng.choice(["text", "command", "command"])
-                response = {"kind": kind, "tool": "shell", "command": {"n": step}} if kind == "command" else {"kind": kind}
-                answer = store.decide(serial, response, 0)
-                if kind == "command" and answer != "ignored":
-                    tickets.append(answer)
-                note(step, ("decide", answer))
-            elif choice == 4 and tickets:
-                ticket = rng.choice(tickets + ["nobody:%d" % step])
-                note(step, ("report", store.report(ticket, "payload %d" % rng.randrange(3),
-                                                   domain=rng.choice(["unknown", "success"]))))
-            elif choice == 5 and tickets:
-                ticket = rng.choice(tickets)
-                shown = presented(store, ticket) if rng.random() < 0.7 else {ticket: [{"ticket": ticket, "payload_digest": "x"}]}
-                store.observe([ticket], shown)
-                note(step, ("observe", final(store)["actions"]))
-            elif choice == 6 and tickets:
-                ticket, request = rng.choice(tickets), rng.choice(requests)
-                note(step, ("attest", store.attest(request, ticket, lambda work, receipt: rng.random() < 0.8)))
-            elif choice == 7 and tickets:
-                ticket, request = rng.choice(tickets), rng.choice(requests)
-                note(step, ("finish", store.finish(request, ticket, {"operator": lambda work, receipt: True})))
-            elif choice == 8:
-                store.control(mode=rng.choice([None, "a", "b"]), paused=rng.choice([None, False, False, True]),
-                              router_revision=rng.choice([None, 1, 2]))
-                note(step, ("control", final(store)["meta"]))
-            elif choice == 9:
-                store.restore()
-                note(step, ("restore", final(store)["meta"]))
-            elif choice == 10 and requests:
-                note(step, ("cancel", store.cancel(rng.choice(requests), operator_authorized=True)))
-            note(step, ("protected", store.protected(rng.choice(requests) if requests else "none")))
-        note("final", final(store))
-    return scenario
 
-
-def presentations(store, native, note):
+def presentations(store, note):
     """An answered prompt marks an action observed only when it carried every attempt's result and the
     receipt exists (lean/pettaclaw/ObservedReceipts.lean); the protected view then moves on."""
     store.accept("r1", "work one")
@@ -195,11 +132,11 @@ def presentations(store, native, note):
                                                      "command": {"commands": commands, "limit": 2}}, 0))
     one, two, three, four = tickets
     for ticket in (one, two, three):
-        record_attempt(store, native, ticket, 0, ["shell", "ls"], {"disposition": "returned", "result": "a"})
+        record_attempt(store, ticket, 0, ["shell", "ls"], {"disposition": "returned", "result": "a"})
     for ticket in (one, two):
-        record_attempt(store, native, ticket, 1, ["shell", "cat"], {"disposition": "returned", "result": "b"})
-    record_attempt(store, native, three, 1, ["shell", "cat"], None)          # interrupted: no result
-    record_attempt(store, native, four, 0, ["shell", "ls"], {"disposition": "returned", "result": "c"})
+        record_attempt(store, ticket, 1, ["shell", "cat"], {"disposition": "returned", "result": "b"})
+    record_attempt(store, three, 1, ["shell", "cat"], None)          # interrupted: no result
+    record_attempt(store, four, 0, ["shell", "ls"], {"disposition": "returned", "result": "c"})
     for ticket in (one, two, three):
         store.report(ticket, "batch " + ticket)                              # four has no receipt
     note("view-before", [r["ticket"] for r in store.protected("r1")["results"]])
@@ -215,7 +152,7 @@ def presentations(store, native, note):
     note("observed", {a["ticket"]: a["observed"] for a in store.projection()["actions"]})
 
 
-def topics(store, native, note):
+def topics(store, note):
     """topic_jobs on either ledger: the implicit conversation topic, select, notes, the context and the
     historical model jobs (none)."""
     import topic_jobs
@@ -238,51 +175,31 @@ def topics(store, native, note):
 
 
 class NativeSides(NativeCase):
-    """A scenario (a function of a Ledger, whether it is native, and a note function) on SQLite and on
-    the native store, compared step by step with the owner normalized."""
-    def run_both(self, scenario):
-        outcomes = {}
-        for native in (False, True):
-            with oracle_environment() as directory:
-                runner = NativeRunner.create(directory, self.server.socket) if native else Oracle.create(directory)
-                store = Ledger(runner.path)
-                # One owner on both sides, so that the digests of texts that carry it agree too.
-                with store.transaction() as db:
-                    db.execute("UPDATE meta SET value=? WHERE key='owner'", (encoded("owner-of-both"),))
-                store._owner = None
-                steps = []
-                scenario(store, native, lambda name, value: steps.append((name, value)))
-                outcomes[native] = normalized(steps, owner_of(store))
-                if native:
-                    # Nothing of the turns or actions went to the SQLite file.
-                    with sqlite3.connect(runner.path) as db:
-                        self.assertEqual(db.execute("SELECT COUNT(*) FROM samples").fetchone()[0], 0)
-                        self.assertEqual(db.execute("SELECT COUNT(*) FROM actions").fetchone()[0], 0)
-                        self.assertIsNone(db.execute("SELECT 1 FROM sqlite_master WHERE name='command_attempts'").fetchone())
-                input_ack.close_ledger()
-        return outcomes[False], outcomes[True]
-
-    def compare(self, scenario):
-        oracle, native = self.run_both(scenario)
-        self.assertEqual(len(native), len(oracle))
-        for number, (want, got) in enumerate(zip(oracle, native)):
-            self.assertEqual(got, want, (number, want[0]))
-        return oracle, native
+    """A scenario (a function of a Ledger and a note function) on the native ledger: its noted steps,
+    with the ledger's owner replaced by one name."""
+    def steps(self, scenario):
+        with oracle_environment() as directory:
+            runner = NativeRunner.create(directory, self.server.socket)
+            store = Ledger(runner.path)
+            store._owner = None
+            steps = []
+            scenario(store, lambda name, value: steps.append((name, value)))
+            outcome = normalized(steps, owner_of(store))
+            input_ack.close_ledger()
+        return outcome
 
 
 @unittest.skipUnless(available(), SKIP)
 class TurnEffectNativeTest(NativeSides):
-    def test_every_turn_and_effect_method_matches_sqlite(self):
-        oracle, _ = self.compare(lifecycle)
-        steps = dict(oracle)
+    def test_every_turn_and_effect_method(self):
+        steps = dict(self.steps(lifecycle))
         self.assertEqual(steps["finish"], [False, True, False])
         self.assertEqual(steps["recovered"], [1, 0])
         self.assertEqual(steps["final"]["meta"]["mode"], "research")
 
 
-    def test_an_answered_prompt_marks_what_it_carried_as_sqlite_does(self):
-        oracle, _ = self.compare(presentations)
-        steps = dict(oracle)
+    def test_an_answered_prompt_marks_what_it_carried(self):
+        steps = dict(self.steps(presentations))
         one, two = [t for t in steps["view-before"]]
         self.assertEqual([steps[k] for k in ("partial", "none", "whole", "again", "interrupted", "no-receipt", "second")],
                          [0, 0, 1, 0, 0, 0, 1])
@@ -291,20 +208,19 @@ class TurnEffectNativeTest(NativeSides):
         observed = steps["observed"]
         self.assertEqual(sorted(t for t, v in observed.items() if v), sorted([one, two]))
 
-    def test_topics_match_sqlite(self):
-        oracle, _ = self.compare(topics)
-        steps = dict(oracle)
+    def test_topics(self):
+        steps = dict(self.steps(topics))
         self.assertIn('"active":"conversation"', steps["initial"][0])
         self.assertEqual(steps["after"][2], ["research", 2])
         self.assertEqual(steps["quiet"], ["", ["conversation", 0]])
         self.assertIn("second notes", steps["kept"][1])
         self.assertEqual(steps["bad-name"][0], "raised")
 
-    def test_the_receipts_page_and_the_reservations_match_sqlite(self):
+    def test_the_receipts_page_and_the_reservations(self):
         import strategy_host as host
         big = {"disposition": "returned", "result": "\U0001f9ea \"quoted\"\\n" * 3000}
 
-        def scenario(store, native, note):
+        def scenario(store, note):
             with mock.patch.multiple(host, _ledger=store, _turn="1", _ticket="t", _position=0), \
                     mock.patch.dict(os.environ, {"METTACLAW_OBSERVED_STRATEGY": "1"}):
                 with mock.patch.object(host, "_close_answered_message"), \
@@ -317,7 +233,7 @@ class TurnEffectNativeTest(NativeSides):
                     try:
                         host.reserve_command("1", ["help"])
                         note("repeat", "accepted")
-                    except sqlite3.IntegrityError as error:
+                    except llm_policy.IntegrityError as error:
                         note("repeat", str(error))
                 cursor, pages = "", []
                 while True:
@@ -328,9 +244,10 @@ class TurnEffectNativeTest(NativeSides):
                         break
                 note("pages", pages)
                 note("recent", json.loads(host.command_receipts("2:0")))
-        oracle, native = self.compare(scenario)
-        self.assertEqual([name for name, _ in native][:3], ["reserve"] * 3)
-        pages = dict(oracle)["pages"]
+        steps = self.steps(scenario)
+        self.assertEqual([name for name, _ in steps][:3], ["reserve"] * 3)
+        self.assertNotEqual(dict(steps)["repeat"], "accepted", "a position is reserved once")
+        pages = dict(steps)["pages"]
         self.assertGreater(len(pages), 3, "the large result is sliced over several pages")
 
     def test_the_clock_orders_turns_among_requests(self):
@@ -348,16 +265,6 @@ class TurnEffectNativeTest(NativeSides):
             self.assertLess(arrivals["b"], positions[second["serial"]])
             input_ack.close_ledger()
 
-
-def random_case(seed):
-    def test(self):
-        self.compare(generated(seed))
-    test.__doc__ = "A seeded random sequence of turn and effect calls matches SQLite (seed %d)." % seed
-    return test
-
-
-for _seed in range(6):  # one test each, so that each sequence starts on a fresh server and store
-    setattr(TurnEffectNativeTest, "test_random_sequence_%d_matches_sqlite" % _seed, random_case(_seed))
 
 
 if __name__ == "__main__":

@@ -1083,8 +1083,8 @@ python3 scripts/check_retry_wake.py --cetta "$CETTA_BIN" --output .runtime/retry
 ```
 
 The second command checks the actual encoded transition function in HOL,
-checks Megalodon conversion where supported, compares all module rows with
-the Lean model, and exercises recovery on disposable host ledgers. It also
+checks Megalodon conversion where supported, and compares all module rows with
+the Lean model. It also
 requires exact conclusions and empty proof contexts, tests changed answers,
 and reuses a case to catch leaked theorem names. This is finite model and
 implementation correspondence, not whole-host verification.
@@ -1094,13 +1094,6 @@ the current Prime namespace reader changes its dotted wire constructor names,
 which the probe reports as unsupported. MM0 has no audited encoding of this
 transition theory yet. Neither backend is counted as checked when unavailable.
 The earlier reflexivity-only demonstration has been replaced.
-
-For an existing provider ledger, run
-`cetta --lang petta --import-mode ancestor-walk scripts/inspect_retry_wake.metta PATH`
-from the repository root (the ledger defaults to `METTACLAW_LLM_LEDGER_PATH`).
-It reads through `sqlite:observe`, so it cannot create, lock or change the
-ledger, and reports active-call contradictions and model outcomes. It does not
-reconcile rows, submit calls, or change the live loop policy.
 
 ### Provider usage history
 

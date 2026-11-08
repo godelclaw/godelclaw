@@ -43,22 +43,23 @@ def main():
 
 
 class NativeRunner(remote.Oracle):
-    """input_ack.py with METTACLAW_INPUT_LEDGER_SOCKET on `socket`. The SQLite file it names only satisfies
-    the gates of input_ack (a strategy path, observed strategy on); the native path never opens it."""
+    """input_ack.py on the native ledger at `socket`, which the caller owns. `path` names a strategy
+    location for observed_strategy.Ledger; nothing is stored there."""
     def __init__(self, path, socket):
-        super().__init__(path)
+        self.path = path
         self.socket = str(socket)
+        self.applied = []
 
     @classmethod
     def create(cls, directory, socket):
-        runner = cls(directory / ("gate-%d.db" % next(cls.numbers)), socket)
+        runner = cls(directory / ("strategy-%d" % next(cls.numbers)), socket)
         runner.select()
         return runner
 
     def select(self):
-        super().select()
         import os
         os.environ[input_ack.LEDGER_SOCKET] = self.socket
+        os.environ["METTACLAW_STRATEGY_PATH"] = str(self.path)  # the agent's location name (agent_checkpoint)
 
     def state(self):
         raise NotImplementedError("read the native store with RemoteCase.dump()")

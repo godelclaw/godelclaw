@@ -78,7 +78,7 @@ class PagesTest(NativeCase):
         with oracle_environment() as directory:
             runner = NativeRunner.create(directory, self.server.socket)
             store = Ledger(runner.path)
-            legacy = cognition.scenario(store, True)
+            legacy = cognition.scenario(store)
             whole = (input_ack.task_view("all"), input_ack.turn_dump(), input_ack.request_rows("all"),
                      input_ack.actions("all"))
             for rows in (1, 2, 3, 7):
@@ -105,14 +105,14 @@ class PagesTest(NativeCase):
         with oracle_environment() as directory:
             runner = NativeRunner.create(directory, self.server.socket)
             store = Ledger(runner.path)
-            cognition.scenario(store, True)
+            cognition.scenario(store)
             for number in range(3, 15):
                 snap = store.capture("task-1", "b%d" % number, cognition.ROUTER, 0)
                 commands = [["shell", "ls %d" % number]]
                 ticket = store.decide(snap["serial"], {"kind": "command", "tool": "batch",
                                                        "command": {"commands": commands, "limit": 1}}, 0)
                 cognition.task_context.proposal(store, snap["serial"], "task-1", commands, "admitted")
-                cognition.record_attempt(store, True, ticket, 0, commands[0],
+                cognition.record_attempt(store, ticket, 0, commands[0],
                                          {"disposition": "returned", "result": ("row %d é\n" % number) * 350})
                 store.report(ticket, "batch %d" % number)
             input_ack.close_ledger()

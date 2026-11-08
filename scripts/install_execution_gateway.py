@@ -30,8 +30,6 @@ def prepare(instance, runtime, config_dir, unit_dir):
         "execution_gateway/__main__.py",
         "execution_gateway/read_tools.py",
         "execution_gateway/cetta_worker.py",
-        "execution_gateway/sqlite_store.py",
-        "execution_gateway/migration.py",
         "execution_gateway/GATEWAY_CETTA_REF",
         "execution_gateway/metta/gateway_queue.metta",
         "execution_gateway/metta/native_kb_server.metta",

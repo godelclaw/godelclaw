@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Inspect and resolve an instance's protected request ledger."""
+"""Inspect and resolve an instance's protected requests on its native ledger
+(METTACLAW_INPUT_LEDGER_SOCKET)."""
 
 import argparse
 import json
@@ -12,7 +13,6 @@ from observed_strategy import Ledger
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--store", type=Path, required=True)
     commands = parser.add_subparsers(dest="operation", required=True)
     commands.add_parser("status")
     accept = commands.add_parser("accept")
@@ -27,12 +27,8 @@ def main():
     cancel = commands.add_parser("cancel")
     cancel.add_argument("request")
     cancel.add_argument("--confirm", action="store_true", required=True)
-    retry = commands.add_parser("retry-command", help="release one quarantined command after repair")
-    retry.add_argument("command", help="command as a JSON array")
-    retry.add_argument("--reason", required=True)
-    retry.add_argument("--confirm", action="store_true", required=True)
     args = parser.parse_args()
-    store = Ledger(args.store)
+    store = Ledger()
     if args.operation == "status":
         result = store.protected(None)
     elif args.operation == "accept":
@@ -41,14 +37,6 @@ def main():
         result = store.cancel(args.request, operator_authorized=args.confirm)
     elif args.operation == "reconcile":
         result = store.report(args.ticket, args.result, domain="unknown")
-    elif args.operation == "retry-command":
-        try:
-            command = json.loads(args.command)
-        except ValueError:
-            parser.error("command must be a JSON array")
-        if not isinstance(command, list) or not command or not isinstance(command[0], str):
-            parser.error("command must be a nonempty JSON array beginning with a tool name")
-        result = store.release_command(command, args.reason)
     else:
         checker = lambda work, receipt: work["checker"] == "operator" and args.confirm
         result = (store.attest(args.request, args.ticket, checker)

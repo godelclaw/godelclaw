@@ -12,6 +12,7 @@ sys.path[:0] = [str(ROOT / "src"), str(ROOT / "channels")]
 import attention
 import input_ack
 import durable_telegram as wire
+import native_ledger
 import telegram
 
 
@@ -38,8 +39,9 @@ class CooperativeAttentionTest(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
+        native_ledger.start(self, temporary.name)
         environment = mock.patch.dict(os.environ, {
-            "METTACLAW_STRATEGY_PATH": str(Path(temporary.name) / "strategy.db"),
+            "METTACLAW_STRATEGY_PATH": str(Path(temporary.name) / "strategy"),
             "METTACLAW_OBSERVED_STRATEGY": "1", "METTACLAW_INPUT_POLICY": "cooperative",
             "METTACLAW_INPUT_ACK_SECONDS": "1", "METTACLAW_INSTANCE": "fixture",
             "METTACLAW_TELEGRAM_BOT_USERNAME": "fixture_bot"})
