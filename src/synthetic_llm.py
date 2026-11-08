@@ -231,6 +231,11 @@ def _anthropic_models():
 
 
 def _provider_for(model):
+    if str(model).startswith("kimi:"):
+        return {"name": "kimi", "protocol": "responses",
+                "model": str(model).split(":", 1)[1],
+                "base": os.environ.get("KIMI_BASE_URL", "https://api.kimi.ai/coding/v1").rstrip("/"),
+                "key": os.environ.get("KIMI_API_KEY", "")}
     if str(model).startswith("openai:"):
         return {"name": "openai", "protocol": "responses",
                 "model": str(model).split(":", 1)[1],
@@ -828,6 +833,7 @@ def quota():
     on_anthropic = _is_anthropic_model(selected)
     provider_tag = ("Anthropic API" if on_anthropic else
                     "ChatGPT subscription" if selected.startswith("chatgpt:") else
+                    "Kimi Code API" if selected.startswith("kimi:") else
                     "OpenAI API" if selected.startswith("openai:") else "Synthetic")
     parts = [f"model={selected} ({provider_tag})"]
     if on_anthropic:

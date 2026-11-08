@@ -259,7 +259,7 @@ class Controller:
         # Only provider configuration enters this isolated model process.
         names = ("PATH", "LANG", "LC_ALL", "PYTHONHOME", "LD_LIBRARY_PATH", "SSL_CERT_FILE",
                  "SYNTHETIC_API_KEY", "SYNTHETIC_BASE_URL", "OPENAI_API_KEY", "OPENAI_BASE_URL",
-                 "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL")
+                 "KIMI_API_KEY", "KIMI_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL")
         env = {k: os.environ[k] for k in names if k in os.environ}
         for name in ("REQUESTS_PER_HOUR", "OUTPUT_TOKENS_PER_DAY", "FAILURES_PER_WINDOW",
                      "FAILURE_WINDOW_SECONDS", "QUOTA_COOLDOWN_SECONDS"):

@@ -444,6 +444,25 @@ def draft(kind, scope, lane):
         self.assertIn('(SelectedAccount "fixture-registration")', out)
         self.assertEqual(self.peer.requests, [])
 
+    def test_kimi_responses_use_kimi_not_openai_credentials(self):
+        self.env.update(KIMI_API_KEY="kimi-fixture",
+                        KIMI_BASE_URL=self.env["SYNTHETIC_BASE_URL"],
+                        OPENAI_API_KEY="openai-fixture",
+                        OPENAI_BASE_URL="http://127.0.0.1:1/v1",
+                        SYNTHETIC_MODEL="kimi:k3.1-pro")
+        self.peer.reply = {"id": "kimi", "status": "completed",
+            "output": [{"type": "message", "role": "assistant",
+                        "content": [{"type": "output_text", "text": "(nop)"}]}]}
+        out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n'
+            '!(llm:command "kimi:k3.1-pro" 42 "high" "input")\n')
+        self.assertIn("(nop)", out)
+        self.assertEqual(len(self.peer.requests), 1)
+        path, headers, body = self.peer.requests[0]
+        self.assertEqual(path, "/v1/responses")
+        self.assertEqual(headers["Authorization"], "Bearer kimi-fixture")
+        self.assertEqual(body["model"], "k3.1-pro")
+        self.assertEqual(body["reasoning"], {"effort": "high"})
+
     def test_command_wire_parity_in_both_dialects_for_all_protocols(self):
         prompt = "S_cache_boundary_T_cache_boundary_U_cache_boundary_user _cache_boundary_ literal"
         self.peer.delay = .01

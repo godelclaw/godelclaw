@@ -121,6 +121,19 @@ class ProviderRoutingTest(unittest.TestCase):
         self.assertEqual(health["completed_count"], 1)
         self.assertEqual(health["pending_since"], 0)
 
+    def test_kimi_has_distinct_credentials_and_does_not_change_openai(self):
+        with mock.patch.dict(os.environ, {
+                "KIMI_API_KEY": "kimi-fixture",
+                "KIMI_BASE_URL": "https://api.kimi.ai/coding/v1",
+                "OPENAI_API_KEY": "openai-fixture"}, clear=False):
+            kimi = synthetic_llm._provider_for("kimi:k3.1-pro")
+            openai = synthetic_llm._provider_for("openai:gpt-fixture")
+        self.assertEqual(kimi, {
+            "name": "kimi", "protocol": "responses", "model": "k3.1-pro",
+            "base": "https://api.kimi.ai/coding/v1", "key": "kimi-fixture"})
+        self.assertEqual(openai["name"], "openai")
+        self.assertEqual(openai["key"], "openai-fixture")
+
     def test_subscription_menu_choices_require_the_native_backend_and_preserve_selection(self):
         from pathlib import Path
         policy = Path(self.flag_dir)/'chatgpt.json'

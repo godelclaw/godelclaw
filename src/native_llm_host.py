@@ -179,7 +179,7 @@ def _plan(kind, model, tokens, builder, *, native_ledger=False):
         alias = "LLM_" + provider["name"].upper()
         prefix = "CETTA_IO_AUTH_" + alias
         credential_env = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY",
-                          "synthetic": "SYNTHETIC_API_KEY"}[provider["name"]]
+                          "kimi": "KIMI_API_KEY", "synthetic": "SYNTHETIC_API_KEY"}[provider["name"]]
         # This is native host configuration, never a guest-selected env name.
         os.environ[prefix + "_URL_PREFIX"] = provider["base"] + "/"
         os.environ[prefix + "_HEADER"] = "x-api-key" if provider["name"] == "anthropic" else "Authorization"
