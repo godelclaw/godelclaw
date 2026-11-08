@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 import re
 import socket
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -77,14 +76,11 @@ def wait(check, label):
 
 
 class Notices:
-    """The fixture's notice records, in the SQLite file or in a native ledger served beside it."""
-    def __init__(self, folder, socket_path=None):
+    """The fixture's notice records, in the native ledger served beside it."""
+    def __init__(self, folder, socket_path):
         self.folder, self.socket = folder, socket_path
 
     def rows(self):
-        if self.socket is None:
-            with sqlite3.connect(self.folder / 'strategy.db') as db:
-                return [dict(zip(COLUMNS, row)) for row in db.execute('SELECT %s FROM input_notices' % ', '.join(COLUMNS))]
         # One JSON line per notice record, read through the server (no test-suite imports: the hermetic
         # guard they load would refuse this fixture's own sockets).
         program = self.folder / "dump.metta"
@@ -108,27 +104,14 @@ class Notices:
         return None
 
     def add_withdrawing(self, task, lane, send_key, message_id):
-        if self.socket is None:
-            with sqlite3.connect(self.folder / 'strategy.db') as db:
-                db.execute("INSERT INTO input_notices(task,update_id,lane,send_key,created,message_id,state) VALUES (?,?,?,?,?,?,?)",
-                           (task, task, lane, send_key, time.time(), message_id, 'withdrawing'))
-            return
         from execution_gateway.cetta_worker import E, S
         atom = E("input-notice", task, task, lane, send_key, time.time(), message_id, 0, S("none"), S("withdrawing"), 0.0)
         assert input_ack._ledger_call("import", (S("any"), (atom,)), 30) is True
 
     def processed(self, task):
-        if self.socket is None:
-            with sqlite3.connect(self.folder / 'strategy.db') as db:
-                flag = db.execute("SELECT processed FROM input_notices WHERE task=?", (task,)).fetchone()[0]
-                seen = db.execute("SELECT 1 FROM processed_inputs WHERE id=?", (task,)).fetchone() is not None
-            return flag, seen
         from execution_gateway.cetta_worker import S
         notice = [row for row in self.rows() if row["task"] == task][0]
         return notice["processed"], bool(input_ack._ledger_call("lookup", (S("processed"), (task,)), 30))
-
-
-COLUMNS = ("task", "update_id", "lane", "send_key", "created", "message_id", "processed", "delete_key", "state", "checked")
 
 
 @contextlib.contextmanager
@@ -147,10 +130,10 @@ def ledger_server(folder):
         server.kill(); server.wait()
 
 
-def main(native=False):
+def main():
     with tempfile.TemporaryDirectory(prefix="owned-notice-") as temporary, contextlib.ExitStack() as stack:
         folder = Path(temporary)
-        ledger = stack.enter_context(ledger_server(folder)) if native else None
+        ledger = stack.enter_context(ledger_server(folder))
         notices = Notices(folder, ledger)
         token = folder / "token"; token.write_text(TOKEN); token.chmod(0o600)
         state = folder / "service"; state.mkdir(mode=0o700)
@@ -168,8 +151,7 @@ def main(native=False):
             METTACLAW_WAKE_REQUEST_PATH=str(folder / "wake"),
             PYTHONPATH=os.pathsep.join([str(ROOT / "src"), str(ROOT / "channels")]))
         environment.pop(input_ack.LEDGER_SOCKET, None)
-        if ledger is not None:
-            environment[input_ack.LEDGER_SOCKET] = str(ledger)
+        environment[input_ack.LEDGER_SOCKET] = str(ledger)
         source = folder / "responder.metta"
         source.write_text('!(import! &self "' + str(ROOT / "channels/telegram_control.metta") + '")\n!(tc:serve)\n')
         with peer() as (api, origin):
@@ -266,12 +248,9 @@ def main(native=False):
 
 @unittest.skipUnless(SERVICE and CETTA, "set CETTA_SERVICE_BIN and CETTA_BIN (and CETTA_CHANNEL_ROOT to the bundle)")
 class OwnedNoticeTest(unittest.TestCase):
-    def test_on_sqlite(self):
-        main()
-
     def test_on_the_native_ledger(self):
-        main(native=True)
+        main()
 
 
 if __name__ == "__main__":
-    main(native="--native" in sys.argv)
+    main()

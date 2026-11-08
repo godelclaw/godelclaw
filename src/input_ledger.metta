@@ -1045,12 +1045,14 @@
      (|-> ($space) (input-ledger:cleanup-key-in $space $task $candidate))
      (input-ledger:attempts) none))
 
-; SELECT task,lane,message_id FROM input_notices WHERE state IN ('registered','submitted',
-; 'withdrawing') AND message_id IS NOT NULL AND (processed=1 OR state='withdrawing') ORDER BY created
+; The open notices with a message that is processed or withdrawing, oldest first, each as
+; (task lane message-id delete-key created): the delete key already stored (none when there
+; is none), so a caller asks for one only when it lacks it, and the creation time, so a caller
+; can tell a notice too old to delete.
 (= (input-ledger:deletable-key ($created $row)) $created)
 (= (input-ledger:deletable-entry (input-notice $t $u $l $s $c $m $p $d $st $ch))
    (if (and (input-ledger:open-notice $st) (and (not (== $m none)) (or (== $p 1) (== $st withdrawing))))
-       ($c ($t $l $m))
+       ($c ($t $l $m $d $c))
        (empty)))
 
 (= (input-ledger:deletable-of $view)

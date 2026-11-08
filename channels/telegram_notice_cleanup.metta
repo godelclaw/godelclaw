@@ -53,23 +53,31 @@
           ($candidate (str:join "" ($lane "." $padding $number))))
      (case (nc:native "notice-cleanup-key" ($task $candidate (system:uuid4-hex)))
          ((none none) ($key (if (== (get-type $key) String) $key none))))))
-(= (nc:delete $row)
-   (let ($task $lane $message) $row
-     (let $key (nc:delete-key $task $lane)
-       (if (== $key none) 0
-         (let* (($raw (repr $message))
-                ($body (json-stringify (JsonArray ((JsonArray ((JsonString "delete") (JsonNumber $raw))))))))
-           (case (nc:call 4 $key $body)
-             (((cwp:reply 66 $_ $_) 1) ($other 0))))))))
-(= (nc:delete-rows $rows)
+; Telegram lets a bot delete its own message for 48 hours. A notice older than that is
+; expired once, by the ledger's check verb, as input_ack.pump expires it, and so leaves the
+; deletable rows: a delete Telegram refused is not asked again every cycle. A delete key the
+; notice already holds is used as it is; only a notice without one asks the ledger for one.
+(= (nc:max-age) 172800)
+(= (nc:delete $row $now)
+   (let ($task $lane $message $stored $created) $row
+     (if (> (- $now $created) (nc:max-age))
+       (let $expired (nc:native "check" ($task $now (nc:max-age))) 0)
+       (let $key (if (== (get-type $stored) String) $stored (nc:delete-key $task $lane))
+         (if (== $key none) 0
+           (let* (($raw (repr $message))
+                  ($body (json-stringify (JsonArray ((JsonArray ((JsonString "delete") (JsonNumber $raw))))))))
+             (case (nc:call 4 $key $body)
+               (((cwp:reply 66 $_ $_) 1) ($other 0)))))))))
+(= (nc:delete-rows $rows $now)
    (if (== $rows ()) 0
-     (let $done (nc:delete (car-atom $rows))
-       (+ $done (nc:delete-rows (cdr-atom $rows))))))
-; The notices whose message may be deleted, oldest first: (task lane message-id) rows.
+     (let $done (nc:delete (car-atom $rows) $now)
+       (+ $done (nc:delete-rows (cdr-atom $rows) $now)))))
+; The notices whose message may be deleted, oldest first: (task lane message-id delete-key
+; created) rows.
 (= (nc:deletable)
    (case (nc:native "notice-deletable" ())
        (((Error $where $why) ()) ($rows $rows))))
 (= (nc:pump)
    (if (not (nc:ready?)) 0
      (let $_ (nc:collect "")
-       (nc:delete-rows (nc:deletable)))))
+       (nc:delete-rows (nc:deletable) (system:wall-time)))))

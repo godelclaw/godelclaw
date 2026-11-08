@@ -111,10 +111,48 @@ class NoticeCleanupNativeTest(NativeCase):
         self.assertEqual(lines["(KEY2"], "(KEY2 true false)")           # not sent: a new key next time
         self.assertEqual(lines["(KEY4"], "(KEY4 false true)")           # only its own message
         self.assertEqual(lines["(KEY5"], "(KEY5 true none)")
-        self.assertEqual(lines["(AFTER"], '(AFTER (("t2" "%s" 102)))' % LANE)   # t1, t4 deleted; t3 unprocessed
+        # t1, t4 deleted; t3 unprocessed. A row carries the stored delete key and the creation time.
+        self.assertRegex(lines["(AFTER"], r'^\(AFTER \(\("t2" "%s" 102 "%s\.\d{20}" 1001\.0\)\)\)$' % (LANE, LANE))
         states = {row[0]: row[base.COLUMNS.index("state")] for row in rows}
         self.assertEqual(states, {"t1": "deleted", "t2": "submitted", "t3": "submitted",
                                   "t4": "deleted", "t5": "withdrawing"})
+
+
+    def test_a_stored_key_is_used_and_a_notice_past_48_hours_expires_once(self):
+        import native_ledger
+        guest = lambda body: "\n".join([
+            '!(import! &self (library lib_import))', '!(import! &self ./channels/telegram_notice_cleanup.metta)',
+            body, '!(println! NOTICES_OK)']) + "\n"
+        delivered = lambda key, number: (
+            '(nc:receipt (JsonArray ((JsonString "delivery") (JsonString "%s") (JsonNumber "0") (JsonNumber "1")'
+            ' (JsonArray ((JsonString "delivered") (JsonNumber "%d"))))))' % (key, number))
+        with oracle_environment() as directory:
+            runner = NativeRunner.create(directory, self.server.socket)
+            keys = {}
+            for number, task in enumerate(("t1", "t2", "t3")):
+                keys[task] = runner.apply(("register", task, "u%d" % number, LANE, 1000.0 + number))
+                self.assertTrue(runner.apply(("submitted", task)))
+            runner.apply(("mark", ["u0", "u1", "u2"], 1100.0))
+            input_ack.close_ledger()
+            setup = " ".join(delivered(keys[task], 101 + number) for number, task in enumerate(("t1", "t2", "t3")))
+            self.run_guest(runner.path, self.server.socket, guest(
+                '!(println! (SETUP %s (nc:delete-key "t1" "%s")))' % (setup, LANE)))
+            # Through a ledger that refuses every request for a delete key: t1 holds one, t2 does not.
+            refusing, faults = native_ledger.faulty(self, directory, self.server.socket, marker=b"notice-cleanup-key")
+            self.run_guest(runner.path, refusing, guest('!(println! (T1 (nc:delete (car-atom (nc:deletable)) 1100.0)))'))
+            self.assertEqual(faults, [])
+            self.run_guest(runner.path, refusing,
+                           guest('!(println! (T2 (nc:delete (car-atom (cdr-atom (nc:deletable))) 1100.0)))'))
+            self.assertTrue(faults)
+            # Past Telegram's 48 hours every notice is expired, once, and none is deletable.
+            printed = self.run_guest(runner.path, self.server.socket, guest(
+                '!(println! (PUMP (nc:delete-rows (nc:deletable) %r)))\n!(println! (AFTER (nc:deletable)))'
+                % (1002.0 + 172801)))
+            self.assertIn("(PUMP 0)", printed)
+            self.assertIn("(AFTER ())", printed)
+            rows, _ = self.dump()
+            self.assertEqual({row[0]: row[base.COLUMNS.index("state")] for row in rows},
+                             {"t1": "expired", "t2": "expired", "t3": "expired"})
 
 
 if __name__ == "__main__":
