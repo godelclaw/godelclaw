@@ -50,6 +50,7 @@ class CettaIterProcess(unittest.TestCase):
             observations = output.replace('\\"', '').replace('"', '')
             self.assertIn('20_failure.metta failure', observations)
             self.assertIn('30_second.metta success', observations)
+            self.assertEqual(list((directory / 'runs').iterdir()), [])   # each run removes its files
 
     def test_timeout_is_result_and_later_transform_still_runs(self):
         with tempfile.TemporaryDirectory() as d:
@@ -63,6 +64,7 @@ class CettaIterProcess(unittest.TestCase):
             frame = next(json.loads(json.loads(line)) for line in output.splitlines()
                          if line.startswith('"{'))
             self.assertEqual(frame['messages'][-1], {'role': 'user', 'content': 'after-timeout'})
+            self.assertEqual(list((directory / 'runs').iterdir()), [])   # a timed-out run's too
 
     def test_syntax_checker_reads_bang_forms_without_running_them(self):
         harness = dispatch.CommandDispatchEngineTest(); binary = harness._cetta_binary()

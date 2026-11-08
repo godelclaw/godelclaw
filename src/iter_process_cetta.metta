@@ -55,13 +55,19 @@
           ((io:pending $handle) (io:submit (proc:request
              $arguments
              (system:cwd) inherit (iter:timeout) $stdout $stderr)))
-          ($completed (iter:await $handle)))
-     (case $completed
-       (((proc:finished $_ exited 0 $_ $_)
-         (iter:interpret (parse (fs:read-text $output))))
-        ((proc:finished $_ timed-out $_ $_ $_) (iter:outcome failure "timeout"))
-        ($other (let $tail (fs:tail-text $stderr 1500)
-                  (iter:outcome failure (str:join " " ((repr $other) (repr $tail))))))))))
+          ($completed (iter:await $handle))
+          ($result (case $completed
+            (((proc:finished $_ exited 0 $_ $_)
+              (iter:interpret (parse (fs:read-text $output))))
+             ((proc:finished $_ timed-out $_ $_ $_) (iter:outcome failure "timeout"))
+             ($other (let $tail (fs:tail-text $stderr 1500)
+                       (iter:outcome failure (str:join " " ((repr $other) (repr $tail))))))))))
+     ; The run's five files are read; none outlives it.
+     (let $removed (iter:remove-all ($transform $input $output $stdout $stderr)) $result)))
+(= (iter:remove-all $paths)
+   (if (== $paths ()) done
+     (let $gone (collapse (catch (fs:remove (car-atom $paths))))
+       (iter:remove-all (cdr-atom $paths)))))
 (= (iter:fold $captured $visible)
    (if (== $captured ()) (iter-native-result $visible iter-observations-empty)
      (let* (((iter:captured $name $source) (car-atom $captured))
