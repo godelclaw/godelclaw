@@ -35,9 +35,12 @@
 
 ;; Python's text where CeTTa's own number text differs (1e+16 against
 ;; 1.0000000000000000e+16), the non-finite floats, a returned "True", an empty
-;; returned text, and the integer digit limit on both sides of it.
+;; returned text, and the integer digit limit on both sides of it. Both Boolean
+;; spellings and computed Booleans convert as Booleans; quoted ones stay text.
 (= (cetta-parts)
    ((py-call (str "")) (py-call (str "a\"b")) (py-call (str "True"))
+    "true" "false" "True" "False" true false (== 1 1) (== 1 2)
+    (nested True false (== 1 1))
     1e16 1e22 1.0e-5 -0.0 123456789012345680.0
     (py-call (float "inf")) (py-call (float "-inf")) (py-call (float "nan"))
     (pow10 4299) (py-call (dict))))

@@ -34,7 +34,7 @@
       (Grounded
         (case (get-type $part)
           ((String $part)
-           (Bool (if $part "true" "false"))
+           (Bool (if $part "True" "False"))
            (Number (utils:py-number-text $part))
            ($other (py-call (str $part))))))
       ($other (py-call (str $part))))))

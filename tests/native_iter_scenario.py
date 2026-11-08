@@ -94,6 +94,11 @@ def verdict() -> int:
     first, second, third, fourth = _prompts
     all_prompts = "\n".join(_prompts)
 
+    def has_user_message(prompt: str, message: str) -> bool:
+        # Prompts may use flattened text or JSON chat messages.
+        return (f"user: {message}" in prompt or
+                f'"role":"user","content":"{message}"' in prompt)
+
     def has_help(prompt: str, command: str) -> bool:
         # CeTTa renders the command's usage text.  PeTTa preserves the
         # structured help result.  Both prove that the previous turn's
@@ -102,18 +107,19 @@ def verdict() -> int:
                 ("api:help" in prompt and command in prompt))
 
     def observed_failure(prompt: str, filename: str) -> bool:
-        # CeTTa preserves JSON-style quotes around the filename; PeTTa's
-        # projection prints the same atom without them.
+        # Prompt projections use plain atoms, quoted JSON strings, or
+        # JSON-escaped quoted strings for the same observation.
         return (f"{filename} failure" in prompt or
-                f'"{filename}" failure' in prompt)
+                f'"{filename}" failure' in prompt or
+                f'\\"{filename}\\" failure' in prompt)
 
     checks = {
         "persona": all(
             "GODEL_NATIVE_ITER_PERSONA" in prompt for prompt in _prompts),
         "pins": all("GODEL_NATIVE_ITER_PIN" in prompt for prompt in _prompts),
-        "first-visible": "user: iter-stage-first" in first,
+        "first-visible": has_user_message(first, "iter-stage-first"),
         "first-is-snapshot": "iter-stage-second" not in first,
-        "second-visible": "user: iter-stage-second" in second,
+        "second-visible": has_user_message(second, "iter-stage-second"),
         "second-replaces-first": "iter-stage-first" not in second,
         "failure-observed": observed_failure(second, "10_failure.metta"),
         "first-feedback": has_help(second, "send"),
@@ -123,7 +129,7 @@ def verdict() -> int:
         "timeout-observed": observed_failure(third, "10_timeout.metta"),
         "timeout-detail": "timeout" in third,
         "second-feedback": has_help(third, "pin"),
-        "fourth-visible": "user: iter-stage-fourth" in fourth,
+        "fourth-visible": has_user_message(fourth, "iter-stage-fourth"),
         "fourth-replaces-first": "iter-stage-first" not in fourth,
         "fourth-replaces-second": "iter-stage-second" not in fourth,
         "observations-cross-boundary": "ITER_PROCESS_OBSERVATIONS" in all_prompts,
