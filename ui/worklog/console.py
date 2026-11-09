@@ -431,6 +431,8 @@ def main(argv=None):
                     else: stop.wait(.1)
                     previous_error = reply_fault[0] = ""
                 except Exception as error:
+                    if stop.is_set():
+                        return
                     label = clean(str(error))
                     if label != previous_error: note("Reply channel unavailable: " + label, "warning")
                     previous_error = reply_fault[0] = label

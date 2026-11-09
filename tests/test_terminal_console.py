@@ -57,6 +57,9 @@ if a[1]=='send':
     (r/'submitted.json').write_text(json.dumps({'id':a[3],'text':a[6]}))
     print(json.dumps({'status':'accepted','id':a[3]}))
 else:
+    if (r/'hold-read').exists():
+        (r/'read-held').touch()
+        while True: time.sleep(.02)
     time.sleep(.2);print(json.dumps({'status':'idle'}));sys.exit(3)
 ''')
             mail.chmod(0o700)
@@ -89,6 +92,8 @@ else:
             try:
                 expect('ACTIVITY_1')
                 os.write(master,b'/models\r');expect('tap to switch')
+                expect('Synthetic (2)')
+                os.write(master,b'1\r');expect('Providers')
                 os.write(master,b'99999\r');expect('Choose a displayed number')
                 self.assertFalse((base/'publishing').exists())
                 (base/'menu-gate').touch();os.write(master,b'/models\r')
@@ -108,8 +113,18 @@ else:
                 (base/'release').touch();expect('accepted ·')
                 submitted=json.loads((base/'submitted.json').read_text())
                 self.assertEqual(submitted['text'],paste)
+                (base/'hold-read').touch()
+                deadline=time.monotonic()+5
+                while not (base/'read-held').exists() and time.monotonic()<deadline:time.sleep(.01)
+                self.assertTrue((base/'read-held').exists())
                 os.write(master,b'/detach\r');process.wait(timeout=5)
+                while select.select([master],[],[],.05)[0]:
+                    try: block=os.read(master,65536)
+                    except OSError:break
+                    if not block:break
+                    transcript.extend(block)
                 self.assertEqual(process.returncode,0)
+                self.assertNotIn(b'Reply channel unavailable',transcript)
                 self.assertNotIn(b'\x1b[?1049h',transcript)
                 self.assertNotIn(b'\x1b[?1000h',transcript)
             finally:
