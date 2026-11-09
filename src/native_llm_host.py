@@ -823,7 +823,7 @@ def _record_failure(plan, kind, status=0):
     code = str(kind)
     code = code if code in known else "provider-error"
     provider = getattr(plan, "provider", "unknown")
-    if provider not in ("synthetic", "anthropic", "openai"):
+    if provider not in ("synthetic", "anthropic", "openai", "kimi"):
         provider = "unknown"
     status = int(status)
     status = status if 100 <= status <= 599 else 0

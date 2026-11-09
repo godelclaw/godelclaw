@@ -709,6 +709,16 @@ def draft(kind, scope, lane):
         self.assertIn("failed request: provider-error; provider=unknown", self.last_stderr)
         self.assertNotIn("private.invalid", self.last_stderr)
 
+    def test_kimi_failure_diagnostics_keep_provider_identity(self):
+        fixture = self.directory / "kimi_diagnostic_fixture.py"
+        fixture.write_text('from types import SimpleNamespace\nimport native_llm_host\n'
+            'def probe():\n'
+            '    native_llm_host._record_failure(SimpleNamespace(provider="kimi", '
+            'sent=True), "transport-error", 0)\n'
+            '    return True\n')
+        self.run_guest(f'!(import! &self "{fixture}")\n!(py-call (kimi_diagnostic_fixture.probe))\n')
+        self.assertIn("failed request: transport-error; provider=kimi", self.last_stderr)
+
     def test_credential_scope_rejects_different_origin_and_redirects(self):
         self.env.update(CETTA_IO_AUTH_FIXTURE_URL_PREFIX=self.env["SYNTHETIC_BASE_URL"]+"/",
             CETTA_IO_AUTH_FIXTURE_HEADER="Authorization", CETTA_IO_AUTH_FIXTURE_ENV="SYNTHETIC_API_KEY",
