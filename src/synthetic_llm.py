@@ -550,7 +550,7 @@ def _openai_base():
 _INTROSPECT_TIMEOUT = float(os.environ.get("SYNTHETIC_INTROSPECT_TIMEOUT", "8"))
 
 _OBSERVATION_SCHEMA = 1
-_OBSERVATION_TTLS = {"models": 300.0, "quota": 60.0}
+_OBSERVATION_TTLS = {"models": 300.0, "kimi-models": 300.0, "quota": 60.0}
 _OBSERVATION_RETRY_SECONDS = 30.0
 _observation_lock = threading.RLock()
 _OBSERVATION_TTLS["model-window"] = _OBSERVATION_TTLS["models"]
@@ -689,6 +689,17 @@ def _refresh_observation(kind):
         if kind == "models":
             payload = _get_json(_openai_base() + "/models")
             value = _sanitize_models(payload) if "error" not in payload else None
+        elif kind == "kimi-models":
+            provider = _provider_for("kimi:")
+            if not provider["key"]:
+                raise ValueError("Kimi Code credential is not configured")
+            request = urllib.request.Request(provider["base"] + "/models",
+                headers={"Authorization": "Bearer " + provider["key"],
+                         "User-Agent": "godelclaw/1.0", "Accept": "application/json"})
+            payload = _request_json(request, _INTROSPECT_TIMEOUT)
+            value = ([{**row, "id": "kimi:" + row["id"].removeprefix("kimi:")}
+                      for row in _sanitize_models(payload)]
+                     if "error" not in payload else None)
         elif kind == "model-window":
             model = current_model()
             provider = _provider_for(model)
@@ -763,6 +774,9 @@ def refresh_provider_observations_async(kinds=("models", "quota"), force=False):
     At most one worker per kind exists. Failure preserves the last good value
     and is rate-limited, so repeated controls cannot stampede the provider.
     """
+    kinds = tuple(kinds)
+    if "models" in kinds and os.environ.get("KIMI_API_KEY"):
+        kinds = tuple(dict.fromkeys((*kinds, "kimi-models")))
     started = []
     for kind in kinds:
         if kind not in _OBSERVATION_TTLS:
@@ -869,15 +883,16 @@ def quota():
 
 def models():
     """Last-known models as a MeTTa-friendly list; never provider-blocking."""
-    record = _cached_observation("models")
-    data = record.get("value") if isinstance(record.get("value"), list) else []
     refresh_provider_observations_async(("models",))
     items = []
-    for model in data:
-        if not isinstance(model, dict):
-            continue
-        context = model.get("context") or "?"
-        items.append(f"({model.get('id', '?')} ctx {context})")
+    for kind, provider in (("models", "synthetic"), ("kimi-models", "kimi")):
+        record = _cached_observation(kind)
+        data = record.get("value") if isinstance(record.get("value"), list) else []
+        for model in data:
+            if not isinstance(model, dict):
+                continue
+            context = model.get("context") or "?"
+            items.append(f"({model.get('id', '?')} ctx {context} provider {provider})")
     if os.environ.get("ANTHROPIC_API_KEY", ""):
         items.extend(f"({m} provider anthropic)" for m in _anthropic_models())
     return "(" + " ".join(items) + ")" if items else "(catalog refreshing)"
@@ -915,10 +930,13 @@ def model_ids():
     Synthetic's choices are exactly its last observed catalog, plus the selected
     model if the catalog no longer lists it, so the menu never offers a model the
     provider does not serve."""
-    record = _cached_observation("models")
-    rows = record.get("value") if isinstance(record.get("value"), list) else []
-    ids = [str(row.get("id")) for row in rows
-           if isinstance(row, dict) and row.get("id")]
+    ids = []
+    for kind in ("models", "kimi-models"):
+        record = _cached_observation(kind)
+        rows = record.get("value") if isinstance(record.get("value"), list) else []
+        for row in rows:
+            if isinstance(row, dict) and row.get("id") and str(row["id"]) not in ids:
+                ids.append(str(row["id"]))
     if _chatgpt_menu_enabled():
         for model_id in _CHATGPT_MENU_MODELS:
             if model_id not in ids:
@@ -936,26 +954,32 @@ def model_ids():
 
 def model_catalog_status():
     """Short, local-only provenance note for the Telegram model menu."""
+    notes = []
+    for kind, provider in (("models", "Synthetic"), ("kimi-models", "Kimi Code")):
+        record = _cached_observation(kind)
+        if kind == "kimi-models" and not record and not os.environ.get("KIMI_API_KEY"):
+            continue
+        observed = float(record.get("observed_at", 0) or 0)
+        if observed:
+            age = max(0, int(time.time() - observed))
+            notes.append(f"{provider} catalog observed {age}s ago")
+        else:
+            notes.append(f"{provider} catalog refreshing")
     if _chatgpt_menu_enabled():
-        return "Synthetic catalog + pinned ChatGPT subscription choices (availability unverified)"
-    record = _cached_observation("models")
-    observed = float(record.get("observed_at", 0) or 0)
-    if not observed:
-        refresh_provider_observations_async(("models",))
-        return "provider catalog refreshing; pinned choices shown"
-    age = max(0, int(time.time() - observed))
-    suffix = "; refresh running" if _observation_stale("models", record) else ""
-    return f"provider catalog observed {age}s ago{suffix}"
+        notes.append("pinned ChatGPT subscription choices (availability unverified)")
+    refresh_provider_observations_async(("models",))
+    return "; ".join(notes)
 
 
 def model_in_observed_catalog(name):
-    if str(name).startswith("chatgpt:"):
-        # Synthetic observations cannot establish subscription availability.
+    if str(name).startswith(("chatgpt:", "openai:")):
+        # Synthetic observations cannot establish another provider's availability.
         return None
     if _is_anthropic_model(name):
         return (str(name) in _anthropic_models()
                 if os.environ.get("ANTHROPIC_API_KEY", "") else False)
-    record = _cached_observation("models")
+    kind = "kimi-models" if str(name).startswith("kimi:") else "models"
+    record = _cached_observation(kind)
     rows = record.get("value") if isinstance(record.get("value"), list) else []
     ids = {str(row.get("id")) for row in rows
            if isinstance(row, dict) and row.get("id")}
@@ -1013,4 +1037,9 @@ def set_model(name):
         "may reject it"
         if availability is False else ""
     )
-    return f"model set to '{name}'; persists across restarts{warning}"
+    label = ("Kimi Code API" if name.startswith("kimi:") else
+             "OpenAI API" if name.startswith("openai:") else
+             "ChatGPT subscription" if name.startswith("chatgpt:") else "Synthetic")
+    if name.startswith("kimi:") and not os.environ.get("KIMI_API_KEY"):
+        warning += "; Kimi Code credential is not configured"
+    return f"model set to '{name}' ({label}); persists across restarts{warning}"

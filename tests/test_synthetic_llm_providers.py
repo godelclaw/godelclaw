@@ -134,6 +134,46 @@ class ProviderRoutingTest(unittest.TestCase):
         self.assertEqual(openai["name"], "openai")
         self.assertEqual(openai["key"], "openai-fixture")
 
+    def test_kimi_catalog_uses_its_own_endpoint_key_and_namespace(self):
+        with mock.patch.dict(os.environ, {
+                "KIMI_API_KEY": "kimi-fixture",
+                "KIMI_BASE_URL": "https://kimi.example.invalid/v1"}), \
+             mock.patch.object(synthetic_llm, "_request_json", return_value={
+                 "data": [{"id": "k3.1-pro", "context_length": 100000}]}) as fetch:
+            synthetic_llm._refresh_observation("kimi-models")
+        request = fetch.call_args.args[0]
+        self.assertEqual(request.full_url, "https://kimi.example.invalid/v1/models")
+        self.assertEqual(request.headers["Authorization"], "Bearer kimi-fixture")
+        self.assertEqual(request.headers["User-agent"], "godelclaw/1.0")
+        self.assertEqual(synthetic_llm._cached_observation("kimi-models")["value"],
+                         [{"id": "kimi:k3.1-pro", "context": 100000}])
+        self.assertEqual(synthetic_llm._cached_observation("models"), {})
+
+    def test_model_menu_keeps_kimi_and_synthetic_catalogs_distinct(self):
+        synthetic_llm._store_observation("models", [{"id": "hf:moonshotai/Kimi-K3.1-Pro"}])
+        with mock.patch.object(synthetic_llm, "refresh_provider_observations_async"), \
+             mock.patch.dict(os.environ, {"KIMI_API_KEY": "kimi-fixture"}):
+            self.assertIsNone(synthetic_llm.model_in_observed_catalog("kimi:k3.1-pro"))
+            reply = synthetic_llm.set_model("kimi:k3.1-pro")
+            self.assertIn("Kimi Code API", reply)
+            self.assertNotIn("absent from", reply)
+            synthetic_llm._store_observation("kimi-models", [{"id": "kimi:k3.1-pro"}])
+            self.assertTrue(synthetic_llm.model_in_observed_catalog("kimi:k3.1-pro"))
+            self.assertFalse(synthetic_llm.model_in_observed_catalog("kimi:unknown"))
+            self.assertIsNone(synthetic_llm.model_in_observed_catalog("openai:unknown"))
+            self.assertIn("kimi:k3.1-pro", synthetic_llm.model_ids())
+            self.assertIn("hf:moonshotai/Kimi-K3.1-Pro", synthetic_llm.model_ids())
+            self.assertIn("provider kimi", synthetic_llm.models())
+            self.assertIn("provider synthetic", synthetic_llm.models())
+            self.assertIn("Kimi Code catalog", synthetic_llm.model_catalog_status())
+
+    def test_kimi_selection_identifies_a_missing_credential(self):
+        with mock.patch.dict(os.environ, {"KIMI_API_KEY": ""}), \
+             mock.patch.object(synthetic_llm, "refresh_provider_observations_async"):
+            reply = synthetic_llm.set_model("kimi:k3.1-pro")
+            self.assertIn("Kimi Code credential is not configured", reply)
+            self.assertNotIn("absent from", reply)
+
     def test_subscription_menu_choices_require_the_native_backend_and_preserve_selection(self):
         from pathlib import Path
         policy = Path(self.flag_dir)/'chatgpt.json'
