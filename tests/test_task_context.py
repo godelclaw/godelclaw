@@ -214,6 +214,20 @@ class TaskContextTests(unittest.TestCase):
         self.assertEqual(view["transcript"][0]["disposition"], "uncertain")
         self.assertEqual(view["requests"][0]["content"], self.store.request_record("guide")["content"])
 
+    def test_retrieval_distinguishes_absent_occurrence_from_unavailable_store(self):
+        import input_ack
+        self.call([["read-file", "source"]], ["retained evidence"])
+        pair = task_context.projection(self.store, 'guide')['transcript'][0]
+        self.assertEqual(json.loads(task_context.read(self.store, pair['id'])['text']), pair)
+        owner, serial, _ = pair['id'].rsplit(':', 2)
+        with self.assertRaisesRegex(ValueError, 'unknown call identity'):
+            task_context.read(self.store, f'{owner}:{serial}:999999')
+        missing_socket = str(self.path.parent / 'unavailable.sock')
+        with mock.patch.dict(os.environ, {native_ledger.VARIABLE: missing_socket}):
+            with self.assertRaises(input_ack.LedgerUnavailable):
+                task_context.read(self.store, pair['id'])
+        self.assertEqual(json.loads(task_context.read(self.store, pair['id'])['text']), pair)
+
     def test_new_input_does_not_inherit_an_autonomous_goal_transcript(self):
         self.store.accept("goal:old","autonomous goal")
         task_context.begin(self.store,"goal:old","autonomous-trigger")
