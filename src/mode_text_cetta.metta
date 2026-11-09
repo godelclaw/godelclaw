@@ -3,7 +3,13 @@
 ; no non-ASCII character lowercases into a letter in those names. This is NOT
 ; a general replacement for Python str.lower on text returned to the caller.
 !(import! &self (library str))
-!(import! &self (library list))
+; Use the native sequence library in both HE and PeTTa profiles.
+!(case (import! &self (library list))
+     (((Error $where $why)
+       (let $reason (format-args "{}" ($why))
+         (if (or (== $reason "import! expects a module name") (== $reason "unknown library"))
+           (import! &self list) (Error $where $why))))
+      ($loaded $loaded)))
 
 (= (mode-text:space? $cp)
    (or (and (>= $cp 9) (<= $cp 13))

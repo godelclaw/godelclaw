@@ -23,6 +23,22 @@ class CompletionRecoveryTests(unittest.TestCase):
     column = boundary.NativeBoundaryTests.column
     events = boundary.NativeBoundaryTests.events
 
+    def test_entrypoint_admission_dependencies_and_owner_values_in_both_dialects(self):
+        for lang in ('he', 'petta'):
+            with self.subTest(lang=lang):
+                out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n' + '''
+!(println! (OWNER (process:owner)))
+!(println! (LIVE (process:alive? (process:owner))))
+!(let $pid (system:pid)
+   (println! (STALE (process:alive? (format-args "{}:0" ($pid))))))
+!(println! (INVALID (process:alive? "not-a-process")))
+''', lang)
+                self.assertRegex(out, r'\(OWNER "[1-9][0-9]*:[0-9]+"\)')
+                self.assertRegex(out, r'\(LIVE [Tt]rue\)')
+                self.assertRegex(out, r'\(STALE [Ff]alse\)')
+                self.assertRegex(out, r'\(INVALID [Ff]alse\)')
+                self.assertEqual(self.peer.requests, [])
+
     def fault(self, mode):
         """Once the first answer is decoded, the ledger fails the way `mode` names:
         rollback  the completion write is refused for .35 s, then the ledger is back;

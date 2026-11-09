@@ -2,8 +2,26 @@
 ; server (src/input_ledger_server.metta), which runs src/input_ledger.metta next to its
 ; store. A request of the Python adapter (input_ack.py, through a persistent value
 ; worker) is (ledger <socket> <verb> <arguments>) and its answer (answer <value>).
-!(import! &self (library db))
-!(import! &self (library list))
+; This client only sends server calls. It does not need PeTTa's local DB/query
+; facade; use the same connection/adoption protocol in both native dialects.
+!(case (import! &self (library store))
+     (((Error $where $why)
+       (let $reason (format-args "{}" ($why))
+         (if (or (== $reason "import! expects a module name") (== $reason "unknown library"))
+           (import! &self store) (Error $where $why))))
+      ($loaded $loaded)))
+!(case (import! &self (library space_service))
+     (((Error $where $why)
+       (let $reason (format-args "{}" ($why))
+         (if (or (== $reason "import! expects a module name") (== $reason "unknown library"))
+           (import! &self space_service) (Error $where $why))))
+      ($loaded $loaded)))
+!(case (import! &self (library list))
+     (((Error $where $why)
+       (let $reason (format-args "{}" ($why))
+         (if (or (== $reason "import! expects a module name") (== $reason "unknown library"))
+           (import! &self list) (Error $where $why))))
+      ($loaded $loaded)))
 !(import! &self (library system))
 
 (= (ledger-client:sessions) 3)
@@ -18,6 +36,7 @@
 ; A call whose reply was lost or whose server was not reachable is made again: a write
 ; carries its request id, so a repeat replays the answer of the first commit. An answer
 ; larger than one wire value is not lost: a read's is then read in pages.
+(: ledger-client:too-large (-> %Undefined% Bool))
 (= (ledger-client:too-large $outcome)
    (case $outcome
      (((Error ledger-client:call (unanswered ((ServiceFailedV1 reply-limit)))) True)
@@ -29,6 +48,7 @@
       ((Error $where limit) True)
       ($other False))))
 
+(: ledger-client:lost (-> %Undefined% Bool))
 (= (ledger-client:lost $outcome)
    (if (ledger-client:too-large $outcome)
        False
@@ -37,41 +57,58 @@
           ((Error $where unavailable) True)
           ((Error $where uncertain) True)
           ((Error ledger-client:call (unanswered $why)) True)
-          ((Error db:connect $why) True)
+          ((Error ledger-client:connect $why) True)
           ($other False)))))
 
+; The PeTTa server spells Boolean wire atoms in lowercase. Normalize only
+; this schema's Boolean field, so HE consumers match the same typed result.
+; Unrelated text and symbols in stored payloads are left untouched.
+(: ledger-client:decoded (-> %Undefined% %Undefined%))
+(= (ledger-client:decoded $value)
+   (case $value
+     (((LedgerChanged $flag)
+       (case $flag ((true (LedgerChanged True)) (false (LedgerChanged False))
+                    ($other $value))))
+      ($other $value))))
+(: ledger-client:answer (-> %Undefined% %Undefined%))
 (= (ledger-client:answer $reply)
    (case $reply
-     ((((LedgerAnswersV1 ($value))) $value)
+     ((((LedgerAnswersV1 ($value))) (ledger-client:decoded $value))
       (((LedgerAnswersV1 $answers)) (Error ledger-client:call (answers $answers)))
       ((DbRefusedV1 $why) (Error ledger-client:call (refused $why)))
       ($other (Error ledger-client:call (unanswered $other))))))
 
-(= (ledger-client:remote $db)
-   (case (db:resource $db)
-     (((db:remote $remote) $remote)
-      ($other (Error ledger-client:call (not-remote $other))))))
+(: ledger-client:connect (-> String %Undefined%))
+(= (ledger-client:connect $socket)
+   (case (space:connect $socket 30000)
+     (((SpaceConnected $connection)
+       (let* (($opened (store:remote-adopt $connection 30000))
+              ($_ (space:disconnect $connection)))
+         (case $opened
+           (((StoreRemoteOpened $owner $_context) $owner)
+            ($failure (Error ledger-client:connect $failure))))))
+      ($failure (Error ledger-client:connect $failure)))))
 
+(: ledger-client:attempt (-> %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (ledger-client:attempt $socket $route $request)
-   (case (db:connect $socket)
+   (case (ledger-client:connect $socket)
      (((Error $where $why) (Error $where $why))
-      ($db (let* (($answer (case (ledger-client:remote $db)
-                             (((Error $where $why) (Error $where $why))
-                              ($remote (ledger-client:answer (collapse (store:remote-call $remote $route $request)))))))
-                  ($_ (db:close $db)))
-             $answer)))))
+      ($remote (case (ledger-client:answer (collapse (store:remote-call $remote $route $request)))
+                 (($answer (let $_ (store:close $remote) $answer))))))))
 
+(: ledger-client:session (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (ledger-client:session $socket $route $request $left)
-   (let $outcome (ledger-client:attempt $socket $route $request)
-     (if (and (> $left 1) (ledger-client:lost $outcome))
+   (case (ledger-client:attempt $socket $route $request)
+     (($outcome (if (and (> $left 1) (ledger-client:lost $outcome))
          (ledger-client:session $socket $route $request (- $left 1))
-         $outcome)))
+         $outcome)))))
 
+(: ledger-client:call (-> %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (ledger-client:call $socket $verb $arguments)
-   (let $outcome (ledger-client:session $socket LedgerCall (LedgerCallV1 $verb $arguments) (ledger-client:sessions))
-     (if (and (ledger-client:too-large $outcome) (ledger-client:pageable $verb))
+   (case (ledger-client:session $socket LedgerCall (LedgerCallV1 $verb $arguments) (ledger-client:sessions))
+     (($outcome (if (and (ledger-client:too-large $outcome) (ledger-client:pageable $verb))
          (ledger-client:pages $socket $verb $arguments 0 (ledger-client:page-rows) none)
-         $outcome)))
+         $outcome)))))
 
 ; One page of a read (input-ledger:page): (page more|last <value>).
 (= (ledger-client:page $socket $verb $arguments $start $count)
