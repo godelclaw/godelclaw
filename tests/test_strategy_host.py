@@ -30,6 +30,10 @@ class StrategyHostTest(unittest.TestCase):
                                            _turn=None, _sample=None, _ticket=None,
                                            _focus=None, _position=0)
         globals_patch.start(); self.addCleanup(globals_patch.stop)
+        # The ledger worker survives between tests. Keep its transport module
+        # in the snapshot restored by the temporary Telegram module patch,
+        # otherwise later requests use a different Symbol class.
+        import execution_gateway.cetta_worker  # noqa: F401
         channels = mock.patch.dict(sys.modules, {"telegram": SimpleNamespace(_current_batch_update_ids=set())})
         channels.start(); self.addCleanup(channels.stop)
         guard = mock.patch.object(host, "guard", return_value="captured-control")
@@ -132,6 +136,17 @@ class StrategyHostTest(unittest.TestCase):
         self.assertEqual(capacity(lambda kind: {}, "872000"), 839232)
         self.assertEqual(capacity(cached, "2000000"), 967232)
         self.assertEqual(capacity(cached, "872000"), 839232)
+
+    def test_kimi_window_comes_from_its_own_catalog(self):
+        import synthetic_llm
+        def cached(kind):
+            return {"value": [{"id": "kimi:k3.1-pro", "context":
+                                1048576 if kind == "kimi-models" else 200000}]}
+        with mock.patch.object(synthetic_llm, "current_model", return_value="kimi:k3.1-pro"), \
+             mock.patch.object(synthetic_llm, "_cached_observation", side_effect=cached), \
+             mock.patch.object(synthetic_llm, "refresh_provider_observations_async"), \
+             mock.patch.dict(os.environ, {"METTACLAW_CONTEXT_WINDOW_TOKENS": ""}):
+            self.assertEqual(host.context_capacity(32768), 1015808)
 
     def test_real_receipt_callback_and_next_prepared_request(self):
         self.capture()

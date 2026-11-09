@@ -103,6 +103,10 @@ def set_model(name):
                 try:
                     body=controls.request('command',name='/models',arguments='')
                     self.assertEqual(body['kind'],'menu');self.assertFalse(chosen.exists())
+                    self.assertEqual(len(body['rows']),1)
+                    self.assertIn('Synthetic',body['rows'][0][0][0])
+                    body=controls.request('choice',value=body['rows'][0][0][1])
+                    self.assertEqual(body['kind'],'menu');self.assertFalse(chosen.exists())
                     self.assertGreater(len(body['rows']),20)
                     choice=body['rows'][0][0][1]
                     controls.request('choice',value=choice)

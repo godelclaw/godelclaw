@@ -1030,15 +1030,44 @@ def menu_state(kind):
 
 
 _MENU_KINDS = {"model": "models", "mode": "modes", "fuel": "fuels", "engine": "engines"}
+_MODEL_PROVIDER_LABELS = {
+    "kimi": "Kimi Code", "synthetic": "Synthetic", "anthropic": "Anthropic",
+    "chatgpt": "ChatGPT", "openai": "OpenAI API",
+}
 
 
-def menu_page(kind, prefix, offset=0):
+def _model_menu_provider(name):
+    name = str(name).strip()
+    for provider in ("kimi", "chatgpt", "openai"):
+        if name.startswith(provider + ":"):
+            return provider
+    return "anthropic" if name.startswith("claude-") else "synthetic"
+
+
+def menu_page(kind, prefix, offset=0, provider=None):
     """A presentation page; every choice remains available on later pages."""
     import hashlib
     if _MENU_KINDS.get(str(prefix)) != str(kind):
         raise ValueError("unknown settings menu")
     state = json.loads(menu_state(str(kind)))
     names = state["names"]
+    if kind == "models":
+        if provider is None:
+            groups = {key: [name for name in names if _model_menu_provider(name) == key]
+                      for key in _MODEL_PROVIDER_LABELS}
+            current = _model_menu_provider(state.get("current", ""))
+            rows = [[[("● " if key == current else "") + label +
+                      " (%d)" % len(groups[key]), "menu:model:%s:0" % key]]
+                    for key, label in _MODEL_PROVIDER_LABELS.items() if groups[key]]
+            return json.dumps({"text": "Choose a provider, then tap to switch models — " + state["text"],
+                               "rows": rows}, ensure_ascii=False)
+        if provider not in _MODEL_PROVIDER_LABELS:
+            raise ValueError("unknown model provider")
+        names = [name for name in names if _model_menu_provider(name) == provider]
+        state["text"] = _MODEL_PROVIDER_LABELS[provider] + " — " + state["text"]
+    elif provider is not None:
+        raise ValueError("provider pages are only for models")
+    page_prefix = str(prefix) + (":" + provider if provider is not None else "")
     width = 24
     offset = max(0, min(int(offset), max(0, len(names) - 1)))
     offset -= offset % width
@@ -1053,11 +1082,13 @@ def menu_page(kind, prefix, offset=0):
         rows.append([[label[:64], data]])
     navigation = []
     if offset:
-        navigation.append(["Previous", "menu:%s:%d" % (prefix, max(0, offset - width))])
+        navigation.append(["Previous", "menu:%s:%d" % (page_prefix, max(0, offset - width))])
     if offset + width < len(names):
-        navigation.append(["Next", "menu:%s:%d" % (prefix, offset + width)])
+        navigation.append(["Next", "menu:%s:%d" % (page_prefix, offset + width)])
     if navigation:
         rows.append(navigation)
+    if provider is not None:
+        rows.append([["Providers", "menu:model:providers"]])
     text = state["text"]
     if len(names) > width:
         text += " — choices %d–%d of %d" % (offset + 1, min(offset + width, len(names)), len(names))
@@ -1068,6 +1099,12 @@ def menu_page_button(argument):
     prefix, separator, offset = str(argument).partition(":")
     if not separator or prefix not in _MENU_KINDS:
         raise ValueError("unknown settings page")
+    if prefix == "model":
+        if offset == "providers":
+            return menu_page("models", "model")
+        provider, separator, page = offset.partition(":")
+        if separator:
+            return menu_page("models", "model", int(page), provider=provider)
     return menu_page(_MENU_KINDS[prefix], prefix, int(offset))
 
 
