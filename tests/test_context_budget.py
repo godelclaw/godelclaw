@@ -1,4 +1,5 @@
 import os
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -27,3 +28,14 @@ class ContextBudgetTests(unittest.TestCase):
         context_budget.policy(1000)
         self.assertEqual(context_budget.available('',None),1000)
         self.assertEqual(context_budget.available('',700),572)
+
+    def test_serialized_unicode_prefix_and_fixed_overhead_use_the_same_budget(self):
+        prefix = '{"retrieve":["task-read","evidence-λ🙂",0]}'
+        ratio = 2.5
+        cost = math.ceil(len(prefix.encode('utf-8')) / ratio)
+        context_budget.policy(1000)
+        with patch.object(context_budget, '_ratio', return_value=ratio):
+            self.assertEqual(context_budget.tokens(prefix), cost)
+            self.assertEqual(context_budget.available(prefix, cost + 128), 0)
+            self.assertEqual(context_budget.available(prefix, cost + 129), 1)
+            self.assertEqual(context_budget.available(prefix, cost + 127), 0)

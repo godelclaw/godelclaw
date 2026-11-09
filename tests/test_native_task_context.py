@@ -1,5 +1,6 @@
 """Compare native projections with the Python projection of the same native ledger."""
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -163,6 +164,52 @@ class NativeTaskContext(unittest.TestCase):
             '!(println! TASK_CONTEXT_OK)\n')
         self.assertIn('(fit-check false false true true)', stdout)
         self.assertEqual(out.read_text(), expected)
+
+    def test_emitted_archive_commands_recover_distinct_occurrences_and_exact_budget(self):
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        text = "same evidence λ🙂 " * 300
+        for name in ('first', 'second'):
+            fixture.call([["read-file", name]], [text])
+        fixture.call([["read-file", "correction"]], ["corrected interpretation; originals retained"])
+        original = reference.task_context.projection(fixture.store, 'guide')
+        view_file = fixture.path.parent / 'emitted-view.json'
+        history_file = fixture.path.parent / 'emitted-history.json'
+        q = lambda value: json.dumps(str(value), ensure_ascii=False)
+        code = '!(import! &self ./src/task_context_views)\n' + f'''
+!(let* (($view (task:projection "guide" "continuation-tick"))
+         ($encoded (state:encoded $view))
+         ($cost (context:measure $view 2.5)))
+   (progn
+     (println! (BOUNDARY (task:fits $view $cost 2.5) (task:fits $view (- $cost 1) 2.5)))
+     (println! (COST $cost (request:bytes $encoded)))
+     (fs:update-text {q(view_file)} "replace" (state:encoded (task:compact $view 800 2.5)) "" "")))
+!(println! TASK_CONTEXT_OK)
+'''
+        out = self.guest(fixture.path, code)
+        self.assertIn('(BOUNDARY true false)', out)
+        source_bytes = len(reference.encoded(original).encode())
+        self.assertIn(f'(COST {math.ceil(source_bytes / 2.5)} {source_bytes})', out)
+        self.assertLessEqual(math.ceil(len(view_file.read_bytes()) / 2.5), 800)
+        compact = json.loads(view_file.read_text())
+        descriptor = compact['archive']['retrieve']
+        self.assertEqual(descriptor[0], 'task-history')
+        command = '(' + descriptor[0] + ' ' + ' '.join(q(v) for v in descriptor[1:]) + ' "0")'
+        self.guest(fixture.path, '!(import! &self ./src/task_context_views)\n' +
+                   f'!(fs:update-text {q(history_file)} "replace" {command} "" "")\n!(println! TASK_CONTEXT_OK)\n')
+        entries = json.loads(history_file.read_text())['entries']
+        self.assertEqual([e['id'] for e in entries], [p['id'] for p in original['transcript']])
+        self.assertNotEqual(entries[0]['id'], entries[1]['id'])
+        for index, entry in enumerate(entries):
+            descriptor = entry['retrieve']
+            self.assertEqual(descriptor[0], 'task-read')
+            output = fixture.path.parent / f'emitted-read-{index}.json'
+            command = '(' + descriptor[0] + ' ' + ' '.join(q(v) for v in descriptor[1:]) + ' "65536")'
+            self.guest(fixture.path, '!(import! &self ./src/task_context_views)\n' +
+                       f'!(fs:update-text {q(output)} "replace" {command} "" "")\n!(println! TASK_CONTEXT_OK)\n')
+            page = json.loads(output.read_text())
+            self.assertIsNone(page['next'])
+            self.assertEqual(json.loads(page['text']), original['transcript'][index])
+        self.assertEqual(reference.task_context.projection(fixture.store, 'guide'), original)
 
     def test_idle_view_collapses_only_identical_confirmed_rest_receipts(self):
         fixture = reference.TaskContextTests(); fixture.setUp()

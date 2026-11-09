@@ -188,10 +188,21 @@ class TaskContextTests(unittest.TestCase):
         view = task_context.compact(original, 1300)
         self.assertLessEqual(len(encoded(view).encode()), 1300)
         self.assertIsNotNone(view["archive"])
-        identities, offset = [], 0
+        descriptor = view['archive']['retrieve']
+        self.assertEqual(descriptor[0], 'task-history')
+        root, offset = descriptor[1:]
+        identities = []
         while offset is not None:
-            page = task_context.history(self.store, "guide", offset, 7)
-            identities.extend(p["id"] for p in page["entries"]); offset = page["next"]
+            page = task_context.history(self.store, root, offset, 7)
+            for entry in page['entries']:
+                command = entry['retrieve']
+                self.assertEqual(command[0], 'task-read')
+                recovered = task_context.read(self.store, *command[1:])
+                self.assertIsNone(recovered['next'])
+                self.assertEqual(json.loads(recovered['text']),
+                                 original['transcript'][len(identities)])
+                identities.append(entry['id'])
+            offset = page["next"]
         self.assertEqual(identities, [p["id"] for p in original["transcript"]])
 
     def test_fresh_interpreter_recovers_original_request_and_uncertainty(self):
