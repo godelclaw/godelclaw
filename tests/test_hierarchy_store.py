@@ -197,11 +197,21 @@ class HierarchyTests(unittest.TestCase):
     def test_checkpoint_compaction_keeps_recoverable_originals(self):
         self.run_metta(self.seed() + '''
 !(hm:put (sock) (store) "e" episode "Evidence" "corrected" () ())
-!(let (space $uuid $id $name $backend $kind $rev $count) (hm:open (sock) (store))
-   (case (space:call (sock) (request (space:request-id) compact $uuid) 5000)
-     (((reply $rid ok $answer) (println! (OK compact)))
-      ($other (println! (FAIL compact $other))))))
-''', checks=1)
+; compact is an administrative checkpoint, not a receipted transaction.
+; Repeating it must preserve the logical world; its request ID is grounded
+; before constructing the data passed to space:call.
+!(let* (((space $uuid $id $name $backend $kind $rev $count) (hm:open (sock) (store)))
+         ($rid (space:request-id))
+         ($first (space:call (sock) (request $rid compact $uuid) 5000))
+         ($again (space:call (sock) (request $rid compact $uuid) 5000)))
+   (progn
+     (expect compact $first (reply $rid ok compacted))
+     (expect repeat-compact $again $first)))
+!(expect original-before-restart (hm:history (sock) (store) "e" 1)
+   (HOriginal "e" 1 episode "Evidence" "original needle Ω" () ((External "file-v1"))))
+!(expect revised-before-restart (hm:history (sock) (store) "e" 2)
+   (HOriginal "e" 2 episode "Evidence" "corrected" () ()))
+''', checks=4)
         self.stop()
         self.start()
         self.run_metta('''
