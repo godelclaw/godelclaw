@@ -248,6 +248,52 @@ class NativeTaskContext(unittest.TestCase):
         self.assertNotIn("CLOSED_BODY", json.dumps(after["requests"]))
         self.assertTrue(all("content" not in r and "retrieve" not in r for r in after["requests"]))
 
+    def test_processed_operator_notices_can_be_addressed_and_leave_open_work(self):
+        from unittest import mock
+        import input_ack
+        import strategy_host
+
+        fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        finished = (("input:finished-message", "message"),
+                    ("input:finished-notification", "notification"))
+        for name, kind in finished + (("input:later", "message"),
+                                     ("input:follow-up", "message"),
+                                     ("input:deferred", "message"),
+                                     ("input:direct", "message")):
+            fixture.store.accept(name, name, kind=kind)
+        for name, _ in finished:
+            self.assertTrue(fixture.store.processed(name))
+        self.assertTrue(fixture.store.processed("input:follow-up"))
+        self.assertTrue(fixture.store.disposition("input:deferred", "defer", "genuine later work"))
+        # Answering directly remains legal without settling the delivery first.
+        self.assertTrue(input_ack.request_answered("input:direct"))
+        self.assertEqual(fixture.store.request_record("input:direct")["processed"], 0)
+
+        def open_requests(name):
+            output = fixture.path.parent / (name + ".json")
+            self.guest(fixture.path, '!(fs:update-text ' + json.dumps(str(output)) +
+                ' "replace" (state:encoded (task:conversation-projection "guide" "continuation-tick" 0 40000)) "" "")\n'
+                '!(println! TASK_CONTEXT_OK)\n')
+            return json.loads(output.read_text())["requests"]
+
+        before = open_requests("notice-before")
+        self.assertTrue({name for name, _ in finished}.issubset({row["id"] for row in before}))
+        with mock.patch.object(strategy_host, "enabled", return_value=True), \
+                mock.patch.object(strategy_host, "ledger", return_value=fixture.store):
+            receipts = [strategy_host.request_disposition(name, "addressed", "reviewed")
+                        for name, _ in finished]
+        self.assertEqual(receipts, ["REQUEST_DISPOSITION_RECORDED"] * len(finished))
+        self.assertEqual([fixture.store.request_record(name)["status"] for name, _ in finished],
+                         ["addressed", "addressed"])
+
+        after = open_requests("notice-after")
+        rows = {row["id"]: row for row in after}
+        self.assertFalse({name for name, _ in finished} & rows.keys())
+        self.assertNotIn("input:direct", rows)
+        self.assertEqual(rows["input:later"]["status"], "active")
+        self.assertEqual(rows["input:follow-up"]["status"], "processed")
+        self.assertEqual(rows["input:deferred"]["status"], "deferred")
+
     def test_native_conversation_projection_matches_python_and_preserves_occurrences(self):
         fixture = reference.TaskContextTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
         fixture.call([["read-file", "a"]], ["same observation"])

@@ -496,8 +496,10 @@ def turn_commit_stage(provider_succeeded, history_saved, has_activity):
     if int(provider_succeeded) == 1 and int(history_saved) == 1:
         import telegram
         import strategy_host
+        # An explicitly deferred input has no new delivery IDs on a later
+        # turn, but its successful checkpoint still settles that one input.
         _turn_commit = (tuple(telegram._current_batch_update_ids) if int(has_activity) else (),
-                        strategy_host._message_focus if int(has_activity) else None)
+                        strategy_host._message_focus)
     else:
         _turn_commit = None
     return 1

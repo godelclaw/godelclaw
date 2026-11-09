@@ -596,14 +596,22 @@ def request_read(request, offset):
 
 
 def request_disposition(request, disposition, note):
+    global _message_focus
     if not enabled():
         return "PROTECTED_STRATEGY_DISABLED"
     import helper
     store, request = ledger(), str(request)
-    if store.request_record(request).get("status") == "unknown":
+    record = store.request_record(request)
+    if record.get("status") == "unknown":
         return "REQUEST_DISPOSITION_WITHHELD: unknown ID %s; (requests) lists request IDs" % request
     try:
         if store.disposition(request, str(disposition), helper.decode_safe_text(note)):
+            # A no-activity turn may explicitly defer an open input without
+            # focusing it. Settle that handled delivery with this turn, never
+            # replace a fresh turn's focus or another explicit defer target.
+            if (_message_focus is None and str(disposition) == "defer" and
+                    not record["processed"] and record["kind"] in ("message", "notification")):
+                _message_focus = request
             return "REQUEST_DISPOSITION_RECORDED"
         return "REQUEST_DISPOSITION_WITHHELD: %s (request %s)" % (store.refusal, request)
     except (ValueError, TypeError) as error:

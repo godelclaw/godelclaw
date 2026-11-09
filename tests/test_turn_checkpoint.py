@@ -68,6 +68,59 @@ class TurnCheckpointTests(unittest.TestCase):
         self.assertEqual(recovered.request_record("input:one")["processed"], 1)
         self.assertFalse(input_ack.committed(["101", "102"]))
 
+    def test_autonomous_defer_settles_notification_without_new_activity(self):
+        from types import SimpleNamespace
+        import lifecycle
+        import strategy_host
+        import task_context
+
+        key = "input:completion"
+        self.store.accept(key, "work completion", kind="notification")
+        task_context.begin(self.store, key, "channel-event", chat="room")
+        self.assertTrue(self.store.disposition(key, "defer", "inspect the completed work later"))
+        self.store.accept("input:newer", "new unfinished input", kind="notification")
+        self.store.accept("input:later", "genuine later work", kind="message")
+        self.assertTrue(self.store.processed("input:later"))
+        self.assertTrue(self.store.disposition("input:later", "defer", "not due yet"))
+        self.store.accept("autonomous", "ongoing autonomous work", kind="autonomous")
+        task_context.begin(self.store, "autonomous", "autonomous-trigger", key)
+
+        def open_requests():
+            # This is the native query behind task:conversation-projection's
+            # limited open-request/open-work view. Focus the distinct active
+            # input so an addressed completion is not retained as the focus.
+            answer = input_ack._ledger_call("conversation-rows", ("input:newer", 0, 40000))
+            return {row[0]: row[1] for row in answer[1]}
+
+        self.assertEqual(open_requests(), {"input:one": "active", "input:completion": "deferred",
+                                           "input:newer": "active", "input:later": "deferred",
+                                           "autonomous": "active"})
+        channel = SimpleNamespace(_current_batch_update_ids=set(), _reply_chat_id="room")
+        with mock.patch.multiple(strategy_host, _ledger=self.store, _booted=True,
+                                 _focus=None, _message_focus=None, _input_turn=False), \
+                mock.patch.object(strategy_host, "guard", return_value="test-control"), \
+                mock.patch.object(lifecycle, "cognition_enabled", return_value=1), \
+                mock.patch.dict(sys.modules, {"telegram": channel}):
+            # No _focus injection: begin recovers the native context focus.
+            strategy_host.begin(2, "autonomous-trigger", "")
+            self.assertEqual(strategy_host.request_disposition(key, "defer", "still later"),
+                             "REQUEST_DISPOSITION_RECORDED")
+            helper.turn_commit_stage(1, 1, 0)
+            self.assertEqual(helper.turn_commit_ready(), 1)
+            self.assertEqual(helper.working_set_save(9, 1, "resumed result", 12), 1)
+            record = self.store.request_record(key)
+            self.assertEqual((strategy_host._focus, record["processed"], record["status"]),
+                             ("autonomous", 1, "deferred"))
+            self.assertEqual(open_requests(), {"input:one": "active", "input:completion": "deferred",
+                                               "input:newer": "active", "input:later": "deferred",
+                                               "autonomous": "active"})
+            self.assertEqual(strategy_host.request_disposition(key, "addressed", "reviewed"),
+                             "REQUEST_DISPOSITION_RECORDED")
+        self.assertEqual(self.store.request_record("input:newer")["processed"], 0)
+        self.assertEqual(open_requests(), {"input:one": "active", "input:newer": "active",
+                                           "input:later": "deferred", "autonomous": "active"})
+        self.assertEqual(self.store.request_record("input:later")["status"], "deferred")
+
     def test_projection_failure_cannot_undo_committed_state(self):
         self.store.checkpoint({"saved_at": 1, "loops": 9})
         with mock.patch.object(helper.os, "replace", side_effect=OSError("projection failed")):
