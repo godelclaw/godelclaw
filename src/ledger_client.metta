@@ -23,6 +23,9 @@
            (import! &self list) (Error $where $why))))
       ($loaded $loaded)))
 !(import! &self (library system))
+; Retain the byte/string operations exposed by the former DB facade. Callers
+; measure encoded replies before choosing their wire allowance.
+!(import! &self (library str))
 
 (= (ledger-client:sessions) 3)
 
@@ -57,7 +60,7 @@
           ((Error $where unavailable) True)
           ((Error $where uncertain) True)
           ((Error ledger-client:call (unanswered $why)) True)
-          ((Error ledger-client:connect $why) True)
+          ((Error db:connect $why) True)
           ($other False)))))
 
 ; The PeTTa server spells Boolean wire atoms in lowercase. Normalize only
@@ -79,6 +82,8 @@
       ($other (Error ledger-client:call (unanswered $other))))))
 
 (: ledger-client:connect (-> String %Undefined%))
+; Keep the existing public failure tag even though the unused local-DB
+; facade is no longer imported. Readers already classify db:connect failures.
 (= (ledger-client:connect $socket)
    (case (space:connect $socket 30000)
      (((SpaceConnected $connection)
@@ -86,8 +91,10 @@
               ($_ (space:disconnect $connection)))
          (case $opened
            (((StoreRemoteOpened $owner $_context) $owner)
-            ($failure (Error ledger-client:connect $failure))))))
-      ($failure (Error ledger-client:connect $failure)))))
+            ((Error $where $why) (Error $where $why))
+            ($failure (Error db:connect $failure))))))
+      ((Error $where $why) (Error $where $why))
+      ($failure (Error db:connect $failure)))))
 
 (: ledger-client:attempt (-> %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (ledger-client:attempt $socket $route $request)

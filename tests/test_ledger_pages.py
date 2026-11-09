@@ -192,18 +192,15 @@ class PagesTest(NativeCase):
         )[0]
         decode_limit_lines = self.client(
             "!(match &self (= (ledger-client:attempt $s $route $req) $body)\n"
-            "   (remove-atom &self (= (ledger-client:attempt $s $route $req) $body)))\n"
+            "   (progn\n"
+            "     (add-atom &self (= (fixture:actual-attempt $s $route $req) $body))\n"
+            "     (remove-atom &self (= (ledger-client:attempt $s $route $req) $body))))\n"
+            "(: fixture:actual-attempt (-> %%Undefined%% %%Undefined%% %%Undefined%% %%Undefined%%))\n"
             "(= (ledger-client:attempt $s $route $req)\n"
             "   (if (== $route LedgerCall)\n"
             "       (let $_ (println! (DECODE_LIMIT_ATTEMPT $req))\n"
             "         (Error ledger-client:call (unanswered ((StoreRemoteFailed limit)))))\n"
-            "       (case (db:connect $s)\n"
-            "         (((Error $where $why) (Error $where $why))\n"
-            "          ($db (let* (($answer (case (ledger-client:remote $db)\n"
-            "                                 (((Error $where $why) (Error $where $why))\n"
-            "                                  ($remote (ledger-client:answer (collapse (store:remote-call $remote $route $req)))))))\n"
-            "                      ($_ (db:close $db)))\n"
-            "                 $answer))))))\n"
+            "       (fixture:actual-attempt $s $route $req)))\n"
             '!(println! (ROWSDATA (ledger-client:call %s "conversation-rows" ("task-1" 0 5000))))\n'
             '!(println! (WRITE_LIMIT (ledger-client:call %s "request-retire" ("retire-big:" "retired" "req-retire-limit"))))\n'
             % (socket, socket)
