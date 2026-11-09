@@ -124,7 +124,9 @@ def release_marker(previous, manifest, files, pid, receipt, instance):
 
 def await_boundaries(entries, pids, timeout):
     deadline = time.monotonic() + float(timeout)
-    waiting = list(entries)
+    # A stopped instance has no in-flight turn to finish. Its launcher is
+    # still held while files and offline checks are prepared.
+    waiting = [entry for entry in entries if pids[entry[0]["service"]] != "0"]
     while waiting:
         waiting = [entry for entry in waiting if
                    service(entry[0]["service"], "show") in ("0", pids[entry[0]["service"]])]
@@ -193,14 +195,19 @@ def main():
             raise ValueError("shared runtime environment source is missing")
     entries = []
     for index, (instance, root) in enumerate(zip(instances, roots)):
-        actual_settings = running_settings(instance["service"])
+        pid = service(instance["service"], "show")
         expected_settings = {
             "METTACLAW_ENGINE_STATE_PATH": str(Path(instance["state_dir"]) / "engine"),
             "METTACLAW_RECYCLE_REQUEST_PATH": instance.get("recycle_path", str(Path(instance["state_dir"]) / "recycle.requested")),
             "METTACLAW_WAKE_REQUEST_PATH": instance.get("wake_path", str(Path(instance["state_dir"]) / "wake.requested")),
         }
-        if any(actual_settings.get(key) != value for key, value in expected_settings.items()):
-            raise ValueError("deployment paths differ from the running instance: " + instance["name"])
+        if pid == "0":
+            if instance.get("activate_stopped") is not True:
+                raise ValueError("stopped instance needs explicit activate_stopped: " + instance["name"])
+        else:
+            actual_settings = running_settings(instance["service"])
+            if any(actual_settings.get(key) != value for key, value in expected_settings.items()):
+                raise ValueError("deployment paths differ from the running instance: " + instance["name"])
         overlays = {str(relative(n)): Path(p) for n, p in instance.get("overlays", {}).items()}
         if set(overlays) & set(files):
             raise ValueError("instance overlays cannot replace shared runtime files")
@@ -217,7 +224,6 @@ def main():
                 backup.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(root / name, backup)
             before[name] = actual
-        pid = service(instance["service"], "show")
         entries.append((instance, root, overlays, before, pid))
         record["instances"].append({"name": instance["name"], "pid_before": pid, "before": before})
     def save():
@@ -294,7 +300,12 @@ def main():
                 except (OSError, ValueError):
                     active = {}
                 booted &= live_pid not in ("0", pid) and str(active.get("pid")) == live_pid
-                required = instance.get("required_runtime", {})
+                required = {
+                    **instance.get("required_runtime", {}),
+                    "METTACLAW_ENGINE_STATE_PATH": str(Path(instance["state_dir"]) / "engine"),
+                    "METTACLAW_RECYCLE_REQUEST_PATH": instance.get("recycle_path", str(Path(instance["state_dir"]) / "recycle.requested")),
+                    "METTACLAW_WAKE_REQUEST_PATH": instance.get("wake_path", str(Path(instance["state_dir"]) / "wake.requested")),
+                }
                 if required:
                     try:
                         actual_runtime = running_settings(instance["service"], required)
@@ -379,7 +390,9 @@ def main():
             # Only the held launcher is restarted. The old cognitive process
             # is allowed to finish naturally if the boundary was not reached.
             current_pid = service(instance["service"], "show")
-            if current_pid not in ("0", pid):
+            if pid == "0" and current_pid != "0":
+                service(instance["service"], "stop")
+            elif current_pid not in ("0", pid):
                 service(instance["service"], "restart")
         for name in activated_controls:
             service(name, "restart")

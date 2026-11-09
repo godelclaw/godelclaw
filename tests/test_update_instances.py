@@ -126,7 +126,8 @@ class ReleasePermissionsTest(unittest.TestCase):
 
 class PairedUpdateTest(unittest.TestCase):
     def exercise(self, failed=False, runtime_missing=False, controls=False, control_failure=False,
-                 shared_environment=False, single=False, readiness=False, readiness_failure=False):
+                 shared_environment=False, single=False, readiness=False, readiness_failure=False,
+                 stopped=False):
         with tempfile.TemporaryDirectory() as temporary:
             work = Path(temporary)
             release = work / "release"
@@ -154,6 +155,8 @@ class PairedUpdateTest(unittest.TestCase):
                     instances[-1]["control_services"] = [name + "-control"]
             plan = work / "plan.json"
             selected = instances[:1] if single else instances
+            if stopped:
+                selected[0]["activate_stopped"] = True
             for item in selected:
                 (Path(item["state_dir"]) / "runtime-release.json").write_text(
                     json.dumps({"schema": 1, "release": "old", "model": "stale-model"}) + "\n")
@@ -166,7 +169,7 @@ class PairedUpdateTest(unittest.TestCase):
                 value = json.loads(plan.read_text())
                 value['shared_environment'] = dict(path=str(old_env), source=str(new_env))
                 plan.write_text(json.dumps(value))
-            pids = {"alpha": "1", "beta": "1"}
+            pids = {"alpha": "0" if stopped else "1", "beta": "1"}
             control_restarts = []
             qualified = []
             def service(name, operation):
@@ -180,8 +183,11 @@ class PairedUpdateTest(unittest.TestCase):
                 item = next(i for i in instances if i["name"] == name)
                 state = Path(item["state_dir"])
                 if operation == "restart":
-                    pids[name] = str(int(pids[name]) + 1)
+                    pids[name] = str(max(2, int(pids[name])) + 1)
+                    (state / "recycle.requested").unlink(missing_ok=True)
                     (state / "active-loop.json").write_text(json.dumps({"pid": int(pids[name])}))
+                elif operation == "stop":
+                    pids[name] = "0"
                 elif (state / "recycle.requested").exists() and pids[name] == "1":
                     pids[name] = "2"
                 elif ((state / "recycle.requested").exists()
@@ -197,6 +203,8 @@ class PairedUpdateTest(unittest.TestCase):
                 qualified.append(command[-1])
                 return subprocess.CompletedProcess(command, int(failed and command[-1] == selected[-1]["name"]), "CHECK_OK", "")
             def settings(name, extra_keys=()):
+                if pids[name] == "0":
+                    raise RuntimeError("stopped instance has no process environment")
                 state = next(i["state_dir"] for i in instances if i["name"] == name)
                 return {"METTACLAW_ACTIVE_LOOP_MODE": "godelclaw",
                         "METTACLAW_OBSERVED_STRATEGY": "0" if runtime_missing and name == selected[-1]["name"] else "1",
@@ -243,6 +251,18 @@ class PairedUpdateTest(unittest.TestCase):
                 elif not unchanged:
                     marker = json.loads((Path(item['state_dir']) / 'runtime-release.json').read_text())
                     self.assertNotIn('model', marker)
+            if stopped:
+                self.assertEqual(pids['alpha'] == '0', rollback)
+
+    def test_stopped_instance_activates_with_its_running_peer(self):
+        self.exercise(stopped=True, controls=True, readiness=True)
+
+    def test_stopped_instance_stays_stopped_after_offline_failure(self):
+        self.exercise(stopped=True, failed=True, controls=True)
+
+    def test_rollback_restores_originally_stopped_instance_to_stopped(self):
+        self.exercise(stopped=True, controls=True, readiness_failure=True,
+                      shared_environment=True)
 
     def test_single_instance_updates_without_touching_its_peer(self):
         self.exercise(single=True, controls=True)
