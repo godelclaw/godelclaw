@@ -15,6 +15,17 @@
 
 !(let* (($_ (py-call (loop_modes.set_mode "godelclaw")))
          ($initial (initLoop))
+         ;; A stopped lifecycle keeps eligible input and its effects pending.
+         ($_ (lifecycle:stop))
+         ($disabledState
+          (process-step $initial
+            (turnProcess (process-periphery $initial))))
+         ($_ (assertEqual (loop-budget (process-periphery $disabledState)) 0))
+         ($_ (assertEqual (py-call (helper.delivery_pending_count)) 1))
+         ($_ (assertEqual
+               (py-call (helper.delivery_history_has "stable turn input")) 0))
+         ($_ (assertEqual (py-call (helper.delivery_prompt_count)) 0))
+         ($_ (lifecycle:start))
          ($afterFailure
           (process-step $initial
             (turnProcess (process-periphery $initial))))

@@ -116,12 +116,16 @@ class LoopWiringTests(unittest.TestCase):
         self.assertIn("(process-step $state $outcome)", self.loop)
 
     def test_timed_rest_carries_quoted_continuation_as_data(self):
-        self.assertIn("(= (rest-command $seconds (quote $continuation))", self.skills)
+        signature = "(= (rest-command $seconds $continuation)"
+        self.assertIn(signature, self.skills)
         self.assertIn("pending-continuation", self.skills)
-        self.assertIn("(continuation-value $continuation)", self.skills)
-        start = self.skills.index("(= (rest-command $seconds (quote $continuation))")
+        start = self.skills.index(signature)
         end = self.skills.index("(= (rest $seconds $why)", start)
-        self.assertNotIn("(helper.intent_save", self.skills[start:end])
+        command = self.skills[start:end]
+        self.assertIn("(helper.rest_schedule $n (quote $continuation))",
+                      command)
+        self.assertIn("(continuation-value $continuation)", command)
+        self.assertNotIn("(helper.intent_save", command)
 
     def test_wait_executes_continuation_without_model_call(self):
         self.assertIn("(runRestContinuation", self.loop)

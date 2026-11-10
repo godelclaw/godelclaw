@@ -209,13 +209,33 @@ class ActivityBatchTests(unittest.TestCase):
         enabled_definition = loop.index("(= (enabledTurnCandidate $periphery)")
         receive = loop.index("($message (eval (receive)))", enabled_definition)
         wrapper = loop.index("(= (turnCandidate $periphery)")
-        gate = loop.index("(lifecycle.cognition_enabled)", wrapper)
+        wrapper_end = loop.index("(= (protectedOutcome", wrapper)
+        gate = loop.index("(case (lifecycle:enabled)", wrapper)
         enabled_call = loop.index("(enabledTurnCandidate $periphery)", gate)
         self.assertLess(enabled_definition, receive)
         self.assertLess(wrapper, gate)
         self.assertLess(gate, enabled_call)
-        self.assertIn("(if $enabled\n                (applyTimedContinuation",
-                      loop)
+        self.assertLess(enabled_call, wrapper_end)
+        gated = loop[wrapper:wrapper_end]
+        self.assertIn("(if (== $enabled 1)", gated)
+        for effect in ("($message (eval (receive)))", "(addition-model-call",
+                       "(settleActivityBatch)", "(telegram.ackActivityBatch"):
+            self.assertNotIn(effect, gated)
+
+        wait = loop.index("(= (waitCandidate $periphery)")
+        wait_gate = loop.index("(case (lifecycle:enabled)", wait)
+        authorized = loop.index(
+            "(waitAuthorizedCandidate $periphery $policy (== $enabled 1))",
+            wait_gate)
+        continuation_guard = loop.index(
+            "(if (and $enabled (not $recycling))", authorized)
+        continuation = loop.index(
+            "(applyTimedContinuation $periphery $timedOut)",
+            continuation_guard)
+        self.assertLess(wait, wait_gate)
+        self.assertLess(wait_gate, authorized)
+        self.assertLess(authorized, continuation_guard)
+        self.assertLess(continuation_guard, continuation)
 
     def test_attention_graph_brackets_the_model_action(self):
         loop = (ROOT / "src" / "loop.metta").read_text(encoding="utf-8")
