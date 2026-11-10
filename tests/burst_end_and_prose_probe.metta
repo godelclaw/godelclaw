@@ -44,5 +44,9 @@
          ($third (cognitiveTurn (applyAutonomousBurst (next-turn $second) True) "" False False True False))
          ($_ (assertEqual (py-call (helper.burst_prompt_has 2 "TASK_COMPLETE_PICK_A_GOAL")) 0))
          ($_ (assertEqual (py-call (helper.burst_prompt_has 2 "RECONSIDER_UNFINISHED_WORK")) 1))
-         ($_ (assertEqual (py-call (helper.burst_prompt_has 2 "CONTINUE_THE_CURRENT_TASK")) 0)))
+         ($_ (assertEqual (py-call (helper.burst_prompt_has 2 "CONTINUE_THE_CURRENT_TASK")) 0))
+         ;; Every assertion has succeeded and the scripted effects are not
+         ;; repeatable. End the fixture's residual choice points here, after
+         ;; those assertions; an earlier failure must still fail the probe.
+         ($_ (cut)))
      (println! BURST_END_AND_PROSE_OK))
