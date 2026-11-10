@@ -8,10 +8,12 @@ known-good Git generation; private runtime state is never switched or reset.
 """
 
 import argparse
+import ast
 import datetime
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -155,22 +157,144 @@ def memory_parser():
     return result
 
 
+def _python_lifecycle_definitions(source, names):
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return False
+    definitions = {
+        node.name for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    return set(names) <= definitions
+
+
+def _python_lifecycle_commands(source):
+    """Recognize the actual cmd dispatch, not comments or documentation."""
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return False
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Compare)
+                and isinstance(node.left, ast.Name) and node.left.id == "cmd"
+                and len(node.ops) == 1 and isinstance(node.ops[0], ast.In)):
+            continue
+        values = set()
+        for comparator in node.comparators:
+            if isinstance(comparator, (ast.Tuple, ast.List, ast.Set)):
+                values.update(element.value for element in comparator.elts
+                              if isinstance(element, ast.Constant)
+                              and isinstance(element.value, str))
+        if {"/start", "/stop"} <= values:
+            return True
+    return False
+
+
+def _metta_code(source):
+    """Blank comments and strings while retaining executable source layout."""
+    output = []
+    quoted = escaped = comment = False
+    for character in source:
+        if comment:
+            if character == "\n":
+                comment = False
+                output.append(character)
+            else:
+                output.append(" ")
+        elif quoted:
+            if character == "\n":
+                output.append(character)
+            else:
+                output.append(" ")
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                quoted = False
+        elif character == ";":
+            comment = True
+            output.append(" ")
+        elif character == '"':
+            quoted = True
+            output.append(" ")
+        else:
+            output.append(character)
+    return "".join(output)
+
+
+def _metta_definition(source, name):
+    match = re.search(r"(?m)^\(=\s+\(" + re.escape(name) + r"(?=[\s)])",
+                      source)
+    if not match:
+        return None
+    # End at this form's closing parenthesis, not at the next definition.
+    # A neighbouring top-level form cannot supply this definition's gate.
+    depth = 0
+    for at in range(match.start(), len(source)):
+        if source[at] == "(":
+            depth += 1
+        elif source[at] == ")":
+            depth -= 1
+            if depth == 0:
+                return source[match.start():at + 1]
+    return None
+
+
+def _metta_calls(source, definition, marker):
+    body = _metta_definition(source, definition)
+    return body is not None and marker in " ".join(body.split())
+
+
 def _generation_has_lifecycle_authority(root, revision):
     """Refuse rollback across the operator-authority safety boundary."""
-    required = {
-        "src/lifecycle.py": ("def cognition_enabled", "def stop", "def start"),
-        "src/loop.metta": ("lifecycle.cognition_enabled",),
-        "channels/telegram.py": ('"/start", "/stop"',),
-    }
-    for relative, markers in required.items():
-        result = _run(
-            ["git", "show", "%s:%s" % (revision, relative)], cwd=root
-        )
-        if result.returncode != 0:
-            return False
-        if any(marker not in result.stdout for marker in markers):
-            return False
-    return True
+    paths = (
+        "channels/telegram.py", "src/lifecycle.py", "src/lifecycle_cetta.metta",
+        "src/loop.metta", "src/mode_state.metta",
+    )
+    sources = {}
+    try:
+        for relative in paths:
+            result = _run(
+                ["git", "show", "%s:%s" % (revision, relative)], cwd=root
+            )
+            sources[relative] = result.stdout if result.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+    commands = sources["channels/telegram.py"]
+    if commands is None or not _python_lifecycle_commands(commands):
+        return False
+    loop = sources["src/loop.metta"]
+    if loop is None:
+        return False
+    loop = _metta_code(loop)
+    gates = ("turnCandidate", "waitCandidate")
+
+    legacy = sources["src/lifecycle.py"]
+    if (legacy is not None
+            and _python_lifecycle_definitions(
+                legacy, ("cognition_enabled", "stop", "start"))
+            and all(_metta_calls(loop, gate, "(lifecycle.cognition_enabled)")
+                    for gate in gates)):
+        return True
+
+    native = sources["src/lifecycle_cetta.metta"]
+    facade = sources["src/mode_state.metta"]
+    if native is None or facade is None:
+        return False
+    native = _metta_code(native)
+    facade = " ".join(_metta_code(facade).split())
+    native_names = ("enabled", "start", "stop")
+    if any(_metta_definition(native, "lifecycle-native:" + name) is None
+           for name in native_names):
+        return False
+    if any("(= (lifecycle:%s) (lifecycle-native:%s))" % (name, name)
+           not in facade for name in native_names):
+        return False
+    return all(_metta_calls(loop, gate, "(lifecycle:enabled)")
+               for gate in gates)
 
 
 def observe(args, deployment, now=None):

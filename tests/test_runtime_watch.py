@@ -11,6 +11,58 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import runtime_watch  # noqa: E402
 
 
+OPERATOR_COMMANDS = """\
+def dispatch(cmd):
+    if cmd in ("/start", "/stop"):
+        pass
+"""
+NATIVE_LOOP = """\
+(= (turnCandidate $p)
+   (case (lifecycle:enabled) (($x $x))))
+(= (waitCandidate $p)
+   (case (lifecycle:enabled) (($x $x))))
+"""
+NATIVE_LIFECYCLE = """\
+(= (lifecycle-native:enabled) 1)
+(= (lifecycle-native:start) "started")
+(= (lifecycle-native:stop) "stopped")
+"""
+NATIVE_FACADE = """\
+(add-atom &self (= (lifecycle:enabled) (lifecycle-native:enabled)))
+(add-atom &self (= (lifecycle:start) (lifecycle-native:start)))
+(add-atom &self (= (lifecycle:stop) (lifecycle-native:stop)))
+"""
+LEGACY_LOOP = """\
+(= (turnCandidate $p)
+   (case (py-call (lifecycle.cognition_enabled)) (($x $x))))
+(= (waitCandidate $p)
+   (case (py-call (lifecycle.cognition_enabled)) (($x $x))))
+"""
+LEGACY_LIFECYCLE = """\
+def cognition_enabled():
+    return 1
+def start():
+    return "started"
+def stop():
+    return "stopped"
+"""
+
+
+def lifecycle_revision(native):
+    if native:
+        return {
+            "channels/telegram.py": OPERATOR_COMMANDS,
+            "src/lifecycle_cetta.metta": NATIVE_LIFECYCLE,
+            "src/loop.metta": NATIVE_LOOP,
+            "src/mode_state.metta": NATIVE_FACADE,
+        }
+    return {
+        "channels/telegram.py": OPERATOR_COMMANDS,
+        "src/lifecycle.py": LEGACY_LIFECYCLE,
+        "src/loop.metta": LEGACY_LOOP,
+    }
+
+
 class MemoryObservationTest(unittest.TestCase):
     def sample(self, at, ram, swap=0, invocation="first"):
         return {"at": at, "invocation": invocation, "pid": 42,
@@ -142,6 +194,82 @@ class RuntimeWatchTest(unittest.TestCase):
         self.assertFalse(success)
         self.assertEqual(action, "rollback-refused-lifecycle-regression")
         run.assert_not_called()
+
+    def assert_revision_authority(self, files, expected, revision):
+        def revision_file(command, cwd=None, check=False):
+            self.assertEqual(cwd, self.args.root)
+            self.assertEqual(command[:2], ["git", "show"])
+            self.assertFalse(check)
+            target, relative = command[2].split(":", 1)
+            self.assertEqual(target, revision)
+            content = files.get(relative)
+            return mock.Mock(returncode=int(content is None),
+                             stdout=content or "")
+
+        with mock.patch.object(runtime_watch, "_run",
+                               side_effect=revision_file) as run:
+            self.assertIs(
+                runtime_watch._generation_has_lifecycle_authority(
+                    self.args.root, revision), expected)
+        self.assertGreater(run.call_count, 0)
+
+    def test_old_and_current_revision_fixtures_are_admissible(self):
+        for revision, native in (("legacy-fixture", False),
+                                 ("current-fixture", True)):
+            with self.subTest(revision=revision):
+                self.assert_revision_authority(
+                    lifecycle_revision(native), True, revision)
+
+    def test_revision_fence_rejects_missing_or_inert_authority(self):
+        missing_native_definition = lifecycle_revision(True)
+        missing_native_definition["src/lifecycle_cetta.metta"] = (
+            NATIVE_LIFECYCLE.replace(
+                '(= (lifecycle-native:stop) "stopped")', ""))
+        missing_native_facade = lifecycle_revision(True)
+        missing_native_facade["src/mode_state.metta"] = ""
+        missing_native_gate = lifecycle_revision(True)
+        missing_native_gate["src/loop.metta"] = NATIVE_LOOP.replace(
+            "(case (lifecycle:enabled)", "(case (lifecycle:other)", 1)
+        commented_native_gates = lifecycle_revision(True)
+        commented_native_gates["src/loop.metta"] = NATIVE_LOOP.replace(
+            "(case (lifecycle:enabled)", "; (case (lifecycle:enabled)")
+        quoted_native_gates = lifecycle_revision(True)
+        quoted_native_gates["src/loop.metta"] = NATIVE_LOOP.replace(
+            "(case (lifecycle:enabled)", '"(case (lifecycle:enabled)"')
+        missing_legacy_definition = lifecycle_revision(False)
+        missing_legacy_definition["src/lifecycle.py"] = (
+            LEGACY_LIFECYCLE.replace("def stop():", "def retired_stop():"))
+        missing_legacy_gate = lifecycle_revision(False)
+        missing_legacy_gate["src/loop.metta"] = LEGACY_LOOP.replace(
+            "(lifecycle.cognition_enabled)", "(lifecycle.retired)", 1)
+        commented_commands = lifecycle_revision(True)
+        commented_commands["channels/telegram.py"] = (
+            "# if cmd in (\"/start\", \"/stop\"): pass\n")
+        missing_loop = lifecycle_revision(True)
+        del missing_loop["src/loop.metta"]
+        adjacent_gate = lifecycle_revision(True)
+        adjacent_gate["src/loop.metta"] = (
+            "(= (turnCandidate $p) $p)\n!(lifecycle:enabled)\n" +
+            NATIVE_LOOP[NATIVE_LOOP.index("(= (waitCandidate"):])
+        wrong_comparison = lifecycle_revision(True)
+        wrong_comparison["channels/telegram.py"] = OPERATOR_COMMANDS.replace(
+            'cmd in', 'cmd !=')
+        cases = {
+            "adjacent-gate": adjacent_gate,
+            "wrong-command-comparison": wrong_comparison,
+            "missing-native-definition": missing_native_definition,
+            "missing-native-facade": missing_native_facade,
+            "missing-native-gate": missing_native_gate,
+            "commented-native-gates": commented_native_gates,
+            "quoted-native-gates": quoted_native_gates,
+            "missing-legacy-definition": missing_legacy_definition,
+            "missing-legacy-gate": missing_legacy_gate,
+            "commented-commands": commented_commands,
+            "missing-loop": missing_loop,
+        }
+        for revision, files in cases.items():
+            with self.subTest(revision=revision):
+                self.assert_revision_authority(files, False, revision)
 
     def test_current_lifecycle_generation_is_admissible(self):
         if not (ROOT := pathlib.Path(__file__).resolve().parents[1]).is_dir():
