@@ -18,11 +18,20 @@ first_char(Str, C) :- sub_string(Str, 0, 1, _, C).
       nb_setval(mettaclaw_command_batch, command_batch(Turn, Commands, Records, Errors))
     ).
 
+% Use the imported Python module object as the Janus receiver. Resolving the
+% module name lazily at the first call can leave a stale python_builtin
+% exception even when Janus returns the requested value. This does not catch
+% or clear genuine exceptions; the existing receipt fallback owns failures.
+dispatch_python_call(Name, Call, Result) :-
+    atom_string(Name, ModuleName),
+    py_call(builtins:'__import__'(ModuleName), Module, [py_object(true)]),
+    py_call(Module:Call, Result).
+
 %% Fix the public-sharing epoch once per turn, before any command of the batch
 %% runs.  Best effort: a failure or exception is swallowed, so it can neither
 %% delay nor fail a command; record_command stays the only publisher.
 capture_public_epoch(Turn) :-
-    ( catch('py-call'(['effect_receipts.capture_public_epoch', Turn], _), _, fail)
+    ( catch(dispatch_python_call(effect_receipts, capture_public_epoch(Turn), _), _, fail)
     -> true
     ;  true
     ).
@@ -41,9 +50,9 @@ run_command_list_once(Turn, [Command|Rest], [Record|Records], Errors) :-
 
 run_command_once(Turn, Command, Record, Errors) :-
     ( getenv('METTACLAW_OBSERVED_STRATEGY', '1')
-    -> 'py-call'(['strategy_host.reserve_command', Turn, Command], _)
+    -> dispatch_python_call(strategy_host, reserve_command(Turn, Command), _)
     ; true ),
-    ( catch('py-call'(['strategy_host.stopped'], 1), _, fail)
+    ( catch(dispatch_python_call(strategy_host, stopped(), 1), _, fail)
     -> Record = ['COMMAND_NOT_RUN:', [Command, "operator stopped cognition"]],
        Errors = [], record_command_receipt(Turn, withheld, Command, "operator stopped cognition")
     ; catch(( once(command_effect(Command, Value))
@@ -61,15 +70,13 @@ command_disposition(failed, no_result).
 command_disposition(exception(_), exception).
 
 record_command_receipt(Turn, Disposition, Command, Result) :-
-    ( catch('py-call'(['effect_receipts.record_command', Turn, Disposition,
-                       Command, Result], _), _, fail)
+    ( catch(dispatch_python_call(effect_receipts, record_command(Turn, Disposition, Command, Result), _), _, fail)
     -> true
     ;  fallback_command_receipt(Turn, Disposition, Command, Result)
     ).
 
 record_suffix_receipt(Turn, Disposition, Commands, Reason) :-
-    ( catch('py-call'(['effect_receipts.record_suffix', Turn, Disposition,
-                       Commands, Reason], _), _, fail)
+    ( catch(dispatch_python_call(effect_receipts, record_suffix(Turn, Disposition, Commands, Reason), _), _, fail)
     -> true
     ;  fallback_suffix_receipt(Turn, Disposition, Commands, Reason)
     ).
@@ -127,7 +134,7 @@ append_fallback_receipt(Entry) :-
 %% no passthrough result, so an unsupported command cannot reach eval/2.
 command_effect(Command, Value) :-
     getenv('METTACLAW_EFFECT_BACKEND', 'tmux-shadow'), !,
-    'py-call'(['effect_backend.dispatch', Command], Outcome),
+    dispatch_python_call(effect_backend, dispatch(Command), Outcome),
     shadow_effect_outcome(Outcome, Value).
 command_effect(Command, _Value) :-
     ( ( getenv('METTACLAW_EFFECT_BACKEND_STATE', State), State \== '' )
@@ -143,11 +150,11 @@ command_effect([rest, Seconds, Command], Value) :-
     is_list(Command), !, schedule_command(Seconds, Command, Value).
 
 command_effect(Command, Value) :-
-    'py-call'(['skills_help.command_error', Command], Error),
+    dispatch_python_call(skills_help, command_error(Command), Error),
     ( (Error == ""; Error == '') -> eval(Command, Value) ; Value = Error ).
 
 schedule_command(Seconds, Command, ['RESTING', Seconds, 'scheduled', Command]) :-
-    'py-call'(['helper.rest_schedule', Seconds, Command], _),
+    dispatch_python_call(helper, rest_schedule(Seconds, Command), _),
     eval(['loop-directive-set', 'rest-request', 1], _),
     eval(['loop-directive-set', 'sleep-interval', Seconds], _),
     eval(['loop-directive-set', 'pending-continuation',
@@ -167,7 +174,7 @@ command_status(exception(Exception), Command, ['Error', Message],
     message_to_string(Exception, Message).
 
 normalize_command_value(Value, Normalized) :-
-    ( catch('py-call'(['helper.normalize_string', Value], Normalized), _, fail)
+    ( catch(dispatch_python_call(helper, normalize_string(Value), Normalized), _, fail)
     -> true
     ; with_output_to(string(Normalized),
                      write_term(Value, [quoted(true)]))

@@ -2,11 +2,20 @@
 :- dynamic probe_count/1, effect_receipt/4, stopped/0, trace_event/1, capture_mode/1.
 :- consult('../src/skills.pl').
 
+% Exercise the dispatcher's explicit module receiver while stubbing the
+% Python services below. This fixture needs no embedded Python runtime.
+py_call(builtins:'__import__'(Name), module(Name), [py_object(true)]).
+py_call(module(Name):Call, Result) :-
+    compound_name_arguments(Call, Function, Args),
+    atomic_list_concat([Name, Function], '.', Spec),
+    'py-call'([Spec|Args], Result).
+
 eval([probe], N) :- assertz(trace_event(command)), retract(probe_count(P)), N is P+1, assertz(probe_count(N)).
 eval([failed], "read failed: missing").
 eval([throws], _) :- throw(test_error).
 eval([stop], ok) :- assertz(stopped).
 'py-call'(['skills_help.command_error', _], "").
+'py-call'(['receipt_failure.fail'], _) :- throw(receipt_failed).
 'py-call'(['strategy_host.stopped'], 1) :- stopped.
 % src/skills.pl:43-44 reserves each command when METTACLAW_OBSERVED_STRATEGY=1;
 % stub it (no trace event) so results are identical for unset, 0 and 1.
@@ -57,4 +66,6 @@ test(capture_failure_or_exception_leaves_commands_and_receipts_unchanged) :-
         assertion(Ds == [returned,exception,returned]),
         findall(E, trace_event(E), Events),
         assertion(Events == [capture(11),command,record,record,command,record]) )).
+test(explicit_receiver_preserves_a_real_exception, [throws(receipt_failed)]) :-
+    dispatch_python_call(receipt_failure, fail(), _).
 :- end_tests(command_dispatch).
