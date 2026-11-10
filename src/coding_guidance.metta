@@ -2,7 +2,7 @@
 ; Selection and scope follow that reference. Complete text is retained rather
 ; than applying its optional byte clipping. All filesystem work is native.
 !(import! &self fs)
-!(import! &self path)
+!(import! &self (library path))
 !(import! &self str)
 !(import! &self json)
 !(import! &self system)

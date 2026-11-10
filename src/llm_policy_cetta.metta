@@ -16,7 +16,7 @@
      (((Error $where $why)
        (let $reason (format-args "{}" ($why))
          (if (or (== $reason "import! expects a module name") (== $reason "unknown library"))
-           (import! &self path) (Error $where $why))))
+           (import! &self (library path)) (Error $where $why))))
       ($loaded $loaded)))
 !(case (import! &self (library str))
      (((Error $where $why)

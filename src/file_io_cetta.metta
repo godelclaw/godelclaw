@@ -6,7 +6,7 @@
 (= (file-io:number $value) (str:number->string $value))
 
 !(import! &self system)
-!(import! &self path)
+!(import! &self (library path))
 (= (file-io:lines $path $start $count) (fs:line-window $path $start $count))
 (= (file-io:tree $path $depth $limit $offset $skips) (fs:tree-page $path $depth $limit $offset $skips))
 (= (file-io:grep $pattern $path $limit $offset $skips) (fs:grep-page $pattern $path $limit $offset $skips))
