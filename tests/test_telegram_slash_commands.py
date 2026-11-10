@@ -16,6 +16,10 @@ import loop_modes  # noqa: E402
 import engine_modes  # noqa: E402
 
 
+_REAL_SET_MODEL = synthetic_llm.set_model
+_REAL_CURRENT_MODEL = synthetic_llm.current_model
+
+
 class SlashCommandTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -63,14 +67,23 @@ class SlashCommandTest(unittest.TestCase):
             synthetic_llm, "current_model", lambda: "syn:large:text")
         self.p6 = mock.patch.object(
             engine_modes, "engine_available", lambda name: True)
-        for p in (self.p2, self.p3, self.p4, self.p5, self.p6):
+        self.p7 = mock.patch.object(
+            synthetic_llm, "model_catalog_status", lambda: "catalog fixture")
+        self.p8 = mock.patch.object(
+            synthetic_llm, "model_in_observed_catalog", lambda name: True)
+        self.p9 = mock.patch.object(
+            synthetic_llm, "refresh_provider_observations_async",
+            lambda *args, **kwargs: None)
+        for p in (self.p2, self.p3, self.p4, self.p5, self.p6,
+                  self.p7, self.p8, self.p9):
             p.start()
         self.chat = {"id": -4321}
         self.operator = {"id": 111000111}
         os.environ["METTACLAW_TELEGRAM_OPERATOR_IDS"] = "111000111"
 
     def tearDown(self):
-        for p in (self.p1, self.p2, self.p3, self.p4, self.p5, self.p6):
+        for p in (self.p1, self.p2, self.p3, self.p4, self.p5, self.p6,
+                  self.p7, self.p8, self.p9):
             p.stop()
         if self.previous_mode_path is None:
             os.environ.pop("METTACLAW_LOOP_MODE_PATH", None)
@@ -172,7 +185,121 @@ class SlashCommandTest(unittest.TestCase):
         self.assertIn("sendMessage", url)
         kb = payload["reply_markup"]["inline_keyboard"]
         self.assertEqual([r[0]["callback_data"] for r in kb],
-                         ["model:modelA", "model:modelB"])
+                         ["menu:model:synthetic:0"])
+
+    def _model_callback(self, data, posts, sender=None):
+        cq = {"id": "77", "data": data,
+              "from": self.operator if sender is None else sender,
+              "message": {"message_id": 5, "chat": {"id": -4321}}}
+        with mock.patch.object(telegram, "_chat_is_allowed",
+                               lambda chat: True), \
+             mock.patch.object(telegram.requests, "post",
+                               lambda url, json=None, timeout=None:
+                               posts.append((url, json)) or mock.Mock()):
+            return telegram._handle_callback_query(cq)
+
+    def test_model_root_provider_and_selection_persist_exact_choice(self):
+        state_path = os.path.join(self.tmp.name, "model-state.metta")
+        with open(state_path, "w", encoding="utf-8") as stream:
+            stream.write("(unrelated-state retained)\n")
+        posts = []
+        with mock.patch.dict(os.environ, {
+                "METTACLAW_MODEL_STATE_PATH": state_path,
+                "SYNTHETIC_MODEL": "modelA"}), \
+             mock.patch.object(synthetic_llm, "set_model", _REAL_SET_MODEL), \
+             mock.patch.object(synthetic_llm, "current_model",
+                               _REAL_CURRENT_MODEL), \
+             mock.patch.object(telegram.requests, "post",
+                               lambda url, json=None, timeout=None:
+                               posts.append((url, json)) or mock.Mock()):
+            self.assertEqual(self.handle("/models"), "slash_command:/models")
+            self.assertEqual(
+                self._model_callback("menu:model:synthetic:0", posts),
+                "callback_menu_page")
+            page = posts[-1][1]
+            choices = [button["callback_data"]
+                       for row in page["reply_markup"]["inline_keyboard"]
+                       for button in row
+                       if button["callback_data"].startswith("model:")]
+            self.assertEqual(choices, ["model:modelA", "model:modelB"])
+            self.assertEqual(self._model_callback("model:modelB", posts),
+                             "callback_model_switch")
+            self.assertEqual(synthetic_llm.current_model(), "modelB")
+        with open(state_path, encoding="utf-8") as stream:
+            state = stream.read()
+        self.assertIn("(active-model modelB)", state)
+        self.assertIn("(unrelated-state retained)", state)
+
+    def test_model_provider_back_and_pagination_boundaries(self):
+        names = ["model%02d" % n for n in range(25)]
+        posts = []
+        with mock.patch.object(synthetic_llm, "model_ids", return_value=names):
+            self.assertEqual(
+                self._model_callback("menu:model:synthetic:0", posts),
+                "callback_menu_page")
+            first = posts[-1][1]["reply_markup"]["inline_keyboard"]
+            first_callbacks = [button["callback_data"] for row in first
+                               for button in row]
+            self.assertEqual(len([callback for callback in first_callbacks
+                                  if callback.startswith("model:")]), 24)
+            self.assertIn("menu:model:synthetic:24", first_callbacks)
+            self.assertEqual(
+                self._model_callback("menu:model:synthetic:24", posts),
+                "callback_menu_page")
+            last = posts[-1][1]["reply_markup"]["inline_keyboard"]
+            self.assertEqual(last[0][0]["callback_data"], "model:model24")
+            navigation = [button["callback_data"] for button in last[1]]
+            self.assertEqual(navigation, ["menu:model:synthetic:0"])
+            self.assertEqual(last[-1][0]["callback_data"], "menu:model:providers")
+            self.assertEqual(
+                self._model_callback("menu:model:synthetic:0", posts),
+                "callback_menu_page")
+            self.assertEqual(
+                self._model_callback("menu:model:providers", posts),
+                "callback_menu_page")
+            root = posts[-1][1]["reply_markup"]["inline_keyboard"]
+            self.assertEqual([row[0]["callback_data"] for row in root],
+                             ["menu:model:synthetic:0"])
+
+    def test_model_menu_and_selection_callbacks_require_operator(self):
+        posts = []
+        outsider = {"id": 222000222}
+        with mock.patch.object(synthetic_llm, "set_model") as set_model:
+            self.assertEqual(
+                self._model_callback("menu:model:synthetic:0", posts, outsider),
+                "callback_not_operator")
+            self.assertEqual(
+                self._model_callback("model:modelB", posts, outsider),
+                "callback_not_operator")
+        set_model.assert_not_called()
+        self.assertFalse(any("editMessageText" in url for url, _ in posts))
+
+    def test_model_provider_pages_keep_same_family_routes_distinct(self):
+        names = ["hf:moonshotai/Kimi-K3.1-Pro", "kimi:k3.1-pro"]
+        posts = []
+        seen = {}
+        with mock.patch.object(synthetic_llm, "model_ids", return_value=names), \
+             mock.patch.object(telegram.requests, "post",
+                               lambda url, json=None, timeout=None:
+                               posts.append((url, json)) or mock.Mock()):
+            self.assertEqual(self.handle("/models"), "slash_command:/models")
+            root = posts[-1][1]["reply_markup"]["inline_keyboard"]
+            callbacks = [row[0]["callback_data"] for row in root]
+            self.assertCountEqual(
+                callbacks, ["menu:model:synthetic:0", "menu:model:kimi:0"])
+            for callback in callbacks:
+                provider = callback.split(":")[2]
+                self.assertEqual(self._model_callback(callback, posts),
+                                 "callback_menu_page")
+                page = posts[-1][1]["reply_markup"]["inline_keyboard"]
+                choices = [button["callback_data"] for row in page
+                           for button in row
+                           if button["callback_data"].startswith("model:")]
+                self.assertEqual(len(choices), 1)
+                seen[provider] = choices[0][len("model:"):]
+                self.assertEqual(page[-1][0]["callback_data"],
+                                 "menu:model:providers")
+        self.assertEqual(seen, {"synthetic": names[0], "kimi": names[1]})
 
     def test_callback_switches_model(self):
         posts = []
