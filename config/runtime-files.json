@@ -161,6 +161,7 @@
   "src/command_dispatch_cetta.metta",
   "src/command_dispatch_core.metta",
   "src/command_dispatch_hooks.metta",
+  "src/command_batches_cetta.metta",
   "src/command_pipeline.metta",
   "src/commitment_projection.py",
   "src/context_budget.py",
