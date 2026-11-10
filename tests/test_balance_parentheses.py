@@ -302,7 +302,10 @@ class CettaCase(unittest.TestCase):
             env.update(extra_env or {})
             with tempfile.NamedTemporaryFile("w", dir=ROOT, suffix=".metta",
                                              encoding="utf-8") as source:
-                source.write("\n".join(lines) + "\n")
+                program = "\n".join(lines).replace(
+                    "(import! &self balance_record.py)",
+                    "(import! &self " + json.dumps(str(directory / "balance_record.py")) + ")")
+                source.write(program + "\n")
                 source.flush()
                 result = subprocess.run(
                     [str(self.binary), "--lang", "petta", "--import-mode", "ancestor-walk",
@@ -443,11 +446,11 @@ class BalanceParity(CettaCase):
         self.assertEqual(cases["malformed"][0], "<raised>")
         self.assertEqual(cases["malformed-tail"][0], "<raised>")
         # A number has no strip(): Python raises. Numbers, expressions and
-        # variables are Python's to answer; text, symbols and Bools are read
-        # natively.
+        # variables and Bools are Python's to answer; text and other symbols
+        # are read natively.
         self.assertEqual(cases["number"][0], "<raised>")
         # (Text that is not UTF-8 never gets as far as Python's function.)
-        self.assertEqual(reached, {"number", "float", "negative", "unit", "expression", "variable"})
+        self.assertEqual(reached, {"number", "float", "negative", "true", "false", "unit", "expression", "variable"})
 
     def test_the_diagnostic_is_written_to_stderr_as_python_prints_it(self):
         texts = generated(77, 1200) + HANDWRITTEN

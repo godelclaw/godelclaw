@@ -40,18 +40,20 @@
 
 ; What helper.balance_parentheses is handed decides what it reads, as for
 ; prose:undelivered: a string, or a symbol's spelling (a Python str comes back
-; from py-call as a symbol), or "true"/"false" for a Bool. A Python str naming
+; from py-call as a symbol). Booleans reach Python as bool and have no strip;
+; preserve that error through the Python compatibility path. A Python str naming
 ; a function the program defines (a lone "rest", say) comes back as that
 ; function's grounded atom, which Python is handed as its name. Anything else,
 ; and text that is not UTF-8, goes to helper.balance_parentheses itself, so it
 ; answers or raises exactly as before.
 (= (balance:parentheses $raw)
    (case (get-metatype $raw)
-     ((Symbol (balance:text (str:symbol->string $raw) $raw))
+     ((Symbol (if (== (get-type $raw) Bool) (balance:python $raw)
+                (balance:text (str:symbol->string $raw) $raw)))
       (Grounded
         (case (get-type $raw)
           ((String (balance:text $raw $raw))
-           (Bool (balance:text (if $raw "true" "false") $raw))
+           (Bool (balance:python $raw))
            (Number (balance:python $raw))
            ($other (case (str:symbol->string $raw)
                      (((Error $call $why) (balance:python $raw))

@@ -42,17 +42,18 @@
 
 ; What Python is handed for the response decides what it reads: a string,
 ; or a symbol's spelling (a Python str comes back from py-call as a symbol),
-; or "true"/"false" for a Bool. A number is no text. Anything else, and text
+; while a Bool and a number are not Python text. Anything else, and text
 ; that is not UTF-8, goes to helper.undelivered_prose itself, so it answers
 ; or raises exactly as before.
 (= (prose:undelivered $response)
    (case (get-metatype $response)
-     ((Symbol (prose:text (str:symbol->string $response) $response))
+     ((Symbol (if (== (get-type $response) Bool) (get-state &prose-none)
+                (prose:text (str:symbol->string $response) $response)))
       (Grounded
         (case (get-type $response)
           ((String (prose:text $response $response))
            (Number "")
-           (Bool (prose:text (if $response "true" "false") $response))
+           (Bool (get-state &prose-none))
            ($other (prose:python $response)))))
       ($other (prose:python $response)))))
 

@@ -132,7 +132,7 @@ def large():
 
 def as_returned(text):
     """What py-call makes of a returned str, read back by Python."""
-    return {"True": "true", "False": "false"}.get(text, text)
+    return {"True": True, "False": False, "true": True, "false": False}.get(text, text)
 
 
 def native_kind(meta, kind):
@@ -226,7 +226,10 @@ class UndeliveredProseParity(unittest.TestCase):
             (directory / "cases.json").write_text(json.dumps(list(cases)), encoding="utf-8")
             with tempfile.NamedTemporaryFile("w", dir=ROOT, suffix=".metta",
                                              encoding="utf-8") as source:
-                source.write("\n".join(lines) + "\n")
+                program = "\n".join(lines).replace(
+                    "(import! &self prose_record.py)",
+                    "(import! &self " + json.dumps(str(directory / "prose_record.py")) + ")")
+                source.write(program + "\n")
                 source.flush()
                 result = subprocess.run(
                     [str(self.binary), "--lang", "petta", "--import-mode", "ancestor-walk",
@@ -257,11 +260,14 @@ class UndeliveredProseParity(unittest.TestCase):
         rows, _, detail = self.run_cetta(lines, texts)
         cases = {row[1]: row[2:] for row in rows if row[0] == "case"}
         reached = {row[1] for row in rows if row[0] == "python"}
-        # py-call hands the Bool to Python as the text "true" or "false".
-        strings = str({row[1]: row[2] for row in rows if row[0] == "value"}.get("string-bridge")) == "true"
+        # Both historical textual and current native Bool carriers are valid.
+        bridge = {row[1]: row[2] for row in rows if row[0] == "value"}.get("string-bridge")
+        self.assertIn(bridge, (True, False, "true", "false"))
+        strings = bridge is True or bridge == "true"
         compared = 0
         for i, text in enumerate(texts):
-            expected = as_returned(helper.undelivered_prose(text))
+            expected_text = helper.undelivered_prose(text)
+            expected = as_returned(expected_text)
             for key in ("n%d" % i, "p%d" % i):
                 if key.startswith("p") and "\x00" in text:
                     continue
@@ -274,7 +280,7 @@ class UndeliveredProseParity(unittest.TestCase):
                 # Python answers only what is not text to CeTTa and prose
                 # holding NUL, which makes no symbol.
                 self.assertEqual(key in reached,
-                                 not native_kind(meta, kind) or "\x00" in expected
+                                 not native_kind(meta, kind) or "\x00" in expected_text
                                  or (key.startswith("p") and text in BOUND_TOKENS
                                      and kind != "String"),
                                  "%s (%s %s)" % (label, meta, kind))
@@ -319,7 +325,8 @@ class UndeliveredProseParity(unittest.TestCase):
             native, python, same, same_repr, meta, kind = cases[key]
             self.assertEqual(native, python, key)
             self.assertTrue(same and same_repr, key)
-        self.assertEqual(cases["true"][0], "true")
+        self.assertEqual(cases["true"][0], "")
+        self.assertEqual(cases["false"][0], "")
         self.assertEqual(cases["symbol"][0], "foo")
         self.assertEqual(cases["skill-symbol"][0], "")
         self.assertEqual(cases["literal"][0], "literal text")
