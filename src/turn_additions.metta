@@ -98,7 +98,7 @@
       ($ready (println! (CHARS_SENT: (string_length $ready) sha256 (str:sha256 $ready)))))))
 
 (= (addition-balance-response $raw)
-   (model-response-balance (py-call (strategy_host.normalize_response $raw))))
+   (model-response-balance (model-response-normalize $raw)))
 (= (addition-envelope-response $balanced)
    (model-response-envelope $balanced))
 (= (addition-read-response $response)

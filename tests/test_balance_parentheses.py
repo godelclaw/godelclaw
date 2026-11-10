@@ -643,7 +643,7 @@ class LiveCaller(CettaCase):
         self.assertIn("(= (model-response-balance $raw)\n   (balance:parentheses $raw))", pipeline)
         self.assertNotIn("helper.balance_parentheses", pipeline)
         turn = (ROOT / "src/turn_additions.metta").read_text(encoding="utf-8")
-        self.assertIn("(model-response-balance (py-call (strategy_host.normalize_response $raw)))",
+        self.assertIn("(model-response-balance (model-response-normalize $raw))",
                       turn)
 
     def test_native_balance_never_calls_the_python_parser(self):
