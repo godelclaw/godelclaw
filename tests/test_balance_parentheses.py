@@ -680,7 +680,8 @@ class LiveCaller(CettaCase):
             env = isolated_environ(
                 METTACLAW_SKIP_INITIALIZE="1", METTACLAW_SKIP_CONFIG="1", METTACLAW_ENGINE="petta",
                 PETTA_ROOT=str(petta),
-                PETTA_PY_ENV=str(pathlib.Path.home() / "miniforge3" / "envs" / "petta"),
+                PETTA_PY_ENV=os.environ.get("PETTA_PY_ENV",
+                    str(pathlib.Path.home() / "miniforge3" / "envs" / "petta")),
                 METTACLAW_ENGINE_STATE_PATH=str(directory / "engine"),
                 METTACLAW_WORKING_SET_PATH=str(directory / "working-set.json"),
                 METTACLAW_HISTORY_PATH=str(directory / "history.metta"))
