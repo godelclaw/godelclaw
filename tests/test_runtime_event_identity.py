@@ -55,12 +55,36 @@ class RuntimeIdentityTest(unittest.TestCase):
         self.assertFalse(self.wake.called)
 
     def test_complete_batch_is_validated_before_any_source_is_settled(self):
-        with mock.patch.object(telegram, "handover_ack") as handover:
-            with self.assertRaises(ValueError):
-                telegram.activity_source_ack(["123", "runtime:bad,id"])
-            with self.assertRaises(ValueError):
-                telegram.activity_source_ack(["runtime:a"] * 257)
-        handover.assert_not_called()
+        import input_ack
+        with mock.patch.object(telegram, "handover_ack") as handover, \
+             mock.patch.object(input_ack, "committed") as committed:
+            for batch in (["123", "runtime:bad,id"],
+                          ["runtime:a"] * 257 + ["runtime:bad,id"],
+                          ["123"] * 257 + ["invalid-update"]):
+                with self.subTest(batch_tail=batch[-1]):
+                    with self.assertRaises(ValueError):
+                        telegram.activity_source_ack(batch)
+            handover.assert_not_called()
+            committed.assert_not_called()
+
+    def test_complete_pages_have_no_legacy_256_item_ceiling(self):
+        # Paging removed the old fixed ceiling in 40aae9607. All IDs must
+        # still be checked before source settlement, including duplicate IDs.
+        import input_ack
+        for count in (256, 257, 513):
+            for runtime in (["runtime:a"] * count,
+                            ["runtime:%d" % n for n in range(count)]):
+                updates = [str(n) for n in range(count)]
+                with self.subTest(count=count, duplicates=len(set(runtime)) == 1), \
+                     mock.patch.object(input_ack, "committed", return_value=True) as committed, \
+                     mock.patch.object(telegram, "handover_ack", return_value=1) as handover:
+                    self.assertEqual(telegram.activity_source_ack(runtime + updates), 1)
+                    committed.assert_called_once_with(runtime)
+                    handover.assert_called_once_with(updates)
+                with mock.patch.object(input_ack, "committed", return_value=False), \
+                     mock.patch.object(telegram, "handover_ack") as handover:
+                    self.assertEqual(telegram.activity_source_ack(runtime + updates), 0)
+                    handover.assert_not_called()
 
     def test_runtime_receipts_remain_separate_from_telegram_receipts(self):
         identity = "runtime:job:1"
