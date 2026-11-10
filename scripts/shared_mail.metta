@@ -201,4 +201,5 @@
                 (JsonPair "retryable"
                   (JsonBool (or (== $why connect)
                             (or (== $why socket)
-                              (or (== $why send) (== $why timeout-or-disconnect)))))))))
+                              (or (== $why send)
+                                (or (== $why disconnect) (== $why timeout-or-disconnect))))))))))

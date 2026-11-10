@@ -9,6 +9,13 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
+from types import SimpleNamespace
+import contextlib
+import io
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import shared_mail
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / 'scripts/shared_mail.py'
@@ -234,6 +241,37 @@ class SharedMailTests(unittest.TestCase):
                 waiting.terminate()
                 waiting.communicate(timeout=5)
 
+    def test_transport_disconnect_retries_but_protocol_refusals_do_not(self):
+        args = SimpleNamespace(cetta=str(BINARY))
+        for reason, retryable in (("disconnect", True), ("connect", True),
+                                  ("timeout-or-disconnect", True),
+                                  ("permission-denied", False),
+                                  ("malformed-reply", False)):
+            with self.subTest(reason=reason):
+                result = shared_mail.invoke(args, '(space:unavailable "test" %s)' % reason)
+                self.assertEqual(result["status"], "error")
+                self.assertIs(result["retryable"], retryable)
+
+    def test_lost_wait_reply_recovers_the_same_unacknowledged_delivery(self):
+        self.reply('recover this delivery')
+        actual_invoke = shared_mail.invoke
+        first = []
+        def lose_first_response(*args, **kwargs):
+            result = actual_invoke(*args, **kwargs)
+            if not first:
+                self.assertEqual(result['status'], 'delivery')
+                first.append(result)
+                return {'status': 'error', 'reason': 'disconnect', 'retryable': True}
+            return result
+        output = io.StringIO()
+        with mock.patch.object(shared_mail, 'invoke', side_effect=lose_first_response), \
+             contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+            code = shared_mail.main(self.command('wait', 'reviewer', '--timeout', '3')[2:])
+        self.assertEqual(code, 0)
+        recovered = json.loads(output.getvalue())
+        self.assertEqual(recovered, first[0])
+        self.assertEqual(self.run_cli('inbox', 'reviewer')['count'], 1)
+
     def test_zero_timeout_waits_until_mail(self):
         waiting = subprocess.Popen(self.command('wait', 'reviewer', '--timeout', '0'),
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -337,3 +375,36 @@ class SharedMailTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class WaitRetryPolicyTests(unittest.TestCase):
+    def command(self):
+        return ['--config', '/nonexistent/test-mail.toml', '--socket', '/fixture/socket',
+                '--cetta', '/fixture/cetta', '--json', 'wait', 'reviewer']
+
+    def test_transient_failures_do_not_reset_finite_deadline(self):
+        now = [0.0]
+        calls = []
+        def invoke(args, call, timeout):
+            calls.append((call, timeout))
+            return {'status': 'error', 'reason': 'disconnect', 'retryable': True}
+        def sleep(delay):
+            now[0] += delay
+        with mock.patch.object(shared_mail, 'invoke', side_effect=invoke), \
+             mock.patch.object(shared_mail.time, 'monotonic', side_effect=lambda: now[0]), \
+             mock.patch.object(shared_mail.time, 'sleep', side_effect=sleep), \
+             contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(shared_mail.main(self.command() + ['--timeout', '0.7']), 1)
+        self.assertAlmostEqual(now[0], 0.7)
+        self.assertEqual(len(calls), 3)
+        self.assertIn('700)', calls[0][0])
+        self.assertIn('0)', calls[-1][0])
+
+    def test_terminal_refusal_does_not_retry(self):
+        with mock.patch.object(shared_mail, 'invoke', return_value={
+                'status': 'error', 'reason': 'permission-denied', 'retryable': False}) as invoke, \
+             mock.patch.object(shared_mail.time, 'sleep') as sleep, \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(shared_mail.main(self.command() + ['--forever']), 1)
+        self.assertEqual(invoke.call_count, 1)
+        sleep.assert_not_called()
