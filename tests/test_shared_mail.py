@@ -373,8 +373,6 @@ class SharedMailTests(unittest.TestCase):
             self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
 
 
-if __name__ == '__main__':
-    unittest.main()
 
 
 class WaitRetryPolicyTests(unittest.TestCase):
@@ -408,3 +406,7 @@ class WaitRetryPolicyTests(unittest.TestCase):
             self.assertEqual(shared_mail.main(self.command() + ['--forever']), 1)
         self.assertEqual(invoke.call_count, 1)
         sleep.assert_not_called()
+
+
+if __name__ == '__main__':
+    unittest.main()
