@@ -4,8 +4,10 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import socket
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -106,6 +108,38 @@ class CheckpointLedgerNativeTests(unittest.TestCase):
         ])
         with mock.patch.dict(os.environ, METTACLAW_OBSERVED_STRATEGY='1'):
             self.assertEqual(input_ack.already_committed('refused'), 0)
+
+    def test_stalled_peer_cannot_refresh_the_call_deadline_on_retry(self):
+        path = str(self.directory / 'stalled.sock')
+        listener = socket.socket(socket.AF_UNIX)
+        listener.bind(path)
+        listener.listen()
+        listener.settimeout(0.1)
+        connections = []
+        stopped = threading.Event()
+
+        def accept():
+            while not stopped.is_set():
+                try:
+                    connection, _ = listener.accept()
+                    connections.append(connection)
+                except socket.timeout:
+                    pass
+                except OSError:
+                    break
+
+        thread = threading.Thread(target=accept, daemon=True)
+        thread.start()
+        try:
+            self.guest(['!(assert (erv:failed? (checkpoint:call-with-timeout "working-set" () 50)))'],
+                       METTACLAW_INPUT_LEDGER_SOCKET=path)
+            self.assertEqual(len(connections), 1, 'retry refreshed an exhausted deadline')
+        finally:
+            stopped.set()
+            listener.close()
+            thread.join(2)
+            for connection in connections:
+                connection.close()
 
 
 if __name__ == '__main__':

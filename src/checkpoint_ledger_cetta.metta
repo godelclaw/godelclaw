@@ -3,15 +3,35 @@
 ; Equal payloads at different checkpoints still receive different IDs.
 !(import! &self ./src/ledger_client.metta)
 !(import! &self ./src/effect_receipt_values_cetta.metta)
+!(import! &self (library math))
 
 (= (checkpoint:socket) (system:getenv-or-default "METTACLAW_INPUT_LEDGER_SOCKET" ""))
 (= (checkpoint:failure $verb $detail)
    (ErFailure LedgerUnavailable (str:concat "native checkpoint ledger: " $verb) $detail))
+(= (checkpoint:exchange $socket $verb $arguments $deadline $left)
+   (let $remaining (math:floor (/ (- $deadline (system:monotonic-ns)) 1000000))
+     (if (or (<= $remaining 0) (<= $left 0)) (checkpoint:failure $verb timeout)
+       (let* (($wire-id (space:request-id))
+              ($request (LedgerCallV1 $verb $arguments))
+              ($reply (space:call $socket (request $wire-id (CallV1 LedgerCall $request)) $remaining)))
+         (case $reply
+           (((reply $_ ok $payload) (ledger-client:answer ($payload)))
+            ((space:unavailable $_ $why)
+             (checkpoint:exchange $socket $verb $arguments $deadline (- $left 1)))
+            ((space:uncertain $_ $why)
+             (checkpoint:exchange $socket $verb $arguments $deadline (- $left 1)))
+            ($other (checkpoint:failure $verb $other))))))))
+; The former transport had two ten-second worker attempts. Preserve that
+; total bound rather than inheriting three separate thirty-second sessions.
+; Neither a retry nor an uncertain reply refreshes the monotonic deadline.
 (= (checkpoint:call $verb $arguments)
+   (checkpoint:call-with-timeout $verb $arguments 20000))
+(= (checkpoint:call-with-timeout $verb $arguments $milliseconds)
    (let $socket (checkpoint:socket)
      (if (== $socket "") (checkpoint:failure $verb missing-socket)
        (if (> (str:byte-length $socket) 107) (checkpoint:failure $verb socket-path-too-long)
-         (case (collapse (catch (ledger-client:call $socket $verb $arguments)))
+         (case (collapse (catch (checkpoint:exchange $socket $verb $arguments
+                                  (+ (system:monotonic-ns) (* $milliseconds 1000000)) 6)))
            ((($answer)
              (case $answer
                (((Error $where $why) (checkpoint:failure $verb $answer))
