@@ -1,0 +1,220 @@
+{
+  "schema": 1,
+  "milestone": "2026-11-15",
+  "scope": "Deployed bootstrap, cognition, services, controls, provider and memory clients, coding management, advertised adapters and operator console run without Python. Build tools, independent test oracles and explicitly launched external tools may use other languages.",
+  "acceptance": [
+    "Build the selected runtime without the Python backend and boot the actual release.",
+    "Exercise offline provider, input, memory, coding, checkpoint, cancellation and restart paths without Python execution.",
+    "Retain differential and fault controls, including independent Python/SWI test oracles.",
+    "Commit qualified slices and deploy both agents together; verify actual executable paths and release files.",
+    "Keep all advertised functionality, explicit unavailable states and a tested rollback path.",
+    "Preserve task acceptance, queued steering, final report delivery and rest/resume across failures; input processing is not certified task achievement."
+  ],
+  "reference_patterns": [
+    "modes/omega/upstream/tests/*",
+    "modes/omega/upstream/Autotests/*",
+    "modes/conformance/*",
+    "modes/omega/fixture_host.py",
+    "modes/omega/offline.py",
+    "modes/iter/iter_fixture.py",
+    "modes/iter/offline.py"
+  ],
+  "launchers": [
+    "run.sh"
+  ],
+  "packages": [
+    {
+      "id": "provider",
+      "target_day": "2026-11-12",
+      "finish": "Native provider configuration, discovery, owned progress, errors and publication; preserve correlation and uncertain outcomes.",
+      "python_files": [
+        "src/llm_policy.py",
+        "src/model_commentary.py",
+        "src/commentary_stream.py",
+        "src/native_llm_host.py",
+        "src/native_lifetime.py",
+        "src/provider_protocol.py",
+        "src/provider_rejection.py",
+        "src/provider_stream.py",
+        "src/synthetic_llm.py",
+        "src/usage_history.py"
+      ]
+    },
+    {
+      "id": "input-effects",
+      "target_day": "2026-11-12",
+      "finish": "Native input/request/effect scope and atomic checkpoint. Preserve sampled occurrence IDs, receipts and recovery.",
+      "python_files": [
+        "src/action_graph.py",
+        "src/admission_frontier.py",
+        "src/agent_checkpoint.py",
+        "src/effect_backend.py",
+        "src/effect_frontier.py",
+        "src/effect_receipts.py",
+        "src/effect_receipts_plugin.py",
+        "src/input_ack.py",
+        "src/observed_strategy.py",
+        "src/stimulus_frontier.py",
+        "src/strategy_host.py",
+        "src/tool_output.py",
+        "src/working_state_host.py"
+      ]
+    },
+    {
+      "id": "coding",
+      "target_day": "2026-11-13",
+      "finish": "Native freeze, token ownership, launch/stop/reap, repin and checkpoint; keep external coding tools callable.",
+      "python_files": [
+        "src/apply_patch.py",
+        "src/coding_estate.py",
+        "src/coding_estate_snapshot.py",
+        "src/coding_io.py"
+      ]
+    },
+    {
+      "id": "context-memory",
+      "target_day": "2026-11-13",
+      "finish": "Native source registry, retrieval, guidance, budgets and evidence views; unavailable remains distinct from absent.",
+      "python_files": [
+        "src/active_queries.py",
+        "src/attention.py",
+        "src/commitment_projection.py",
+        "src/context_budget.py",
+        "src/context_sources.py",
+        "src/context_source_loaders.py",
+        "src/development_state.py",
+        "src/goal_views_boundary.py",
+        "src/goals.py",
+        "src/helper.py",
+        "src/memory_health.py",
+        "src/pins.py",
+        "src/project_capabilities.py",
+        "src/project_evidence.py",
+        "src/runtime_context.py",
+        "src/task_context.py",
+        "src/task_phase.py"
+      ]
+    },
+    {
+      "id": "channels",
+      "target_day": "2026-11-14",
+      "finish": "Native Telegram, terminal, IRC, Mattermost and websearch clients; preserve batching, sender tiers and control state.",
+      "python_files": [
+        "channels/irc.py",
+        "channels/mattermost.py",
+        "channels/telegram.py",
+        "channels/websearch.py",
+        "src/durable_telegram.py",
+        "src/mode_channel.py",
+        "src/start_telegram_service.py",
+        "src/terminal_client.py"
+      ]
+    },
+    {
+      "id": "gateway",
+      "target_day": "2026-11-14",
+      "finish": "Native gateway admission, queue clients and server supervision; retain cancellation, authentication and stale-owner refusal.",
+      "python_files": [
+        "src/execution_gateway/__init__.py",
+        "src/execution_gateway/__main__.py",
+        "src/execution_gateway/cetta_worker.py",
+        "src/execution_gateway/client.py",
+        "src/execution_gateway/read_tools.py",
+        "src/execution_gateway/server.py",
+        "src/execution_gateway/store.py",
+        "src/gateway_bridge.py"
+      ]
+    },
+    {
+      "id": "host-tools",
+      "target_day": "2026-11-14",
+      "finish": "Native agent-side adapters for every advertised tool, including enabled optional integrations. External tools may use their own language.",
+      "python_files": [
+        "src/claude_bridge.py",
+        "src/file_tools.py",
+        "src/fsops.py",
+        "src/ggb_bridge_ext.py",
+        "src/ggb_tick.py",
+        "src/godel_shadow.py",
+        "src/iter_authoring.py",
+        "src/jobs.py",
+        "src/mcp_bridge.py",
+        "src/moltbook.py",
+        "src/public_worklog.py",
+        "src/replay_evaluation.py",
+        "src/sibling.py",
+        "src/skills_help.py",
+        "src/tmux_bridge.py",
+        "src/tmux_qualification.py",
+        "src/topic_jobs.py"
+      ]
+    },
+    {
+      "id": "process-runtime",
+      "target_day": "2026-11-14",
+      "finish": "Native bootstrap, configuration, lifecycle, watchdogs and mode hosts; preserve PeTTa/Omega loop behavior.",
+      "python_files": [
+        "scripts/runtime_watch.py",
+        "modes/launch.py",
+        "modes/runtime_host.py",
+        "modes/tool_protocol.py",
+        "modes/iter/iter_host.py",
+        "scripts/config_ctl.py",
+        "scripts/config_to_env.py",
+        "src/cognitive_health.py",
+        "src/engine_modes.py",
+        "src/fuel_modes.py",
+        "src/lifecycle.py",
+        "src/loop_modes.py",
+        "src/process_supervision.py",
+        "src/runtime_health.py",
+        "src/wire.py",
+        "scripts/usage_report.py",
+        "modes/iter/upstream/channels/_example.py",
+        "modes/iter/upstream/channels/terminal.py",
+        "modes/iter/upstream/iter.py",
+        "modes/iter/upstream/tools/nop.py",
+        "modes/iter/upstream/tools/python.py",
+        "modes/iter/upstream/tools/send.py",
+        "modes/iter/upstream/tools/shell.py",
+        "modes/omega/upstream/channels/mockchannel.py",
+        "modes/omega/upstream/providers/lib_llm_ext.py",
+        "modes/omega/upstream/providers/mockprovider.py",
+        "modes/omega/upstream/providers/openai.py",
+        "modes/omega/upstream/providers/openaiapi.py",
+        "modes/omega/upstream/src/channels.py",
+        "modes/omega/upstream/src/config.py",
+        "modes/omega/upstream/src/embedding_models.py",
+        "modes/omega/upstream/src/fileio.py",
+        "modes/omega/upstream/src/helper.py",
+        "modes/omega/upstream/src/logger.py",
+        "modes/omega/upstream/src/memory_export.py",
+        "modes/omega/upstream/src/plugin.py",
+        "modes/omega/upstream/src/providers.py",
+        "modes/omega/upstream/src/rag.py",
+        "modes/omega/upstream/src/utils.py",
+        "modes/omega/upstream/src/websearch.py"
+      ]
+    },
+    {
+      "id": "console-stream",
+      "target_day": "2026-11-14",
+      "finish": "Native stream ownership/publication and operator console, including redraw, cancellation and terminal behavior.",
+      "python_files": [
+        "src/stream_sink.py",
+        "src/stream_lifecycle.py",
+        "scripts/worklog_view.py",
+        "scripts/worklog_control.py",
+        "ui/worklog/viewer.py",
+        "ui/worklog/console.py",
+        "scripts/agent_console.py",
+        "ui/worklog/inlineview/__init__.py",
+        "ui/worklog/inlineview/textsafe.py",
+        "ui/worklog/inlineview/render.py",
+        "ui/worklog/inlineview/engine.py",
+        "ui/worklog/inlineview/adapter.py"
+      ]
+    }
+  ],
+  "reference_policy": "Only test/fixture/offline-comparison paths are exempted. Vendored mode helpers are counted because the current mode hosts still load or copy some of them; vendoring is not evidence of runtime independence."
+}
