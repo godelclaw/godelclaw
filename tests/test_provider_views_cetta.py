@@ -15,7 +15,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import native_lifetime
+from sqlite_provider_reference import lifetime as native_lifetime
 
 ROOT = Path(__file__).resolve().parents[1]
 CETTA_ROOT = Path(os.environ.get("CETTA_CHANNEL_ROOT", ROOT.parent / "CeTTa-ours"))

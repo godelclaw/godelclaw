@@ -134,6 +134,9 @@ class EnginePinTests(unittest.TestCase):
 class CodingSessionTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
+        # Registered first, so ledger/worker cleanups finish before deleting
+        # the files they may still be publishing.
+        self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name)
         self.socket = native_ledger.start(self, self.directory)
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Script)
@@ -171,7 +174,6 @@ class CodingSessionTests(unittest.TestCase):
     def tearDown(self):
         self.server.shutdown()
         self.server.server_close()
-        self.temporary.cleanup()
 
     def session(self, task, workspace, name="session"):
         session = self.directory / name

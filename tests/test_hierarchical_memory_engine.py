@@ -24,6 +24,9 @@ class HierarchicalMemoryEngineTest(unittest.TestCase):
         environment = CommandDispatchEngineTest()._cetta_env()
         with tempfile.TemporaryDirectory(prefix='hierarchy-dispatch-') as directory:
             home = Path(directory)
+            latch = home / 'lifecycle.json'
+            latch.write_text('{"schema":1,"state":"running"}')
+            environment['METTACLAW_LIFECYCLE_PATH'] = str(latch)
             socket = home / 'memory.sock'
             process = subprocess.Popen([server, '--socket', str(socket), '--data', str(home / 'data')],
                                        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -86,7 +89,7 @@ class HierarchicalMemoryEngineTest(unittest.TestCase):
             def run(body):
                 source = home / 'probe.metta'
                 source.write_text('!(import! &self ' + json.dumps(str(ROOT / 'src/hierarchical_memory_cetta.metta')) + ')\n' + body)
-                result = subprocess.run([engine, '--lang', 'petta', str(source)], cwd=ROOT,
+                result = subprocess.run([engine, '--lang', 'petta', '--import-mode', 'ancestor-walk', str(source)], cwd=ROOT,
                                         env=environment, text=True, capture_output=True, timeout=30)
                 self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
                 self.assertNotIn('HIERARCHY_ERROR', result.stdout, result.stdout)

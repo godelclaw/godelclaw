@@ -7,7 +7,11 @@ import test_semantic_memory_engine as fixture
 
 
 class APITests(unittest.TestCase):
-    setUp = fixture.MemoryTests.setUp
+    def setUp(self):
+        fixture.MemoryTests.setUp(self)
+        latch = self.home / 'lifecycle.json'
+        latch.write_text('{"schema":1,"state":"running"}')
+        self.env['METTACLAW_LIFECYCLE_PATH'] = str(latch)
     stop_store = fixture.MemoryTests.stop_store
     run_metta = fixture.MemoryTests.run_metta
 

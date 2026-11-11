@@ -23,7 +23,8 @@ class ProviderAdmissionReferenceTests(unittest.TestCase):
         self.f = fixture.ProviderAdmissionTests()
         self.f.setUp()
         self.addCleanup(lambda: self.assertTrue(self.f.doCleanups()))
-        path = fixture.ROOT / "src/llm_policy.py"
+        from sqlite_provider_reference import DIRECTORY
+        path = DIRECTORY / "llm_policy.py"
         spec = importlib.util.spec_from_file_location("offline_admission_reference", path)
         self.policy = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.policy)

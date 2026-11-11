@@ -1006,6 +1006,19 @@ CETTA_BIN=/path/to/cetta python3 -m unittest discover -s tests -p 'test_native_l
 
 Use the Python environment linked into CeTTa for native checks.
 
+For the full native unittest suite, the runner verifies an installed bundle
+and configures its engine, space service, and value worker together. Each
+module gets an isolated process; logs and exact test counts are retained:
+
+```sh
+python3 scripts/test_native.py --cetta /path/to/bundle/cetta --log-dir .qualification/native --jobs 2
+```
+
+The runner selects the bundle's Python version when needed. Missing optional
+fixtures remain visible as skips; an unavailable or altered bundle is an error.
+Source-fixture checks use `CETTA_SOURCE` (or the sibling `CeTTa-ours` checkout),
+which must be clean and match the bundle revision.
+
 ## Memory
 
 The framework exposes `(remember string)` and `(query string)` for deliberate

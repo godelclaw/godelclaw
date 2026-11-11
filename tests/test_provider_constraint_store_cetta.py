@@ -60,7 +60,7 @@ class ProviderConstraintTests(unittest.TestCase):
         with patch.dict(os.environ,environment,clear=True):
             # Build the current primary application's schema in a disposable
             # ledger. No provider transport or live agent state is imported.
-            import native_lifetime
+            from sqlite_provider_reference import lifetime as native_lifetime
             with native_lifetime.transaction() as connection:
                 connection.execute('DELETE FROM llm_call_history')
                 # Optional repair evidence is retained by the checkpoint ABI.

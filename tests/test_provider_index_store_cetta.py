@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 CETTA_ROOT = Path(os.environ.get("CETTA_CHANNEL_ROOT", ROOT.parent / "CeTTa-ours"))
+CETTA_SOURCE = Path(os.environ.get("CETTA_SOURCE", ROOT.parent / "CeTTa-ours"))
 WORKER = os.environ.get("CETTA_VALUE_WORKER")
 if WORKER:
     sys.path.insert(0, str(CETTA_ROOT / "tools"))
@@ -38,7 +39,7 @@ class ProviderIndexStoreTests(unittest.TestCase):
                                 "provider-index-query:call", language="petta")
             self.legacy = Worker(WORKER, ROOT / "src/provider_store_cetta.metta",
                                  "provider-store:checkpoint-call", language="petta")
-            self.bytes = Worker(WORKER, CETTA_ROOT / "tests/support/store_fixture.metta",
+            self.bytes = Worker(WORKER, CETTA_SOURCE / "tests/support/store_fixture.metta",
                                 "store-fixture:run", language="petta")
             self.probe = Worker(WORKER, ROOT / "tests/support/provider_index_probe.metta",
                                 "provider-index-probe:call", language="petta", import_mode="relative")

@@ -80,13 +80,16 @@ def digest(path):
 
 
 def worker_processes():
-    """Pids of cetta value workers running the ledger's client module, by command line."""
+    """This test process's ledger clients; other modules/agents own their workers."""
     found = []
     for entry in Path("/proc").iterdir():
         if entry.name.isdigit():
             try:
+                fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+                if int(fields[1]) != os.getpid():
+                    continue
                 command = (entry / "cmdline").read_bytes().split(b"\0")
-            except OSError:
+            except (OSError, ValueError, IndexError):
                 continue
             if any(part.endswith(b"ledger_client.metta") for part in command) and b"--serve" not in command:
                 found.append(int(entry.name))

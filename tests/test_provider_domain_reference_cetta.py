@@ -19,8 +19,7 @@ WORKER = domain_fixture.WORKER
 if WORKER:
     sys.path.insert(0, str(ROOT / "src"))
     from space_service_client import E, S, BigInt, encode
-    import llm_policy
-    import native_lifetime
+    from sqlite_provider_reference import policy as llm_policy, lifetime as native_lifetime
 
 
 @unittest.skipUnless(WORKER, "set CETTA_VALUE_WORKER to the native store/math worker")
