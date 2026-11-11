@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "libraries": [
+    {
+      "name": "scoped-observation",
+      "distribution": "application-source-module",
+      "runtime": "src/scoped_observation_cetta.metta",
+      "sha256": "beaa398622ea0156c928f4e2a28ef3a0ac2a659b034b73ab450521b70c35d4d9",
+      "kernel_contract": "captured native store point ABI at 64dd3ccd; no evaluator changes"
+    }
+  ]
+}

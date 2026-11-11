@@ -366,5 +366,10 @@
   "ui/worklog/inlineview/textsafe.py",
   "ui/worklog/inlineview/render.py",
   "ui/worklog/inlineview/engine.py",
-  "ui/worklog/inlineview/adapter.py"
+  "ui/worklog/inlineview/adapter.py",
+  "config/native-libraries.json",
+  "src/knowledge_store_cetta.metta",
+  "src/scoped_observation_cetta.metta",
+  "src/knowledge_observation_cetta.metta",
+  "docs/scoped-observations/README.md"
 ]
