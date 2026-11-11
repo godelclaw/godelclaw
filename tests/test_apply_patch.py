@@ -124,6 +124,23 @@ assert a.st_gid == b.st_gid
             self.assertEqual(stat.S_IMODE(target.stat().st_mode), mode)
         self.assertEqual(self.leftovers(), [])
 
+    def test_moves_preserve_source_permissions_for_new_and_existing_destinations(self):
+        for mode in (0o600, 0o750):
+            for existing_destination in (False, True):
+                with self.subTest(mode=oct(mode), existing_destination=existing_destination):
+                    source = self.root / 'a.py'
+                    target = self.root / 'moved.py'
+                    source.write_text('one\ntwo\n'); source.chmod(mode)
+                    target.unlink(missing_ok=True)
+                    if existing_destination:
+                        target.write_text('old target\n'); target.chmod(0o644)
+                    result = self.apply(patch('*** Update File: a.py', '*** Move to: moved.py', '-one', '+ONE'))
+                    self.assertTrue(result.startswith('Success.'), result)
+                    self.assertFalse(source.exists())
+                    self.assertEqual(target.read_text(), 'ONE\ntwo\n')
+                    self.assertEqual(stat.S_IMODE(target.stat().st_mode), mode)
+        self.assertEqual(self.leftovers(), [])
+
 
 if __name__ == "__main__":
     unittest.main()

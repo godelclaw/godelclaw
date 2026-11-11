@@ -157,20 +157,20 @@ def _new_stage(path):
     raise FileExistsError("cannot reserve a fresh patch staging name")
 
 
-def _stage(path, text, created):
+def _stage(path, text, created, source_mode=None):
     """Write text beside path under a fresh name; record directories it creates."""
     missing = [parent for parent in reversed(path.parents) if not parent.exists()]
     for directory in missing:
         directory.mkdir()
         created.append(directory)
-    existed = path.exists()
+    mode = source_mode if source_mode is not None else (path.stat().st_mode & 0o7777 if path.exists() else None)
     handle, temporary = (tempfile.mkstemp(dir=path.parent, prefix="." + path.name + ".")
-                         if existed else _new_stage(path))
+                         if mode is not None else _new_stage(path))
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as stream:
             stream.write(text)
-        if existed:
-            os.chmod(temporary, path.stat().st_mode & 0o7777)
+        if mode is not None:
+            os.chmod(temporary, mode)
     except BaseException:
         os.unlink(temporary)
         raise
@@ -197,7 +197,7 @@ def apply(patch, workdir="."):
         base = Path(str(workdir)).expanduser()
         resolve = lambda name: (Path(name).expanduser() if os.path.isabs(os.path.expanduser(name))
                                 else base / name)
-        planned, receipt = [], []
+        planned, receipt, source_modes = [], [], {}
         for operation in _parse(patch):
             kind, target = operation[0], resolve(operation[1])
             if kind == "add":
@@ -215,6 +215,7 @@ def apply(patch, workdir="."):
                     raise PatchError("%s does not exist" % operation[1])
                 text = _updated(operation[1], target.read_text(encoding="utf-8"), operation[3])
                 if operation[2]:
+                    source_modes[resolve(operation[2])] = target.stat().st_mode & 0o7777
                     planned += [("write", resolve(operation[2]), text, operation[2]),
                                 ("remove", target, None, operation[1])]
                     receipt.append("M %s -> %s" % (operation[1], operation[2]))
@@ -230,7 +231,7 @@ def apply(patch, workdir="."):
         staged, created = [], []
         try:
             for action, target, text, name in planned:
-                staged.append(_stage(target, text, created) if action == "write" else None)
+                staged.append(_stage(target, text, created, source_modes.get(target)) if action == "write" else None)
         except BaseException:
             _discard(staged, created)
             raise
