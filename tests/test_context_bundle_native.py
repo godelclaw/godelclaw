@@ -25,7 +25,7 @@ ENGINE = os.environ.get("CETTA_BIN", "cetta")
 PETTA_ROOT = Path(os.environ.get("PETTA_ROOT", Path.home() / "repos/PeTTa"))
 NATIVE_SOURCES = {"active-query-declaration", "commitment-state", "task-phase",
                   "development-state", "project-capabilities", "project-evidence",
-                  "work-state", "affect-gestalt", "effect-receipts"}
+                  "work-state", "affect-gestalt", "effect-receipts", "coding-sessions"}
 
 
 def save_evidence(prefix, value):
@@ -369,8 +369,11 @@ class NativeContextBundleTest(unittest.TestCase):
         first = self.compare([{key: {"raises": True} for key in base}])[0]["text"]
         self.assertNotIn("stale-known", first)
         statuses = dict(re.findall(r"^SOURCE\[([^]]+)\] status=([^ ]+)", first, re.M))
-        retained = {"pins", "recent-proposals", "relevant-files", "coding-sessions", "conversation"}
+        retained = {"pins", "recent-proposals", "relevant-files", "conversation"}
         self.assertEqual({key for key in retained if statuses[key] == "unavailable"}, retained)
+        # Coding sessions now use their real native read-only view rather than
+        # a fixture loader; a fresh process may know that view, never a stale one.
+        self.assertIn(statuses["coding-sessions"], {"known", "absent"})
         self.assertEqual(statuses["effect-receipts"], "absent")
 
     def test_text_conversion_failure_aborts_bundle_without_fallback(self):

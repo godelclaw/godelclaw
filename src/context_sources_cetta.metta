@@ -6,6 +6,7 @@
 !(import! &self ./src/undelivered_prose_unicode)
 !(import! &self ./src/context_source_loaders.py)
 !(import! &self ./src/small_views_cetta.metta)
+!(import! &self ./src/coding_estate_cetta.metta)
 !(import! &self ./src/goal_views_cetta.metta)
 !(import! &self ./src/effect_receipts_cetta.metta)
 
@@ -72,7 +73,7 @@
       ("task-phase" (sv:load $id)) ("development-state" (sv:load $id))
       ("project-capabilities" (sv:load $id)) ("project-evidence" (sv:load $id))
       ("work-state" (gv:load $id)) ("affect-gestalt" (gv:load $id))
-      ("effect-receipts" (er:context-load))
+      ("effect-receipts" (er:context-load)) ("coding-sessions" (estate:load))
       ($retained (ctx:decode (py-call (context_source_loaders.load $loaders $id)))))))
 ; Python text is String on the native bridge and Symbol on older bridges.
 (= (ctx:text $value)

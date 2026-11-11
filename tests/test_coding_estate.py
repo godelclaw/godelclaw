@@ -570,6 +570,179 @@ class CodingEstateProbeAndBundleTests(CodingEstateFixture):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return result
 
+    def _counting_native_ledger(self, counter, outcome="native"):
+        import socket as sockets
+        import threading
+        from test_input_ledger_remote import DbServer
+
+        counter.write_text("", encoding="utf-8")
+        if outcome == "unreachable":
+            dead = self.directory / (counter.name + ".dead.sock")
+            dead.write_text("", encoding="utf-8")
+            return str(dead)
+
+        if not hasattr(self, "_native_ledger_server"):
+            ledger_root = self.directory / "native_ledger"
+            ledger_root.mkdir(parents=True, exist_ok=True)
+            server = DbServer(ledger_root)
+            server.start()
+            self.addCleanup(server.stop)
+            self._native_ledger_server = server
+            self._proxy_seq = 0
+
+        self._proxy_seq += 1
+        proxy_path = str(self.directory / ("ledger-proxy-%d.sock" % self._proxy_seq))
+        listener = sockets.socket(sockets.AF_UNIX)
+        listener.bind(proxy_path)
+        listener.listen(16)
+        upstream = str(self._native_ledger_server.socket)
+
+        def close_quietly(*ends):
+            for end in ends:
+                try:
+                    end.shutdown(sockets.SHUT_RDWR)
+                except OSError:
+                    pass
+                try:
+                    end.close()
+                except OSError:
+                    pass
+
+        def handle(client):
+            if outcome == "timeout":
+                buf = b""
+                try:
+                    data = client.recv(65536)
+                    buf += data
+                    if b"llm-selection" in buf:
+                        with open(counter, "a", encoding="utf-8") as stream:
+                            stream.write("llm-selection\n")
+                    time.sleep(1.5)
+                except OSError:
+                    pass
+                finally:
+                    close_quietly(client)
+                return
+
+            server_conn = sockets.socket(sockets.AF_UNIX)
+            try:
+                server_conn.connect(upstream)
+            except OSError:
+                close_quietly(client, server_conn)
+                return
+
+            def back():
+                try:
+                    while reply := server_conn.recv(65536):
+                        client.sendall(reply)
+                except OSError:
+                    pass
+                finally:
+                    close_quietly(client, server_conn)
+
+            threading.Thread(target=back, daemon=True).start()
+            recorded = False
+            buf = b""
+            try:
+                while chunk := client.recv(65536):
+                    buf += chunk
+                    if not recorded and b"llm-selection" in buf:
+                        recorded = True
+                        with open(counter, "a", encoding="utf-8") as stream:
+                            stream.write("llm-selection\n")
+                    server_conn.sendall(chunk)
+                try:
+                    server_conn.shutdown(sockets.SHUT_WR)
+                except OSError:
+                    pass
+            except OSError:
+                close_quietly(client, server_conn)
+
+        def accept_loop():
+            while True:
+                try:
+                    client, _ = listener.accept()
+                except OSError:
+                    return
+                threading.Thread(target=handle, args=(client,), daemon=True).start()
+
+        threading.Thread(target=accept_loop, daemon=True).start()
+        self.addCleanup(close_quietly, listener)
+        return proxy_path
+
+    def native_view(self, output, today="2026-10-25", outcome="native", sentinel=None):
+        """Render through the real native snapshot/policy with old readers and policy forbidden."""
+        if sentinel is None:
+            sentinel = self.directory / "coding_estate_native_sentinel.py"
+            sentinel.write_text('''import coding_estate
+import coding_estate_snapshot
+import input_ack
+from pathlib import Path
+import sys
+
+FORBIDDEN_FILES = ("/coding_estate_snapshot.py", "/coding_estate.py")
+
+def forbidden(*args, **kwargs):
+    raise AssertionError("native view called forbidden Python observation/policy helper")
+
+def _profile(frame, event, arg):
+    if event != "call":
+        return
+    code = frame.f_code
+    filename = code.co_filename.replace("\\\\", "/")
+    if filename.endswith(FORBIDDEN_FILES) and code.co_name != "<module>":
+        raise AssertionError(
+            "native view entered %s:%s" % (Path(filename).name, code.co_name)
+        )
+    if filename.endswith("/input_ack.py") and code.co_name == "_ledger_call":
+        op = frame.f_locals.get("op")
+        if op == "llm-selection":
+            raise AssertionError("native view called input_ack._ledger_call('llm-selection')")
+
+def forbid():
+    for attr in ("snapshot", "_session", "_date"):
+        setattr(coding_estate_snapshot, attr, forbidden)
+    for attr in (
+        "classify", "listed", "context_view", "_read_json", "read_runs",
+        "read_lifecycle", "_engine_sha256", "_dir_blocks", "llm_ledger_selection",
+        "_matched_retirements", "snapshot_world", "snapshot_session_world",
+        "_status_date", "launching_date", "work_setting", "_runtimes_summary",
+    ):
+        setattr(coding_estate, attr, forbidden)
+    sys.setprofile(_profile)
+    return 1
+
+def record(path, text):
+    Path(path).write_text(str(text), encoding="utf-8")
+    return 1
+''', encoding="utf-8")
+        counter = self.directory / (output.name + ".selection")
+        socket_path = self._counting_native_ledger(counter, outcome=outcome)
+        probe = ROOT / ("estate_native_view_%d.metta" % os.getpid())
+        probe.write_text(
+            "!(import! &self (library lib_import))\n"
+            '!(import! &self "%s")\n' % sentinel
+            + "!(py-call (coding_estate_native_sentinel.forbid))\n"
+            + "!(import! &self ./src/coding_estate_cetta.metta)\n"
+            + '!(py-call (coding_estate_native_sentinel.record "%s" (estate:context-view-root "%s" "%s")))\n'
+            % (output, self.directory, today),
+            encoding="utf-8",
+        )
+        env = {**self.env, "METTACLAW_INPUT_LEDGER_SOCKET": socket_path}
+        try:
+            result = subprocess.run(
+                [os.environ["CETTA_BIN"], "--lang", "petta", "--import-mode", "ancestor-walk", str(probe)],
+                cwd=self.directory,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        finally:
+            probe.unlink(missing_ok=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return output.read_text(encoding="utf-8"), counter
+
     def test_refused_work_resume_names_reason_and_launches_nothing(self):
         # 1. needs-current refusal (hash changed)
         s_changed = self.make_session("work-changed", status="stopped", binary_sha256="0" * 64)
@@ -640,6 +813,79 @@ class CodingEstateProbeAndBundleTests(CodingEstateFixture):
         self.assertIn("needs-current: it uses the retired SQLite LLM ledger", single.stdout)
         self.assertEqual(len(counter.read_text(encoding="utf-8").splitlines()), 1)
 
+    def test_native_view_matches_every_branch_and_never_calls_old_policy(self):
+        self.make_session("work-01-done", status="done")
+        self.make_session("work-02-unpinned", status="failed", pin=False)
+        self.make_session("work-03-retired", status="stopped", bundle=self.bundle_old)
+        self.make_session("work-04-no-hash", status="interrupted", binary_sha256=None)
+        self.make_session("work-05-resumable", status="running")
+        self.make_session("work-06-changed", status="stopped", binary_sha256="f" * 64)
+        self.make_session("work-07-engine-gone", status="stopped",
+                          binary=str(self.directory / "absent-engine"))
+        self.make_session("work-08-pretoken", status="stopped", phase=None)
+        held_future = self.make_session("work-09-held-future", status="stopped")
+        coding_estate.hold_session(held_future, "waiting on upstream", "2026-11-10", now=self.fixed_ts)
+        held_past = self.make_session("work-10-held-past", status="stopped")
+        coding_estate.hold_session(held_past, "check after release", "2026-10-20", now=self.fixed_ts)
+        held_indef = self.make_session("work-11-held-indef", status="failed")
+        coding_estate.hold_session(held_indef, "parked indefinitely", "", now=self.fixed_ts)
+        archived = self.make_session("work-12-archived", status="stopped")
+        coding_estate.archive_session(archived, "superseded", now=self.fixed_ts)
+        launching = self.make_session("work-13-launching", status="stopped", phase="reserved")
+        self.make_session("work-14-nostate", write_state=False)
+
+        first, counter = self.native_view(self.directory / "native-first.txt")
+        second, _ = self.native_view(self.directory / "native-second.txt")
+        world = coding_estate.World(today="2026-10-25")
+        with mock.patch.dict(os.environ, {"METTACLAW_INPUT_LEDGER_SOCKET": str(self.socket_path)}), \
+             mock.patch.object(input_ack, "_ledger_call", return_value="native") as selected:
+            expected = coding_estate.context_view(self.directory, world=world)
+        self.assertEqual(first, expected)
+        self.assertEqual(second, expected)
+        self.assertEqual(selected.call_count, 1)
+        self.assertEqual(counter.read_text().splitlines(), ["llm-selection"])
+        for verdict in ("needs-current", "unverified", "resumable", "unpinned"):
+            self.assertIn(verdict, first)
+        self.assertIn("work-13-launching launching since", first)
+        self.assertNotIn("\nwork-09-held-future ", first)
+        self.assertNotIn("\nwork-11-held-indef ", first)
+        self.assertNotIn("\nwork-12-archived ", first)
+        self.assertIn("work-10-held-past", first)
+
+        coding_estate.set_work_setting(self.directory, "context", "summary")
+        summary, _ = self.native_view(self.directory / "native-summary.txt")
+        self.assertEqual(summary, expected.splitlines()[0] + "\n" + coding_estate.VERBS_LINE)
+        coding_estate.set_work_setting(self.directory, "context", "off")
+        result = self.run_probe('!(import! &self ./src/coding_estate_cetta.metta)\n'
+                                '!(println! (estate:load))\n')
+        self.assertIn('("missing")', result.stdout)
+
+    def test_native_two_hundred_session_bound_and_single_selection_snapshot(self):
+        for index in range(200):
+            if index % 4 == 0:
+                self.make_session("work-20261023-%04d" % index, status="failed", pin=False)
+            elif index % 4 == 1:
+                self.make_session("work-20261023-%04d" % index, status="stopped", bundle=self.bundle_old)
+            elif index % 4 == 2:
+                self.make_session("work-20261023-%04d" % index, status="interrupted", binary_sha256=None)
+            else:
+                self.make_session("work-20261023-%04d" % index, status="stopped")
+        actual, counter = self.native_view(self.directory / "native-200.txt")
+        with mock.patch.dict(os.environ, {"METTACLAW_INPUT_LEDGER_SOCKET": str(self.socket_path)}), \
+             mock.patch.object(input_ack, "_ledger_call", return_value="native") as selected:
+            expected = coding_estate.context_view(
+                self.directory, world=coding_estate.World(today="2026-10-25"))
+        self.assertEqual(actual, expected)
+        self.assertEqual(selected.call_count, 1)
+        self.assertEqual(counter.read_text().splitlines(), ["llm-selection"])
+        self.assertLessEqual(len(actual), 2000)
+        lines = actual.splitlines()
+        self.assertEqual(lines[-1], coding_estate.VERBS_LINE)
+        self.assertRegex(lines[-2], r"^… \d+ more: \(work-status\)$")
+        shown_count = len(lines) - 3
+        omitted_count = int(lines[-2].split()[1])
+        self.assertEqual(shown_count + omitted_count, 200)
+
     def test_work_hold_work_archive_and_resume_clears_lifecycle(self):
         s_hold = self.make_session("work-hold-target", status="stopped")
         s_arch = self.make_session("work-archive-target", status="failed")
@@ -689,6 +935,59 @@ class CodingEstateProbeAndBundleTests(CodingEstateFixture):
             view_after,
             r"\nwork-hold-target launching since \d{4}-\d{2}-\d{2} · pin aaaa1111 \d{4}-\d{2}-\d{2} · resumable\n",
         )
+
+    def test_native_context_source_route_matches_python_with_policy_sentinel(self):
+        self.make_session("work-bundle-1", status="stopped")
+        self.make_session("work-bundle-2", status="failed", pin=False)
+        self.native_view(self.directory / "native-sentinel-warmup.txt")
+        sentinel = self.directory / "coding_estate_native_sentinel.py"
+
+        from test_context_bundle_native import HEADER, guest
+        from test_pins_context_native import guest_env, q
+        instructions = self.directory / "instructions.txt"
+        instructions.write_text("Fixture instructions\n", encoding="utf-8")
+        registry = self.directory / "registry.json"
+        registry.write_text('{"schema":1,"projects":[]}', encoding="utf-8")
+        (self.directory / "history.metta").write_text("", encoding="utf-8")
+        (self.directory / "pins.txt").write_text("", encoding="utf-8")
+        settings = {
+            "METTACLAW_PROJECT_ROOT": str(self.directory),
+            "METTACLAW_PROMPT_PATH": str(instructions),
+            "METTACLAW_PROJECT_REGISTRY_PATH": str(registry),
+            "METTACLAW_ITER_PROCESS_DIR": str(self.directory / "transformations"),
+            "METTACLAW_OBSERVED_STRATEGY": "0",
+        }
+        for subdir in ("src", "channels", "tests"):
+            link = self.directory / subdir
+            if not link.exists():
+                link.symlink_to(ROOT / subdir)
+        out = self.directory / "native-direct-bundle.txt"
+        guest(self.directory, HEADER + [
+            '!(import! &self "%s")' % sentinel,
+            '!(py-call (coding_estate_native_sentinel.forbid))',
+            '!(import! &self ./src/context_sources_cetta.metta)',
+            '!(py-call (context_bundle_probe.note %s (context-bundle:with-views ())))' % q(out),
+        ], engine="cetta", runtime_root=self.directory, **settings)
+        native_text = out.read_text(encoding="utf-8")
+
+        import telegram
+        env = guest_env(self.directory, "cetta", **settings)
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(self.directory)
+            with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(
+                context_sources, "_PROJECTOR", context_sources.Projector()
+            ), mock.patch.multiple(
+                telegram, _reply_chat_id="", _last_chat_id="", _primary_chat_id="",
+                _last_message_is_human=False, _last_from_bot=False,
+            ):
+                python_text = context_sources.bundle()
+        finally:
+            os.chdir(old_cwd)
+        self.assertEqual(native_text, python_text)
+        self.assertIn("SOURCE[coding-sessions] status=known", native_text)
+        self.assertIn("work-bundle-1 stopped", native_text)
+        self.assertIn("work-bundle-2 failed", native_text)
 
     def test_python_and_cetta_context_bundles_include_coding_sessions_identically(self):
         self.make_session("work-bundle-1", status="stopped")
@@ -752,7 +1051,7 @@ class CodingEstateProbeAndBundleTests(CodingEstateFixture):
 
         native_block = _extract_source_block(native_text, "coding-sessions")
         python_block = _extract_source_block(python_text, "coding-sessions")
-        self.assertIsNotNone(native_block)
+        self.assertIsNotNone(native_block, native_text)
         self.assertEqual(native_block.encode("utf-8"), python_block.encode("utf-8"))
         self.assertEqual(native_text, python_text)
         self.assertIn("SOURCE[coding-sessions] status=known", native_text)
