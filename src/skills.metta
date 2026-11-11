@@ -233,7 +233,15 @@
 ;; check parses with the loop's OWN reader (sread), so its verdict is the
 ;; loop's verdict — nothing is executed either way.
 (= (help) (string_concat (py-call (skills_help.help "")) (api:help-index)))
+; A skill name is syntax: asking for help must never invoke that skill.
+(: help (-> Atom %Undefined%))
 (= (help $name)
+   (case (catch (str:symbol->string $name))
+     (((Error $_ $_) (if (== (get-type (quote $name)) String)
+                         (help:page (utils:decode-safe $name))
+                         "help: expected a skill name"))
+      ($text (help:page $text)))))
+(= (help:page $name)
    (case (api:help $name)
      (((APINotRegistered $key)
        (if (or (== $name "settings") (== $name "setting"))
