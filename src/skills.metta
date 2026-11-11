@@ -3,6 +3,7 @@
 (= (getLegacySkills)
    (;INTERNAL:
     "- Coding mode for real work: (work \"task\") or (work \"task\" \"workdir\") starts a session that keeps working (plan, commands, patches, tests) until done and mails you its report; meanwhile you stay free. (work-status) lists sessions, (work-status \"id\") shows plan and report, (work-steer \"id\" \"text\") adds guidance, (work-resume \"id\" [\"current\"]) continues the same finished or interrupted session on its pin or after checking and re-pinning to the current runtime, (work-stop \"id\") stops it, (work-hold \"id\" \"why\" [\"YYYY-MM-DD\"]) holds it until a review date or indefinitely, and (work-archive \"id\" \"why\") sets it aside. Open sessions and pin verdicts appear in the coding-sessions context source, controlled by (setting \"work\" \"context\" \"open\"|\"summary\"|\"off\") and (setting \"work\" \"resume\" \"pinned\"|\"current\"). CeTTa only."
+    "- A coding worker sends a completion report. When it is the only thing you are waiting for, (rest) waits for real activity, including that report; (rest seconds) deliberately requests a timer wake. A blank NEW_ACTIVITY continuation tick is not a worker update. Use work-status when the result can change your next action, rather than a periodic status-only model loop. Other useful work remains your decision."
     "- Send native peer mail: (mail-send \"name\" \"text\"). Incoming mail enters a turn automatically. Mail labelled [automatic mail from ...] is information; answer it only when an answer is useful. When mail asks about work you can inspect, inspect it first (the commit, files, logs or a run) across as many steps as it takes, then reply with mail-send from what you found; the sender sees nothing until you reply. Mail from another account shows its sender as \"account/agent\"; mail-send to that name replies into its inbox. (mail-receive) checks now. CeTTa only."
     "- Discover module-registered settings (CeTTa): (settings) or (settings \"namespace\"); inspect/change one with (setting \"namespace\" \"key\" [value]). Values, defaults, units, domains and persistence come from each module. New registrations appear automatically; (help \"settings\") describes the registration protocol."
     "- Remember a particular string such as skills and memories: (remember \"string\")"
@@ -19,7 +20,7 @@
     "- Goal stack + mood (kernel decays STI, consolidates LTI, flags stuck/cull-review at each wake): (goals)"
     "- Add/update one goal (liberal format, see (help \"goal-write\")): (goal-write (goal name Area sti:0.8 lti:0.3 vibes:(a b) blocked-by:none last-verified:never note:why it matters))"
     "- Retire a goal with a reason, or close it with reason solved once last-verified is set; it goes to the compost log and goal-write can bring it back: (goal-drop \"name\" \"reason\")"
-    "- Rest now, ending this burst until the next human message: (rest)"
+    "- Rest now, ending this burst until the next incoming activity: (rest)"
     "- Wait for new activity without spending inference on idle clock ticks: (rest)"
     "- Rest for a chosen interval: (rest seconds)"
     "- Rest with a stated intention shown at your next waking: (rest seconds \"why\")"
