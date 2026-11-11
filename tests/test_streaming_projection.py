@@ -7,6 +7,7 @@ import sys
 import tempfile
 import time
 import unittest
+import threading
 from unittest import mock
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -105,17 +106,69 @@ class ProjectionLaws(unittest.TestCase):
 
     def test_queue_pressure_preserves_terminal_and_bounds_display(self):
         with tempfile.TemporaryDirectory() as d:
-            w=stream_sink.Writer(d,'s',capacity=2)
+            with mock.patch.object(threading.Thread, 'start'):
+                w=stream_sink.Writer(d,'s',capacity=2)
             for n in range(500): w.emit(dict(kind='text.delta',item='i',text='x'*100))
             w.emit(dict(kind='attempt.finished',item='a',attempt='a',status='completed',texts=[]))
+            w.worker.start()
             self.assertTrue(w.flush(2))
-            rows=Reader(d).read()
+            rows=read_all(Reader(d))
             self.assertTrue(any(r['kind']=='attempt.finished' for r in rows))
             self.assertTrue(w.dropped or any(r.get('display_gap') for r in rows))
             p=stream_sink.Projection(max_items=4,tail_chars=50)
             for n in range(100):p.apply(dict(producer='p',sequence=n+1,session='s',kind='text.delta',item=str(n),text='x'*100))
             self.assertEqual(len(p.sessions['s']['items']),4)
             self.assertTrue(all(len(v['text'])==50 for v in p.sessions['s']['items'].values()))
+
+    def test_flush_cannot_acknowledge_the_terminal_handoff_gap(self):
+        with tempfile.TemporaryDirectory() as d:
+            # Reserve a terminal before the consumer starts, then stop its
+            # handoff after dict.pop and before queue.put increments the count.
+            with mock.patch.object(threading.Thread, 'start'):
+                writer = stream_sink.Writer(d, 's', capacity=1)
+            writer.emit(dict(kind='text.delta', item='i', text='first'))
+            writer.emit(dict(kind='attempt.finished', attempt='a', item='a', status='completed'))
+            promoting, release, entered, done = (threading.Event() for _ in range(4))
+            put = writer.queue.put_nowait
+            results = []
+
+            def handoff(record):
+                if record['kind'] == 'attempt.finished':
+                    promoting.set()
+                    release.wait(5)
+                return put(record)
+
+            def flush():
+                entered.set()
+                results.append(writer.flush(2))
+                done.set()
+
+            writer.queue.put_nowait = handoff
+            writer.worker.start()
+            observer = threading.Thread(target=flush)
+            try:
+                self.assertTrue(promoting.wait(2))
+                observer.start()
+                self.assertTrue(entered.wait(2))
+                self.assertFalse(done.wait(.1), 'flush acknowledged an unpublished terminal')
+            finally:
+                release.set()
+                if observer.ident is not None:
+                    observer.join(3)
+            self.assertEqual(results, [True])
+            self.assertTrue(any(row['kind'] == 'attempt.finished' for row in read_all(Reader(d))))
+
+    def test_failed_writer_does_not_report_a_successful_flush(self):
+        with tempfile.TemporaryDirectory() as d:
+            parent = Path(d) / 'file'
+            parent.write_text('not a directory')
+            writer = stream_sink.Writer(parent / 'stream', 's')
+            writer.emit(dict(kind='attempt.finished', attempt='a', item='a', status='completed'))
+            until = time.monotonic() + 2
+            while not writer.failed and time.monotonic() < until:
+                time.sleep(.001)
+            self.assertTrue(writer.failed)
+            self.assertFalse(writer.flush(2))
 
 
     def test_items_keep_when_they_began_and_executions_how_long_they_ran(self):

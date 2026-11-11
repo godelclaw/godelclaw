@@ -139,9 +139,19 @@ class Writer:
 
     def flush(self, seconds=.25):
         deadline = time.monotonic() + seconds
-        while (self.queue.unfinished_tasks or self.terminals) and time.monotonic() < deadline:
-            time.sleep(.005)
-        return not self.queue.unfinished_tasks and not self.terminals
+        while True:
+            # Moving a reserved terminal into the queue pops it before put.
+            # Observe both owners under the handoff lock; that transient gap
+            # must never certify that the terminal has been published.
+            with self.lock, self.queue.all_tasks_done:
+                if self.failed:
+                    return False
+                if not self.queue.unfinished_tasks and not self.terminals:
+                    return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            time.sleep(min(.005, remaining))
 
 
 def receipt(identity, command, result, disposition):
