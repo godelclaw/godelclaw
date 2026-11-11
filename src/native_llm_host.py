@@ -97,6 +97,22 @@ def enabled():
                       and os.environ.get("METTACLAW_ACTIVE_ENGINE") == "cetta") else "false"
 
 
+def native_contract(plan):
+    """Whether terminal command classification is owned by native MeTTa."""
+    return (model_commentary.enabled()
+            and getattr(plan, "kind", "") == "command")
+
+
+def native_classified(plan, status, program, commentary, code, publish):
+    """Attach the pure native decision to this plan's existing settlement."""
+    if status not in ("accepted", "rejected"):
+        raise ValueError("invalid native command classification")
+    plan.native_command_classification = {
+        "status": status, "program": str(program), "commentary": str(commentary),
+        "code": str(code), "publish": str(publish) == "true"}
+    return 1
+
+
 def request_allowed():
     import provider_rejection
     return "false" if provider_rejection.blocked() else "true"
@@ -555,6 +571,17 @@ def field(plan, name):
     return getattr(plan, str(name))
 
 
+def transport_config(plan):
+    """One immutable configuration observation, before transport starts.
+
+    Progress, claims, publication and transport ownership remain outside this
+    value. The native caller validates admission independently of these facts.
+    """
+    return (plan.epoch, plan.correlation, plan.protocol, plan.base, plan.headers,
+            plan.request, plan.kind, plan.encoding, plan.timeout, plan.cap,
+            plan.connect, plan.first, plan.idle)
+
+
 def claim(plan):
     """One local submission authority; replaying the same plan cannot bill twice."""
     with _claim_lock:
@@ -720,6 +747,24 @@ def waiting(plan, count=0, quiet=0):
     return 1
 
 
+def _native_finish(plan):
+    """Release only the decision computed by model_commentary_cetta.metta."""
+    decision = getattr(plan, "native_command_classification", None)
+    if not isinstance(decision, dict):
+        raise model_commentary.OutputError("invalid command envelope")
+    if decision["status"] == "rejected":
+        message = {"incomplete-output": "unfinished command output",
+                   "invalid-native-tool": "invalid native tool output",
+                   "refused-or-structured-output": "refused or structured command output",
+                   "invalid-envelope": "invalid command envelope"}.get(
+                       decision["code"], "invalid command envelope")
+        raise model_commentary.OutputError(message)
+    publication = getattr(plan, "commentary", None)
+    if publication and decision["publish"]:
+        publication.publish(decision["commentary"])
+    return decision["program"]
+
+
 def finish(plan, epoch, correlation, encoded, canonical):
     if str(epoch) != plan.epoch or str(correlation) != plan.correlation:
         return failed(plan, correlation, "correlation-error")
@@ -767,7 +812,10 @@ def finish(plan, epoch, correlation, encoded, canonical):
                      "finish": reason, "llm_result": boundary, "usage": result.get("usage", {})})
     content = result["choices"][0]["message"].get("content")
     try:
-        content = model_commentary.finish(plan, content, reason, result["choices"][0]["message"])
+        if native_contract(plan):
+            content = _native_finish(plan)
+        else:
+            content = model_commentary.finish(plan, content, reason, result["choices"][0]["message"])
     except model_commentary.OutputError as error:
         stream_sink.final(plan, result["choices"][0]["message"], "rejected")
         code = {"unfinished command output": "incomplete-output",

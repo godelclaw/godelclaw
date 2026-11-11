@@ -195,6 +195,123 @@ class NativeCommentaryTest(unittest.TestCase):
         self.assertIn('(RESULT ((nop)))', self.call())
         self.assertFalse((self.worklog / 'notes.jsonl').exists())
 
+    def test_native_classifier_rejects_every_incomplete_prefix(self):
+        value = json.dumps({'commentary': 'Check žluťoučký 🐈\nnext.',
+                            'commands': '((nop))'}, ensure_ascii=True)
+        forms = [f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")']
+        for cut in range(1, len(value)):
+            response = json.dumps({'choices': [{'finish_reason': 'stop',
+                'message': {'content': value[:cut]}}]}, separators=(',', ':'))
+            forms.append('!(println! (PREFIX ' + str(cut) +
+                         ' (commentary:classify ' + json.dumps(response) + ')))')
+        response = json.dumps({'choices': [{'finish_reason': 'stop',
+            'message': {'content': value}}]}, separators=(',', ':'))
+        forms.append('!(println! (FULL (commentary:classify ' +
+                     json.dumps(response) + ')))')
+        output = self.run_guest('\n'.join(forms) + '\n')
+        prefixes = [line for line in output.splitlines() if line.startswith('(PREFIX ')]
+        self.assertEqual(len(prefixes), len(value) - 1, output + self.last_stderr)
+        for line in prefixes:
+            self.assertIn('CommentaryRejectedV1', line, line)
+            self.assertNotIn('CommentaryAcceptedV1', line, line)
+        self.assertIn('(FULL (CommentaryAcceptedV1 "((nop))"', output)
+
+    def test_native_tool_shape_and_argument_duplicates_are_failed_turns(self):
+        valid = {'id': 'call-1', 'type': 'function', 'function': {
+            'name': 'metta', 'arguments': '{"program":"((nop))"}'}}
+        cases = []
+        for name, update in [
+                ('empty identity', {'id': ''}), ('numeric identity', {'id': 3}),
+                ('wrong type', {'type': 'other'}),
+                ('wrong function', {'function': {'name': 'other',
+                    'arguments': '{"program":"((nop))"}'}}),
+                ('extra function member', {'function': {'name': 'metta',
+                    'arguments': '{"program":"((nop))"}', 'reasoning': 'private'}}),
+                ('missing program', {'function': {'name': 'metta', 'arguments': '{}'}}),
+                ('numeric program', {'function': {'name': 'metta',
+                    'arguments': '{"program":3}'}}),
+                ('duplicate program', {'function': {'name': 'metta',
+                    'arguments': '{"program":"((nop))","program":"((shell wrong))"}'}})]:
+            call = dict(valid)
+            call.update(update)
+            cases.append((name, [call]))
+        cases.append(('multiple calls', [valid, dict(valid, id='call-2')]))
+        self.peer.delay = 0
+        for name, calls in cases:
+            with self.subTest(name=name):
+                self.peer.reply['choices'][0] = {'finish_reason': 'tool_calls',
+                    'message': {'role': 'assistant', 'content': 'not public',
+                                'tool_calls': calls}}
+                self.assertIn('(RESULT ())', self.call())
+                health = json.loads((self.directory / 'health.json').read_text())
+                self.assertEqual(health['last_outcome'], 'failed')
+                self.assertEqual(self.notes(), [])
+        self.assertEqual(len(self.peer.requests), len(cases))
+
+    def test_native_duplicate_members_never_release_commands(self):
+        documents = [
+            '{"choices":[],"choices":[{"finish_reason":"stop","message":{"content":"((nop))"}}]}',
+            '{"choices":[{"finish_reason":"stop","finish_reason":"tool_calls","message":{"content":"((nop))"}}]}',
+            '{"choices":[{"finish_reason":"stop","message":{"content":"((nop))","content":"((shell wrong))"}}]}',
+            '{"choices":[{"finish_reason":"tool_calls","message":{"tool_calls":[{"id":"x","id":"y","type":"function","function":{"name":"metta","arguments":"{\\"program\\":\\"((nop))\\"}"}}]}}]}',
+        ]
+        forms = [f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")']
+        forms += ['!(println! (DUPLICATE (commentary:classify ' +
+                  json.dumps(document) + ')))' for document in documents]
+        output = self.run_guest('\n'.join(forms) + '\n')
+        lines = [line for line in output.splitlines() if line.startswith('(DUPLICATE ')]
+        self.assertEqual(len(lines), len(documents), output + self.last_stderr)
+        for line in lines:
+            self.assertIn('CommentaryRejectedV1', line)
+            self.assertNotIn('((nop))', line)
+            self.assertNotIn('shell', line)
+
+    def test_native_enabled_turn_does_not_call_python_classifier(self):
+        module = self.directory / 'fixture_modules/commentary_sentinel.py'
+        module.write_text('''import model_commentary
+
+def forbidden(*args, **kwargs):
+    raise AssertionError("native enabled turn used the old Python classifier")
+
+model_commentary.finish = forbidden
+model_commentary.split = forbidden
+model_commentary._native_commands = forbidden
+''')
+        self.peer.reply['choices'][0].update(finish_reason='tool_calls', message={
+            'role': 'assistant', 'content': 'Native classification only.',
+            'tool_calls': [{'id': 'call-native', 'type': 'function', 'function': {
+                'name': 'metta', 'arguments': '{"program":"((nop))"}'}}]})
+        output = self.run_guest(f'!(import! &self "{module}")\n'
+            f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'
+            '!(println! (RESULT (llm:command "fixture-model" 42 "low" "input")))\n')
+        self.assertIn('(RESULT ((nop)))', output, output + self.last_stderr)
+        self.assertEqual([n['text'] for n in self.notes()], ['Native classification only.'])
+
+    def test_native_zero_valued_refusal_matches_python_truthiness(self):
+        forms = [f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")']
+        values = ['0', '-0.0', '0e99', '0.000E-12', '0.0001', '-2e-99', '[]', '{}', '[0]', '{"x":0}']
+        for index, value in enumerate(values):
+            document = '{"choices":[{"finish_reason":"stop","message":{"refusal":' + value + ',"content":"((nop))"}}]}'
+            forms.append('!(println! (TRUTH ' + str(index) +
+                         ' (commentary:classify ' + json.dumps(document) + ')))')
+        output = self.run_guest('\n'.join(forms) + '\n')
+        for index, value in enumerate(values):
+            expected = json.loads(value)
+            line = next(line for line in output.splitlines()
+                        if line.startswith('(TRUTH ' + str(index) + ' '))
+            if expected:
+                self.assertIn('refused-or-structured-output', line, line)
+            else:
+                self.assertIn('CommentaryAcceptedV1 "((nop))"', line, line)
+
+    def test_native_disabled_mode_returns_compatibility_content_unchanged(self):
+        self.env['METTACLAW_MODEL_COMMENTARY'] = '0'
+        source = json.dumps({'commentary': 'public', 'commands': '((nop))'},
+                            separators=(',', ':'))
+        self.peer.reply['choices'][0]['message']['content'] = source
+        self.assertIn('(RESULT ' + source + ')', self.call())
+        self.assertEqual(self.notes(), [])
+
 
 class PythonCommentaryTest(unittest.TestCase):
     def test_python_transport_separates_completed_envelope(self):
