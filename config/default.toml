@@ -30,7 +30,8 @@ public_work_dir = ""
 # This does not publish to Telegram or the deliberately public notes feed.
 stream_dir = ""
 # Optional agent-wide coding guidance; empty disables the global layer.
-# Files here are private agent data and are not copied into runtime releases.
+# The default includes shipped coding-mode rules. Choose another directory
+# when an instance needs a private replacement for that guidance layer.
 coding_guidance_dir = "$ROOT/identity"
 
 # Local Qwen3-Embedding-8B path. Fill this before using remember/query.
@@ -99,6 +100,9 @@ reports_root = ""
 project_registry_path = ""
 
 [coding]
+# Soft input-context ceiling, also bounded by provider capacity after reserving
+# output tokens. The compactor retains requester inputs and frozen guidance.
+context_window_tokens = 256000
 # Discovery walks to the nearest marker, then reads back down to the workspace.
 # An empty marker list restricts discovery to the workspace itself.
 project_root_markers = [".git"]

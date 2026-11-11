@@ -150,6 +150,7 @@ def main():
     emit("METTACLAW_PUBLIC_WORK_DIR", expand(paths.get("public_work_dir"), root))
     emit("METTACLAW_STREAM_DIR", expand(paths.get("stream_dir"), root))
     emit("METTACLAW_CODING_GUIDANCE_DIR", expand(paths.get("coding_guidance_dir", "$ROOT/identity"), root))
+    emit("METTACLAW_CODING_CONTEXT_TOKENS", coding.get("context_window_tokens", 256000))
     emit("METTACLAW_CODING_ROOT_MARKERS", json.dumps(coding.get("project_root_markers", [".git"])))
     emit("METTACLAW_CODING_DOC_FALLBACKS", json.dumps(coding.get("project_doc_fallback_filenames", [])))
     emit("METTACLAW_EMBED_MODEL", expand(paths.get("embed_model"), root))

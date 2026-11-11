@@ -255,6 +255,7 @@ class GuidanceTests(unittest.TestCase):
         workspace = runner / 'repo'; workspace.mkdir()
         global_dir = runner / 'identity'
         global_doc = self.write(global_dir / 'AGENTS.md', 'PRIVATE_GLOBAL_RULE')
+        self.env['METTACLAW_CODING_GUIDANCE_DIR'] = str(global_dir)
         self.env['METTACLAW_CODING_DOC_FALLBACKS'] = '["TEAM_GUIDE.txt"]'
         result = self.run_probe('!(println! (work "Read the rules." "repo"))\n',
                                 module='coding_work.metta', cwd=runner)

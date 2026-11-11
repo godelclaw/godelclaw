@@ -159,6 +159,9 @@ class CodingSessionTests(unittest.TestCase):
             "METTACLAW_RECYCLE_REQUEST_PATH": str(self.directory / "recycle"),
             "METTACLAW_WAKE_REQUEST_PATH": str(self.directory / "wake"),
             "METTACLAW_CODING_SESSION": "1",
+            # Tests supply their own guidance; never inherit the checkout's
+            # shipped coding rules or a live agent's private guidance layer.
+            "METTACLAW_CODING_GUIDANCE_DIR": str(self.directory / "identity"),
             "METTACLAW_LIFECYCLE_PATH": str(latch), "SYNTHETIC_MODEL": "fixture-model",
             "METTACLAW_MODEL_STATE_PATH": str(self.directory / "model"),
             "METTACLAW_CONTEXT_WINDOW_TOKENS": "100000",

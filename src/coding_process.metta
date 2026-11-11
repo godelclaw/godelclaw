@@ -51,13 +51,13 @@
           ($now (system:monotonic-ns)))
      (if (== $live ()) (py-call (coding_io.execution_result $dir $id))
        (let $report (coding:observe (car-atom $live))
-         (if (>= $now $deadline) $report
+         (if (or (>= $now $deadline) (fs:is-file (coding:file $dir "stop"))) $report
            (progn (coding:wait-tick) (coding:poll-until $dir $id $deadline)))))))
 (= (coding:wait-tick)
    (let (io:pending $timer) (io:submit (timer:after 100)) (io:wait $timer 200)))
 (= (coding:poll $dir $args)
    (let* (($id (coding:text (coding:field $args "execution_id")))
-          ($wait (max 0 (coding:number (coding:field $args "yield_time_ms") 1000))))
+          ($wait (max 0 (coding:number (coding:field $args "yield_time_ms") 30000))))
      (coding:poll-until $dir $id (+ (system:monotonic-ns) (* $wait 1000000)))))
 (= (coding:cancel $dir $args)
    (let* (($id (coding:text (coding:field $args "execution_id")))

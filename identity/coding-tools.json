@@ -12,7 +12,7 @@
     "name": "exec_poll", "description": "Observe an existing execution without restarting it. Finished results and full output artifacts remain available.",
     "parameters": {"type": "object", "properties": {
       "execution_id": {"type": "string"},
-      "yield_time_ms": {"type": "integer", "minimum": 0, "description": "Wait duration; 1000 ms by default."}},
+      "yield_time_ms": {"type": "integer", "minimum": 0, "description": "Wait duration; 30000 ms by default. Prefer a substantial wait for a build or test instead of repeated short polls. Explicit zero returns immediately; a session stop interrupts waiting."}},
       "required": ["execution_id"]}}},
   {"type": "function", "function": {
     "name": "exec_cancel", "description": "Send SIGTERM to an execution owned by this session and inspect its outcome. This never starts another process.",
