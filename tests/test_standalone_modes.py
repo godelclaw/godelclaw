@@ -159,7 +159,14 @@ class StandaloneModesTests(unittest.TestCase):
                     else:
                         self.assertEqual(request["tool_choice"], "required")
                         self.assertEqual(request["max_tokens"], 6000)
-                        self.assertTrue((runtime / "repos/Omega/memory/history.metta").exists())
+                        history = runtime / "repos/Omega/memory/history.metta"
+                        # Sending a tool reply precedes the loop's checkpoint.
+                        # Observe that durable boundary before stopping it.
+                        until = time.monotonic() + 10
+                        while not history.exists() and process.poll() is None and time.monotonic() < until:
+                            time.sleep(.02)
+                        self.assertTrue(history.exists(), stderr.read_text()[-3000:])
+                        self.assertIn("terminal-fixture-input", history.read_text())
                     # Lightweight startup never seeds the framework identity.
                     self.assertFalse((root / "memory/soul.md").exists())
                 finally:

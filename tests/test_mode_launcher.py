@@ -23,6 +23,26 @@ spec.loader.exec_module(launcher)
 
 
 class ModeLauncherTests(unittest.TestCase):
+    def test_native_omega_is_a_pinned_copy_with_only_host_boundary_changes(self):
+        native = ROOT / "modes/omega/native"
+        vendor = ROOT / "modes/omega/upstream"
+        manifest = json.loads((native / "manifest.json").read_text())
+        import hashlib
+        for name, digest in manifest["upstream_files"].items():
+            self.assertEqual(hashlib.sha256((vendor / name).read_bytes()).hexdigest(), digest)
+        loop = (vendor / "src/loop.metta").read_text()
+        for change in manifest["loop_adaptations"]:
+            self.assertIn(change["source"], loop)
+            loop = loop.replace(change["source"], change["native"])
+        self.assertEqual((native / "loop.metta").read_text(), loop)
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = Path(directory)
+            launcher.prepare_omega(runtime, ROOT, standalone=True)
+            self.assertEqual((runtime / "repos/Omega/src/loop.metta").read_bytes(),
+                             (native / "loop.metta").read_bytes())
+            for name in ("utils.metta", "memory.metta", "skills.metta", "host.metta"):
+                self.assertEqual((runtime / name).read_bytes(), (native / name).read_bytes())
+
     def test_omega_runtime_loads_reasoning_and_selects_native_memory_explicitly(self):
         with tempfile.TemporaryDirectory() as directory:
             runtime = Path(directory) / "runtime"

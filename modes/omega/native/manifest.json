@@ -1,0 +1,21 @@
+{
+  "upstream_commit": "94d7b9a2e1ef6b5873aee764ca1ef16de8dcd943",
+  "upstream_files": {
+    "src/loop.metta": "4245a23036c434bde33946169fbe71bff0b9cef955476f104f0399c3ce6655d6",
+    "src/utils.metta": "af1dcfc057eff7a1f43d93f77d93667a19a0319486a043e05d59df9485413226",
+    "src/memory.metta": "ebb6cbf1b555381924d2d717e0897a39ab3ad8a5585a2a495014f80b6973e9da",
+    "src/skills.metta": "16992039dc280f26f5e6348f214fd3fe80c884c10fb4d5d7686ad2c7fcdb0055"
+  },
+  "loop_adaptations": [
+    {
+      "source": "helper.",
+      "native": "omega_helper.",
+      "reason": "Keep the Omega host helper separate from the agent host helper"
+    },
+    {
+      "source": "(string-safe (repr (receive)))",
+      "native": "(omega-host:receive-text (receive))",
+      "reason": "Preserve empty input and text across the native String carrier"
+    }
+  ]
+}
