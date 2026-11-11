@@ -19,11 +19,11 @@
 !(configure commchannel telegram)
 
 (= (aw:turn $p)
-   (let* (($_ (py-call (helper.turn_commit_reset)))
+   (let* (($_ (working:turn-commit-reset))
           ((success $next) (turnProcess $p))
           ($_ (persistProcessState (rooted weak-process-core-v1 $next)))
-          ($_ (if (== (py-call (helper.turn_commit_ready)) 1) (settleActivityBatch) 0))
-          ($_ (py-call (helper.turn_commit_reset))))
+          ($_ (if (== (working:turn-commit-ready) 1) (settleActivityBatch) 0))
+          ($_ (working:turn-commit-reset)))
      $next))
 (= (aw:turns $p $n) (if (== $n 0) $p (aw:turns (aw:turn $p) (- $n 1))))
 (= (aw:quiet $uid $text)
@@ -107,7 +107,7 @@
          ;; Across a restart the bank and the activity wait survive. A new
          ;; process boots from the saved working set; initLoop's settings are
          ;; already configured in this one.
-         ($_ (py-call (helper.working_boot)))
+         ($_ (working:boot))
          ($restored (coordinate-set iteration 5 (initialPeriphery)))
          ($_ (assertEqual (aw:bank $restored) $renewed))
          ($_ (assertEqual (aw:waiting $restored) 1))

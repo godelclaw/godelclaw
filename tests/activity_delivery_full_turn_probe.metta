@@ -39,7 +39,7 @@
          ($_ (cut))
          ;; processLoop commits its checkpoint before acknowledging the batch.
          ($_ (assertEqual (persistProcessState $afterSuccess) 1))
-         ($_ (assertEqual (py-call (helper.turn_commit_ready)) 1))
+         ($_ (assertEqual (working:turn-commit-ready) 1))
          ($_ (assertEqual (settleActivityBatch) 1))
          ($_ (assertEqual (py-call (helper.delivery_pending_count)) 0))
          ($_ (assertEqual

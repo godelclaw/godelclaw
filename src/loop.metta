@@ -14,27 +14,27 @@
    (case (mode:process)
      (((Error $call $why) (Error $call $why))
       ($selected (coordinate rest-await-input
-       (py-call (helper.boot_int "rest_await_input" 0))
+       (working:boot-int "rest_await_input" 0)
        (coordinate iteration 1
      (coordinate loops
-       (py-call (helper.boot_int "loops" (policy-burst-budget $selected)))
+       (working:boot-int "loops" (policy-burst-budget $selected))
        (coordinate sleep-interval
-         (py-call (helper.boot_int "sleepInterval" (sleepInterval)))
+         (working:boot-int "sleepInterval" (sleepInterval))
          (coordinate last-results
-           (py-call (helper.boot_str "lastresults" ""))
+           (working:boot-str "lastresults" "")
            (coordinate last-heartbeat
-             (py-call (helper.boot_num "last_heartbeat" (get_time)))
+             (working:boot-num "last_heartbeat" (get_time))
              (coordinate active-policy $selected
                (coordinate autonomous-ready 0
                  (coordinate banked-loops
-                   (py-call (helper.boot_int "banked_loops" 0))
+                   (working:boot-int "banked_loops" 0)
                    (coordinate pending-continuation
-                     (loop:host-continuation (py-call (helper.rest_pending))) coordinates-empty))))))))))))))
+                     (loop:host-continuation (working:rest-pending)) coordinates-empty))))))))))))))
 
-;; helper.rest_pending answers in Python text, which py-call made symbols
-;; before CeTTa b8d3580b (and Janus still does on SWI-PeTTa): no-continuation,
-;; or (continuation-value COMMAND) with the restored command's words. Since
-;; then the words are Strings; make them the symbols the loop runs.
+;; The working-state facade answers no-continuation, or
+;; (continuation-value COMMAND) with the restored command's words. SWI may
+;; still cross them as symbols and CeTTa as Strings; make them the symbols
+;; the loop runs.
 (= (loop:host-continuation $value)
    (case $value
      (("no-continuation" no-continuation)
@@ -45,7 +45,7 @@
    (progn
      ;; Only the launcher acknowledges the previous process's request,
      ;; before selecting its engine and mode. A newer request belongs to us.
-     (py-call (helper.working_boot))
+     (working:boot)
      (configure sleepInterval 1)
      (configure LLM syn:large:text)
      (configure maxOutputToken 32768)
@@ -189,7 +189,7 @@
               ($fresh (goal-bookkeeping:fresh $wake))
               ($message (goal-bookkeeping:message $wake)))
          (if (== $fresh 1)
-           (let* (($_ (py-call (helper.rest_release)))
+           (let* (($_ (working:rest-release))
                   ($armed
                 (max (loop-budget $periphery)
                      (if (tg:client-metta?) (tg:last-message-arm-loops) (py-call (telegram.lastMessageArmLoops))))))
@@ -231,7 +231,7 @@
 ;; operator message or /wake — and returns idle pacing to normal. Taking the
 ;; maximum keeps a timer continuation's own allowance when one fired.
 (= (applyRestRestore $periphery)
-   (let* (($_ (py-call (helper.rest_release)))
+   (let* (($_ (working:rest-release))
           ($banked (coordinate-get-or banked-loops 0 $periphery)))
      (if (> $banked 0)
          (coordinate-set banked-loops 0
@@ -404,7 +404,7 @@
           ($directed (loop-directives-apply $withResults))
           ($banked (applyRestBanking $directed))
           ($_ (loop-directives-clear))
-          ($_ (py-call (helper.turn_commit_stage $providerSucceeded $historyReceipt (if $has-activity 1 0))))
+          ($_ (working:turn-commit-stage $providerSucceeded $historyReceipt (if $has-activity 1 0)))
           ($_ (if (and (and (== $providerSucceeded 1) (== $historyReceipt 1))
                        (or $has-activity (or (not (== $sexpr ())) (not (== $undelivered "")))))
                   (hierarchy:record $iteration $source $message $response (quote $commandResults))
@@ -518,7 +518,7 @@
           ;; unlike a compound marker it cannot be eagerly reduced away while
           ;; crossing the MeTTa/Prolog call boundary.
           ($turn (- 0 $iteration))
-          ($_ (py-call (helper.rest_claim)))
+          ($_ (working:rest-claim))
           ($_ (addition-effect-turn-begin $turn))
           ($actual (py-call (strategy_host.begin_continuation $turn (quote ($continuation)))))
           ($records (run-command-batch-once $actual 1 (quote ($continuation))))
@@ -527,7 +527,7 @@
           ($_ (println! $results))
           ($_ (hierarchy:begin $turn timed-continuation (py-call (strategy_host.view))))
           ($_ (hierarchy:record $turn timed-continuation "" (quote $continuation) (quote $records)))
-          ($_ (py-call (helper.rest_finish))))
+          ($_ (working:rest-finish)))
      (coordinate-set pending-continuation no-continuation
        (coordinate-set loops 2
          (coordinate-set last-results (string-safe (repr $results))
@@ -535,7 +535,7 @@
 
 (= (applyTimedContinuation $periphery $timedOut)
    (let $pending (loop-pending-continuation $periphery)
-     (if (and (== (py-call (helper.rest_due $timedOut)) 1)
+     (if (and (== (working:rest-due $timedOut) 1)
               (not (== $pending no-continuation)))
          (runRestContinuation $periphery $pending)
          $periphery)))
@@ -564,8 +564,8 @@
                      (max $policyWait $retryWait)
                      $policyWait))
           ($wait (if $enabled
-                    (py-call (helper.wait_seconds $requestedWait
-                              (loop-last-heartbeat $periphery) (heartbeatInterval)))
+                    (working:wait-seconds $requestedWait
+                              (loop-last-heartbeat $periphery) (heartbeatInterval))
                     $requestedWait))
           ;; Retained input cannot interrupt the retry it caused. The separate
           ;; command responder remains live, and /stop is checked once per
@@ -597,8 +597,7 @@
 
 (= (persistProcessState $state)
    (let $periphery (process-periphery $state)
-     (py-call
-       (helper.working_set_save
+     (working:save
          (loop-budget $periphery)
          (loop-sleep $periphery)
          (loop-last-results $periphery)
@@ -606,7 +605,7 @@
          (if (== (loop-pending-continuation $periphery)
                  no-continuation) 0 1)
          (coordinate-get-or banked-loops 0 $periphery)
-         (coordinate-get-or rest-await-input 0 $periphery)))))
+         (coordinate-get-or rest-await-input 0 $periphery))))
 
 (= (settleActivityBatch)
    (let $channel (catch (if (tg:client-metta?) (tg:ack-activity-batch)
@@ -618,17 +617,17 @@
 ;; before tail recursion, so dormant alternatives cannot retain earlier turns.
 (= (processCycle $state)
    (let* (($periphery (process-periphery $state))
-          ($_ (py-call (helper.turn_commit_reset)))
+          ($_ (working:turn-commit-reset))
           ($_ (py-call (process_supervision.progress "turn-start")))
           ($_ (println! (---------iteration (loop-iteration $periphery))))
           ($outcome (turnProcess $periphery))
-          ($_ (case $outcome (((success $p) 1) ($other (py-call (helper.turn_commit_reset))))))
+          ($_ (case $outcome (((success $p) 1) ($other (working:turn-commit-reset)))))
           ($next (process-step $state $outcome))
           ($checkpoint (persistProcessState $next))
-          ($_ (if (and (== $checkpoint 1) (== (py-call (helper.turn_commit_ready)) 1))
+          ($_ (if (and (== $checkpoint 1) (== (working:turn-commit-ready) 1))
                 (let $acked (settleActivityBatch)
                   (if (== $acked 1) (py-call (cognitive_health.turn_settled)) 0)) 0))
-          ($_ (py-call (helper.turn_commit_reset))))
+          ($_ (working:turn-commit-reset)))
      (if (== (py-call (helper.recycle_requested)) 1)
          (progn
            (println! (RECYCLE_AT_TURN_BOUNDARY

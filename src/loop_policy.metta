@@ -1,6 +1,7 @@
 ;; Replaceable life-policy data and per-turn directives.  This file is not
 ;; part of the two-equation process kernel.
 
+!(import! &self ./src/working_state)
 !(bind! &loop-directives (new-state coordinates-empty))
 
 (= (loop-directives-clear)
@@ -107,7 +108,7 @@
 ;; capped waits and a process restart.
 (= (loop-parked $periphery)
    (or (== (coordinate-get-or rest-await-input 0 $periphery) 1)
-       (== (py-call (helper.rest_holding)) 1)))
+       (== (working:rest-holding) 1)))
 
 (= (policy-wait-seconds $selected $loops $requested $paused)
    (if (and (and (policy-autonomous-renewal $selected) (<= $loops 0))

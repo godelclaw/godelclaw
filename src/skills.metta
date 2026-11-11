@@ -126,7 +126,7 @@
 ;; and handed back when the rest ends, so a short nap no longer costs a whole
 ;; breath. The loop does the banking because only it can see the periphery.
 (= (rest)
-   (progn (py-call (helper.rest_cancel))
+   (progn (working:rest-cancel)
           (loop-directive-set rest-await-input 1)
           (loop-directive-set rest-request 1)
           (loop-directive-set pending-continuation (quote no-continuation))
@@ -136,8 +136,8 @@
    ;; Rest duration remains the agent's decision. An authenticated operator
    ;; message or /wake may deliberately end it; other activity queues.
    (let $n (max 1 (py-call (int $seconds)))
-        (progn (py-call (helper.rest_cancel))
-               (py-call (helper.rest_hold $n))
+        (progn (working:rest-cancel)
+               (working:rest-hold $n)
                (loop-directive-set rest-await-input 0)
                (loop-directive-set rest-request 1)
                (loop-directive-set sleep-interval $n)
@@ -150,8 +150,8 @@
    ;; generic coordinate store.  The wait adapter is the sole consumer that
    ;; unwraps it after the timer expires.
    (let $n (max 1 (py-call (int $seconds)))
-        (progn (py-call (helper.rest_schedule $n (quote $continuation)))
-               (py-call (helper.rest_hold $n))
+        (progn (working:rest-schedule $n (quote $continuation))
+               (working:rest-hold $n)
                (loop-directive-set rest-await-input 0)
                (loop-directive-set rest-request 1)
                (loop-directive-set sleep-interval $n)
@@ -165,15 +165,15 @@
    ;; Preserve the original intention-bearing rest.  Unlike a quoted command,
    ;; text is context for the next waking rather than executable data.
    (let $n (max 1 (py-call (int $seconds)))
-        (progn (py-call (helper.rest_cancel))
-               (py-call (helper.rest_hold $n))
+        (progn (working:rest-cancel)
+               (working:rest-hold $n)
                (loop-directive-set rest-await-input 0)
                (loop-directive-set rest-request 1)
                (loop-directive-set sleep-interval $n)
                (loop-directive-set pending-continuation
                                    (quote no-continuation))
-               (py-call (helper.intent_save
-                          (utils:decode-safe $why)))
+               (working:intent-save
+                          (utils:decode-safe $why))
                (RESTING budget-banked
                         sleep-interval-seconds $n
                         intent (utils:decode-safe $why)))))

@@ -19,6 +19,7 @@ class TurnCheckpointTests(unittest.TestCase):
     def test_native_ack_gate_and_recovery_preserve_later_arrival(self):
         root = Path(__file__).resolve().parents[1]
         environment = dict(os.environ, METTACLAW_TELEGRAM_SERVICE_SOCKET="",
+            METTACLAW_ENGINE="cetta", METTACLAW_ACTIVE_ENGINE="cetta",
             METTACLAW_ENGINE_STATE_PATH=str(self.root / "engine"),
             METTACLAW_TELEGRAM_LOG_PATH=str(self.root / "updates.jsonl"),
             PYTHONPATH=os.pathsep.join([str(root / "src"), str(root / "channels")]))

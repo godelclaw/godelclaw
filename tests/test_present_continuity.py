@@ -98,12 +98,12 @@ class LoopWiringTests(unittest.TestCase):
             self.skills = fh.read()
 
     def test_boot_restores_instead_of_blank_arming(self):
-        self.assertIn("(helper.working_boot)", self.loop)
+        self.assertIn("(working:boot)", self.loop)
         self.assertIn(
-            '(helper.boot_int "loops" (policy-burst-budget $selected))',
+            '(working:boot-int "loops" (policy-burst-budget $selected))',
             self.loop,
         )
-        self.assertIn('(helper.boot_str "lastresults" ""', self.loop)
+        self.assertIn('(working:boot-str "lastresults" ""', self.loop)
         self.assertIn("(rooted weak-process-core-v1 (initialPeriphery))",
                       self.loop)
         self.assertNotIn("&loops", self.loop)
@@ -112,7 +112,7 @@ class LoopWiringTests(unittest.TestCase):
         self.assertNotIn("&last-heartbeat", self.loop)
 
     def test_every_turn_boundary_persists(self):
-        self.assertIn("(helper.working_set_save", self.loop)
+        self.assertIn("(working:save", self.loop)
         self.assertIn("(process-step $state $outcome)", self.loop)
 
     def test_timed_rest_carries_quoted_continuation_as_data(self):
@@ -122,10 +122,10 @@ class LoopWiringTests(unittest.TestCase):
         start = self.skills.index(signature)
         end = self.skills.index("(= (rest $seconds $why)", start)
         command = self.skills[start:end]
-        self.assertIn("(helper.rest_schedule $n (quote $continuation))",
+        self.assertIn("(working:rest-schedule $n (quote $continuation))",
                       command)
         self.assertIn("(continuation-value $continuation)", command)
-        self.assertNotIn("(helper.intent_save", command)
+        self.assertNotIn("(working:intent-save", command)
 
     def test_wait_executes_continuation_without_model_call(self):
         self.assertIn("(runRestContinuation", self.loop)

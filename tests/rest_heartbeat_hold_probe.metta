@@ -10,8 +10,8 @@
 !(add-atom &self (= (sleepInterval) 1))
 
 (= (hold-probe:rest $periphery $seconds)
-   (progn (py-call (helper.rest_cancel))
-          (py-call (helper.rest_hold $seconds))
+   (progn (working:rest-cancel)
+          (working:rest-hold $seconds)
           (loop-directives-clear)
           (loop-directive-set rest-await-input 0)
           (loop-directive-set rest-request 1)
@@ -26,7 +26,7 @@
                   (coordinate rest-await-input 0
                     (coordinate pending-continuation no-continuation
                       coordinates-empty))))))))
-         ($_ (py-call (helper.rest_cancel)))
+         ($_ (working:rest-cancel))
          ($_ (assertEqual (loop-parked $start) False))
          ($resting (hold-probe:rest $start 36000))
          ($_ (assertEqual (loop-budget $resting) 0))
@@ -47,10 +47,10 @@
          ($_ (assertEqual (loop-resting $empty) 1))
          ($_ (assertEqual (restoreAfterWait $empty 1) $empty))
          ;; The wait is capped by the heartbeat, never past the rest's end.
-         ($_ (assertEqual (<= (py-call (helper.wait_seconds 36000 (get_time) 1800)) 1800) True))
-         ($_ (assertEqual (> (py-call (helper.rest_until)) (+ (get_time) 35000)) True))
+         ($_ (assertEqual (<= (working:wait-seconds 36000 (get_time) 1800) 1800) True))
+         ($_ (assertEqual (> (working:rest-until) (+ (get_time) 35000)) True))
          ;; At the deadline the rest ends and hands the bank back.
-         ($_ (py-call (helper.rest_hold 0)))
+         ($_ (working:rest-hold 0))
          ($_ (assertEqual (loop-parked $beat) False))
          ($due (restoreAfterWait $beat 1))
          ($_ (assertEqual (loop-budget $due) 44))
@@ -60,9 +60,9 @@
          ($again (hold-probe:rest $start 36000))
          ($woken (restoreAfterWait $again 0))
          ($_ (assertEqual (loop-budget $woken) 43))
-         ($_ (assertEqual (py-call (helper.rest_holding)) 0))
+         ($_ (assertEqual (working:rest-holding) 0))
          ;; An activity wait is unchanged: no deadline, parked until input.
-         ($_ (py-call (helper.rest_cancel)))
+         ($_ (working:rest-cancel))
          ($await (coordinate-set rest-await-input 1 $resting))
          ($_ (assertEqual (loop-parked $await) True))
          ($_ (assertEqual (restoreAfterWait $await 1) $await))
