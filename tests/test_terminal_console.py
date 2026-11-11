@@ -13,11 +13,40 @@ import tempfile
 import termios
 import time
 import unittest
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 
 @unittest.skipUnless(os.environ.get('CETTA_BIN'), 'qualified Python-enabled CeTTa required')
 class TerminalConsole(unittest.TestCase):
+    def test_a_suppressed_redraw_still_publishes_the_buffered_reply(self):
+        from ui.worklog.console import EditorProxy
+        buffer, published = [], []
+        loop = object()
+
+        def flush():
+            if buffer:
+                published.append(''.join(buffer))
+                buffer.clear()
+
+        output = SimpleNamespace(write_raw=buffer.append, flush=flush)
+        renderer = SimpleNamespace(waiting_for_cpr=False, erase=lambda: None,
+                                   request_absolute_cursor_position=lambda: None)
+        app = SimpleNamespace(loop=loop, is_running=True, _running_in_terminal=False,
+                              renderer=renderer, _redraw=lambda: None)
+
+        class Base:
+            def __init__(self, **kwargs):
+                self._output = output
+                self.app_session = SimpleNamespace(app=app)
+
+        proxy = EditorProxy(Base)
+        proxy.pending.append('reply')
+        proxy.loop = loop
+        proxy._drain(loop, time.monotonic())
+        self.assertEqual(published, ['reply'])
+        self.assertFalse(buffer)
+
     def test_bracketed_paste_and_controls_share_the_session_without_blocking(self):
         with tempfile.TemporaryDirectory() as folder:
             base=Path(folder); instance=base/'instance';instance.mkdir();state=base/'state'
@@ -64,7 +93,7 @@ else:
 ''')
             mail.chmod(0o700)
             commands=base/'bin';commands.mkdir();(commands/'claw-mail').symlink_to(mail)
-            environment=dict(os.environ,PATH=str(commands),
+            environment=dict(os.environ,PATH=str(commands),TERM='xterm-256color',
                 CETTA_SHARED_MAIL_SOCKET=str(base/'no-service.sock'),CLAW_MAIL_CONFIG=str(base/'isolated-mail.toml'))
             (base/'isolated-mail.toml').write_text('socket = '+json.dumps(str(base/'no-service.sock'))+'\ncetta = '+json.dumps(os.environ['CETTA_BIN'])+'\n')
             profile=base/'instances.json';profile.write_text(json.dumps({'instances':[{
@@ -78,17 +107,38 @@ else:
                 '--agent','fixture','--instances',str(profile),'--dir',str(base/'display')],
                 cwd=ROOT,env=environment,stdin=slave,stdout=slave,stderr=slave,start_new_session=True)
             os.close(slave);transcript=bytearray()
+            cursor_tail = b''
+
+            def drain(timeout=.05):
+                nonlocal cursor_tail
+                if not select.select([master], [], [], timeout)[0]:
+                    return False
+                try:
+                    block = os.read(master, 65536)
+                except OSError:
+                    return False
+                if not block:
+                    return False
+                transcript.extend(block)
+                # A terminal answers every cursor query, including queries
+                # batched in one read or split across reads.
+                queries = cursor_tail + block
+                count = queries.count(b'\x1b[6n')
+                cursor_tail = queries[-3:]
+                if count:
+                    os.write(master, b'\x1b[1;1R' * count)
+                return True
+
             def expect(text):
                 deadline=time.monotonic()+15
                 while time.monotonic()<deadline:
                     if text.encode() in transcript:return
-                    if select.select([master],[],[],.05)[0]:
-                        try: block=os.read(master,65536)
-                        except OSError:break
-                        transcript.extend(block)
-                        if b'\x1b[6n' in block:os.write(master,b'\x1b[1;1R')
+                    drain()
                     if process.poll() is not None:break
-                self.fail('missing '+text+'; tail: '+transcript[-1800:].decode(errors='replace'))
+                log = state / 'terminal-client/controls.log'
+                detail = log.read_text(errors='replace')[-2400:] if log.exists() else 'no control log'
+                self.fail('missing '+text+'; tail: '+transcript[-1800:].decode(errors='replace')+
+                          '; controls: '+detail)
             try:
                 expect('ACTIVITY_1')
                 os.write(master,b'/models\r');expect('tap to switch')
@@ -117,7 +167,11 @@ else:
                 deadline=time.monotonic()+5
                 while not (base/'read-held').exists() and time.monotonic()<deadline:time.sleep(.01)
                 self.assertTrue((base/'read-held').exists())
-                os.write(master,b'/detach\r');process.wait(timeout=5)
+                os.write(master,b'/detach\r')
+                until = time.monotonic() + 5
+                while process.poll() is None and time.monotonic() < until:
+                    drain()
+                process.wait(timeout=max(.01, until-time.monotonic()))
                 while select.select([master],[],[],.05)[0]:
                     try: block=os.read(master,65536)
                     except OSError:break

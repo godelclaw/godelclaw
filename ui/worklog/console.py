@@ -1,5 +1,6 @@
 """Attach an input composer to an existing agent without starting cognition."""
 import argparse
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -53,10 +54,9 @@ def EditorProxy(StdoutProxy):
     three separate writes, so a terminal can show a frame without the editor on every event.
     Here, in the application's own loop and in order: erase the editor, print the batch, ask
     for the cursor row, redraw the editor, then flush once. It waits (briefly) for an
-    outstanding cursor-row answer first, as run_in_terminal does. Each prompt runs a fresh
-    event loop that is closed when the prompt returns, dropping callbacks still queued on it,
-    so text is kept here until it is written: on the loop of the prompt now running, or
-    directly when none is (release() is called after each prompt returns).
+    outstanding cursor-row answer first, as run_in_terminal does. All prompts share one
+    event loop, so queued drawing callbacks survive input submissions. Text remains here
+    until written; release() drains it directly while the editor is inactive.
     Output is raw: every caller hands it sanitised whole lines."""
     import collections
 
@@ -123,7 +123,10 @@ def EditorProxy(StdoutProxy):
                     renderer.request_absolute_cursor_position()
                 finally:
                     output.flush = flush
-                app._redraw()                       # renders and flushes everything at once
+                app._redraw()
+                # prompt_toolkit can suppress this redraw. The reply is then
+                # still in the output buffer although it left our queue.
+                output.flush()
 
     return Proxy()
 
@@ -495,7 +498,7 @@ def main(argv=None):
         proxy = EditorProxy(StdoutProxy)
         streams = sys.stdout, sys.stderr
         sys.stdout = sys.stderr = proxy
-        try:
+        async def interact():
             for target in (worker, publisher, replies, events, poller): threading.Thread(target=target, daemon=True).start()
             note("Attached to %s. /help lists commands; Ctrl-D detaches and cognition keeps running." % agent_label, "dim")
             count_unconfirmed()
@@ -508,7 +511,7 @@ def main(argv=None):
                     say(blocks.reply(agent_label if value.get("from") in (None, "", args.agent) else value["from"], value["text"]))
             work.put(("command", dict(name="/activity", arguments=""), view_epoch[0]))
             while True:
-                try: text = session.prompt()
+                try: text = await session.prompt_async()
                 except KeyboardInterrupt: continue
                 except EOFError: break
                 finally: proxy.release()
@@ -547,9 +550,13 @@ def main(argv=None):
                     count_unconfirmed()
             stop.set()
             note("Detached from %s; cognition keeps running." % agent_label, "dim")
+        try:
+            asyncio.run(interact())
         finally:
+            stop.set()
             sys.stdout, sys.stderr = streams
             proxy.close()
+            proxy.release()
         return 0
     finally:
         if mail is not None: mail.close()
