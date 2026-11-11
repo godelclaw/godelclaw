@@ -216,5 +216,24 @@
       ]
     }
   ],
-  "reference_policy": "Only test/fixture/offline-comparison paths are exempted. Vendored mode helpers are counted because the current mode hosts still load or copy some of them; vendoring is not evidence of runtime independence."
+  "reference_policy": "Only test/fixture/offline-comparison paths are exempted. Vendored mode helpers are counted because the current mode hosts still load or copy some of them; vendoring is not evidence of runtime independence.",
+  "completed_slices": [
+    {
+      "id": "checkpoint-transport",
+      "status": "qualified-and-deployed",
+      "native_module": "src/checkpoint_ledger_cetta.metta",
+      "runtime_commit": "985340c565ba5c7cfa81166bf1344665456cc84e",
+      "release": "ea0070f79f0f849676c64532ec0b88decf35b954b8698c25b3ef8f2c72a72f82",
+      "checks": {
+        "tests": 74,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "remaining_working_state_bridges": [
+        "working_state_host.commit_scope",
+        "process_supervision.progress"
+      ]
+    }
+  ]
 }
