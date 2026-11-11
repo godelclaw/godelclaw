@@ -35,16 +35,15 @@ class ScopedObservationTests(unittest.TestCase):
         source = self.directory / ('observe-' + str(self.sequence) + '.metta')
         result = self.directory / ('result-' + str(self.sequence) + '.cav1')
         source.write_text('\n'.join([
-            '!(import! &self ' + q(ROOT / 'tests/support/scoped_observation_probe.metta') + ')',
+            '!(import! &self ' + q(getattr(self, 'probe', ROOT / 'tests/support/scoped_observation_probe.metta')) + ')',
             '(= (observation-probe:body $owner $view $epoch $revision) ' + body + ')',
             '!(let (StoreOpened $owner) (store:open ' + q(self.seed.path) + ' "existing")',
             ' (let (StoreSnapshot $view $epoch $revision) (store:snapshot $owner)',
             '  (let* (($out (observation-probe:body $owner $view $epoch $revision))',
-            '         ($_ (observation-probe:save ' + q(result) + ' $out))',
-            '         ($_ (collapse (store:close $view)))',
-            '         ($_ (collapse (store:close $owner))))',
-            '    True)))',
-            '!(println! "SCOPED_OBSERVATION_OK")',
+            '         ($discarded1 (observation-probe:save ' + q(result) + ' $out))',
+            '         ($discarded2 (collapse (store:close $view)))',
+            '         ($discarded3 (collapse (store:close $owner))))',
+            '    (println! "SCOPED_OBSERVATION_OK"))))',
         ]) + '\n')
         process = subprocess.run([os.environ['CETTA_BIN'], '--lang', lang, '--profile', 'extended',
                                   '--import-mode', 'relative', str(source)],
@@ -66,10 +65,10 @@ class ScopedObservationTests(unittest.TestCase):
         manifest = json.loads((ROOT / 'config/native-libraries.json').read_text())
         selection = json.loads((ROOT / 'config/runtime-files.json').read_text())
         self.assertEqual(manifest['schema'], 1)
-        library, = manifest['libraries']
-        path = ROOT / library['runtime']
-        self.assertIn(library['runtime'], selection)
-        self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), library['sha256'])
+        for library in manifest['libraries']:
+            path = ROOT / library['runtime']
+            self.assertIn(library['runtime'], selection)
+            self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), library['sha256'])
         self.assertIn('config/native-libraries.json', selection)
         for name in ('src/knowledge_store_cetta.metta', 'src/knowledge_observation_cetta.metta'):
             self.assertIn(name, selection)
@@ -119,6 +118,7 @@ class ScopedObservationTests(unittest.TestCase):
           ($r (obs:choice $left $right))) (Results (obs:values $r) (obs:status $r) (obs:dependencies $r)))'''
         for result in self.both(body):
             self.assertEqual(self.projected(result[1]), ('x', 'x', 'y'))
+            self.assertIsInstance(result[1][2], tuple)
             self.assertEqual(result[1][2][0], S('ObservationOpenV1'))
             self.assertEqual(result[2][0], S('Incomplete'))
             self.assertEqual(result[3], (S('a'),))
@@ -147,7 +147,7 @@ class ScopedObservationTests(unittest.TestCase):
           ($forged (kb:report-scopes-on $view $fake))
           ((StoreSnapshot $other $other-epoch $other-revision) (store:snapshot $owner))
           ($wrong (kb:report-scopes-on $other $bound))
-          ($_ (collapse (store:close $other)))) (Results $valid $wire $forged $wrong))'''
+          ($discarded4 (collapse (store:close $other)))) (Results $valid $wire $forged $wrong))'''
         for result in self.both(body):
             self.assertEqual(result[1][0], S('KnowledgeReadScopesV2'))
             for refused in result[2:]:
@@ -179,7 +179,7 @@ class ScopedObservationTests(unittest.TestCase):
 
     def test_owner_handle_and_closed_snapshot_do_not_manufacture_absence(self):
         body = '''(let* (($wrong (obs:lookup $owner "missing" 1024))
-          ($_ (collapse (store:close $view))) ($closed (obs:lookup $view "missing" 1024)))
+          ($discarded5 (collapse (store:close $view))) ($closed (obs:lookup $view "missing" 1024)))
           (Results (obs:status $wrong) (obs:status $closed)))'''
         for result in self.both(body):
             self.assertEqual([r[0] for r in result[1:]], [S('Faulted'), S('Faulted')])
@@ -205,6 +205,206 @@ class ScopedObservationTests(unittest.TestCase):
             self.assertEqual(result[1][0], S('Empty'))
             self.assertEqual(result[2][0], S('KnowledgeCommittedV1'), result)
             self.assertEqual(result[3], E('StoreRefused', S('conflict')))
+
+
+    def test_computational_zero_empty_unit_syntax_and_not_observed_stay_distinct(self):
+        body = """(let* (($report (kb:read-report $view "missing" 1024))
+          ($index (obs:scope $report)) ($syntax (obs:syntax (+ 1 2))))
+          (Results (collapse (superpose ())) (collapse (obs:status $report))
+           (collapse (function (return ()))) $syntax
+           (obs:status (obs:undemanded $index))
+           (obs:negative-grade ($report $report))))"""
+        for result in self.both(body):
+            self.assertEqual(result[1], ())
+            self.assertEqual(len(result[2]), 1)
+            self.assertEqual(result[2][0][0], S('Empty'))
+            self.assertEqual(result[3], ((),))
+            self.assertEqual(decode(result[4][1].encode('utf-8')), E('+', 1, 2))
+            self.assertEqual(result[5][0], S('NotObserved'))
+            self.assertEqual(len(result[6][1]), 2)
+            self.assertEqual(result[6][1][0], result[6][1][1])
+
+    def test_epsilon_is_one_success_and_no_match_is_scoped_empty(self):
+        body = """(let* (($yes (obs:regex-find (re:pattern "") ""))
+          ($no (obs:regex-find (re:pattern "x") ""))
+          ($fault (obs:regex-find (re:pattern "[") "")))
+          (Results (obs:status $yes) (obs:values $yes) (obs:status $no)
+            (obs:status $fault) (obs:negative-grade ($yes))))"""
+        for result in self.both(body):
+            self.assertEqual(result[1][0], S('Observed'))
+            values = self.projected(result[2])
+            self.assertEqual(len(values), 1)
+            self.assertEqual(values[0][0:3], (S('RegexOccurrenceV1'), 0, 0))
+            self.assertEqual(result[3][0], S('Empty'))
+            self.assertEqual(result[4][0], S('Faulted'))
+            self.assertEqual(result[5][0], S('ObservationRefusedV1'))
+
+
+    def test_native_range_zero_work_and_resumption_keep_duplicate_occurrences(self):
+        body = """(let* (((StoreSnapshot $updated $e $r)
+          (store:commit $owner $view (ops (put "a" "A") (put "b" "A") (put "c" "B"))))
+          ((ObservationStepV1 $initial $c0) (obs:open-range $updated NoBound NoBound 4))
+          ($discarded6 (collapse (store:close $updated)))
+          ((ObservationStepV1 $zero $c1) (obs:step $c0 0 100))
+          ((ObservationStepV1 $first $c2) (obs:step $c1 2 100))
+          ((ObservationStepV1 $finished $none) (obs:step $c2 8 100))
+          ((ObservationStepV1 $reused $nothing) (obs:step $c1 8 100)))
+          (Results (obs:status $initial) (obs:status $zero) (obs:values $first)
+            (obs:values $finished) (obs:reconcile $first $finished)
+            $none (obs:status $reused)))"""
+        for result in self.both(body):
+            self.assertEqual(result[1][0], S('Incomplete'))
+            self.assertEqual(result[2][0], S('Incomplete'))
+            self.assertEqual(self.projected(result[3]), ('A', 'A'))
+            self.assertEqual(self.projected(result[4]), ('A', 'A', 'B'))
+            self.assertEqual(result[4][2], S('ObservationClosedV1'))
+            self.assertEqual(result[5][0], S('ObservationReportV1'))
+            self.assertEqual(result[6], S('NoObservationContinuationV1'))
+            self.assertEqual(result[7][0], S('Faulted'))
+
+    def test_native_range_byte_limit_retry_and_cancel_keep_the_prefix(self):
+        body = """(let* (((StoreSnapshot $updated $e $r)
+          (store:commit $owner $view (ops (put "a" "long payload") (put "b" "B"))))
+          ((ObservationStepV1 $initial $c0) (obs:open-range $updated NoBound NoBound 2))
+          ((ObservationStepV1 $limited $c1) (obs:step $c0 1 0))
+          ((ObservationStepV1 $partial $c2) (obs:step $c1 1 100))
+          ((ObservationStepV1 $cancelled $none) (obs:cancel $c2))
+          ((ObservationStepV1 $late $no) (obs:step $c2 5 100))
+          ($discarded7 (collapse (store:close $updated))))
+          (Results (obs:status $limited) (obs:values $partial)
+            (obs:values $cancelled) (obs:coverage $cancelled) (obs:status $late) (obs:coverage $limited)))"""
+        for result in self.both(body):
+            self.assertEqual(result[1][2], S('materialization-limit'))
+            self.assertEqual(self.projected(result[2]), ('long payload',))
+            self.assertEqual(self.projected(result[3]), ('long payload',))
+            self.assertEqual(result[4][1], S('cancelled'))
+            self.assertEqual(result[5][0], S('Faulted'))
+            self.assertEqual(result[6][2][3], E('RequiredBytesV1', len('long payload')))
+
+    def test_native_range_resource_limit_and_unissued_work_refuse(self):
+        body = """(let* (((ObservationStepV1 $initial $c0) (obs:open-range $view NoBound NoBound 1))
+          ($refused (obs:open-range $view NoBound NoBound 1))
+          ($zero (obs:open-range $view NoBound NoBound 0))
+          ($fake (work-new (FabricatedState would-execute-if-forced)))
+          ((ObservationStepV1 $bad $none) (obs:step (ObservationCursorV2 $fake) 1 100))
+          ($untouched (work-take $fake 1)) ($discarded8 (collapse (work-cancel $fake)))
+          ($discarded9 (obs:cancel $c0))
+          ((ObservationStepV1 $after $c1) (obs:open-range $view NoBound NoBound 1))
+          ((ObservationStepV1 $empty $end) (obs:step $c1 1 100)))
+          (Results $refused $zero (obs:status $bad) $untouched (obs:status $empty)))"""
+        for result in self.both(body):
+            self.assertEqual(result[1][0:2], (S('ObservationRefusedV1'), S('cursor-capacity')))
+            self.assertEqual(result[2][0:2], (S('ObservationRefusedV1'), S('cursor-capacity')))
+            self.assertEqual(result[3][0], S('Faulted'))
+            self.assertEqual(result[4][0], S('taken'))
+            self.assertEqual(len(result[4][1]), 1)
+            self.assertEqual(result[5][0], S('Empty'))
+
+
+    def test_reconciliation_keeps_negative_premises_and_refuses_backward_progress(self):
+        body = """(let* (($a (ObservationReportV1 scope () (ObservationOpenV1 budget residual) (first)))
+          ($lost (ObservationReportV1 scope () (ObservationOpenV1 budget residual) ()))
+          ($regressed (ObservationReportV1 scope () ObservationNotStartedV1 (first)))
+          ($bad (ObservationReportV1 scope ((ObservationWitnessV1 id (ObservationBytesV1 "x")))
+                 ObservationNotStartedV1 ())))
+          (Results (obs:reconcile $a $lost) (obs:reconcile $a $regressed) (obs:status $bad)))"""
+        for result in self.both(body):
+            self.assertEqual(result[1][1], S('negative-dependency-conflict'))
+            self.assertEqual(result[2][1], S('progress-regressed'))
+            self.assertEqual(result[3][1], S('not-started-with-occurrences'))
+
+    def test_many_ordered_values_roundtrip_without_container_header_truncation(self):
+        events = ' '.join('(ObservationWitnessV1 (id ' + str(i) + ') (ObservationBytesV1 "v"))' for i in range(129))
+        body = '(obs:values (ObservationReportV1 scope (' + events + ') ObservationClosedV1 ()))'
+        for result in self.both(body):
+            self.assertEqual(self.projected(result), ('v',) * 129)
+
+    def test_range_boundaries_and_captured_values_survive_later_writes_and_compaction(self):
+        body = """(let* (((StoreSnapshot $before $e1 $r1)
+          (store:commit $owner $view (ops (put "a" "outside") (put "b" "old") (put "c" "upper"))))
+          ((ObservationStepV1 $initial $cursor) (obs:open-range $before "b" "c" 2))
+          ((StoreSnapshot $after $e2 $r2) (store:commit $owner $before (ops (put "b" "new"))))
+          ($closed1 (collapse (store:close $before))) ($closed2 (collapse (store:close $after)))
+          ((StoreSnapshot $compacted $compact-epoch $compact-revision) (store:compact $owner))
+          ($compact-closed (collapse (store:close $compacted)))
+          ((ObservationStepV1 $finished $none) (obs:step $cursor 4 100)))
+          (Results (obs:values $finished) (obs:scope $initial) (obs:scope $finished) (Compacted $compact-epoch $compact-revision)))"""
+        for result in self.both(body):
+            self.assertEqual(self.projected(result[1]), ('old',))
+            self.assertEqual(result[1][2], S('ObservationClosedV1'))
+            self.assertEqual(result[2], result[3])
+            self.assertEqual(result[4][0], S('Compacted'))
+
+
+    def test_invalid_budgets_do_not_consume_the_owned_residual(self):
+        body = """(let* (((ObservationStepV1 $initial $cursor) (obs:open-range $view NoBound NoBound 1))
+          ($negative (obs:step $cursor -1 100)) ($fraction (obs:step $cursor 0.5 100))
+          ($text (obs:step $cursor "zero" 100))
+          ($bad-limit (obs:open-range $view NoBound NoBound "one"))
+          ((ObservationStepV1 $finished $none) (obs:step $cursor 1 100)))
+          (Results $negative $fraction $text $bad-limit (obs:status $finished)))"""
+        for result in self.both(body):
+            for refused in result[1:5]:
+                self.assertEqual(refused[0], S('ObservationRefusedV1'))
+            self.assertEqual(result[5][0], S('Empty'))
+
+    def test_inert_indices_roundtrip_through_codec_and_parser_without_query_execution(self):
+        body = """(let* (($a (obs:lookup-at $view "(NotAnExecutedQuery 1)" 1024 "fixed"))
+          ($b (obs:lookup-at $view "different" 1024 "fixed"))
+          ($wire (obs:encode (Envelope (obs:status $a) $a)))
+          ((StoreDecoded $copy) (store:decode $wire)) ($parsed (parse (repr $copy))))
+          (Results (obs:same $copy $parsed) (obs:reconcile $a $b)))"""
+        for result in self.both(body):
+            self.assertIn(result[1], (True, S('true'), S('True')))
+            self.assertEqual(result[2][1], S('scope-mismatch'))
+
+
+    def test_overlapping_fragments_reconcile_replays_but_keep_distinct_equal_values(self):
+        body = """(let* (($one (ObservationWitnessV1 one (ObservationBytesV1 "equal")))
+          ($two (ObservationWitnessV1 two (ObservationBytesV1 "equal")))
+          ($three (ObservationWitnessV1 three (ObservationBytesV1 "last")))
+          ($a (ObservationReportV1 scope ($one $two) (ObservationOpenV1 budget a-residual) (a)))
+          ($b (ObservationReportV1 scope ($two $three) (ObservationOpenV1 budget b-residual) (b)))
+          ($merged (obs:reconcile-overlap $a $b)))
+          (Results (obs:values $merged) (obs:dependencies $merged) (obs:status $merged)))"""
+        for result in self.both(body):
+            self.assertEqual(self.projected(result[1]), ('equal', 'equal', 'last'))
+            self.assertEqual(result[2], (S('a'), S('b')))
+            self.assertEqual(result[3][0], S('Incomplete'))
+
+    def test_overlapping_fragments_refuse_conflicting_records_order_and_closed_coverage(self):
+        body = """(let* (($one (ObservationWitnessV1 one (ObservationBytesV1 "one")))
+          ($two (ObservationWitnessV1 two (ObservationBytesV1 "two")))
+          ($changed (ObservationWitnessV1 one (ObservationBytesV1 "changed")))
+          ($a (ObservationReportV1 scope ($one $two) (ObservationOpenV1 budget residual) ()))
+          ($b (ObservationReportV1 scope ($changed) (ObservationOpenV1 budget residual) ()))
+          ($order (ObservationReportV1 scope ($two $one) (ObservationOpenV1 budget residual) ()))
+          ($closed (ObservationReportV1 scope ($one) ObservationClosedV1 ())))
+          (Results (obs:reconcile-overlap $a $b) (obs:reconcile-overlap $a $order)
+           (obs:reconcile-overlap $a $closed)))"""
+        for result in self.both(body):
+            self.assertEqual([v[0] for v in result[1:]], [S('ObservationRefusedV1')] * 3)
+            self.assertEqual(result[1][1], S('occurrence-conflict'))
+            self.assertEqual(result[2][1], S('occurrence-order-conflict'))
+            self.assertEqual(result[3][1], S('closed-observation-changed'))
+
+
+    def test_declared_empty_report_preserves_each_dialects_bare_empty(self):
+        for lang, expected in [('petta', (S('Empty'),)), ('he', ())]:
+            result = self.guest('(Results (collapse Empty) (collapse (Empty index)))', lang)
+            self.assertEqual(result[1], expected)
+            self.assertEqual(result[2], (E('Empty', S('index')),))
+
+
+    def test_explanation_counts_occurrences_without_materializing_payloads(self):
+        body = """(obs:explain (ObservationReportV1 scope
+          ((ObservationWitnessV1 one (ObservationCav1V1 "not-decoded-for-counting"))
+           (ObservationWitnessV1 two (ObservationBytesV1 "large-value-placeholder"))
+           (ObservationFaultV1 fail (obs:diagnostic search io "unavailable")))
+          (ObservationOpenV1 fault NoObservationContinuationV1) ()))"""
+        for result in self.both(body):
+            self.assertIn('witnesses=2', result)
+            self.assertIn('faults=1', result)
 
 
 

@@ -5,8 +5,29 @@
       "name": "scoped-observation",
       "distribution": "application-source-module",
       "runtime": "src/scoped_observation_cetta.metta",
-      "sha256": "beaa398622ea0156c928f4e2a28ef3a0ac2a659b034b73ab450521b70c35d4d9",
+      "sha256": "dffb38d52970567abf50fc830c286205e978a2b43e8267994e144da9bd95b2a4",
       "kernel_contract": "captured native store point ABI at 64dd3ccd; no evaluator changes"
+    },
+    {
+      "name": "scoped-observation-range",
+      "distribution": "application-source-module",
+      "runtime": "src/observation_range_cetta.metta",
+      "sha256": "38d0f8e1c36374b416b577a6c99cdf3770abf9143344eb6ac2917a79d3a02d11",
+      "kernel_contract": "native snapshot, scan and owned work ABI at 64dd3ccd; serialized interpreter calls"
+    },
+    {
+      "name": "scoped-observation-interfaces",
+      "distribution": "application-source-module",
+      "runtime": "src/observation_interfaces_cetta.metta",
+      "sha256": "c27c51816aff3533080501a8f03eab62d468ab3b66ff1b0fbb00ce3a1f42f379",
+      "kernel_contract": "native regex completion ABI at 64dd3ccd; inert syntax and data-only proof grades"
+    },
+    {
+      "name": "scoped-observation-reconciliation",
+      "distribution": "application-source-module",
+      "runtime": "src/observation_reconcile_cetta.metta",
+      "sha256": "59c57dc11732564939868f36a63a6b36c814d808c0304e91e6c9b3d0c06632a2",
+      "kernel_contract": "ordered occurrence reconciliation; reports grant no authority"
     }
   ]
 }

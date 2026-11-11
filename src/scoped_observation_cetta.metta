@@ -90,7 +90,9 @@
          (if (== (obs:diagnostics-events $events) ()) (Observed $scope)
            (if (== (obs:encoded-values $events) (ObservationEncodedValuesV1 ()))
              (Faulted $scope closed-faults) (ObservedWithFaults $scope)))))
-      (ObservationNotStartedV1 (NotObserved $scope))
+      (ObservationNotStartedV1
+       (if (== $events ()) (NotObserved $scope)
+         (ObservationRefusedV1 not-started-with-occurrences ())))
       ((ObservationOpenV1 $why $continuation)
        (if (== (obs:diagnostics-events $events) ()) (Incomplete $scope $why) (Faulted $scope $why)))
       ($other (ObservationRefusedV1 coverage $other)))))
@@ -119,9 +121,20 @@
       ((NotObserved $scope) "NotObserved")
       ($other "invalid report"))))
 (= (obs:explain $report)
-   (format-args "{} | status={} | witnesses={} | faults={}"
-     ((obs:describe-index (obs:scope $report)) (obs:status-text $report)
-      (obs:value-count (obs:values $report)) (size-atom (obs:diagnostics $report)))))
+   (case (obs:event-counts (obs:events $report))
+     (((ObservationCountsV1 $witnesses $faults)
+       (format-args "{} | status={} | witnesses={} | faults={}"
+         ((obs:describe-index (obs:scope $report)) (obs:status-text $report)
+          $witnesses $faults))))))
+; Counting occurrences does not decode or copy their potentially large payloads.
+(= (obs:event-counts $events)
+   (if (== $events ()) (ObservationCountsV1 0 0)
+     (case (obs:event-counts (cdr-atom $events))
+       (((ObservationCountsV1 $witnesses $faults)
+         (case (car-atom $events)
+           (((ObservationWitnessV1 $id $payload)
+             (let $next (+ $witnesses 1) (ObservationCountsV1 $next $faults)))
+            ($other (let $next (+ $faults 1) (ObservationCountsV1 $witnesses $next))))))))))
 ; Project sealed encoded data as ONE container, without activating each
 ; decoded term at an intermediate evaluation boundary. Native CAV1 validates
 ; the complete constructed container. Errors remain ordinary data here.
@@ -211,5 +224,10 @@
      (ObservationRefusedV1 scope-mismatch ())
      (if (not (obs:prefix? (obs:events $earlier) (obs:events $later)))
        (ObservationRefusedV1 occurrence-conflict ())
-       (if (and (== (obs:coverage $earlier) ObservationClosedV1) (not (obs:same $earlier $later)))
-         (ObservationRefusedV1 closed-observation-changed ()) $later))))
+       (if (not (obs:prefix? (obs:dependencies $earlier) (obs:dependencies $later)))
+         (ObservationRefusedV1 negative-dependency-conflict ())
+         (if (and (not (== (obs:coverage $earlier) ObservationNotStartedV1))
+                  (== (obs:coverage $later) ObservationNotStartedV1))
+           (ObservationRefusedV1 progress-regressed ())
+           (if (and (== (obs:coverage $earlier) ObservationClosedV1) (not (obs:same $earlier $later)))
+             (ObservationRefusedV1 closed-observation-changed ()) $later))))))

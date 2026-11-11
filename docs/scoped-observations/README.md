@@ -81,5 +81,84 @@ and publish through `store:commit-scoped`. An insertion after a negative read
 can make that publication conflict; it does not make the historical report a
 claim about the new snapshot.
 
-This pilot covers point lookup and observation composition. Native bounded-range
-continuations are a separate extension and are not exposed by this version.
+## Bounded ranges and owned residuals
+
+Import `src/observation_range_cetta.metta`. Open a captured range with
+`(obs:open-range view lower upper maximum-cursors)`. Bounds are byte keys or
+`NoBound`; the lower bound is inclusive and the upper bound is exclusive.
+The explicit positive cursor allowance bounds this interpreter's outstanding
+registered residuals. Each call returns:
+
+```metta
+(ObservationStepV1 report cursor-or-NoObservationContinuationV1)
+```
+
+Call `(obs:step cursor work-budget maximum-bytes)` to advance or
+`(obs:cancel cursor)` to finish without claiming complete coverage. A step
+consumes its cursor exactly once; use the returned cursor for the next step.
+A report remains ordinary reusable data after its cursor is consumed.
+
+```metta
+(let (ObservationStepV1 $initial $cursor)
+  (obs:open-range $view NoBound NoBound 8)
+  (let (ObservationStepV1 $report $next) (obs:step $cursor 16 1048576)
+    (case $next
+      ((NoObservationContinuationV1 (obs:values $report))
+       ($owned (let $cancelled (obs:cancel $owned)
+                 (obs:values $report)))))))
+```
+
+Work counts native cursor offers, including the end-of-range check. Zero work
+keeps the observation incomplete. A byte limit keeps the offered row pending,
+so a larger allowance retries that row. Cancellation keeps earlier occurrences
+and leaves coverage open. Invalid budgets refuse without consuming the cursor.
+Snapshot clones and scans pin the captured root: later writes and compaction
+cannot substitute newer values. Close or cancel residuals when finished.
+
+Operations are serialized within one interpreter; this API does not offer
+concurrent mutation of a residual registry. It uses existing native ownership
+and revocation, and adds no evaluator, parser or C changes.
+
+## Overlapping fragments
+
+Import `src/observation_reconcile_cetta.metta` for `obs:reconcile-overlap`.
+It weaves compatible same-index ordered fragments, coalesces replayed occurrence
+identities and preserves distinct equal-valued occurrences. Both inputs must
+have unique occurrence identities. Conflicting payloads, conflicting order and
+new events beyond a supposedly closed observation are refused. Two unfinished
+fragments remain unfinished; their combination does not invent exhaustive
+coverage. Both negative-premise lists remain attached.
+
+## Other observation boundaries
+
+Import `src/observation_interfaces_cetta.metta`:
+
+* `obs:regex-find` uses a captured native regex question and subject. A native
+  no-match is complete absence; epsilon is one zero-consumption match; a
+  compilation or execution failure remains a fault.
+* `obs:syntax` encodes a term as inert data. `obs:undemanded` produces a
+  NotObserved report. Neither operation runs the described computation.
+* `obs:negative-grade` retains the exact negative dependencies of completed
+  Empty reports. It refuses positive, unfinished and fault reports. A grade is
+  inspectable data; a proof consumer must discharge its indexed premises.
+
+Type-level emptiness remains in the type system; no new evaluator primitive is
+introduced. The Lean contract treats empty types, epsilon and result cardinality
+at their respective interfaces.
+
+## Qualification and cost
+
+The contract modules are
+`Mettapedia.Languages.FiniteChoice.ScopedObservation` and
+`Mettapedia.Languages.FiniteChoice.ScopedObservationContracts`. They prove finite
+producer, scan, ordered composition, demand-sensitive binding and negative-grade
+properties; they do not constitute a C refinement proof. Native tests exercise
+both extended profiles, real compaction, concurrent insertion conflicts and
+codec/parser round trips. Existing dialect goldens are unchanged.
+
+A scope-sharing wire prototype was rejected: its repeated-scope representation
+was much smaller, but packing slowed down both that workload and a single-query
+control. It is not part of the runtime. The normal API retains existing native
+atom sharing and uses the existing CAV1 codec; richer reports have explicit
+metadata and encoding costs. None of these helpers runs on the default agent
+loop unless imported and called.

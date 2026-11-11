@@ -371,5 +371,8 @@
   "src/knowledge_store_cetta.metta",
   "src/scoped_observation_cetta.metta",
   "src/knowledge_observation_cetta.metta",
-  "docs/scoped-observations/README.md"
+  "docs/scoped-observations/README.md",
+  "src/observation_range_cetta.metta",
+  "src/observation_interfaces_cetta.metta",
+  "src/observation_reconcile_cetta.metta"
 ]
