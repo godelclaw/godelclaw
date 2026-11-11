@@ -7,6 +7,7 @@
 !(import! &self (library system))
 !(import! &self ./src/effect_receipt_values_cetta.metta)
 !(import! &self ./src/mode_io_cetta.metta)
+!(import! &self ./src/checkpoint_ledger_cetta.metta)
 !(import! &self ./src/working_state_host.py)
 
 !(bind! &working-state-boot (new-state (JsonObject ())))
@@ -74,7 +75,7 @@
       ($other (ErFailure NativeEvaluationError "invalid native working-set answer" $other)))))
 (= (working-state:read)
    (if (working-state:managed?)
-     (working-state:read-ledger (working-state:answer (collapse (catch (py-call (working_state_host.ledger_read))))))
+     (working-state:read-ledger (checkpoint:read))
      (working-state:read-file)))
 
 ; The operator projection follows the native commit. A projection failure after
@@ -86,8 +87,7 @@
 (= (working-state:write-encoded $data $encoded $ids $request)
    (if (working-state:managed?)
      (let* (($saved (working-state:number-or-zero (erv:get $data "saved_at" 0)))
-            ($committed (working-state:answer (collapse (catch
-              (py-call (working_state_host.checkpoint $encoded $ids $request $saved)))))))
+            ($committed (checkpoint:write $encoded $ids $request $saved)))
        (if (== $committed True) (working-state:project True $encoded)
          (WorkingFailure checkpoint $committed)))
      (working-state:project False $encoded)))

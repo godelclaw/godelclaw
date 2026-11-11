@@ -154,6 +154,7 @@
   "src/channels.metta",
   "src/chatgpt_agent_cetta.metta",
   "src/chatgpt_plan_cetta.metta",
+  "src/checkpoint_ledger_cetta.metta",
   "src/claude_bridge.py",
   "src/coding_checkpoint.metta",
   "src/coding_delivery.metta",

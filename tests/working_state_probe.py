@@ -23,6 +23,9 @@ def forbid():
         setattr(helper, name, forbidden)
     helper._working_read = forbidden
     helper._working_write = forbidden
+    import working_state_host
+    working_state_host.ledger_read = forbidden
+    working_state_host.checkpoint = forbidden
     return 1
 
 

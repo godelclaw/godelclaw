@@ -263,7 +263,7 @@ class NativeWorkingLedgerTests(NativeWorkingStateFixture, unittest.TestCase):
         read_shape = self.directory / "read-shape"
         staged = self.directory / "staged"
         self.run_native([
-            '!(py-call (working_state_probe.record %s (repr (py-call (working_state_host.ledger_read)))))' % q(read_shape),
+            '!(py-call (working_state_probe.record %s (repr (checkpoint:read))))' % q(read_shape),
             '!(py-call (working_state_probe.scope ("runtime:101" "102") "input:one"))',
             '!(py-call (working_state_probe.record %s (repr (py-call (working_state_host.commit_scope 1)))))' % q(scope_shape),
             '!(py-call (working_state_probe.record %s (working:turn-commit-stage 1 1 1)))' % q(staged),
@@ -304,6 +304,15 @@ class NativeWorkingLedgerTests(NativeWorkingStateFixture, unittest.TestCase):
         self.assertEqual(self.committed(["lost:101"]), [1])
         self.assertEqual(self.store.request_record("input:one")["processed"], 1)
         self.assertEqual(self.store.working_checkpoint()["lastresults"], "lost reply")
+
+    def test_unavailable_ledger_never_loads_the_file_projection(self):
+        self.working.write_text('{"loops":999,"lastresults":"stale projection"}')
+        self.run_native([
+            '!(assert (working-state:failed? (working-state:read)))',
+            '!(assert (== (working:save 10 3 "not committed" 15 0 4 0) 0))',
+        ], env={input_ack.LEDGER_SOCKET: str(self.directory / 'missing.sock')})
+        self.assertEqual(json.loads(self.working.read_text())['loops'], 999)
+        self.assertIsNone(self.store.working_checkpoint())
 
     def test_competing_native_checkpoints_commit_once_each(self):
         processes = []
