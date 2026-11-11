@@ -24,6 +24,7 @@ spaces to ASCII, as Codex matches it.
 """
 import os
 from pathlib import Path
+import secrets
 import tempfile
 
 
@@ -140,17 +141,35 @@ def _updated(path, text, hunks):
     return "\n".join(lines) + ("\n" if trailing or not lines else "")
 
 
+def _new_stage(path):
+    """Create a new-file stage with normal creation-mode/umask/ACL semantics.
+
+    Reading umask by changing it would race other threads. O_EXCL also avoids
+    following an existing name or symlink while creating the staging file.
+    """
+    for _ in range(100):
+        temporary = path.parent / ("." + path.name + "." + secrets.token_hex(12))
+        try:
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+            return descriptor, str(temporary)
+        except FileExistsError:
+            continue
+    raise FileExistsError("cannot reserve a fresh patch staging name")
+
+
 def _stage(path, text, created):
     """Write text beside path under a fresh name; record directories it creates."""
     missing = [parent for parent in reversed(path.parents) if not parent.exists()]
     for directory in missing:
         directory.mkdir()
         created.append(directory)
-    handle, temporary = tempfile.mkstemp(dir=path.parent, prefix="." + path.name + ".")
+    existed = path.exists()
+    handle, temporary = (tempfile.mkstemp(dir=path.parent, prefix="." + path.name + ".")
+                         if existed else _new_stage(path))
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as stream:
             stream.write(text)
-        if path.exists():
+        if existed:
             os.chmod(temporary, path.stat().st_mode & 0o7777)
     except BaseException:
         os.unlink(temporary)

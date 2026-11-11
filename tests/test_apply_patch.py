@@ -1,6 +1,8 @@
 """Patch application: distinct targets, staged writes, honest partial reports."""
 import os
 from pathlib import Path
+import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -88,6 +90,38 @@ class ApplyPatchTests(unittest.TestCase):
                                   "*** Add File: sub/b.py", "+b"))
         self.assertEqual(result, "Success. Updated the following files:\nM a.py\nA sub/b.py")
         self.assertEqual((self.root / "sub/b.py").read_text(), "b\n")
+        self.assertEqual(self.leftovers(), [])
+
+    def test_new_file_permissions_follow_normal_creation_under_each_umask(self):
+        code = '''import os, stat, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import apply_patch
+root = Path(sys.argv[2])
+os.umask(int(sys.argv[3], 8))
+reference = root / "ordinary"
+reference.write_text("ordinary\\n")
+result = apply_patch.apply("*** Begin Patch\\n*** Add File: patched\\n+patch\\n*** End Patch", root)
+assert result.startswith("Success."), result
+a, b = reference.stat(), (root / "patched").stat()
+assert stat.S_IMODE(a.st_mode) == stat.S_IMODE(b.st_mode), (oct(a.st_mode), oct(b.st_mode))
+assert a.st_gid == b.st_gid
+'''
+        for mask in ('002', '022', '077'):
+            with self.subTest(mask=mask):
+                directory = self.root / mask; directory.mkdir()
+                result = subprocess.run([sys.executable, '-c', code, str(ROOT / 'src'),
+                                         str(directory), mask], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.leftovers(), [])
+
+    def test_updates_preserve_private_and_executable_modes(self):
+        target = self.root / 'a.py'
+        for mode in (0o600, 0o750):
+            target.write_text('one\ntwo\n'); target.chmod(mode)
+            result = self.apply(patch('*** Update File: a.py', '-one', '+ONE'))
+            self.assertTrue(result.startswith('Success.'), result)
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), mode)
         self.assertEqual(self.leftovers(), [])
 
 
