@@ -89,18 +89,18 @@ class NativeWorkingStateFixture:
         wait = self.directory / "native-wait"
         stamp = "2026-10-25 12:00:00"
         self.run_native([
-            "!(let* (($state (ws:transition (JsonObject ()) "
+            "!(let* (($state (working-state:transition (JsonObject ()) "
             "(WorkingSaveV1 0 60 \"earlier evidence\" 90 1 17 0) 100.0)) "
-            "($timer (ws:transition $state (WorkingRestScheduleV1 60 (shell \"printf scheduled\")) 100.0)) "
-            "($with-intent (ws:transition $timer (WorkingIntentV1 \"waiting on build\") 100.0)) "
-            "($boot (ws:boot-transition $with-intent 120.0 %s)) "
-            "($_ (py-call (working_state_probe.record %s (ws:encoded $with-intent)))) "
-            "($_ (py-call (working_state_probe.record %s (repr (ws:rest-due-at $with-intent 1 120.0))))) "
-            "($_ (py-call (working_state_probe.record %s (repr (ws:rest-due-at $with-intent 0 160.0))))) "
-            "($_ (py-call (working_state_probe.record %s (repr (ws:wait-at $with-intent 5000 90 30 100.0)))))) "
+            "($timer (working-state:transition $state (WorkingRestScheduleV1 60 (shell \"printf scheduled\")) 100.0)) "
+            "($with-intent (working-state:transition $timer (WorkingIntentV1 \"waiting on build\") 100.0)) "
+            "($boot (working-state:boot-transition $with-intent 120.0 %s)) "
+            "($_ (py-call (working_state_probe.record %s (working-state:encoded $with-intent)))) "
+            "($_ (py-call (working_state_probe.record %s (repr (working-state:rest-due-at $with-intent 1 120.0))))) "
+            "($_ (py-call (working_state_probe.record %s (repr (working-state:rest-due-at $with-intent 0 160.0))))) "
+            "($_ (py-call (working_state_probe.record %s (repr (working-state:wait-at $with-intent 5000 90 30 100.0)))))) "
             "(let (WorkingBootV1 $persisted $cache $write) $boot "
-            "(let* (($_ (py-call (working_state_probe.record %s (ws:encoded $persisted)))) "
-            "($_ (py-call (working_state_probe.record %s (ws:encoded $cache))))) 1)))" % (
+            "(let* (($_ (py-call (working_state_probe.record %s (working-state:encoded $persisted)))) "
+            "($_ (py-call (working_state_probe.record %s (working-state:encoded $cache))))) 1)))" % (
                 q(stamp), q(state_out), q(due_early), q(due_late), q(wait),
                 q(persisted_out), q(cache_out)),
         ])
@@ -132,23 +132,54 @@ class NativeWorkingStateFixture:
 
     def test_missing_file_snapshot_has_one_boot_and_pending_answer(self):
         self.run_native([
-            "!(assert (== (collapse (ws:read-file)) ((JsonObject ()))))",
+            "!(assert (== (collapse (working-state:read-file)) ((JsonObject ()))))",
             '!(assert (== (collapse (working:rest-pending)) ("no-continuation")))',
             "!(assert (== (collapse (working:boot)) (1)))",
         ])
+
+    def test_working_set_and_workspace_stores_compose_in_either_import_order(self):
+        workspace = self.directory / 'workspaces.metta'
+        for order in [('working_state', 'workspaces_cetta'),
+                      ('workspaces_cetta', 'working_state')]:
+            with self.subTest(order=order):
+                self.working.unlink(missing_ok=True)
+                workspace.unlink(missing_ok=True)
+                source = self.directory / ('compose-' + order[0] + '.metta')
+                forms = [
+                    '!(import! &self (library lib_import))',
+                    '!(import! &self ' + q(ROOT / 'src/helper.py') + ')',
+                    *['!(import! &self ' + q(ROOT / ('src/' + name + '.metta')) + ')' for name in order],
+                    '!(assert (== (collapse (ws:path)) (%s)))' % q(workspace),
+                    '!(assert (== (collapse (working-state:path)) (%s)))' % q(self.working),
+                    '!(assert (== (collapse (working:save 0 60 "feedback" 90 1 17 0)) (1)))',
+                    '!(let $before (fs:read-text %s)\n'
+                    '   (let $_ (workspace "focus" ("all") () "")\n'
+                    '     (assert (== $before (fs:read-text %s)))))' % (q(self.working), q(self.working)),
+                    '!(assert (== (size-atom (collapse (workspace))) 1))',
+                    '!(println! "WORKING_WORKSPACE_COMPOSE_OK")',
+                ]
+                source.write_text('\n'.join(forms) + '\n')
+                result = subprocess.run(
+                    [os.environ['CETTA_BIN'], '--lang', 'petta', '--import-mode', 'ancestor-walk', str(source)],
+                    cwd=ROOT, env=dict(self.env, METTACLAW_WORKSPACES_PATH=str(workspace)),
+                    capture_output=True, text=True, timeout=90)
+                self.assertEqual(result.returncode, 0, result.stdout[-3000:] + result.stderr[-3000:])
+                self.assertIn('WORKING_WORKSPACE_COMPOSE_OK', result.stdout)
+                self.assertEqual(json.loads(self.working.read_text())['banked_loops'], 17)
+                self.assertTrue(workspace.read_text().startswith('(WorkspaceSnapshot 1 '))
 
     def test_interrupted_boot_transition_reports_unknown_and_removes_timer(self):
         cache_out = self.directory / "interrupted-cache.json"
         persisted_out = self.directory / "interrupted-persisted.json"
         stamp = "2026-10-25 12:00:00"
         self.run_native([
-            "!(let* (($timer (ws:transition (JsonObject ()) "
+            "!(let* (($timer (working-state:transition (JsonObject ()) "
             "(WorkingRestScheduleV1 1 (send \"hello\")) 100.0)) "
-            "($running (ws:transition $timer WorkingRestClaimV1 100.0)) "
-            "($boot (ws:boot-transition $running 101.0 %s))) "
+            "($running (working-state:transition $timer WorkingRestClaimV1 100.0)) "
+            "($boot (working-state:boot-transition $running 101.0 %s))) "
             "(let (WorkingBootV1 $persisted $cache $write) $boot "
-            "(let* (($_ (py-call (working_state_probe.record %s (ws:encoded $persisted)))) "
-            "($_ (py-call (working_state_probe.record %s (ws:encoded $cache))))) 1)))" % (
+            "(let* (($_ (py-call (working_state_probe.record %s (working-state:encoded $persisted)))) "
+            "($_ (py-call (working_state_probe.record %s (working-state:encoded $cache))))) 1)))" % (
                 q(stamp), q(persisted_out), q(cache_out)),
         ])
         cache = json.loads(cache_out.read_text(encoding="utf-8"))
@@ -174,10 +205,10 @@ class NativeWorkingStateFixture:
         due = self.directory / "restart-due"
         second = self.start_native([
             "!(working:boot)",
-            "!(py-call (working_state_probe.record %s (ws:encoded (get-state &ws-boot))))" % q(boot),
+            "!(py-call (working_state_probe.record %s (working-state:encoded (get-state &working-state-boot))))" % q(boot),
             "!(let $pending (working:rest-pending) (case $pending "
             "(((\"continuation-value\" $command) "
-            "(py-call (working_state_probe.record %s (ws:encoded (JsonArray $command))))) "
+            "(py-call (working_state_probe.record %s (working-state:encoded (JsonArray $command))))) "
             "($other (Error unexpected-pending $other)))))" % q(pending),
             "!(py-call (working_state_probe.record %s (repr (working:rest-due 1))))" % q(due),
             "!(working:rest-claim)",
@@ -196,7 +227,7 @@ class NativeWorkingStateFixture:
         final_pending = self.directory / "final-pending"
         self.run_native([
             "!(working:boot)",
-            "!(py-call (working_state_probe.record %s (ws:encoded (get-state &ws-boot))))" % q(final_boot),
+            "!(py-call (working_state_probe.record %s (working-state:encoded (get-state &working-state-boot))))" % q(final_boot),
             "!(py-call (working_state_probe.record %s (repr (working:rest-pending))))" % q(final_pending),
         ])
         final = json.loads(final_boot.read_text(encoding="utf-8"))
