@@ -2,6 +2,7 @@
 import itertools
 import json
 import difflib
+import contextlib
 import os
 from pathlib import Path
 import re
@@ -76,6 +77,8 @@ CALLER = ["!(import! &self ./src/memory)", "!(import! &self ./src/turn_additions
 
 class NativeContextBundleTest(unittest.TestCase):
     def setUp(self):
+        # The oracle observes the same workspace as the native subprocess.
+        self.enterContext(contextlib.chdir(ROOT))
         # Each native guest starts a fresh process. Its Python oracle needs
         # the same initial loader-cache state, independent of test ordering.
         import project_evidence
@@ -400,10 +403,6 @@ class NativeContextBundleTest(unittest.TestCase):
             self.assertEqual(actual["forbidden"], 0)
 
     def test_production_boot_real_telegram_views_with_python_bundle_disabled(self):
-        library = Path(os.environ.get("PETTA_LIB_CHROMADB", ROOT / "repos" / "petta_lib_chromadb"))
-        self.assertTrue((library / "lib_chromadb.metta").is_file())
-        shutil.copytree(library, self.directory / "repos" / "petta_lib_chromadb",
-                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".git"))
         rendered = subprocess.run([sys.executable, str(ROOT / "scripts/render_channel_config.py"), "telegram"],
                                   env=guest_env(self.directory), capture_output=True, text=True, check=True)
         (self.directory / "channel.metta").write_text(rendered.stdout)
@@ -431,6 +430,7 @@ class NativeContextBundleTest(unittest.TestCase):
                        '(tg:conversation-window-for (tg:conversation-events) (tg:get reply-chat ""))' if i % 2 == 0 else '(tg:route-view)'),
                       "!(py-call (context_bundle_probe.record %s (addition-context-sources)))" % q(log)]
         guest(self.directory, lines, boot=True, METTACLAW_TELEGRAM_CLIENT="metta", METTACLAW_OBSERVED_STRATEGY="1")
+        self.assertFalse((self.directory / "repos").exists(), "boot fetched a retired backend")
         actual = [json.loads(row) for row in log.read_text().splitlines()]
         expected = []
         with mock.patch.dict(os.environ, guest_env(self.directory, METTACLAW_OBSERVED_STRATEGY="1"), clear=True), mock.patch.object(context_sources, "_loaders", probe.fixture_loaders), mock.patch.object(context_sources, "_PROJECTOR", context_sources.Projector()):
@@ -454,7 +454,7 @@ class NativeContextBundleTest(unittest.TestCase):
         # Read the ACTUAL model source, compile its proofs in this temporary
         # program and execute admit. No MeTTapedia build/cache is touched.
         model = Path(os.environ.get("CONTEXT_PROJECTION_LEAN",
-                                    Path.home() / "repos/MeTTapedia/lean/pettaclaw/ContextProjection.lean"))
+                                    ROOT.parent / "MeTTapedia/lean/pettaclaw/ContextProjection.lean"))
         lean_bin = os.environ.get("LEAN_BIN") or shutil.which("lean") or str(Path.home() / ".elan/bin/lean")
         if not model.is_file() or not Path(lean_bin).exists():
             self.skipTest("set CONTEXT_PROJECTION_LEAN and LEAN_BIN to replay the Lean model")

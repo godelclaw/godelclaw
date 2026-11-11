@@ -25,9 +25,9 @@ class CommandDispatchEngineTest(unittest.TestCase):
         environment = mock.patch.dict(os.environ, {
             "METTACLAW_LIFECYCLE_PATH": os.fspath(lifecycle),
             "METTACLAW_SKIP_CONFIG": "1",
-            "PETTA_ROOT": os.fspath(pathlib.Path.home() / "repos" / "PeTTa"),
-            "PETTA_PY_ENV": os.fspath(pathlib.Path.home() / "miniforge3" /
-                                      "envs" / "petta"),
+            "PETTA_ROOT": os.environ.get("PETTA_ROOT", os.fspath(pathlib.Path.home() / "repos" / "PeTTa")),
+            "PETTA_PY_ENV": os.environ.get("PETTA_PY_ENV", os.fspath(pathlib.Path.home() / "miniforge3" /
+                                      "envs" / "petta")),
         })
         environment.start()
         self.addCleanup(environment.stop)
@@ -188,10 +188,9 @@ class CommandDispatchEngineTest(unittest.TestCase):
                       bridge_text.bare(result.stdout, ("NESTED_PYTHON_OK",)))
         self.assertNotIn("PettaSearchHostError", result.stdout + result.stderr)
 
-    def test_petta_executes_quoted_batch_once(self):
-        petta = self._petta_root()
-        if not (petta / "run.sh").is_file():
-            self.skipTest("PeTTa checkout is unavailable")
+    def test_native_executes_quoted_batch_once(self):
+        if not self._cetta_binary().is_file():
+            self.skipTest("CeTTa executable is unavailable")
         with tempfile.TemporaryDirectory() as directory:
             directory = pathlib.Path(directory)
             effect = directory / "effect.log"
@@ -201,7 +200,7 @@ class CommandDispatchEngineTest(unittest.TestCase):
             response = "((shell %s))" % json.dumps(command)
             probe.write_text(
                 "!(import! &self (library lib_import))\n"
-                "!(import! &self ./src/skills)\n"
+                f"!(import! &self {json.dumps(str(ROOT / 'src/skills.metta'))})\n"
                 "!(println! (run-command-batch-once 424242 5 "
                 "(quote %s)))\n" % response,
                 encoding="utf-8",
@@ -310,10 +309,9 @@ class CommandDispatchEngineTest(unittest.TestCase):
             self.assertIn("⋄⟨Cn:.9 Sp:.4⟩", result.stdout)
             self.assertNotRegex(result.stdout, r"\$V[0-9]+")
 
-    def test_petta_runs_timed_continuation_once(self):
-        petta = self._petta_root()
-        if not (petta / "run.sh").is_file():
-            self.skipTest("PeTTa checkout is unavailable")
+    def test_native_runs_timed_continuation_once(self):
+        if not self._cetta_binary().is_file():
+            self.skipTest("CeTTa executable is unavailable")
         with tempfile.TemporaryDirectory() as directory:
             directory = pathlib.Path(directory)
             effect = directory / "continued.log"
@@ -322,7 +320,7 @@ class CommandDispatchEngineTest(unittest.TestCase):
                 os.fspath(effect))
             probe.write_text(
                 "!(import! &self (library lib_import))\n"
-                "!(import! &self ./lib_mettaclaw)\n"
+                f"!(import! &self {json.dumps(str(ROOT / 'lib_mettaclaw.metta'))})\n"
                 "!(let* (($p (coordinate iteration 7 "
                 "(coordinate loops 0 (coordinate sleep-interval 1 "
                 "(coordinate last-results before "

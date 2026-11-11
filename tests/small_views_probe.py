@@ -115,7 +115,8 @@ def retained_loaders(conversation=None, views=None):
         # No unrelated live loaders. Keep real supplied action/pins views and
         # their sole marker owner; provide deterministic other-source text.
         if spec.source_id not in MODULES and spec.source_id not in {
-                "work-state", "affect-gestalt", "pins", "effect-receipts", "recent-proposals", "relevant-files"}:
+                "work-state", "affect-gestalt", "pins", "effect-receipts", "recent-proposals", "relevant-files",
+                "coding-sessions"}:
             loader = lambda source=spec.source_id: "fixture " + source
         result.append((spec, loader))
     return result

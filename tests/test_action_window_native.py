@@ -545,6 +545,13 @@ class NativeActionWindowTest(unittest.TestCase):
             os.environ.update(saved)
 
     def boundary_run(self, lines, settings, swi, imports=()):
+        if swi:
+            # SWI is a bridge oracle, not a launch of the CeTTa-only runtime.
+            self.run_guest(CALLER_HEADER + [
+                "!(import! &self ./src/context_sources.py)",
+                "(= (addition-context-sources) (py-call (context_sources.bundle)))"] + lines,
+                "petta", True, cwd=self.directory, **settings)
+            return
         # On CeTTa, warm the bundle's imports, then forbid the helpers and I/O.
         guard = [] if swi else ["!(py-call (action_window_probe.action_loaders))",
                                 "!(py-call (action_window_probe.forbid))"]

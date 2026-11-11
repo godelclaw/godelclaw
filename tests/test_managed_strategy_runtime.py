@@ -7,11 +7,17 @@ import subprocess
 import tempfile
 import unittest
 from isolated_env import isolated_environ
+import native_ledger
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class ManagedRuntimeTest(unittest.TestCase):
+    def setUp(self):
+        state = tempfile.TemporaryDirectory()
+        self.addCleanup(state.cleanup)
+        self.socket = native_ledger.start(self, state.name)
+
     def exercise(self, fixture, marker, expected_commands, expected_deferred=None, *, environment=None, expected_count=18):
         engines = []
         if Path(os.environ.get("CETTA_BIN", "")).is_file():
@@ -22,10 +28,14 @@ class ManagedRuntimeTest(unittest.TestCase):
             with self.subTest(engine=engine), tempfile.TemporaryDirectory() as temporary:
                 env = isolated_environ(METTACLAW_ENGINE=engine, METTACLAW_SKIP_CONFIG="1",
                            METTACLAW_OBSERVED_STRATEGY="1",
+                           # Each probe scripts its model in Python; the turn
+                           # ledger, capture and command execution are real.
                            METTACLAW_LLM_TRANSPORT="python",
+                           METTACLAW_INPUT_LEDGER_SOCKET=self.socket,
                            METTACLAW_SKIP_INITIALIZE="1",
                            METTACLAW_COMMAND_BATCH_LIMIT="1",
                            METTACLAW_STRATEGY_PATH=str(Path(temporary) / "strategy.sqlite3"),
+                           METTACLAW_PINS_PATH=str(Path(temporary) / "pins.txt"),
                            METTACLAW_EFFECT_RECEIPT_PATH=str(Path(temporary) / "effects.jsonl"),
                            OPENAI_API_KEY="unused-test-value")
                 metadata=Path(temporary)/"provider-observations.json"
@@ -71,7 +81,7 @@ class ManagedRuntimeTest(unittest.TestCase):
 
     def test_runtime_observation_and_omission_on_available_engines(self):
         self.exercise("tests/runtime_context_probe.metta", "RUNTIME_CONTEXT_OK",
-                      [["help", "vitals"], ["help", "vitals"]])
+                      [["help", "vitals"], ["help", "vitals"], ["help", "vitals"]])
 
 
 

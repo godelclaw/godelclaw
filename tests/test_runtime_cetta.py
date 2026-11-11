@@ -223,7 +223,9 @@ class NativeRuntimeProjectionTests(unittest.TestCase):
         text = output.read_text()
         evidence = subprocess.run([sys.executable, "-c", "import strategy_host, sys; sys.stdout.write(strategy_host.lifetime_context())"],
                                   cwd=ROOT, env=env, capture_output=True, text=True, timeout=60).stdout
-        self.assertTrue(text.startswith("PROMPT-HEAD" + evidence + "\nSOURCE[runtime-state] revision=sha256:"), text[:400])
+        prefix, separator, _ = text.partition("SOURCE[runtime-state] revision=sha256:")
+        self.assertTrue(separator, text[:400])
+        self.assertEqual(prefix.rstrip("\n"), ("PROMPT-HEAD" + evidence).rstrip("\n"))
         self.assertEqual(text.count("RUNTIME_STATE "), 1)
         revision = text.split("revision=sha256:", 1)[1][:64]
         body = next(line for line in text.splitlines() if line.startswith("RUNTIME_STATE "))[len("RUNTIME_STATE "):]

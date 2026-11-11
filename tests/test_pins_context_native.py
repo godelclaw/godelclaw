@@ -671,14 +671,7 @@ class NativePinsContextTest(unittest.TestCase):
         """The launch's own program (cetta_bootstrap.metta, then a channel
         config), not a hand-picked list of imports: the turn's context
         addition must still be served natively, with the Python reader off."""
-        library = next((path for path in (Path(os.environ.get("PETTA_LIB_CHROMADB", ROOT / "repos/petta_lib_chromadb")),
-                                          ROOT / "repos/petta_lib_chromadb",
-                                          Path.home() / "repos/petta_lib_chromadb")
-                        if (path / "lib_chromadb.metta").is_file()), None)
-        if library is None:
-            self.skipTest("petta_lib_chromadb checkout unavailable")
         repos = self.directory / "repos"
-        shutil.copytree(library, repos / "petta_lib_chromadb", ignore=shutil.ignore_patterns("__pycache__"))
         channel = self.directory / "channel.metta"
         channel.write_text(subprocess.run(
             [sys.executable, str(ROOT / "scripts/render_channel_config.py"), "telegram"],

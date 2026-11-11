@@ -129,7 +129,10 @@ class TelegramClockParity(unittest.TestCase):
             env = cetta_env(directory, zone)
             with tempfile.NamedTemporaryFile("w", dir=ROOT, suffix=".metta",
                                              encoding="utf-8") as source:
-                source.write("\n".join(lines) + "\n")
+                imports = [line.replace("&self clock_record.py)",
+                           "&self " + json.dumps(str(directory / "clock_record.py")) + ")")
+                           for line in lines]
+                source.write("\n".join(imports) + "\n")
                 source.flush()
                 result = subprocess.run(
                     [str(self.binary), "--lang", "petta", "--import-mode", "ancestor-walk",

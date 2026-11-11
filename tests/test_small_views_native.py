@@ -1,5 +1,6 @@
 """Six read-only native loaders against their unchanged Python oracles."""
 import base64
+import contextlib
 import json
 import os
 import re
@@ -46,6 +47,7 @@ def oracle(source):
 
 class SmallViewsTest(unittest.TestCase):
     def setUp(self):
+        self.enterContext(contextlib.chdir(ROOT))
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.directory = Path(self.temp.name)
@@ -123,7 +125,7 @@ class SmallViewsTest(unittest.TestCase):
         self.assertEqual(actual[-1]["receipt_views"]["python"], len(steps) if caller and swi else 0)
         self.assertEqual([row["probe_events"] for row in actual], expected_probes)
         if caller and not swi:
-            retained = {s.source_id for s in context_sources.SOURCE_SPECS} - set(SOURCES) - {"work-state", "affect-gestalt", "effect-receipts"}
+            retained = {s.source_id for s in context_sources.SOURCE_SPECS} - set(SOURCES) - {"work-state", "affect-gestalt", "effect-receipts", "coding-sessions"}
             self.assertEqual(actual[-1]["calls"], {key: len(steps) for key in retained})
             self.assertEqual(actual[-1]["engine_calls"], len(steps))
             boundaries = {"prepare": len(steps), "retained-load": len(retained) * len(steps),
@@ -477,7 +479,7 @@ print(mode.get("version", "fixture 日 r1") if sys.argv[-1] == "--version" else 
 
     def test_capability_lean_projection_replay(self):
         model = Path(os.environ.get("CAPABILITY_PROJECTION_LEAN",
-                                    Path.home() / "repos/MeTTapedia/lean/pettaclaw/CapabilityProjection.lean"))
+                                    ROOT.parent / "MeTTapedia/lean/pettaclaw/CapabilityProjection.lean"))
         lean = os.environ.get("LEAN_BIN") or shutil.which("lean") or str(Path.home() / ".elan/bin/lean")
         self.assertTrue(model.is_file())
         self.assertTrue(Path(lean).exists())

@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "src"))
 import install_execution_gateway as installer  # noqa: E402
 from execution_gateway import Client  # noqa: E402
+from execution_gateway.cetta_worker import resolve_gateway_worker  # noqa: E402
 
 
 class GatewayInstallationTest(unittest.TestCase):
@@ -47,6 +48,9 @@ class GatewayInstallationTest(unittest.TestCase):
                                            "METTACLAW_GATEWAY_AGENT": "alpha"}},
             "custom": {"command": [sys.executable, "-c", "print('custom')"], "effect": "read",
                        "environment": {"PYTHONPATH": "custom-modules"}}}}
+        # The deployed copy has no checkout-local .runtime directory. Bind its
+        # queue worker explicitly, as a real gateway installation does.
+        self.original["cetta_worker"] = str(resolve_gateway_worker())
         (self.runtime / "public.txt").write_text("fixture line\n")
         (self.config / "gateway-alpha.json").write_text(json.dumps(self.original))
         (self.config / "gateway-alpha.env").write_text("PRESERVED=yes\nPYTHONPATH=retired\n")
@@ -79,7 +83,7 @@ class GatewayInstallationTest(unittest.TestCase):
                 client = Client(self.base / "state/gateway.sock", "alpha")
                 until = time.monotonic() + 5
                 while time.monotonic() < until:
-                    self.assertIsNone(process.poll())
+                    self.assertIsNone(process.poll(), (self.base / "gateway.log").read_text())
                     try:
                         client.tools()
                         break

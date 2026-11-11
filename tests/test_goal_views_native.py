@@ -1,5 +1,6 @@
 """Goal views at native helpers, complete caller and skill; generated data only."""
 import json
+import contextlib
 import math
 import os
 from pathlib import Path
@@ -28,6 +29,7 @@ def goal(name="a", sti="0.5", lti="0.2", blocked="none", verified="never", note=
 
 class GoalViewsTest(unittest.TestCase):
     def setUp(self):
+        self.enterContext(contextlib.chdir(ROOT))
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.directory = Path(self.temp.name)
@@ -256,7 +258,7 @@ class GoalViewsTest(unittest.TestCase):
                  self.step(""), self.step(goal(note="changed")), self.step(goal(note="changed"))]
         rows = self.compare("work_state_view", steps, caller=True)
         self.assertEqual(rows[-1]["calls"], {name: len(steps) for name in
-                         ("pins", "recent-proposals", "relevant-files", "coding-sessions", "conversation")})
+                         ("pins", "recent-proposals", "relevant-files", "conversation")})
         self.assertIn("work state unavailable", rows[2]["text"])
         self.assertIn("SOURCE[work-state] status=stale-known", rows[3]["text"])
 
@@ -316,16 +318,12 @@ class GoalViewsTest(unittest.TestCase):
         self.assertTrue(all(row["forbidden"] == 0 for row in rows))
 
     def test_direct_production_boot_order(self):
-        # Same safe Chroma import fixture as the accepted direct-boot check.
-        library = Path(os.environ.get("PETTA_LIB_CHROMADB", ROOT / "repos" / "petta_lib_chromadb"))
-        self.assertTrue((library / "lib_chromadb.metta").is_file())
-        shutil.copytree(library, self.directory / "repos" / "petta_lib_chromadb",
-                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".git"))
         rendered = subprocess.run([sys.executable, str(ROOT / "scripts/render_channel_config.py"), "telegram"],
                                   env=guest_env(self.directory), capture_output=True, text=True, check=True)
         (self.directory / "channel.metta").write_text(rendered.stdout)
         self.settings["METTACLAW_TELEGRAM_CLIENT"] = "metta"
         self.compare("work_state_view", [self.step(goal()), self.step(goal(note="new"))], caller=True, boot=True)
+        self.assertFalse((self.directory / "repos").exists(), "boot fetched a retired backend")
 
 
 if __name__ == "__main__":

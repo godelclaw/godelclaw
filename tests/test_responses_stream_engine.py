@@ -223,7 +223,10 @@ class ResponsesHTTPTests(unittest.TestCase):
         self.assertNotIn('stream', body)  # Existing API-key request shape is preserved.
         self.assertFalse(body['store'])
         self.assertEqual(body['max_output_tokens'], 42)  # Ordinary API-key profile retains its limit.
-        self.assertEqual(body['instructions'], 'stable')
+        self.assertEqual(body['input'], [dict(role='system', content='stable'),
+                                         dict(role='user', content='input')])
+        self.assertEqual(body['prompt_cache_key'],
+                         boundary.provider_protocol.cache_key('openai', 'fixture-model', 'stable'))
         self.assertNotIn('fixture-only-key', out)
 
     def test_native_http_truncation_does_not_run_provisional_command(self):

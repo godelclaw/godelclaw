@@ -2,8 +2,7 @@
 !(import! &self ./lib_mettaclaw)
 (= (assertEqual $a $b) (assert (== $a $b)))
 
-!(py-eval "__import__('helper').__dict__.update(_feedback_calls=0, _feedback_pin_dir=__import__('tempfile').TemporaryDirectory())")
-!(py-eval "__import__('pins').__dict__.__setitem__('_path', lambda: __import__('helper')._feedback_pin_dir.name + '/pins.txt')")
+!(py-eval "__import__('helper').__dict__.update(_feedback_calls=0)")
 !(py-eval "__import__('strategy_host').__dict__.__setitem__('_stimulus_free', lambda: True)")
 !(py-eval "__import__('synthetic_llm').__dict__.__setitem__('chat', lambda *args: (__import__('helper').__dict__.__setitem__('_feedback_calls', __import__('helper')._feedback_calls + 1), __import__('cognitive_health').turn_started('probe'), __import__('cognitive_health').turn_completed(10), ['((command-batch (pin \"verified note\") (help \"shell\")))', '((not-a-tool))', '((help pin))'][__import__('helper')._feedback_calls - 1])[-1])")
 !(py-eval "__import__('helper').__dict__.__setitem__('feedback_first_ok', lambda: int('verified note' in __import__('pins').view() and len(__import__('strategy_host').ledger().projection()['actions']) == 1))")

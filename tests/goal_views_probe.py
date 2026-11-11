@@ -28,7 +28,7 @@ def loaders(conversation=None, views=None):
         elif spec.source_id in retained_views:
             loader = lambda source=spec.source_id: retained_views[source]
         elif spec.source_id not in base.MODULES and spec.source_id not in {
-                "work-state", "affect-gestalt", "pins", "effect-receipts", "recent-proposals", "relevant-files"}:
+                "work-state", "affect-gestalt", "pins", "effect-receipts", "recent-proposals", "relevant-files", "coding-sessions"}:
             loader = lambda source=spec.source_id: "fixture " + source
         result.append((spec, loader))
     return result

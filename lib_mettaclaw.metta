@@ -33,7 +33,3 @@
 !(import! &self ./src/memory)
 !(import! &self ./src/attention_graph)
 !(import! &self ./src/loop)
-; The second argument is a build command (none here), not a commit: a
-; commit there runs as a command, fails, and the fresh clone is dropped.
-!(git-import! "https://github.com/godelclaw/petta_lib_chromadb.git" "" (py-call (helper.path_from_env "METTACLAW_REPOS_DIR" "./repos")))
-!(import! &self (library petta_lib_chromadb lib_chromadb))

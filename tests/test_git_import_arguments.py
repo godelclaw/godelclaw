@@ -5,7 +5,8 @@ In SWI-PeTTa and CeTTa alike, (git-import! URL BUILD BASE) clones URL into
 BASE and then runs BUILD in the clone.  A commit hash given there is run as
 a command; it fails, and CeTTa then removes the half-made clone, so every
 start clones and fails again.  CeTTa pins a commit only through a fourth
-argument, which SWI-PeTTa does not have; the agents boot on both engines.
+argument, which SWI-PeTTa does not have. Native agent boot needs no git
+dependency; the local fixture retains this primitive's comparison contract.
 
 Offline: the repository is a local one.  Environment: CETTA_BIN.
 """
@@ -20,12 +21,11 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 class GitImportArguments(unittest.TestCase):
-    def test_boot_gives_no_build_command(self):
+    def test_boot_has_no_git_dependency(self):
         source = (ROOT / "lib_mettaclaw.metta").read_text(encoding="utf-8")
         calls = re.findall(r'!\(git-import!\s+"([^"]+)"\s+"([^"]*)"', source)
-        self.assertTrue(calls, "lib_mettaclaw.metta imports no git library")
-        for url, build in calls:
-            self.assertEqual(build, "", "%s is given a build command" % url)
+        self.assertEqual(calls, [], "native memory must not fetch a retired backend at boot")
+        self.assertNotIn("(library petta_lib_chromadb", source)
 
     def test_second_argument_runs_as_a_build_command(self):
         cetta = os.environ.get("CETTA_BIN", "")
