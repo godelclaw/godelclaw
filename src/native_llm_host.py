@@ -861,6 +861,25 @@ def provider_error(plan, body):
     return 1
 
 
+def transport_failure(plan, kind, code):
+    """Retain an inert native observation, never its URL or error text.
+
+    Diagnosis is best effort: malformed metadata cannot prevent the existing
+    failure settlement. The native classifier supplies the category; this
+    boundary rejects a category inconsistent with the native timeout code.
+    """
+    kind = str(kind)
+    if (type(code) is not int or not 0 < code <= 65535
+            or kind not in ("timeout", "transport")
+            or (kind == "timeout") != (code == 28)):
+        return 0
+    plan.native_transport_code = code
+    plan.native_transport_kind = kind
+    error_type = TimeoutError if kind == "timeout" else OSError
+    plan.error = error_type("native HTTP transport failure")
+    return 1
+
+
 def _record_failure(plan, kind, status=0):
     """Keep diagnostic categories and the provider's stated reason, without
     logging request or response bytes."""
@@ -886,6 +905,10 @@ def _record_failure(plan, kind, status=0):
                                      reason == "provider-outcome-unknown") else ""
     stated_code, stated = getattr(plan, "provider_error", ("", ""))
     detail += ("; code=" + stated_code if stated_code else "") + ("; message=" + stated if stated else "")
+    native_code = getattr(plan, "native_transport_code", None)
+    native_kind = getattr(plan, "native_transport_kind", None)
+    if type(native_code) is int and 0 < native_code <= 65535 and native_kind in ("timeout", "transport"):
+        detail += f"; transport_code={native_code}; transport_kind={native_kind}"
     print(f"[native_llm] failed request: {code}; provider={provider}; "
           f"status={status}; sent={sent}; elapsed_ms={elapsed}; deadline_ms={deadline}{detail}",
           file=sys.stderr)
@@ -901,7 +924,7 @@ def failed(plan, correlation, kind, status=0):
     _record_failure(plan, kind, status)
     if getattr(plan, "ready", "false") == "true" and not getattr(plan, "native_ledger", False):
         native_lifetime.fail(plan, kind, status=int(status) or None, retry_after=getattr(plan, "retry_after", None))
-    error = getattr(plan, "error", TimeoutError(str(kind)) if str(kind) == "transport-error" else RuntimeError(str(kind)))
+    error = getattr(plan, "error", OSError(str(kind)) if str(kind) == "transport-error" else RuntimeError(str(kind)))
     error.status = int(status) or None
     if getattr(plan, "retry_after", None) is not None:
         error.retry_after = plan.retry_after

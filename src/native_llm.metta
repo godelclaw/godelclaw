@@ -29,6 +29,7 @@
      (let* (($command-module (import! &self llm:command))
             ($compat-module (import! &self llm:compat))
             ($io-module (import! &self llm:io))
+            ($transport-module (import! &self ./src/native_transport_cetta.metta))
             ($policy-module (import! &self ./src/llm_accounting_cetta.metta))
             ($commentary-module (import! &self ./src/model_commentary_cetta.metta))
             ($responses-module (import! &self ./src/responses_stream_cetta.metta))
@@ -219,6 +220,11 @@
            (let $_ (py-call (native_llm_host.provider_error $plan $body))
              (llm:v1:failed $epoch $correlation (http-status $status) response-received)))
          $state))
+      ((io:event $received (NativeHttpFailureV1 $kind $code))
+       (if (== $id $received)
+         (let $_ (py-call (native_llm_host.transport_failure $plan $kind $code))
+           (llm:v1:failed $epoch $correlation transport-error remote-outcome-unknown))
+         $state))
       ($other (llm:v1:failed $epoch $correlation transport-error remote-outcome-unknown)))))
 
 (: llm:decode-body (-> Atom Atom Atom Atom Atom %Undefined%))
@@ -295,7 +301,7 @@
 (: llm:status-http (-> Atom %Undefined%))
 (= (llm:status-http $id) (io:try-status $id))
 (: llm:wait-http (-> Atom Number %Undefined%))
-(= (llm:wait-http $id $milliseconds) (io:try-wait $id $milliseconds))
+(= (llm:wait-http $id $milliseconds) (llm-transport:wait $id $milliseconds))
 
  ; Optional owned text observation. Only inert chunk values cross the portable
 ; function/return error boundary. Host publication runs outside that boundary.
