@@ -7,7 +7,6 @@ if [ "${1:-}" = "--mode" ]; then
     exec "${METTACLAW_MODE_PYTHON:-python3}" "$ROOT/modes/launch.py" --profile standalone "$@"
 fi
 PETTA_ROOT="${PETTA_ROOT:-${HOME:-}/repos/PeTTa}"
-export METTACLAW_PETTA_RUNNER="${METTACLAW_PETTA_RUNNER:-$PETTA_ROOT/run.sh}"
 PETTA_PY_ENV="${PETTA_PY_ENV:-${HOME:-}/miniforge3/envs/petta}"
 CETTA_ROOT="${CETTA_ROOT:-${HOME:-}/repos/CeTTa-runtime}"
 STATE_HOME="${XDG_STATE_HOME:-${HOME:-}/.local/state}"
@@ -48,7 +47,7 @@ STATE_PATH_NAMES=(
     METTACLAW_ENERGY_PATH METTACLAW_MODEL_STATE_PATH
     METTACLAW_ANTHROPIC_USAGE_PATH METTACLAW_EFFECT_RECEIPT_PATH
     METTACLAW_STIMULUS_FRONTIER_PATH METTACLAW_WAKE_REQUEST_PATH
-    METTACLAW_MEMORY_LOG_DIR METTACLAW_CHROMA_DIR
+    METTACLAW_MEMORY_LOG_DIR
     METTACLAW_TELEGRAM_ATTACHMENTS_DIR
     METTACLAW_ITER_PROCESS_DIR METTACLAW_JOBS_DIR
     METTACLAW_PINS_PATH METTACLAW_GOALS_PATH
@@ -122,10 +121,8 @@ if [ "$NONLIVE_TARGET" = 1 ]; then
     fi
 fi
 
-# The persisted selection is deliberately tiny: one validated engine name.
-# With no state, SWI-PeTTa remains the stable default. The active value is
-# exported separately so the Telegram UI can distinguish this process from a
-# newly requested engine that will take effect after recycling.
+# The instance's state folder is the directory of METTACLAW_ENGINE_STATE_PATH;
+# the other per-instance paths default beside it.
 export METTACLAW_ENGINE_STATE_PATH="${METTACLAW_ENGINE_STATE_PATH:-$STATE_HOME/$INSTANCE/engine}"
 export METTACLAW_ENGINE_FAILURE_PATH="${METTACLAW_ENGINE_FAILURE_PATH:-$STATE_HOME/$INSTANCE/engine-failure}"
 export METTACLAW_RECYCLE_REQUEST_PATH="${METTACLAW_RECYCLE_REQUEST_PATH:-$STATE_HOME/$INSTANCE/recycle.requested}"
@@ -139,27 +136,9 @@ fi
 if [ "$REQUESTED_TARGET" = run.metta ] || [ "$REQUESTED_TARGET" = "$ROOT/run.metta" ]; then
     rm -f "$METTACLAW_RECYCLE_REQUEST_PATH"
 fi
-ENGINE_DEFAULT="${METTACLAW_ENGINE:-petta}"
-SELECTED_ENGINE="$ENGINE_DEFAULT"
-HEAL_ENGINE_SELECTION=0
-if [ -f "$METTACLAW_ENGINE_STATE_PATH" ]; then
-    IFS= read -r SELECTED_ENGINE <"$METTACLAW_ENGINE_STATE_PATH" || true
-fi
-case "$SELECTED_ENGINE" in
-    petta|cetta) ;;
-    pleatta)
-        echo "PLeaTTa is temporarily disabled because its current integration is not functional; using petta" >&2
-        SELECTED_ENGINE=petta
-        HEAL_ENGINE_SELECTION=1
-        ;;
-    *)
-        echo "invalid persisted engine '$SELECTED_ENGINE'; using petta" >&2
-        SELECTED_ENGINE=petta
-        HEAL_ENGINE_SELECTION=1
-        ;;
-esac
-export METTACLAW_ENGINE="$SELECTED_ENGINE"
-export METTACLAW_ACTIVE_ENGINE="$SELECTED_ENGINE"
+# godelclaw is PeTTa-dialect MeTTa on CeTTa: there is one engine.
+export METTACLAW_ENGINE=cetta
+export METTACLAW_ACTIVE_ENGINE=cetta
 
 python_site_paths=""
 if [ -d "$PETTA_PY_ENV" ]; then
@@ -188,16 +167,11 @@ else
     echo "warning: PETTA_PY_ENV ($PETTA_PY_ENV) not found; the Python bridge will likely fail. Set petta_py_env in config/local.toml." >&2
 fi
 
-# Keep py-call module resolution local and reproducible. Explicitly include the
-# checked-out semantic-memory bridge so both engines resolve it the same way.
-# Do not inherit an external PYTHONPATH, which would mix venvs again.
-export PYTHONPATH="$ROOT/src:$ROOT/channels:$ROOT/repos/petta_lib_chromadb${python_site_paths:+:$python_site_paths}"
+# Keep py-call module resolution local and reproducible. Do not inherit an
+# external PYTHONPATH, which would mix venvs again.
+export PYTHONPATH="$ROOT/src:$ROOT/channels${python_site_paths:+:$python_site_paths}"
 
 export SYNTHETIC_MODEL="${SYNTHETIC_MODEL:-syn:large:text}"
-export METTACLAW_CHROMA_DIR="${METTACLAW_CHROMA_DIR:-$ROOT/chroma_db}"
-export METTACLAW_CHROMA_COLLECTION="${METTACLAW_CHROMA_COLLECTION:-memories}"
-export METTACLAW_CHROMA_METRIC="${METTACLAW_CHROMA_METRIC:-cosine}"
-export METTACLAW_CHROMA_SYNC_THRESHOLD="${METTACLAW_CHROMA_SYNC_THRESHOLD:-20}"
 export METTACLAW_MEMORY_LOG_DIR="${METTACLAW_MEMORY_LOG_DIR:-$ROOT/memory/remembered}"
 export METTACLAW_TELEGRAM_OFFSET_PATH="${METTACLAW_TELEGRAM_OFFSET_PATH:-$STATE_HOME/$INSTANCE/telegram/offset}"
 export METTACLAW_TELEGRAM_LOG_PATH="${METTACLAW_TELEGRAM_LOG_PATH:-$STATE_HOME/$INSTANCE/telegram/updates.jsonl}"
@@ -234,15 +208,7 @@ mkdir -p \
     "$(dirname "$METTACLAW_LIFECYCLE_PATH")" \
     "$(dirname "$METTACLAW_DEPLOYMENT_STATE_PATH")"
 
-if [ "$HEAL_ENGINE_SELECTION" = 1 ]; then
-    temporary="${METTACLAW_ENGINE_STATE_PATH}.tmp.$$"
-    umask 077
-    printf '%s\n' petta >"$temporary"
-    chmod 600 "$temporary"
-    mv -f "$temporary" "$METTACLAW_ENGINE_STATE_PATH"
-fi
-
-mkdir -p "$METTACLAW_CHROMA_DIR" "$METTACLAW_MEMORY_LOG_DIR" "$ROOT/chat" "$ROOT/episodes"
+mkdir -p "$METTACLAW_MEMORY_LOG_DIR" "$ROOT/chat" "$ROOT/episodes"
 
 # Local imports (./src, ./memory, ./lib_mettaclaw) and git-import's default
 # ./repos clone dir resolve relative to CWD, so always launch from the repo
@@ -252,7 +218,7 @@ cd "$ROOT"
 # The Telegram command responder (channels/telegram_control.metta) is a
 # process of its own beside cognition, in the same configured environment.
 # It is MeTTa only, so it always runs on CeTTa, and it touches none of the
-# loop's lifecycle: no recycle acknowledgement, no engine fallback.
+# loop's lifecycle: no recycle acknowledgement.
 if [ "$REQUESTED_TARGET" = telegram-control ]; then
     CETTA_BIN="${CETTA_BIN:-$CETTA_ROOT/cetta}"
     exec "$CETTA_BIN" --value-bytes 268435456 --lang petta --import-mode ancestor-walk \
@@ -269,15 +235,6 @@ fi
 #   ./run.sh smoketest.metta   # import-only check; does NOT start the loop
 TARGET="${1:-run.metta}"
 case "$TARGET" in /*) ;; *) TARGET="$ROOT/$TARGET" ;; esac
-
-persist_engine_selection() {
-    local engine="$1"
-    local temporary="${METTACLAW_ENGINE_STATE_PATH}.tmp.$$"
-    umask 077
-    printf '%s\n' "$engine" >"$temporary"
-    chmod 600 "$temporary"
-    mv -f "$temporary" "$METTACLAW_ENGINE_STATE_PATH"
-}
 
 record_engine_failure() {
     local status="$1"
@@ -296,23 +253,14 @@ record_engine_failure() {
     mv -f "$temporary" "$METTACLAW_ENGINE_FAILURE_PATH"
 }
 
-fallback_to_petta() {
+engine_failed() {
     local status="$1"
     local reason="$2"
     if ! record_engine_failure "$status" "$reason"; then
         echo "warning: could not persist engine failure receipt" >&2
     fi
-    echo "engine '$METTACLAW_ENGINE' failed ($reason, status $status)" >&2
-    if [ "$TARGET" != "$ROOT/run.metta" ] || [ "${METTACLAW_ENGINE_FALLBACK:-none}" != petta ]; then
-        echo "engine selection preserved; inspect the failure or explicitly select another engine" >&2
-        exit "$status"
-    fi
-    echo "restoring stable engine 'petta'" >&2
-    persist_engine_selection petta
-    export METTACLAW_ENGINE=petta
-    export METTACLAW_ACTIVE_ENGINE=petta
-    # Re-enter mode dispatch; fallback must not always start the framework.
-    exec bash "$ROOT/run.sh"
+    echo "CeTTa failed ($reason, status $status)" >&2
+    exit "$status"
 }
 
 if [ "$TARGET" = "$ROOT/run.metta" ] && [ -f "$ROOT/modes/launch.py" ]; then
@@ -330,20 +278,16 @@ if [ "$TARGET" = "$ROOT/run.metta" ] && [ -f "$ROOT/modes/launch.py" ]; then
     esac
 fi
 
-# Memory-index startup diagnostic and best-effort hard-drift recovery.
-# Chroma flushes its HNSW index only every sync_threshold writes; an index far
-# behind the write-ahead log segfaults the process when the backlog is replayed
-# at query time. This subprocess reports to the service journal, not the model
-# prompt. It attempts catch-up only at dangerous drift and reports measured
-# before/after state. It remains non-fatal so diagnostics cannot prevent boot.
-PYTHONPATH="$ROOT/src:$ROOT/repos/petta_lib_chromadb${python_site_paths:+:$python_site_paths}" \
+# Memory startup diagnostic: the native memory service's state, to the service
+# journal, not the model prompt. Non-fatal, so a diagnostic cannot prevent boot.
+PYTHONPATH="$ROOT/src${python_site_paths:+:$python_site_paths}" \
     "$PETTA_PY_ENV/bin/python3" "$ROOT/src/memory_health.py" 2>&1 || true
 
 # A probe runs as a child so that the EXIT trap can remove its state. A
 # shell waiting on a child runs its traps only after the child exits, so a
 # TERM from a timeout or Ctrl-C would stop neither of them, and the engine
 # would keep running orphaned. Forward the signal to the probe and to its
-# children (the SWI process under PeTTa's run.sh), then return its status.
+# children, then return its status.
 run_probe() {
     "$@" <&0 &
     probe_pid=$!
@@ -359,18 +303,10 @@ run_probe() {
 }
 
 case "$METTACLAW_ENGINE" in
-    petta)
-        if [ "$NONLIVE_TARGET" = 1 ]; then
-            status=0
-            run_probe "$PETTA_ROOT/run.sh" "$TARGET" default || status=$?
-            exit "$status"
-        fi
-        exec "$PETTA_ROOT/run.sh" "$TARGET" default
-        ;;
     cetta)
         CETTA_BIN="${CETTA_BIN:-$CETTA_ROOT/cetta}"
         if [ ! -x "$CETTA_BIN" ]; then
-            fallback_to_petta 2 "CeTTa executable unavailable"
+            engine_failed 2 "CeTTa executable unavailable"
         fi
         if [ "$TARGET" != "$ROOT/run.metta" ]; then
             status=0
@@ -378,11 +314,9 @@ case "$METTACLAW_ENGINE" in
             exit "$status"
         fi
         # systemd stops the launcher and its CeTTa child as one control group.
-        # CeTTa may turn that TERM into a clean exit; without this independent
-        # witness the launcher mistakes an intentional service lifecycle event
-        # for an engine failure and permanently rewrites the selection to
-        # PeTTa.  The trap changes no crash/fallback policy: it only remembers
-        # that this launcher itself was explicitly asked to stop.
+        # CeTTa may turn that TERM into a clean exit; this independent witness
+        # keeps the launcher from mistaking an intentional service lifecycle
+        # event for an engine failure.
         shutdown_requested=0
         trap 'shutdown_requested=1' TERM INT HUP
         set +e
@@ -406,10 +340,9 @@ case "$METTACLAW_ENGINE" in
             exit 0
         fi
         if [ "$status" -eq 0 ]; then
-            status=1
-            fallback_to_petta "$status" "CeTTa stopped without a recycle request"
+            engine_failed 1 "CeTTa stopped without a recycle request"
         fi
-        fallback_to_petta "$status" "CeTTa process exited"
+        engine_failed "$status" "CeTTa process exited"
         ;;
     *)
         echo "unknown METTACLAW_ENGINE: $METTACLAW_ENGINE" >&2

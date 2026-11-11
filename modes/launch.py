@@ -287,11 +287,7 @@ def engine_command(engine, entry, environment):
         if not (Path(binary).parent / "lib/petta/lib_import.metta").exists():
             raise RuntimeError("mode engine bundle is missing its lib directory")
         return [binary, "--lang", "petta", "--import-mode", "ancestor-walk", str(entry)]
-    # Upstream run.sh need not have a shebang. Python's exec does not provide
-    # the ENOEXEC shell fallback that an interactive shell does.
-    if not environment.get("PETTA_ROOT"):
-        raise RuntimeError("set PETTA_ROOT to a SWI-PeTTa checkout")
-    return ["bash", str(Path(environment["PETTA_ROOT"]).resolve() / "run.sh"), str(entry), "--silent"]
+    raise RuntimeError("godelclaw runs modes on CeTTa only: unknown engine %r" % engine)
 
 
 def standalone_ledger(mode, prompt_path):
@@ -385,7 +381,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", type=Path, default=HERE.parent)
     parser.add_argument("--mode", choices=("iter", "omega"), required=True)
-    parser.add_argument("--engine", choices=("petta", "cetta"), default="cetta")
+    parser.add_argument("--engine", choices=("cetta",), default="cetta")
     parser.add_argument("--profile", choices=("auto", "standalone", "supervised"), default="auto")
     parser.add_argument("--state-dir", type=Path, help="directory for this launch's persistent mode state")
     parser.add_argument("--prompt", type=Path, help="append this prompt when seeding a new standalone mode")

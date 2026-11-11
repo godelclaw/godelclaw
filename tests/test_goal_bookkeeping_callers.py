@@ -73,29 +73,19 @@ def caller_prefix(native=True, trace_io=True):
     return text
 
 
-def guest(directory, program, native=True, runtime_root=ROOT):
-    if native:
-        return engine(directory, program, runtime_root=runtime_root)
-    # SWI uses the actual run.sh and the actual branch/staged runtime sources.
-    with tempfile.NamedTemporaryFile("w", dir=runtime_root, suffix=".metta") as source:
-        source.write(program)
-        source.flush()
-        receipt("swi-real-caller-program", {"program": program})
-        return run(["bash", str(Path(os.environ["PETTA_ROOT"]) / "run.sh"), source.name, "default"],
-                   directory, cwd=runtime_root, extra_env={"METTACLAW_ENGINE": "petta", "METTACLAW_ACTIVE_ENGINE": "petta",
-                   "PYTHONPATH": os.pathsep.join((str(ROOT / "tests"), str(runtime_root / "src"), str(runtime_root / "channels")))})
+def guest(directory, program, runtime_root=ROOT):
+    return engine(directory, program, runtime_root=runtime_root)
 
 
 @unittest.skipUnless(os.environ.get("CETTA_BIN"), "set authorized CETTA_BIN")
 class RealCallerTests(unittest.TestCase):
-    def compare(self, initial, steps, native=True, faults=None, runtime_root=ROOT):
+    def compare(self, initial, steps, faults=None, runtime_root=ROOT):
         faults = faults or {}
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp)
             initial = {**{n: None for n in ("goals.metta", "goals_kernel.json", "goals_compost.log", "updates.jsonl")}, **initial}
             restore(directory, initial)
             env = environment(directory)
-            env.update(METTACLAW_ENGINE="petta", METTACLAW_ACTIVE_ENGINE="petta")
             expected, printed = [], []
             held, last, sleep, burst = 0, 0, 60, "idle"
             real_open, real_replace = open, os.replace
@@ -143,7 +133,7 @@ class RealCallerTests(unittest.TestCase):
             restore(directory, initial)
             for name in ("goals.metta.tmp", "goals_kernel.json.tmp"):
                 (directory / name).unlink(missing_ok=True)
-            program = caller_prefix(native)
+            program = caller_prefix()
             for i, step in enumerate(steps):
                 fixture = directory / ("caller-fixture-%d.json" % i)
                 fixture.write_text(json.dumps(step.get("files", {})))
@@ -165,21 +155,20 @@ class RealCallerTests(unittest.TestCase):
                 program += '!(py-call (goal_bookkeeping_callers_probe.record "%d" %s))\n' % (i, expression)
             with mock.patch.dict(os.environ, {"GK_TEST_WRITE_FAILURE": faults.get("write", "never-injected"),
                  "GK_TEST_RENAME_FAILURE": faults.get("rename", "never-injected"), "GK_TEST_APPEND_FAILURE": "1" if faults.get("append") else "0"}):
-                result = guest(directory, program, native, runtime_root)
+                result = guest(directory, program, runtime_root)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             path = directory / "observations.jsonl"
             self.assertTrue(path.exists(), result.stdout + result.stderr)
             rows = [json.loads(line) for line in path.read_text().splitlines()]
             actual = [{k: row[k] for k in ("label", "value", "messages", "files")} for row in rows]
             events = [json.loads(line) for line in (directory / "io-events.jsonl").read_text().splitlines()] if (directory / "io-events.jsonl").exists() else []
-            receipt("real-caller-parity", {"native": native, "expected": expected, "actual": actual,
+            receipt("real-caller-parity", {"expected": expected, "actual": actual,
                 "steps": steps, "faults": faults, "events": events, "rows": rows, "printed_messages": printed,
                 "scope": "actual branch loop/skills definitions; boot init/continuation, clock, channel inputs are explicit fixtures"})
             self.assertEqual(actual, expected)
             for message in printed:
                 self.assertIn(message, result.stdout)
-            if native:
-                self.assertFalse(any(key in rows[-1]["calls"] for key in ("kernel_pass", "human_wake", "goal_write", "goal_drop")))
+            self.assertFalse(any(key in rows[-1]["calls"] for key in ("kernel_pass", "human_wake", "goal_write", "goal_drop")))
             return rows, events
 
     def test_boot_heartbeat_operator_real_skill_atom_paths(self):
@@ -241,17 +230,6 @@ class RealCallerTests(unittest.TestCase):
             self.compare(initial, [{"kind": "boot"}, {"kind": "heartbeat"}], faults=faults)
 
     @unittest.skipUnless(os.environ.get("PETTA_ROOT"), "set PETTA_ROOT for actual SWI route")
-    def test_real_swi_loop_skills_and_legacy_list_string(self):
-        literal = repr(["goal", "list-input", "Work", "sti:0.8", "lti:0.3", "vibes:", ["care"],
-                        "blocked-by:none", "last-verified:never", "note:generated"])
-        self.compare({}, [{"kind": "boot"}, {"kind": "write", "text": literal},
-            {"kind": "operator", "token": "swi-1"}, {"kind": "operator", "token": "swi-1"},
-            {"kind": "heartbeat"}, {"kind": "drop", "name": "list-input", "reason": "retire"}], native=False)
-        rows, _ = self.compare({"goals.metta": encoded(goal() + "\n")},
-            [{"kind": "operator", "token": "failed-swi"}, {"kind": "operator", "token": "failed-swi"}],
-            native=False, faults={"write": "goals_kernel.json.tmp"})
-        self.assertEqual(rows[-1]["calls"]["kernel_pass"], 1)
-
     def test_manifest_staging_without_deployment(self):
         with tempfile.TemporaryDirectory() as temp:
             stage = Path(temp) / "package"

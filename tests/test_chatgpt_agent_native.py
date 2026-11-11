@@ -172,20 +172,6 @@ class ChatGPTAgentTests(unittest.TestCase):
         self.assertIn('(RESULT ())', out)
         self.assertEqual(self.identity_provider.api_requests, []); self.assertEqual(self.peer.requests, [])
 
-    def test_swi_petta_reports_unsupported_subscription_without_legacy_provider_request(self):
-        root = Path(os.environ.get('PETTA_ROOT', Path.home()/'repos/PeTTa'))
-        if not shutil.which('swipl') or not (root/'src/main.pl').is_file():
-            self.skipTest('set PETTA_ROOT and install SWI-PeTTa for compatibility qualification')
-        probe = self.directory/'swi.metta'
-        probe.write_text(self.forms('!(println! (RESULT (llm:command "chatgpt:fixture-model" 42 "high" "hello")))\n', select=False))
-        env = {**self.env, 'METTACLAW_LLM_TRANSPORT':'python',
-               'METTACLAW_ACTIVE_ENGINE':'petta', 'METTACLAW_ENGINE':'petta'}
-        p = subprocess.run(['swipl', '-q', '-s', str(root/'src/main.pl'), '--', str(probe)],
-                           cwd=boundary.ROOT, env=env, text=True, capture_output=True, timeout=20)
-        self.assertEqual(p.returncode, 0, p.stderr[-2000:])
-        self.assertIn('(RESULT ())', p.stdout)
-        self.assertEqual(self.identity_provider.api_requests, []); self.assertEqual(self.peer.requests, [])
-
     def test_structured_profile_is_explicitly_unsupported_without_a_provider_request(self):
         for transport in ('native', 'python'):
             with self.subTest(transport=transport):

@@ -43,7 +43,6 @@ class RetryWakeKernelsTest(unittest.TestCase):
             self.assertEqual(counts['inactive_proofs'],18)
             self.assertEqual(counts['module_executions'],34)
             self.assertTrue(counts['wrong_result_refused'])
-        self.assertEqual(self.receipt['lanes']['he']['megalodon_proofs'],42)
         self.assertEqual(self.receipt['lanes']['petta']['megalodon_proofs'],42)
         self.assertEqual(self.receipt['host_cases'],48)
         self.assertFalse(self.receipt['live_policy_changed'])

@@ -82,6 +82,7 @@ SCENARIOS = {
     "malformed-receipts": scenario(receipts=[receipt("returned"), "", receipt("withheld", "stale")]),
     "unreachable-memory": scenario(backend={"mode": "native", "name": None, "socket": "/nonexistent/socket"}),
     "invalid-backend": scenario(backend="{not json"),
+    "array-backend": scenario(backend="[1, 2]"),
     "nothing": {"health": None, "completion": None, "control": None, "receipts": None, "backend": None},
     "chroma-missing": scenario(backend={"mode": "chroma"}),
 }

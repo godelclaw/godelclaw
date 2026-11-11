@@ -347,7 +347,12 @@
 
 !(bind! &sv-evidence-cache (new-state ()))
 ; Bind the default checkout to this module's location, not the caller's cwd.
-!(bind! &sv-root (new-state (path:dirname (path:dirname (fs:canonical-path "src/small_views_cetta.metta")))) )
+; The location is found from the checkout root; imported from elsewhere, the
+; module cannot see it, so the checkout stays unnamed and sv:checkout reads
+; the working directory.
+!(bind! &sv-root (new-state
+   (let $module (fs:canonical-path "src/small_views_cetta.metta")
+     (if (== (get-type $module) String) (path:dirname (path:dirname $module)) ""))))
 (= (sv:default-project)
    (JsonObject ((JsonPair "id" "pettaclaw") (JsonPair "report_namespace" "pettaclaw")
      (JsonPair "checkouts" (JsonArray

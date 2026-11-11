@@ -123,7 +123,7 @@
        (settings:coerce $domain $raw)) ($other $raw))))
 (= (attention-last) (get-state &am-last))
 (= (am:context)
-   (if (semantic:native?) (am:context-native) (AttentionMemory requires-native-memory)))
+   (am:context-native))
 (= (am:context-native)
    (case (am:open)
      (((AttentionReady $bank $time)

@@ -199,13 +199,6 @@ class RuntimeProbeTest(unittest.TestCase):
             % engine,
         )
 
-    def test_each_probe_reaches_its_success_witness(self):
-        paths = self.paths()
-        if not (paths["petta_root"] / "run.sh").is_file():
-            self.skipTest("PeTTa checkout is unavailable at %s"
-                          % paths["petta_root"])
-        self.run_probes("petta", {}, "PeTTa", paths)
-
     def test_each_probe_reaches_its_success_witness_on_cetta(self):
         """The same probes on CeTTa, the engine Lila runs on."""
         paths = self.cetta_paths()
@@ -215,16 +208,16 @@ class RuntimeProbeTest(unittest.TestCase):
                         "CeTTa", paths)
 
     def test_explicit_paths_remain_valid_under_fake_home(self):
-        paths = self.paths()
-        if not (paths["petta_root"] / "run.sh").is_file():
-            self.skipTest("PeTTa checkout is unavailable at %s"
-                          % paths["petta_root"])
+        paths = self.cetta_paths()
+        cetta = paths["cetta"]
         probe = (("tests/weak_process_core_probe.metta",
                   "WEAK_PROCESS_CORE_OK"),)
         with tempfile.TemporaryDirectory() as home, \
                 mock.patch.dict(os.environ, {"HOME": home}), \
                 mock.patch.object(RuntimeProbeTest, "PROBES", probe):
-            self.run_probes("petta", {}, "PeTTa", paths)
+            self.run_probes("cetta", {"CETTA_BIN": os.fspath(cetta),
+                                      "CETTA_ROOT": os.fspath(cetta.parent)},
+                            "CeTTa", paths)
 
     def run_probes(self, engine, engine_env, label, paths):
         with tempfile.TemporaryDirectory() as directory:

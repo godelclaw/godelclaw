@@ -93,8 +93,7 @@ def call_lane():
 
 
 def enabled():
-    return "true" if (os.environ.get("METTACLAW_LLM_TRANSPORT", "python") == "native"
-                      and os.environ.get("METTACLAW_ACTIVE_ENGINE") == "cetta") else "false"
+    return "true" if os.environ.get("METTACLAW_LLM_TRANSPORT", "python") == "native" else "false"
 
 
 def native_contract(plan):

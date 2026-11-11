@@ -1,4 +1,4 @@
-"""Process contracts run on both engines; CeTTa's backend is native MeTTa/C."""
+"""Process contracts of the native shell on CeTTa (MeTTa/C)."""
 import json
 import os
 from pathlib import Path
@@ -12,17 +12,16 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ShellEngineTests(unittest.TestCase):
-    def engine(self, engine, program, work, **overrides):
-        petta = Path(os.environ.get("PETTA_ROOT", Path.home() / "repos/PeTTa"))
+    def cetta(self, program, work, **overrides):
         cetta = Path(os.environ.get("CETTA_BIN", ""))
-        if not (petta / "run.sh").is_file() or (engine == "cetta" and not cetta.is_file()):
-            self.skipTest("engine checkout/executable unavailable")
+        if not cetta.is_file():
+            self.skipTest("CeTTa executable unavailable; set CETTA_BIN")
         python = Path(os.environ.get("PETTA_PY_ENV", Path.home() / "miniforge3/envs/petta"))
-        env = dict(os.environ, METTACLAW_ACTIVE_ENGINE=engine,
+        env = dict(os.environ,
                    METTACLAW_ENGINE_STATE_PATH=str(work / "engine.json"),
                    METTACLAW_PROGRESS_PATH=str(work / "progress.json"),
                    METTACLAW_SHELL_TIMEOUT_SECONDS="120", SHELL_TEST_VALUE="λ 🌸",
-                   PETTA_PATH=str(petta), PYTHONHOME=str(python),
+                   PYTHONHOME=str(python),
                    PYTHONPATH=str(ROOT / "src"),
                    PATH=str(python / "bin") + os.pathsep + os.environ.get("PATH", ""),
                    LD_LIBRARY_PATH=str(python / "lib") + os.pathsep + os.environ.get("LD_LIBRARY_PATH", ""))
@@ -31,9 +30,7 @@ class ShellEngineTests(unittest.TestCase):
         local = ROOT / (".shell-probe-" + work.name + ".metta")
         local.write_text("!(import! &self (library lib_import))\n"
                          "!(import! &self ./src/shell_io)\n" + program, encoding="utf-8")
-        command = ([str(cetta), "--lang", "petta", "--import-mode", "ancestor-walk",
-                    str(petta / "lib/lib_import.metta"), str(local)] if engine == "cetta"
-                   else ["bash", str(petta / "run.sh"), str(local), "default"])
+        command = [str(cetta), "--lang", "petta", "--import-mode", "ancestor-walk", str(local)]
         try:
             result = subprocess.run(command, cwd=ROOT, env=env, capture_output=True,
                                     text=True, timeout=45)
@@ -43,7 +40,7 @@ class ShellEngineTests(unittest.TestCase):
         self.assertNotIn("AssertionError", result.stderr)
         return result
 
-    def contract(self, engine):
+    def contract(self):
         with tempfile.TemporaryDirectory() as folder:
             work = Path(folder)
             checks = []
@@ -70,7 +67,7 @@ class ShellEngineTests(unittest.TestCase):
             checks.append("!(println! SHELL_CONTRACT_OK)\n")
             program = "!(import! &self ./src/file_io)\n" + "\n".join(checks)
             try:
-                result = self.engine(engine, program, work)
+                result = self.cetta(program, work)
                 self.assertIn("SHELL_CONTRACT_OK", result.stdout)
                 self.assertNotIn("Error", result.stdout)
                 self.assertNotIn("Assertion failed", result.stderr)
@@ -79,8 +76,7 @@ class ShellEngineTests(unittest.TestCase):
                     try: os.kill(int((work / "child").read_text()), 9)
                     except ProcessLookupError: pass
 
-    def test_native_cetta_contract(self): self.contract("cetta")
-    def test_swi_petta_contract(self): self.contract("petta")
+    def test_native_contract(self): self.contract()
 
     def test_native_wait_observation_and_watchdog(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -89,7 +85,7 @@ class ShellEngineTests(unittest.TestCase):
             self.addCleanup(notify.close)
             notify.bind(str(work / "notify.sock")); notify.settimeout(1)
             program = '!(assert (== (shell "sleep 31; printf observed" 0) "observed"))\n'
-            result = self.engine("cetta", program, work, NOTIFY_SOCKET=str(work / "notify.sock"))
+            result = self.cetta(program, work, NOTIFY_SOCKET=str(work / "notify.sock"))
             self.assertNotIn("Error", result.stdout)
             self.assertEqual(notify.recv(128), b"WATCHDOG=1")
             self.assertEqual(notify.recv(128), b"WATCHDOG=1")
@@ -104,7 +100,7 @@ class ShellEngineTests(unittest.TestCase):
             work = Path(folder)
             command = f"(sleep 0.5; printf leaked > '{work / 'leaked'}') & printf partial; sleep 2"
             program = f'!(println! (shell {json.dumps(command)} 0.1))\n'
-            result = self.engine("cetta", program, work)
+            result = self.cetta(program, work)
             self.assertIn("SHELL_TIMEOUT after 0.1 seconds", result.stdout)
             self.assertIn("partial", result.stdout)
             time.sleep(0.6)
@@ -113,7 +109,7 @@ class ShellEngineTests(unittest.TestCase):
     def test_native_progress_path_derived_from_engine_state(self):
         with tempfile.TemporaryDirectory() as folder:
             work = Path(folder)
-            result = self.engine("cetta", '!(println! (shell "printf derived"))\n', work,
+            result = self.cetta('!(println! (shell "printf derived"))\n', work,
                                  METTACLAW_PROGRESS_PATH="")
             self.assertIn("derived", result.stdout)
             self.assertNotIn("Error", result.stdout)
@@ -125,7 +121,7 @@ class ShellEngineTests(unittest.TestCase):
                        '!(assert (== (shell "kill -TERM $$" 1) "SHELL_ERROR signal 15\\n"))\n'
                        '!(assert (== (shell "printf should-not-run" -0.000001) '
                        '"SHELL_ERROR timeout seconds must be nonnegative"))\n')
-            result = self.engine("cetta", program, Path(folder))
+            result = self.cetta(program, Path(folder))
             self.assertNotIn("Assertion failed", result.stderr)
 
     def test_native_background_child_does_not_delay_return(self):
@@ -134,7 +130,7 @@ class ShellEngineTests(unittest.TestCase):
             command = f"sleep 10 </dev/null & printf '%s' $! > '{work / 'child'}'; printf ready"
             started = time.monotonic()
             try:
-                result = self.engine("cetta", f'!(println! (shell {json.dumps(command)} 0))\n', work)
+                result = self.cetta(f'!(println! (shell {json.dumps(command)} 0))\n', work)
                 self.assertIn("ready", result.stdout)
                 self.assertLess(time.monotonic() - started, 5)
             finally:

@@ -105,33 +105,6 @@ class ResponseRecoveryTest(unittest.TestCase):
         self.assertEqual(prose(()), "")
         self.assertEqual(prose("((send \"x\")))"), "")
 
-    @unittest.skipUnless(
-        shutil.which("swipl") and (pathlib.Path(os.environ.get(
-            "PETTA_ROOT", os.path.expanduser("~/repos/PeTTa")))
-            / "src" / "parser.pl").is_file(),
-        "SWI-Prolog and PeTTa's reader are required")
-    def test_recovered_batches_parse_with_the_petta_reader(self):
-        parser = (pathlib.Path(os.environ.get(
-            "PETTA_ROOT", os.path.expanduser("~/repos/PeTTa")))
-            / "src" / "parser.pl")
-        for raw in [
-            '((send-telegram-chat "42" "1) first, 2) second"))'
-            ' (query "q") (pin "p") (rest 7200 "r"))',
-            'Sure! ((send "x") (pin "y")) ⋄⟨Cn:.8 C:.7⟩',
-            '((send "she said \\"hi (there)\\"")) (pin "p"))',
-        ]:
-            with self.subTest(raw=raw):
-                goal = ("read_term(user_input, S, []), sread(S, T), "
-                        "length(T, N), format('~w', [N]), halt")
-                result = subprocess.run(
-                    ["swipl", "-q", "-s", os.fspath(parser), "-g", goal,
-                     "-t", "halt(1)"],
-                    input=repr_prolog_string(recover(raw)) + ".\n",
-                    capture_output=True, text=True, timeout=20)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertGreater(int(result.stdout.strip() or 0), 0)
-
-
 def repr_prolog_string(text):
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
 

@@ -70,7 +70,7 @@ _effect_sends = set()
 
 _CONTROL_COMMANDS = (
     "/start", "/stop",
-    "/model", "/models", "/mode", "/modes", "/engine", "/engines",
+    "/model", "/models", "/mode", "/modes",
     "/fuel", "/fuels",
     "/quota", "/wake", "/energy", "/health", "/activity", "/delete",
     "/claude_code_authorization",
@@ -79,8 +79,6 @@ _CONTROL_COMMANDS = (
 _MENU_COMMANDS = (
     ("start", "Enable cognition with the operator latch"),
     ("stop", "Stop cognition with the operator latch"),
-    ("engine", "Show or switch the evaluator engine"),
-    ("engines", "List evaluator engines"),
     ("fuel", "Show or switch what a renewal does to the budget"),
     ("fuels", "List fuel disciplines"),
     ("mode", "Show or switch the cognitive loop mode"),
@@ -1124,9 +1122,9 @@ def recent_activity(n=10, chat=None, snippet_chars=110):
 
 
 _CONTROL_REPLY_PREFIXES = (
-    "activity:", "runtime-health:", "active engine:", "active model:",
+    "activity:", "runtime-health:", "active model:",
     "active mode:", "arming energy", "model set to ", "mode set to ",
-    "engine set to ", "tap to switch:", "deleted message ",
+    "tap to switch:", "deleted message ",
     "delete refused:", "delete failed:", "cannot delete message ",
 )
 
@@ -1322,10 +1320,6 @@ def _fuels_keyboard():
     return _settings_keyboard("fuels", "fuel")
 
 
-def _engines_keyboard():
-    return _settings_keyboard("engines", "engine")
-
-
 def _handle_callback_query(cq):
     """A tapped, namespaced model button (callback_data 'model:<id>') from an
     operator: switch, acknowledge, update the menu message."""
@@ -1411,32 +1405,6 @@ def _handle_callback_query(cq):
                 "reply_markup": _fuels_keyboard(),
             }, timeout=15)
             return "callback_fuel_switch"
-        if data.startswith("engine:"):
-            if not _chat_is_allowed(chat):
-                return "callback_disallowed_chat"
-            if not _is_operator(cq.get("from")):
-                requests.post(_api("answerCallbackQuery"), json={
-                    "callback_query_id": cq.get("id"),
-                    "text": "engine switching is operator-only",
-                }, timeout=15)
-                return "callback_not_operator"
-            import engine_modes
-            reply = engine_modes.set_engine(data[len("engine:"):])
-            requests.post(_api("answerCallbackQuery"), json={
-                "callback_query_id": cq.get("id"), "text": str(reply)[:190],
-            }, timeout=15)
-            requests.post(_api("editMessageText"), json={
-                "chat_id": chat.get("id"),
-                "message_id": message.get("message_id"),
-                "text": engine_modes.engines_view(),
-                "reply_markup": _engines_keyboard(),
-            }, timeout=15)
-            if (not str(reply).startswith("engine-set failed:")
-                    and engine_modes.selected_engine()
-                    != engine_modes.active_engine()):
-                engine_modes.request_recycle()
-                _request_wake("engine switch")
-            return "callback_engine_switch"
         if not data.startswith("model:"):
             return "callback_ignored"
         if not _chat_is_allowed(chat):
@@ -1607,14 +1575,6 @@ def _handle_slash_command(chat, sender, text):
                 "reply_markup": _energy_keyboard(),
             }, timeout=15)
             return "slash_command:/energy"
-        if cmd == "/engines":
-            import engine_modes
-            requests.post(_api("sendMessage"), json={
-                "chat_id": chat.get("id"),
-                "text": engine_modes.engines_view(),
-                "reply_markup": _engines_keyboard(),
-            }, timeout=15)
-            return "slash_command:/engines"
         if cmd == "/fuels":
             import fuel_modes
             requests.post(_api("sendMessage"), json={
@@ -1690,18 +1650,6 @@ def _command_answer(cmd, arg, chat_id):
     if cmd == "/activity":
         import runtime_health
         return runtime_health.activity_report()
-    if cmd == "/engine":
-        import engine_modes
-        if not arg:
-            return (engine_modes.engine_view()
-                    + " — /engine <name> to switch, /engines to list")[:3800]
-        reply = engine_modes.set_engine(arg)
-        if (not str(reply).startswith("engine-set failed:")
-                and engine_modes.selected_engine()
-                != engine_modes.active_engine()):
-            engine_modes.request_recycle()
-            _request_wake("engine switch")
-        return str(reply)[:3800]
     if cmd == "/fuel":
         import fuel_modes
         if arg:
@@ -2251,8 +2199,7 @@ def handover_ack(ids):
     return 1
 
 
-_METTA_SHARED = ("pending_count", "prepared_count", "sleep_until", "last_poll",
-                 "active_engine")
+_METTA_SHARED = ("pending_count", "prepared_count", "sleep_until", "last_poll")
 
 
 def metta_value(name, default=None):
@@ -2276,7 +2223,7 @@ def metta_publish(name, value):
         with _health_lock:
             shared = dict(_health_state.get("metta") or {})
             shared[name] = value
-        _health_update(force=name in ("sleep_until", "active_engine"), metta=shared)
+        _health_update(force=name == "sleep_until", metta=shared)
     if name == "context_frontier":
         _context_frontier_bytes = int(value)
     elif name == "batch_update_ids":

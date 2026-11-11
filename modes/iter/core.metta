@@ -2,11 +2,10 @@
 ; Host values are boxed JSON; the provider/tools retain their upstream protocol.
 !(import! &self ./iter_host.py)
 !(import! &self ../../src/native_llm.metta)
-; Host Booleans cross py-call as the text "true"/"false" (Janus would hand
-; SWI-PeTTa's `if` a non-Boolean (@ true)); on CeTTa that text is a String,
-; which `if` reads as false. Conditions read it as a Boolean on both hosts.
+; Host Booleans cross py-call as the text "true"/"false"; on CeTTa that text
+; is a String, which `if` reads as false. Conditions read it as a Boolean.
 (= (iter:true $value) (case $value ((True True) (true True) ("true" True) ($other False))))
-!(if (iter:true (py-call (iter_host.native_processes))) (import! &self (library proc)) True)
+!(import! &self (library proc))
 
 (= (iter:prune $history $i $limit)
    (if (< $i $limit)
@@ -77,14 +76,12 @@
                 (py-call (iter_host.retry_no_tool (py-call (iter_host.optional $message "content")))))))))
 
 (= (iter:dynamic $tools $name $arguments)
-   (if (iter:true (py-call (iter_host.native_processes)))
-     (let* (($job (py-call (iter_host.prepare_dynamic $tools $name $arguments)))
+   (let* (($job (py-call (iter_host.prepare_dynamic $tools $name $arguments)))
           ($argv (py-call (iter_host.expression_field $job "argv")))
           ($cwd (py-call (iter_host.get $job "cwd")))
           ($env (py-call (iter_host.expression_field $job "env")))
           ($process (proc:run $argv $cwd $env 5000 4096)))
-       (py-call (iter_host.finish_dynamic $job $process)))
-     (py-call (iter_host.reference_dynamic $tools $name $arguments))))
+     (py-call (iter_host.finish_dynamic $job $process))))
 (= (iter:dispatch $tools $call)
    (let* (($function (py-call (iter_host.get $call "function")))
           ($name (py-call (iter_host.get $function "name")))

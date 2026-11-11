@@ -2,22 +2,13 @@
 ;; It owns no authority: it only balances, reads, and projects the proposed
 ;; outer command list. The effect broker remains a separate addition below it.
 
-;; Undelivered prose and parenthesis balancing are native on CeTTa; SWI-PeTTa
-;; keeps src/helper.py's oracle. The engine choice and command vocabulary are
-;; captured once at boot.
-!(import! &self ./src/engine_modes.metta)
-(= (model-response:cetta? $engine)
-   (case $engine ((cetta True) ("cetta" True) ($other False))))
-!(if (model-response:cetta? (engine:active))
-     (progn (import! &self ./src/undelivered_prose.metta)
-            (import! &self ./src/balance_parentheses.metta)
-            (import! &self ./src/command_batches_cetta.metta)
-            (add-atom &self (= (model-response-normalize $raw)
-                              (command-batches:normalize $raw))))
-     (progn (import! &self ./src/undelivered_prose_python.metta)
-            (import! &self ./src/balance_parentheses_python.metta)
-            (add-atom &self (= (model-response-normalize $raw)
-                              (py-call (strategy_host.normalize_response $raw))))))
+;; Undelivered prose, parenthesis balancing and command-batch normalization
+;; are native.
+!(progn (import! &self ./src/undelivered_prose.metta)
+        (import! &self ./src/balance_parentheses.metta)
+        (import! &self ./src/command_batches_cetta.metta)
+        (add-atom &self (= (model-response-normalize $raw)
+                          (command-batches:normalize $raw))))
 
 (= (model-response-balance $raw)
    (balance:parentheses $raw))

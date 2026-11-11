@@ -28,7 +28,6 @@
      (json-object-get $object $key)
      (((JsonString $s) $s) ((JsonNumber $n) (str:string->number $n)) ($other $default))))
 
-(= (semantic:native?) (== (sm:field (sm:config) "mode" "chroma") "native"))
 
 (= (sm:socket) (sm:field (sm:config) "socket" ""))
 
@@ -241,9 +240,7 @@
      (AttentionError query "expected similarity, attention or hybrid")))
 
 (= (sm:query-text $text $count $mode)
-   (if
-     (semantic:native?)
-     (let
+   (let
        $_
        (semantic:maintain)
        (case
@@ -252,9 +249,7 @@
            (case
              (sm:embed "query" $text $dim)
              (((MemoryVector $vector) (sm:query-vector $vector (am:number $count) $mode)) ($error $error))))
-          ($error $error))))
-     (if (== (ws:filter (ws:chosen)) All) (legacy-query $text $count)
-       (WorkspaceError query "scoped retrieval requires native memory"))))
+          ($error $error)))))
 
 (= (sm:queue $id $action $text)
    (case
@@ -280,7 +275,7 @@
       ($error $error))))
 
 (= (semantic:remember $text)
-   (if (semantic:native?) (sm:queue (space:request-id) remember $text) (legacy-remember $text)))
+   (sm:queue (space:request-id) remember $text))
 
 (= (memory-edit $id $text) (sm:queue $id edit $text))
 
@@ -381,16 +376,13 @@
 (= (sm:live? $op) (not (== (collapse (match &semantic-http (MHTTP $op $id $handle) True)) ())))
 
 (= (sm:maintain-body)
-   (if
-     (semantic:native?)
-     (let
+   (let
        $_
        (sm:poll-all
          (collapse (match &semantic-http (MHTTP $op $id $handle) (MHTTP $op $id $handle))))
        (case
          (sm:open)
-         (((MStore $space $profile $dim) (sm:start-pending (sm:pending $space))) ($error False))))
-     True))
+         (((MStore $space $profile $dim) (sm:start-pending (sm:pending $space))) ($error False)))))
 
 (= (sm:start-rows $rows)
    (if
@@ -500,9 +492,7 @@
           ($error False)))))))
 
 (= (semantic:retry-wait)
-   (if
-     (semantic:native?)
-     (case
+   (case
        (sm:open)
        (((MStore $space $p $dim)
          (let*
@@ -522,8 +512,7 @@
                (case
                  (io:submit (timer:after $milliseconds))
                  (((io:pending $handle) ((memory-retry-wake $handle))) ($error ())))))))
-        ($error ())))
-     ()))
+        ($error ()))))
 
 (= (memory-retry)
    (case
@@ -545,9 +534,7 @@
       ($error $error))))
 
 (= (semantic:health)
-   (if
-     (semantic:native?)
-     (case
+   (case
        (sm:query-text "memory retrieval health probe" 1 "probe")
        (((MemoryResults $hits (Unindexed $pending))
          (case
@@ -562,8 +549,7 @@
                    (MemoryHealth unavailable retrieval-returned-no-hits)))
                 ($error (MemoryHealth unavailable $error)))))
             ($error (MemoryHealth unavailable $error)))))
-        ($error (MemoryHealth unavailable $error))))
-     (py-call (memory_health.engine_query_probe))))
+        ($error (MemoryHealth unavailable $error)))))
 
 (= (sm:embed-json $value $dim)
    (if

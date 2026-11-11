@@ -69,8 +69,6 @@
    (iter-native-render-observations $observations))
 
 (= (iter-process-render-request (iter-native-result (coding-view $messages $advertised) $observations))
-   (if (request:cetta?)
-     (RoleContext $messages (repr $advertised)
+   (RoleContext $messages (repr $advertised)
        (if (== $observations iter-observations-empty) ""
-         (str:concat "ITER_PROCESS_OBSERVATIONS " (repr $observations))) () "" "" "")
-     (iter-process-render-text (iter-native-result (coding-view $messages $advertised) $observations))))
+         (str:concat "ITER_PROCESS_OBSERVATIONS " (repr $observations))) () "" "" ""))

@@ -225,9 +225,8 @@ def check_lean(model, models, toolchain, work):
     return {'model_sha256':digests, 'compared_observations':34, 'invariant_axioms':sorted(axioms)}
 
 
-def check(binary, work, lanes=('he', 'petta', 'prime'), models=None, toolchain='v4.33.1'):
-    if not lanes or any(lane not in ('he', 'petta', 'prime') for lane in lanes):
-        raise ValueError('select he, petta or prime')
+def check(binary, work, models=None, toolchain='v4.33.1'):
+    """The model's kernels on CeTTa's PeTTa language profile, godelclaw's one dialect."""
     work.mkdir(parents=True, exist_ok=True)
     sources = ('verification/RetryWake.module', 'verification/RetryWakeKernels.metta',
                'verification/RetryWakeModel.metta', 'verification/RetryWake.model.json',
@@ -242,34 +241,24 @@ def check(binary, work, lanes=('he', 'petta', 'prime'), models=None, toolchain='
             raise ValueError('generated artifact differs from module: ' + path.name)
     cases = claims(model)
     prefix = '!(import! &self ' + json.dumps(str(ROOT/'verification/RetryWakeKernels.metta')) + ')\n'
-    result = {}
-    for lane in lanes:
-        with_mg = True
-        probe = output_values(execute(binary, lane, prefix + candidate(cases[0]), work, 'backend-probe'), parse)
-        try:
-            authenticate(probe, [cases[0]], symbol, string, parse)
-        except ValueError:
-            probe_text = (work/('backend-probe.'+lane+'.stdout')).read_text()
-            if lane != 'prime' or 'Tm:' not in probe_text or 'MegalodonMalformed' not in probe_text:
-                raise
-            with_mg = False
-        executions = check_execution(binary, lane, model, work, symbol, string, parse)
-        source = prefix + ''.join(candidate(case, with_mg=with_mg) for case in cases)
-        records = output_values(execute(binary, lane, source, work, 'kernels'), parse)
-        authenticate(records, cases, symbol, string, parse, with_mg)
-        # No named declarations leak between checks: the same case is reusable.
-        repeated = output_values(execute(binary, lane, prefix + candidate(cases[0], with_mg=with_mg) * 2, work, 'repeated'), parse)
-        authenticate(repeated, [cases[0], cases[0]], symbol, string, parse, with_mg)
-        wrong = next(c for c in cases if c[:3] == ('transition', 'RequestFailed', 'CallSubmitted'))
-        _, codes, _, _, _ = model_terms(model)
-        bad = output_values(execute(binary, lane, prefix + candidate(wrong, codes['CallSubmitted'], with_mg), work, 'must-refuse'), parse)
-        mg_refusal = (symbol('GcMegalodonRefusedV2'),) if with_mg else (symbol('GcBackendUnavailableV2'), symbol('megalodon'), symbol('prime-symbol-wire'))
-        if (len(bad) != 1 or bad[0][5:] != ((symbol('GcHolRefusedV2'),), mg_refusal)):
-            raise ValueError('changed transition result was not refused')
-        result[lane] = {'proof_program_sha256': hashlib.sha256((work/('kernels.'+lane+'.metta')).read_bytes()).hexdigest(),
-                        'module_executions': executions, 'transition_proofs': 24, 'inactive_proofs': 18,
-                        'megalodon_proofs': 42 if with_mg else 0,
-                        'repeated_cases': 2, 'wrong_result_refused': True}
+    lane = 'petta'
+    probe = output_values(execute(binary, lane, prefix + candidate(cases[0]), work, 'backend-probe'), parse)
+    authenticate(probe, [cases[0]], symbol, string, parse)
+    executions = check_execution(binary, lane, model, work, symbol, string, parse)
+    source = prefix + ''.join(candidate(case) for case in cases)
+    records = output_values(execute(binary, lane, source, work, 'kernels'), parse)
+    authenticate(records, cases, symbol, string, parse)
+    # No named declarations leak between checks: the same case is reusable.
+    repeated = output_values(execute(binary, lane, prefix + candidate(cases[0]) * 2, work, 'repeated'), parse)
+    authenticate(repeated, [cases[0], cases[0]], symbol, string, parse)
+    wrong = next(c for c in cases if c[:3] == ('transition', 'RequestFailed', 'CallSubmitted'))
+    _, codes, _, _, _ = model_terms(model)
+    bad = output_values(execute(binary, lane, prefix + candidate(wrong, codes['CallSubmitted']), work, 'must-refuse'), parse)
+    if (len(bad) != 1 or bad[0][5:] != ((symbol('GcHolRefusedV2'),), (symbol('GcMegalodonRefusedV2'),))):
+        raise ValueError('changed transition result was not refused')
+    result = {lane: {'proof_program_sha256': hashlib.sha256((work/('kernels.'+lane+'.metta')).read_bytes()).hexdigest(),
+                     'module_executions': executions, 'transition_proofs': 24, 'inactive_proofs': 18,
+                     'megalodon_proofs': 42, 'repeated_cases': 2, 'wrong_result_refused': True}}
     host_cases = check_host(binary, model, work)
     lean = check_lean(model, models, toolchain, work) if models else {'status': 'not-requested'}
     if source_hashes != {name: hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in sources}:
@@ -289,11 +278,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--cetta', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
-    parser.add_argument('--languages', default='he,petta,prime')
     parser.add_argument('--models', type=Path)
     parser.add_argument('--toolchain', default='v4.33.1')
     args = parser.parse_args()
-    print(json.dumps(check(args.cetta.resolve(), args.output.resolve(), tuple(args.languages.split(',')), args.models, args.toolchain), sort_keys=True))
+    print(json.dumps(check(args.cetta.resolve(), args.output.resolve(), args.models, args.toolchain), sort_keys=True))
 
 
 if __name__ == '__main__': main()

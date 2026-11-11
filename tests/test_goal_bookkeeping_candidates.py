@@ -312,7 +312,7 @@ class CandidateTests(unittest.TestCase):
         for path in (ROOT / "src/loop.metta", ROOT / "src/skills.metta"):
             self.assertIn("./src/goal_bookkeeping.metta", path.read_text())
         selected = json.loads((ROOT / "config/runtime-files.json").read_text())
-        for name in ("goal_bookkeeping", "goal_bookkeeping_cetta", "goal_bookkeeping_math_cetta", "goal_bookkeeping_python"):
+        for name in ("goal_bookkeeping", "goal_bookkeeping_cetta", "goal_bookkeeping_math_cetta"):
             self.assertIn("src/" + name + ".metta", selected)
 
 

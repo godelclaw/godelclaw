@@ -63,7 +63,6 @@
     "- Search the web using DuckDuckGo HTML: (search-ddg \"string\")"
     ;LLM API:
     "- Check your actual embedding and retrieval path: (memory-health)"
-    "- Attempt memory-index catch-up and report measured before/after drift: (memory-compact)"
     "- Check your LLM API budget — model in use, credits left, rate window: (llm-quota)"
     "- List the LLM models you can use: (llm-models)"
     "- Switch your LLM model for this session: (llm-set-model \"model-name\")"
@@ -269,7 +268,6 @@
 
 ;; LLM API introspection (synthetic.new): budget, model list, session model switch.
 (= (memory-health) (semantic:health))
-(= (memory-compact) (py-call (memory_health.compact)))
 (= (llm-quota) (py-call (synthetic_llm.quota)))
 (= (llm-models) (py-call (synthetic_llm.models)))
 (= (llm-set-model $name) (py-call (synthetic_llm.set_model $name)))

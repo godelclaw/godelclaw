@@ -1,4 +1,4 @@
-"""The same file-read contract runs on CeTTa and SWI-PeTTa."""
+"""The file-read contract on CeTTa."""
 import hashlib
 from isolated_env import isolated_environ  # noqa: E402
 import json
@@ -107,6 +107,3 @@ class FileReadEngineTests(unittest.TestCase):
 
     def test_native_cetta_contract_without_python_reader(self):
         self.run_contract("cetta")
-
-    def test_swi_petta_contract(self):
-        self.run_contract("petta")

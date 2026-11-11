@@ -1009,16 +1009,14 @@ Use the Python environment linked into CeTTa for native checks.
 ## Memory
 
 The framework exposes `(remember string)` and `(query string)` for deliberate
-long-term memory use. Remembered items are journaled under `memory/remembered/`;
-Chroma holds the derived similarity index. The agent can use different MeTTa
-representations within those memories.
+long-term memory use. The native memory service holds the memories and their
+similarity index. The agent can use different MeTTa representations within those
+memories.
 
 Embedding-backed recall uses the configured Qwen-compatible embedding service.
 The launcher defaults to `http://127.0.0.1:8876`; the service itself is not
 installed by this repository. Configure `METTACLAW_EMBED_ENDPOINT` and the
-matching model/protocol before using these skills. The
-[journal replay utility](scripts/rebuild_chroma_from_journal.py) can build and
-verify a separate Chroma index; run it with `--help` for its explicit inputs.
+matching model/protocol before using these skills.
 
 Upstream modes keep their own memory behavior: Iter retains its experience and
 transformations; the Omega host currently provides text recall with its embedding,

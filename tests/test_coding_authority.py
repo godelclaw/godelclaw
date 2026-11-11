@@ -889,9 +889,11 @@ class CodingAuthorityAndRepinTests(unittest.TestCase):
         target_bundle, _ = coding_io.freeze_bundle(ROOT, self.directory / "memory" / "coding-runtimes")
         ok, detail = coding_io.check_checkpoint_copy(session, target_bundle)
         self.assertTrue(ok, detail)
-        self.assertIn("CheckpointReady 4", detail)
+        # The copy holds the three written messages, the repaired in-flight
+        # tool result and the shipped working guidance.
+        self.assertIn("CheckpointReady 5", detail)
 
-        # Live session files are byte-for-byte identical (the repaired 4th message was written only in the copy)
+        # Live session files are byte-for-byte identical (the repairs were written only in the copy)
         self.assertEqual(_snapshot_tree(session), before_snap)
         self.assertEqual(len(self.server.requests), 0)
         # The check made no ledger call that records anything: no request, call or event of the LLM ledger.

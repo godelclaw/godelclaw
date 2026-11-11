@@ -125,11 +125,6 @@
    (if (== $closed 1)
      (let $mode (mio:path-mode $temporary 384)
        (if (== $mode 1) (mio:rename $temporary $path) $mode)) $closed))
-(= (mio:save-engine $path $temporary $payload)
-   (let $parent (mio:parent $path)
-     (if (== $parent ())
-       (mio:engine-finish $temporary $path
-         (mio:write $temporary $payload ("create" "truncate") 438 True ())) $parent)))
 (= (mio:save-json $path $data $label)
    (let $result (mio:save $path (str:concat $path ".tmp")
      (str:concat (json:stringify-python-with $data ((ensure-ascii False) (indent 2))) "\n") False ())

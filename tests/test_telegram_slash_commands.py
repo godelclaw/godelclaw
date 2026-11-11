@@ -13,7 +13,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 import telegram  # noqa: E402
 import synthetic_llm  # noqa: E402
 import loop_modes  # noqa: E402
-import engine_modes  # noqa: E402
 
 
 _REAL_SET_MODEL = synthetic_llm.set_model
@@ -30,7 +29,6 @@ class SlashCommandTest(unittest.TestCase):
             name: os.environ.get(name) for name in (
                 "METTACLAW_ENGINE_STATE_PATH",
                 "METTACLAW_RECYCLE_REQUEST_PATH",
-                "METTACLAW_ACTIVE_ENGINE",
             )
         }
         os.environ["METTACLAW_LOOP_MODE_PATH"] = os.path.join(
@@ -41,7 +39,6 @@ class SlashCommandTest(unittest.TestCase):
             self.tmp.name, "engine")
         os.environ["METTACLAW_RECYCLE_REQUEST_PATH"] = os.path.join(
             self.tmp.name, "recycle.requested")
-        os.environ["METTACLAW_ACTIVE_ENGINE"] = "petta"
         self.previous_fuel_path = os.environ.get("METTACLAW_FUEL_MODE_PATH")
         os.environ["METTACLAW_FUEL_MODE_PATH"] = os.path.join(
             self.tmp.name, "fuel_mode.json")
@@ -65,8 +62,6 @@ class SlashCommandTest(unittest.TestCase):
             lambda name: f"model set to '{name}'")
         self.p5 = mock.patch.object(
             synthetic_llm, "current_model", lambda: "syn:large:text")
-        self.p6 = mock.patch.object(
-            engine_modes, "engine_available", lambda name: True)
         self.p7 = mock.patch.object(
             synthetic_llm, "model_catalog_status", lambda: "catalog fixture")
         self.p8 = mock.patch.object(
@@ -74,7 +69,7 @@ class SlashCommandTest(unittest.TestCase):
         self.p9 = mock.patch.object(
             synthetic_llm, "refresh_provider_observations_async",
             lambda *args, **kwargs: None)
-        for p in (self.p2, self.p3, self.p4, self.p5, self.p6,
+        for p in (self.p2, self.p3, self.p4, self.p5,
                   self.p7, self.p8, self.p9):
             p.start()
         self.chat = {"id": -4321}
@@ -82,7 +77,7 @@ class SlashCommandTest(unittest.TestCase):
         os.environ["METTACLAW_TELEGRAM_OPERATOR_IDS"] = "111000111"
 
     def tearDown(self):
-        for p in (self.p1, self.p2, self.p3, self.p4, self.p5, self.p6,
+        for p in (self.p1, self.p2, self.p3, self.p4, self.p5,
                   self.p7, self.p8, self.p9):
             p.stop()
         if self.previous_mode_path is None:
@@ -434,57 +429,6 @@ class SlashCommandTest(unittest.TestCase):
                      for row in payload["reply_markup"]["inline_keyboard"]]
         self.assertEqual(callbacks, ["mode:godelclaw", "mode:coding", "mode:iter", "mode:omega"])
 
-    def test_engine_bare_shows_active_engine(self):
-        self.assertEqual(self.handle("/engine"), "slash_command:/engine")
-        self.assertIn("active engine: petta", self.sent[-1][1])
-
-    def test_engine_switch_persists_and_requests_recycle(self):
-        telegram._wake_event.clear()
-        try:
-            self.assertEqual(self.handle("/engine cetta"),
-                             "slash_command:/engine")
-            self.assertEqual(engine_modes.selected_engine(), "cetta")
-            self.assertTrue(os.path.isfile(
-                os.environ["METTACLAW_RECYCLE_REQUEST_PATH"]))
-            self.assertTrue(telegram._wake_event.is_set())
-            self.assertIn("recycling", self.sent[-1][1])
-        finally:
-            telegram._wake_event.clear()
-
-    def test_engines_sends_keyboard(self):
-        posts = []
-        with mock.patch.object(telegram.requests, "post",
-                               lambda url, json=None, timeout=None:
-                               posts.append((url, json)) or mock.Mock()):
-            self.assertEqual(self.handle("/engines"),
-                             "slash_command:/engines")
-        payload = posts[-1][1]
-        callbacks = [row[0]["callback_data"]
-                     for row in payload["reply_markup"]["inline_keyboard"]]
-        self.assertEqual(callbacks, ["engine:petta", "engine:cetta"])
-        self.assertIn("pleatta [disabled]", payload["text"])
-
-    def test_callback_switches_engine(self):
-        posts = []
-        cq = {"id": "89", "data": "engine:cetta",
-              "from": {"id": 111000111},
-              "message": {"message_id": 7, "chat": {"id": -4321}}}
-        telegram._wake_event.clear()
-        try:
-            with mock.patch.object(telegram, "_chat_is_allowed",
-                                   lambda chat: True), \
-                 mock.patch.object(telegram.requests, "post",
-                                   lambda url, json=None, timeout=None:
-                                   posts.append((url, json)) or mock.Mock()):
-                note = telegram._handle_callback_query(cq)
-            self.assertEqual(note, "callback_engine_switch")
-            self.assertEqual(engine_modes.selected_engine(), "cetta")
-            self.assertTrue(telegram._wake_event.is_set())
-            self.assertTrue(any("answerCallbackQuery" in u for u, _ in posts))
-            self.assertTrue(any("editMessageText" in u for u, _ in posts))
-        finally:
-            telegram._wake_event.clear()
-
     def test_command_menu_registers_mode_controls(self):
         response = mock.Mock()
         response.raise_for_status.return_value = None
@@ -498,8 +442,8 @@ class SlashCommandTest(unittest.TestCase):
         self.assertIn("modes", names)
         self.assertIn("start", names)
         self.assertIn("stop", names)
-        self.assertIn("engine", names)
-        self.assertIn("engines", names)
+        self.assertNotIn("engine", names)    # one engine: nothing to show or switch
+        self.assertNotIn("engines", names)
         self.assertIn("health", names)
         self.assertEqual(len(names), len(set(names)))
 

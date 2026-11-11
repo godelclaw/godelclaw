@@ -16,10 +16,8 @@ class ManagedRuntimeTest(unittest.TestCase):
         engines = []
         if Path(os.environ.get("CETTA_BIN", "")).is_file():
             engines.append("cetta")
-        if (Path(os.environ.get("PETTA_ROOT", "")) / "run.sh").is_file():
-            engines.append("petta")
         if not engines:
-            self.skipTest("configure a CeTTa or PeTTa executable")
+            self.skipTest("configure a CeTTa executable (CETTA_BIN)")
         for engine in engines:
             with self.subTest(engine=engine), tempfile.TemporaryDirectory() as temporary:
                 env = isolated_environ(METTACLAW_ENGINE=engine, METTACLAW_SKIP_CONFIG="1",

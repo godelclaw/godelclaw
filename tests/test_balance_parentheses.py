@@ -291,12 +291,12 @@ class CettaCase(unittest.TestCase):
         if not self.binary.is_file():
             self.skipTest("set CETTA_BIN to a Python-enabled cetta")
 
-    def run_cetta(self, lines, cases=(), engine="cetta", extra_env=None, timeout=900):
+    def run_cetta(self, lines, cases=(), extra_env=None, timeout=900):
         with tempfile.TemporaryDirectory() as directory:
             directory = pathlib.Path(directory)
             (directory / "balance_record.py").write_text(RECORDER)
             (directory / "cases.json").write_text(json.dumps(list(cases)), encoding="utf-8")
-            env = cetta_env(directory, engine)
+            env = cetta_env(directory)
             env.update(BALANCE_RECORD=str(directory / "record.jsonl"),
                        BALANCE_CASES=str(directory / "cases.json"))
             env.update(extra_env or {})
@@ -628,17 +628,15 @@ class LiveCaller(CettaCase):
         self.assertEqual(len(grounded), len({k for k in grounded}))
         self.assertEqual(set(grounded) & reached, set(), detail)
 
-    def test_pipeline_selects_native_balance_only_on_cetta(self):
+    def test_pipeline_uses_the_native_balance(self):
         program = ["!(import! &self ./src/helper.py)", "!(import! &self balance_record.py)",
                    "!(import! &self ./src/command_pipeline.metta)",
                    "!(py-call (balance_record.watch))", '!(py-call (balance_record.begin "loop"))',
                    '!(py-call (balance_record.value "loop" (model-response-balance '
                    '"Sure! ((send \\"x\\")) ⋄⟨C:.7⟩")))']
-        for engine, native in (("cetta", True), ("petta", False)):
-            with self.subTest(engine=engine):
-                rows, _, detail = self.run_cetta(program, engine=engine)
-                self.assertIn(["value", "loop", '((send "x"))'], rows, detail)
-                self.assertEqual(["python", "loop"] in rows, not native, detail)
+        rows, _, detail = self.run_cetta(program)
+        self.assertIn(["value", "loop", '((send "x"))'], rows, detail)
+        self.assertNotIn(["python", "loop"], rows, detail)
         pipeline = (ROOT / "src/command_pipeline.metta").read_text(encoding="utf-8")
         self.assertIn("(= (model-response-balance $raw)\n   (balance:parentheses $raw))", pipeline)
         self.assertNotIn("helper.balance_parentheses", pipeline)
@@ -662,40 +660,6 @@ class LiveCaller(CettaCase):
         expected = [oracle(t)[0] for t in texts]
         self.assertEqual([values.get("n%d" % i) for i in range(len(texts))], expected, detail)
         self.assertEqual([values.get("s%d" % i) for i in range(len(texts))], expected, detail)
-
-    def test_swi_petta_keeps_the_python_oracle(self):
-        """On SWI-PeTTa the pipeline loads the Python fallback, and the live
-        caller gives the oracle's answers."""
-        petta = pathlib.Path(os.environ.get("PETTA_ROOT", pathlib.Path.home() / "repos" / "PeTTa"))
-        if not (petta / "run.sh").is_file():
-            self.skipTest("PeTTa checkout is unavailable")
-        texts = ['Sure! ((send "x") (pin "y")) tail', "I will rest", "rest 60", '(send "x"',
-                 '( (send "x") )']
-        imports = [line for line in self.IMPORTS if "balance_record" not in line]
-        probe = "\n".join(imports + [
-            "!(println! (SWI %d (addition-balance-response %s)))" % (i, json.dumps(t))
-            for i, t in enumerate(texts)]) + "\n"
-        with tempfile.TemporaryDirectory() as directory:
-            directory = pathlib.Path(directory)
-            env = isolated_environ(
-                METTACLAW_SKIP_INITIALIZE="1", METTACLAW_SKIP_CONFIG="1", METTACLAW_ENGINE="petta",
-                PETTA_ROOT=str(petta),
-                PETTA_PY_ENV=os.environ.get("PETTA_PY_ENV",
-                    str(pathlib.Path.home() / "miniforge3" / "envs" / "petta")),
-                METTACLAW_ENGINE_STATE_PATH=str(directory / "engine"),
-                METTACLAW_WORKING_SET_PATH=str(directory / "working-set.json"),
-                METTACLAW_HISTORY_PATH=str(directory / "history.metta"))
-            with tempfile.NamedTemporaryFile("w", dir=ROOT, suffix=".metta", encoding="utf-8") as source:
-                source.write(probe)
-                source.flush()
-                result = subprocess.run(["./run.sh", source.name], cwd=ROOT, env=env,
-                                        stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                                        timeout=120)
-        self.assertEqual(result.returncode, 0, result.stderr[-2000:])
-        out = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", result.stdout)
-        answers = dict(re.findall(r"^\(SWI (\d+) (.*)\)$", out, re.M))
-        self.assertEqual([answers.get(str(i)) for i in range(len(texts))],
-                         [oracle(t)[0] for t in texts], out[-3000:])
 
 
 if __name__ == "__main__":

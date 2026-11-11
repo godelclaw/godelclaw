@@ -99,9 +99,6 @@ class NativeTextTests(unittest.TestCase):
     def test_cetta_never_uses_the_python_decoder(self):
         self.check_adapter(native=True)
 
-    def test_swi_retains_the_python_adapter(self):
-        self.check_adapter(native=False)
-
 
 if __name__ == "__main__":
     unittest.main()

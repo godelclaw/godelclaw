@@ -304,7 +304,6 @@ def observe(args, deployment, now=None):
     if getattr(args, "cognitive_health", None):
         os.environ["METTACLAW_COGNITIVE_HEALTH_PATH"] = str(
             args.cognitive_health)
-    os.environ["METTACLAW_CHROMA_DIR"] = str(args.chroma)
     facts = runtime_health.status(now=now)
     problems = list(facts["problems"])
     active = _service_active(args.service)
@@ -321,8 +320,6 @@ def observe(args, deployment, now=None):
                        if args.canonical_memory.exists() else 0)
     if canonical_bytes < int(deployment.get("baseline_canonical_bytes", 0)):
         problems.append("canonical-memory-regressed")
-    if facts["memories"] is not None and facts["memories"] < int(deployment.get("baseline_memories", 0)):
-        problems.append("memory-count-regressed")
     return {
         "observed_at": now, "active": active, "head": head,
         "canonical_memory_bytes": canonical_bytes,
@@ -410,7 +407,7 @@ def parser():
     result.add_argument("--working-set", required=True, type=pathlib.Path)
     result.add_argument("--cognitive-health", type=pathlib.Path)
     result.add_argument("--canonical-memory", required=True, type=pathlib.Path)
-    result.add_argument("--chroma", required=True, type=pathlib.Path)
+    result.add_argument("--chroma", type=pathlib.Path, help=argparse.SUPPRESS)  # unused: installed units still pass it
     result.add_argument("--deployment", required=True, type=pathlib.Path)
     result.add_argument("--log", required=True, type=pathlib.Path)
     result.add_argument("--failures", type=int, default=3)

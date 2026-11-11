@@ -6,8 +6,17 @@ import subprocess
 import tempfile
 import unittest
 import test_command_dispatch_engine as dispatch
-from test_native_iter_process import APPEND
 ROOT = dispatch.ROOT
+
+APPEND = """\
+(= (iter-transform
+      (coding-view $messages $advertised))
+   (success
+     (coding-view
+       (coding-message-append-one
+         $messages (coding-message user %s))
+       $advertised)))
+"""
 
 class CettaIterProcess(unittest.TestCase):
     def guest(self, directory, code):

@@ -15,18 +15,6 @@
    (let $fallback (mode-path:expand "~/.local/state")
      (if (mv:failed? $fallback) $fallback
        (mio:env "XDG_STATE_HOME" $fallback))))
-(= (mode-path:engine)
-   (let $configured (mio:env "METTACLAW_ENGINE_STATE_PATH" "")
-     (if (!= $configured "") $configured
-       (let $home (mode-path:state-home)
-         (if (mv:failed? $home) $home
-           (mio:join (mio:join $home (mio:env "METTACLAW_INSTANCE" "default")) "engine"))))))
-(= (mode-path:failure)
-   (let $configured (mio:env "METTACLAW_ENGINE_FAILURE_PATH" "")
-     (if (!= $configured "") $configured
-       (let $engine (mode-path:engine)
-         (if (mv:failed? $engine) $engine
-           (mio:join (mio:dirname $engine) "engine-failure"))))))
 (= (mode-path:active-loop)
    (let $engine (mio:env "METTACLAW_ENGINE_STATE_PATH" "")
      (if (!= $engine "") (mio:join (mio:dirname $engine) "active-loop.json")
@@ -59,7 +47,6 @@
    (let $home (mode-path:expand "~")
      (if (mv:failed? $home) $home
        (case $name
-         (("petta" ((mio:join (mio:env "PETTA_ROOT" (mio:join $home "repos/PeTTa")) "run.sh")))
-          ("cetta" ((mio:env "CETTA_BIN" (mio:join
+         (("cetta" ((mio:env "CETTA_BIN" (mio:join
             (mio:env "CETTA_ROOT" (mio:join $home "repos/CeTTa-runtime")) "cetta"))))
           ($other ()))))))

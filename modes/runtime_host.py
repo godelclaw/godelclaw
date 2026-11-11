@@ -44,8 +44,7 @@ def standalone_flag():
 
 def native_memory_flag():
     """MeTTa Boolean spelling for the qualified CeTTa semantic-memory path."""
-    enabled = not standalone() and os.environ.get("METTACLAW_ACTIVE_ENGINE") == "cetta"
-    return "true" if enabled else "false"
+    return "false" if standalone() else "true"
 
 
 def terminal():
@@ -242,7 +241,7 @@ def boot():
             for name in dir(time) if not name.startswith("_")})
         loop_modes.record_active(mode(), os.getpid(), str(root()))
         recover_outbox()
-    record("boot", pid=os.getpid(), engine=os.environ["METTACLAW_ACTIVE_ENGINE"])
+    record("boot", pid=os.getpid())
     print("[mode-runtime] started " + mode(), flush=True)
     return True
 

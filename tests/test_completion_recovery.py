@@ -103,9 +103,9 @@ def arm(kind):
             self.assertEqual(len(self.events(event)), count)
         self.assertEqual([row for row in self.events() if row['event'] in ('failed', 'unknown')], [])
 
-    def test_known_rollback_retries_only_local_recording_in_both_dialects(self):
+    def test_known_rollback_retries_only_local_recording(self):
         self.peer.delay = .01
-        for lang in ('he', 'petta'):
+        for lang in ('petta',):
             with self.subTest(lang=lang):
                 self.fresh_ledger(lang)
                 self.env['METTACLAW_COGNITIVE_HEALTH_PATH'] = str(self.directory / (lang + '-health.json'))

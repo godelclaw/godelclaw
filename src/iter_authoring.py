@@ -126,10 +126,6 @@ def _atomic_write(path: Path, source: bytes, mode: int) -> tuple[str, str]:
 
 
 def _syntax(source: str, filename: str) -> tuple[str, str]:
-    petta_root = Path(os.environ.get(
-        "PETTA_ROOT", Path.home() / "repos" / "PeTTa"
-    ))
-    parser = ROOT / "scripts" / "metta_parse_only.pl"
     descriptor, temporary = tempfile.mkstemp(
         prefix="mettaclaw-iter-parse-", suffix=".metta"
     )
@@ -138,12 +134,8 @@ def _syntax(source: str, filename: str) -> tuple[str, str]:
             descriptor = -1
             stream.write(source)
         try:
-            if os.environ.get("METTACLAW_ACTIVE_ENGINE", os.environ.get("METTACLAW_ENGINE")) == "cetta":
-                command = [os.environ.get("CETTA_BIN", "cetta"), "--lang", "petta",
-                           str(ROOT / "scripts" / "metta_parse_only.metta"), "--", temporary]
-            else:
-                command = ["swipl", "-q", "-s", str(parser),
-                           "--", str(petta_root), temporary]
+            command = [os.environ.get("CETTA_BIN", "cetta"), "--lang", "petta",
+                       str(ROOT / "scripts" / "metta_parse_only.metta"), "--", temporary]
             result = subprocess.run(
                 command,
                 stdin=subprocess.DEVNULL,

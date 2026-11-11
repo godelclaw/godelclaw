@@ -981,16 +981,6 @@ def rest_notice_text(left, now=None):
             "and will be read then; send /wake to end the rest now." % (span, wake_at))
 
 
-def adopt_active_engine():
-    """The command responder runs beside the loop: the engine that loop
-    runs is the one it published, not this process's own start value."""
-    import telegram
-    active = telegram.metta_value("active_engine", "")
-    if active:
-        os.environ["METTACLAW_ACTIVE_ENGINE"] = str(active)
-    return 1
-
-
 def claude_code_toggle():
     import claude_bridge
     return claude_bridge.set_authorized(not claude_bridge.authorized())
@@ -1009,15 +999,7 @@ def menu_state(kind):
         import fuel_modes
         state = {"text": fuel_modes.fuels_view(), "current": fuel_modes.current_fuel(),
                  "names": list(fuel_modes.FUELS)}
-    elif kind == "engines":
-        adopt_active_engine()
-        import engine_modes
-        state = {"text": engine_modes.engines_view(), "current": engine_modes.active_engine(),
-                 "selected": engine_modes.selected_engine(), "names": list(engine_modes.ENGINES),
-                 "unavailable": [n for n in engine_modes.ENGINES
-                                 if not engine_modes.engine_available(n)]}
     elif kind == "models":
-        adopt_active_engine()
         import synthetic_llm
         names = synthetic_llm.model_ids()
         state = {"text": "tap to switch — " + synthetic_llm.model_catalog_status(),
@@ -1029,7 +1011,7 @@ def menu_state(kind):
     return json.dumps(state, ensure_ascii=False)
 
 
-_MENU_KINDS = {"model": "models", "mode": "modes", "fuel": "fuels", "engine": "engines"}
+_MENU_KINDS = {"model": "models", "mode": "modes", "fuel": "fuels"}
 _MODEL_PROVIDER_LABELS = {
     "kimi": "Kimi Code", "synthetic": "Synthetic", "anthropic": "Anthropic",
     "chatgpt": "ChatGPT", "openai": "OpenAI API",
@@ -1078,7 +1060,7 @@ def menu_page(kind, prefix, offset=0, provider=None):
             data = "choice:" + str(prefix) + ":" + hashlib.sha256(data.encode()).hexdigest()[:40]
         off = name in state.get("unavailable", ())
         mark = "● " if name == state.get("current") else "◌ " if name == state.get("selected") else "⚠ " if off and kind == "models" else ""
-        label = mark + name + (" (unavailable)" if off and kind == "engines" else "")
+        label = mark + name
         rows.append([[label[:64], data]])
     navigation = []
     if offset:

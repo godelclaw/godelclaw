@@ -138,7 +138,6 @@ def main():
     emit("CETTA_ROOT", expand(paths.get("cetta_root"), root))
     emit("PETTA_PY_ENV", expand(paths.get("petta_py_env"), root))
     emit("SESSION_MEMORY_TOOLS", expand(paths.get("session_memory_tools"), root))
-    emit("METTACLAW_CHROMA_DIR", expand(paths.get("chroma_dir"), root))
     emit("METTACLAW_TELEGRAM_OFFSET_PATH", expand(paths.get("telegram_offset_path"), root))
     emit("METTACLAW_TELEGRAM_LOG_PATH", expand(paths.get("telegram_log_path"), root))
     emit("METTACLAW_LIFECYCLE_PATH", expand(paths.get("lifecycle_path"), root))

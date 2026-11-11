@@ -15,7 +15,6 @@ session_memory_tools = ""
 
 # Mutable transport state lives outside the checkout. This keeps atomic
 # offset updates working when the deployed program tree is mounted read-only.
-chroma_dir = "$ROOT/chroma_db"
 telegram_offset_path = "$STATE_HOME/$INSTANCE/telegram/offset"
 telegram_log_path = "$STATE_HOME/$INSTANCE/telegram/updates.jsonl"
 lifecycle_path = "$STATE_HOME/$INSTANCE/lifecycle.json"

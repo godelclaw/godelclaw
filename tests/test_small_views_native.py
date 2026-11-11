@@ -386,22 +386,17 @@ print(mode.get("version", "fixture 日 r1") if sys.argv[-1] == "--version" else 
                         for row in rows]
             self.assertEqual(statuses, ["known", "stale-known", "stale-known", "known"])
 
-    def test_swi_caller_keeps_all_python_loaders(self):
-        self.compare(None, [{}, {}], caller=True, swi=True)
-
     def test_complete_caller_real_receipts_absent_and_populated(self):
         path = str(self.directory / "receipts.jsonl")
         entry = {"turn": 7, "disposition": "returned", "command": "generated command",
                  "result": "generated 日🙂\0result"}
         steps = [{"files": {path: None}}, {"files": {path: encoded(receipt_bytes([entry]))}},
                  {"files": {path: encoded(b"")}}]
-        for swi in (False, True):
-            with self.subTest(swi=swi):
-                rows = self.compare(None, steps, caller=True, swi=swi)
-                self.assertIn("SOURCE[effect-receipts] status=absent", rows[0]["text"])
-                self.assertIn("AUTHORITATIVE BROKER RECEIPTS", rows[1]["text"])
-                self.assertIn("generated 日🙂\0result", rows[1]["text"])
-                self.assertIn("SOURCE[effect-receipts] status=absent", rows[2]["text"])
+        rows = self.compare(None, steps, caller=True)
+        self.assertIn("SOURCE[effect-receipts] status=absent", rows[0]["text"])
+        self.assertIn("AUTHORITATIVE BROKER RECEIPTS", rows[1]["text"])
+        self.assertIn("generated 日🙂\0result", rows[1]["text"])
+        self.assertIn("SOURCE[effect-receipts] status=absent", rows[2]["text"])
 
     def test_isolated_production_boot_all_six_python_loaders_disabled(self):
         library = Path(os.environ.get("PETTA_LIB_CHROMADB", ROOT / "repos" / "petta_lib_chromadb"))

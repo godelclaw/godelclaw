@@ -265,17 +265,6 @@ def unknown(name):
     return f"Unknown tool: {name!r}"
 
 
-def native_processes():
-    return truth(os.environ.get("METTACLAW_ACTIVE_ENGINE") != "petta")
-
-
-def reference_dynamic(loaded, name, arguments):
-    """Keep the pinned upstream process helper on hosts without lib/proc."""
-    result = namespace["invoke_dynamic"](unbox(loaded)["snapshot"][name][0],
-                                          "run", **unbox(arguments))
-    return boxed(result["result"]) if result["ok"] else f"Tool execution failed: {result['error']}"
-
-
 def prepare_dynamic(loaded, name, arguments):
     result_fd, result_file = tempfile.mkstemp(prefix="iter-result-", suffix=".json")
     payload_fd, payload_file = tempfile.mkstemp(prefix="iter-payload-", suffix=".json")

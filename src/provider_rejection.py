@@ -168,7 +168,7 @@ def record(status, code="", message="", captured=None):
                                                message=safe_text(message), context=snapshot,
                                                reason=error_kind(status, code, message))
             if (health['provider_rejection']['reason'] == 'context-size'
-                    and os.environ.get('METTACLAW_ACTIVE_ENGINE') == 'cetta' and full_context()
+                    and full_context()
                     and os.environ.get('METTACLAW_OBSERVED_STRATEGY') == '1'
                     and health.get('provider_context_repair') != snapshot):
                 health['provider_rejection']['repair'] = 'requested'

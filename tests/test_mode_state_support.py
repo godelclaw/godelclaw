@@ -124,21 +124,10 @@ class ModeStateSupportTest(unittest.TestCase):
         self.assertEqual(env["MODE_STATE_REQUIRE_LONG_REPLY"],"1")
         self.assertNotIn("MODE_STATE_UNRELATED_SECRET",env)
 
-    def test_handler_baseline_pin_has_no_ref_or_hash_default(self):
-        from mode_state_handler_errors_check import baseline_source
-        guard=self.guard()
-        for value in (None,"","main","HEAD","1234567","z"*40):
-            with mock.patch.dict(os.environ,{},clear=True):
-                if value is not None:os.environ["MODE_STATE_BASELINE_COMMIT"]=value
-                with mock.patch("mode_state_handler_errors_check.subprocess.run") as run:
-                    with self.assertRaisesRegex(AssertionError,"MODE_STATE_BASELINE_COMMIT"):
-                        baseline_source(guard)
-                    run.assert_not_called()
-
     def mode_sources(self):
         root = Path(__file__).resolve().parents[1] / "src"
-        names = ("mode_runtime", "mode_text_cetta", "mode_values_cetta", "mode_io_cetta",
-                 "mode_paths_cetta", "engine_active_cetta", "engine_modes_cetta", "attention_cetta",
+        names = ("mode_text_cetta", "mode_values_cetta", "mode_io_cetta",
+                 "mode_paths_cetta", "engine_modes_cetta", "attention_cetta",
                  "fuel_cetta", "loop_modes_cetta", "lifecycle_cetta", "mode_state")
         return [root / (name + ".metta") for name in names]
 

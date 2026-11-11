@@ -1,6 +1,1 @@
-!(import! &self ./src/engine_modes.metta)
-(= (jobs:cetta? $engine)
-   (case $engine ((cetta True) ("cetta" True) ($other False))))
-!(if (jobs:cetta? (engine:active))
-     (import! &self ./src/jobs_cetta)
-     (import! &self ./src/jobs_python))
+!(import! &self ./src/jobs_cetta)

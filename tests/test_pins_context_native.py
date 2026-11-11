@@ -667,23 +667,6 @@ class NativePinsContextTest(unittest.TestCase):
         self.assertIn('"pins-body"', views)
         self.assertIn("together", views)
 
-    def test_engine_selection_python_and_swi_keep_the_python_view(self):
-        steps = [pin_lines("[10-24 09:00] one"), pin_lines("[10-24 09:00] one"), pin_lines("[10-24 09:00] two")]
-        expected = self.oracle_bundles(steps)
-        for engine, swi in (("petta", False), ("petta", True)):
-            with self.subTest(engine=engine, swi=swi):
-                logged = self.bundle_run(steps, engine, swi, forbid=False)
-                self.assertEqual([entry["text"] for entry in logged], expected)
-        # And the native view is simply not asked off CeTTa.
-        output = self.directory / "views"
-        for swi in (False, True):
-            output.unlink(missing_ok=True)
-            self.run_guest(HEADER + self.CALLER + [
-                "!(py-call (pins_context_probe.write %s %s))" % (q(self.pins), q(pin_lines("[x] y").hex())),
-                "!(py-call (pins_context_probe.note %s (repr (collapse (addition-pins-views)))))" % q(output)],
-                "petta", swi)
-            self.assertEqual(output.read_text(encoding="utf-8"), "(())")
-
     def test_production_boot_import_order_reaches_the_native_view(self):
         """The launch's own program (cetta_bootstrap.metta, then a channel
         config), not a hand-picked list of imports: the turn's context

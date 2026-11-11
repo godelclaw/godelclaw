@@ -148,21 +148,6 @@ class ModeLauncherTests(unittest.TestCase):
                 self.assertNotIn("SHOULD_NOT_RUN_AFTER_SWITCH", result.stdout)
                 self.assertTrue(flag.exists(), "boot consumed a newer switch")
 
-    def test_upstream_shell_runner_without_shebang(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory)
-            runner = path / "run.sh"
-            runner.write_text('printf "%s\\n" "$1" "$2" > argv.txt\nexit 7\n')
-            runner.chmod(0o755)
-            # This is how a direct exec fails, even with executable mode bits.
-            with self.assertRaises(OSError) as failure:
-                subprocess.Popen([str(runner)], cwd=path)
-            self.assertEqual(failure.exception.errno, 8)
-            entry = path / "a program.metta"
-            command = launcher.engine_command("petta", entry, {"PETTA_ROOT": directory})
-            self.assertEqual(launcher.run_child(command, path, isolated_environ()), 7)
-            self.assertEqual((path / "argv.txt").read_text().splitlines(), [str(entry), "--silent"])
-
     def test_spawn_failure_keeps_original_error(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(FileNotFoundError):
@@ -176,12 +161,9 @@ class ModeLauncherTests(unittest.TestCase):
     def test_new_selection_does_not_change_running_policy(self):
         with tempfile.TemporaryDirectory() as directory:
             mode = Path(directory) / "mode.json"
-            engine = Path(directory) / "engine"
-            engine.write_text("cetta\n")
             env = {"METTACLAW_LOOP_MODE_PATH": str(mode),
-                   "METTACLAW_ENGINE_STATE_PATH": str(engine),
+                   "METTACLAW_ENGINE_STATE_PATH": str(Path(directory) / "engine"),
                    "METTACLAW_ACTIVE_LOOP_MODE": "godelclaw",
-                   "METTACLAW_ACTIVE_ENGINE": "cetta",
                    "METTACLAW_RECYCLE_REQUEST_PATH": str(Path(directory) / "absent")}
             with mock.patch.dict(os.environ, env):
                 mode.write_text(json.dumps({"mode": "godelclaw"}))
@@ -190,8 +172,7 @@ class ModeLauncherTests(unittest.TestCase):
                 self.assertEqual(loop_modes.process_mode(), "godelclaw")
                 self.assertEqual(helper.recycle_requested(), 1)
                 mode.write_text(json.dumps({"mode": "godelclaw"}))
-                engine.write_text("petta\n")
-                self.assertEqual(helper.recycle_requested(), 1)
+                self.assertEqual(helper.recycle_requested(), 0)
 
 
 if __name__ == "__main__":

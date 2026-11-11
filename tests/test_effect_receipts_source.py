@@ -35,7 +35,7 @@ class SourceTest(unittest.TestCase):
 
     def test_native_imports_are_packaged(self):
         selected=set(json.loads((ROOT/'config/runtime-files.json').read_text()))
-        for name in (*NATIVE,'effect_receipts.metta','effect_receipts_python.metta'):
+        for name in (*NATIVE,'effect_receipts.metta'):
             self.assertIn('src/'+name,selected)
             for imported in re.findall(r'import! &self \./(src/[^\s)]+)',(ROOT/'src'/name).read_text()):
                 self.assertIn(imported,selected)

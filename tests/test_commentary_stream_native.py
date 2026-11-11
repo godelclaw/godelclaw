@@ -109,11 +109,10 @@ class NativeCommentaryStreamingTests(unittest.TestCase):
 
     def notes(self): return public_worklog.transact(self.worklog, 'read')[1]
 
-    def launch(self, protocol='chat-completions', lang='petta', require_prefix=True):
+    def launch(self, protocol='chat-completions', require_prefix=True):
         if require_prefix and not self.prefix_reader:
             self.skipTest('this engine has no io:http-read; completion-time commentary remains supported')
         self.peer.protocol = protocol
-        self.lang = lang
         model = 'fixture-model'
         if protocol == 'responses':
             model = 'openai:fixture-model'
@@ -125,7 +124,7 @@ class NativeCommentaryStreamingTests(unittest.TestCase):
         self.output = self.directory / 'stdout'
         self.output_stream = self.output.open('w')
         self.addCleanup(self.output_stream.close)
-        self.process = subprocess.Popen([os.environ['CETTA_BIN'], '--lang', lang,
+        self.process = subprocess.Popen([os.environ['CETTA_BIN'], '--lang', 'petta',
             '--import-mode', 'ancestor-walk', '--quiet', str(entry)], cwd=boundary.ROOT,
             env=self.env, stdout=self.output_stream, stderr=subprocess.PIPE, text=True)
         self.assertTrue(self.peer.started.wait(5), 'provider request did not start')
@@ -144,13 +143,11 @@ class NativeCommentaryStreamingTests(unittest.TestCase):
         self.peer.release.set()
         _, stderr = self.process.communicate(timeout=10)
         output = self.output.read_text()
-        if self.lang == 'petta':
-            output = bridge_text.bare(output, boundary.ANSWER_TAGS)
+        output = bridge_text.bare(output, boundary.ANSWER_TAGS)
         self.assertEqual(self.process.returncode, 0, stderr)
         self.assertNotIn('(Error ', output)
         self.assertNotIn('fixture-secret', output+stderr)
-        rendered = json.dumps(expected) if self.lang == 'he' else expected
-        self.assertIn('(RESULT ' + rendered + ')', output, stderr)
+        self.assertIn('(RESULT ' + expected + ')', output, stderr)
         self.assertEqual(len(self.peer.requests), 1)
         return output
 
@@ -161,9 +158,6 @@ class NativeCommentaryStreamingTests(unittest.TestCase):
     def test_responses_commentary_before_completion(self):
         self.launch('responses'); self.early(); self.finish()
         self.assertEqual(len(self.notes()), 1)
-
-    def test_he_commentary_before_completion(self):
-        self.launch(lang='he'); self.early(); self.finish()
 
     def test_chat_truncation_keeps_provisional_note_but_no_commands(self):
         self.peer.ending = 'truncated'

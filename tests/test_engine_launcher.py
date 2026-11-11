@@ -88,14 +88,6 @@ class EngineLauncherTests(unittest.TestCase):
         path.chmod(0o755)
 
     @property
-    def state_path(self):
-        return self.base / "state" / "agent" / "engine"
-
-    def select(self, name):
-        self.state_path.parent.mkdir(parents=True, exist_ok=True)
-        self.state_path.write_text(name + "\n", encoding="utf-8")
-
-    @property
     def failure_path(self):
         return self.base / "state" / "agent" / "engine-failure"
 
@@ -120,7 +112,6 @@ class EngineLauncherTests(unittest.TestCase):
             "value = 'venv-dependency'\n")
         self._script(self.cetta,
             'python3 -c "import encodings,launcher_venv_marker; print(launcher_venv_marker.value)"')
-        self.select("cetta")
         (self.root / "venv-check.metta").write_text("")
         result = subprocess.run(
             [str(self.root / "run.sh"), "venv-check.metta"],
@@ -129,16 +120,7 @@ class EngineLauncherTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("venv-dependency", result.stdout)
 
-    def test_absent_selection_uses_stable_petta_default(self):
-        result = self.launch(CETTA_REQUEST_RECYCLE=1)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(len(self.result_lines()), 1)
-        self.assertTrue(self.result_lines()[0].startswith("petta:petta:"))
-        self.assertIn(str(self.root / "repos" / "petta_lib_chromadb"),
-                      self.result_lines()[0])
-
-    def test_cetta_selection_launches_petta_profile(self):
-        self.select("cetta")
+    def test_the_launcher_runs_cetta_with_the_petta_profile(self):
         result = self.launch(CETTA_REQUEST_RECYCLE=1)
         self.assertEqual(result.returncode, 0, result.stderr)
         line = self.result_lines()[0]
@@ -154,7 +136,7 @@ class EngineLauncherTests(unittest.TestCase):
 
     def test_terminating_a_probe_stops_its_engine_and_the_engine_children(self):
         (self.root / "utility.metta").write_text("")
-        for engine, script in (("petta", self.petta / "run.sh"), ("cetta", self.cetta)):
+        for engine, script in (("cetta", self.cetta),):
             with self.subTest(engine=engine):
                 child_file = self.base / (engine + "-child")
                 # Like PeTTa's run.sh, which waits on its SWI process.
@@ -218,15 +200,12 @@ class EngineLauncherTests(unittest.TestCase):
                              PYTHONPATH=str(self.base / "foreign-modules"))
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_clean_unrequested_stop_preserves_engine(self):
-        self.select("cetta")
+    def test_clean_unrequested_stop_is_recorded(self):
         result = self.launch()
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertEqual([line.split(":", 1)[0]
                           for line in self.result_lines()],
                          ["cetta"])
-        self.assertEqual(self.state_path.read_text(encoding="utf-8"),
-                         "cetta\n")
         self.assertIn("stopped without a recycle request", result.stderr)
         failure = self.failure_path.read_text(encoding="utf-8")
         self.assertIn("engine=cetta\n", failure)
@@ -235,30 +214,13 @@ class EngineLauncherTests(unittest.TestCase):
                       failure)
         self.assertEqual(self.failure_path.stat().st_mode & 0o777, 0o600)
 
-    def test_cetta_failure_preserves_selection_by_default(self):
-        self.select("cetta")
+    def test_cetta_failure_is_recorded_and_returned(self):
         result = self.launch(CETTA_EXIT_CODE=7)
         self.assertEqual(result.returncode, 7, result.stderr)
         self.assertEqual(len(self.result_lines()), 1)
-        self.assertEqual(self.state_path.read_text(), "cetta\n")
         self.assertIn("status=7\n", self.failure_path.read_text())
 
-    def test_explicit_fallback_heals_selection(self):
-        self.select("cetta")
-        result = self.launch(CETTA_EXIT_CODE=7, METTACLAW_ENGINE_FALLBACK="petta")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual([line.split(":", 1)[0]
-                          for line in self.result_lines()],
-                         ["cetta", "petta"])
-        self.assertEqual(self.state_path.read_text(encoding="utf-8"),
-                         "petta\n")
-        self.assertIn("restoring stable engine 'petta'", result.stderr)
-        failure = self.failure_path.read_text(encoding="utf-8")
-        self.assertIn("status=7\n", failure)
-        self.assertIn("reason=CeTTa process exited\n", failure)
-
-    def test_intentional_service_stop_preserves_cetta_selection(self):
-        self.select("cetta")
+    def test_intentional_service_stop_records_no_failure(self):
         ready = self.base / "cetta-ready"
         env = dict(self.env)
         env.update({
@@ -279,47 +241,25 @@ class EngineLauncherTests(unittest.TestCase):
         self.assertEqual(process.returncode, 0, stderr)
         self.assertEqual([line.split(":", 1)[0]
                           for line in self.result_lines()], ["cetta"])
-        self.assertEqual(self.state_path.read_text(encoding="utf-8"),
-                         "cetta\n")
         self.assertFalse(self.failure_path.exists())
-        self.assertNotIn("restoring stable engine", stderr)
 
-    def test_unwritable_failure_receipt_does_not_block_fallback(self):
-        self.select("cetta")
+    def test_an_unwritable_failure_receipt_is_reported_and_the_status_kept(self):
         failure_parent = self.base / "unwritable"
         failure_parent.mkdir()
         failure_parent.chmod(0o500)
         try:
             result = self.launch(
                 CETTA_EXIT_CODE=7,
-                METTACLAW_ENGINE_FALLBACK="petta",
                 METTACLAW_ENGINE_FAILURE_PATH=(
                     failure_parent / "engine-failure"),
             )
         finally:
             failure_parent.chmod(0o700)
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.returncode, 7, result.stderr)
         self.assertEqual([line.split(":", 1)[0]
-                          for line in self.result_lines()],
-                         ["cetta", "petta"])
+                          for line in self.result_lines()], ["cetta"])
         self.assertIn("could not persist engine failure receipt",
                       result.stderr)
-
-    def test_invalid_selection_uses_petta(self):
-        self.select("not-an-engine")
-        result = self.launch()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(self.result_lines()[0].startswith("petta:petta:"))
-        self.assertIn("invalid persisted engine", result.stderr)
-
-    def test_legacy_pleatta_selection_is_not_launched(self):
-        self.select("pleatta")
-        result = self.launch()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(self.result_lines()[0].startswith("petta:petta:"))
-        self.assertEqual(self.state_path.read_text(encoding="utf-8"),
-                         "petta\n")
-        self.assertIn("PLeaTTa is temporarily disabled", result.stderr)
 
 
 if __name__ == "__main__":

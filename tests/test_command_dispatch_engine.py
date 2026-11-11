@@ -209,7 +209,6 @@ class CommandDispatchEngineTest(unittest.TestCase):
             env = isolated_environ()
             env.update({
                 "METTACLAW_SKIP_INITIALIZE": "1",
-                "METTACLAW_ENGINE": "petta",
                 "METTACLAW_ENGINE_STATE_PATH": os.fspath(
                     directory / "engine-selection"),
                 "METTACLAW_EFFECT_RECEIPT_PATH": os.fspath(
@@ -343,7 +342,6 @@ class CommandDispatchEngineTest(unittest.TestCase):
             env = isolated_environ()
             env.update({
                 "METTACLAW_SKIP_INITIALIZE": "1",
-                "METTACLAW_ENGINE": "petta",
                 "METTACLAW_ENGINE_STATE_PATH": os.fspath(
                     directory / "engine-selection"),
             })

@@ -461,8 +461,7 @@ class NativeActionWindowTest(unittest.TestCase):
         table = self.directory / "expected.json"
         table.write_text(json.dumps([helper.recent_actions(path, 8), helper.relevant_files(path, 8)]))
         # Native is chosen on CeTTa even when file_io was not imported first.
-        for engine, swi, file_io in (("cetta", False, True), ("cetta", False, False),
-                                     ("petta", False, True), ("petta", True, True)):
+        for engine, swi, file_io in (("cetta", False, True), ("cetta", False, False)):
             with self.subTest(engine=engine, swi=swi, file_io=file_io):
                 native = engine == "cetta"
                 stdout = self.run_guest(self.caller_lines(table, file_io, forbid=native, native=native),
@@ -569,7 +568,7 @@ class NativeActionWindowTest(unittest.TestCase):
         self.assertRegex(output, r"\(SnapshotParity (?:True|true) (?:True|true)\)")
         self.assertNotEqual(helper.relevant_files(history, limit=12), files)
 
-    def test_bundle_sources_are_identical_on_both_engines(self):
+    def test_bundle_sources_match_the_oracle(self):
         import action_window_probe
 
         self.boundary_journals()
@@ -578,20 +577,19 @@ class NativeActionWindowTest(unittest.TestCase):
             with self.oracle_environment(settings), contextlib.redirect_stdout(io.StringIO()):
                 expected = action_window_probe.action_sources()
             texts.append(expected)
-            for swi in (False, True):
-                with self.subTest(settings=settings, swi=swi):
-                    output = self.directory / "sources"
-                    output.unlink(missing_ok=True)
-                    self.boundary_run(["!(let $views (action-window:context-views) "
-                                       "(py-call (action_window_probe.write_action_sources $views %s)))" % q(output)],
-                                      settings, swi)
-                    self.assertEqual(output.read_text(encoding="utf-8"), expected)
-                    compared += 1
-        self.assertEqual(compared, 2 * len(self.BOUNDARY_ENVIRONMENTS))
+            with self.subTest(settings=settings):
+                output = self.directory / "sources"
+                output.unlink(missing_ok=True)
+                self.boundary_run(["!(let $views (action-window:context-views) "
+                                   "(py-call (action_window_probe.write_action_sources $views %s)))" % q(output)],
+                                  settings, False)
+                self.assertEqual(output.read_text(encoding="utf-8"), expected)
+                compared += 1
+        self.assertEqual(compared, len(self.BOUNDARY_ENVIRONMENTS))
         # Text, not a Symbol, crosses here: NUL in a proposal reaches the bundle.
         self.assertTrue(any("\0" in text for text in texts))
         self.assertGreaterEqual(len(set(texts)), 10)  # the environments do change the views
-        print("Compared %d bundle source texts across CeTTa and SWI" % compared)
+        print("Compared %d bundle source texts on CeTTa" % compared)
 
     def test_live_context_addition_hands_native_views_to_the_bundle(self):
         import action_window_probe

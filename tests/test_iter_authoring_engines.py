@@ -1,4 +1,4 @@
-import os
+import json
 from isolated_env import isolated_environ  # noqa: E402
 from pathlib import Path
 import subprocess
@@ -13,7 +13,6 @@ class IterAuthoringEngineTests(unittest.TestCase):
     def run_probe(self, directory):
         env = isolated_environ()
         env.update({
-            "METTACLAW_ENGINE": "petta",
             "METTACLAW_ITER_PROCESS_DIR": str(directory),
             "METTACLAW_SKIP_INITIALIZE": "1",
         })
@@ -28,7 +27,7 @@ class IterAuthoringEngineTests(unittest.TestCase):
             timeout=40,
         )
 
-    def test_direct_metta_authoring_crosses_swi_petta_boundary(self):
+    def test_metta_authoring_writes_disables_and_enables_a_transformation(self):
         source = (
             "(= (iter-transform $visible) (success $visible))\n"
         )
@@ -37,9 +36,24 @@ class IterAuthoringEngineTests(unittest.TestCase):
             result = self.run_probe(directory)
             self.assertEqual(result.returncode, 0, result.stderr[-3000:])
             self.assertIn("ITER_AUTHORING_OK", result.stdout)
-            self.assertIn('"state":"installed"', result.stdout)
-            self.assertIn('"state":"disabled"', result.stdout)
-            self.assertIn('"state":"enabled"', result.stdout)
+            # Each authoring call answers with its JSON receipt, printed as a
+            # MeTTa string; the last one lists the transformations.
+            documents = [json.loads(json.loads(line))
+                         for line in result.stdout.splitlines()
+                         if line.startswith('"{')]
+            receipts = [doc for doc in documents if "operation" in doc]
+            self.assertEqual([(doc["operation"], doc["active"]) for doc in receipts],
+                             [("write", True), ("disable", False), ("enable", True)])
+            self.assertEqual([entry["name"] for entry in documents[-1]["active"]],
+                             ["10_probe.metta"])
+            self.assertEqual(documents[-1]["disabled"], [])
+            # A request prepared while the transformation is active observes
+            # it; one prepared while it is disabled does not.
+            prepared = [line for line in result.stdout.splitlines()
+                        if line.startswith("(iter-native-result ")]
+            self.assertEqual(len(prepared), 2, result.stdout[-3000:])
+            self.assertIn('(iter-observation "10_probe.metta" success "")', prepared[0])
+            self.assertTrue(prepared[1].endswith(" iter-observations-empty)"), prepared[1])
             self.assertEqual(
                 (directory / "10_probe.metta").read_text(encoding="utf-8"),
                 source,

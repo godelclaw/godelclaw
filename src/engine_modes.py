@@ -1,50 +1,24 @@
-"""Persistent evaluator selection shared by the launcher and operator UI."""
+"""The CeTTa process: its command, its last failure receipt, and the recycle request.
+
+godelclaw is PeTTa-dialect MeTTa on CeTTa: there is one engine and nothing to select.
+"""
 
 import os
-import threading
 import time
-
-
-ENGINES = {
-    "petta": "SWI-PeTTa; stable default",
-    "cetta": "CeTTa running the PeTTa language profile",
-}
-
-DISABLED_ENGINES = {
-    "pleatta": "PLeaTTa is temporarily disabled; its current integration is not functional",
-}
-
-ALIASES = {
-    "swi": "petta",
-    "swi-petta": "petta",
-}
-
-_lock = threading.RLock()
-
-
-def _canonical(name):
-    name = str(name or "").strip().lower()
-    return ALIASES.get(name, name)
-
-
-def _state_path():
-    configured = os.environ.get("METTACLAW_ENGINE_STATE_PATH", "")
-    if configured:
-        return configured
-    state_home = os.environ.get(
-        "XDG_STATE_HOME", os.path.expanduser("~/.local/state"))
-    instance = os.environ.get("METTACLAW_INSTANCE", "default")
-    return os.path.join(state_home, instance, "engine")
 
 
 def _failure_path():
     configured = os.environ.get("METTACLAW_ENGINE_FAILURE_PATH", "")
     if configured:
         return configured
-    return os.path.join(os.path.dirname(_state_path()), "engine-failure")
+    state_home = os.environ.get(
+        "XDG_STATE_HOME", os.path.expanduser("~/.local/state"))
+    instance = os.environ.get("METTACLAW_INSTANCE", "default")
+    return os.path.join(state_home, instance, "engine-failure")
 
 
-def _last_failure():
+def last_failure():
+    """The receipt run.sh wrote when CeTTa last exited without a recycle request, or None."""
     fields = {}
     try:
         with open(_failure_path(), "r", encoding="utf-8") as stream:
@@ -54,138 +28,26 @@ def _last_failure():
                     fields[key] = value
     except OSError:
         return None
-    if fields.get("engine") not in ENGINES or not fields.get("reason"):
-        return None
-    return fields
+    return fields if fields.get("reason") else None
 
 
-def _engine_paths(name):
-    home = os.path.expanduser("~")
-    if name == "petta":
-        root = os.environ.get("PETTA_ROOT", os.path.join(home, "repos", "PeTTa"))
-        return (os.path.join(root, "run.sh"),)
-    if name == "cetta":
-        root = os.environ.get(
-            "CETTA_ROOT", os.path.join(home, "repos", "CeTTa-runtime"))
-        return (os.environ.get("CETTA_BIN", os.path.join(root, "cetta")),)
-    return ()
+def failure_view():
+    failure = last_failure()
+    if not failure:
+        return "none"
+    return "%s (status %s)" % (failure["reason"], failure.get("status", "unknown"))
 
 
-def engine_command(name):
-    """Return the configured argv prefix for an engine, without executing it."""
-    return _engine_paths(_canonical(name))
+def engine_command(name="cetta"):
+    """The configured argv prefix of the CeTTa executable, without executing it."""
+    if str(name or "").strip().lower() != "cetta":
+        return ()
+    root = os.environ.get(
+        "CETTA_ROOT", os.path.join(os.path.expanduser("~"), "repos", "CeTTa-runtime"))
+    return (os.environ.get("CETTA_BIN", os.path.join(root, "cetta")),)
 
 
-def engine_available(name):
-    name = _canonical(name)
-    if name not in ENGINES:
-        return False
-    paths = _engine_paths(name)
-    for index, path in enumerate(paths):
-        if not os.path.isfile(path):
-            return False
-        if index == 0 and not os.access(path, os.X_OK):
-            return False
-    return bool(paths)
-
-
-def selected_engine():
-    fallback = _canonical(os.environ.get("METTACLAW_ENGINE", "petta"))
-    if fallback not in ENGINES:
-        fallback = "petta"
-    try:
-        with open(_state_path(), "r", encoding="utf-8") as stream:
-            selected = _canonical(stream.readline())
-    except OSError:
-        selected = fallback
-    return selected if selected in ENGINES else "petta"
-
-
-def active_engine():
-    active = _canonical(os.environ.get(
-        "METTACLAW_ACTIVE_ENGINE",
-        os.environ.get("METTACLAW_ENGINE", "petta")))
-    return active if active in ENGINES else "petta"
-
-
-def engine_view():
-    active = active_engine()
-    selected = selected_engine()
-    suffix = ""
-    if selected != active:
-        suffix = "; requested %s for next process" % selected
-    failure = _last_failure()
-    if failure:
-        suffix += "; last %s failure: %s (status %s)" % (
-            failure["engine"], failure["reason"],
-            failure.get("status", "unknown"))
-    return "active engine: %s — %s%s" % (
-        active, ENGINES[active], suffix)
-
-
-def engines_view():
-    active = active_engine()
-    selected = selected_engine()
-    lines = []
-    for name, description in ENGINES.items():
-        marks = []
-        if name == active:
-            marks.append("active")
-        if name == selected and name != active:
-            marks.append("requested")
-        if not engine_available(name):
-            marks.append("unavailable")
-        prefix = "● " if name == active else "  "
-        state = " [%s]" % ", ".join(marks) if marks else ""
-        lines.append(prefix + name + state + " — " + description)
-    for name, notice in DISABLED_ENGINES.items():
-        lines.append("  %s [disabled] — %s" % (name, notice))
-    failure = _last_failure()
-    if failure:
-        lines.append("  last failure — %s: %s (status %s)" % (
-            failure["engine"], failure["reason"],
-            failure.get("status", "unknown")))
-    return "\n".join(lines)
-
-
-def _save(name):
-    path = _state_path()
-    parent = os.path.dirname(path)
-    try:
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-        temporary = "%s.tmp.%d" % (path, os.getpid())
-        with open(temporary, "w", encoding="utf-8") as stream:
-            stream.write(name + "\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.chmod(temporary, 0o600)
-        os.replace(temporary, path)
-        return True
-    except OSError as exc:
-        print("[engine-mode] save failed:", type(exc).__name__)
-        return False
-
-
-def set_engine(name):
-    requested = str(name or "").strip().lower()
-    name = _canonical(requested)
-    if name in DISABLED_ENGINES:
-        return "engine-set failed: %s" % DISABLED_ENGINES[name]
-    if name not in ENGINES:
-        return "engine-set failed: choose one of %s" % ", ".join(ENGINES)
-    if not engine_available(name):
-        return "engine-set failed: %s is unavailable" % name
-    with _lock:
-        if not _save(name):
-            return "engine-set failed: could not persist"
-    alias = " (from alias '%s')" % requested if requested != name else ""
-    if name == active_engine():
-        return "engine '%s' is already active%s" % (name, alias)
-    return "engine set to '%s'%s; recycling into it" % (name, alias)
-
-
-def request_recycle():
+def request_recycle(reason="requested"):
     path = os.environ.get("METTACLAW_RECYCLE_REQUEST_PATH", "")
     if not path:
         return False
@@ -195,7 +57,7 @@ def request_recycle():
         if parent:
             os.makedirs(parent, exist_ok=True)
         with open(temporary, "w", encoding="utf-8") as stream:
-            stream.write("requested_at=%.6f reason=engine-switch\n" % time.time())
+            stream.write("requested_at=%.6f reason=%s\n" % (time.time(), reason))
             stream.flush()
             os.fsync(stream.fileno())
         os.chmod(temporary, 0o600)
@@ -207,11 +69,9 @@ def request_recycle():
 
 
 def recycle_requested():
-    """Flags and persisted selections are independent switch witnesses."""
+    """A recycle flag, or a loop mode selected for the next process, asks for a recycle."""
     path = os.environ.get("METTACLAW_RECYCLE_REQUEST_PATH", "")
     if path and os.path.isfile(path):
-        return True
-    if os.environ.get("METTACLAW_ACTIVE_ENGINE") and selected_engine() != active_engine():
         return True
     if __package__:
         from . import loop_modes

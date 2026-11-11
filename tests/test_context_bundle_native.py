@@ -196,18 +196,15 @@ class NativeContextBundleTest(unittest.TestCase):
                   {"entries": [dict(entry, result="oversized " + "🙂" * 16000)]},
                   {"raw": " \t\nnot JSON\n"}, {"denied": True}, {"entries": [entry]}]
         fixture = {"conversation": "generated neighbor"}
-        for engine in ("cetta", "petta"):
-            with self.subTest(engine=engine):
-                actual = self.compare([fixture] * len(states), engine=engine, receipt_states=states)
-                statuses = [re.search(r"SOURCE\[effect-receipts\] status=([^ ]+)", row["text"]).group(1)
-                            for row in actual]
-                self.assertEqual(statuses, ["absent", "known", "stale-known", "stale-known",
-                                            "known", "absent", "absent", "unavailable", "known"])
-                self.assertIn("AUTHORITATIVE BROKER RECEIPTS", actual[1]["text"])
-                self.assertIn("result=日🙂\0é", actual[1]["text"])
-                self.assertIn("\n…\n", actual[4]["text"])
-                self.assertTrue(all(row["receipt_views"] == {"native": 0, "python": 0 if engine == "cetta" else 1}
-                                    for row in actual))
+        actual = self.compare([fixture] * len(states), receipt_states=states)
+        statuses = [re.search(r"SOURCE\[effect-receipts\] status=([^ ]+)", row["text"]).group(1)
+                    for row in actual]
+        self.assertEqual(statuses, ["absent", "known", "stale-known", "stale-known",
+                                    "known", "absent", "absent", "unavailable", "known"])
+        self.assertIn("AUTHORITATIVE BROKER RECEIPTS", actual[1]["text"])
+        self.assertIn("result=日🙂\0é", actual[1]["text"])
+        self.assertIn("\n…\n", actual[4]["text"])
+        self.assertTrue(all(row["receipt_views"] == {"native": 0, "python": 0} for row in actual))
 
     def test_surrogate_replacement_preserves_revisions_at_real_caller(self):
         # fx045 in the read-only review reproduction is "lone\ud800surrogate".
@@ -401,12 +398,6 @@ class NativeContextBundleTest(unittest.TestCase):
                 spec.source_id not in NATIVE_SOURCES
                 for spec in context_sources.SOURCE_SPECS[:failed_index + 1]))
             self.assertEqual(actual["forbidden"], 0)
-
-    def test_swi_and_engine_selected_python_caller_unchanged(self):
-        fixtures = [{s.source_id: value for s in context_sources.SOURCE_SPECS}
-                    for value in ("known 🙂", {"raises": True}, None, "again")]
-        self.compare(fixtures, engine="petta")
-        self.compare(fixtures, engine="petta", swi=True)
 
     def test_production_boot_real_telegram_views_with_python_bundle_disabled(self):
         library = Path(os.environ.get("PETTA_LIB_CHROMADB", ROOT / "repos" / "petta_lib_chromadb"))

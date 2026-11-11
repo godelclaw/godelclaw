@@ -265,28 +265,14 @@
 ;; layout that is actually sent.  Only the active policy's request is built:
 ;; assembling the context advances its change markers, so building both would
 ;; count every turn twice and leave a structured request its markers consumed.
-(= (turnStructuredRequest $policy $periphery $lastmessage $role-context)
-   (let* (($instructions (string-safe (utils:py-str ((getContextPrefix) (getContextInstructions $periphery)))))
-          ($evidence (getContextObservations $periphery))
-          ($advertised (string-safe (utils:py-str (loop:lines (getSkills)))))
-          ($activity (string-safe (utils:py-str $lastmessage))))
-     (if $role-context
-       (addition-prepare-request $policy ""
-         (InstructionContext $instructions $evidence) $activity $advertised)
-       (addition-prepare-request $policy ""
-         (str:concat $instructions
-           (str:concat " _cache_boundary_ " $evidence))
-         $activity $advertised))))
-
 (= (turnRequest $periphery $lastmessage)
-   (let $policy (loop-active-policy $periphery)
-     (if (state:cetta? (engine:active))
-       (turnStructuredRequest $policy $periphery $lastmessage True)
-       (if (== (policy-structured-request $policy) 1)
-         (turnStructuredRequest $policy $periphery $lastmessage False)
-         (let* (($prompt (getContext $periphery))
-                ($legacy (utils:py-str ($prompt $lastmessage))))
-           (addition-prepare-request $policy $legacy "" "" ""))))))
+   (let* (($policy (loop-active-policy $periphery))
+          ($instructions (string-safe (utils:py-str ((getContextPrefix) (getContextInstructions $periphery)))))
+          ($evidence (getContextObservations $periphery))
+          ($advertised (string-safe (utils:py-str (loop:lines (getSkills))))))
+     (addition-prepare-request $policy ""
+         (InstructionContext $instructions $evidence)
+         (string-safe (utils:py-str $lastmessage)) $advertised)))
 
 
 ;; One model-and-tools episode.  It returns a candidate periphery; rest and nop

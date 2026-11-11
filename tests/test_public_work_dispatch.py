@@ -74,7 +74,7 @@ _module.capture_public_epoch = _broken
 
 
 class Fixture:
-    """Shared scenarios; subclasses choose the engine."""
+    """The dispatch scenarios; the subclass launches the engine."""
 
     def run_batch(self, command_tail="", enabled=True, status_fails=False,
                   raising_capture=False):
@@ -186,21 +186,6 @@ class Fixture:
         self.check_receipt(receipts)
 
 
-class PettaPrologDispatch(Fixture, unittest.TestCase):
-    probe_prefix = ("!(import! &self (library lib_import))\n"
-                    "!(import! &self ./src/skills)\n")
-
-    def launch(self, probe, env):
-        if not (harness()._petta_root() / "run.sh").is_file():
-            self.skipTest("PeTTa checkout is unavailable")
-        env = dict(env, METTACLAW_ENGINE="petta")
-        env.pop("METTACLAW_ACTIVE_ENGINE", None)
-        return subprocess.run(
-            ["bash", str(harness()._petta_root() / "run.sh"), str(probe), "default"], cwd=ROOT, env=env,
-            stdin=subprocess.DEVNULL, capture_output=True, text=True,
-            timeout=60)
-
-
 class CettaMettaDispatch(Fixture, unittest.TestCase):
     probe_prefix = ""
 
@@ -215,9 +200,6 @@ class CettaMettaDispatch(Fixture, unittest.TestCase):
             cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
             capture_output=True, text=True, timeout=60)
 
-    # The PeTTa launcher rebuilds PYTHONPATH, so the shadow module that makes
-    # capture raise cannot be injected there; the Prolog catch is covered by
-    # test_command_dispatch.pl instead.
     def test_raising_capture_leaves_command_and_receipt_unchanged(self):
         reference = self.run_batch(enabled=False)
         reference_directory = self.last_directory

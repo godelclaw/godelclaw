@@ -335,42 +335,23 @@
 (= (rt:backend-path)
    (let $configured (system:getenv-or-default "METTACLAW_MEMORY_BACKEND_CONFIG" "")
      (if (!= $configured "") $configured (path:join (system:cwd) "repos/petta_lib_chromadb/memory_backend.json"))))
-; The configured backend: a JSON object, (JsonObject ()) for "chroma", or None.
+; The configured backend as a JSON object; (JsonObject ()), no mode, when there is no
+; readable object, as memory_health.backend reads it.
 (= (rt:backend-config)
    (let $path (rt:backend-path)
      (if (not (fs:is-file $path)) (JsonObject ())
        (case (rt:try (json-parse (fs:read-text $path)))
          (((JsonObject $pairs) (JsonObject $pairs))
-          ((JsonFailureV1 $a $b $c $d) (JsonObject ()))
-          (None (JsonObject ()))
-          ($other None))))))
+          ($other (JsonObject ())))))))
 (= (rt:reachable $socket)
    (case $socket (((JsonString $path) (py-call (memory_health.native_reachable $path))) ($other False))))
 (= (rt:memory)
    (let $config (rt:backend-config)
-     (if (== $config None) None
-       (if (== (rt:get-or $config "mode" (JsonString "chroma")) (JsonString "native"))
-         (Val (JsonObject ((JsonPair "backend" (JsonString "native")) (JsonPair "collection" (rt:get $config "name"))
-                           (JsonPair "reachable" (JsonBool (rt:reachable (rt:get $config "socket")))))))
-         (Val (JsonObject ((JsonPair "backend" (rt:get-or $config "mode" (JsonString "chroma")))
-                           (JsonPair "supported" (JsonBool False)))))))))
-; The first sync_threshold number found depth-first, as memory_health does.
-(= (rt:threshold $value)
-   (case $value
-     (((JsonObject $pairs)
-       (case (rt:get $value "sync_threshold")
-         (((JsonNumber $text) (case (rt:try (str:string->number $text)) ((None None) ($n (Val (math:trunc $n))))))
-          ((JsonBool true) (Val 1)) ((JsonBool false) (Val 0))
-          ($other (rt:threshold-pairs $pairs)))))
-      ((JsonArray $items) (rt:threshold-items $items))
-      ($other None))))
-(= (rt:threshold-pairs $pairs)
-   (if (== $pairs ()) None
-     (let (JsonPair $key $child) (car-atom $pairs)
-       (case (rt:threshold $child) ((None (rt:threshold-pairs (cdr-atom $pairs))) ($found $found))))))
-(= (rt:threshold-items $items)
-   (if (== $items ()) None
-     (case (rt:threshold (car-atom $items)) ((None (rt:threshold-items (cdr-atom $items))) ($found $found)))))
+     (if (== (rt:get-or $config "mode" (JsonString "unconfigured")) (JsonString "native"))
+       (Val (JsonObject ((JsonPair "backend" (JsonString "native")) (JsonPair "collection" (rt:get $config "name"))
+                         (JsonPair "reachable" (JsonBool (rt:reachable (rt:get $config "socket")))))))
+       (Val (JsonObject ((JsonPair "backend" (rt:get-or $config "mode" (JsonString "unconfigured")))
+                         (JsonPair "supported" (JsonBool False))))))))
 
 ; ---- process and model -----------------------------------------------------
 (= (rt:btime $lines)

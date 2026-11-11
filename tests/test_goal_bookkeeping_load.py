@@ -88,17 +88,16 @@ class LoadPolicyTests(unittest.TestCase):
                 self.assertFalse((directory / "goals.metta.tmp").exists())
                 self.assertFalse((directory / "goals_kernel.json.tmp").exists())
 
-    def test_immediate_real_skills_after_filter_native_and_actual_swi(self):
-        for native in (True, False):
-            for mood in moods():
-                with self.subTest(native=native, mood=mood):
-                    rows, _ = callers.RealCallerTests().compare({"goals.metta": encoded(goal() + "\n"),
-                        "goals_kernel.json": encoded(json.dumps({"mood": mood}))}, [
-                        {"kind": "write", "text": "(goal-budget 0.5)"},
-                        {"kind": "drop", "name": "alpha", "reason": "retire"}], native=native)
-                    self.assertEqual(rows[0]["value"], "budget set to 0.5")
-                    self.assertIn("composted", rows[1]["value"])
-                    self.assertEqual(rows[0]["files"]["goals_kernel.json"], rows[1]["files"]["goals_kernel.json"])
+    def test_immediate_real_skills_after_filter(self):
+        for mood in moods():
+            with self.subTest(mood=mood):
+                rows, _ = callers.RealCallerTests().compare({"goals.metta": encoded(goal() + "\n"),
+                    "goals_kernel.json": encoded(json.dumps({"mood": mood}))}, [
+                    {"kind": "write", "text": "(goal-budget 0.5)"},
+                    {"kind": "drop", "name": "alpha", "reason": "retire"}])
+                self.assertEqual(rows[0]["value"], "budget set to 0.5")
+                self.assertIn("composted", rows[1]["value"])
+                self.assertEqual(rows[0]["files"]["goals_kernel.json"], rows[1]["files"]["goals_kernel.json"])
 
     def test_no_samples_then_seeding_and_subsequent_samples(self):
         for mood in moods():
@@ -158,16 +157,15 @@ class LoadPolicyTests(unittest.TestCase):
             log += log_record(cases[i % len(cases)][1])
             steps.append({"kind": "heartbeat", "files": {"updates.jsonl": encoded(log)}})
         steps.append({"kind": "drop", "name": "alpha", "reason": "retire"})
-        for native in (True, False):
-            rows, _ = callers.RealCallerTests().compare(initial, steps, native=native)
-            track = []
-            for row in rows:
-                finite_outputs(row["files"])
-                state = json.loads(base64.b64decode(row["files"]["goals_kernel.json"]))
-                track.append({dim: bits(value) for dim, value in state["mood"].items()})
-            receipt("loaded-mood-reparse-bits", {"native": native, "track": track,
-                "scope": "101 saved/reparsed state observations; exact oracle/native bytes checked separately; not in-memory track"})
-            self.assertIn(b"NaN Infinity -Infinity", base64.b64decode(rows[-1]["files"]["goals_compost.log"]))
+        rows, _ = callers.RealCallerTests().compare(initial, steps)
+        track = []
+        for row in rows:
+            finite_outputs(row["files"])
+            state = json.loads(base64.b64decode(row["files"]["goals_kernel.json"]))
+            track.append({dim: bits(value) for dim, value in state["mood"].items()})
+        receipt("loaded-mood-reparse-bits", {"track": track,
+            "scope": "101 saved/reparsed state observations; exact oracle/native bytes checked separately; not in-memory track"})
+        self.assertIn(b"NaN Infinity -Infinity", base64.b64decode(rows[-1]["files"]["goals_compost.log"]))
 
 
 if __name__ == "__main__":

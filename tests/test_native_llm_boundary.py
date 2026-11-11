@@ -463,7 +463,7 @@ def draft(kind, scope, lane):
         self.assertEqual(body["model"], "k3.1-pro")
         self.assertEqual(body["reasoning"], {"effort": "high"})
 
-    def test_command_wire_parity_in_both_dialects_for_all_protocols(self):
+    def test_command_wire_for_all_protocols(self):
         prompt = "S_cache_boundary_T_cache_boundary_U_cache_boundary_user _cache_boundary_ literal"
         self.peer.delay = .01
         cases = [("chat-completions", "fixture-model", self.peer.reply),
@@ -475,7 +475,7 @@ def draft(kind, scope, lane):
         self.env.update(ANTHROPIC_API_KEY="fixture-secret", OPENAI_API_KEY="fixture-secret",
                         ANTHROPIC_BASE_URL=self.env["SYNTHETIC_BASE_URL"],
                         OPENAI_BASE_URL=self.env["SYNTHETIC_BASE_URL"])
-        for lang in ("he", "petta"):
+        for lang in ("petta",):
             for protocol, model, reply in cases:
                 self.env["SYNTHETIC_MODEL"] = model
                 self.peer.reply = reply
@@ -516,7 +516,7 @@ def draft(kind, scope, lane):
         self.env.update(ANTHROPIC_API_KEY="fixture-secret", ANTHROPIC_BASE_URL=self.env["SYNTHETIC_BASE_URL"],
                         SYNTHETIC_MODEL="claude-fixture", METTACLAW_ANTHROPIC_CACHE_TTL="1h")
         prompt = "stable λ_cache_boundary_sources_cache_boundary_A\n_cache_chunk_\nB\n_cache_chunk_\nC_cache_boundary_input"
-        for lang in ("he", "petta"):
+        for lang in ("petta",):
             out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n' + self.disable_python_accounting() +
                 f'!(llm:command "claude-fixture" 100 "high" {json.dumps(prompt, ensure_ascii=False)})\n', lang)
             self.assertIn("(nop)", out, self.last_stderr[-1000:])
@@ -543,7 +543,7 @@ def draft(kind, scope, lane):
                        messages=[dict(role="system", content="instructions"), dict(role="system", content="policy"),
                                  dict(role="user", content="old"), dict(role="assistant", content="draft"),
                                  dict(role="user", content="resume")])
-        for lang in ("he", "petta"):
+        for lang in ("petta",):
             text = json.dumps(json.dumps(request))
             self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n' + self.disable_python_accounting() +
                 f'!(let $plan (py-call (native_llm_host.native_structured_json_plan {text})) '
@@ -571,7 +571,7 @@ def draft(kind, scope, lane):
         forms = f'!(import! &self "{ROOT}/src/llm_boundary.metta")\n' + "\n".join(
             f'!(json-stringify (llm:decode {json.dumps(protocol)} {json.dumps(json.dumps(wire))}))'
             for protocol, wire in fixtures)
-        for lang in ("petta", "he"):
+        for lang in ("petta",):
             out = self.run_guest(forms, lang)
             decoded = [json.loads(json.loads(line)[0] if line.startswith("[") else json.loads(line))
                        for line in out.splitlines() if line.startswith(('"', '["'))]

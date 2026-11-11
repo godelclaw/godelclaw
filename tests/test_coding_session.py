@@ -1189,6 +1189,10 @@ class CodingSessionTests(unittest.TestCase):
         import shutil
         if not shutil.which("systemd-run"):
             self.skipTest("systemd-run is unavailable")
+        # A hermetic environment has no user service manager to start the scope.
+        if subprocess.run(["systemctl", "--user", "show-environment"], env=self.env,
+                          capture_output=True, timeout=30).returncode != 0:
+            self.skipTest("the user service manager is unreachable")
         workspace = self.directory / "workspace"
         workspace.mkdir()
         # Sessions and runtime snapshots stay in the temporary runner, never in the checkout.

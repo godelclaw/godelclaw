@@ -142,11 +142,11 @@ class RuntimeWatchTest(unittest.TestCase):
         self.deployment = {
             "status": "probation", "candidate": "candidate",
             "previous": "previous", "baseline_canonical_bytes": 9,
-            "baseline_memories": 100, "probation_until": 2000,
+            "probation_until": 2000,
         }
 
     def test_legitimate_rest_is_healthy(self):
-        facts = {"state": "ok", "problems": [], "memories": 100}
+        facts = {"state": "ok", "problems": []}
         with mock.patch.object(runtime_watch.runtime_health, "status",
                                return_value=facts), \
              mock.patch.object(runtime_watch, "_service_active",
@@ -155,17 +155,6 @@ class RuntimeWatchTest(unittest.TestCase):
                                return_value="candidate"):
             value = runtime_watch.observe(self.args, self.deployment, now=1000)
         self.assertEqual(value["problems"], [])
-
-    def test_memory_regression_is_a_failure(self):
-        facts = {"state": "ok", "problems": [], "memories": 99}
-        with mock.patch.object(runtime_watch.runtime_health, "status",
-                               return_value=facts), \
-             mock.patch.object(runtime_watch, "_service_active",
-                               return_value=True), \
-             mock.patch.object(runtime_watch, "_head",
-                               return_value="candidate"):
-            value = runtime_watch.observe(self.args, self.deployment, now=1000)
-        self.assertIn("memory-count-regressed", value["problems"])
 
     def test_third_probation_failure_invokes_rollback(self):
         state = dict(self.deployment, consecutive_failures=2)

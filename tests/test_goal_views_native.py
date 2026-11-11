@@ -52,7 +52,7 @@ class GoalViewsTest(unittest.TestCase):
     def test_runtime_manifest_includes_explicit_imports(self):
         selected = set(json.loads((ROOT / "config/runtime-files.json").read_text()))
         self.assertTrue({"src/goal_views.metta", "src/goal_views_boundary.py",
-                         "src/goal_views_cetta.metta", "src/goal_views_python.metta"} <= selected)
+                         "src/goal_views_cetta.metta"} <= selected)
 
     def test_missing_native_read_is_unavailable_not_invented_absence(self):
         log = self.directory / "missing-read"
@@ -212,9 +212,6 @@ class GoalViewsTest(unittest.TestCase):
     def test_capability_gap_json_exponent_overflow(self):
         self.compare("affect_view", [self.step(goal(), mood=b'{"mood":{"C":1e400}}')])
 
-    def test_swi_skill_unchanged(self):
-        self.compare("goals_view", [self.step(goal()), self.step(""), self.step("\n")], skill=True, swi=True)
-
     def test_path_defaults_empty_and_nonregular_files(self):
         nested = self.directory / "日 🙂"
         nested.mkdir()
@@ -266,15 +263,12 @@ class GoalViewsTest(unittest.TestCase):
     def test_complete_caller_real_receipts_absent_and_populated(self):
         entry = {"turn": 7, "disposition": "returned", "command": "generated command",
                  "result": "generated 日🙂\0result"}
-        for swi in (False, True):
-            with self.subTest(swi=swi):
-                rows = self.compare("work_state_view", [self.step(goal()),
-                    self.step(goal(), receipts=[entry]), self.step(goal(), receipts=[])],
-                    caller=True, swi=swi)
-                self.assertIn("SOURCE[effect-receipts] status=absent", rows[0]["text"])
-                self.assertIn("AUTHORITATIVE BROKER RECEIPTS", rows[1]["text"])
-                self.assertIn("generated 日🙂\0result", rows[1]["text"])
-                self.assertIn("SOURCE[effect-receipts] status=absent", rows[2]["text"])
+        rows = self.compare("work_state_view", [self.step(goal()),
+            self.step(goal(), receipts=[entry]), self.step(goal(), receipts=[])], caller=True)
+        self.assertIn("SOURCE[effect-receipts] status=absent", rows[0]["text"])
+        self.assertIn("AUTHORITATIVE BROKER RECEIPTS", rows[1]["text"])
+        self.assertIn("generated 日🙂\0result", rows[1]["text"])
+        self.assertIn("SOURCE[effect-receipts] status=absent", rows[2]["text"])
 
     def test_mixed_complete_callers_share_work_and_pins_markers(self):
         steps = [self.step(text) for text in [goal(), goal(), goal(), goal(note="changed"),
@@ -332,9 +326,6 @@ class GoalViewsTest(unittest.TestCase):
         (self.directory / "channel.metta").write_text(rendered.stdout)
         self.settings["METTACLAW_TELEGRAM_CLIENT"] = "metta"
         self.compare("work_state_view", [self.step(goal()), self.step(goal(note="new"))], caller=True, boot=True)
-
-    def test_swi_bundle_unchanged(self):
-        self.compare("work_state_view", [self.step(goal()), self.step(goal()), self.step("(goal broken)")], caller=True, swi=True)
 
 
 if __name__ == "__main__":

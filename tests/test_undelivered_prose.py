@@ -196,10 +196,9 @@ VALUES = {
 }
 
 
-def cetta_env(directory, engine="cetta"):
+def cetta_env(directory):
     env = isolated_environ()
-    env.update(METTACLAW_ENGINE=engine, METTACLAW_ACTIVE_ENGINE=engine,
-               PROSE_RECORD=str(directory / "record.jsonl"),
+    env.update(PROSE_RECORD=str(directory / "record.jsonl"),
                PROSE_CASES=str(directory / "cases.json"),
                PYTHONPATH=os.pathsep.join((str(directory), str(ROOT / "src"),
                                            str(ROOT / "channels"))))
@@ -219,7 +218,7 @@ class UndeliveredProseParity(unittest.TestCase):
         if not self.binary.is_file():
             self.skipTest("set CETTA_BIN to a Python-enabled cetta")
 
-    def run_cetta(self, lines, cases=(), engine="cetta"):
+    def run_cetta(self, lines, cases=()):
         with tempfile.TemporaryDirectory() as directory:
             directory = pathlib.Path(directory)
             (directory / "prose_record.py").write_text(RECORDER)
@@ -233,7 +232,7 @@ class UndeliveredProseParity(unittest.TestCase):
                 source.flush()
                 result = subprocess.run(
                     [str(self.binary), "--lang", "petta", "--import-mode", "ancestor-walk",
-                     source.name], cwd=ROOT, env=cetta_env(directory, engine),
+                     source.name], cwd=ROOT, env=cetta_env(directory),
                     capture_output=True, text=True, timeout=900)
             record = directory / "record.jsonl"
             rows = ([json.loads(line) for line in
@@ -367,17 +366,15 @@ class UndeliveredProseParity(unittest.TestCase):
                                  "--check"], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_pipeline_selects_native_prose_only_on_cetta(self):
+    def test_pipeline_uses_the_native_prose(self):
         program = ["!(import! &self ./src/helper.py)", "!(import! &self prose_record.py)",
                    "!(import! &self ./src/command_pipeline.metta)",
                    "!(py-call (prose_record.watch))", '!(py-call (prose_record.begin "loop"))',
                    '!(py-call (prose_record.value "loop" (model-response-undelivered-prose '
                    '"Sure! ((send \\"x\\")) ⋄⟨C:.7⟩")))']
-        for engine, native in (("cetta", True), ("petta", False)):
-            with self.subTest(engine=engine):
-                rows, _, detail = self.run_cetta(program, engine=engine)
-                self.assertIn(["value", "loop", "Sure!"], rows, detail)
-                self.assertEqual(["python", "loop"] in rows, not native, detail)
+        rows, _, detail = self.run_cetta(program)
+        self.assertIn(["value", "loop", "Sure!"], rows, detail)
+        self.assertNotIn(["python", "loop"], rows, detail)
         loop = (ROOT / "src/loop.metta").read_text(encoding="utf-8")
         self.assertIn("($prose (model-response-undelivered-prose $respi))", loop)
         self.assertNotIn("helper.undelivered_prose", loop)

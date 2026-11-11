@@ -382,8 +382,8 @@ class GatewayTest(unittest.TestCase):
         cetta, _ = resolve_pinned_client_cetta()
         petta = Path(os.environ.get("PETTA_ROOT", Path.home() / "repos/PeTTa"))
         exercised = []
-        for engine in ("petta", "cetta"):
-            if not ((petta / "run.sh").is_file() if engine == "petta" else (cetta is not None and cetta.is_file())):
+        for engine in ("cetta",):
+            if cetta is None or not cetta.is_file():
                 continue
             agent = "probe-" + engine
             self.start(agent)
@@ -432,8 +432,8 @@ class GatewayTest(unittest.TestCase):
         cetta, _ = resolve_pinned_client_cetta()
         petta = Path(os.environ.get("PETTA_ROOT", Path.home() / "repos/PeTTa"))
         exercised = []
-        for engine in ("petta", "cetta"):
-            if not ((petta / "run.sh").is_file() if engine == "petta" else (cetta is not None and cetta.is_file())):
+        for engine in ("cetta",):
+            if cetta is None or not cetta.is_file():
                 continue
             agent = "skills-" + engine
             self.start(agent, {"read-lines": {

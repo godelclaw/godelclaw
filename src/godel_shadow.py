@@ -1,11 +1,10 @@
 """Full-path Gödel qualification against a disposable effect world.
 
-Each model response is parsed by the selected live evaluator and executed by
-the same ``run-command-batch-once`` predicate as a live cognitive turn.  Only
-the final effect provider is replaced.  This makes historical-failure replay
-useful as an agent test rather than merely a test of a parallel JSON
-controller.  Set ``GODEL_SHADOW_ENGINE=cetta`` to cross the real
-``cetta --lang petta`` boundary.
+Each model response is parsed by the live evaluator, ``cetta --lang petta``,
+and executed by the same ``run-command-batch-once`` predicate as a live
+cognitive turn.  Only the final effect provider is replaced.  This makes
+historical-failure replay useful as an agent test rather than merely a test of
+a parallel JSON controller.
 """
 
 from __future__ import annotations
@@ -36,13 +35,7 @@ class FullShadow:
     def __init__(self, auto_stop_after_first_effect: bool = False,
                  backend_selector: str | None = "tmux-shadow",
                  prompt_timeout: float = 5.0,
-                 engine: str | None = None,
                  channel: str = "telegram"):
-        self.engine = str(
-            engine or os.environ.get("GODEL_SHADOW_ENGINE", "petta")
-        ).strip().lower()
-        if self.engine not in {"petta", "cetta"}:
-            raise ValueError("shadow engine must be petta or cetta")
         self.channel = str(channel).strip().lower()
         if self.channel not in {"telegram", "irc", "mattermost"}:
             raise ValueError("unsupported shadow channel")
@@ -145,15 +138,12 @@ class FullShadow:
             if not name.startswith("METTACLAW_")
         }
         python_paths = [str(ROOT / "src"), str(ROOT / "channels")]
-        library = ROOT / "repos" / "petta_lib_chromadb"
-        if library.is_dir():
-            python_paths.append(str(library))
         environment.update({
             "PYTHONPATH": os.pathsep.join(python_paths),
             "XDG_STATE_HOME": str(self.directory / "state"),
             "METTACLAW_LIFECYCLE_PATH": str(self.lifecycle_path),
             "METTACLAW_SKIP_INITIALIZE": "1",
-            "METTACLAW_ENGINE": self.engine,
+            "METTACLAW_ENGINE": "cetta",
             "METTACLAW_EFFECT_BACKEND_STATE": str(self.state_path),
             "METTACLAW_ENGINE_STATE_PATH": str(
                 self.directory / "engine-selection"
@@ -185,11 +175,10 @@ class FullShadow:
             environment.pop("METTACLAW_EFFECT_BACKEND", None)
         else:
             environment["METTACLAW_EFFECT_BACKEND"] = self.backend_selector
-        if self.engine == "cetta":
-            environment["CETTA_BIN"] = os.environ.get(
-                "CETTA_BIN",
-                str(Path.home() / "repos" / "CeTTa-runtime" / "cetta"),
-            )
+        environment["CETTA_BIN"] = os.environ.get(
+            "CETTA_BIN",
+            str(Path.home() / "repos" / "CeTTa-runtime" / "cetta"),
+        )
         python_environment = Path(os.environ.get(
             "PETTA_PY_ENV", Path.home() / "miniforge3" / "envs" / "petta"
         ))
@@ -210,20 +199,14 @@ class FullShadow:
                       batch_limit: int, begin_frontier: bool = True) -> str:
         # This is the live parser expression from cognitiveTurn, with only
         # logging/history removed. The same explicit quote crosses into the
-        # same deterministic Prolog dispatcher.
+        # same deterministic dispatcher. The bootstrap has imported the
+        # program (execute_response).
         literal = json.dumps(str(response), ensure_ascii=False)
         frontier = (
             "!(println! (addition-effect-turn-begin %d))\n" % turn
             if begin_frontier else ""
         )
-        imports = "" if self.engine == "cetta" else (
-            "!(import! &self (library lib_import))\n"
-            "!(import! &self ./src/utils)\n"
-            "!(import! &self ./src/skills)\n"
-            "!(import! &self ./src/command_pipeline)\n"
-            "!(import! &self ./src/turn_additions)\n"
-        )
-        return (imports +
+        return (
             "%s"
             "!(let* ("
             "($respi %s) "
@@ -246,31 +229,23 @@ class FullShadow:
             ),
             encoding="utf-8",
         )
-        if self.engine == "cetta":
-            cetta = Path(self.environment()["CETTA_BIN"])
-            if not cetta.is_file():
-                raise FileNotFoundError("CeTTa executable is unavailable")
-            # Match run.sh's live CeTTa launch: the bootstrap imports the
-            # whole program, as run.metta does, and the probe takes the place
-            # of cetta_run.metta.  Listing the program's modules as well
-            # would load every equation twice.  The shadow's own channel
-            # configuration follows the program's.
-            sources = [
-                ROOT / "cetta_bootstrap.metta",
-                self.channel_config_path,
-                probe,
-            ]
-            command = [
-                str(cetta), "--lang", "petta", "--import-mode",
-                "ancestor-walk", *(str(source) for source in sources),
-            ]
-        else:
-            petta_root = Path(os.environ.get(
-                "PETTA_ROOT", Path.home() / "repos" / "PeTTa"
-            ))
-            if not (petta_root / "run.sh").is_file():
-                raise FileNotFoundError("PeTTa run.sh is unavailable")
-            command = ["bash", str(petta_root / "run.sh"), str(probe)]
+        cetta = Path(self.environment()["CETTA_BIN"])
+        if not cetta.is_file():
+            raise FileNotFoundError("CeTTa executable is unavailable")
+        # Match run.sh's live CeTTa launch: the bootstrap imports the whole
+        # program, as run.metta does, and the probe takes the place of
+        # cetta_run.metta.  Listing the program's modules as well would load
+        # every equation twice.  The shadow's own channel configuration
+        # follows the program's.
+        sources = [
+            ROOT / "cetta_bootstrap.metta",
+            self.channel_config_path,
+            probe,
+        ]
+        command = [
+            str(cetta), "--lang", "petta", "--import-mode",
+            "ancestor-walk", *(str(source) for source in sources),
+        ]
         return subprocess.run(
             command,
             cwd=ROOT,

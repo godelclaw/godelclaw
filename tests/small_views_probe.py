@@ -145,8 +145,7 @@ def setup(disable=1, caller=0):
         context_sources._loaders = retained_loaders
     context_source_loaders.load = counted_load
     context_source_loaders.prepare = counted_prepare
-    for module, name, label in ((engine_modes, "active_engine", "pins-engine"),
-                                (strategy_host, "enabled_flag", "action-strategy"),
+    for module, name, label in ((strategy_host, "enabled_flag", "action-strategy"),
                                 (strategy_host, "conversation_mode", "conversation-mode")):
         original = getattr(module, name)
         def counted(*args, original=original, label=label, **kwargs):

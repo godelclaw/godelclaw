@@ -122,12 +122,11 @@ class TelegramClockParity(unittest.TestCase):
         if not self.binary.is_file():
             self.skipTest("set CETTA_BIN to a Python-enabled cetta")
 
-    def run_cetta(self, lines, zone, engine="cetta"):
+    def run_cetta(self, lines, zone):
         with tempfile.TemporaryDirectory() as directory:
             directory = pathlib.Path(directory)
             (directory / "clock_record.py").write_text(RECORDER)
             env = cetta_env(directory, zone)
-            env.update(METTACLAW_ENGINE=engine, METTACLAW_ACTIVE_ENGINE=engine)
             with tempfile.NamedTemporaryFile("w", dir=ROOT, suffix=".metta",
                                              encoding="utf-8") as source:
                 source.write("\n".join(lines) + "\n")
@@ -198,21 +197,17 @@ class TelegramClockParity(unittest.TestCase):
                     for t in range(int(before) - 1, int(later) + 2)})
                 self.assertIn(iso, stamps)
 
-    def test_client_selects_native_clocks_only_on_cetta(self):
+    def test_the_client_uses_the_native_clocks(self):
         program = ["!(import! &self ./src/helper.py)", "!(import! &self ./channels/telegram.py)",
                    "!(import! &self ./channels/telegram.metta)",
-                   "!(Native (tg:native-clock?))",
                    '!(Clock (tg:clock "1790000000") (tg:clock ""))',
                    "!(Pad (tg:pad20 -5))",
                    '!(Rest (str:starts-with (tg:rest-notice-text 61) '
                    '"💤 resting — wakes in 1m01s (at "))']
-        for engine, native in (("cetta", "true"), ("petta", "false")):
-            with self.subTest(engine=engine):
-                _, stdout, detail = self.run_cetta(program, "UTC", engine)
-                self.assertIn("(Native %s)" % native, stdout, detail)
-                self.assertRegex(stdout, r'\(Clock "?2026-09-21 14:13:20"? "?"?\)', detail)
-                self.assertRegex(stdout, r'\(Pad "?-0000000000000000005"?\)', detail)
-                self.assertIn("(Rest true)", stdout, detail)
+        _, stdout, detail = self.run_cetta(program, "UTC")
+        self.assertRegex(stdout, r'\(Clock "?2026-09-21 14:13:20"? "?"?\)', detail)
+        self.assertRegex(stdout, r'\(Pad "?-0000000000000000005"?\)', detail)
+        self.assertIn("(Rest true)", stdout, detail)
 
 
 if __name__ == "__main__":

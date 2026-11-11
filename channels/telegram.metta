@@ -23,18 +23,14 @@
 !(import! &self cwp)
 !(import! &self system)
 !(import! &self ./src/helper.py)
-!(import! &self ./src/engine_modes.metta)
 !(import! &self ./src/process_supervision.py)
 !(import! &self ./channels/energy.metta)
 !(import! &self ./channels/telegram_control_input.metta)
 !(import! &self ./channels/telegram_notice_cleanup.metta)
 !(import! &self ./src/job_io)
 !(import! &self ./src/mail)
-; The native idle provider initializes native memory. Keep it out of the
-; separately selected SWI-PeTTa backend, which uses the existing Python client.
-!(if (case (engine:active)
-       ((cetta True) ("cetta" True) ($other False)))
-     (import! &self ./src/idle_cetta) True)
+; The native idle provider initializes native memory.
+!(import! &self ./src/idle_cetta)
 
 ;; ---------------------------------------------------------------- lists
 ;; A list built by cons-atom onto a computed tail may be an open PeTTa cell.
@@ -192,26 +188,20 @@
 
 ;; --------------------------------------------------------------- clocks
 
-; Clocks and keys are native on CeTTa; SWI-PeTTa keeps src/helper.py's.
-!(tg:set clock-engine
-   (case (engine:active)
-     ((cetta native) ("cetta" native) ($other python))))
-!(if (== (tg:get clock-engine python) native)
-     (import! &self ./channels/telegram_clock.metta) True)
-(= (tg:native-clock?) (== (tg:get clock-engine python) native))
+; Clocks and keys are native.
+!(import! &self ./channels/telegram_clock.metta)
 (= (tg:now-iso)
-   (if (tg:native-clock?) (tg-clock:now-iso) (py-call (time.strftime "%Y-%m-%dT%H:%M:%S%z"))))
-(= (tg:now) (if (tg:native-clock?) (tg-clock:now) (py-call (time.time))))
+   (tg-clock:now-iso))
+(= (tg:now) (tg-clock:now))
 (= (tg:clock $epoch)
    (if (== $epoch "") ""
-     (if (tg:native-clock?) (tg-clock:local-clock $epoch) (py-call (helper.local_clock $epoch)))))
+     (tg-clock:local-clock $epoch)))
 (= (tg:sleep $seconds)
-   (if (tg:native-clock?) (tg-clock:sleep $seconds) (py-call (time.sleep $seconds))))
+   (tg-clock:sleep $seconds))
 (= (tg:pad20 $number)
-   (if (tg:native-clock?) (tg-clock:pad20 $number) (py-call (helper.pad20 $number))))
+   (tg-clock:pad20 $number))
 (= (tg:rest-notice-text $left)
-   (if (tg:native-clock?) (tg-clock:rest-notice-text $left (tg-clock:now))
-     (py-call (helper.rest_notice_text $left))))
+   (tg-clock:rest-notice-text $left (tg-clock:now)))
 
 ;; ------------------------------------------------------------ formatting
 
@@ -1348,8 +1338,8 @@
 
 (= (tg:control-reply? $text)
    (tg:any-prefix (str:lower $text)
-     ("activity:" "runtime-health:" "active engine:" "active model:" "active mode:" "arming energy"
-      "model set to " "mode set to " "engine set to " "tap to switch:" "deleted message "
+     ("activity:" "runtime-health:" "active model:" "active mode:" "arming energy"
+      "model set to " "mode set to " "tap to switch:" "deleted message "
       "delete refused:" "delete failed:" "cannot delete message ")))
 (= (tg:any-prefix $text $prefixes)
    (if (== $prefixes ()) False
@@ -1476,5 +1466,4 @@
 
 (= (tg:start)
    (if (== (tg:socket) "") "telegram disabled: the durable service socket is not configured"
-     (let $a (py-call (telegram.metta_publish "active_engine" (tg:env "METTACLAW_ACTIVE_ENGINE" "")))
-       (let $b (tg:poll) "telegram client started"))))
+     (let $b (tg:poll) "telegram client started")))

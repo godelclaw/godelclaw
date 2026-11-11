@@ -151,41 +151,6 @@ class NativeTmux(unittest.TestCase):
                  ("tmux-send", ["agent:5", "literal _quote_λ_quote_"])]
         self.run_native(calls, self.reference(calls), env=env, skills=True)
 
-    def test_swi_selects_the_python_adapter(self):
-        from test_command_dispatch_engine import CommandDispatchEngineTest
-        harness = CommandDispatchEngineTest()
-        petta = harness._petta_root()
-        if not (petta / "run.sh").is_file():
-            self.skipTest("PeTTa checkout is unavailable")
-        env = dict(harness._cetta_env(), METTACLAW_ACTIVE_ENGINE="petta",
-                   PETTA_PATH=str(petta), TMUX_FIXTURE_CONFIG=str(self.config),
-                   TMUX_FIXTURE_LOG=str(self.log))
-        env["PATH"] = str(self.bin) + os.pathsep + env["PATH"]
-        self.config.write_text(json.dumps({"list-windows": {"stdout": "agent:5 λ\n"}}))
-        calls = [("tmux-windows", []), ("tmux-peek", ["agent:5", 2]),
-                 ("tmux-send", ["agent:5", "literal _quote_λ_quote_"])]
-        expected = self.reference(calls)
-        with tempfile.NamedTemporaryFile("w", dir=ROOT, suffix=".metta") as source:
-            source.write('!(import! &self (library lib_import))\n'
-                         '!(import! &self ./src/helper.py)\n'
-                         '!(import! &self ./src/tmux_io)\n'
-                         '!(import! &self ./tests/file_tools_probe.py)\n')
-            for (name, args), answer in zip(calls, expected):
-                expression = "(" + name + " " + " ".join(json.dumps(x) for x in args) + ")"
-                source.write(f'!(let $answers (collapse {expression}) '
-                             '(if (== (length $answers) 1) '
-                             '(let $answer (car-atom $answers) '
-                             f'(py-call (file_tools_probe.check $answer {json.dumps(answer, ensure_ascii=False)}))) '
-                             '(py-call (file_tools_probe.check "wrong answer count" "one"))))\n')
-            source.write('!(println! TMUX_SWI_OK)\n')
-            source.flush()
-            result = subprocess.run(["bash", str(petta / "run.sh"), source.name, "default"],
-                                    cwd=ROOT, env=env, text=True, capture_output=True, timeout=25)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("TMUX_SWI_OK", result.stdout)
-        self.assertNotIn("Error", result.stdout + result.stderr)
-        self.assertEqual(len(self.log.read_text().splitlines()), 4)
-
     def test_real_separate_server(self):
         tmux = shutil.which("tmux")
         if not tmux:

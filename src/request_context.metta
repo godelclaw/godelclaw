@@ -6,16 +6,7 @@
 !(import! &self (library json))
 !(import! &self (library str))
 !(import! &self ./src/model_commentary.py)
-; Rendering needs the active evaluator, not mode switching, receipt storage,
-; or process control. Keep the provider entrypoint's dependency closure small.
-!(import! &self ./src/mode_runtime.metta)
-!(if (mode-runtime:cetta?)
-   (import! &self ./src/engine_active_cetta.metta)
-   (import! &self ./src/engine_modes_python.metta))
 
-(= (request:cetta?)
-   (let $active (if (mode-runtime:cetta?) (engine-native:active) (engine-python:active))
-     (case $active ((cetta True) ("cetta" True) ($other False)))))
 
 (= (request:text $value)
    (if (== (get-type $value) String) $value (repr $value)))

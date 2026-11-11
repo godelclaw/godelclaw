@@ -1,10 +1,12 @@
-"""Memory-health actions report evidence, never inferred persistence."""
+"""Memory health states the configured backend and whether its native service is reachable."""
 
+import json
 import os
-import sqlite3
+from pathlib import Path
+import shutil
+import socket
 import sys
 import tempfile
-import types
 import unittest
 from unittest import mock
 
@@ -13,112 +15,51 @@ import memory_health  # noqa: E402
 
 
 class MemoryHealthTests(unittest.TestCase):
-    def fake_chroma(self):
-        collection = mock.Mock()
-        collection.count.return_value = 10
-        return types.SimpleNamespace(COLLECTION=collection, CLIENT=object())
+    def setUp(self):
+        self.directory = Path(tempfile.mkdtemp(prefix="mh-", dir="/tmp"))  # a unix socket path must be short
+        self.addCleanup(shutil.rmtree, self.directory, True)
+        self.config = self.directory / "memory_backend.json"
+        environment = mock.patch.dict(os.environ, {"METTACLAW_MEMORY_BACKEND_CONFIG": str(self.config)})
+        environment.start()
+        self.addCleanup(environment.stop)
 
-    def test_no_drift_needs_no_attempt(self):
-        with mock.patch.object(memory_health, "drift", return_value=(10, 10, 0)):
-            self.assertIn("nothing to do", memory_health.compact())
+    def configure(self, **fields):
+        self.config.write_text(json.dumps(fields), encoding="utf-8")
 
-    def test_compact_reports_measured_progress(self):
-        fake = self.fake_chroma()
-        with mock.patch.object(
-                memory_health, "drift",
-                side_effect=[(10, 5, 5), (10, 9, 1), (10, 9, 1)]), \
-             mock.patch.dict(sys.modules, {"lib_chromadb": fake}):
-            result = memory_health.compact()
-        self.assertIn("measured progress 5 -> 1", result)
-        fake.COLLECTION.count.assert_called_once_with()
+    def test_no_configuration_is_reported_as_such(self):
+        self.assertEqual(memory_health.backend(), {"mode": "unconfigured"})
+        self.assertIn("no native memory is configured (backend unconfigured)", memory_health.report())
 
-    def test_compact_does_not_claim_success_without_progress(self):
-        fake = self.fake_chroma()
-        with mock.patch.object(
-                memory_health, "drift",
-                side_effect=[(10, 5, 5), (10, 5, 5), (10, 5, 5)]), \
-             mock.patch.dict(sys.modules, {"lib_chromadb": fake}):
-            result = memory_health.compact()
-        self.assertIn("NO VERIFIED PROGRESS (5 -> 5 behind)", result)
+    def test_an_unreadable_configuration_counts_as_none(self):
+        self.config.write_text("{not json", encoding="utf-8")
+        self.assertEqual(memory_health.backend(), {"mode": "unconfigured"})
 
-    def test_compact_surfaces_chroma_failure(self):
-        fake = self.fake_chroma()
-        fake.COLLECTION.count.side_effect = RuntimeError("unavailable")
-        with mock.patch.object(memory_health, "drift", return_value=(10, 5, 5)), \
-             mock.patch.dict(sys.modules, {"lib_chromadb": fake}):
-            result = memory_health.compact()
-        self.assertIn("FAILED: RuntimeError", result)
+    def test_native_backend_with_its_service_listening(self):
+        path = self.directory / "memory.sock"
+        listener = socket.socket(socket.AF_UNIX)
+        listener.bind(str(path))
+        listener.listen(1)
+        self.addCleanup(listener.close)
+        self.configure(mode="native", name="memories-test", socket=str(path))
+        self.assertEqual(memory_health.backend(), {"mode": "native", "name": "memories-test", "socket": str(path)})
+        self.assertTrue(memory_health.native_reachable(path))
+        self.assertEqual(memory_health.report(), "memory-health: native backend memories-test — service reachable")
 
-    def test_threshold_prefers_persisted_configuration_over_stale_metadata(self):
-        with tempfile.TemporaryDirectory() as chroma_dir:
-            db = sqlite3.connect(os.path.join(chroma_dir, "chroma.sqlite3"))
-            db.execute(
-                "create table collections "
-                "(id text, name text, config_json_str text, schema_str text)"
-            )
-            db.execute(
-                "create table collection_metadata "
-                "(collection_id text, key text, str_value text, "
-                "int_value integer, float_value real)"
-            )
-            schema = '{"vector_index":{"hnsw":{"sync_threshold":20}}}'
-            db.execute(
-                "insert into collections values (?, ?, ?, ?)",
-                ("collection-id", "memories", "{}", schema),
-            )
-            db.execute(
-                "insert into collection_metadata values (?, ?, ?, ?, ?)",
-                ("collection-id", "hnsw:sync_threshold", None, 100, None),
-            )
-            db.commit()
-            db.close()
-            with mock.patch.dict(
-                os.environ,
-                {
-                    "METTACLAW_CHROMA_DIR": chroma_dir,
-                    "METTACLAW_CHROMA_SYNC_THRESHOLD": "999",
-                },
-            ):
-                self.assertEqual(memory_health.threshold(), 20)
+    def test_native_backend_without_its_service(self):
+        self.configure(mode="native", name="memories-test", socket=str(self.directory / "absent.sock"))
+        self.assertFalse(memory_health.native_reachable(self.directory / "absent.sock"))
+        self.assertIn("service UNREACHABLE", memory_health.report())
 
-    def test_engine_probe_reports_shape_without_memory_content(self):
-        qwen = types.SimpleNamespace(embed_query=lambda _text: [0.1, 0.2])
-        chroma = types.SimpleNamespace(query_with_ids=lambda _vector, _k: [
-            ["id-1", "time-1", "private content one"],
-            ["id-2", "time-2", "private content two"],
-        ])
-        with mock.patch.dict(sys.modules, {
-            "qwen_embed": qwen,
-            "lib_chromadb": chroma,
-        }):
-            result = memory_health.engine_query_probe()
-        self.assertEqual(result, "memory-engine-probe: ok (2 unique results)")
-        self.assertNotIn("private content", result)
+    def test_a_missing_socket_setting_is_unreachable_not_an_error(self):
+        self.configure(mode="native", name="memories-test")
+        self.assertFalse(memory_health.native_reachable(None))
+        self.assertIn("service UNREACHABLE", memory_health.report())
+
+    def test_boot_check_prints_the_report(self):
+        with mock.patch("builtins.print") as printed:
+            line = memory_health.boot_check()
+        printed.assert_called_once_with("[memory_health] " + line, flush=True)
 
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class NativeBackendHealthTest(unittest.TestCase):
-    def test_native_mode_checks_the_service_not_chroma(self):
-        import json, socket, tempfile, threading
-        with tempfile.TemporaryDirectory() as directory:
-            sock_path = os.path.join(directory, "memory.sock")
-            config = os.path.join(directory, "memory_backend.json")
-            with open(config, "w", encoding="utf-8") as handle:
-                json.dump({"mode": "native", "name": "memories-test", "socket": sock_path}, handle)
-            with mock.patch.dict(os.environ, {"METTACLAW_MEMORY_BACKEND_CONFIG": config}):
-                self.assertEqual(memory_health.report(),
-                                 "memory-health: native backend memories-test — service UNREACHABLE")
-                server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                server.bind(sock_path); server.listen(1)
-                try:
-                    self.assertEqual(memory_health.report(),
-                                     "memory-health: native backend memories-test — service reachable")
-                finally:
-                    server.close()
-
-    def test_without_a_backend_config_chroma_is_measured(self):
-        with mock.patch.dict(os.environ, {"METTACLAW_MEMORY_BACKEND_CONFIG": "/nonexistent/backend.json"}):
-            self.assertEqual(memory_health.backend(), {"mode": "chroma"})

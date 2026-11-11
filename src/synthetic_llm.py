@@ -907,8 +907,6 @@ _CHATGPT_MENU_MODELS = (
 
 
 def _chatgpt_menu_enabled():
-    if os.environ.get("METTACLAW_ACTIVE_ENGINE") != "cetta":
-        return False
     if os.environ.get("METTACLAW_LLM_TRANSPORT") != "native":
         return False
     path = os.environ.get("METTACLAW_CHATGPT_POLICY_PATH")

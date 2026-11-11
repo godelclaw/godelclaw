@@ -1,4 +1,4 @@
-"""File skill conformance on CeTTa (Python backend disabled) and SWI-PeTTa."""
+"""File skill conformance on CeTTa (Python backend disabled)."""
 import json
 import os
 from pathlib import Path
@@ -104,6 +104,3 @@ class FileToolsEngineTests(unittest.TestCase):
 
     def test_native_without_python_filesystem(self):
         self.contract("cetta")
-
-    def test_swi_petta(self):
-        self.contract("petta")

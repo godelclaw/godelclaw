@@ -6,6 +6,7 @@ import subprocess
 import time
 
 import cognitive_health
+import engine_modes
 import loop_modes
 import memory_health
 
@@ -127,16 +128,10 @@ def status(now=None):
         if started_at and now - started_at > stale_after:
             problems.append("model-turn-receipt-missing")
     configured = memory_health.backend()
-    # Chroma's index counts; the native memory service has none to report.
-    docs = behind = threshold = None
-    if configured["mode"] == "native":
-        if not memory_health.native_reachable(configured["socket"]):
-            problems.append("memory-service-unreachable")
-    else:
-        docs, _indexed, behind = memory_health.drift()
-        threshold = memory_health.threshold()
-        if docs and behind > threshold:
-            problems.append("memory-index-drift")
+    if configured["mode"] != "native":
+        problems.append("memory-not-native")
+    elif not memory_health.native_reachable(configured["socket"]):
+        problems.append("memory-service-unreachable")
     return {
         "state": "ok" if not problems else "problem",
         "lifecycle": lifecycle.view(),
@@ -159,9 +154,7 @@ def status(now=None):
         "model_turn_completed_count": int(
             cognition.get("completed_count", 0) or 0),
         "model_turn_last_outcome": cognition.get("last_outcome", "none"),
-        "memories": docs,
-        "memory_index_behind": behind,
-        "memory_flush_threshold": threshold,
+        "memory": configured["mode"],
     }
 
 
@@ -173,7 +166,7 @@ def report():
         "generation={generation} | menu={menu} | "
         "telegram={transport} | loop={loop} | working-set-age={working}s | "
         "model-turn-age={turn}s | model-turn-pending={pending}s | "
-        "memory={memory} | problems={problems}"
+        "memory={memory} | engine-failure={engine_failure} | problems={problems}"
     ).format(
         state=value["state"], lifecycle=value["lifecycle"],
         generation=value["generation"],
@@ -184,10 +177,8 @@ def report():
         loop=value["loop"], working=value["working_set_age_seconds"],
         turn=value["model_turn_age_seconds"],
         pending=value["model_turn_pending_age_seconds"],
-        memory=(memory_health.backend()["mode"] if value["memories"] is None else
-                "%s (%s/%s behind)" % (value["memories"], value["memory_index_behind"],
-                                       value["memory_flush_threshold"])),
-        problems=problems,
+        memory=value["memory"],
+        engine_failure=engine_modes.failure_view(), problems=problems,
     )
 
 
@@ -226,7 +217,6 @@ def activity_report(now=None):
     obligation_age = (None if not obligation_at
                       else max(0, int(now - obligation_at)))
 
-    import engine_modes
     import loop_modes
     import synthetic_llm
     import telegram
@@ -317,7 +307,7 @@ def activity_report(now=None):
     return (
         "activity: {state} | steps={steps}@{steps_source} | fuel={fuel} | "
         "mode={mode} | "
-        "engine={engine} | model={model} | wake={wake} | "
+        "model={model} | wake={wake} | "
         "rest={rest} | continuation={continuation} | "
         "checkpoint-age={checkpoint} | "
         "turn={turn} | last-success={success} | input={input_state} | "
@@ -327,7 +317,6 @@ def activity_report(now=None):
         state=state, steps=steps, steps_source=steps_source,
         fuel=fuel_modes.current_fuel(),
         mode=loop_modes.current_mode(),
-        engine=engine_modes.active_engine(),
         model=synthetic_llm.current_model(),
         wake=wake,
         rest=rest,

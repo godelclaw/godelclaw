@@ -1,9 +1,9 @@
 ; Lila's operator-command responder, in MeTTa.
 ;
 ; The CeTTa Telegram channel service asks about the operator commands it does
-; not answer itself, and about taps on the buttons of their menus. /engine,
-; /mode, /fuel, /model, /quota, /health, /activity, /wake, /start, /stop,
-; /claude_code_authorization and the menus /engines, /modes, /fuels, /models
+; not answer itself, and about taps on the buttons of their menus. /mode,
+; /fuel, /model, /quota, /health, /activity, /wake, /start, /stop,
+; /claude_code_authorization and the menus /modes, /fuels, /models
 ; and /energy read or change Lila's settings, never her thinking, so they are
 ; answered here, in a process of its own beside her loop that makes no model
 ; call: an answer never waits for her turn. /delete stays with her loop's
@@ -161,8 +161,8 @@
 (= (tc:member? $x $items) (not (== (collapse (let $i (tc:items $items) (if (== $i $x) True (empty)))) ())))
 
 ; A settings menu: one button a choice, the current one marked, the selected
-; one (an engine chosen but not yet running) marked apart, and those not
-; available said so. Its data is PREFIX:NAME.
+; one (chosen but not yet running) marked apart, and those not available
+; said so. Its data is PREFIX:NAME.
 (= (tc:settings-page $state $toast)
    (tc:menu $toast (tc:string (tc:at $state "text")) (tc:at $state "rows")))
 (= (tc:settings-menu $kind $prefix $toast)
@@ -171,25 +171,6 @@
 (= (tc:energy-menu $toast)
    (let $view (energy:view)
      (tc:menu $toast (format-args "arming energy — {}" ($view)) (energy:menu))))
-
-; Switch the engine, and restart Lila's loop on it when it is not the one
-; running.
-(= (tc:switch-engine $name)
-   (let $adopted (py-call (helper.adopt_active_engine))
-     (case (engine:set $name)
-       (((Error $call $why) (Error $call $why))
-        ($value
-         (let $reply (tc:text $value)
-           (case (engine:selected)
-             (((Error $call $why) (Error $call $why))
-              ($selection
-               (let $selected (tc:text $selection)
-                 (let $active (tc:text (engine:active))
-                   (if (and (not (str:starts-with $reply "engine-set failed:")) (not (== $selected $active)))
-                     (case (engine:recycle)
-                       (((Error $call $why) (Error $call $why))
-                        ($recycled (let $woken (tc:wake "engine switch") $reply))))
-                     $reply))))))))))))
 
 ; A tap on a menu's button: PREFIX:ARGUMENT. The answer is the menu again,
 ; redrawn, with the outcome as the tap's toast.
@@ -204,7 +185,6 @@
                   ("mode" (tc:mode-tap $arg))
                   ("fuel" (let $reply (tc:text (fuel:set $arg))
                             (tc:settings-menu "fuels" "fuel" $reply)))
-                  ("engine" (let $reply (tc:switch-engine $arg) (tc:settings-menu "engines" "engine" $reply)))
                   ("model" (let $reply (tc:text (py-call (synthetic_llm.set_model $arg)))
                              (tc:settings-menu "models" "model" $reply)))
                   ("energy" (case (str:find $arg ":")
@@ -221,12 +201,6 @@
       ("/claude_code_authorization" (tc:text (py-call (helper.claude_code_toggle))))
       ("/health" (tc:text (py-call (runtime_health.report))))
       ("/activity" (tc:text (py-call (runtime_health.activity_report))))
-      ("/engine"
-       (if (== $args "")
-         (let $adopted (py-call (helper.adopt_active_engine))
-           (tc:mode-view (engine:view) "/engine <name> to switch, /engines to list"))
-         (tc:switch-engine $args)))
-      ("/engines" (tc:settings-menu "engines" "engine" ""))
       ("/modes" (tc:settings-menu "modes" "mode" ""))
       ("/fuels" (tc:settings-menu "fuels" "fuel" ""))
       ("/models" (tc:settings-menu "models" "model" ""))

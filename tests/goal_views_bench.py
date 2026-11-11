@@ -90,7 +90,7 @@ def measured(case, step, root, native, process, args, wrapper, real_git):
     for row in rows:
         assert row["loader_calls"] == {key: 1 for key in expected}, row["loader_calls"]
         assert row["text"].count("status=known") == 13
-        boundaries = {"action-strategy": 1, "pins-engine": 1, "prepare": 1,
+        boundaries = {"action-strategy": 1, "prepare": 1,
                       "retained-load": 5 if native else 7, "engine-command": 1}
         if native:
             boundaries["marker/work-state"] = 1
