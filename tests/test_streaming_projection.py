@@ -170,6 +170,25 @@ class ProjectionLaws(unittest.TestCase):
             self.assertTrue(writer.failed)
             self.assertFalse(writer.flush(2))
 
+    def test_flush_deadline_covers_waiting_for_the_handoff_lock(self):
+        with tempfile.TemporaryDirectory() as d:
+            writer = stream_sink.Writer(d, 's')
+            results, finished = [], threading.Event()
+
+            def observe():
+                results.append(writer.flush(0))
+                finished.set()
+
+            writer.lock.acquire()
+            observer = threading.Thread(target=observe)
+            try:
+                observer.start()
+                self.assertTrue(finished.wait(1), 'the flush deadline did not cover lock contention')
+            finally:
+                writer.lock.release()
+                observer.join(2)
+            self.assertEqual(results, [False])
+
 
     def test_items_keep_when_they_began_and_executions_how_long_they_ran(self):
         p=stream_sink.Projection();base=dict(producer='p',session='s',attempt='a')

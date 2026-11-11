@@ -143,11 +143,21 @@ class Writer:
             # Moving a reserved terminal into the queue pops it before put.
             # Observe both owners under the handoff lock; that transient gap
             # must never certify that the terminal has been published.
-            with self.lock, self.queue.all_tasks_done:
-                if self.failed:
+            if not self.lock.acquire(timeout=max(0, deadline - time.monotonic())):
+                return False
+            try:
+                done = self.queue.all_tasks_done
+                if not done.acquire(timeout=max(0, deadline - time.monotonic())):
                     return False
-                if not self.queue.unfinished_tasks and not self.terminals:
-                    return True
+                try:
+                    if self.failed:
+                        return False
+                    if not self.queue.unfinished_tasks and not self.terminals:
+                        return True
+                finally:
+                    done.release()
+            finally:
+                self.lock.release()
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return False
