@@ -19,7 +19,7 @@
       "name": "scoped-observation-interfaces",
       "distribution": "application-source-module",
       "runtime": "src/observation_interfaces_cetta.metta",
-      "sha256": "c27c51816aff3533080501a8f03eab62d468ab3b66ff1b0fbb00ce3a1f42f379",
+      "sha256": "46b3fa4392c58e60c9b7936fb81e38254f1ec2f3df5d0fa0effbcf43b5c5216e",
       "kernel_contract": "native regex completion ABI at 64dd3ccd; inert syntax and data-only proof grades"
     },
     {

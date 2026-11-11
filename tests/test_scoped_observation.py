@@ -407,6 +407,20 @@ class ScopedObservationTests(unittest.TestCase):
             self.assertIn('faults=1', result)
 
 
+    def test_regex_refuses_unencodable_query_owners_and_records_native_unicode_policy(self):
+        body = """(let* (($prepared (re:prepare (re:pattern "x")))
+          ($unbound (obs:regex-find $prepared ""))
+          ($closed (collapse (re:close $prepared)))
+          ($complete (obs:regex-find (re:pattern "x") ""))
+          ($version (str:unicode-version)))
+          (Results (obs:status $unbound) (obs:diagnostics $unbound)
+            (obs:scope $complete) $version))"""
+        for result in self.both(body):
+            self.assertEqual(result[1][0], S('Faulted'))
+            self.assertEqual(result[2][0][2], S('descriptor-codec'))
+            self.assertEqual(result[3][3], E('NativeRegexFindV1', E('UnicodeBaseV1', result[4])))
+
+
 
 if __name__ == '__main__':
     unittest.main()

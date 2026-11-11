@@ -115,6 +115,9 @@ and leaves coverage open. Invalid budgets refuse without consuming the cursor.
 Snapshot clones and scans pin the captured root: later writes and compaction
 cannot substitute newer values. Close or cancel residuals when finished.
 
+Residual handles belong to their live process and are not durable restart
+checkpoints. Only their reports are portable data.
+
 Operations are serialized within one interpreter; this API does not offer
 concurrent mutation of a residual registry. It uses existing native ownership
 and revocation, and adds no evaluator, parser or C changes.
@@ -135,7 +138,9 @@ Import `src/observation_interfaces_cetta.metta`:
 
 * `obs:regex-find` uses a captured native regex question and subject. A native
   no-match is complete absence; epsilon is one zero-consumption match; a
-  compilation or execution failure remains a fault.
+  compilation or execution failure remains a fault. The index records the native
+  Unicode base version. Unencodable prepared handles refuse with descriptor-codec;
+  use the ordinary encodable pattern definition.
 * `obs:syntax` encodes a term as inert data. `obs:undemanded` produces a
   NotObserved report. Neither operation runs the described computation.
 * `obs:negative-grade` retains the exact negative dependencies of completed

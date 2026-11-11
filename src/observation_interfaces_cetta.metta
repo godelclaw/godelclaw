@@ -12,8 +12,14 @@
 ; descriptions and subject text are captured together before invoking find.
 (= (obs:regex-find $pattern $text)
   (let* (($query (obs:encode $pattern)) ($subject (obs:encode $text))
-         ($scope (ObservationTextIndexV1 $subject $query NativeRegexFindV1 (system:uuid4-hex))))
-    (obs:regex-answers $scope (collapse (re:find $pattern $text)))))
+         ($version (str:unicode-version)) ($run (system:uuid4-hex)))
+    (if (and (== (get-type $query) String)
+             (and (== (get-type $subject) String) (== (get-type $version) String)))
+      (let* (($policy (NativeRegexFindV1 (UnicodeBaseV1 $version)))
+             ($scope (ObservationTextIndexV1 $subject $query $policy $run)))
+        (obs:regex-answers $scope (collapse (re:find $pattern $text))))
+      (obs:fault (ObservationUnboundV1 "regex" $run) regex descriptor-codec
+        "use an encodable pattern definition and subject"))))
 (= (obs:regex-answers $scope $answers)
   (case $answers
     (((re:no-match) (ObservationReportV1 $scope () ObservationClosedV1 ($scope)))
