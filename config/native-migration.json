@@ -35,7 +35,6 @@
         "src/native_lifetime.py",
         "src/provider_protocol.py",
         "src/provider_rejection.py",
-        "src/provider_stream.py",
         "src/synthetic_llm.py",
         "src/usage_history.py"
       ]

@@ -239,14 +239,25 @@
 
 (: llm:decode-legacy-body (-> Atom Atom Atom Atom Atom %Undefined%))
 (= (llm:decode-legacy-body $plan $epoch $correlation $protocol $body)
-   (let* (($wrapper (py-call (native_llm_host.decoded_body $plan $body)))
-          ($json (llm:v1:parse $wrapper))
-          ($ok (llm:v1:get $json "ok")))
-     (if (== $ok (JsonBool True))
-       (let* (($value (llm:v1:get $json "body"))
-              ($text (llm:v1:text $value)))
-         (llm:v1:io-outcome $epoch $correlation $protocol (http:response 200 $text)))
-       (llm:v1:failed $epoch $correlation incomplete-stream response-received))))
+   (case (py-call (native_llm_host.response_decode_config $plan))
+     ((($stream $limit)
+       (let $enabled (llm:host-flag $stream)
+         (llm:decode-received-body $plan $epoch $correlation $protocol $body $enabled $limit 0)))
+      ($other (llm:v1:failed $epoch $correlation invalid-decode-config response-received)))))
+
+; A local decoder allocation refusal retains this body. Re-entering transport
+; here would confuse a local resource failure with an unknown remote outcome.
+(: llm:decode-received-body (-> Atom Atom Atom Atom Atom Bool Number Number %Undefined%))
+(= (llm:decode-received-body $plan $epoch $correlation $protocol $body $stream $limit $attempt)
+   (case (llm:v1:response-body $protocol $stream $body $limit)
+     (((llm:v1:ok $text)
+       (llm:v1:io-outcome $epoch $correlation $protocol (http:response 200 $text)))
+      ((llm:v1:error stream-capacity)
+       (let $_ (py-call (native_llm_host.decoding_wait $plan $attempt))
+         (llm:decode-received-body $plan $epoch $correlation $protocol $body $stream $limit (+ $attempt 1))))
+      ((llm:v1:error $why)
+       (llm:v1:failed $epoch $correlation incomplete-stream response-received))
+      ($other (llm:v1:failed $epoch $correlation invalid-decode-result response-received)))))
 
 (: llm:continue (-> Atom Atom %Undefined%))
 (= (llm:continue $plan $state)

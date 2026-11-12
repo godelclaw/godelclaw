@@ -51,6 +51,81 @@ class NativeStreamingTest(unittest.TestCase):
         return [(row["state"], row["soft"], row["result"], row["reason"])
                 for row in native_ledger.llm_records("calls", self.socket)]
 
+    def decoder_sentinel(self):
+        fixture = self.directory / "fixture_modules/decode_sentinel.py"
+        fixture.write_text('''import json
+import sys
+import native_llm_host
+import provider_stream
+
+captured = provider_stream.chat
+codes = {captured.__code__, provider_stream.anthropic.__code__, provider_stream.events.__code__}
+entries = []
+
+def profile(frame, event, arg):
+    if event == "call" and frame.f_code in codes:
+        entries.append(frame.f_code.co_name)
+        raise AssertionError("native response entered Python decoder")
+
+def arm():
+    sys.setprofile(profile)
+    return 1
+
+def positive_control():
+    try:
+        captured("")
+    except AssertionError:
+        sys.setprofile(profile)
+        return True
+    raise AssertionError("decoder sentinel failed to catch retained callable")
+
+def report():
+    return json.dumps(entries)
+''')
+        return f'!(import! &self "{fixture}")\n!(py-call (decode_sentinel.arm))\n'
+
+    def test_received_body_never_enters_the_python_decoder(self):
+        output = self.run_guest(self.decoder_sentinel() +
+            f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'
+            '!(println! (CONTROL (py-call (decode_sentinel.positive_control))))\n'
+            '!(println! (RESULT (llm:command "fixture-model" 42 "low" "input")))\n'
+            '!(println! (ENTRIES (py-call (decode_sentinel.report))))\n')
+        self.assertRegex(output, r'\(CONTROL [Tt]rue\)')
+        self.assertIn('(RESULT (nop))', output, self.last_stderr)
+        self.assertIn('chat', output)
+        self.assertEqual(output.count('chat'), 1, output)
+        self.assertEqual(len(self.peer.requests), 1)
+        self.assertEqual(self.journal()[0][0], 'completed')
+
+    def test_local_decode_allocation_retry_retains_body_without_another_post(self):
+        source = (boundary.ROOT / 'src/native_llm.metta').read_text().replace(
+            './src/', str(boundary.ROOT / 'src') + '/')
+        old = '(case (llm:v1:response-body $protocol $stream $body $limit)'
+        self.assertEqual(source.count(old), 1)
+        fixture = self.directory / 'decode-capacity.metta'
+        fixture.write_text(source.replace(old, '(case (decode-test:body $protocol $stream $body $limit)') + '''
+!(bind! &decode-test-attempts (new-state 0))
+(= (decode-test:refusals) (get-state &decode-test-attempts))
+(: decode-test:body (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
+(= (decode-test:body $protocol $stream $body $limit)
+   (let $count (get-state &decode-test-attempts)
+     (if (< $count 3)
+       (let $_ (change-state! &decode-test-attempts (+ $count 1)) (llm:v1:error stream-capacity))
+       (llm:v1:response-body $protocol $stream $body $limit))))
+''')
+        output = self.run_guest(self.decoder_sentinel() +
+            f'!(import! &self "{fixture}")\n'
+            '!(println! (RESULT (llm:command "fixture-model" 42 "low" "input")))\n'
+            '!(println! (REFUSALS (decode-test:refusals)))\n'
+            '!(println! (ENTRIES (py-call (decode_sentinel.report))))\n')
+        self.assertIn('(RESULT (nop))', output, self.last_stderr)
+        self.assertIn('(REFUSALS 3)', output)
+        self.assertIn('(ENTRIES "[]")', output)
+        self.assertIn('waiting for local decoding', self.last_stderr)
+        self.assertEqual(len(self.peer.requests), 1)
+        self.assertEqual(len(self.journal()), 1)
+        self.assertEqual(self.journal()[0][0], 'completed')
+
     def test_silent_first_wait_and_soft_deadline_keep_one_request(self):
         output = self.run_guest(f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'
             '!(println! (RESULT (llm:command "fixture-model" 42 "low" "input")))\n')

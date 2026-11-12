@@ -22,7 +22,6 @@ import llm_policy
 import provider_protocol
 import synthetic_llm
 import native_lifetime
-import provider_stream
 import model_commentary
 import stream_sink
 
@@ -677,17 +676,26 @@ def wire_body(plan, body):
     return json.dumps(value, ensure_ascii=False)
 
 
-def decoded_body(plan, body):
+def response_decode_config(plan):
+    """Small immutable facts; response bytes stay in the native continuation."""
+    return "true" if plan.stream else "false", plan.cap
+
+
+def decoding_wait(plan, attempt):
+    """Pace a local allocation retry without resubmitting a received response."""
+    attempt = max(0, int(attempt))
+    if attempt == 0:
+        print("[native_transport] received body retained; waiting for local decoding; call=" +
+              plan.correlation, file=sys.stderr)
+    if not _compaction(plan):
+        cognitive_health.result_recording(attempt)
     try:
-        text = str(body)
-        streamed = plan.stream and not text.lstrip().startswith("{")
-        if streamed and plan.protocol == "anthropic":
-            value = provider_stream.anthropic(text, plan.cap)
-        else:
-            value = provider_stream.chat(text, plan.cap) if streamed else text
-        return json.dumps({"ok": True, "body": value})
-    except (ValueError, TypeError, KeyError, RecursionError):
-        return json.dumps({"ok": False})
+        import process_supervision
+        process_supervision.progress("local-decode-wait", 60)
+    except Exception:
+        pass
+    time.sleep(min(5.0, .1 * 2 ** min(attempt, 6)))
+    return 1
 
 
 def commentary_readable(plan):

@@ -233,7 +233,7 @@ def fingerprint(args):
     digest = hashlib.sha256(b"native-activity-worker/1\0")
     for name in ("activity_worker.py", "activity_model_host.py", "activity_model_worker.metta",
                  "activity_tool_exec.py", "native_llm_host.py", "native_llm.metta", "native_lifetime.py",
-                 "provider_protocol.py", "provider_stream.py", "llm_policy.py", "tool_output.py",
+                 "provider_protocol.py", "llm_policy.py", "tool_output.py",
                  "llm_policy_cetta.metta", "native_lifetime_cetta.metta"):
         digest.update((ROOT / "src" / name).read_bytes()); digest.update(b"\0")
     for path in [args.engine, *args.tools.values()]:

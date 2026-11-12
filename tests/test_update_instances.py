@@ -25,10 +25,10 @@ class ReleasePermissionsTest(unittest.TestCase):
             "src/native_llm.metta", "src/native_llm_host.py",
             "src/native_lifetime.py", "src/llm_policy.py",
             "src/cognitive_health.py", "src/provider_protocol.py",
-            "src/provider_stream.py",
             "src/model_commentary.py", "src/commentary_stream.py",
         ):
             self.assertIn(required, selected)
+        self.assertNotIn("src/provider_stream.py", selected)
         for mode in ("iter", "omega"):
             manifest = json.loads(
                 (root / f"modes/{mode}/upstream-manifest.json").read_text())

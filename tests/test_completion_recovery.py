@@ -40,7 +40,7 @@ class CompletionRecoveryTests(unittest.TestCase):
                 self.assertEqual(self.peer.requests, [])
 
     def fault(self, mode):
-        """Once the first answer is decoded, the ledger fails the way `mode` names:
+        """Once the first body is received, the ledger fails the way `mode` names:
         rollback  the completion write is refused for .35 s, then the ledger is back;
         many      the completion write is refused until the 255th local retry;
         ambiguous the completion write lands but its reply is lost (once);
@@ -69,10 +69,10 @@ def complete_elsewhere(plan):
         time.time(), llm_policy._request()))
 
 def arm(kind):
-    original = native_llm_host.decoded_body
+    original = native_llm_host.response_decode_config
     pending = [True]
-    def decoded(plan, body):
-        result = original(plan, body)
+    def received(plan):
+        result = original(plan)
         if pending[0]:
             pending[0] = False
             if kind == "conflict":
@@ -91,7 +91,7 @@ def arm(kind):
                     flag.unlink(missing_ok=True)
                 threading.Thread(target=later, daemon=True).start()
         return result
-    native_llm_host.decoded_body = decoded
+    native_llm_host.response_decode_config = received
     return 1
 ''')
         return f'!(import! &self "{module}")\n!(py-call (recovery_fault.arm "{mode}"))\n'
