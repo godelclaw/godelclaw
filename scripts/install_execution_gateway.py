@@ -11,15 +11,19 @@ import os
 from pathlib import Path
 import re
 import shutil
+import sys
 import tempfile
 
 from update_instances import install
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+from execution_gateway.cetta_worker import (WorkerUnavailable, describe_gateway_worker,
+                                          validate_gateway_worker_bundle)
 
 
-def prepare(instance, runtime, config_dir, unit_dir):
+def prepare(instance, runtime, config_dir, unit_dir, worker=None):
     if not re.fullmatch(r"[A-Za-z0-9_-]+", instance):
         raise ValueError("instance must be a simple service name")
     runtime = runtime.expanduser().resolve(strict=True)
@@ -47,6 +51,17 @@ def prepare(instance, runtime, config_dir, unit_dir):
     config = json.loads(config_path.read_text())
     if config["agent"] != instance:
         raise ValueError("configuration belongs to another instance")
+    reference = (source / "execution_gateway/GATEWAY_CETTA_REF").read_text().strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", reference):
+        raise ValueError("runtime has an invalid gateway engine pin")
+    selected = worker if worker is not None else config.get("cetta_worker")
+    try:
+        if selected is None:
+            selected = describe_gateway_worker()["path"]
+        verified = validate_gateway_worker_bundle(selected, expected_ref=reference)
+    except WorkerUnavailable as error:
+        raise ValueError("gateway needs a verified worker for its runtime pin; supply --worker") from error
+    config["cetta_worker"] = str(verified["path"])
     # Only the supplied read adapter imports this runtime's modules. Preserve
     # custom tools, identities, state paths, credentials and effect classes.
     for tool in config["tools"].values():
@@ -110,9 +125,10 @@ def main():
     parser.add_argument("--unit-dir", type=Path, default=config_home / "systemd/user")
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--backup-dir", type=Path)
+    parser.add_argument("--worker", type=Path, help="verified worker matching the deployed runtime's engine pin")
     args = parser.parse_args()
     try:
-        plan = prepare(args.instance, args.runtime_root, args.config_dir, args.unit_dir)
+        plan = prepare(args.instance, args.runtime_root, args.config_dir, args.unit_dir, args.worker)
         if args.apply:
             if args.backup_dir is None:
                 raise ValueError("--apply requires a new --backup-dir")

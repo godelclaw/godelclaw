@@ -50,7 +50,7 @@ class GatewayInstallationTest(unittest.TestCase):
                        "environment": {"PYTHONPATH": "custom-modules"}}}}
         # The deployed copy has no checkout-local .runtime directory. Bind its
         # queue worker explicitly, as a real gateway installation does.
-        self.original["cetta_worker"] = str(resolve_gateway_worker())
+        self.original["cetta_worker"] = str(resolve_gateway_worker(os.environ.get("CETTA_VALUE_WORKER_BIN")))
         (self.runtime / "public.txt").write_text("fixture line\n")
         (self.config / "gateway-alpha.json").write_text(json.dumps(self.original))
         (self.config / "gateway-alpha.env").write_text("PRESERVED=yes\nPYTHONPATH=retired\n")
@@ -58,6 +58,25 @@ class GatewayInstallationTest(unittest.TestCase):
     def plan(self):
         with mock.patch.object(installer, "ROOT", self.source):
             return installer.prepare("alpha", self.runtime, self.config, self.units)
+
+    def test_changed_runtime_pin_requires_an_explicit_verified_worker_rebind(self):
+        from test_gateway_worker_selection import bundle
+        old = bundle(self.base / 'old-worker', 'b' * 40)
+        path = self.config / 'gateway-alpha.json'
+        previous = dict(self.original, cetta_worker=str(old))
+        path.write_text(json.dumps(previous))
+        before = path.read_bytes()
+        with self.assertRaisesRegex(ValueError, 'verified worker'):
+            self.plan()
+        self.assertEqual(path.read_bytes(), before)
+        with mock.patch.object(installer, 'ROOT', self.source):
+            prepared = installer.prepare('alpha', self.runtime, self.config, self.units,
+                                         worker=Path(self.original['cetta_worker']))
+        installer.apply(prepared, self.base / 'rebind-backup')
+        installed = json.loads(path.read_text())
+        expected = json.loads(json.dumps(self.original))
+        expected['tools']['read-lines']['environment']['PYTHONPATH'] = str(self.runtime / 'src')
+        self.assertEqual(installed, expected)
 
     def test_deployed_copy_and_tool_imports_survive_source_removal(self):
         plan = self.plan()

@@ -19,6 +19,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 from execution_gateway import Client, GatewayError  # noqa: E402
+from execution_gateway.cetta_worker import resolve_gateway_worker  # noqa: E402
 from execution_gateway.store import TERMINAL  # noqa: E402
 
 
@@ -103,7 +104,9 @@ class GatewayTest(unittest.TestCase):
         tools["identity"]["credential_files"] = {"TEST_AGENT_TOKEN": str(secret)}
         tools.update(extra_tools or {})
         config = root / "config.json"
-        config.write_text(json.dumps({"agent": agent, "state_directory": str(root), "tools": tools}))
+        selected_worker = resolve_gateway_worker(os.environ.get("CETTA_VALUE_WORKER_BIN"))
+        config.write_text(json.dumps({"agent": agent, "state_directory": str(root), "tools": tools,
+                                      "cetta_worker": str(selected_worker)}))
         log = open(root / "worker.log", "ab")
         env = dict(os.environ, PYTHONPATH=str(ROOT / "src"))
         # The worker is launched independently of every test cognition client.

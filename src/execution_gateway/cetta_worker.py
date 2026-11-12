@@ -239,7 +239,7 @@ class WorkerEvaluationError(RuntimeError):
 
 
 _VALIDATED_WORKERS_LOCK = threading.Lock()
-_VALIDATED_WORKERS: dict[tuple[str, int, int, int, int, str], dict] = {}
+_VALIDATED_WORKERS: dict[tuple[str, str, tuple[tuple[int, int, int, int, int], ...]], dict] = {}
 
 
 def gateway_cetta_ref() -> str:
@@ -282,14 +282,9 @@ def validate_gateway_worker_bundle(
     except OSError as err:
         raise WorkerUnavailable(f"unable to stat gateway worker bundle: {err}") from err
 
-    cache_key = (
-        str(resolved),
-        st.st_dev,
-        st.st_ino,
-        st.st_mtime_ns,
-        st.st_size,
-        f"{pst.st_mtime_ns}:{pst.st_size}:{mst.st_mtime_ns}:{mst.st_size}:{required_ref}",
-    )
+    cache_key = (str(resolved), required_ref,
+                 tuple((s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
+                       for s in (st, pst, mst)))
     with _VALIDATED_WORKERS_LOCK:
         cached = _VALIDATED_WORKERS.get(cache_key)
     if cached is not None:
@@ -373,6 +368,7 @@ def describe_gateway_worker(explicit: str | Path | None = None) -> dict:
         runtime_root / ".runtime/cetta-gateway/cetta-value-worker",
         Path.home() / f".local/lib/pettaclaw/cetta-gateway-{short_ref}/cetta-value-worker",
         Path.home() / f".local/lib/pettaclaw/cetta-ours-{short_ref}/cetta-value-worker",
+        Path.home() / f".local/lib/pettaclaw/cetta-ours-{short_ref}-siwc/cetta-value-worker",
     ]
     errors: list[str] = []
     for candidate in candidates:
