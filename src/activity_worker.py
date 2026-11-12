@@ -256,16 +256,20 @@ class Controller:
             "worker.sqlite3", "worker.sqlite3-wal", "worker.sqlite3-shm"])
 
     def model_environment(self, identity, directory, value):
-        # Only provider configuration enters this isolated model process.
+        # Provider settings and the configured native policy resource enter
+        # this isolated process. Its engine comes from the controller, never
+        # the captured model request or another ambient engine selection.
         names = ("PATH", "LANG", "LC_ALL", "PYTHONHOME", "LD_LIBRARY_PATH", "SSL_CERT_FILE",
                  "SYNTHETIC_API_KEY", "SYNTHETIC_BASE_URL", "OPENAI_API_KEY", "OPENAI_BASE_URL",
-                 "KIMI_API_KEY", "KIMI_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL")
+                 "KIMI_API_KEY", "KIMI_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL",
+                 "METTACLAW_INPUT_LEDGER_SOCKET")
         env = {k: os.environ[k] for k in names if k in os.environ}
         for name in ("REQUESTS_PER_HOUR", "OUTPUT_TOKENS_PER_DAY", "FAILURES_PER_WINDOW",
                      "FAILURE_WINDOW_SECONDS", "QUOTA_COOLDOWN_SECONDS"):
             key = "METTACLAW_LLM_" + name
             if key in os.environ: env[key] = os.environ[key]
-        env.update(PYTHONPATH=os.pathsep.join([str(ROOT / "src"), str(ROOT / "modes"), str(ROOT / "modes/iter")]),
+        env.update(CETTA_BIN=str(self.args.engine),
+            PYTHONPATH=os.pathsep.join([str(ROOT / "src"), str(ROOT / "modes"), str(ROOT / "modes/iter")]),
             METTACLAW_ACTIVE_ENGINE="cetta", METTACLAW_ENGINE="cetta", METTACLAW_LLM_TRANSPORT="native",
             METTACLAW_LLM_POLICY=os.environ.get("METTACLAW_LLM_POLICY", "managed"),
             METTACLAW_LLM_POLICY_PATH=os.environ.get("METTACLAW_LLM_POLICY_PATH", ""),

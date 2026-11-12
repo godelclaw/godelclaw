@@ -17,6 +17,7 @@ import tempfile
 import threading
 import time
 import unittest
+import native_ledger
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVICE = os.environ.get("CETTA_ACTIVITY_SERVICE")
@@ -60,8 +61,8 @@ class Fixture:
 
 
 class Pilot:
-    def __init__(self, directory, fixture):
-        self.root = Path(directory); self.fixture = fixture
+    def __init__(self, directory, fixture, ledger_socket):
+        self.root = Path(directory); self.fixture = fixture; self.ledger_socket = ledger_socket
         for name in ("journal", "worker", "budget"): (self.root / name).mkdir(mode=0o700)
         self.socket = self.root / "worker.sock"
         self.listener = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
@@ -95,6 +96,7 @@ class Pilot:
                 env.pop(key)
         env.update(SYNTHETIC_API_KEY="fixture-only", SYNTHETIC_BASE_URL=
             "http://127.0.0.1:%d/v1" % self.fixture.server.server_port,
+            METTACLAW_INPUT_LEDGER_SOCKET=self.ledger_socket,
             METTACLAW_LLM_POLICY="managed", METTACLAW_LLM_REQUESTS_PER_HOUR="100",
             METTACLAW_LLM_OUTPUT_TOKENS_PER_DAY="100000", METTACLAW_LLM_STREAM="0")
         python = sys.executable
@@ -183,7 +185,8 @@ class RuntimeTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(); self.addCleanup(temporary.cleanup)
         fixture = Fixture(); self.addCleanup(fixture.close)
-        self.p = Pilot(temporary.name, fixture); self.addCleanup(self.p.close)
+        ledger_socket = native_ledger.start(self, Path(temporary.name) / 'model-policy')
+        self.p = Pilot(temporary.name, fixture, ledger_socket); self.addCleanup(self.p.close)
 
     def test_delayed_model_and_tool_leave_input_interactive_call_and_periodic_work_responsive(self):
         p = self.p
@@ -242,14 +245,21 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual((authority, result["status"], result["value"]), ("late", "completed", "answer:slow-cancel"))
         self.assertEqual(p.fixture.count("slow-cancel"), 1)
 
-    def test_lost_transport_is_unknown_and_an_identical_prompt_is_not_reissued(self):
+    def test_lost_transport_is_retained_for_the_same_request_identity(self):
         p = self.p; p.model("lost-transport", "dropped-response")
         _, _, result = p.result("lost-transport", 8)
         self.assertEqual((result["status"], result["reason"]), ("unknown", "transport-error"))
-        p.model("attempt-replay", "dropped-response")
-        _, _, retry = p.result("attempt-replay", 8)
-        self.assertEqual((retry["status"], retry["reason"]), ("failed", "provider-outcome-unknown"))
+        # Retry the actual input identity. Equal prompt text in a new input
+        # is independent work, not proof that an old operation was replayed.
+        p.model("lost-transport", "dropped-response")
+        start = p.record("notice", "retry-barrier", "same request observed again")
+        p.wait(lambda line: line.startswith("result retry-barrier "), after=start)
         self.assertEqual(p.fixture.count("dropped-response"), 1)
+        self.assertEqual(sum(line.startswith("result lost-transport ") for _, line in p.lines), 1)
+        p.model("independent-request", "dropped-response")
+        _, _, independent = p.result("independent-request", 8)
+        self.assertEqual((independent["status"], independent["reason"]), ("unknown", "transport-error"))
+        self.assertEqual(p.fixture.count("dropped-response"), 2)
 
 
 if __name__ == "__main__": unittest.main(verbosity=2)

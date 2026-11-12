@@ -21,6 +21,20 @@ class CacheTests(unittest.TestCase):
         self.cache = Cache(self.path, "version", retained=2)
         self.addCleanup(lambda: self.cache.close())
 
+    def test_model_process_keeps_its_configured_ledger_and_controller_engine(self):
+        controller = Controller.__new__(Controller)
+        controller.args = SimpleNamespace(engine=self.path / 'bundle/cetta', budget=self.path / 'budget',
+                                         parallel=3, reserve_interactive=1, max_tokens=64)
+        with mock.patch.dict(os.environ, {'METTACLAW_INPUT_LEDGER_SOCKET': '/fixture/policy.sock',
+                                         'CETTA_BIN': '/unrelated/cetta',
+                                         'CETTA_VALUE_WORKER_BIN': '/unrelated/cetta-value-worker',
+                                         'METTACLAW_ENGINE_STATE_PATH': '/unrelated/state'}):
+            env = controller.model_environment('owned-call', self.path, dict(lane='background', model='hf:fixture'))
+        self.assertEqual(env['METTACLAW_INPUT_LEDGER_SOCKET'], '/fixture/policy.sock')
+        self.assertEqual(env['CETTA_BIN'], str(controller.args.engine))
+        self.assertNotIn('CETTA_VALUE_WORKER_BIN', env)
+        self.assertEqual(env['METTACLAW_ENGINE_STATE_PATH'], str(self.path / 'engine_state.json'))
+
     def test_started_job_recovers_unknown_without_becoming_runnable(self):
         self.cache.add("call", "captured", "background"); self.cache.start("call")
         self.cache.close(); self.cache = Cache(self.path, "version")
