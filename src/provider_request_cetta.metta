@@ -70,6 +70,8 @@
 (: preq:number (-> %Undefined% %Undefined%))
 (: preq:object (-> %Undefined% %Undefined%))
 (: preq:observation (-> %Undefined% %Undefined% %Undefined%))
+(: preq:parts-observation (-> %Undefined% %Undefined% %Undefined%))
+(: preq:prompt-parts (-> %Undefined% %Undefined% %Undefined%))
 (: preq:pair (-> %Undefined% %Undefined% %Undefined%))
 (: preq:parse (-> %Undefined% %Undefined%))
 (: preq:prefix-legacy (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
@@ -318,7 +320,12 @@
        (preq:cons (preq:object ((preq:pair "chars" (preq:number (preq:repr (str:codepoint-count $part))))
                               (preq:pair "digest" (preq:string (str:sha256 $part)))))
                   (preq:text-profile (preq:tail $parts))))))
+; A prompt is split into its parts once; every consumer reads the parts.
+(= (preq:prompt-parts $prompt $frame)
+   (case $frame (((ProviderRoleFrameV1 $messages $points) RolePromptV1) ($legacy (preq:split $prompt)))))
 (= (preq:observation $prompt $frame)
+   (preq:parts-observation (preq:prompt-parts $prompt $frame) $frame))
+(= (preq:parts-observation $parts $frame)
    (case $frame
      (((ProviderRoleFrameV1 $messages $points)
        (let* (($stable (preq:trusted-texts $messages)) ($prefix (str:join "" $stable))
@@ -330,7 +337,7 @@
            (preq:pair "stable_digest" (preq:string (str:sha256 $prefix)))
            (preq:pair "blocks" (preq:array $all))))))
       ($legacy
-       (let* (((ProviderPromptPartsV1 $stable $user) (preq:split $prompt)) ($prefix (str:join "" $stable)))
+       (let* (((ProviderPromptPartsV1 $stable $user) $parts) ($prefix (str:join "" $stable)))
          (preq:object ((preq:pair "stable_chars" (preq:number (preq:repr (str:codepoint-count $prefix))))
            (preq:pair "dynamic_chars" (preq:number (preq:repr (str:codepoint-count $user))))
            (preq:pair "stable_digest" (preq:string (str:sha256 $prefix)))
@@ -373,24 +380,24 @@
      (if (== $parts ()) $request
        (let $key (preq:cache-key "openai" $model (preq:head $parts))
          (preq:put $request "cache_key" (preq:string $key))))))
-(= (preq:legacy-request $protocol $model $tokens $prompt $tool $ttl)
-   (let* (((ProviderPromptPartsV1 $stable $user) (preq:split $prompt)) ($header (preq:header $model $tokens)))
+(= (preq:legacy-request $protocol $model $tokens $parts $tool $ttl)
+   (let* (((ProviderPromptPartsV1 $stable $user) $parts) ($header (preq:header $model $tokens)))
      (if (== $protocol "anthropic") (preq:anthropic-legacy $header $stable $user $ttl)
        (if (== $protocol "responses") (preq:responses-legacy $header $model $stable $user)
          (if (== $tool JsonNull) (preq:prefix-legacy $header $model $stable $user)
            (preq:commentary-legacy $header $stable $user))))))
-(= (preq:base-command $protocol $model $tokens $prompt $frame $tool $ttl)
+(= (preq:base-command $protocol $model $tokens $parts $frame $tool $ttl)
    (case $frame
      (((ProviderRoleFrameV1 $messages $points) (preq:role-request $protocol $model $tokens $messages $ttl))
-      ($legacy (preq:legacy-request $protocol $model $tokens $prompt $tool $ttl)))))
+      ($legacy (preq:legacy-request $protocol $model $tokens $parts $tool $ttl)))))
 (= (preq:tag-texts $texts)
    (if (== $texts ()) () (preq:cons (preq:string (preq:head $texts)) (preq:tag-texts (preq:tail $texts)))))
 (= (preq:anthropic-command-options $protocol $request $ttl)
    (if (== $protocol "anthropic")
      (let $cached (preq:put $request "cache_system" (preq:bool True))
        (if (== $ttl "5m") $cached (preq:put $cached "cache_ttl" (preq:string $ttl)))) $request))
-(= (preq:command-request $protocol $model $tokens $effort $prompt $frame $tool $ttl)
-   (let* (($base (preq:base-command $protocol $model $tokens $prompt $frame $tool $ttl))
+(= (preq:command-request $protocol $model $tokens $effort $parts $frame $tool $ttl)
+   (let* (($base (preq:base-command $protocol $model $tokens $parts $frame $tool $ttl))
           ($reasoned (if (preq:member? $effort ("default" "" "None")) $base
                         (preq:put $base "reasoning" (preq:object ((preq:pair "effort" (preq:string $effort))))))))
      (if (== $tool JsonNull) $reasoned
@@ -403,15 +410,16 @@
         ($valid
          (if (and (== $protocol "anthropic") (not (preq:member? $ttl ("5m" "1h"))))
            (ProviderPreparationRefusedV1 invalid-cache-ttl)
-           (let* (($request (preq:command-request $protocol $model $tokens $effort $prompt $frame $tool $ttl))
+           (let* (($parts (preq:prompt-parts $prompt $frame))
+                  ($request (preq:command-request $protocol $model $tokens $effort $parts $frame $tool $ttl))
                   ($encoding (if (or (not (== $frame LegacyPrompt))
                                 (or (== $protocol "anthropic") (or (== $protocol "responses") (not (== $tool JsonNull)))))
                               "messages" "default"))
                   ($cache (case $frame
                     (((ProviderRoleFrameV1 $messages $points) (ProviderCacheRolesV1 $messages $points))
-                     ($legacy (let (ProviderPromptPartsV1 $stable $user) (preq:split $prompt)
+                     ($legacy (let (ProviderPromptPartsV1 $stable $user) $parts
                                 (ProviderCacheRegionsV1 (preq:boundaries $stable)))))))
-                  ($profile (preq:observation $prompt $frame)))
+                  ($profile (preq:parts-observation $parts $frame)))
              (PreparedProviderCommandV1 $request $encoding $cache $profile))))))))
 
 (= (preq:truthy $value)
