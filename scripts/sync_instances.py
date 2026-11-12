@@ -14,6 +14,7 @@ import sys
 import time
 
 import update_instances as updater
+import cetta_source_snapshot
 
 
 def selection(config, config_path):
@@ -103,18 +104,36 @@ def main():
     parser.add_argument('--config', type=Path,
                         default=Path.home()/'.config/godelclaw/instances.json')
     parser.add_argument('--source', type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument('--source-snapshot', type=Path,
+                        help='freeze committed inputs without depending on working checkout edits')
+    parser.add_argument('--ref', help='commit to freeze with --source-snapshot; defaults to HEAD')
     parser.add_argument('--status', action='store_true', help='compare shared code without changing anything')
     parser.add_argument('--apply', action='store_true', help='activate after the configured offline checks')
     args = parser.parse_args()
     config_path = args.config.resolve()
     config = json.loads(config_path.read_text())
     source = args.source.resolve()
+    repository = source
     selection_path, names, removed = selection(config, config_path)
+    revision = None
+    if args.ref and not args.source_snapshot:
+        parser.error('--ref requires --source-snapshot')
+    if args.source_snapshot:
+        try:
+            relative_selection = selection_path.resolve().relative_to(repository)
+        except ValueError:
+            parser.error('the committed snapshot selection must be inside --source')
+        revision = subprocess.check_output(['git', 'rev-parse', '--verify',
+            (args.ref or 'HEAD') + '^{commit}'], cwd=repository, text=True).strip()
+        source = cetta_source_snapshot.materialize(repository, revision, args.source_snapshot)
+        frozen_config = dict(config, selection=str(source / relative_selection))
+        selection_path, names, removed = selection(frozen_config, config_path)
     hashes, status = compare(source, config, names, removed)
     if args.status:
         print(json.dumps({'instances': status}, indent=2))
         return 0
-    revision = committed_source(source, names)
+    if not args.source_snapshot:
+        revision = committed_source(source, names)
     if args.apply and not any(item['different'] for item in status) and runtime_current(config):
         print(json.dumps({'status': 'current', 'instances': status}))
         return 0
@@ -137,10 +156,10 @@ def main():
         manifest_path.write_text(json.dumps(manifest, indent=2)+'\n')
     # Verify the actual copy too: a concurrent edit between preflight and
     # copying must never inherit the earlier commit's provenance.
-    verify_committed_files(source, revision, release, names)
+    verify_committed_files(repository, revision, release, names)
     manifest = json.loads((release / 'manifest.json').read_text())
     if manifest.get('source_commit') and manifest['source_commit'] != revision:
-        verify_committed_files(source, manifest['source_commit'], release, names)
+        verify_committed_files(repository, manifest['source_commit'], release, names)
     receipt = base/('activation-'+str(time.time_ns()))
     command = [sys.executable, str(scripts/'update_instances.py'), '--plan', str(config_path),
                '--release', str(release), '--receipt-dir', str(receipt)]
