@@ -6,6 +6,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -23,22 +24,27 @@ class ContextContinuityTest(unittest.TestCase):
         self.log = pathlib.Path(self.temporary.name) / "updates.jsonl"
         self.history = pathlib.Path(self.temporary.name) / "history.metta"
         self.old_log = telegram._log_path
-        self.old_frontier = telegram._context_frontier_bytes
-        self.old_excluded = set(telegram._current_batch_update_ids)
         telegram._log_path = str(self.log)
-        telegram._context_frontier_bytes = None
-        telegram._current_batch_update_ids = set()
+        published = mock.patch.dict(telegram._published, dict(telegram._published))
+        published.start()
+        self.addCleanup(published.stop)
         self.old_history = os.environ.get("METTACLAW_HISTORY_PATH")
         os.environ["METTACLAW_HISTORY_PATH"] = str(self.history)
+        self.old_health = os.environ.get("METTACLAW_TELEGRAM_HEALTH_PATH")
+        os.environ["METTACLAW_TELEGRAM_HEALTH_PATH"] = str(pathlib.Path(self.temporary.name) / "health.json")
+        telegram._client_seen = None
 
     def tearDown(self):
         telegram._log_path = self.old_log
-        telegram._context_frontier_bytes = self.old_frontier
-        telegram._current_batch_update_ids = self.old_excluded
         if self.old_history is None:
             os.environ.pop("METTACLAW_HISTORY_PATH", None)
         else:
             os.environ["METTACLAW_HISTORY_PATH"] = self.old_history
+        if self.old_health is None:
+            os.environ.pop("METTACLAW_TELEGRAM_HEALTH_PATH", None)
+        else:
+            os.environ["METTACLAW_TELEGRAM_HEALTH_PATH"] = self.old_health
+        telegram._client_seen = None
 
     def append(self, **fields):
         record = {
@@ -59,10 +65,13 @@ class ContextContinuityTest(unittest.TestCase):
             stream.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     def prepare(self, update_ids):
-        """What the MeTTa client publishes when it prepares a batch: the
-        ledger's end as the context frontier, and the batch's update ids."""
-        telegram.metta_publish("context_frontier", self.log.stat().st_size)
-        telegram.metta_publish("batch_update_ids", ",".join(update_ids))
+        """What the MeTTa client of this process publishes when it prepares a
+        batch: the ledger's end as the context frontier, and its update ids."""
+        path = pathlib.Path(telegram._client_path())
+        fresh = path.with_name(path.name + ".tmp")
+        fresh.write_text(json.dumps({"pid": os.getpid(), "context_frontier": self.log.stat().st_size,
+                                     "batch_update_ids": ",".join(update_ids)}), encoding="utf-8")
+        os.replace(fresh, path)
 
     def test_window_is_causal_and_current_batch_appears_once(self):
         self.append(update_id=10, message_id=10, text="prior human")
@@ -113,7 +122,9 @@ class ContextContinuityTest(unittest.TestCase):
 
     def test_future_edit_cannot_cross_the_context_frontier(self):
         self.append(update_id=50, message_id=10, text="visible now")
-        telegram._context_frontier_bytes = self.log.stat().st_size
+        frontier = mock.patch.object(telegram, "_context_frontier_bytes", self.log.stat().st_size)
+        frontier.start()
+        self.addCleanup(frontier.stop)
         self.append(update_id=51, kind="edited_message", message_id=10,
                     text="future revision")
         window = telegram.conversation_window()

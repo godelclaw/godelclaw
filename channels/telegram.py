@@ -1,4 +1,5 @@
 import os
+import fcntl
 import hashlib
 import json
 import math
@@ -23,12 +24,7 @@ except ImportError:
 _token = ""
 _allowed_chat_ids = set()
 _last_chat_id = ""
-_reply_chat_id = ""
 _primary_chat_id = ""
-_activity_epoch = 0
-_context_activity_epoch = 0
-_context_frontier_bytes = None
-_current_batch_update_ids = set()
 _offset_path = ""
 # "durable" makes a CeTTa channel service the bot's only poller and sender,
 # for the MeTTa client; "bot-api" leaves the client disabled.
@@ -44,10 +40,7 @@ _log_lock = threading.Lock()
 _energy_lock = threading.RLock()
 _chat_titles = {}  # chat_id -> last-seen display title (for outbound records)
 # Rest state, as the MeTTa client publishes it.
-_sleep_until = 0.0          # epoch when the current rest ends; 0 = awake
 _health_lock = threading.RLock()
-_health_state = {}
-_health_last_write = 0.0
 _effect_lock = threading.RLock()
 _effect_turn = None
 _effect_activity_epoch = None
@@ -93,36 +86,44 @@ def _health_path():
                         "telegram-health.json")
 
 
-def _health_update(force=False, **fields):
-    """Atomically publish non-secret liveness facts for an external monitor."""
-    global _health_last_write
-    now = time.time()
+def _health_update(**fields):
+    """Merge non-secret liveness facts into the health file an external
+    monitor reads. The MeTTa client merges its own facts into the same file,
+    so each writer adds only the facts it was given, under the file's lock."""
+    path = _health_path()
     with _health_lock:
-        _health_state.update(fields)
-        _health_state["observed_at"] = now
-        if not force and now - _health_last_write < 15:
-            return
-        path = _health_path()
-        directory = os.path.dirname(path) or "."
         try:
-            os.makedirs(directory, exist_ok=True)
-            fd, tmp = tempfile.mkstemp(prefix=".telegram-health-",
-                                       dir=directory, text=True)
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            lock = os.open(path + ".lock", os.O_CREAT | os.O_WRONLY | os.O_APPEND, 0o600)
             try:
-                os.fchmod(fd, 0o600)
-                with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                    json.dump(_health_state, fh, sort_keys=True)
-                    fh.write("\n")
-                    fh.flush()
-                    os.fsync(fh.fileno())
-                os.replace(tmp, path)
-            except Exception:
+                fcntl.flock(lock, fcntl.LOCK_EX)
                 try:
-                    os.unlink(tmp)
-                except OSError:
-                    pass
-                raise
-            _health_last_write = now
+                    with open(path, encoding="utf-8") as stream:
+                        state = json.load(stream)
+                except (OSError, ValueError):
+                    state = {}
+                if not isinstance(state, dict):
+                    state = {}
+                state.update(fields)
+                state["observed_at"] = time.time()
+                fd, tmp = tempfile.mkstemp(prefix=".telegram-health-",
+                                           dir=os.path.dirname(path) or ".", text=True)
+                try:
+                    os.fchmod(fd, 0o600)
+                    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                        json.dump(state, fh, sort_keys=True)
+                        fh.write("\n")
+                        fh.flush()
+                        os.fsync(fh.fileno())
+                    os.replace(tmp, path)
+                except BaseException:
+                    try:
+                        os.unlink(tmp)
+                    except OSError:
+                        pass
+                    raise
+            finally:
+                os.close(lock)
         except OSError as exc:
             print("[telegram] health write failed:", type(exc).__name__)
 
@@ -616,11 +617,11 @@ RUNTIME_CHAT = "runtime"
 def enqueue_runtime_event(text, reason="runtime event", *, identity=None):
     """Deliver a runtime event as ordinary activity for the next turn and end
     any rest.  A plain send afterwards still goes where it would have."""
-    global _activity_epoch
     identity = _runtime_id("runtime:" + uuid.uuid4().hex if identity is None else identity)
     import input_ack
     if input_ack.already_committed(identity): return True
-    if identity in _current_batch_update_ids: return True
+    _sync()
+    if identity in _value("_current_batch_update_ids"): return True
     with _metta_lock:
         if any(e.get("update_id") == identity for e in _metta_events): return True
         _metta_events.append({"chat": RUNTIME_CHAT, "text": "[runtime] " + str(text), "from_bot": False,
@@ -647,9 +648,10 @@ def current_batch_identity():
     therefore has the same identity, while any newly included occurrence
     changes it.
     """
+    _sync()
     with _msg_lock:
-        epoch = int(_context_activity_epoch)
-        identities = sorted(str(value) for value in _current_batch_update_ids)
+        epoch = int(_value("_context_activity_epoch"))
+        identities = sorted(str(value) for value in _value("_current_batch_update_ids"))
     payload = (str(epoch) + "\0" + "\0".join(identities)).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
 
@@ -708,6 +710,7 @@ def conversation_window(max_chars=30000, max_events=48,
     Deterministic slash-command chatter remains auditable in the ledger but is
     not conversation.
     """
+    _sync()
     try:
         limit = max(1000, int(max_chars))
         event_limit = max(1, int(max_events))
@@ -715,8 +718,8 @@ def conversation_window(max_chars=30000, max_events=48,
         if not _log_path or not os.path.exists(_log_path):
             return route_view() + "\n\n(no prior conversation events)"
         with _msg_lock:
-            frontier = _context_frontier_bytes
-            excluded = set(_current_batch_update_ids)
+            frontier = _value("_context_frontier_bytes")
+            excluded = set(_value("_current_batch_update_ids"))
         with _log_lock:
             size = os.path.getsize(_log_path)
             end = size if frontier is None else min(size, int(frontier))
@@ -1198,13 +1201,13 @@ def _register_menu_commands():
         payload = response.json()
         if not payload.get("ok", False):
             raise RuntimeError("Telegram rejected the command menu")
-        _health_update(force=True, menu_status="ok",
+        _health_update(menu_status="ok",
                        menu_registered_at=time.time())
     except Exception as exc:
         # Menu discoverability is not allowed to take down message polling;
         # typed slash commands continue to work and the health watch records
         # registration failures from the service journal.
-        _health_update(force=True, menu_status="error",
+        _health_update(menu_status="error",
                        menu_error_at=time.time(),
                        menu_error_type=type(exc).__name__)
         print("[telegram] command menu registration failed:",
@@ -1220,6 +1223,7 @@ def _register_menu_commands():
 # an answer must be current (the unread-input guard on sends).
 
 _metta = {}
+_client_seen = None
 _metta_lock = threading.Lock()
 _metta_events = []
 _handover_offered = set()
@@ -1320,60 +1324,75 @@ def handover_ack(ids):
     return 1
 
 
-_METTA_SHARED = ("pending_count", "prepared_count", "sleep_until", "last_poll")
+# What this process's MeTTa client last published (_sync takes it up from its
+# file). Other modules read these under their own names, which stay out of the
+# module's globals so that a read always goes through __getattr__; a test may
+# assign one, and its value then stands for this module's code too.
+_published = {"_reply_chat_id": "", "_activity_epoch": 0, "_context_activity_epoch": 0,
+              "_context_frontier_bytes": None, "_current_batch_update_ids": frozenset()}
+
+
+def _value(name):
+    """A published value: a test's assignment if one stands, else the client's."""
+    if name in globals():
+        return globals()[name]
+    _sync()
+    return _published[name]
+
+
+def __getattr__(name):
+    if name in _published:
+        return _value(name)
+    raise AttributeError("module %r has no attribute %r" % (__name__, name))
+
+
+def _client_path():
+    """The file beside the health file where the MeTTa client publishes."""
+    health = _health_path()
+    return (health[:-5] if health.endswith(".json") else health) + ".client.json"
+
+
+def _sync():
+    """Take up what the MeTTa client of this process last published, once its
+    file changed. It rewrites the file whole, so a new identity is a new
+    value; another process's client is read through metta_value only."""
+    global _client_seen
+    try:
+        status = os.stat(_client_path())
+    except OSError:
+        return
+    seen = (status.st_ino, status.st_mtime_ns, status.st_size)
+    if seen == _client_seen:
+        return
+    try:
+        with open(_client_path(), encoding="utf-8") as stream:
+            published = json.load(stream)
+    except (OSError, ValueError):
+        return
+    if not isinstance(published, dict):
+        return
+    with _msg_lock:
+        _client_seen = seen
+        _metta.clear()
+        _metta.update(published)
+        if published.get("pid") != os.getpid():
+            return
+        frontier = published.get("context_frontier")
+        _published.update(
+            _reply_chat_id=str(published.get("reply_chat") or ""),
+            _activity_epoch=int(published.get("activity_epoch") or 0),
+            _context_activity_epoch=int(published.get("context_epoch") or 0),
+            _context_frontier_bytes=None if frontier is None else int(frontier),
+            _current_batch_update_ids=frozenset(v for v in str(published.get("batch_update_ids") or "").split(",") if v))
+        titles = published.get("titles")
+        if isinstance(titles, dict):
+            _chat_titles.update({str(chat): str(title) for chat, title in titles.items()})
 
 
 def metta_value(name, default=None):
-    """What the MeTTa client published: here if it runs in this process, else
-    from the health file it keeps, as the command responder reads it."""
-    if name in _metta:
-        return _metta[name]
-    try:
-        with open(_health_path(), encoding="utf-8") as stream:
-            return (json.load(stream).get("metta") or {}).get(name, default)
-    except (OSError, ValueError):
-        return default
-
-
-def metta_publish(name, value):
-    global _context_frontier_bytes, _current_batch_update_ids, _sleep_until
-    global _reply_chat_id, _activity_epoch, _context_activity_epoch
-    name = str(name)
-    _metta[name] = value
-    if name in _METTA_SHARED:
-        with _health_lock:
-            shared = dict(_health_state.get("metta") or {})
-            shared[name] = value
-        _health_update(force=name == "sleep_until", metta=shared)
-    if name == "context_frontier":
-        _context_frontier_bytes = int(value)
-    elif name == "batch_update_ids":
-        _current_batch_update_ids = {v for v in str(value).split(",") if v}
-    elif name == "batch_tasks":
-        pass
-    elif name == "sleep_until":
-        _sleep_until = float(value)
-        if _sleep_until:
-            _health_update(force=True, loop_status="waiting",
-                           waiting_since=time.time(), waiting_until=_sleep_until)
-        else:
-            _health_update(force=True, loop_status="awake", waiting_until=0.0,
-                           last_wait_completed_at=time.time())
-    elif name == "reply_chat":
-        _reply_chat_id = str(value)
-    elif name == "activity_epoch":
-        with _msg_lock:
-            _activity_epoch = int(value)
-    elif name == "context_epoch":
-        with _msg_lock:
-            _context_activity_epoch = int(value)
-    elif name == "last_poll":
-        _health_update(poll_status="ok", last_poll_ok_at=float(value))
-    elif name == "title":
-        chat, _, title = str(value).partition(":")
-        if chat:
-            _chat_titles[chat] = title
-    return 1
+    """What the MeTTa client published, in this process or another."""
+    _sync()
+    return _metta.get(name, default)
 
 
 def _metta_unread_chats():
@@ -1383,7 +1402,8 @@ def _metta_unread_chats():
     path = os.environ.get("METTACLAW_TELEGRAM_SERVICE_SOCKET", "")
     if not path:
         return None
-    prepared = set(_current_batch_update_ids)
+    _sync()
+    prepared = set(_value("_current_batch_update_ids"))
     unread = set()
     try:
         for task, observation in durable_telegram.Channel(path, os.devnull).iter_pending():
@@ -1520,7 +1540,7 @@ def start_telegram(token="", chat_id=""):
         for key, entry in _durable_outbox.entries.items():
             if entry:
                 _durable_pending[key] = dict(entry, seen=set())
-    _health_update(force=True, running=True, started_at=time.time(),
+    _health_update(running=True, started_at=time.time(),
                    client="metta", menu_status="pending", poll_status="starting")
     threading.Thread(target=_register_menu_commands, daemon=True).start()
     _recover_pending_attachments()
@@ -1528,6 +1548,7 @@ def start_telegram(token="", chat_id=""):
 
 
 def _reply_target(chat_id=""):
+    _sync()
     if chat_id:
         return str(chat_id)
     with _msg_lock:
@@ -1536,11 +1557,12 @@ def _reply_target(chat_id=""):
         # from". Other audiences remain available through the explicit
         # addressed send. Deployments without a configured primary retain the
         # legacy reply behavior.
-        return _primary_chat_id or _reply_chat_id or _last_chat_id
+        return _primary_chat_id or _value("_reply_chat_id") or _last_chat_id
 
 
 def route_view():
     """Project the actual default-send rule into model context."""
+    _sync()
     with _msg_lock:
         if _primary_chat_id:
             title = _chat_titles.get(_primary_chat_id, "primary operator")
@@ -1550,7 +1572,7 @@ def route_view():
                 '"message"). Reading another chat cannot change this route.'
                 % (title, _primary_chat_id)
             )
-        current = _reply_chat_id or _last_chat_id
+        current = _value("_reply_chat_id") or _last_chat_id
         return (
             "TELEGRAM ROUTE: no primary chat is configured; plain (send ...) "
             "uses the current reply chat%s. Prefer an explicit addressed "
@@ -1568,6 +1590,7 @@ def _log_outbound(chat_id, text, message_id=None):
     so if the id is not captured here it is lost, and `deleteMessage` has
     nothing to aim at. That gap is why a "clean up the test message" request
     turned into a long hunt for an id that was never stored."""
+    _sync()
     if not _log_path:
         return
     try:
@@ -1666,13 +1689,14 @@ def begin_effect_turn(turn):
     reduction while resolving later goals, but an already attempted external
     send must not become a second Telegram message.
     """
+    _sync()
     global _effect_turn, _effect_activity_epoch
     turn = str(turn)
     # The context frontier was fixed atomically with the activity drain. A
     # message received after that drain must not be laundered into this turn by
     # capturing the newer live epoch here.
     with _msg_lock:
-        context_epoch = _context_activity_epoch
+        context_epoch = _value("_context_activity_epoch")
     import attention
     if attention.enabled():
         _metta_unread_chats()
@@ -1682,7 +1706,7 @@ def begin_effect_turn(turn):
             _effect_activity_epoch = context_epoch
             _effect_sends.clear()
         stimulus_frontier.publish(
-            turn, _effect_activity_epoch, _activity_epoch
+            turn, _effect_activity_epoch, _value("_activity_epoch")
         )
     return turn
 

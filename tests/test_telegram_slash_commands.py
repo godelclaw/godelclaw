@@ -47,8 +47,7 @@ class SlashCommandTest(unittest.TestCase):
         self.previous_fuel_path = os.environ.get("METTACLAW_FUEL_MODE_PATH")
         os.environ["METTACLAW_FUEL_MODE_PATH"] = os.path.join(
             self.tmp.name, "fuel_mode.json")
-        telegram._health_state.clear()
-        telegram._health_last_write = 0.0
+        telegram._client_seen = None
         telegram._allowed_chat_ids = set()
         telegram._primary_chat_id = ""
         telegram._log_path = os.path.join(
@@ -297,7 +296,7 @@ class SlashCommandTest(unittest.TestCase):
             telegram._register_menu_commands()
 
     def test_health_file_has_liveness_but_no_credentials(self):
-        telegram._health_update(force=True, poll_status="ok",
+        telegram._health_update(poll_status="ok",
                                 last_poll_ok_at=123.0)
         with open(os.environ["METTACLAW_TELEGRAM_HEALTH_PATH"],
                   encoding="utf-8") as fh:
