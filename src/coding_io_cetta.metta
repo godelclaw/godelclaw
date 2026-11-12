@@ -342,9 +342,14 @@
      (if (cio:failed? $reader) ""
        (let* (($bytes (cio:read-up-to $reader $limit ()))
               ($_ (fs:close $reader))
-              ($decoder (str:utf8-new replace)))
+              ($decoder (cio:replacing-decoder)))
          (case (str:utf8-feed $decoder $bytes True)
            (((Utf8DecodedV1 $text $next) $text) ($other "")))))))
+; U+FFFD for malformed bytes; an engine without the replace policy drops
+; them instead, rather than losing the head of the output.
+(= (cio:replacing-decoder)
+   (let $decoder (str:utf8-new replace)
+     (case $decoder (((Utf8DecoderV1 $policy $tail $seen) $decoder) ($refused (str:utf8-new ignore))))))
 (= (cio:read-up-to $reader $left $chunks)
    (if (<= $left 0) (str:join "" (cio:reverse $chunks ()))
      (case (fs:read-chunk $reader $left)

@@ -214,7 +214,12 @@
                                     (path:join $d "executions") (nt:environment $root) 30000 4096)))
           ($cut (cio:execution-finish $d $long "exited" 0 0.1))
           ($_ (nt:require long-output-is-text (nt:equal (str:utf8-error $cut) StrUtf8WellFormedV1)))
-          ($_ (nt:require head-malformed-replaced (nt:contains $cut "head��mark")))
+          ;; U+FFFD where the engine has the replace policy; dropped bytes, but
+          ;; never a lost head, where it has not.
+          ($_ (nt:require head-malformed-shown
+                (case (str:utf8-new replace)
+                  (((Utf8DecoderV1 $policy $tail $seen) (nt:contains $cut "head��mark"))
+                   ($older (nt:contains $cut "headmark"))))))
           ($_ (nt:require tail-malformed-replaced (nt:contains $cut "tail�end"))))
      True))
 
