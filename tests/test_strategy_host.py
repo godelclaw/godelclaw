@@ -223,7 +223,6 @@ class StrategyHostTest(unittest.TestCase):
         raw = '((command-batch (pin "note") (send "message")))'
         self.assertEqual(host.normalize_response(raw), '((pin "note") (send "message"))')
         commands = [["pin", "note"], ["send", "message"]]
-        self.assertEqual(host.batch_limit(5, commands), 2)
         self.capture()
         self.assertEqual(host.broker_begin(1, commands, 2), 1)
         self.assertEqual(host.reserve_command(1, commands[0]), 1)
@@ -237,10 +236,6 @@ class StrategyHostTest(unittest.TestCase):
         raw = '((command-batch (pin "note")))'
         with mock.patch.dict(os.environ, {"METTACLAW_OBSERVED_STRATEGY": "0"}):
             self.assertEqual(host.normalize_response(raw), raw)
-
-    def test_count_limit_does_not_decide_dependency_admission(self):
-        self.assertEqual(host.batch_limit(1, [["help", "shell"], ["vitals"]]), 2)
-        self.assertEqual(host.batch_limit(1, [["shell", "mutation"], ["send", "done"]]), 2)
 
     def test_restart_recovers_complete_saved_result_without_repeating(self):
         self.capture()

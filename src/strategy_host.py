@@ -246,12 +246,6 @@ def task_note(text, sources="[]"):
     return task_context.note(ledger(), _focus, str(text), str(sources))
 
 
-def description():
-    return ("TASK_CONTEXT contains the request, earlier calls and their results. Resume the task after interruptions. "
-            "task-history and task-read retrieve older evidence; task-note is an optional scratchpad. "
-            "No disposition or resolution bookkeeping is required. context-policy adjusts the task context target. ")
-
-
 def context_presented(calls):
     """The renderer's list of the calls it is carrying with their results, a JSON array of call ids
     (owner:serial:position); an empty array starts a preparation."""
@@ -350,16 +344,6 @@ def preparation_failed(reason):
     import synthetic_llm
     from admission_frontier import ContextPreparationFailure
     return synthetic_llm._empty_action(ContextPreparationFailure(reason))
-
-
-def batch_limit(requested, commands):
-    return len(commands)
-
-
-def batch_description(requested):
-    return ("Output a ((skillName args) ...) S-expression. Each call runs in order and returns its own result. "
-            "Use another model step when choosing an action requires a result, or express conditional "
-            "work in a script. ")
 
 
 def broker_turn(turn):
