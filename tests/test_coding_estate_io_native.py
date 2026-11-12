@@ -1038,178 +1038,28 @@ class CodingEstateNativeIoTests(unittest.TestCase):
             }
             Path(receipt_target).write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
 
-    def test_find_dependency_missing_unsupported_and_timeout_propagate_unavailable_without_caching_zero(self):
-        # Populate 2 MB runtime payload so valid observation yields "2 MB" (not 0 MB).
+    def test_native_blocks_no_longer_depend_on_an_external_find_or_its_locale(self):
         (self.bundle_current / "two_mb.bin").write_bytes(b"M" * (2 * 1024 * 1024))
-        os.utime(self.bundle_current, (self.pin_ts, self.pin_ts))
-        self.make_session("work-find-ctrl", status="stopped", bundle=self.bundle_current)
-
-        # 1. Missing find binary -> estate:load returns ("unavailable"), and context-bundle:with-views
-        #    marks ONLY coding-sessions unavailable without starving other context sources.
-        missing_find = str(self.directory / "absent-find-binary")
-        res_missing = self.run_native(
-            "!(println! (estate:load))\n",
-            cwd=self.estate,
-            extra_env={"METTACLAW_ESTATE_FIND_BIN": missing_find},
-        )
-        self.assertIn('("unavailable")', res_missing.stdout)
-
-        from test_context_bundle_native import HEADER, guest
-        from test_pins_context_native import q
-
-        instructions = self.estate / "instructions.txt"
-        instructions.write_text("Fixture instructions\n", encoding="utf-8")
-        registry = self.estate / "registry.json"
-        registry.write_text('{"schema":1,"projects":[]}', encoding="utf-8")
-        (self.estate / "history.metta").write_text("", encoding="utf-8")
-        (self.estate / "pins.txt").write_text("pinned note\n", encoding="utf-8")
-        for subdir in ("src", "channels", "tests"):
-            link = self.estate / subdir
-            if not link.exists():
-                link.symlink_to(ROOT / subdir)
-        bundle_out = self.directory / "degraded-bundle.txt"
-        guest(
-            self.estate,
-            HEADER + [
-                "!(import! &self %s)" % self._metta_quote(self.sentinel),
-                "!(py-call (estate_io_sentinel.arm))",
-                "!(import! &self ./src/context_sources_cetta.metta)",
-                "!(py-call (context_bundle_probe.note %s (context-bundle:with-views ())))" % q(bundle_out),
-            ],
-            engine="cetta",
-            runtime_root=self.estate,
-            METTACLAW_PROJECT_ROOT=str(self.estate),
-            METTACLAW_PROMPT_PATH=str(instructions),
-            METTACLAW_PROJECT_REGISTRY_PATH=str(registry),
-            METTACLAW_ITER_PROCESS_DIR=str(self.estate / "transformations"),
-            METTACLAW_OBSERVED_STRATEGY="0",
-            METTACLAW_ESTATE_FIND_BIN=missing_find,
-        )
-        bundle_text = bundle_out.read_text(encoding="utf-8")
-        self.assertIn("SOURCE[coding-sessions] status=unavailable", bundle_text)
-        self.assertIn("SOURCE[project-capabilities] status=known", bundle_text)
-
-        # 2. Unsupported non-GNU find (-printf rejected on exit 1 / exit 2 / non-numeric stdout) -> ("unavailable").
-        fake_unsupported_1 = self.directory / "find_unsupported_exit1"
-        fake_unsupported_1.write_text(
-            "#!/bin/sh\necho \"find: unknown predicate '-printf'\" >&2\nexit 1\n",
-            encoding="utf-8",
-        )
-        fake_unsupported_1.chmod(0o755)
-        fake_unsupported_2 = self.directory / "find_unsupported_exit2"
-        fake_unsupported_2.write_text(
-            "#!/bin/sh\necho \"find: illegal option -- P\" >&2\nexit 2\n",
-            encoding="utf-8",
-        )
-        fake_unsupported_2.chmod(0o755)
-        fake_garbage = self.directory / "find_garbage"
-        fake_garbage.write_text("#!/bin/sh\necho 'not-a-number'\nexit 0\n", encoding="utf-8")
-        fake_garbage.chmod(0o755)
-
-        for bad_find in (fake_unsupported_1, fake_unsupported_2, fake_garbage):
-            res_bad = self.run_native(
-                "!(println! (estate:load))\n",
+        self.make_session("work-native-blocks", status="stopped", bundle=self.bundle_current)
+        marker = self.directory / "find-was-executed"
+        forbidden = self.directory / "find"
+        forbidden.write_text("#!/bin/sh\n: > " + str(marker) + "\nexit 99\n")
+        forbidden.chmod(0o755)
+        for old_override in (str(self.directory / "missing-find"), str(forbidden)):
+            result = self.run_native(
+                '!(println! (estate:load))\n!(println! (eio:local-date 0))\n',
                 cwd=self.estate,
-                extra_env={"METTACLAW_ESTATE_FIND_BIN": str(bad_find)},
+                extra_env={"METTACLAW_ESTATE_FIND_BIN": old_override,
+                           "METTACLAW_ESTATE_FIND_TIMEOUT_MS": "1",
+                           "PATH": str(self.directory) + os.pathsep + self.base_env.get("PATH", "/usr/bin:/bin"),
+                           "LANG": "de_DE.UTF-8", "LC_MESSAGES": "fr_FR.UTF-8", "TZ": "UTC"},
             )
-            self.assertIn('("unavailable")', res_bad.stdout)
-            self.assertNotIn("0 MB", res_bad.stdout)
-
-        # 3. Hung find exceeding timeout -> ("unavailable").
-        fake_hang = self.directory / "find_hang"
-        fake_hang.write_text(
-            "#!%s\nimport time\ntime.sleep(2.0)\n" % sys.executable,
-            encoding="utf-8",
-        )
-        fake_hang.chmod(0o755)
-        res_hang = self.run_native(
-            "!(println! (estate:load))\n",
-            cwd=self.estate,
-            extra_env={
-                "METTACLAW_ESTATE_FIND_BIN": str(fake_hang),
-                "METTACLAW_ESTATE_FIND_TIMEOUT_MS": "150",
-            },
-        )
-        self.assertIn('("unavailable")', res_hang.stdout)
-
-        # 4. Failed find MUST NOT cache an invented 0: within the same process and unchanged
-        #    runtime directory mtime/inode, recovering find yields the true 2 MB count.
-        toggle_flag = self.directory / "find_fail_once.flag"
-        toggle_flag.write_text("fail\n", encoding="utf-8")
-        flaky_find = self.directory / "find_flaky"
-        real_find = "/usr/bin/find" if Path("/usr/bin/find").is_file() else "find"
-        flaky_find.write_text(
-            "#!%s\nimport os, pathlib, sys\n"
-            "flag = pathlib.Path(%r)\n"
-            "if flag.exists():\n"
-            "    flag.unlink()\n"
-            "    sys.stderr.write(\"find: unknown predicate '-printf'\\n\")\n"
-            "    sys.exit(1)\n"
-            "os.execvp(%r, [%r] + sys.argv[1:])\n"
-            % (sys.executable, str(toggle_flag), real_find, real_find),
-            encoding="utf-8",
-        )
-        flaky_find.chmod(0o755)
-        res_recover = self.run_native(
-            "!(let* (($first (estate:load))\n"
-            "        ($second (estate:load)))\n"
-            "   (py-call (estate_io_sentinel.write_text %s (str:join \"\\n===\\n\" ((repr $first) (repr $second))))))\n"
-            % self._metta_quote(self.directory / "recover_out.txt"),
-            cwd=self.estate,
-            extra_env={"METTACLAW_ESTATE_FIND_BIN": str(flaky_find)},
-        )
-        self.assertEqual(res_recover.returncode, 0)
-        first_load, second_load = (self.directory / "recover_out.txt").read_text(encoding="utf-8").split("\n===\n")
-        self.assertEqual(first_load.strip(), '("unavailable")')
-        self.assertIn("runtimes 2 (2 MB;", second_load)
-        self.assertNotIn("(0 MB;", second_load)
-
-        # 5. Child-env C locale isolation: non-English parent locale (LC_ALL/LC_MESSAGES/LANG/LANGUAGE)
-        #    must neither break permission-partial stderr classification nor alter parent local-date TZ,
-        #    while unsupported-utility failure still returns ("unavailable").
-        locale_probe_find = self.directory / "find_locale_probe"
-        locale_probe_find.write_text(
-            "#!%s\nimport os, sys\n"
-            "if (os.environ.get('LC_ALL') != 'C' or os.environ.get('LANG') != 'C'\n"
-            "        or os.environ.get('LANGUAGE') != 'C' or 'LC_MESSAGES' in os.environ):\n"
-            "    sys.stdout.write('4096\\n')\n"
-            "    sys.stderr.write('find: Zugriff verweigert\\n')\n"
-            "    sys.exit(1)\n"
-            "os.execvp(%r, [%r] + sys.argv[1:])\n"
-            % (sys.executable, real_find, real_find),
-            encoding="utf-8",
-        )
-        locale_probe_find.chmod(0o755)
-        non_c_locale_env = {
-            "LANG": "de_DE.UTF-8",
-            "LC_ALL": "de_DE.UTF-8",
-            "LC_MESSAGES": "fr_FR.UTF-8",
-            "LANGUAGE": "de:fr:cs",
-            "TZ": "UTC",
-        }
-        if os.geteuid() != 0:
-            locked = self.bundle_current / "locale-locked"
-            locked.mkdir()
-            os.chmod(locked, 0o000)
-            self.addCleanup(lambda: os.chmod(locked, 0o755))
-            try:
-                res_locale_ok = self.run_native(
-                    "!(println! (estate:load))\n"
-                    "!(println! (eio:local-date 0))\n",
-                    cwd=self.estate,
-                    extra_env={**non_c_locale_env, "METTACLAW_ESTATE_FIND_BIN": str(locale_probe_find)},
-                )
-            finally:
-                os.chmod(locked, 0o755)
-            self.assertIn("runtimes 2 (2 MB;", res_locale_ok.stdout)
-            self.assertIn('"1970-01-01"', res_locale_ok.stdout)
-
-        res_locale_fail = self.run_native(
-            "!(println! (estate:load))\n",
-            cwd=self.estate,
-            extra_env={**non_c_locale_env, "METTACLAW_ESTATE_FIND_BIN": str(fake_unsupported_1)},
-        )
-        self.assertIn('("unavailable")', res_locale_fail.stdout)
+            self.assertIn('("value" ', result.stdout)
+            self.assertIn("runtimes 2 (2 MB;", result.stdout)
+            self.assertIn('"1970-01-01"', result.stdout)
+            self.assertFalse(marker.exists())
+        # Native descriptor refusal/recovery and no-false-zero behavior are
+        # exercised without guest Python in test_coding_estate_native_core.
 
 
 if __name__ == "__main__":

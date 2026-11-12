@@ -1,0 +1,6 @@
+!(import! &self ../../src/coding_estate_cetta.metta)
+(= (estate-probe:call (Blocks $path)) (collapse (eio:dir-blocks $path)))
+(= (estate-probe:call (Hash $path)) (eio:engine-sha256 $path))
+(= (estate-probe:call (Snapshot $root $today)) (json:stringify-python (eio:snapshot $root $today)))
+(= (estate-probe:call (View $root $today)) (estate:context-view-root $root $today))
+(= (estate-probe:call Clear) (eio:clear-caches!))
