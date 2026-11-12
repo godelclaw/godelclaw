@@ -193,7 +193,6 @@ def _supplied(views):
 
 def _loaders(conversation=None, views=None):
     import active_queries
-    import coding_estate
     import commitment_projection
     import development_state
     import effect_receipts
@@ -233,7 +232,9 @@ def _loaders(conversation=None, views=None):
         (specs["relevant-files"],
          lambda: views["relevant-files"] if "relevant-files" in views else helper.relevant_files(history, limit=turns)),
         (specs["project-evidence"], project_evidence.view),
-        (specs["coding-sessions"], coding_estate.context_view),
+        # Native routes load this source with estate:load; only this Python
+        # bundle still reads coding_estate, and only when it renders.
+        (specs["coding-sessions"], lambda: __import__("coding_estate").context_view()),
         (specs["project-capabilities"], project_capabilities.view),
         # The MeTTa Telegram client renders the conversation itself.
         (specs["conversation"],
