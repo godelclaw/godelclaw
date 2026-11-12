@@ -666,5 +666,37 @@
         "Whole runtime still uses the SDK Python backend"
       ]
     }
+  ],
+  "tuning_debt": [
+    {
+      "area": "turn process resident memory",
+      "measured": "about +10 MiB peak RSS per turn process since batch 1, constant across prompt sizes (+10-14%)",
+      "likely_cause": "every native module is loaded into every turn, including ones the turn never uses",
+      "direction": "load modules on first use, or share one parsed module image across turn processes"
+    },
+    {
+      "area": "small-turn latency",
+      "measured": "p95 +9% on an 18-byte prompt in batch 1; +1.8% more after provider-core batch 2",
+      "likely_cause": "module loading, and completion files now written natively within the turn",
+      "direction": "same as above; measure load time per module and batch the completion writes"
+    },
+    {
+      "area": "conversation encoders",
+      "measured": "Anthropic 28 / 143 / 965 ms and Responses 11 / 31 / 128 ms at 100 / 200 / 400 messages",
+      "likely_cause": "each message walks or appends the whole conversation built so far",
+      "direction": "build newest-first and reverse once; linear growth checks at 100 / 400 / 1,600 messages (in progress)"
+    },
+    {
+      "area": "large-request copying",
+      "measured": "a 1 MiB request keeps about 15.4 MiB live at peak, against 1.0 MiB for plain writev",
+      "likely_cause": "the prompt is copied through each request-building stage",
+      "direction": "owned, reference-counted byte fragments written with writev (in progress)"
+    },
+    {
+      "area": "remaining Python per turn",
+      "measured": "census ceilings: activity delivery 76, two-turn coding 60, coding lifecycle 76, provider command 14",
+      "likely_cause": "telegram.py publishing for the MeTTa client, and the strategy_host broker (24-28 entries per turn)",
+      "direction": "port the publishing path and further broker slices"
+    }
   ]
 }
