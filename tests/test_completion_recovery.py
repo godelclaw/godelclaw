@@ -63,7 +63,7 @@ def detail(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 def complete_elsewhere(plan):
-    purpose = json.loads(native_llm_host.policy_metadata(plan)).get("purpose", "turn")
+    purpose = getattr(plan, "purpose", "turn")
     usage = {"counts": {"input_tokens": 1, "output_tokens": 1}}
     llm_policy.native("llm-complete", (plan.correlation, plan.epoch, detail(usage), 1, "stop",
         detail({"finish": "stop"}), detail({"epoch": plan.epoch}), "different", 0, purpose,
@@ -129,18 +129,18 @@ def arm(kind):
         fixture = self.directory / 'fixture_modules/recovery_receipt.py'
         fixture.write_text('''
 import native_ledger
-def read(plan):
-    return native_ledger.llm_call(plan.correlation)["result"]
+def read(identity):
+    return native_ledger.llm_call(str(identity))["result"]
 ''')
         self.env["PYTHONPATH"] += os.pathsep + str(ROOT / "tests")
         legacy = json.dumps(json.dumps(self.peer.reply))
         self.peer.delay = .01
         out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n' +
             self.disable_python_accounting() + f'!(import! &self "{fixture}")\n' +
-            '!(let* (($plan (py-call (native_llm_host.native_command_plan "fixture-model" 100 "high" "input")))\n'
-            '        ($first (llm:run $plan)) ($receipt (py-call (recovery_receipt.read $plan)))\n'
-            '        ($epoch (py-call (native_llm_host.field $plan "epoch")))\n'
-            '        ($identity (py-call (native_llm_host.field $plan "correlation"))))\n'
+            '!(let* (($prepared (pcall:command-plan "fixture-model" 100 "high" "input"))\n'
+            '        ($plan (llm:owner $prepared))\n'
+            '        ($epoch (call:fact $plan "epoch" "")) ($identity (call:correlation $plan))\n'
+            '        ($first (llm:run $prepared)) ($receipt (py-call (recovery_receipt.read $identity))))\n'
             '   (progn (println! (FIRST $first))\n'
             f'     (println! (SECOND (account:complete $plan $epoch $identity {legacy} $receipt)))))\n')
         self.assertIn('(FIRST (nop))', out)

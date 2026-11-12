@@ -1,5 +1,7 @@
 ; Provider transport, command preparation and policy transactions run in CeTTa.
-; Host lifecycle observations and credential configuration remain boundaries.
+; Every call is a native call owner (src/native_call_cetta.metta): its facts,
+; prepared transport and phase are native. The host plan is only the handle of
+; the remaining host observers (display, health, completion effects).
 !(import! &self ./src/native_llm_host.py)
 !(import! &self ./src/interop_flags_cetta.metta)
 !(import! &self ./src/model_selection_cetta.metta)
@@ -9,27 +11,8 @@
 (: llm:host-flag (-> %Undefined% Bool))
 (= (llm:host-flag $value)
    (host:flag $value))
-(: llm:command-kind? (-> Atom Bool))
-(= (llm:command-kind? $value)
-   (case $value ((command True) ("command" True) ($other False))))
-(: llm:messages-encoding? (-> Atom Bool))
-(= (llm:messages-encoding? $value)
-   (case $value ((messages True) ("messages" True) ($other False))))
-; Janus and CeTTa both expose one-level standard-library callables. Avoid a
-; dotted builtin method name, which Janus treats as a missing Python builtin.
-(= (llm:subscription-model? $selected)
-   (let* (($method (py-call (builtins.getattr $selected "startswith")))
-          ($value (py-call (operator.call $method "chatgpt:"))))
-     (llm:host-flag $value)))
 (= (llm:native?)
    (== (system:getenv-or-default "METTACLAW_LLM_TRANSPORT" "python") "native"))
-; A native call owner answers from its own phase; a legacy plan from the host.
-(= (llm:plan-ready $plan)
-   (if (call:native? $plan) (call:ready? $plan)
-     (let $value (py-call (native_llm_host.field $plan "ready")) (llm:host-flag $value))))
-(= (llm:uses-native-ledger $plan)
-   (if (call:native? $plan) True
-     (llm:host-flag (py-call (native_llm_host.native_accounting $plan)))))
 !(if (llm:native?)
      (let* (($command-module (import! &self llm:command))
             ($compat-module (import! &self llm:compat))
@@ -42,16 +25,13 @@
        (let $_ (import! &self ./src/provider_call_cetta.metta)
          (import! &self ./src/stream_runtime.metta))) True)
 
-(= (llm:plan-claim $plan)
-   (if (llm:uses-native-ledger $plan) (account:claim $plan)
-     (let $value (py-call (native_llm_host.claim $plan)) (llm:host-flag $value))))
-
 ; Providers report each model's window. The host reads Synthetic's catalog and
-; Anthropic's model metadata; the ChatGPT list needs this runtime's sign-in.
+; Anthropic's model metadata; the ChatGPT list needs this runtime's sign-in, so
+; only a selected chatgpt: model asks the host whether its window is due.
 ; The host's answer crosses as a Symbol: compare its text, so that no other
 ; provider's model ever reaches the ChatGPT list.
 (= (llm:observe-window)
-   (if (llm:native?)
+   (if (and (llm:native?) (str:starts-with (model:current syn:large:text) "chatgpt:"))
      (let $model (format-args "{}" ((py-call (synthetic_llm.model_window_due))))
        (if (== $model "") True (chatgpt:observe-window $model)))
      True))
@@ -63,9 +43,8 @@
        (if (str:starts-with $selected "chatgpt:")
          (chatgpt:command $selected $tokens $effort $prompt)
          (let $plan (pcall:command-plan $selected $tokens $effort $prompt) (llm:run $plan))))
-     (let* (($selected (model:current $model))
-            ($subscription (llm:subscription-model? $selected)))
-       (if $subscription
+     (let $selected (model:current $model)
+       (if (str:starts-with $selected "chatgpt:")
          (py-call (synthetic_llm.unavailable_action chatgpt-requires-native-cetta))
          (py-call (synthetic_llm.chat $model $tokens $effort $prompt)))))))
 
@@ -79,102 +58,49 @@
          (let $session (chatgpt:session)
            (case $session
              (((ChatGPTUnavailable $why) (Error llm:structured-plan $why))
-              ($ready (llm:host-purpose (chatgpt:structured-plan $selected $request $ready) $purpose))))))
+              ($ready (chatgpt:structured-plan-purpose $selected $request $ready $purpose))))))
        (pcall:structured-plan $selected $request $purpose))))
-; A subscription plan is still a host plan; its purpose is set on it.
-(= (llm:host-purpose $plan $purpose)
-   (if (== $purpose "coding") (py-call (native_llm_host.for_coding $plan))
-     (if (== $purpose "compaction") (py-call (native_llm_host.for_compaction $plan)) $plan)))
 
 ; The reply of a structured call, written as JSON where its caller keeps it
-; (atomically) and returned as a value. A native owner's reply never crosses
-; the host; a subscription plan still answers with a host box.
-(= (llm:reply-file $answer $path)
-   (case $answer
-     (((ProviderReplyV1 $reply) (call:write-reply $reply $path))
-      ($box (let $_ (py-call (native_llm_host.structured_json_result $box $path))
-              (json-parse (fs:read-text $path)))))))
+; (atomically) and returned as a value. It never crosses the host.
+(= (llm:reply-file (ProviderReplyV1 $reply) $path) (call:write-reply $reply $path))
 
-(: llm:owner (-> Atom %Undefined%))
+(: llm:owner (-> %Undefined% %Undefined%))
 (= (llm:owner $plan)
-   (case $plan (((PreparedProviderCallV1 $owner $transport) $owner) ($legacy $legacy))))
+   (case $plan (((PreparedProviderCallV1 $owner $transport) $owner)
+                ((RefusedProviderCallV1 $host) $host))))
+(= (llm:plan-ready $plan)
+   (case $plan
+     (((PreparedProviderCallV1 $owner $transport) (call:ready? $owner))
+      ((RefusedProviderCallV1 $host) False)
+      ($owner (call:ready? $owner)))))
 
+; A refused preparation never claims, admits or submits; it settles as the
+; failure the host reports for an unadmitted call.
 (= (llm:run $plan)
    (case $plan
      (((PreparedProviderCallV1 $owner $transport)
        (let $state (pcall:begin $owner $transport) (llm:after-submit $owner $state)))
-      ($legacy (let $state (llm:begin $plan) (llm:after-submit $plan $state))))))
+      ((RefusedProviderCallV1 $host) (llm:refused $host)))))
+(= (llm:refused $host)
+   (py-call (native_llm_host.failed $host "unsubmitted" admission-error 0)))
 
 ; Programs may retain this owned pending value, poll it later, or wait for a
 ; bounded interval. A soft wait returns the same call; it never cancels it.
 (= (llm:begin $plan)
    (case $plan
      (((PreparedProviderCallV1 $owner $transport) (pcall:begin $owner $transport))
-      ($legacy (llm:begin-owned $plan)))))
-(= (llm:begin-owned $plan)
-   (if (llm:plan-ready $plan)
-    (if (llm:plan-claim $plan)
-     (let* (($_ (py-call (native_llm_host.gate)))
-            ($config (llm:configuration $plan)))
-       (llm:configured-begin $plan $config))
-     (if (llm:plan-ready $plan) (llm:v1:failed duplicate duplicate duplicate-plan not-started)
-       (llm:v1:failed unsubmitted unsubmitted admission-error not-started)))
-     (llm:v1:failed unsubmitted unsubmitted admission-error not-started)))
+      ((RefusedProviderCallV1 $host) (llm:v1:failed unsubmitted unsubmitted admission-error not-started)))))
 
-; Configuration is ordinary native data. It is not a claim or an I/O owner.
-; Consume the request/encoding fields here; later phases carry only the
-; prepared wire and native timeout description they actually need.
-(= (llm:configuration $plan)
-   (let ($epoch $correlation $protocol $base $headers $request $kind $encoding
-         $timeout $cap $connect $first $idle)
-        (py-call (native_llm_host.transport_config $plan))
-     (NativeCallConfigV1 $epoch $correlation $protocol $base $headers $request
-                         $kind $encoding $timeout $cap $connect $first $idle)))
-(: llm:configured-begin (-> Atom Atom %Undefined%))
-(= (llm:configured-begin $plan
-     (NativeCallConfigV1 $epoch $correlation $protocol $base $headers-json $request
-                         $kind $encoding $timeout $cap $connect $first $idle))
-   (let* (($headers-outcome (llm:v1:headers-json $headers-json))
-          ($encoded (if (and (llm:command-kind? $kind) (not (llm:messages-encoding? $encoding)))
-                       (llm:v1:encode-command $protocol $request)
-                       (llm:v1:encode $protocol $request)))
-          ($name (llm:v1:protocol $protocol))
-          ($waits (NativeCallWaitsV1 $connect $first $idle)))
-     (llm:start-plan $plan $epoch $correlation $name $base $headers-outcome $encoded $timeout $cap $waits)))
-
-(: llm:start-plan (-> Atom Atom Atom Atom Atom Atom Atom Atom Atom Atom %Undefined%))
-(= (llm:start-plan $plan $epoch $correlation $protocol $base $headers-outcome $encoded $timeout $cap $waits)
-   (case $headers-outcome
-     (((llm:v1:ok $headers)
-       (llm:encode-plan $plan $epoch $correlation $protocol $base $headers $encoded $timeout $cap $waits))
-      ((llm:v1:error $code) (llm:v1:failed $epoch $correlation $code not-started)))))
-
-(: llm:encode-plan (-> Atom Atom Atom Atom Atom Atom Atom Atom Atom Atom %Undefined%))
-(= (llm:encode-plan $plan $epoch $correlation $protocol $base $headers $encoded $timeout $cap $waits)
-   (case $encoded
-     (((llm:v1:ok (llm:v1:encoded $path $body))
-       (let $url (str:concat $base $path)
-         (llm:network-plan $plan $epoch $correlation $protocol $url $headers $body $timeout $cap $waits)))
-      ((llm:v1:error $code) (llm:v1:failed $epoch $correlation $code not-started)))))
-
-(: llm:network-plan (-> Atom Atom Atom Atom Atom Atom Atom Atom Atom Atom %Undefined%))
-(= (llm:network-plan $plan $epoch $correlation $protocol $url $headers $body $timeout $cap
-                     (NativeCallWaitsV1 $connect $first $idle))
-   (let* (($legacy-wire (py-call (native_llm_host.wire_body $plan $body)))
-          ($profiled (if (chatgpt:plan? $plan) (chatgpt:wire $legacy-wire) $legacy-wire))
-          ($wire (llm:observe-wire $plan $profiled)))
-     (llm:network-ready $plan $epoch $correlation $protocol $url $headers $wire $timeout $cap
-                        (NativeCallWaitsV1 $connect $first $idle))))
 (: llm:network-ready (-> Atom Atom Atom Atom Atom Atom Atom Atom Atom Atom %Undefined%))
 (= (llm:network-ready $plan $epoch $correlation $protocol $url $headers $wire $timeout $cap
                      (NativeCallWaitsV1 $connect $first $idle))
-   (let $described (if (llm:uses-native-ledger $plan) (account:describe $plan) True)
+   (let $described (account:describe $plan)
      (if $described
       (let $submitted (llm:submit-http $url $headers $wire $timeout $cap $connect $first $idle)
      (case $submitted
        (((io:pending $id)
-         (let $_ (if (llm:uses-native-ledger $plan) (account:submitted $plan $id)
-                   (py-call (native_llm_host.submitted (call:host $plan) $id)))
+         (let $_ (account:submitted $plan $id)
            (llm:v1:pending $epoch $correlation $protocol $id)))
         ($other (llm:v1:failed $epoch $correlation submit-error not-started)))))
       (llm:v1:failed $epoch $correlation native-accounting-error not-started))))
@@ -188,18 +114,13 @@
            ((True (py-call (native_llm_host.observe_wire $plan $body)))
             ($disabled $body)))))))
 
-(: llm:submit-headers (-> Atom Atom Atom Atom Atom Atom Atom Atom %Undefined%))
-(= (llm:submit-headers $epoch $correlation $protocol $base $headers-outcome $encoded $timeout $cap)
-   (case $headers-outcome
-     (((llm:v1:ok $headers)
-       (llm:v1:submit-encoded $epoch $correlation $protocol $base $headers $encoded $timeout $cap))
-      ((llm:v1:error $code) (llm:v1:failed $epoch $correlation $code not-started)))))
-
+; Callers hold the prepared call, its owner, or a refused preparation.
 (: llm:after-submit (-> Atom Atom %Undefined%))
 (= (llm:after-submit $plan $state)
    (case $plan
      (((PreparedProviderCallV1 $owner $transport) (llm:after-owned $owner $state))
-      ($legacy (llm:after-owned $plan $state)))))
+      ((RefusedProviderCallV1 $host) (llm:refused $host))
+      ($owner (llm:after-owned $owner $state)))))
 (: llm:after-owned (-> Atom Atom %Undefined%))
 (= (llm:after-owned $plan $state)
    (case $state
@@ -222,29 +143,27 @@
 (= (llm:wait-once $plan $state $milliseconds)
    (case $plan
      (((PreparedProviderCallV1 $owner $transport) (llm:wait-owned $owner $state $milliseconds))
-      ($legacy (llm:wait-owned $plan $state $milliseconds)))))
+      ((RefusedProviderCallV1 $host) $state)
+      ($owner (llm:wait-owned $owner $state $milliseconds)))))
 (: llm:wait-owned (-> Atom Atom Number %Undefined%))
 (= (llm:wait-owned $plan $state $milliseconds)
    (case $state
      (((llm:v1:pending $epoch $correlation $protocol $id)
-       (let $owned (if (call:native? $plan) (call:owns? $plan $epoch $correlation $id)
-                     (llm:host-flag (py-call (native_llm_host.owns $plan $epoch $correlation $id))))
-        (if $owned
+       (if (call:owns? $plan $epoch $correlation $id)
         (let* (($status (llm:status-http $id))
               ($_ (llm:progress $plan $status))
               ($_ (stream:progress $plan $id))
               ($_ (llm:commentary-progress $plan $id))
               ($event (llm:wait-http $id $milliseconds)))
          (llm:observe-plan $plan $state $epoch $correlation $protocol $id $event))
-        (llm:v1:rejected ownership-error))))
+        (llm:v1:rejected ownership-error)))
       ($terminal $terminal))))
 
 (: llm:progress (-> Atom Atom %Undefined%))
 (= (llm:progress $plan $status)
    (case $status
      (((io:progress $id $phase $age $bytes $quiet)
-       (if (llm:uses-native-ledger $plan) (account:progress $plan $bytes $quiet)
-         (py-call (native_llm_host.waiting $plan $bytes $quiet))))
+       (account:progress $plan $bytes $quiet))
       ($other 1))))
 
 (: llm:observe-plan (-> Atom Atom Atom Atom Atom Atom Atom %Undefined%))
@@ -253,7 +172,7 @@
      (((io:idle) $state)
       ((io:event $received (http:response-with-metadata $status $body (http:retry-after $seconds)))
        (if (== $id $received)
-         (let* (($native-retry (if (call:native? $plan) (call:retry-after $plan $seconds) ()))
+         (let* (($native-retry (call:retry-after $plan $seconds))
                 ($host-retry (py-call (native_llm_host.response_retry_after (call:host $plan) $seconds))))
                 (llm:observe-plan $plan $state $epoch $correlation $protocol $id
                   (io:event $received (http:response $status $body))))
@@ -281,16 +200,8 @@
          (let $rendered (llm:v1:render $response)
            (llm:v1:io-outcome $epoch $correlation $protocol (http:response 200 $rendered))))
         ((ResponsesStreamError $why) (llm:v1:failed $epoch $correlation $why response-received))))
-     (llm:decode-legacy-body $plan $epoch $correlation $protocol $body)))
-
-(: llm:decode-legacy-body (-> Atom Atom Atom Atom Atom %Undefined%))
-(= (llm:decode-legacy-body $plan $epoch $correlation $protocol $body)
-   (case (if (call:native? $plan) (call:decode-config $plan)
-           (py-call (native_llm_host.response_decode_config $plan)))
-     ((($stream $limit)
-       (let $enabled (llm:host-flag $stream)
-         (llm:decode-received-body $plan $epoch $correlation $protocol $body $enabled $limit 0)))
-      ($other (llm:v1:failed $epoch $correlation invalid-decode-config response-received)))))
+     (let ($stream $limit) (call:decode-config $plan)
+       (llm:decode-received-body $plan $epoch $correlation $protocol $body (llm:host-flag $stream) $limit 0))))
 
 ; A local decoder allocation refusal retains this body. Re-entering transport
 ; here would confuse a local resource failure with an unknown remote outcome.
@@ -314,11 +225,9 @@
 
 (: llm:deliver (-> Atom Atom %Undefined%))
 (= (llm:deliver $plan $state)
-   (let* (($display-id (if (call:native? $plan) (call:correlation $plan)
-                          (py-call (native_llm_host.field $plan "correlation"))))
-          ($closed (stream:close $display-id))
+   (let* (($closed (stream:close (call:correlation $plan)))
           ($answer (llm:deliver-final $plan $state))
-          ($released (if (call:native? $plan) (call:release $plan) ())))
+          ($released (call:release $plan)))
      $answer))
 
 (: llm:deliver-final (-> Atom Atom %Undefined%))
@@ -338,8 +247,7 @@
         (llm:failed-plan $plan $correlation $reason 0))
       ($other (llm:failed-plan $plan unknown invalid-phase 0)))))
 (= (llm:failed-plan $plan $correlation $kind $status)
-   (if (llm:uses-native-ledger $plan) (account:failed $plan $correlation $kind $status)
-     (py-call (native_llm_host.failed (call:host $plan) $correlation $kind $status))))
+   (account:failed $plan $correlation $kind $status))
 
 (: llm:finish-rendered (-> Atom Atom Atom Atom Atom %Undefined%))
 (= (llm:finish-rendered $plan $epoch $correlation $encoded $canonical)
@@ -348,9 +256,7 @@
        (case $canonical
          (((llm:v1:ok $canonical-text)
            (let $_ (commentary:prepare $plan $legacy-text)
-             (if (llm:uses-native-ledger $plan)
-               (account:complete $plan $epoch $correlation $legacy-text $canonical-text)
-               (py-call (native_llm_host.finish (call:host $plan) $epoch $correlation $legacy-text $canonical-text)))))
+             (account:complete $plan $epoch $correlation $legacy-text $canonical-text)))
           ((llm:v1:error $code) (llm:failed-plan $plan $correlation $code 0)))))
       ((llm:v1:error $other-code) (llm:failed-plan $plan $correlation $other-code 0)))))
 
@@ -366,8 +272,7 @@
 
 ; Only a command turn with commentary on has an observer to feed.
 (= (llm:commentary-observed? $owner)
-   (if (call:native? $owner)
-     (and (commentary:enabled?) (and (call:command? $owner) (not (call:compaction? $owner)))) True))
+   (and (commentary:enabled?) (and (call:command? $owner) (not (call:compaction? $owner)))))
 ; Optional owned text observation. Only inert chunk values cross the portable
 ; function/return error boundary. Host publication runs outside that boundary.
 (= (llm:commentary-progress $owner $id)

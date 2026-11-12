@@ -114,7 +114,7 @@
        (let $_ (call:set-phase $owner (CallPhaseV1 $status $t $s $r $soft $retry ready)) True)
        False)))
 
-; The ledger's call metadata, as native_llm_host.policy_metadata gave it.
+; The ledger's call metadata: the call facts and its owned phase.
 (= (call:policy-metadata $owner)
    (let* (((CallPhaseV1 $status $t $s $r $last-soft $retry $publication) (call:phase $owner))
           ($sent (if (== $t ()) false true)) ($progress-soft (if (== $last-soft ()) 0 $last-soft))

@@ -910,9 +910,9 @@ class CodingAuthorityAndRepinTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "METTACLAW_CODING_CHECK"):
                 native_llm_host.gate()
             with self.assertRaisesRegex(RuntimeError, "METTACLAW_CODING_CHECK"):
-                native_llm_host.for_coding(types.SimpleNamespace())
+                native_llm_host.native_call_seed("fixture-model", 64, "structured", "coding")
             with self.assertRaisesRegex(RuntimeError, "METTACLAW_CODING_CHECK"):
-                native_llm_host.for_compaction(types.SimpleNamespace())
+                native_llm_host.native_call_seed("fixture-model", 64, "structured", "compaction")
             with self.assertRaisesRegex(RuntimeError, "METTACLAW_CODING_CHECK"):
                 apply_patch.apply("*** Begin Patch\n*** Add File: x.txt\n+hi\n*** End Patch", self.directory)
             with self.assertRaisesRegex(RuntimeError, "METTACLAW_CODING_CHECK"):
@@ -920,11 +920,9 @@ class CodingAuthorityAndRepinTests(unittest.TestCase):
 
         with mock.patch.dict(os.environ, {k: v for k, v in self.env.items() if k != "METTACLAW_CODING_CHECK"}, clear=True):
             self.assertTrue(native_llm_host.gate())
-            plan_coding = types.SimpleNamespace()
-            self.assertIs(native_llm_host.for_coding(plan_coding), plan_coding)
+            plan_coding, _ = native_llm_host.native_call_seed("fixture-model", 64, "structured", "coding")
             self.assertEqual(plan_coding.purpose, "coding")
-            plan_compact = types.SimpleNamespace()
-            self.assertIs(native_llm_host.for_compaction(plan_compact), plan_compact)
+            plan_compact, _ = native_llm_host.native_call_seed("fixture-model", 64, "structured", "compaction")
             self.assertEqual(plan_compact.purpose, "compaction")
 
     def test_torn_runs_jsonl_tail_ignored_and_resume_setting_current(self):

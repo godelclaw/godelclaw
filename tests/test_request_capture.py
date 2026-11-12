@@ -46,10 +46,11 @@ class RequestCaptureTests(unittest.TestCase):
             with self.subTest(protocol=protocol):
                 body = dict(model='fixture', messages=[dict(role='user', content='λ\nfixture')],
                             reasoning=dict(effort='low'))
-                with mock.patch.object(host.stream_sink, 'configured', return_value=True), \
-                     mock.patch.object(host.stream_sink, 'emit'):
-                    plan = self.plan(protocol, provider)
-                    wire = host.observe_wire(plan, host.wire_body(plan, json.dumps(body)))
+                # The native wire is final: the capture holds it byte for byte.
+                plan = self.plan(protocol, provider)
+                final = json.dumps(dict(body, stream=True), ensure_ascii=False)
+                wire = host.observe_wire(plan, final)
+                self.assertEqual(wire, final)
                 record = next(row for row in self.records() if row['protocol'] == protocol)
                 self.assertEqual(record['wire_body'], wire)
                 self.assertNotIn('fixture-header-secret', json.dumps(record))

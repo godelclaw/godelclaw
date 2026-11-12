@@ -24,14 +24,14 @@
           ($_ (call:release $owner))
           ($_ (nt:require rebind-refused
                 (not (host:flag (py-call (native_llm_host.bind_native_call $plan $seal "{broken"))))))
-          ($_ (nt:require live-owner-not-revoked (nt:equal (py-call (native_llm_host.field $plan "ready")) "true")))
+          ($_ (nt:require live-owner-not-revoked (nt:equal (py-call (builtins.getattr $plan "ready")) "true")))
           ($_ (nt:require request-not-retained (not (host:flag (py-call (builtins.hasattr $plan "request"))))))
           ($_ (nt:require prompt-not-retained (not (host:flag (py-call (builtins.hasattr $plan "prompt_text"))))))
           ($other (owner-test:seed)) ($wrong-model (owner-test:metadata "other"))
           ($_ (nt:require wrong-model-never-bound
                 (not (host:flag (py-call (native_llm_host.bind_native_call $other $seal $wrong-model))))))
           ($_ (nt:require wrong-model-remains-unready
-                (nt:equal (py-call (native_llm_host.field $other "ready")) "false")))
+                (nt:equal (py-call (builtins.getattr $other "ready")) "false")))
           ($missing (owner-test:seed))
           ($_ (nt:require incomplete-metadata-never-bound
                 (not (host:flag (py-call (native_llm_host.bind_native_call $missing $seal "{}"))))))

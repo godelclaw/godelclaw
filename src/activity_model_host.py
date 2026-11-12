@@ -19,13 +19,6 @@ def arm():
     return 1
 
 
-def prepare():
-    import native_llm_host
-    request = json.loads(Path(os.environ["METTACLAW_ACTIVITY_INPUT"]).read_text())
-    return native_llm_host.command_plan(request["model"], request["tokens"],
-                                        request["effort"], request["prompt"])
-
-
 def finish(plan, content):
     import native_lifetime
     import llm_policy
@@ -40,8 +33,8 @@ def finish(plan, content):
     result = {"kind": "model", "status": status,
               "call_id": plan.correlation, "value": str(content) if state == "completed" else "",
               "reason": reason}
-    if hasattr(plan, "request"):
-        result["request_fingerprint"] = llm_policy.fingerprint(json.loads(plan.request))
+    if getattr(plan, "request_fingerprint", ""):
+        result["request_fingerprint"] = plan.request_fingerprint
     encoded = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode()
     if len(encoded) > 65536:
         encoded = json.dumps({"kind": "model", "status": "failed", "call_id": plan.correlation,

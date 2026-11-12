@@ -55,9 +55,12 @@
        (preq:pair "prompt_bytes" (preq:number (preq:repr $bytes)))
        (preq:pair "feedback_visible" (preq:bool $feedback)) (preq:pair "footer_visible" (preq:bool $footer))
        (preq:pair "stream" (preq:bool $active)) (preq:pair "model" $model) (preq:pair "cache_layout" $layout)))))
+; A refused preparation keeps its host handle for the failure it settles as;
+; it never becomes a call owner.
 (= (pcall:refused $plan $reason)
-   (let $text (preq:repr $reason)
-     (py-call (native_llm_host.native_preparation_failed $plan $text))))
+   (let* (($text (preq:repr $reason))
+          ($host (py-call (native_llm_host.native_preparation_failed $plan $text))))
+     (RefusedProviderCallV1 $host)))
 ; A command's metadata measures its prompt; a structured request has none.
 (= (pcall:metadata-of (CommandMetadataV1 $request $encoding $profile $prompt) $active $model $layout)
    (pcall:metadata $request $encoding $profile $prompt $active $model $layout))
@@ -117,7 +120,7 @@
 (= (pcall:command-plan-purpose $selected $tokens $effort $prompt $purpose)
    (let* ((($plan $text) (py-call (native_llm_host.native_call_seed $selected $tokens "command" $purpose)))
           ($facts (preq:parse $text)))
-     (if (not (preq:truthy (preq:field $facts "ready"))) $plan
+     (if (not (preq:truthy (preq:field $facts "ready"))) (RefusedProviderCallV1 $plan)
        (if (not (== (str:utf8-error $prompt) StrUtf8WellFormedV1)) (pcall:refused $plan invalid-prompt-utf8)
          (let* (($protocol (pcall:fact $facts "protocol")) ($model (pcall:fact $facts "wire_model"))
                 ($tool (preq:field $facts "tool")) ($ttl (pcall:fact $facts "ttl"))
@@ -133,7 +136,7 @@
 (= (pcall:structured-plan $selected $request $purpose)
    (let* ((($plan $text) (py-call (native_llm_host.native_call_seed $selected (pcall:offered-tokens $request) "structured" $purpose)))
           ($facts (preq:parse $text)))
-     (if (not (preq:truthy (preq:field $facts "ready"))) $plan
+     (if (not (preq:truthy (preq:field $facts "ready"))) (RefusedProviderCallV1 $plan)
        (let* (($protocol (pcall:fact $facts "protocol")) ($model (pcall:fact $facts "wire_model")))
          (pcall:structured-prepared $plan $facts (preq:prepare-structured $protocol $model $request))))))
 (= (pcall:structured-prepared $plan $facts $prepared)
@@ -161,7 +164,7 @@
     (let $seal (pcall:seal $transport)
      (if (not (call:seal-matches? $plan $seal))
        (llm:v1:rejected prepared-configuration-mismatch)
-       (if (not (llm:plan-claim $plan))
+       (if (not (account:claim $plan))
          (if (llm:plan-ready $plan) (llm:v1:failed duplicate duplicate duplicate-plan not-started)
            (llm:v1:failed unsubmitted unsubmitted admission-error not-started))
          (let* (($_ (py-call (native_llm_host.gate)))

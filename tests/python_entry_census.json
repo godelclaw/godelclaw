@@ -20,13 +20,13 @@
     [
       "tests/coding_lifecycle_probe.metta",
       "CODING_LIFECYCLE_OK",
-      134,
+      128,
       "world"
     ],
     [
       "tests/provider_command_census_probe.metta",
       "CENSUS_PROVIDER_OK",
-      20,
+      18,
       "world",
       {
         "METTACLAW_MODEL_COMMENTARY": "1",

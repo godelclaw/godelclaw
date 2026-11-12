@@ -188,17 +188,6 @@ class UsageHistoryTests(unittest.TestCase):
         row = self.request(ticket)
         self.assertEqual((row['status'], row['output']), ('completed', None))
 
-    def test_native_wire_records_subscription_billing_and_compaction_purpose(self):
-        ticket = llm_policy.admit("chatgpt", 100, now=100)
-        plan = SimpleNamespace(correlation=ticket, provider="openai", protocol="responses",
-                               request_profile="chatgpt-plan", stream=False, purpose="compaction")
-        native_llm_host.wire_body(plan, json.dumps(dict(model="wire-model", input="private prompt sentinel")))
-        with patch.dict(os.environ, SYNTHETIC_MODEL="different-later-model"):
-            llm_policy.complete(ticket, result())
-        group = self.report()["groups"][0]
-        self.assertEqual((group["provider"], group["model"], group["purpose"]),
-                         ("chatgpt", "wire-model", "compaction"))
-
     def test_python_transport_keeps_the_sent_model_when_selection_changes(self):
         provider = dict(name="synthetic", protocol="chat-completions",
                         base="https://example.invalid/v1", key="fixture-secret")

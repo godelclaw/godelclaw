@@ -1,22 +1,18 @@
-; The native call path records its policy and lifecycle in the native LLM ledger.
-; Host calls here only read interop facts or publish existing host effects.
+; The native call owner records its policy and lifecycle in the native LLM
+; ledger. Host calls here only publish existing host effects.
 !(import! &self ./native_lifetime_cetta.metta)
 !(import! &self ./native_llm_host.py)
 !(import! &self ./interop_flags_cetta.metta)
 !(import! &self ./native_call_cetta.metta)
 
 (: account:ready (-> %Undefined% %Undefined%))
-(= (account:ready $plan)
-   (if (call:native? $plan) (call:ready? $plan)
-     (host:flag (py-call (native_llm_host.field $plan "ready")))))
+(= (account:ready $plan) (call:ready? $plan))
 
 (: account:metadata (-> %Undefined% %Undefined%))
-(= (account:metadata $plan)
-   (if (call:native? $plan) (call:policy-metadata $plan)
-     (json:parse (lp:text (py-call (native_llm_host.policy_metadata $plan))))))
+(= (account:metadata $plan) (call:policy-metadata $plan))
 (: account:reject (-> %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (account:reject $plan $reason $retry)
-   (let* (($native (if (call:native? $plan) (call:refused $plan) ()))
+   (let* (($native (call:refused $plan))
           ($ignored0 (py-call (native_llm_host.policy_rejected (call:host $plan) $reason $retry)))) False))
 (: account:cleanup-unsent (-> %Undefined% %Undefined% %Undefined%))
 (= (account:cleanup-unsent $plan $metadata)
@@ -28,7 +24,7 @@
    (case $answer
      (((LedgerChanged True)
        (if (host:flag (py-call (native_llm_host.claim_effect (call:host $plan))))
-         (if (call:native? $plan) (let $_ (call:claimed $plan) True) True)
+         (let $_ (call:claimed $plan) True)
          (account:cleanup-unsent $plan $metadata)))
       ((LedgerChanged False)
        (case (lp:fail (lp:field $metadata "id" "") False JsonNull JsonNull (system:wall-time))
@@ -46,22 +42,19 @@
       ($error (account:reject $plan "native-admission-error" -1)))))
 (: account:claim (-> %Undefined% %Undefined%))
 (= (account:claim $plan)
-   (if (not (if (call:native? $plan) (call:begin-claim $plan)
-              (host:flag (py-call (native_llm_host.begin_native_claim $plan))))) False
+   (if (not (call:begin-claim $plan)) False
      (let $metadata (account:metadata $plan)
        (account:admitted $plan $metadata
          (lp:admit (lp:field $metadata "id" "") (lp:field $metadata "provider" "")
                    (lp:field $metadata "maximum" 0) (lp:field $metadata "fingerprint" "") (system:wall-time))))))
-; The host's Python route passes `request_origin(plan) or None` to describe,
-; so an empty origin is omitted there; mirror that falsiness here.
+; An empty origin is described as null, as the retired host route did.
 (: account:request-origin (-> %Undefined% %Undefined%))
 (= (account:request-origin $metadata)
    (let $origin (lp:field $metadata "origin" JsonNull)
      (if (ue:truthy $origin) $origin JsonNull)))
 (: account:describe (-> %Undefined% %Undefined%))
 (= (account:describe $plan)
-   (let $metadata (if (call:native? $plan) (call:request-metadata $plan)
-                    (json:parse (lp:text (py-call (native_llm_host.request_metadata $plan)))))
+   (let $metadata (call:request-metadata $plan)
      (case (lp:describe-origin (lp:field $metadata "id" "") (lp:field $metadata "model" "")
                         (lp:field $metadata "protocol" "") (lp:field $metadata "purpose" "turn")
                         "native" (account:request-origin $metadata) (system:wall-time))
@@ -70,31 +63,23 @@
 (: account:submitted (-> %Undefined% %Undefined% %Undefined%))
 (= (account:submitted $plan $id)
    (let* (($ignored6 (py-call (native_llm_host.submitted (call:host $plan) $id)))
-          ($native (if (call:native? $plan) (call:submitted $plan $id) ()))
+          ($native (call:submitted $plan $id))
           ($metadata (account:metadata $plan)))
      (case (nl:submitted $metadata $id (system:wall-time))
        (
         ((LedgerChanged $changed) 1)
         ($error (py-call (native_llm_host.accounting_observation_error (call:host $plan) "submitted")))))))
 (: account:progress (-> %Undefined% %Undefined% %Undefined% %Undefined%))
-; A native owner paces its own records; host observers hear only due records.
+; The owner paces its own records; host observers hear only due records.
 (= (account:progress $plan $bytes $quiet)
-   (if (call:native? $plan)
-     (case (call:progress-due $plan)
-       (((True $soft)
-         (let* (($_ (py-call (native_llm_host.progress_observed (call:host $plan) $bytes $quiet $soft)))
-                ($metadata (account:metadata $plan)))
-           (case (nl:progress $metadata $bytes $quiet (lp:field $metadata "progress_soft" 0) (system:wall-time))
-             (((LedgerChanged $changed) 1)
-              ($error (py-call (native_llm_host.accounting_observation_error (call:host $plan) "progress")))))))
-        ((False $soft) 1)))
-   (let $ignored8 (py-call (native_llm_host.waiting $plan $bytes $quiet))
-     (if (host:flag (py-call (native_llm_host.field $plan "progress_record_due")))
-       (let $metadata (account:metadata $plan)
+   (case (call:progress-due $plan)
+     (((True $soft)
+       (let* (($_ (py-call (native_llm_host.progress_observed (call:host $plan) $bytes $quiet $soft)))
+              ($metadata (account:metadata $plan)))
          (case (nl:progress $metadata $bytes $quiet (lp:field $metadata "progress_soft" 0) (system:wall-time))
-           (
-            ((LedgerChanged $changed) 1)
-            ($error (py-call (native_llm_host.accounting_observation_error $plan "progress")))))) 1))))
+           (((LedgerChanged $changed) 1)
+            ($error (py-call (native_llm_host.accounting_observation_error (call:host $plan) "progress")))))))
+      ((False $soft) 1))))
 (: account:failed (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (account:failed $plan $correlation $kind $status)
    (if (account:ready $plan)

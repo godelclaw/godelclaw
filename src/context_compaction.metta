@@ -112,7 +112,7 @@
      (let $session (chatgpt:session)
        (case $session
          (((ChatGPTUnavailable $_) (ContextPreparationFailed "context-compaction-account-unavailable"))
-          ($ready (chatgpt:command-plan $model $tokens $effort $prompt $ready)))))
+          ($ready (chatgpt:command-plan-purpose $model $tokens $effort $prompt $ready "compaction")))))
      (let $selected (model:current $model)
        (pcall:command-plan-purpose $selected $tokens $effort $prompt "compaction"))))
 (= (context:ask $model $tokens $effort $prompt)
@@ -120,19 +120,15 @@
      (case $planned
        (((ContextPreparationFailed $_) $planned)
         ($ready
-          ; A native owner was prepared for compaction; a subscription plan is
-          ; still a host plan and is marked here.
-          (let* (($native (call:native? (llm:owner $ready)))
-                 ($owner (call:host (llm:owner $ready)))
-                 ($_ (if $native () (py-call (native_llm_host.for_compaction $owner))))
+          ; Every compaction call was prepared for compaction; a failure leaves
+          ; its retry metadata on the host handle.
+          (let* (($owner (call:host (llm:owner $ready)))
                  ($path (path:join (path:dirname (system:getenv-or-default "METTACLAW_ENGINE_STATE_PATH" "memory/engine")) "compaction-reply.json")))
             (case (catch (llm:run $ready))
               (((Error $kind $detail) (context:failed-reply $owner $path))
                ((Error $detail) (context:failed-reply $owner $path))
                ((ProviderReplyV1 $reply) (context:validate-summary $reply))
-               ($box
-                 (let $_ (py-call (native_llm_host.structured_json_result $box $path))
-                   (context:validate-summary (json-parse (fs:read-text $path)))))))))))))
+               ($other (ContextPreparationFailed "context-compaction-provider-failed"))))))))))
 (= (context:failed-reply $plan $path)
    (let* (($_ (py-call (native_llm_host.compaction_failure_result $plan $path)))
           ($reply (json-parse (fs:read-text $path)))

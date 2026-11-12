@@ -174,7 +174,7 @@ def report():
 
     def test_detached_wait_returns_pending_and_later_delivers_same_call(self):
         output = self.run_guest(f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'
-            '!(let $plan (py-call (native_llm_host.command_plan "fixture-model" 42 "low" "input"))\n'
+            '!(let $plan (pcall:command-plan "fixture-model" 42 "low" "input")\n'
             '  (let $state (llm:begin $plan)\n'
             '    (let $waiting (llm:wait-once $plan $state 20)\n'
             '      (progn (println! (DETACHED $waiting))\n'
@@ -190,7 +190,7 @@ def report():
                            '    return True\n')
         output = self.run_guest(f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'
             f'!(import! &self "{fixture}")\n'
-            '!(let $plan (py-call (native_llm_host.command_plan "fixture-model" 42 "low" "input"))\n'
+            '!(let $plan (pcall:command-plan "fixture-model" 42 "low" "input")\n'
             '  (let $state (llm:begin $plan)\n'
             '    (progn (py-call (recycle_fixture.request))\n'
             '           (println! (RESULT (llm:after-submit $plan $state))))))\n')
@@ -209,7 +209,7 @@ def report():
 
     def test_foreign_pending_state_cannot_consume_the_owned_answer(self):
         output = self.run_guest(f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'
-            '!(let $plan (py-call (native_llm_host.command_plan "fixture-model" 42 "low" "input"))\n'
+            '!(let $plan (pcall:command-plan "fixture-model" 42 "low" "input")\n'
             '  (let $state (llm:begin $plan)\n'
             '    (progn (println! (FOREIGN (llm:wait-once $plan (llm:v1:pending other other "chat-completions" 1) 20)))\n'
             '           (println! (RESULT (llm:after-submit $plan $state))))))\n')
@@ -224,7 +224,7 @@ def report():
             'def steer():\n    global revision\n    revision="steered"\n    return True\n')
         output = self.run_guest(f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'
             f'!(import! &self "{fixture}")\n'
-            '!(let $plan (py-call (native_llm_host.command_plan "fixture-model" 42 "low" "input"))\n'
+            '!(let $plan (pcall:command-plan "fixture-model" 42 "low" "input")\n'
             '  (let $state (llm:begin $plan)\n'
             '    (progn (py-call (guard_fixture.steer))\n'
             '           (println! (RESULT (llm:after-submit $plan $state))))))\n')

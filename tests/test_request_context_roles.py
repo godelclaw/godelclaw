@@ -39,18 +39,6 @@ class RoleProtocolTests(unittest.TestCase):
                                      [('assistant', NOTE), ('user', CURRENT)])
                     self.assertIn('cache_control', body['messages'][0]['content'][0])
 
-    def test_native_host_plan_preserves_declared_roles_for_every_provider(self):
-        for provider in ('responses', 'anthropic', 'chat-completions'):
-            captured = []
-            def fake_plan(kind, model, tokens, builder, **kwargs):
-                captured.append(builder(provider, 'fixture'))
-                return SimpleNamespace(protocol=provider)
-            with patch.object(native_llm_host, '_plan', fake_plan):
-                plan = native_llm_host.command_plan('fixture', 100, 'high', json.dumps(FRAME))
-            self.assertEqual(captured[0]['messages'], MESSAGES)
-            self.assertEqual(plan.encoding, 'messages')
-            self.assertFalse(hasattr(plan, 'cache_boundaries'))
-
     def test_cache_hints_cannot_change_roles_or_content(self):
         for points in ([], [0], [1, 2], [-1, 0, 1, 2, 5000]):
             frame = dict(FRAME, cache_points=points)
@@ -125,8 +113,7 @@ class NativeRoleTests(unittest.TestCase):
         self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n'
             f'!(let* (($plan (chatgpt:command-plan "chatgpt:fixture-model" 100 "high" '
             f'{json.dumps(json.dumps(frame))} (json-parse {session}))) '
-            '($request (py-call (native_llm_host.field $plan "request"))) '
-            '((llm:v1:ok (llm:v1:encoded $_ $wire)) (llm:v1:encode "responses" $request))) '
+            '((PreparedProviderCallV1 $owner (PreparedProviderTransportV1 $e $c $p $u $h $wire $t $cap $co $f $i)) $plan)) '
             f'(fs:update-text {json.dumps(str(path))} "replace" $wire "" ""))\n')
         self.assertTrue(path.exists(), self.last_stderr)
         body = json.loads(path.read_text())

@@ -1,7 +1,6 @@
 """Immutable provider configuration crosses the host boundary once per call."""
 import json
 import os
-import re
 import unittest
 
 import test_native_llm_boundary as boundary
@@ -63,7 +62,7 @@ class NativeCallConfigTests(unittest.TestCase):
 
     def test_replayed_plan_never_captures_or_submits_again(self):
         out = self.run_guest(self.instrument() +
-            '!(let $plan (py-call (native_llm_host.native_command_plan "fixture-model" 42 "low" "input"))\n'
+            '!(let $plan (pcall:command-plan "fixture-model" 42 "low" "input")\n'
             '   (progn (println! (FIRST (llm:run $plan))) (println! (SECOND (llm:run $plan)))))\n'
             '!(println! (CAPTURES (py-call (call_config_probe.count))))\n')
         self.assertIn('(FIRST (nop))', out)
@@ -80,22 +79,6 @@ class NativeCallConfigTests(unittest.TestCase):
         self.assertIn('(CAPTURES 1)', out)
         self.assertEqual(len(self.peer.requests), 1)
         self.assertEqual(self.column('calls', 'state'), [('completed',)])
-
-    def test_old_individual_field_rule_is_caught_before_any_provider_effect(self):
-        source = (boundary.ROOT / 'src/native_llm.metta').read_text()
-        marker = '(let $state (pcall:begin $owner $transport) (llm:after-submit $owner $state))'
-        self.assertEqual(source.count(marker), 1)
-        source = source.replace(marker,
-            '(let* (($old (py-call (native_llm_host.field $owner "base"))) '
-            '($state (pcall:begin $owner $transport))) (llm:after-submit $owner $state))')
-        source = re.sub(r'(import!\s+&self\s+)(\./src/[^\s()]+)',
-                        lambda match: match[1] + json.dumps(str(boundary.ROOT / match[2][2:])), source)
-        mutant = self.directory / 'individual-field-mutant.metta'
-        mutant.write_text(source)
-        with self.assertRaisesRegex(AssertionError, 'CALL_CONFIG_FORBIDDEN_FIELD:base'):
-            self.run_guest(self.instrument(mutant) +
-                '!(llm:command "fixture-model" 42 "low" "input")\n')
-        self.assertEqual(self.peer.requests, [])
 
 
 if __name__ == '__main__':

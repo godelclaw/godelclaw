@@ -169,9 +169,9 @@ class NativeStreamTests(unittest.TestCase):
                 old_attempts = {e.get("attempt") for e in self.observations()}
                 path = self.directory/"probe.metta"
                 path.write_text('!(import! &self "'+str(ROOT/'src/native_llm.metta')+'")\n'
-                    '!(let $plan (py-call (native_llm_host.command_plan "openai:fixture" 512 "high" "inspect")) '
-                    '(progn (py-call (native_llm_host.for_coding $plan)) '
-                    '(println! (RESULT (llm:run $plan)))))\n')
+                    '!(let $plan (llm:structured-plan (json-parse "{\\"max_tokens\\":512,\\"reasoning\\":{\\"effort\\":\\"high\\"},'
+                    '\\"messages\\":[{\\"role\\":\\"user\\",\\"content\\":\\"inspect\\"}]}") "coding") '
+                    '(println! (RESULT (catch (llm:run $plan)))))\n')
                 output = (self.directory/("output-"+str(failure))).open("w")
                 self.addCleanup(output.close)
                 self.process = subprocess.Popen([os.environ["CETTA_BIN"],"--lang","petta",
