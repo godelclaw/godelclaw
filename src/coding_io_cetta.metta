@@ -265,3 +265,88 @@
                       (cio:publish-json $runtime-path (cio:put $runtime "phase" (JsonString "ended"))) True)
                     True)))
          (if (== $written True) 1 0)))))
+
+;; -------------------------------------------------------- executions
+; A command the worker runs is recorded before it starts and again when it
+; ends. The record is evidence, never permission to run the command again.
+
+(= (cio:execution-path $dir $id $suffix)
+   (path:join (path:join $dir "executions") (str:concat $id $suffix)))
+(= (cio:execution-id? $id)
+   (and (== (str:char-length $id) 32) (and (str:is-all-in xdigit $id) (== (str:lower $id) $id))))
+
+; The log a new command writes to: (ExecutionLog path), or (ExecutionRefused
+; why). A checkpoint check (METTACLAW_CODING_CHECK=1) never starts commands,
+; and an identity is used once.
+(= (cio:execution-create $dir $id $command)
+   (if (== (system:getenv-or-default "METTACLAW_CODING_CHECK" "") "1")
+     (ExecutionRefused "commands are refused while a checkpoint is checked")
+     (if (not (cio:execution-id? $id)) (ExecutionRefused "invalid execution identity")
+       (let* (($record (cio:execution-path $dir $id ".json"))
+              ($_ (fs:make-directories (path:dirname $record) 504))
+              ($writer (fs:open-write $record ("create" "exclusive") 432)))
+         (if (cio:failed? $writer) (ExecutionRefused (repr $writer))
+           (let* (($wrote (fs:write-all $writer (json-stringify (JsonObject (
+                            (JsonPair "id" (JsonString $id)) (JsonPair "command" (JsonString $command))
+                            (JsonPair "status" (JsonString "dispatching")) (JsonPair "started" (cio:now-json)))))))
+                  ($_ (fs:close $writer)))
+             (if (cio:failed? $wrote) (ExecutionRefused (repr $wrote))
+               (ExecutionLog (cio:execution-path $dir $id ".log")))))))))
+
+; Record how a command ended, then answer its result.
+(= (cio:execution-finish $dir $id $status $code $seconds)
+   (let* (($path (cio:execution-path $dir $id ".json"))
+          ($record (cio:json $path))
+          ($_ (if (== $record (JsonObject ())) ()
+                (cio:publish-json $path
+                  (cio:put (cio:put (cio:put (cio:put $record
+                    "status" (JsonString $status)) "code" (JsonNumber (repr $code)))
+                    "seconds" (JsonNumber (repr $seconds))) "ended" (cio:now-json))))))
+     (cio:execution-result $dir $id)))
+
+; A command's result as the model reads it: exit code, wall time, where the
+; whole output is, and the output, keeping its first and last 20000 bytes
+; when it is longer than 40000. A record with no recorded ending was not run
+; to its end by this runtime, and is said to be uncertain.
+(= (cio:execution-result $dir $id)
+   (let $record (if (cio:execution-id? $id) (cio:json (cio:execution-path $dir $id ".json")) (JsonObject ()))
+     (case (coding:field $record "status")
+       (((JsonString $status)
+         (let* (($log (cio:execution-path $dir $id ".log"))
+                ($outcome (if (== $status "exited") (cio:shown-or (coding:field $record "code") "?")
+                            (if (or (== $status "dispatching") (== $status "running"))
+                              "uncertain: this runtime does not own the execution; it was not replayed" $status))))
+           (str:join "" ("Exit code: " $outcome "\nWall time: " (cio:shown-or (coding:field $record "seconds") "?")
+                         " seconds\nExecution ID: " $id "\nOutput artifact: " $log "\nOutput:\n" (cio:log-excerpt $log)))))
+        ($missing "Unknown execution ID; nothing was started.")))))
+(= (cio:shown-or $value $default)
+   (case $value (((JsonNumber $text) $text) ((JsonString $text) $text) ($other $default))))
+
+; The output, bounded: whole up to 40000 bytes, otherwise its first and last
+; 20000 bytes. Only the bytes shown are read, whatever the log's size.
+(= (cio:log-excerpt $log)
+   (case (fs:metadata $log follow)
+     (((fs:info regular $size $identity)
+       (if (<= $size 40000)
+         (case (fs:read-text-result $log 0 "replace") ((("ok" $text) $text) ($other "")))
+         (str:join "" ((cio:head-text $log 20000) "\n... tokens truncated; full output in artifact ...\n"
+                       (case (fs:tail-text $log 20000) (((fs:tail $total $cut $text) $text) ($other "")))))))
+      ($other ""))))
+(= (cio:head-text $path $limit)
+   (let $reader (fs:open-read $path)
+     (if (cio:failed? $reader) ""
+       (let* (($bytes (cio:read-up-to $reader $limit ()))
+              ($_ (fs:close $reader))
+              ($decoder (str:utf8-new ignore)))
+         (case (str:utf8-feed $decoder $bytes True)
+           (((Utf8DecodedV1 $text $next) $text) ($other "")))))))
+(= (cio:read-up-to $reader $left $chunks)
+   (if (<= $left 0) (str:join "" (cio:reverse $chunks ()))
+     (case (fs:read-chunk $reader $left)
+       (((fs:chunk $bytes $offset)
+         (let $count (str:byte-length $bytes)
+           (if (== $count 0) (str:join "" (cio:reverse $chunks ()))
+             (cio:read-up-to $reader (- $left $count) (cons-atom $bytes $chunks)))))
+        ($end (str:join "" (cio:reverse $chunks ())))))))
+(= (cio:reverse $items $out)
+   (if (== $items ()) $out (cio:reverse (cdr-atom $items) (cons-atom (car-atom $items) $out))))

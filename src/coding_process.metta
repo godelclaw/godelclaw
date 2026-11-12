@@ -6,7 +6,7 @@
 !(import! &self str)
 !(import! &self ./src/coding_values.metta)
 !(import! &self ./src/stream_sink.py)
-!(import! &self ./src/coding_io.py)
+!(import! &self ./src/coding_io_cetta.metta)
 
 (= (coding:execution $id)
    (collapse (match &self (CodingProcess $id $handle $reader $decoder $dir $log $start)
@@ -31,7 +31,7 @@
                   ($_ (fs:close $reader))
                   ($_ (remove-atom &self $record))
                   ($seconds (/ (- (system:monotonic-ns) $start) 1000000000.0))
-                  ($result (py-call (coding_io.execution_finish $dir $id (repr $state) $code $seconds)))
+                  ($result (cio:execution-finish $dir $id (repr $state) $code $seconds))
                   ($_ (py-call (stream_sink.tool_finished $id (repr $state) $code $log))))
              $result))
           ($running
@@ -49,7 +49,7 @@
 (= (coding:poll-until $dir $id $deadline)
    (let* (($live (coding:execution $id))
           ($now (system:monotonic-ns)))
-     (if (== $live ()) (py-call (coding_io.execution_result $dir $id))
+     (if (== $live ()) (cio:execution-result $dir $id)
        (let $report (coding:observe (car-atom $live))
          (if (or (>= $now $deadline) (fs:is-file (coding:file $dir "stop"))) $report
            (progn (coding:wait-tick) (coding:poll-until $dir $id $deadline)))))))
@@ -62,23 +62,24 @@
 (= (coding:cancel $dir $args)
    (let* (($id (coding:text (coding:field $args "execution_id")))
           ($live (coding:execution $id)))
-     (if (== $live ()) (py-call (coding_io.execution_result $dir $id))
+     (if (== $live ()) (cio:execution-result $dir $id)
        (let (CodingProcess $_ $handle $_ $_ $_ $_ $_) (car-atom $live)
          (progn (io:signal $handle 15)
            (coding:poll-until $dir $id (+ (system:monotonic-ns) 1000000000)))))))
 (= (coding:exec-owned $dir $workdir $args)
-   (let* (($raw-id (py-call (secrets.token_hex 16)))
-          ($id (str:concat "" $raw-id))
+   (let* (($id (system:uuid4-hex))
           ($cmd (coding:text (coding:field $args "cmd")))
           ($given (coding:text (coding:field $args "workdir")))
           ($cwd (if (== $given "") $workdir $given))
           ($timeout (max 0 (coding:number (coding:field $args "timeout_ms") 600000)))
           ($yield (max 0 (coding:number (coding:field $args "yield_time_ms") (+ $timeout 1000))))
-          ($log (py-call (coding_io.execution_create $dir $id $cmd)))
+          ($created (cio:execution-create $dir $id $cmd))
+          ($log (case $created (((ExecutionLog $path) $path) ($refused ""))))
           ($start (system:monotonic-ns))
           ($_ (py-call (stream_sink.event "tool.dispatching" $id $cmd "dispatching" "exec_command")))
-          ($submitted (catch (io:submit (proc:request
-            ("bash" "-lc" (coding:workspace-shell $cmd)) $cwd inherit $timeout $log $log)))))
+          ($submitted (if (== $log "") $created
+            (catch (io:submit (proc:request
+              ("bash" "-lc" (coding:workspace-shell $cmd)) $cwd inherit $timeout $log $log))))))
      (case $submitted
        (((io:pending $handle)
          (let* (($reader (fs:open-read $log)) ($decoder (str:utf8-new ignore))
@@ -86,6 +87,6 @@
                 ($_ (py-call (stream_sink.event "tool.started" $id $cmd "running" "exec_command"))))
            (coding:poll-until $dir $id (+ $start (* $yield 1000000)))))
         ($failure
-          (let $result (py-call (coding_io.execution_finish $dir $id "not_started" 0 0))
+          (let $result (cio:execution-finish $dir $id "not_started" 0 0)
             (progn (py-call (stream_sink.tool_finished $id "not_started" 0 $log))
               (str:concat "The command could not run: " (repr $failure)))))))))
