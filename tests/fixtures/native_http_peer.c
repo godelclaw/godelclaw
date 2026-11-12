@@ -85,7 +85,10 @@ int main(int argc,char **argv) {
         if(delay>0){struct timespec pause={.tv_sec=delay/1000,.tv_nsec=(delay%1000)*1000000L};while(nanosleep(&pause,&pause)&&errno==EINTR){}}
         setting=read_file(root,"status",&n);int status=(int)strtol(setting,NULL,10);free(setting);
         if(status==0){close(client);continue;}
-        char *body=read_file(root,"response.body",&n);char response[256];int head=snprintf(response,sizeof(response),"HTTP/1.1 %d Fixture\r\nContent-Length: %zu\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n",status,n);
+        /* A scripted reply for this request number takes precedence. */
+        snprintf(name,sizeof(name),"response-%lu.body",count);
+        char scripted[4096];snprintf(scripted,sizeof(scripted),"%s/%s",root,name);
+        char *body=read_file(root,access(scripted,R_OK)==0?name:"response.body",&n);char response[256];int head=snprintf(response,sizeof(response),"HTTP/1.1 %d Fixture\r\nContent-Length: %zu\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n",status,n);
         if(head>0 && send_all(client,response,(size_t)head))send_all(client,body,n);
         free(body);close(client);
     }

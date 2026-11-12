@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "about": "Ceilings for scripts/census_python_entries_cetta.metta: calls entering project Python per scenario. A port lowers its ceiling; no change may raise one.",
+  "scenarios": [
+    [
+      "tests/activity_delivery_full_turn_probe.metta",
+      "ACTIVITY_DELIVERY_FULL_TURN_OK",
+      93
+    ],
+    [
+      "tests/background_jobs_probe.metta",
+      "BACKGROUND_JOBS_OK",
+      3
+    ],
+    [
+      "tests/coding_lifecycle_probe.metta",
+      "CODING_LIFECYCLE_OK",
+      342,
+      "world"
+    ]
+  ]
+}
