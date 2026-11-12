@@ -207,17 +207,22 @@ def main(argv=None):
             # The waiter's generation: a newer waiter for the same name takes
             # its slot, and this one ends.
             generation = time.time_ns()
+            named = args.command == 'wait'
             failures = 0
             while True:
                 milliseconds = int(min(30000, max(0, (deadline - time.monotonic()) * 1000)))
                 request = (f'(shared-mail:next-as {q(args.socket)} {q(args.agent)} {milliseconds} {generation})'
-                           if args.command == 'wait' else
+                           if named else
                            f'(shared-mail:next {q(args.socket)} {q(args.agent)} {milliseconds})')
                 try:
                     result = invoke(args, request, timeout=milliseconds / 1000 + 30)
                 except subprocess.TimeoutExpired as error:
                     result = {'status': 'error', 'reason': str(error), 'retryable': True}
                 reason = str(result.get('reason', ''))
+                if named and result.get('status') == 'error' and reason.startswith('(mailbox:watch-as '):
+                    # An engine without named waits leaves the call unreduced; wait unnamed.
+                    named = False
+                    continue
                 if result.get('status') == 'error' and 'error superseded' in reason:
                     result = {'status': 'superseded', 'reason': 'a newer waiter for this name holds it'}
                     break
