@@ -10,7 +10,8 @@
     (GrowthCheck "coding-settle-report" "tests/growth/coding_settle_report.metta" 64 (growth:linear))
     (GrowthCheck "coding-execution-result" "tests/growth/coding_execution_result.metta" 1024 (growth:bounded))
     (GrowthCheck "coding-freeze-bundle" "tests/growth/coding_freeze_bundle.metta" 50 (growth:linear))
-    (GrowthCheck "coding-repin-checkpoint" "tests/growth/coding_repin_checkpoint.metta" 256 (growth:linear))))
+    (GrowthCheck "coding-repin-checkpoint" "tests/growth/coding_repin_checkpoint.metta" 256 (growth:linear))
+    (GrowthCheck "apply-patch-lines" "tests/growth/apply_patch_lines.metta" 500 (growth:linear))))
 
 (= (growth:run-all $root $core $artifacts $checks $only $ok)
    (if (== $checks ()) $ok

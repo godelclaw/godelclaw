@@ -2,7 +2,8 @@
  * descriptors opened under FSYNC_FAULT_TARGET. FSYNC_FAULT_MODE=all fails
  * every such fsync (a failure before a rename publishes); directories fails
  * only directory fsyncs (the rename happened, its durability is unknown).
- * Every other call goes to libc unchanged. */
+ * A rename onto exactly FSYNC_FAULT_RENAME fails with EIO. Every other call
+ * goes to libc unchanged. */
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
@@ -70,4 +71,12 @@ int fdatasync(int fd) {
     if (!real) real = dlsym(RTLD_NEXT, "fdatasync");
     if (injected(fd)) { errno = EIO; return -1; }
     return real(fd);
+}
+
+int rename(const char *from, const char *to) {
+    static int (*real)(const char *, const char *);
+    if (!real) real = dlsym(RTLD_NEXT, "rename");
+    const char *target = getenv("FSYNC_FAULT_RENAME");
+    if (target && *target && to && !strcmp(to, target)) { errno = EIO; return -1; }
+    return real(from, to);
 }

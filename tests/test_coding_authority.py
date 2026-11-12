@@ -39,7 +39,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "tests"), str(ROOT / "src"), str(ROOT / "channels")]
 
 from isolated_env import isolated_environ  # noqa: E402
-import apply_patch  # noqa: E402
 import coding_estate  # noqa: E402
 import native_ledger  # noqa: E402
 import native_lifetime  # noqa: E402

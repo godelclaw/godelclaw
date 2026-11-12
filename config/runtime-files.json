@@ -142,7 +142,7 @@
   "src/api/README.md",
   "src/api_module_cetta.metta",
   "src/api_registry.metta",
-  "src/apply_patch.py",
+  "src/apply_patch_cetta.metta",
   "src/attention.py",
   "src/attention_api.metta",
   "src/attention_graph.metta",
