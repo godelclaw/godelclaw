@@ -169,7 +169,9 @@ class CodingSessionTests(unittest.TestCase):
             "METTACLAW_MODEL_STATE_PATH": str(self.directory / "model"),
             "METTACLAW_CONTEXT_WINDOW_TOKENS": "100000",
             "SYNTHETIC_BASE_URL": f"http://127.0.0.1:{self.server.server_port}/v1",
-            "SYNTHETIC_API_KEY": "fixture-secret", "SYNTHETIC_EMPTY_BACKOFF": "0"}
+            "SYNTHETIC_API_KEY": "fixture-secret", "SYNTHETIC_EMPTY_BACKOFF": "0",
+            # Probes run from scratch folders; launches freeze this checkout's runtime.
+            "METTACLAW_RUNTIME_ROOT": str(ROOT)}
 
     def tearDown(self):
         self.server.shutdown()
@@ -1129,8 +1131,10 @@ class CodingSessionTests(unittest.TestCase):
         workspace.mkdir()
         listing = ('env | cut -d= -f1 | grep -E "^(METTACLAW_|PYTHONPATH$|.*_API_KEY$|'
                    '.*_TOKEN$|AWS_.*|SSH_AUTH_SOCK$|KEEP_THIS$)" | sort | tr "\\n" " "')
-        result = self.run_probe('!(Out (coding:exec %s (json-parse %s)))'
-                                % (json.dumps(str(workspace)), json.dumps(json.dumps({"cmd": listing}))))
+        records = self.directory / "records"
+        result = self.run_probe('!(Out (coding:exec-owned %s %s (json-parse %s)))'
+                                % (json.dumps(str(records)), json.dumps(str(workspace)),
+                                   json.dumps(json.dumps({"cmd": listing}))))
         out = result.stdout[result.stdout.index("(Out "):]
         self.assertIn("Exit code: 0", out)
         self.assertIn("KEEP_THIS", out)
@@ -1144,8 +1148,10 @@ class CodingSessionTests(unittest.TestCase):
         workspace = self.directory / "workspace"
         workspace.mkdir()
         command = 'printf "%s" "$SSH_AUTH_SOCK"'
-        result = self.run_probe('!(Out (coding:exec %s (json-parse %s)))'
-                                % (json.dumps(str(workspace)), json.dumps(json.dumps({"cmd": command}))))
+        records = self.directory / "records"
+        result = self.run_probe('!(Out (coding:exec-owned %s %s (json-parse %s)))'
+                                % (json.dumps(str(records)), json.dumps(str(workspace)),
+                                   json.dumps(json.dumps({"cmd": command}))))
         self.assertIn("/fixture/agent.sock", result.stdout)
 
     def test_agent_recycle_does_not_end_an_independent_coding_scope(self):

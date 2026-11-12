@@ -8,8 +8,8 @@
 !(import! &self (library system))
 !(import! &self (library str))
 !(import! &self (library json))
-!(import! &self ./src/coding_io.py)
 !(import! &self ./src/coding_estate.py)
+!(import! &self ./src/coding_io_cetta.metta)
 !(import! &self ./src/coding_guidance.metta)
 !(import! &self ./src/coding_delivery.metta)
 !(import! &self ./src/process_identity_cetta.metta)
@@ -51,7 +51,7 @@
    (case $value (((JsonString $text) $text) ((JsonNumber $text) $text) ($other ""))))
 (= (work:json $path) (if (fs:is-file $path) (json-parse (fs:read-text $path)) (JsonObject ())))
 (= (work:shell $command) (proc:run ("bash" "-c" $command) (system:cwd) inherit 30000 0 "merged"))
-(= (work:quote $text) (py-call (shlex.quote $text)))
+(= (work:quote $text) (cio:shell-quote $text))
 (= (work:clip $text $limit)
    (if (<= (str:char-length $text) $limit) $text (str:concat (str:char-slice $text 0 $limit) " …")))
 
@@ -87,8 +87,8 @@
             ((GuidanceFailed $why) (str:concat "work: " $why)))))
         ((GuidanceFailed $why) (str:concat "work: " $why))))))
 (= (work:start-at $task $workdir $model $effort $guidance)
-   (let* (($stamp (py-call (time.strftime "%Y%m%d-%H%M%S")))
-          ($salt (py-call (secrets.token_hex 2)))
+   (let* (($stamp (system:format-time "%Y%m%d-%H%M%S" (system:wall-time) "local"))
+          ($salt (str:char-slice (system:uuid4-hex) 0 4))
           ($id (format-args "work-{}-{}" ($stamp $salt)))
           ($dir (work:dir $id))
           ($_ (proc:run ("mkdir" "-p" "--" $dir) (system:cwd) inherit 10000 0 "merged"))
@@ -98,27 +98,31 @@
                                    (JsonPair "requester" (JsonString $requester)) (JsonPair "effort" (JsonString $effort))
                                    (JsonPair "requester_space" (JsonString (system:getenv-or-default "METTACLAW_MAIL_SPACE" "agent-mail")))
                                    (JsonPair "model" (JsonString $model)) (JsonPair "guidance" $guidance))))
-          ($_ (fs:update-text (path:join $dir "task.json") "replace" (json-stringify $task-json) "" ""))
-          ($_ (work:launch $id)))
-     (str:join "" ("WORK_STARTED " $id ". It runs on its own and mails you its report when done; "
-                   "(work-status \"" $id "\") shows its progress, (work-steer \"" $id "\" \"text\") guides it, "
-                   "(work-stop \"" $id "\") stops it."))))
+          ($_ (fs:update-text (path:join $dir "task.json") "replace" (json-stringify $task-json) "" "")))
+     (case (work:launch $id)
+       (((WorkLaunched $launched)
+         (str:join "" ("WORK_STARTED " $id ". It runs on its own and mails you its report when done; "
+                       "(work-status \"" $id "\") shows its progress, (work-steer \"" $id "\" \"text\") guides it, "
+                       "(work-stop \"" $id "\") stops it.")))
+        ((WorkNotLaunched $why) (str:join "" ("work: session " $id " could not launch: " $why)))))))
 
 (= (work:launch $id)
-   (let $desc (py-call (coding_io.freeze_runtime (system:cwd) (work:dir $id)))
-     (work:launch-at $id $desc)))
+   (work:launch-at $id (cio:freeze-runtime (system:cwd) (work:dir $id) NoNote)))
+;; A reservation launches; anything else names why it did not.
 (= (work:launch-at $id $desc)
+   (case $desc
+     (((CodingLaunch reserved $runtime $binary $token $detail) (work:launch-reserved $id $runtime $binary $token))
+      ((CodingLaunch $status $runtime $binary $token $detail) (WorkNotLaunched (str:concat $status (str:concat ": " $detail))))
+      ($other (WorkNotLaunched (repr $other))))))
+(= (work:launch-reserved $id $runtime $binary $token)
    (let* (($dir (work:dir $id))
           ($tmp (path:join $dir "tmp"))
           ($_ (proc:run ("mkdir" "-p" "--" $tmp) (system:cwd) inherit 10000 0 "merged"))
           ;; The session reads its model from its own state file, never the
           ;; agent's; a session from before models were recorded keeps the
           ;; agent's model of the moment it resumes.
-          ($model (format-args "{}" ((py-call (coding_io.session_model $dir (work:agent-model))))))
-          ($runtime (format-args "{}" ((py-call (coding_io.descriptor_field $desc "root")))))
-          ($binary (format-args "{}" ((py-call (coding_io.descriptor_field $desc "binary")))))
-          ($token (format-args "{}" ((py-call (coding_io.descriptor_field $desc "run")))))
-          ($pythonpath (py-call (coding_io.runtime_pythonpath $runtime (system:cwd))))
+          ($model (cio:session-model $dir (work:agent-model)))
+          ($pythonpath (cio:runtime-pythonpath $runtime (system:cwd)))
           ;; The session shares the account's ledger and usage tally, as
           ;; Codex sub-agents share rate limits, but keeps its own health,
           ;; last-completion and restart files: its calls are not the agent's turns.
@@ -173,27 +177,23 @@
                  (str:concat "work-resume: " $problem)
                  (str:join "" ("work-resume: " $problem "; this session cannot resume on its pin. Move it to the current runtime with (work-resume \"" $id "\" \"current\"), start a new session with (work \"...\"), or set it aside with (work-archive \"" $id "\" \"why\").")))
                (let* (($_ (delivery:preserve $dir))
-                      ($desc (py-call (coding_io.freeze_runtime (system:cwd) $dir
-                               "Resume this session from its existing evidence and plan. Verify uncertain effects before choosing new actions.")))
-                      ($status (format-args "{}" ((py-call (coding_io.descriptor_field $desc "status"))))))
-                 (if (== $status "running")
-                   (str:concat "WORK_RUNNING " $id)
-                   (work:finish-resume $id $dir $desc)))))
+                      ($desc (cio:freeze-runtime (system:cwd) $dir (cio:note-pinned))))
+                 (case $desc
+                   (((CodingLaunch running $runtime $binary $token $detail) (str:concat "WORK_RUNNING " $id))
+                    ((CodingLaunch failed $runtime $binary $token $detail) (str:concat "work-resume: " $detail))
+                    ($reserved (work:finish-resume $id $dir $reserved)))))))
            (if (== $mode "current")
              (let* (($_ (delivery:preserve $dir))
-                    ($raw (format-args "{}" ((py-call (coding_io.repin_session_json (system:cwd) $dir)))))
-                    ($outcome (json-parse $raw))
-                    ($status (work:text (work:field $outcome "status")))
-                    ($detail (work:text (work:field $outcome "detail"))))
-               (if (== $status "running")
-                 (str:concat "WORK_RUNNING " $id)
-                 (if (== $status "failed")
-                   (str:join "" ("work-resume: the current runtime cannot read this session's checkpoint: " $detail "; its pin is unchanged. Start a new session for the task with (work \"...\") or set it aside with (work-archive \"" $id "\" \"why\")."))
-                   (if (== $status "uncertain")
-                     (str:join "" ("work-resume: re-pinning could not confirm durability after updating runtime.json: " $detail "; its pin may have changed and the next resume will recheck it."))
-                     (if (== $status "changed")
-                       (str:concat "work-resume: " $detail)
-                       (work:finish-resume $id $dir $raw))))))
+                    ($outcome (cio:repin (system:cwd) $dir)))
+               (case $outcome
+                 (((CodingLaunch running $runtime $binary $token $detail) (str:concat "WORK_RUNNING " $id))
+                  ((CodingLaunch failed $runtime $binary $token $detail)
+                   (str:join "" ("work-resume: the current runtime cannot read this session's checkpoint: " $detail "; its pin is unchanged. Start a new session for the task with (work \"...\") or set it aside with (work-archive \"" $id "\" \"why\").")))
+                  ((CodingLaunch uncertain $runtime $binary $token $detail)
+                   (str:join "" ("work-resume: re-pinning could not confirm durability after updating runtime.json: " $detail "; its pin may have changed and the next resume will recheck it.")))
+                  ((CodingLaunch changed $runtime $binary $token $detail) (str:concat "work-resume: " $detail))
+                  ((CodingLaunch $moved $runtime $binary $token $detail)
+                   (work:finish-resume $id $dir (CodingLaunch reserved $runtime $binary $token ""))))))
              (str:join "" ("work-resume: unknown resume mode \"" $mode "\"; use \"pinned\" or \"current\"."))))))))
 
 (= (work:line $id)
@@ -245,18 +245,19 @@
 (= (work-steer $id $text)
    (let* (($dir (work:dir $id)) ($path (path:join $dir "inbox.jsonl")) ($line (json-stringify (JsonString $text))))
      (if (fs:is-file (path:join $dir "task.json"))
-       (let $_ (py-call (coding_io.append_line $path $line)) (str:concat "WORK_STEERED " $id))
+       (let $_ (cio:append-line $path $line) (str:concat "WORK_STEERED " $id))
        (str:concat "work-steer: no session " $id))))
 (= (work-stop $id)
    (let* (($dir (work:dir $id)))
      (if (fs:is-file (path:join $dir "task.json"))
-       (let* (($_ (py-call (coding_io.stop_session $dir)))
+       (let* (($_ (cio:stop-session $dir))
               ($_ (proc:run ("systemctl" "--user" "stop" (str:concat (work:unit $id) ".scope"))
                             (system:cwd) inherit 10000 0 "merged"))
               ;; Every ending has the same report handover, including a stop
-              ;; that ends the scope before its worker can write a report.
-              ($_ (if (fs:is-file (path:join $dir "report.txt")) ()
-                    (work:ended $id $dir))))
+              ;; that ends the scope before its worker can record its ending.
+              ;; Settling is a no-op unless the state still says running; a
+              ;; report the worker wrote before it was stopped is kept in it.
+              ($_ (work:ended $id $dir)))
          (str:concat "WORK_STOPPED " $id))
        (str:concat "work-stop: no session " $id))))
 
@@ -272,13 +273,7 @@
      (let $id (str:trim (car-atom $ids))
        (work:reap-ids (cdr-atom $ids) (+ $count (if (== $id "") 0 (work:reap-one $id)))))))
 (= (work:reap-error $dir $where $why)
-   (case $where
-     (((python_error $type $exc)
-        (let $msg (case (catch (py-call (builtins.str $exc)))
-                    (((Error $a $b) (repr $where))
-                     ($m (format-args "{}: {}" ($type $m)))))
-          (py-call (coding_io.log_reap_error $dir $msg (repr $why)))))
-      ($other (py-call (coding_io.log_reap_error $dir (repr $where) (repr $why)))))))
+   (cio:log $dir (format-args "reap error ({}): {}" ((repr $where) (repr $why)))))
 (= (work:reap-one $id)
    (let* (($dir (work:dir $id))
           ($state (work:json (path:join $dir "state.json")))
@@ -297,10 +292,8 @@
                  (let $_ (work:notify $id $dir $ending) 1)
                  0)))))
        0)))
-(= (work:ended $id $dir)
-   (format-args "{}" ((py-call (coding_io.settle_ending $dir)))))
-(= (work:ended $id $dir $owner)
-   (format-args "{}" ((py-call (coding_io.settle_ending $dir $owner)))))
+(= (work:ended $id $dir) (cio:settle-ending $dir))
+(= (work:ended $id $dir $owner) (cio:settle-ending $dir $owner))
 ; The same announcement coding:notify (coding_session.metta) makes when a
 ; session ends by itself.
 (= (work:notify $id $dir $status)

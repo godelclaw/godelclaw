@@ -1,95 +1,161 @@
-; Python-entry census over the smoke scenarios. Each scenario runs in its own
-; disposable world with tests/python_entry_census.py installed as a profiler;
-; every total must stay at or below its ceiling in tests/python_entry_census.json.
-; Lower a ceiling in the same commit as the port that lowers the count.
-; Run from the checkout root with NATIVE_TEST_SDK, NATIVE_TEST_CORE and
-; NATIVE_TEST_ARTIFACTS, as for scripts/test_runtime_probes_cetta.metta.
+; Python-entry census: the migration's progress metric.
+;
+; Each scenario runs as the runtime probes run (tests/runtime_probes_native.metta),
+; but its Python environment carries tests/support/python_entry_census.py as
+; sitecustomize. Every process of the scenario, spawned workers included, then
+; records each call that entered Python from native code. The project count
+; must stay at or below the scenario's ceiling in tests/python_entry_census.json;
+; a port lowers the ceiling. Run from the checkout root with the core engine:
+;   NATIVE_TEST_SDK=... NATIVE_TEST_CORE=... NATIVE_TEST_ARTIFACTS=... \
+;     $NATIVE_TEST_CORE/cetta --lang petta --import-mode ancestor-walk --quiet \
+;     scripts/census_python_entries_cetta.metta
 !(import! &self ../tests/runtime_probes_native.metta)
 
-(: census:absolute-imports (-> %Undefined% %Undefined% %Undefined%))
-(= (census:absolute-imports $root $text)
-   (str:join (str:concat (str:concat "(import! &self " $root) "/")
-             (str:split "(import! &self ./" $text)))
+;; A disposable environment whose site-packages holds the census hook. run.sh
+;; puts a pyvenv's site-packages on PYTHONPATH, so the agent's own launch path
+;; loads the hook without any change to the runtime.
+(= (census:environment $root $sdk $artifacts)
+   (let* (($manifest (preq:parse (fs:read-text (nt:join $sdk "build-manifest.json"))))
+          ($prefix (pcall:fact $manifest "python_prefix"))
+          ($version (pcall:fact $manifest "python_version"))
+          ($venv (nt:join $artifacts "census-python"))
+          ($bin (nt:join $venv "bin"))
+          ($site (nt:join $venv (format-args "lib/python{}/site-packages" ($version))))
+          ($_ (fs:make-directories $bin 448)) ($_ (fs:make-directories $site 448))
+          ($_ (fs:write (nt:join $venv "pyvenv.cfg")
+                (format-args "home = {}/bin\ninclude-system-site-packages = true\nversion = {}\n" ($prefix $version))))
+          ($python (nt:join $bin "python3"))
+          ($_ (if (fs:exists $python) True
+                (nt:exit-ok (proc:run ("ln" "-s" (nt:join $prefix "bin/python3") $python) $root (nt:environment $artifacts) 5000 4096))))
+          ($_ (fs:write (nt:join $site "sitecustomize.py") (fs:read-text "tests/support/python_entry_census.py"))))
+     $venv))
 
-(: census:wrapper (-> %Undefined% %Undefined% %Undefined% %Undefined%))
-(= (census:wrapper $root $probe $result)
-   (let* (($profiler (preq:repr (nt:join $root "tests/python_entry_census.py")))
-          ($head (format-args "!(import! &self (library lib_import))\n!(import! &self {})\n!(py-call (python_entry_census.start {}))\n"
-                              ($profiler (preq:repr $result))))
-          ($body (census:absolute-imports $root (fs:read-text (nt:join $root $probe)))))
-     (str:concat (str:concat $head $body) "\n!(py-call (python_entry_census.finish))\n")))
+;; Census records: one line "kind<TAB>file<TAB>function" per entry.
+(= (census:records $directory)
+   (census:records-of $directory (fs:entries $directory) ()))
+(= (census:records-of $directory $names $records)
+   (if (nt:equal $names ()) $records
+     (let* (($name (preq:head $names))
+            ($lines (str:split "\n" (fs:read-text (nt:join $directory $name)))))
+       (census:records-of $directory (preq:tail $names) (census:parse-lines $lines $records)))))
+(= (census:parse-lines $lines $records)
+   (if (nt:equal $lines ()) $records
+     (let $line (preq:head $lines)
+       (census:parse-lines (preq:tail $lines)
+         (if (nt:equal $line "") $records (preq:cons (str:split "\t" $line) $records))))))
 
-; A short world directory: its ledger socket path must stay within the
-; 108-byte Unix socket limit under a deep artifacts directory.
-(= (census:world-name $name) (str:concat "cn-" (str:byte-slice $name 0 8)))
+;; Counts per kind and per file, as an association list ((key count) ...).
+(= (census:tally $records $kind $counts)
+   (if (nt:equal $records ()) $counts
+     (let ($found $file $function) (preq:head $records)
+       (census:tally (preq:tail $records) $kind
+         (if (nt:equal $found $kind) (census:bump $file $counts) $counts)))))
+(= (census:bump $key $counts)
+   (if (nt:equal $counts ()) (($key 1))
+     (let ($head-key $head-count) (preq:head $counts)
+       (if (nt:equal $head-key $key) (preq:cons ($key (+ $head-count 1)) (preq:tail $counts))
+         (preq:cons ($head-key $head-count) (census:bump $key (preq:tail $counts)))))))
+(= (census:total $counts)
+   (if (nt:equal $counts ()) 0
+     (let ($key $count) (preq:head $counts) (+ $count (census:total (preq:tail $counts))))))
+(= (census:print-counts $scenario $counts)
+   (if (nt:equal $counts ()) True
+     (let* ((($key $count) (preq:head $counts))
+            ($_ (println! (PYTHON_ENTRIES_BY_FILE $scenario $key $count))))
+       (census:print-counts $scenario (preq:tail $counts)))))
 
-(: census:total (-> %Undefined% %Undefined% %Undefined%))
-(= (census:total $name $result)
-   (let* (($census (preq:parse (fs:read-text $result)))
-          ($total (pcall:fact $census "total"))
-          ($_ (println! (PYTHON_ENTRY_CENSUS $name $total (preq:render (preq:field $census "modules"))))))
-     $total))
+;; A probe scenario runs through ./run.sh like the runtime probes. A world
+;; scenario runs on the SDK engine directly, with the test world as working
+;; directory: everything it creates (coding sessions, frozen runtimes, fixture
+;; programs on PATH in <world>/scope-bin) stays inside the world, and the
+;; world's loopback provider and ledger serve it.
+; $extra is the scenario's optional environment, applied last. A relative path
+; in it names a file inside the world, the working directory of world mode.
+(= (census:command $root $sdk $world $bin $venv $directory $name probe $extra)
+   (CensusCommand ("./run.sh" $name) $root
+     (nq:overlay-env (nq:overlay-env (nr:probe-env $world $name $bin $name)
+       (("PETTA_PY_ENV" $venv) ("PYTHON_ENTRY_CENSUS_DIR" $directory)
+        ("PYTHON_ENTRY_CENSUS_ROOT" $root))) $extra)))
+(= (census:command $root $sdk $world $bin $venv $directory $name world $extra)
+   (let* (($cwd (nq:path $world ""))
+          ($manifest (preq:parse (fs:read-text (nt:join $sdk "build-manifest.json"))))
+          ($site (nt:join $venv (format-args "lib/python{}/site-packages" ((pcall:fact $manifest "python_version")))))
+          ($path (format-args "{}scope-bin:{}:{}" ($cwd $bin (system:getenv-or-default "PATH" "/usr/bin:/bin")))))
+     (CensusCommand ((nt:join $sdk "cetta") "--lang" "petta" "--import-mode" "ancestor-walk" (nt:join $root $name)) $cwd
+       (nq:overlay-env (nq:guest-env $world "fixture-model"
+         (("PYTHONPATH" (format-args "{}/src:{}/modes:{}/modes/iter:{}/channels:{}" ($root $root $root $root $site)))
+          ("PATH" $path) ("METTACLAW_INSTANCE" "census")
+          ("METTACLAW_CODING_GUIDANCE_DIR" (nq:path $world "no-guidance"))
+          ("METTACLAW_MAIL_NAME" "census-requester")
+          ("METTACLAW_WORK_MAIL" (format-args "{}scope-bin/mailer" ($cwd)))
+          ("PYTHON_ENTRY_CENSUS_DIR" $directory) ("PYTHON_ENTRY_CENSUS_ROOT" $root))) $extra))))
 
-(: census:probe (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
-(= (census:probe $root $sdk $core $artifacts $fixture $bin $name $probe $marker)
-   (let* (($world (nq:world $root $sdk $core $artifacts $fixture (census:world-name $name)))
-          ($result (nq:path $world "census.json"))
-          ($wrapper (nq:path $world "census-probe.metta"))
-          ($_ (fs:write $wrapper (census:wrapper $root $probe $result)))
-          ($env (nr:probe-env $world $probe $bin $probe))
-          ($output (nt:exit-ok (proc:run ("./run.sh" $wrapper) $root $env 120000 4194304)))
+(= (census:scenario $root $sdk $core $artifacts $fixture $bin $venv $name $marker $ceiling $mode $extra $index)
+   (let* (($world (nq:world $root $sdk $core $artifacts $fixture (format-args "census-{}" ($index))))
+          ($directory (nq:path $world "census")) ($_ (fs:make-directories $directory 448))
+          ((CensusCommand $argv $cwd $env) (census:command $root $sdk $world $bin $venv $directory $name $mode $extra))
+          ($start (system:monotonic-ns))
+          ($result (proc:run $argv $cwd $env 300000 1048576))
+          ($elapsed (/ (- (system:monotonic-ns) $start) 1000000))
+          ($_ (fs:write (nq:path $world "probe-result.metta") (preq:repr $result)))
+          ($output (nt:exit-ok $result))
           ($_ (nt:require census-scenario-witness (preq:member? $marker (str:split "\n" $output))))
+          ($records (census:records $directory))
+          ($project (census:tally $records "project" ()))
+          ($other (census:tally $records "other" ()))
+          ($count (census:total $project))
+          ($_ (census:print-counts $name $project))
+          ($_ (println! (PYTHON_ENTRY_CENSUS $name project $count ceiling $ceiling other (census:total $other) ms $elapsed)))
           ($_ (nq:close $world)))
-     (census:total $name $result)))
+     (if (<= $count $ceiling) True
+       (let $_ (println! (PYTHON_ENTRY_CEILING_EXCEEDED $name $count $ceiling)) False))))
 
-; One production-shaped command turn: native transport and ledger, model
-; commentary and a display stream, against the owned loopback provider.
-(: census:provider (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
-(= (census:provider $root $sdk $core $artifacts $fixture $name)
-   (let* (($world (nq:world $root $sdk $core $artifacts $fixture (census:world-name $name)))
-          ($_ (fs:write (nq:path $world "response.body")
-               "{\"id\":\"fixture\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"id\":\"t1\",\"type\":\"function\",\"function\":{\"name\":\"metta\",\"arguments\":\"{\\\"program\\\":\\\"((nop))\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":2}}"))
-          ($result (nq:path $world "census.json"))
-          ($entry (nq:path $world "census-guest.metta"))
-          ($forms "!(let $answer (llm:command \"fixture-model\" 42 \"low\" \"S_cache_boundary_U\") (let $_ (nt:require census-provider-answer (nt:equal $answer \"((nop))\")) (println! CENSUS_PROVIDER_OK)))")
-          ($_ (fs:write $entry
-               (format-args "!(import! &self {})\n!(py-call (python_entry_census.start {}))\n!(import! &self {})\n!(import! &self {})\n{}\n!(py-call (python_entry_census.finish))\n"
-                 ((preq:repr (nt:join $root "tests/python_entry_census.py")) (preq:repr $result)
-                  (preq:repr (nt:join $root "src/native_llm.metta"))
-                  (preq:repr (nt:join $root "tests/native_test_support.metta")) $forms))))
-          ($env (nq:guest-env $world "fixture-model"
-                  (("METTACLAW_MODEL_COMMENTARY" "1") ("METTACLAW_STREAM_DIR" (nq:path $world "display")))))
-          ($output (nt:exit-ok (proc:run ((nt:join $sdk "cetta") "--lang" "petta" "--profile" "extended"
-                                          "--import-mode" "ancestor-walk" "--quiet" $entry)
-                                         $root $env 120000 4194304)))
-          ($_ (nt:require census-scenario-witness (nt:contains $output "CENSUS_PROVIDER_OK")))
-          ($_ (nt:require census-provider-single-post (nt:equal (nq:posts $world) 1)))
-          ($_ (nq:close $world)))
-     (census:total $name $result)))
-
-(: census:check (-> %Undefined% %Undefined% %Undefined% %Undefined%))
-(= (census:check $ceilings $name $total)
-   (let $ceiling (pcall:fact $ceilings $name)
-     (let $_ (println! (PYTHON_ENTRY_CEILING $name $total $ceiling))
-       (nt:require python-entries-at-or-below-ceiling (<= $total $ceiling)))))
+; Optional fields after the ceiling: a mode ("probe", the default, or
+; "world"), then an object of environment settings for the scenario.
+(= (census:mode ()) probe)
+(= (census:mode ((JsonString "probe") $more)) probe)
+(= (census:mode ((JsonString "world") $more)) world)
+(= (census:mode ((JsonString "world"))) world)
+(= (census:extra-env ()) ())
+(= (census:extra-env ($mode)) ())
+(= (census:extra-env ($mode (JsonObject $pairs))) (census:env-pairs $pairs))
+(= (census:env-pairs $pairs)
+   (if (nt:equal $pairs ()) ()
+     (let (JsonPair $key (JsonString $value)) (preq:head $pairs)
+       (preq:cons ($key $value) (census:env-pairs (preq:tail $pairs))))))
+(= (census:run-scenarios $root $sdk $core $artifacts $fixture $bin $venv $scenarios $index $ok)
+   (if (nt:equal $scenarios ()) $ok
+     (let* (((JsonArray $fields) (preq:head $scenarios))
+            (((JsonString $name) (JsonString $marker) (JsonNumber $ceiling)) (census:first-three $fields))
+            ($optional (cdr-atom (cdr-atom (cdr-atom $fields))))
+            ($mode (census:mode $optional)) ($extra (census:extra-env $optional))
+            ($passed (census:scenario $root $sdk $core $artifacts $fixture $bin $venv $name $marker (parse $ceiling) $mode $extra $index)))
+       (census:run-scenarios $root $sdk $core $artifacts $fixture $bin $venv (preq:tail $scenarios) (+ $index 1)
+         (and $ok $passed)))))
 
 (= (census:run)
    (let* (($root (system:cwd)) ($sdk (nt:required-env "NATIVE_TEST_SDK"))
           ($core (nt:required-env "NATIVE_TEST_CORE")) ($artifacts (nt:required-env "NATIVE_TEST_ARTIFACTS"))
           ($fixture (nt:join $artifacts "native-http-peer")) ($bin (nt:join $artifacts "bin"))
-          ($_ (fs:make-directories $bin 448)) ($env (nq:base-env $root $artifacts))
+          ($_ (fs:make-directories $bin 448)) ($control (nt:join $bin "systemctl"))
+          ($env (nq:base-env $root $artifacts))
           ($_ (nt:exit-ok (proc:run ("cc" "-std=c11" "-O2" "-Wall" "-Wextra" "-Werror"
              "tests/fixtures/native_http_peer.c" "-o" $fixture) $root $env 30000 65536)))
-          ($_ (nt:exit-ok (proc:run ("ln" "-sfn" $fixture (nt:join $bin "systemctl")) $root $env 5000 65536)))
-          ($ceilings (preq:parse (fs:read-text "tests/python_entry_census.json")))
-          ($coding (census:probe $root $sdk $core $artifacts $fixture $bin "coding-two-turn"
-                     "tests/integrated_coding_turn_probe.metta" "INTEGRATED_CODING_TURN_OK"))
-          ($delivery (census:probe $root $sdk $core $artifacts $fixture $bin "activity-delivery"
-                       "tests/activity_delivery_full_turn_probe.metta" "ACTIVITY_DELIVERY_FULL_TURN_OK"))
-          ($provider (census:provider $root $sdk $core $artifacts $fixture "native-provider-command"))
-          ($_ (census:check $ceilings "coding-two-turn" $coding))
-          ($_ (census:check $ceilings "activity-delivery" $delivery))
-          ($_ (census:check $ceilings "native-provider-command" $provider)))
-     PythonEntryCensusPassedV1))
-!(nt:require census-completed (nt:equal (collapse (census:run)) (PythonEntryCensusPassedV1)))
+          ($_ (nt:exit-ok (proc:run ("ln" "-sfn" $fixture $control) $root $env 5000 65536)))
+          ($venv (census:environment $root $sdk $artifacts))
+          ($only (system:getenv-or-default "PYTHON_ENTRY_CENSUS_ONLY" ""))
+          ((JsonObject $fields) (preq:parse (fs:read-text "tests/python_entry_census.json")))
+          ((JsonArray $all) (preq:field (JsonObject $fields) "scenarios"))
+          ($scenarios (if (nt:equal $only "") $all (census:select $all $only))))
+     (census:run-scenarios $root $sdk $core $artifacts $fixture $bin $venv $scenarios 0 True)))
+(= (census:first-three $fields)
+   ((car-atom $fields) (car-atom (cdr-atom $fields)) (car-atom (cdr-atom (cdr-atom $fields)))))
+(= (census:select $scenarios $only)
+   (if (nt:equal $scenarios ()) ()
+     (let* (((JsonArray $fields) (preq:head $scenarios))
+            (((JsonString $name) $marker $ceiling) (census:first-three $fields))
+            ($rest (census:select (preq:tail $scenarios) $only)))
+       (if (nt:contains $name $only) (preq:cons (preq:head $scenarios) $rest) $rest))))
+
+!(nt:require python-entry-census-within-ceilings (census:run))
 !(println! PYTHON_ENTRY_CENSUS_PASSED)

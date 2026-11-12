@@ -166,6 +166,7 @@ class CodingAuthorityAndRepinTests(unittest.TestCase):
             "METTACLAW_RECYCLE_REQUEST_PATH": str(self.directory / "recycle"),
             "METTACLAW_WAKE_REQUEST_PATH": str(self.directory / "wake"),
             "METTACLAW_CODING_SESSION": "1",
+            "METTACLAW_RUNTIME_ROOT": str(ROOT),
             "METTACLAW_LIFECYCLE_PATH": str(latch),
             "METTACLAW_STREAM_DIR": str(self.stream_dir),
             "SYNTHETIC_MODEL": "fixture-model",
@@ -696,7 +697,9 @@ class CodingAuthorityAndRepinTests(unittest.TestCase):
 
         manifest = json.loads((session / "runtime.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest.get("phase"), "reserved")
-        self.assertEqual(manifest.get("checkpoint"), coding_io.checkpoint_revision(session))
+        # The checkpoint the re-pin checked, as the runtime computes its revision.
+        revision = self.run_work_probe('!(println! (cio:checkpoint-revision "%s"))\n' % session)
+        self.assertEqual(manifest.get("checkpoint"), json.loads(revision.stdout.splitlines()[0]))
         self.assertIsInstance(manifest.get("previous"), dict)
         self.assertEqual(manifest["previous"]["digest"], "1111" * 16)
         # Only one level of previous is kept (no nested "previous")
@@ -1152,8 +1155,8 @@ class CodingAuthorityAndRepinTests(unittest.TestCase):
         self.launches.unlink(missing_ok=True)
         # Execute the exact MeTTa race: freeze A, then repin to B before work:launch-at runs with A's return value
         probe_forms = (
-            f'!(let $desc_a (py-call (coding_io.freeze_runtime "{src_a}" "{session}"))\n'
-            f'   (let $_ (py-call (coding_io.repin_session "{src_b}" "{session}"))\n'
+            f'!(let $desc_a (cio:freeze-runtime "{src_a}" "{session}" NoNote)\n'
+            f'   (let $_ (cio:repin "{src_b}" "{session}")\n'
             f'     (println! (work:launch-at "work-launch-race" $desc_a))))\n'
         )
         self.run_work_probe(probe_forms)
@@ -1516,7 +1519,7 @@ class CodingAuthorityAndRepinTests(unittest.TestCase):
         self.assertIn("its pin may have changed and the next resume will recheck it", probe_uncertain.stdout)
         self.assertNotIn("its pin is unchanged", probe_uncertain.stdout)
 
-        # 6. (work:reap-one ...) catches an OSError from settle_ending, logs to run.log, and returns 0
+        # 6. A reap that cannot record the ending logs why to run.log and returns 0
         (session / "state.json").write_text(dead_running_state, encoding="utf-8")
         rt_started = json.loads((session / "runtime.json").read_text(encoding="utf-8"))
         rt_started["phase"] = "started"
@@ -1527,7 +1530,7 @@ class CodingAuthorityAndRepinTests(unittest.TestCase):
         self.addCleanup(lambda: shutil.rmtree(report_file, ignore_errors=True))
         reap_probe = self.run_work_probe('!(println! (ReapEio (work:reap-one "work-fsync-eio")))\n')
         self.assertIn("(ReapEio 0)", reap_probe.stdout)
-        self.assertIn("reap error", (session / "run.log").read_text(encoding="utf-8"))
+        self.assertIn("settle error", (session / "run.log").read_text(encoding="utf-8"))
         shutil.rmtree(report_file, ignore_errors=True)
 
     def test_systemctl_stub_on_path_guards_reserved_manifest_until_scope_inactive(self):

@@ -19,6 +19,7 @@
 !(import! &self (library json))
 !(import! &self ./src/apply_patch.py)
 !(import! &self ./src/coding_io.py)
+!(import! &self ./src/coding_io_cetta.metta)
 !(import! &self ./src/coding_values.metta)
 !(import! &self ./src/coding_guidance.metta)
 !(import! &self ./src/coding_checkpoint.metta)
@@ -40,8 +41,8 @@
      (if (== $status "running") "" (delivery:identity $dir $value $status))))
 (= (coding:state $dir $status $steps $progress $inbox)
    (let $delivery-id (coding:delivery-id $dir $status $steps $progress $inbox)
-     (py-call (coding_io.write_worker_state $dir (coding:run-token) (process:owner)
-                $status $steps $progress $inbox $delivery-id))))
+     (cio:worker-state $dir (coding:run-token) (process:owner)
+       $status $steps $progress $inbox $delivery-id NoReport)))
 
 ; Codex keeps the beginning and the end of long output.
 (= (coding:cut $text)
@@ -53,12 +54,6 @@
 
 (= (coding:exec-report $code $seconds $output)
    (str:join "" ("Exit code: " $code "\nWall time: " (repr $seconds) " seconds\nOutput:\n" (coding:cut $output))))
-; Commands run in the workspace's shell, not the agent's runtime: without the
-; agent's METTACLAW_* settings (session health, recycle, wake and ledger paths,
-; channel sockets, bot token), its live module path and its provider keys.
-; Tests run from a session otherwise wrote into that session and the live ledger.
-(= (coding:exec $workdir $args)
-   (let $dir (py-call (coding_io.transient_root)) (coding:exec-owned $dir $workdir $args)))
 (= (coding:patch $workdir $patch)
    (let $receipt (py-call (apply_patch.apply $patch $workdir)) (format-args "{}" ($receipt))))
 (= (coding:plan $dir $args)
@@ -302,8 +297,8 @@
        "\n\nResume without replaying uncertain effects:\n(work-resume \"" $id "\")"))))
 (= (coding:finish $dir $status $text $steps $inbox)
    (let* (($delivery-id (coding:delivery-id $dir $status $steps $text $inbox))
-          ($wrote (py-call (coding_io.write_worker_state $dir (coding:run-token) (process:owner)
-                             $status $steps $text $inbox $delivery-id $text))))
+          ($wrote (cio:worker-state $dir (coding:run-token) (process:owner)
+                    $status $steps $text $inbox $delivery-id $text)))
      (if (== $wrote 0)
        (CodingAborted "superseded")
        (let $_ (py-call (stream_sink.event "session.finished" "session" $text $status))
