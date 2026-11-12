@@ -52,7 +52,9 @@
 ; A recorded count: a JSON integer, otherwise zero.
 (= (cio:count $value)
    (case $value
-     (((JsonNumber $text) (if (str:is-all-in digit $text) (JsonNumber $text) (JsonNumber "0")))
+     (((JsonNumber $text)
+       (let $digits (if (str:starts-with $text "-") (str:char-slice $text 1 (str:char-length $text)) $text)
+         (if (and (!= $digits "") (str:is-all-in digit $digits)) (JsonNumber $text) (JsonNumber "0"))))
       ($other (JsonNumber "0")))))
 ; A field as the log shows it: its text, or null when absent.
 (= (cio:shown $value)
