@@ -524,7 +524,7 @@ class CodingEstateVerbTests(CodingEstateFixture):
         direct, caller = self.directory / "direct_bundle.txt", self.directory / "caller_bundle.txt"
         guest(self.directory, HEADER + [
             "!(import! &self ./src/context_sources_cetta.metta)",
-            "!(py-call (context_bundle_probe.note %s (context-bundle:with-views ())))" % q(direct),
+            "!(py-call (context_bundle_probe.note %s (context-bundle:with-views () \"fixture conversation\")))" % q(direct),
         ], engine="cetta", runtime_root=self.directory, **settings)
         guest(self.directory, HEADER + CALLER + [
             '!(py-call (context_bundle_probe.trigger "idle"))',

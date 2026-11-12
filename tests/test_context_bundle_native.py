@@ -71,8 +71,13 @@ def guest(directory, lines, engine="cetta", swi=False, boot=False, runtime_root=
 HEADER = ["!(import! &self (library lib_import))",
           "!(import! &self ./src/helper.py)",
           "!(import! &self ./tests/context_bundle_probe.py)"]
+# The MeTTa Telegram client renders the conversation; a fixture source of the
+# same name replaces it in both bundles, as any fixture source does.
+CONVERSATION = "fixture conversation"
 CALLER = ["!(import! &self ./src/memory)", "!(import! &self ./src/turn_additions)",
-          "(= (tg:client-metta?) False)"]
+          "(= (tg:conversation-events) 64)", "(= (tg:get $key $default) $default)",
+          '(= (tg:conversation-window-for $events $chat) "%s")' % CONVERSATION,
+          '(= (tg:route-view) "%s")' % CONVERSATION]
 
 
 def native_coding_sessions(directory):
@@ -184,7 +189,7 @@ class NativeContextBundleTest(unittest.TestCase):
                                                _receipt_path=str(receipt_path)), ensure_ascii=True), encoding="utf-8")
                 lines += ["!(py-call (context_bundle_probe.configure %s %d))" % (q(path), 1 if engine == "cetta" else 0),
                           "!(py-call (context_bundle_probe.record %s (addition-context-sources)))" % q(log)]
-                expected.append(context_sources.bundle())
+                expected.append(context_sources.bundle(CONVERSATION))
                 oracle_calls.append({"loaders": probe.calls.copy(), "receipt_views": probe.receipts.calls.copy()})
         guest(self.directory, lines, engine=engine, swi=swi, **settings)
         actual = [json.loads(line) for line in log.read_text().splitlines()]
@@ -349,7 +354,7 @@ class NativeContextBundleTest(unittest.TestCase):
             path.write_text(json.dumps({s.source_id: "fixed" for s in context_sources.SOURCE_SPECS
                 if s.source_id != "conversation" and s.source_id not in NATIVE_SOURCES}))
             lines = HEADER + ["!(import! &self ./src/memory)", "!(import! &self ./src/turn_additions)",
-                              "(= (tg:client-metta?) True)", '(= (tg:conversation-events) 64)',
+                              '(= (tg:conversation-events) 64)',
                               '(= (tg:get reply-chat "") "fixture-chat")',
                               '(= (tg:conversation-window-for $events $chat) "native chat 🙂")',
                               '(= (tg:route-view) "native route 漢字")',

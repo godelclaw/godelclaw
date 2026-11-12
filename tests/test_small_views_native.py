@@ -137,11 +137,12 @@ class SmallViewsTest(unittest.TestCase):
             retained = {s.source_id for s in context_sources.SOURCE_SPECS} - set(SOURCES) - {"work-state", "affect-gestalt", "effect-receipts", "coding-sessions"}
             self.assertEqual(actual[-1]["calls"], {key: len(steps) for key in retained})
             self.assertEqual(actual[-1]["engine_calls"], len(steps))
+            # The caller asks the strategy host whether the MeTTa client
+            # renders the chat window or the route view.
             boundaries = {"prepare": len(steps), "retained-load": len(retained) * len(steps),
-                          "engine-command": len(steps),
+                          "engine-command": len(steps), "conversation-mode": len(steps),
                           "action-strategy": 2 * len(steps)}
             if boot:
-                boundaries["conversation-mode"] = len(steps)
                 # Boot may retain a pre-instrumentation enabled_flag callable.
                 # These witnesses are NOT an engine-level full-turn census.
                 observed = actual[-1]["boundaries"].copy()

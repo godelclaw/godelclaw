@@ -140,6 +140,25 @@ class ContextSourcesTest(unittest.TestCase):
                     self.assertIn("(no prior actions recorded)", rendered)
                     self.assertNotIn("NATIVE WINDOW", rendered)
 
+    def test_natively_rendered_sources_have_no_python_loader(self):
+        # estate:load renders the coding sessions and the MeTTa Telegram client
+        # the conversation; the Python bundle observes them as unavailable and
+        # imports nothing for them.
+        # A None entry makes importing that module fail.
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {
+                "METTACLAW_OBSERVED_STRATEGY": "0",
+                "METTACLAW_HISTORY_PATH": str(pathlib.Path(directory) / "history.metta")}), \
+                mock.patch.dict(sys.modules, {"coding_estate": None, "telegram": None}):
+            loaders = dict((spec.source_id, loader) for spec, loader in context_sources._loaders())
+            supplied = dict((spec.source_id, loader) for spec, loader in context_sources._loaders("chat window"))
+            for source_id in ("coding-sessions", "conversation"):
+                with self.subTest(source=source_id):
+                    with self.assertRaisesRegex(LookupError, "rendered on the native route"):
+                        loaders[source_id]()
+                    spec = context_sources.SourceSpec(source_id, 2000)
+                    self.assertEqual(self.projector.observe(spec, loaders[source_id]).status, "unavailable")
+            self.assertEqual(supplied["conversation"](), "chat window")
+
     def test_layout_orders_sources_least_changeable_first(self):
         observations = [
             context_sources.Observation(source_id, "known", "x", "r")

@@ -191,6 +191,15 @@ def _supplied(views):
     return supplied
 
 
+def _native_only(source_id):
+    """The loader of a source only the native route renders: estate:load the
+    coding sessions, the MeTTa Telegram client the conversation. A bundle built
+    without it observes the source as unavailable."""
+    def loader():
+        raise LookupError(source_id + " is rendered on the native route")
+    return loader
+
+
 def _loaders(conversation=None, views=None):
     import active_queries
     import commitment_projection
@@ -202,13 +211,11 @@ def _loaders(conversation=None, views=None):
     import project_evidence
     import project_capabilities
     import task_phase
-    import telegram
     import strategy_host
 
     history = helper.path_from_env(
         "METTACLAW_HISTORY_PATH", "./memory/history.metta")
     turns = helper.int_env("METTACLAW_RECENT_ACTION_TURNS", 12)
-    events = helper.int_env("METTACLAW_CONVERSATION_EVENTS", 64)
     specs = {spec.source_id: spec for spec in SOURCE_SPECS}
     # Source texts the caller computed with these same arguments and
     # conditions: on CeTTa, the two action views and the pins body are
@@ -232,16 +239,11 @@ def _loaders(conversation=None, views=None):
         (specs["relevant-files"],
          lambda: views["relevant-files"] if "relevant-files" in views else helper.relevant_files(history, limit=turns)),
         (specs["project-evidence"], project_evidence.view),
-        # Native routes load this source with estate:load; only this Python
-        # bundle still reads coding_estate, and only when it renders.
-        (specs["coding-sessions"], lambda: __import__("coding_estate").context_view()),
+        (specs["coding-sessions"], _native_only("coding-sessions")),
         (specs["project-capabilities"], project_capabilities.view),
-        # The MeTTa Telegram client renders the conversation itself.
+        # The MeTTa Telegram client renders the conversation and hands it over.
         (specs["conversation"],
-         (lambda: conversation) if conversation is not None
-         else (lambda: telegram.conversation_window(max_events=events,
-                    chat_id=getattr(telegram, "_reply_chat_id", ""))
-               if strategy_host.conversation_mode() == "chat" else telegram.route_view())),
+         (lambda: conversation) if conversation is not None else _native_only("conversation")),
     )
 
 

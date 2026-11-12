@@ -141,7 +141,5 @@
    (case $answers
      ((($text) (if (== (get-type $text) String) $text "SOURCE[context-bundle] status=unavailable"))
       ($other "SOURCE[context-bundle] status=unavailable"))))
-(= (context-bundle:with-views $views)
-   (ctx:safe (collapse (catch (ctx:build (py-call (context_source_loaders.prepare $views)))))))
 (= (context-bundle:with-views $views $conversation)
    (ctx:safe (collapse (catch (ctx:build (py-call (context_source_loaders.prepare $views $conversation)))))))

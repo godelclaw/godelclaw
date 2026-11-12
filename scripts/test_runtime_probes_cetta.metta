@@ -10,5 +10,5 @@
           ($_ (nt:exit-ok (proc:run ("ln" "-sfn" $fixture $control) $root $env 5000 65536)))
           ((JsonArray $cases) (preq:parse (fs:read-text "tests/runtime_probes.json"))))
      (nr:run-cases $root $sdk $core $artifacts $fixture $bin $cases 0)))
-!(nt:require all-runtime-probes-completed (nt:equal (collapse (native-runtime-probes:run)) (33)))
+!(nt:require all-runtime-probes-completed (nt:equal (collapse (native-runtime-probes:run)) (32)))
 !(println! NATIVE_RUNTIME_PROBES_PASSED)

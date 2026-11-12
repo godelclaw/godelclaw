@@ -42,14 +42,12 @@
 (= (addition-chat-mode?)
    (== (host:text (py-call (strategy_host.conversation_mode))) "chat"))
 (= (addition-context-sources)
-   (let $views (addition-context-views)
-     (if (tg:client-metta?)
-         (let $conversation
-              (if (addition-chat-mode?)
-                  (tg:conversation-window-for (tg:conversation-events) (tg:get reply-chat ""))
-                  (tg:route-view))
-           (context-bundle:with-views $views $conversation))
-         (context-bundle:with-views $views))))
+   (let* (($views (addition-context-views))
+          ($conversation
+            (if (addition-chat-mode?)
+                (tg:conversation-window-for (tg:conversation-events) (tg:get reply-chat ""))
+                (tg:route-view))))
+     (context-bundle:with-views $views $conversation)))
 
 (= (addition-effect-turn-begin $turn)
    (let $_ (addition-reap-work) (py-call (effect_frontier.begin $turn))))
@@ -67,7 +65,7 @@
          (py-call (strategy_host.begin $turn $source $message)))
      (let* (($_ (hierarchy:begin $turn $source (py-call (strategy_host.view))))
             ($_ (ws:begin (hierarchy:task) $source
-                  (if (and (== $source "operator-event") (tg:client-metta?))
+                  (if (== $source "operator-event")
                     (tg:get reply-chat "") "")))) $receipt)))
 
 (= (addition-protected-request $request)

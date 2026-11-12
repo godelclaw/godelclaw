@@ -375,7 +375,9 @@ class NativePinsContextTest(unittest.TestCase):
 
     # ---- the caller and the real bundle ----------------------------------
     CALLER = ["!(import! &self ./src/turn_additions)",
-              "(= (tg:client-metta?) False)"]
+              "(= (tg:conversation-events) 64)", "(= (tg:get $key $default) $default)",
+              '(= (tg:conversation-window-for $events $chat) "CONVERSATION")',
+              '(= (tg:route-view) "CONVERSATION")']
 
     def bundle_run(self, steps, engine="cetta", swi=False, forbid=True, prelude=(), write=True, **env):
         """Run addition-context-sources once per step; return the logged bundles."""

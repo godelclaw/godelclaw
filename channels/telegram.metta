@@ -76,9 +76,6 @@
 
 (= (tg:env $name $default) (system:getenv-or-default $name $default))
 
-; This is the only Telegram client; the context bundle's caller still asks.
-(= (tg:client-metta?) True)
-
 (= (tg:split-ids $raw)
    (tg:nonempty (tg:trim-all (str:split "," $raw))))
 (= (tg:trim-all $items)

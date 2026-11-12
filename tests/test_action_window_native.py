@@ -608,12 +608,11 @@ class NativeActionWindowTest(unittest.TestCase):
                 expected = context_sources.layout(
                     context_sources.Projector().project(action_window_probe.action_loaders(),
                                                         context_sources.context_epoch()))
-            for client, swi in ((client, swi) for client in ("True", "False") for swi in (False, True)):
-                with self.subTest(settings=settings, client=client, swi=swi):
+            for swi in (False, True):
+                with self.subTest(settings=settings, swi=swi):
                     output = self.directory / "bundle"
                     output.unlink(missing_ok=True)
                     self.boundary_run([
-                        "(= (tg:client-metta?) %s)" % client,
                         "(= (tg:conversation-events) ())", "(= (tg:get $key $default) $default)",
                         '(= (tg:conversation-window-for $events $chat) "CONVERSATION")',
                         '(= (tg:route-view) "ROUTE")',
@@ -640,7 +639,9 @@ class NativeActionWindowTest(unittest.TestCase):
                 self.run_guest(CALLER_HEADER + [
                     "!(import! &self ./src/turn_additions)",
                     "(= (action-window:context-views) %s)" % broken,
-                    "(= (tg:client-metta?) False)",
+                    "(= (tg:conversation-events) ())", "(= (tg:get $key $default) $default)",
+                    '(= (tg:conversation-window-for $events $chat) "CONVERSATION")',
+                    '(= (tg:route-view) "ROUTE")',
                     "!(py-call (action_window_probe.record_bundle %s))" % q(output),
                     "!(py-call (action_window_probe.record_caller (addition-context-sources)))"], cwd=self.directory)
                 self.assertEqual(output.read_text(encoding="utf-8"), expected)

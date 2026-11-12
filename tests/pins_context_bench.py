@@ -103,7 +103,10 @@ def main():
             py = median3(lambda: python_view(path, repeat))
             native = median3(lambda: timed(directory, label, "(pinsctx:view)", repeat,
                                            ["!(import! &self ./src/pins_context_cetta.metta)"]))
-            boundary = ["!(import! &self ./src/turn_additions)", "(= (tg:client-metta?) False)",
+            boundary = ["!(import! &self ./src/turn_additions)", "(= (tg:conversation-events) 64)",
+                        '(= (tg:get $key $default) $default)',
+                        '(= (tg:conversation-window-for $events $chat) "CONVERSATION")',
+                        '(= (tg:route-view) "CONVERSATION")',
                         "!(py-call (pins_context_probe.restrict_to_pins))"]
             bn = median3(lambda: timed(directory, label, "(addition-context-sources)", repeat, boundary))
             bp = median3(lambda: timed(directory, label, "(addition-context-sources)", repeat, boundary, "petta"))

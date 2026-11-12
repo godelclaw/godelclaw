@@ -47,7 +47,7 @@ def check(c):
         source += '!(println! (Batch %s))\n!(println! (CachedBatch %s))\n' % (batch,batch)
         source += '!(import! &self ./src/context_sources_cetta.metta)\n'
         source += '!(println! (ImportOwner (size-atom (get-state &er-published)) (get-state &er-captured)))\n'
-        source += emit('(context-bundle:with-views ())')
+        source += emit('(context-bundle:with-views () "fixture conversation")')
         source += '!(println! (ContextRaw (collapse (catch (ctx:build (py-call (context_source_loaders.prepare ())))))))\n'
         source += '!(println! (ProbeSummary (json:stringify-python (json:parse-python (format-args "{}" ((py-call (effect_receipts_caller_probe.summary))))))))\n'
         before=time.time()
