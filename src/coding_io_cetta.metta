@@ -20,12 +20,11 @@
 !(import! &self (library system))
 !(import! &self (library math))
 !(import! &self ./src/coding_values.metta)
+!(import! &self ./src/state_file_cetta.metta)
 !(import! &self ./src/process_identity_cetta.metta)
 
 ;; ------------------------------------------------------------- values
 
-(= (cio:failed? $value)
-   (case $value (((fs:failed $reason $operation $path $code $progress $message) True) ($other False))))
 (= (cio:last $items) (if (== (cdr-atom $items) ()) (car-atom $items) (cio:last (cdr-atom $items))))
 (= (cio:basename $path) (cio:last (str:split "/" $path)))
 (= (cio:now) (system:wall-time))
@@ -33,23 +32,6 @@
 (= (cio:clip $text $limit)
    (if (<= (str:char-length $text) $limit) $text (str:concat (str:char-slice $text 0 $limit) " …")))
 
-; A JSON object file, or the empty object when it is missing or is not an
-; object. Parse failures are values, not errors.
-(= (cio:json $path)
-   (if (fs:is-file $path)
-     (case (catch (json-parse (fs:read-text $path)))
-       (((JsonObject $pairs) (JsonObject $pairs))
-        ($other (JsonObject ()))))
-     (JsonObject ())))
-(= (cio:put-pairs $pairs $key $value)
-   (if (== $pairs ()) ((JsonPair $key $value))
-     (let (JsonPair $name $old) (car-atom $pairs)
-       (if (== $name $key) (cons-atom (JsonPair $key $value) (cdr-atom $pairs))
-         (cons-atom (JsonPair $name $old) (cio:put-pairs (cdr-atom $pairs) $key $value))))))
-(= (cio:put $object $key $value)
-   (case $object
-     (((JsonObject $pairs) (JsonObject (cio:put-pairs $pairs $key $value)))
-      ($other (JsonObject ((JsonPair $key $value)))))))
 ; A recorded count: a JSON integer, otherwise zero.
 (= (cio:count $value)
    (case $value
@@ -64,28 +46,11 @@
 ;; ------------------------------------------------------- publication
 
 ; Publish text at path whole. True; a failure before the rename (the old file
-; stands); or (CioUncertain failure) when the rename happened but syncing the
+; stands); or (SfUncertain failure) when the rename happened but syncing the
 ; folder failed, so durability of the new file is unconfirmed.
 (= (cio:publish $path $text)
-   (let* (($dir (path:dirname $path))
-          ($made (fs:make-directories $dir 504))
-          ($temporary (path:join $dir (str:join "" ("." (cio:basename $path) "-" (system:uuid4-hex)))))
-          ($writer (fs:open-write $temporary ("create" "exclusive") 432)))
-     (if (cio:failed? $writer) $writer
-       (let* (($moded (fs:set-mode $writer 432))
-              ($wrote (fs:write-all $writer $text))
-              ($synced (if (cio:failed? $wrote) $wrote (fs:sync $writer)))
-              ($closed (fs:close $writer)))
-         (if (cio:failed? $synced) (let $_ (fs:remove $temporary) $synced)
-           (let $renamed (fs:rename $temporary $path)
-             (if (cio:failed? $renamed) (let $_ (fs:remove $temporary) $renamed)
-               (let $flushed (cio:sync-directory $dir)
-                 (if (== $flushed True) True (CioUncertain $flushed))))))))))
-(= (cio:sync-directory $dir)
-   (let $reader (fs:open-read $dir)
-     (if (cio:failed? $reader) $reader
-       (let* (($synced (fs:sync $reader)) ($_ (fs:close $reader)))
-         (if (cio:failed? $synced) $synced True)))))
+   (let $made (fs:make-directories (path:dirname $path) 504)
+     (sf:replace $path $text 432 True)))
 (= (cio:publish-json $path $value) (cio:publish $path (json-stringify $value)))
 
 ; One line appended to a file, written with one append call: 1, or the failure.
@@ -101,14 +66,8 @@
 ; the body answers. The body's first answer is the result.
 (: cio:locked (-> %Undefined% Atom %Undefined%))
 (= (cio:locked $dir $body)
-   (let* (($made (fs:make-directories $dir 504))
-          ($lock (fs:open-write (path:join $dir ".ending.lock") ("create" "append") 432)))
-     (if (cio:failed? $lock) (CioLockFailed $lock)
-       (let* (($held (fs:lock $lock exclusive))
-              ($result (collapse (catch (eval $body))))
-              ($released (fs:unlock $lock))
-              ($closed (fs:close $lock)))
-         (if (== $result ()) (CioNoAnswer) (car-atom $result))))))
+   (let $made (fs:make-directories $dir 504)
+     (sf:locked (path:join $dir ".ending.lock") 432 $body)))
 
 ;; -------------------------------------------------------- run tokens
 
@@ -122,7 +81,7 @@
    (cio:locked $dir (cio:consume-run-locked $dir $token $owner $root)))
 (= (cio:consume-run-locked $dir $token $owner $root)
    (let* (($runtime-path (path:join $dir "runtime.json"))
-          ($runtime (cio:json $runtime-path))
+          ($runtime (sf:object $runtime-path))
           ($run (coding:field $runtime "run"))
           ($phase (coding:field $runtime "phase"))
           ($pinned (coding:text (coding:field $runtime "root"))))
@@ -132,7 +91,7 @@
        (if (and (!= $pinned "") (!= (cio:canonical $pinned) (cio:canonical $root)))
          (cio:refuse $dir (format-args "refused run token {}: bundle mismatch manifest root={} worker root={}"
                             ($token $pinned $root)))
-         (let* (($prior (cio:json (path:join $dir "state.json")))
+         (let* (($prior (sf:object (path:join $dir "state.json")))
                 ($state (JsonObject ((JsonPair "status" (JsonString "running"))
                                      (JsonPair "steps" (cio:count (coding:field $prior "steps")))
                                      (JsonPair "progress" (JsonString "started"))
@@ -142,7 +101,7 @@
                                      (JsonPair "run" (JsonString $token))
                                      (JsonPair "inbox" (cio:count (coding:field $prior "inbox")))
                                      (JsonPair "updated" (cio:now-json)))))
-                ($started (cio:publish-json $runtime-path (cio:put $runtime "phase" (JsonString "started"))))
+                ($started (cio:publish-json $runtime-path (sf:put $runtime "phase" (JsonString "started"))))
                 ($published (if (== $started True) (cio:publish-json (path:join $dir "state.json") $state) $started)))
            (if (== $published True) 1
              (cio:refuse $dir (format-args "uncertain publication for run token {}: {}" ($token (repr $published))))))))))
@@ -155,8 +114,8 @@
 (= (cio:worker-state-locked $dir $token $owner $status $steps $progress $inbox $delivery-id $report)
    (let* (($runtime-path (path:join $dir "runtime.json"))
           ($pinned (fs:is-file $runtime-path))
-          ($runtime (cio:json $runtime-path))
-          ($state (cio:json (path:join $dir "state.json"))))
+          ($runtime (sf:object $runtime-path))
+          ($state (sf:object (path:join $dir "state.json"))))
      (if (and (or $pinned (!= $token ""))
               (or (== $token "")
                   (or (!= (coding:field $runtime "run") (JsonString $token))
@@ -180,7 +139,7 @@
               ($reported (if (== $report NoReport) True (cio:publish (path:join $dir "report.txt") $report)))
               ($written (if (== $reported True) (cio:publish-json (path:join $dir "state.json") $next) $reported))
               ($ended (if (and (== $written True) (and (not $running) (and $pinned (!= $runtime (JsonObject ())))))
-                        (cio:publish-json $runtime-path (cio:put $runtime "phase" (JsonString "ended")))
+                        (cio:publish-json $runtime-path (sf:put $runtime "phase" (JsonString "ended")))
                         $written)))
          (if (and (== $written True) (== $ended True)) 1 0)))))
 (= (cio:append-pair $pairs $pair)
@@ -202,9 +161,9 @@
 (= (cio:stop-session-locked $dir)
    (let* (($flag (fs:write (path:join $dir "stop") ""))
           ($runtime-path (path:join $dir "runtime.json"))
-          ($runtime (cio:json $runtime-path))
+          ($runtime (sf:object $runtime-path))
           ($_ (if (== (coding:field $runtime "phase") (JsonString "reserved"))
-                (cio:publish-json $runtime-path (cio:put $runtime "phase" (JsonString "ended")))
+                (cio:publish-json $runtime-path (sf:put $runtime "phase" (JsonString "ended")))
                 True)))
      1))
 
@@ -221,7 +180,7 @@
    (if (or (== $result "") (or (== $result "stopped") (== $result "interrupted"))) $result
      (let $_ (cio:log $dir (format-args "settle error: {}" ((repr $result)))) "")))
 (= (cio:settle-ending-locked $dir $expected $liveness)
-   (let* (($state (cio:json (path:join $dir "state.json")))
+   (let* (($state (sf:object (path:join $dir "state.json")))
           ($owner (coding:text (coding:field $state "worker_owner")))
           ($expect (if (== $expected Observed) $owner $expected)))
      (if (or (!= (coding:field $state "status") (JsonString "running")) (!= $owner $expect)) ""
@@ -247,8 +206,8 @@
 (= (cio:mark-state-locked $dir $status $report $identity $expected)
    (let* (($state-path (path:join $dir "state.json"))
           ($runtime-path (path:join $dir "runtime.json"))
-          ($state (cio:json $state-path))
-          ($runtime (cio:json $runtime-path))
+          ($state (sf:object $state-path))
+          ($runtime (sf:object $runtime-path))
           ($run (coding:field $state "run"))
           ($phase (coding:field $runtime "phase")))
      (if (or (!= (coding:field $state "status") (JsonString "running"))
@@ -257,7 +216,7 @@
                       (or (!= $phase (JsonString "started"))
                           (and (!= (coding:text $run) "") (!= (coding:field $runtime "run") $run))))))
        0
-       (let* (($marked (cio:put (cio:put (cio:put (cio:put (cio:put (cio:put $state
+       (let* (($marked (sf:put (sf:put (sf:put (sf:put (sf:put (sf:put $state
                           "status" (JsonString $status)) "delivery" (JsonString "pending"))
                           "updated" (cio:now-json)) "progress" (JsonString $report))
                           "delivery_version" (JsonNumber "2")) "delivery_id" (JsonString $identity)))
@@ -265,7 +224,7 @@
               ($written (if (== $reported True) (cio:publish-json $state-path $marked) $reported))
               ($_ (if (and (== $written True) (and (fs:is-file $runtime-path) (!= $runtime (JsonObject ()))))
                     (if (or (== (coding:text $run) "") (== (coding:field $runtime "run") $run))
-                      (cio:publish-json $runtime-path (cio:put $runtime "phase" (JsonString "ended"))) True)
+                      (cio:publish-json $runtime-path (sf:put $runtime "phase" (JsonString "ended"))) True)
                     True)))
          (if (== $written True) 1
            (cio:refuse $dir (format-args "settle error: could not record the {} ending: {}" ($status (repr $written)))))))))
@@ -289,21 +248,21 @@
        (let* (($record (cio:execution-path $dir $id ".json"))
               ($_ (fs:make-directories (path:dirname $record) 504))
               ($writer (fs:open-write $record ("create" "exclusive") 432)))
-         (if (cio:failed? $writer) (ExecutionRefused (repr $writer))
+         (if (sf:failed? $writer) (ExecutionRefused (repr $writer))
            (let* (($wrote (fs:write-all $writer (json-stringify (JsonObject (
                             (JsonPair "id" (JsonString $id)) (JsonPair "command" (JsonString $command))
                             (JsonPair "status" (JsonString "dispatching")) (JsonPair "started" (cio:now-json)))))))
                   ($_ (fs:close $writer)))
-             (if (cio:failed? $wrote) (ExecutionRefused (repr $wrote))
+             (if (sf:failed? $wrote) (ExecutionRefused (repr $wrote))
                (ExecutionLog (cio:execution-path $dir $id ".log")))))))))
 
 ; Record how a command ended, then answer its result.
 (= (cio:execution-finish $dir $id $status $code $seconds)
    (let* (($path (cio:execution-path $dir $id ".json"))
-          ($record (cio:json $path))
+          ($record (sf:object $path))
           ($_ (if (== $record (JsonObject ())) ()
                 (cio:publish-json $path
-                  (cio:put (cio:put (cio:put (cio:put $record
+                  (sf:put (sf:put (sf:put (sf:put $record
                     "status" (JsonString $status)) "code" (JsonNumber (repr $code)))
                     "seconds" (JsonNumber (repr $seconds))) "ended" (cio:now-json))))))
      (cio:execution-result $dir $id)))
@@ -313,7 +272,7 @@
 ; when it is longer than 40000. A record with no recorded ending was not run
 ; to its end by this runtime, and is said to be uncertain.
 (= (cio:execution-result $dir $id)
-   (let $record (if (cio:execution-id? $id) (cio:json (cio:execution-path $dir $id ".json")) (JsonObject ()))
+   (let $record (if (cio:execution-id? $id) (sf:object (cio:execution-path $dir $id ".json")) (JsonObject ()))
      (case (coding:field $record "status")
        (((JsonString $status)
          (let* (($log (cio:execution-path $dir $id ".log"))
@@ -339,7 +298,7 @@
       ($other ""))))
 (= (cio:head-text $path $limit)
    (let $reader (fs:open-read $path)
-     (if (cio:failed? $reader) ""
+     (if (sf:failed? $reader) ""
        (let* (($bytes (cio:read-up-to $reader $limit ()))
               ($_ (fs:close $reader))
               ($decoder (cio:replacing-decoder)))
@@ -455,12 +414,12 @@
      ((("ok" $bytes)
        (let* (($_ (fs:make-directories (path:dirname $target) 504))
               ($writer (fs:open-write $target ("create" "exclusive") 384)))
-         (if (cio:failed? $writer) $writer
+         (if (sf:failed? $writer) $writer
            (let* (($wrote (fs:write-all $writer $bytes)) ($_ (fs:close $writer)))
-             (if (cio:failed? $wrote) $wrote
+             (if (sf:failed? $wrote) $wrote
                (case (fs:metadata $source follow-permissions)
                  (((fs:info $kind $size $identity (fs:permissions $bits))
-                   (let $moded (fs:set-mode $target $bits) (if (cio:failed? $moded) $moded True)))
+                   (let $moded (fs:set-mode $target $bits) (if (sf:failed? $moded) $moded True)))
                   ($other $other))))))))
       ($other (CioFreezeFailed (format-args "cannot read {}: {}" ($source (repr $other))))))))
 
@@ -493,7 +452,7 @@
 ; Live: its recorded worker is alive, or (when the folder holds a session
 ; that could have a scope) its scope is active.
 (= (cio:live? $dir $check-scope)
-   (let $state (cio:json (path:join $dir "state.json"))
+   (let $state (sf:object (path:join $dir "state.json"))
      (if (and (== (coding:field $state "status") (JsonString "running"))
               (process:alive? (coding:text (coding:field $state "worker_owner")))) True
        (if $check-scope (cio:scope-active? $dir) False))))
@@ -502,7 +461,7 @@
                  (coding:text (coding:field $manifest "run")) "session is already running"))
 (= (cio:put-default $object $key $value)
    (if (== (coding:field $object $key) JsonNull)
-     (case $object (((JsonObject $pairs) (if (cio:has-key $pairs $key) $object (cio:put $object $key $value)))))
+     (case $object (((JsonObject $pairs) (if (cio:has-key $pairs $key) $object (sf:put $object $key $value)))))
      $object))
 (= (cio:has-key $pairs $key)
    (if (== $pairs ()) False
@@ -516,7 +475,7 @@
 (= (cio:freeze-runtime-locked $root $dir $note)
    (let* (($record (path:join $dir "runtime.json"))
           ($pinned (fs:is-file $record))
-          ($old (cio:json $record))
+          ($old (sf:object $record))
           ($existing (or $pinned (or (fs:exists (path:join $dir "state.json"))
                                      (or (fs:exists (path:join $dir "messages.jsonl")) (!= $note NoNote))))))
      (if (cio:live? $dir $existing) (cio:running-launch $old)
@@ -528,7 +487,7 @@
      (if (not (fs:is-file (path:join $runtime "coding_main.metta")))
        (CodingLaunch failed "" "" "" "session runtime is missing; restore it before resuming")
        (let* (($token (system:uuid4-hex))
-              ($manifest (cio:put (cio:put (cio:put (cio:put-default (cio:put-default $old "checkpoint" JsonNull) "previous" JsonNull)
+              ($manifest (sf:put (sf:put (sf:put (cio:put-default (cio:put-default $old "checkpoint" JsonNull) "previous" JsonNull)
                             "run" (JsonString $token)) "phase" (JsonString "reserved")) "at" (cio:now-json)))
               ($published (cio:publish-json $record $manifest)))
          (if (== $published True)
@@ -569,32 +528,25 @@
 (= (cio:then $done $next)
    (let $ok (cio:ok $done)
      (if (== $ok True) (eval $next) (CioPrepareFailed (repr $ok)))))
-(= (cio:ok $result) (if (or (== $result True) (== $result 1)) True (if (cio:failed? $result) $result (case $result ((() True) ($other $other))))))
+(= (cio:ok $result) (if (or (== $result True) (== $result 1)) True (if (sf:failed? $result) $result (case $result ((() True) ($other $other))))))
 (= (cio:remove-flag $path) (if (fs:exists $path) (fs:remove $path) True))
 (= (cio:keep-report $dir)
    (let $report (path:join $dir "report.txt")
      (if (fs:is-file $report)
        (let $moved (fs:rename $report (path:join $dir "report.previous.txt"))
-         (if (cio:failed? $moved) $moved (cio:sync-directory $dir)))
+         (if (sf:failed? $moved) $moved (sf:sync-directory $dir)))
        True)))
 
 ; Hold and archive labels live in lifecycle.json under .lifecycle.lock, which
 ; stays writable by the shared group (0660) whatever the umask.
 (: cio:lifecycle-locked (-> %Undefined% Atom %Undefined%))
 (= (cio:lifecycle-locked $dir $body)
-   (let $lock (fs:open-write (path:join $dir ".lifecycle.lock") ("create" "append") 432)
-     (if (cio:failed? $lock) (CioLockFailed $lock)
-       (let* (($moded (fs:set-mode $lock 432))
-              ($held (fs:lock $lock exclusive))
-              ($result (collapse (catch (eval $body))))
-              ($released (fs:unlock $lock))
-              ($closed (fs:close $lock)))
-         (if (== $result ()) (CioNoAnswer) (car-atom $result))))))
+   (sf:locked (path:join $dir ".lifecycle.lock") 432 $body))
 (= (cio:clear-lifecycle $dir)
    (cio:lifecycle-locked $dir
      (let $path (path:join $dir "lifecycle.json")
        (if (fs:is-file $path)
-         (let $_ (fs:rename $path (path:join $dir "lifecycle.previous.json")) (cio:sync-directory $dir))
+         (let $_ (fs:rename $path (path:join $dir "lifecycle.previous.json")) (sf:sync-directory $dir))
          True))))
 
 ; The model a session keeps, recorded in its own model.metta so the agent's
@@ -602,7 +554,7 @@
 ; from before models were recorded, the one model.metta already names, or
 ; else the fallback.
 (= (cio:session-model $dir $fallback)
-   (let* (($recorded (coding:text (coding:field (cio:json (path:join $dir "task.json")) "model")))
+   (let* (($recorded (coding:text (coding:field (sf:object (path:join $dir "task.json")) "model")))
           ($state (path:join $dir "model.metta"))
           ($saved (if (and (== $recorded "") (fs:is-file $state)) (cio:active-model (fs:read-text $state)) ""))
           ($model (if (!= $recorded "") $recorded (if (!= $saved "") $saved $fallback)))
@@ -769,7 +721,7 @@
 (= (cio:published-launch $published $status $root $binary $token)
    (case $published
      ((True (CodingLaunch $status $root $binary $token $token))
-      ((CioUncertain $failure) (CodingLaunch uncertain "" "" "" (repr $failure)))
+      ((SfUncertain $failure) (CodingLaunch uncertain "" "" "" (repr $failure)))
       ($failed (CodingLaunch failed "" "" "" (repr $failed))))))
 
 ; Re-pin to the current runtime: same (the pin already is the current runtime;
@@ -789,7 +741,7 @@
                  (cio:locked $dir (cio:repin-commit $dir $target $digest $binary $engine $revision $run $phase))))))
             ($decided $decided))))))))
 (= (cio:repin-observe $dir $target $digest $binary $engine)
-   (let* (($record (path:join $dir "runtime.json")) ($old (cio:json $record)) ($phase (coding:field $old "phase")))
+   (let* (($record (path:join $dir "runtime.json")) ($old (sf:object $record)) ($phase (coding:field $old "phase")))
      (if (cio:live? $dir True) (cio:running-launch $old)
        (if (and (!= $old (JsonObject ()))
                 (and (== (coding:field $old "digest") (JsonString $digest))
@@ -799,7 +751,7 @@
                                     (fs:is-file (path:join (coding:text (coding:field $old "root")) "coding_main.metta")))))))
          (let* (($_ (cio:settle-ending-locked $dir Observed RequireDead))
                 ($token (system:uuid4-hex))
-                ($manifest (cio:put (cio:put (cio:put (cio:put-default (cio:put-default $old "checkpoint" JsonNull) "previous" JsonNull)
+                ($manifest (sf:put (sf:put (sf:put (cio:put-default (cio:put-default $old "checkpoint" JsonNull) "previous" JsonNull)
                               "run" (JsonString $token)) "phase" (JsonString "reserved")) "at" (cio:now-json)))
                 ($launch (cio:published-launch (cio:publish-json $record $manifest) same
                            (coding:text (coding:field $old "root")) (coding:text (coding:field $old "binary")) $token)))
@@ -808,13 +760,13 @@
               ($other $other))))
          (RepinObserved (cio:checkpoint-revision $dir) (coding:field $old "run") $phase)))))
 (= (cio:repin-commit $dir $target $digest $binary $engine $revision $run $phase)
-   (let* (($record (path:join $dir "runtime.json")) ($current (cio:json $record)))
+   (let* (($record (path:join $dir "runtime.json")) ($current (sf:object $record)))
      (if (cio:live? $dir True) (cio:running-launch $current)
        (if (or (!= (cio:checkpoint-revision $dir) $revision)
                (or (!= (coding:field $current "run") $run) (!= (coding:field $current "phase") $phase)))
          (CodingLaunch changed "" "" "" "the session changed during the check; try again.")
          (let* (($_ (cio:settle-ending-locked $dir Observed RequireDead))
-                ($settled (cio:json $record))
+                ($settled (sf:object $record))
                 ($token (system:uuid4-hex)) ($now (cio:now-json))
                 ($manifest (JsonObject ((JsonPair "root" (JsonString $target)) (JsonPair "digest" (JsonString $digest))
                                         (JsonPair "binary" (JsonString $binary)) (JsonPair "binary_sha256" $engine)
@@ -857,14 +809,14 @@
          (if (> $total 0) $total None)))))
 ; Remember what the provider counted for the request just answered (reply.json).
 (= (cio:context-observe $dir $request-bytes)
-   (let $tokens (cio:reported-input (coding:field (cio:json (path:join $dir "reply.json")) "usage"))
+   (let $tokens (cio:reported-input (coding:field (sf:object (path:join $dir "reply.json")) "usage"))
      (if (or (== $tokens None) (<= $request-bytes 0)) 0
        (if (== (cio:publish-json (path:join $dir "context.json")
                  (JsonObject ((JsonPair "bytes" (JsonNumber (repr $request-bytes)))
                               (JsonPair "tokens" (JsonNumber (repr $tokens))))))
                True) 1 0))))
 (= (cio:context-tokens $dir $request-bytes)
-   (let* (($record (cio:json (path:join $dir "context.json")))
+   (let* (($record (sf:object (path:join $dir "context.json")))
           ($bytes (cio:token-count (coding:field $record "bytes")))
           ($tokens (cio:token-count (coding:field $record "tokens")))
           ($quarter (math:floor (/ $request-bytes 4))))
@@ -918,10 +870,10 @@
 ; current). An unknown recorded value reads as the default.
 (= (cio:settings-path $root) (path:join $root "memory/coding-settings.json"))
 (= (cio:work-setting $root $key)
-   (let $value (coding:text (coding:field (cio:json (cio:settings-path $root)) $key))
+   (let $value (coding:text (coding:field (sf:object (cio:settings-path $root)) $key))
      (if (== $key "context") (if (cio:member $value ("open" "summary" "off")) $value "open")
        (if (== $key "resume") (if (cio:member $value ("pinned" "current")) $value "pinned") $value))))
 (= (cio:set-work-setting $root $key $value)
    (let* (($path (cio:settings-path $root))
-          ($written (cio:publish-json $path (cio:put (cio:json $path) $key (JsonString $value)))))
+          ($written (cio:publish-json $path (sf:put (sf:object $path) $key (JsonString $value)))))
      (if (== $written True) $path (CioSettingFailed $written))))
