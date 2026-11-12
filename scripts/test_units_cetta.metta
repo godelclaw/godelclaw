@@ -5,12 +5,19 @@
 !(import! &self ../tests/native_test_support.metta)
 
 (= (units:all)
-   (("tests/unit/model_selection.metta" "UNIT_MODEL_SELECTION_OK")))
+   (("tests/unit/model_selection.metta" "UNIT_MODEL_SELECTION_OK")
+    ("tests/unit/loop_host.metta" "UNIT_LOOP_HOST_OK")))
 
 (= (units:env $directory)
    (let $base (nt:environment $directory)
-     (cons-atom ("SYNTHETIC_MODEL" "unit-configured-model")
-       (cons-atom ("METTACLAW_MODEL_STATE_PATH" (nt:join $directory "model-state")) $base))))
+     (preq-free:append
+       (("SYNTHETIC_MODEL" "unit-configured-model")
+        ("METTACLAW_MODEL_STATE_PATH" (nt:join $directory "model-state"))
+        ("METTACLAW_HEARTBEAT_INTERVAL_SECONDS" " 45 ") ("METTACLAW_COMMAND_BATCH_LIMIT" "0")
+        ("METTACLAW_HISTORY_PATH" (nt:join $directory "journal/history.metta")))
+       $base)))
+(= (preq-free:append $front $back)
+   (if (== $front ()) $back (cons-atom (car-atom $front) (preq-free:append (cdr-atom $front) $back))))
 
 (= (units:one $root $engine $artifacts ($file $marker))
    (let* (($directory (nt:join $artifacts (str:concat "unit-" (system:uuid4-hex))))

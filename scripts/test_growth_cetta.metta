@@ -18,6 +18,9 @@
           ($_ (nt:require growth-model-selection-linear
                 (growth:linear? $root $core-engine $env $fixture $directory
                   (growth-suite:import $root "tests/growth/model_selection.metta") "model-growth:workload" 20000 4096)))
+          ($_ (nt:require growth-journal-append-linear
+                (growth:linear? $root $core-engine $env $fixture $directory
+                  (growth-suite:import $root "tests/growth/loop_host.metta") "loop-growth:workload" 20000 4096)))
           ($_ (nt:require growth-quadratic-mutant-fails
                 (not (growth:linear? $root $core-engine $env $fixture $directory $controls "growth-control:quadratic" 500 4096)))))
      GrowthSuitePassedV1))

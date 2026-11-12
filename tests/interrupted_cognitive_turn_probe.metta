@@ -15,6 +15,5 @@
                    (turnProcess (process-periphery $initial))))
          ($_ (cut))
          ($feedback (loop-last-results (process-periphery $after)))
-         ($_ (assertEqual
-               (py-call (helper.text_nonempty $feedback)) 1)))
+         ($_ (assertEqual (loop-host:nonempty? $feedback) True)))
      (println! INTERRUPTED_COGNITIVE_TURN_OK))

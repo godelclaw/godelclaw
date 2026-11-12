@@ -2,6 +2,6 @@
 
 (= (assertEqual $A $B) (assert (== $A $B)))
 
-!(assertEqual (py-call (helper.text_nonempty "")) 0)
-!(assertEqual (py-call (helper.text_nonempty "activity")) 1)
+!(assertEqual (loop-host:nonempty? "") False)
+!(assertEqual (loop-host:nonempty? "activity") True)
 !(println! ACTIVITY_CARRIER_OK)

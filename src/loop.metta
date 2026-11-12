@@ -2,13 +2,15 @@
 !(import! &self ./src/fuel_io)
 !(import! &self ./src/goal_bookkeeping.metta)
 !(import! &self ./src/interop_flags_cetta.metta)
+!(import! &self ./src/loop_host_cetta.metta)
+!(import! &self ./src/model_selection_cetta.metta)
 (= (sleepInterval) (empty))
 (= (LLM) (empty))
 (= (maxOutputToken) (empty))
 (= (reasoningMode) (empty))
 
 (= (heartbeatInterval)
-   (py-call (helper.int_env "METTACLAW_HEARTBEAT_INTERVAL_SECONDS" 1800)))
+   (loop-host:heartbeat-interval))
 
 (= (initialPeriphery)
    (case (mode:process)
@@ -49,7 +51,7 @@
      (configure sleepInterval 1)
      (configure LLM syn:large:text)
      (configure maxOutputToken 32768)
-     (configure reasoningMode (py-call (helper.str_env "METTACLAW_REASONING_EFFORT" "default")))
+     (configure reasoningMode (loop-host:reasoning-effort))
      (rooted weak-process-core-v1 (initialPeriphery))))
 
 ;; Authored instructions and observed state have distinct message roles.
@@ -96,7 +98,7 @@
         " SETTINGS_API: " (repr (settings:context))
         " MEMORY_ATTENTION: " (repr (am:context))
         " MEMORY_WORKSPACE: " (repr (ws:context))
-        " ACTIVE_MODEL: " (py-call (synthetic_llm.current_model))
+        " ACTIVE_MODEL: " (model:current syn:large:text)
 
         " LAST_SKILL_USE_RESULTS: "
         (loop:last-results-view (loop-last-results $periphery))
@@ -295,7 +297,7 @@
           ($priorResults (loop-last-results $periphery))
           ($_ (loop-directives-clear))
           ($_ (eval (attention-begin $iteration $source
-                    (== (py-call (helper.text_nonempty $priorResults)) 1))))
+                    (loop-host:nonempty? $priorResults))))
           ($_ (addition-effect-turn-begin $iteration))
           ($_ (am:begin-turn))
           ($_ (addition-strategy-begin $iteration $source $message))
@@ -330,7 +332,7 @@
           ;; was not sent.
           ($prose (model-response-undelivered-prose $respi))
           ($undelivered
-            (if (== (py-call (helper.text_nonempty $prose)) 1)
+            (if (loop-host:nonempty? $prose)
                 (repr (UNDELIVERED: $prose NOT_DELIVERED_TO_ANY_CHANNEL_USE_send))
                 ""))
           ($parsed (addition-read-response $response))
@@ -423,7 +425,7 @@
           ;; waiting. With budget left the turn runs and presents the batch,
           ;; so it must count as activity to be settled.
           ($hasActivity
-            (and (== (py-call (helper.text_nonempty $message)) 1)
+            (and (loop-host:nonempty? $message)
                  (not (and (and (loop-parked $decremented)
                                 (<= (loop-budget $decremented) 0))
                            (channel:quiet-activity?)))))

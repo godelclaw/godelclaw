@@ -2,6 +2,6 @@
 !(import! &self ./lib_mettaclaw)
 
 !(let $bundle (py-call (context_sources.bundle))
-   (if (== (py-call (helper.text_nonempty $bundle)) 1)
+   (if (loop-host:nonempty? $bundle)
        (println! CONTEXT_SOURCES_OK)
        (println! CONTEXT_SOURCES_EMPTY)))
