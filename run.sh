@@ -264,16 +264,14 @@ engine_failed() {
 }
 
 if [ "$TARGET" = "$ROOT/run.metta" ] && [ -f "$ROOT/modes/launch.py" ]; then
-    LOOP_MODE="$("$PETTA_PY_ENV/bin/python3" -c 'import loop_modes; print(loop_modes.current_mode())')"
+    LOOP_MODE="$(METTACLAW_BOOT_OPERATION=capture METTACLAW_BOOT_PARENT_PID="$$" \
+        "${CETTA_BIN:-$CETTA_ROOT/cetta}" --no-results --lang petta --profile extended \
+        --import-mode ancestor-walk "$ROOT/scripts/loop_bootstrap_cetta.metta")"
     export METTACLAW_ACTIVE_LOOP_MODE="$LOOP_MODE"
     case "$LOOP_MODE" in
         iter|omega)
             exec "$PETTA_PY_ENV/bin/python3" "$ROOT/modes/launch.py" \
                 --repo "$ROOT" --mode "$LOOP_MODE" --engine "$METTACLAW_ENGINE" --profile supervised
-            ;;
-        *)
-            "$PETTA_PY_ENV/bin/python3" -c \
-                'import os,loop_modes; loop_modes.record_active(os.environ["METTACLAW_ACTIVE_LOOP_MODE"],os.getppid())'
             ;;
     esac
 fi
@@ -341,8 +339,9 @@ case "$METTACLAW_ENGINE" in
         if [ "$shutdown_requested" -eq 1 ]; then
             exit 0
         fi
-        if [ "$status" -eq 0 ] && "$PETTA_PY_ENV/bin/python3" -c \
-            'import engine_modes; raise SystemExit(0 if engine_modes.recycle_requested() else 1)'; then
+        if [ "$status" -eq 0 ] && METTACLAW_BOOT_OPERATION=recycle \
+            "$CETTA_BIN" --no-results --lang petta --profile extended --import-mode ancestor-walk \
+            "$ROOT/scripts/loop_bootstrap_cetta.metta"; then
             exit 0
         fi
         if [ "$status" -eq 0 ]; then

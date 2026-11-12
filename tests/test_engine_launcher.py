@@ -54,7 +54,10 @@ class EngineLauncherTests(unittest.TestCase):
             self.cetta,
             'case "$*" in *scripts/config_to_env_cetta.metta*) '
             'printf "native-bootstrap:%s\\n" "$*" >>"$ENGINE_TEST_RESULT"; exit 0;; '
-            '*scripts/memory_health_cetta.metta*) exit 0;; esac; '
+            '*scripts/memory_health_cetta.metta*) exit 0;; '
+            '*scripts/loop_bootstrap_cetta.metta*) '
+            'if [ "${METTACLAW_BOOT_OPERATION:-}" = recycle ]; then '
+            'test -f "$METTACLAW_RECYCLE_REQUEST_PATH"; else printf "godelclaw\\n"; fi; exit $?;; esac; '
             'printf "cetta:%s:%s\\n" "$METTACLAW_ACTIVE_ENGINE" "$*" '
             '>>"$ENGINE_TEST_RESULT"; '
             'if [ "${CETTA_WAIT_FOR_TERM:-0}" = 1 ]; then '

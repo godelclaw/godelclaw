@@ -1,0 +1,12 @@
+!(import! &self ../src/boot_state_cetta.metta)
+!(case (collapse (catch (boot-state:dispatch (mio:env "METTACLAW_BOOT_OPERATION" ""))))
+   ((((BootModeV1 $mode))
+     (if (and (== (get-type $mode) String) (mv:contains (loop-mode:names) $mode))
+       (let $written (collapse (system:write stdout (str:concat $mode "\n")))
+         (if (== $written (())) (system:exit 0) (system:exit 2)))
+       (system:exit 2)))
+    (((BootRecycleV1 True)) (system:exit 0))
+    (((BootRecycleV1 False)) (system:exit 1))
+    ($bad
+      (let $written (collapse (system:write stderr "native boot state operation failed\n"))
+        (system:exit 2)))))

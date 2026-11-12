@@ -380,5 +380,7 @@
   "scripts/render_config_native.sh",
   "src/configuration_cetta.metta",
   "src/memory_health_cetta.metta",
-  "scripts/memory_health_cetta.metta"
+  "scripts/memory_health_cetta.metta",
+  "src/boot_state_cetta.metta",
+  "scripts/loop_bootstrap_cetta.metta"
 ]
