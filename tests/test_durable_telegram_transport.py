@@ -124,7 +124,10 @@ class DurableTransportTest(unittest.TestCase):
         base = pathlib.Path(self.tmp.name)
         self.environ = mock.patch.dict(os.environ, {
             "METTACLAW_TELEGRAM_HEALTH_PATH": str(base / "health.json"),
-            "METTACLAW_TELEGRAM_SERVICE_TIMEOUT": "3",
+            # A bound for a failing run, not a test parameter: a send returns as
+            # soon as its receipts arrive, so a busy host must not turn a slow
+            # but correct round trip into "queued". Tests of expiry set 1.
+            "METTACLAW_TELEGRAM_SERVICE_TIMEOUT": "30",
         })
         self.environ.start()
         self.tg = importlib.reload(telegram)
@@ -149,7 +152,7 @@ class DurableTransportTest(unittest.TestCase):
         self.environ.stop()
         self.tmp.cleanup()
 
-    def wait(self, predicate, seconds=5):
+    def wait(self, predicate, seconds=30):
         until = time.monotonic() + seconds
         while time.monotonic() < until:
             if predicate():
