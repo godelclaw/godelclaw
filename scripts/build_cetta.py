@@ -12,6 +12,7 @@ import sys
 import tempfile
 
 from cetta_profile import PROFILES, build_flags, publication_directory
+import cetta_source_snapshot
 
 ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = "https://github.com/godelclaw/CeTTa.git"
@@ -100,6 +101,8 @@ def main():
     parser.add_argument("--profile", choices=PROFILES, default="python",
                         help="native-agent builds without a Python SDK and includes native ChatGPT")
     parser.add_argument("--source", type=Path, help="existing checkout at the selected revision")
+    parser.add_argument("--source-snapshot", type=Path,
+                        help="build exact committed inputs here without consuming checkout edits")
     parser.add_argument("--prefix", type=Path, default=ROOT / ".runtime/cetta")
     parser.add_argument("--ref", default=(ROOT / "CETTA_REF").read_text().strip())
     parser.add_argument("--repository", default=REPOSITORY)
@@ -130,19 +133,31 @@ def main():
     prefix = args.prefix.resolve()
     if source == prefix or source in prefix.parents or prefix in source.parents:
         parser.error("source and installed bundle must be separate directories")
-    if not (source / ".git").exists():
-        if args.source:
-            parser.error("--source must be a Git checkout")
-        source.mkdir(parents=True, exist_ok=True)
-        run(["git", "init", str(source)])
-        run(["git", "remote", "add", "origin", args.repository], source)
-        run(["git", "fetch", "--depth", "1", "origin", revision], source)
-        run(["git", "checkout", "--detach", "FETCH_HEAD"], source)
-    head = run(["git", "rev-parse", "HEAD"], source, capture=True).strip()
-    if head != revision:
-        parser.error("source is at a different revision; use a matching checkout or a new build directory")
-    if subprocess.run(["git", "diff", "--quiet", "HEAD", "--"], cwd=source).returncode:
-        parser.error("source has tracked changes; commit them and select that revision before building")
+    source_repository = source
+    if args.source_snapshot:
+        if not args.source:
+            parser.error("--source-snapshot requires an existing --source repository")
+        snapshot_path = args.source_snapshot.absolute()
+        if snapshot_path == prefix or snapshot_path in prefix.parents or prefix in snapshot_path.parents:
+            parser.error("source snapshot and installed bundle must be separate directories")
+        try:
+            source = cetta_source_snapshot.materialize(source_repository, revision, snapshot_path)
+        except (ValueError, OSError, subprocess.CalledProcessError) as error:
+            parser.error(str(error))
+    else:
+        if not (source / ".git").exists():
+            if args.source:
+                parser.error("--source must be a Git checkout")
+            source.mkdir(parents=True, exist_ok=True)
+            run(["git", "init", str(source)])
+            run(["git", "remote", "add", "origin", args.repository], source)
+            run(["git", "fetch", "--depth", "1", "origin", revision], source)
+            run(["git", "checkout", "--detach", "FETCH_HEAD"], source)
+        head = run(["git", "rev-parse", "HEAD"], source, capture=True).strip()
+        if head != revision:
+            parser.error("source is at a different revision; use a matching checkout or a new build directory")
+        if subprocess.run(["git", "diff", "--quiet", "HEAD", "--"], cwd=source).returncode:
+            parser.error("source has tracked changes; commit them and select that revision before building")
     if subprocess.run(["pkg-config", "--exists", "libpcre2-8"], stdout=subprocess.DEVNULL,
                       stderr=subprocess.DEVNULL).returncode:
         parser.error("native file search requires PCRE2 development headers (libpcre2-dev)")
@@ -170,7 +185,12 @@ def main():
                   "--eval", recipe, "godelclaw-release-paths"], source, capture=True)
     artifacts = [line.split("=", 1)[1] for line in output.splitlines()
                  if line.startswith("GODELCLAW_ARTIFACT=")]
-    if (run(["git", "rev-parse", "HEAD"], source, capture=True).strip() != revision or
+    if args.source_snapshot:
+        try:
+            cetta_source_snapshot.verify(source_repository, revision, source)
+        except (ValueError, OSError, subprocess.CalledProcessError) as error:
+            parser.error("source input changed during build; no artifact was installed: " + str(error))
+    elif (run(["git", "rev-parse", "HEAD"], source, capture=True).strip() != revision or
             subprocess.run(["git", "diff", "--quiet", "HEAD", "--"], cwd=source).returncode):
         parser.error("source changed during build; no artifact was installed")
     with publication_directory(prefix, args.profile == "native-agent") as bundle:
@@ -198,6 +218,7 @@ def main():
         (bundle / "runtime.env").write_text("".join(key + "=" + value + "\n"
                                                     for key, value in environment.items()))
         manifest = {"schema": 1, "repository": args.repository, "revision": revision,
+                    "source_kind": "commit-snapshot" if args.source_snapshot else "checkout",
                     "features": flags, "runtime_profile": args.profile,
                     "python_enabled": args.profile == "python", "python_version": version.group(1) if version else None,
                     "python_prefix": python_prefix,
