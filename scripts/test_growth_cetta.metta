@@ -24,6 +24,9 @@
           ($_ (nt:require growth-commentary-rewrite-linear
                 (growth:linear? $root $core-engine (cons-atom ("METTACLAW_MODEL_COMMENTARY" "1") $env) $fixture $directory
                   (growth-suite:import $root "tests/growth/commentary_contract.metta") "commentary-growth:workload" 20000 4096)))
+          ($_ (nt:require growth-native-call-owners-linear
+                (growth:linear? $root $core-engine $env $fixture $directory
+                  (growth-suite:import $root "tests/growth/native_call.metta") "call-growth:workload" 500 4096)))
           ($_ (nt:require growth-quadratic-mutant-fails
                 (not (growth:linear? $root $core-engine $env $fixture $directory $controls "growth-control:quadratic" 500 4096)))))
      GrowthSuitePassedV1))

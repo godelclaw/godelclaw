@@ -67,8 +67,9 @@
              (stream:frames $plan (str:concat "" $protocol) $frames)))
           ((SSEError $why) (py-call (stream_sink.unavailable $plan $why))))))
      0)))
-(= (stream:progress $plan $handle)
-   (let $readable (py-call (stream_sink.readable $plan))
+; The display observer keeps its state on the host plan of a native owner.
+(= (stream:progress $owner $handle)
+   (let* (($plan (call:host $owner)) ($readable (py-call (stream_sink.readable $plan))))
     (if (llm:host-flag $readable)
      (let* (($offset (py-call (stream_sink.offset $plan)))
             ($chunk (llm:commentary-read $handle $offset)))

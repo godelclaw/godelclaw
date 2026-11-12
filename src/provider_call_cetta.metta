@@ -1,5 +1,6 @@
 ; Native request preparation bound to an existing owned provider lifecycle.
 !(import! &self ./provider_request_cetta.metta)
+!(import! &self ./native_call_cetta.metta)
 
 ; Call boundaries consume computed values in both extended dialects.
 (: pcall:begin (-> %Undefined% %Undefined% %Undefined%))
@@ -59,9 +60,21 @@
               ($metadata (pcall:metadata $request $encoding $profile $prompt $active $model $layout))
               ($metadata-text (preq:render $metadata))
               ($bound (py-call (native_llm_host.bind_native_command $plan $seal $metadata-text))))
-         (if (host:flag $bound) (PreparedProviderCallV1 $plan $transport)
+         (if (host:flag $bound)
+           (PreparedProviderCallV1 (call:owner $plan (pcall:owner-facts $facts $metadata $active) $seal) $transport)
            (pcall:refused $plan native-binding-refused))))
       ($invalid (pcall:refused $plan $invalid)))))
+; The owner's immutable facts: the seed's, plus what preparation fixed.
+(= (pcall:owner-facts $facts $metadata $active)
+   (let* (((JsonObject $seed) (json:parse (preq:render $facts)))
+          ((JsonObject $prepared) (json:parse (preq:render $metadata)))
+          ($fingerprint (lp:field (JsonObject $prepared) "fingerprint" ""))
+          ($layout (if (== (pcall:fact $facts "protocol") "anthropic")
+                     (lp:field (JsonObject $prepared) "cache_layout" JsonNull) JsonNull))
+          ($stream (if $active true false))
+          ($pairs (call:append $seed ((JsonPair "fingerprint" $fingerprint) (JsonPair "prepared_stream" $stream)
+                                      (JsonPair "cache_layout" $layout)))))
+     (JsonObject $pairs)))
 (= (pcall:encoded $plan $facts $request $encoding $cache $profile $prompt $encoded)
    (case $encoded
      (((llm:v1:ok (llm:v1:encoded $path $body))
@@ -98,19 +111,19 @@
    (if (not (llm:plan-ready $plan))
      (llm:v1:failed unsubmitted unsubmitted admission-error not-started)
     (let $seal (pcall:seal $transport)
-     (if (not (host:flag (py-call (native_llm_host.native_prepared_matches $plan $seal))))
+     (if (not (call:seal-matches? $plan $seal))
        (llm:v1:rejected prepared-configuration-mismatch)
        (if (not (llm:plan-claim $plan))
          (if (llm:plan-ready $plan) (llm:v1:failed duplicate duplicate duplicate-plan not-started)
            (llm:v1:failed unsubmitted unsubmitted admission-error not-started))
          (let* (($_ (py-call (native_llm_host.gate)))
-                ($_ (py-call (native_llm_host.native_wire_started $plan))))
+                ($_ (py-call (native_llm_host.native_wire_started (call:host $plan)))))
            (pcall:submit $plan $transport)))))))
 (= (pcall:submit $plan (PreparedProviderTransportV1 $epoch $correlation $protocol $url $headers-json $wire
                                               $timeout $cap $connect $first $idle))
    (case (llm:v1:headers-json $headers-json)
      (((llm:v1:ok $headers)
-       (let $observed (llm:observe-wire $plan $wire)
+       (let $observed (llm:observe-wire (call:host $plan) $wire)
          (llm:network-ready $plan $epoch $correlation $protocol $url $headers $observed $timeout $cap
                             (NativeCallWaitsV1 $connect $first $idle))))
       ((llm:v1:error $why) (llm:v1:failed $epoch $correlation $why not-started)))))

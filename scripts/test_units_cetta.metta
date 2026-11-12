@@ -8,7 +8,8 @@
    (("tests/unit/model_selection.metta" "UNIT_MODEL_SELECTION_OK")
     ("tests/unit/loop_host.metta" "UNIT_LOOP_HOST_OK")
     ("tests/unit/commentary_contract.metta" "UNIT_COMMENTARY_ON_OK" (("METTACLAW_MODEL_COMMENTARY" "1")))
-    ("tests/unit/commentary_contract.metta" "UNIT_COMMENTARY_OFF_OK" (("METTACLAW_MODEL_COMMENTARY" "0")))))
+    ("tests/unit/commentary_contract.metta" "UNIT_COMMENTARY_OFF_OK" (("METTACLAW_MODEL_COMMENTARY" "0")))
+    ("tests/unit/native_call.metta" "UNIT_NATIVE_CALL_OK")))
 
 (= (units:env $directory)
    (let $base (nt:environment $directory)

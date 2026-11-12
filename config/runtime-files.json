@@ -388,5 +388,6 @@
   "scripts/loop_bootstrap_cetta.metta",
   "src/model_selection_cetta.metta",
   "src/loop_host_cetta.metta",
-  "src/commentary_contract_cetta.metta"
+  "src/commentary_contract_cetta.metta",
+  "src/native_call_cetta.metta"
 ]

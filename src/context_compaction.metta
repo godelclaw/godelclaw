@@ -120,7 +120,7 @@
      (case $planned
        (((ContextPreparationFailed $_) $planned)
         ($ready
-          (let* (($owner (llm:owner $ready))
+          (let* (($owner (call:host (llm:owner $ready)))
                  ($_ (py-call (native_llm_host.for_compaction $owner)))
                  ($path (path:join (path:dirname (system:getenv-or-default "METTACLAW_ENGINE_STATE_PATH" "memory/engine")) "compaction-reply.json")))
             (case (catch (llm:run $ready))

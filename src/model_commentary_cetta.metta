@@ -2,6 +2,8 @@
 ; streaming or command execution lives here. JSON parsing retains/rejects member
 ; occurrences through llm:v1:parse (JsonUniqueKeysV1), including nested arguments.
 !(import! &self (library str))
+!(import! &self ./commentary_contract_cetta.metta)
+!(import! &self ./native_call_cetta.metta)
 
 (: CommentaryPublicationV1 Type)
 (: CommentaryDecisionV1 Type)
@@ -184,14 +186,19 @@
 
 ; The host owns settlement and its existing publication observer. This pure
 ; decision is attached to that one owned plan before native_llm_host.finish.
-(= (commentary:store $plan (CommentaryAcceptedV1 $program $publication))
+(= (commentary:store $owner (CommentaryAcceptedV1 $program $publication))
    (case $publication
      (((CommentaryPublishV1 $text)
-       (py-call (native_llm_host.native_classified $plan accepted $program $text "" "true")))
+       (py-call (native_llm_host.native_classified (call:host $owner) accepted $program $text "" "true")))
       (CommentaryNoPublicationV1
-       (py-call (native_llm_host.native_classified $plan accepted $program "" "" false))))))
-(= (commentary:store $plan (CommentaryRejectedV1 $code))
-   (py-call (native_llm_host.native_classified $plan rejected "" "" $code false)))
+       (py-call (native_llm_host.native_classified (call:host $owner) accepted $program "" "" false))))))
+(= (commentary:store $owner (CommentaryRejectedV1 $code))
+   (py-call (native_llm_host.native_classified (call:host $owner) rejected "" "" $code false)))
+; A native owner is always a command call: the contract applies unless commentary
+; is off or the call is compaction.
+(= (commentary:native-contract? $owner)
+   (if (call:native? $owner) (and (commentary:enabled?) (not (call:compaction? $owner)))
+     (llm:host-flag (py-call (native_llm_host.native_contract $owner)))))
 (= (commentary:prepare $plan $legacy)
-   (if (llm:host-flag (py-call (native_llm_host.native_contract $plan)))
+   (if (commentary:native-contract? $plan)
      (let $decision (commentary:classify $legacy) (commentary:store $plan $decision)) True))

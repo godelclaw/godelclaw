@@ -321,7 +321,10 @@ def native_command_seed(selected, tokens, purpose="command"):
     plan.native_visible = purpose == "command" and stream_sink.configured()
     facts.update(ready=True, visible=plan.native_visible,
                  tool=model_commentary.tool_schema() if purpose == "command" and model_commentary.enabled() else None,
-                 ttl=os.environ.get("METTACLAW_ANTHROPIC_CACHE_TTL", "5m"))
+                 ttl=os.environ.get("METTACLAW_ANTHROPIC_CACHE_TTL", "5m"),
+                 # Immutable call facts the native owner keeps from here on.
+                 soft=plan.soft, maximum=plan.max_output, purpose=getattr(plan, "purpose", "turn"),
+                 activity=plan.activity, lane=plan.lane, guard=plan.guard, origin=plan.call_origin)
     return plan, json.dumps(facts, ensure_ascii=False)
 
 
@@ -360,10 +363,6 @@ def _bind_native_command(plan, seal, encoded):
     except (ValueError, TypeError, KeyError, AttributeError) as error:
         plan.error, plan.ready = error, "false"
         return "false"
-
-
-def native_prepared_matches(plan, seal):
-    return "true" if getattr(plan, "prepared_seal", None) == str(seal) else "false"
 
 
 def native_preparation_failed(plan, reason):
@@ -828,6 +827,15 @@ def waiting(plan, count=0, quiet=0):
         native_lifetime.progress(plan, count, quiet, soft)
     if not _compaction(plan):
         cognitive_health.provider_progress(count, quiet, soft, plan.timeout)
+    import process_supervision
+    process_supervision.provider_data(count)
+    return 1
+
+
+def progress_observed(plan, count, quiet, soft):
+    """Health and watchdog observers of a progress record the native owner paced."""
+    if not _compaction(plan):
+        cognitive_health.provider_progress(count, quiet, int(soft), plan.timeout)
     import process_supervision
     process_supervision.provider_data(count)
     return 1
