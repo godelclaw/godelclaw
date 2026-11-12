@@ -13,7 +13,7 @@
 !(import! &self (library proc))
 !(import! &self (library str))
 !(import! &self (library system))
-!(import! &self ./src/memory_health.py)
+!(import! &self ./src/memory_health_cetta.metta)
 !(import! &self ./src/synthetic_llm.py)
 
 (= (rt:max-chars) 2400)
@@ -344,7 +344,7 @@
          (((JsonObject $pairs) (JsonObject $pairs))
           ($other (JsonObject ())))))))
 (= (rt:reachable $socket)
-   (case $socket (((JsonString $path) (py-call (memory_health.native_reachable $path))) ($other False))))
+   (case $socket (((JsonString $path) (memory-health:reachable? $path)) ($other False))))
 (= (rt:memory)
    (let $config (rt:backend-config)
      (if (== (rt:get-or $config "mode" (JsonString "unconfigured")) (JsonString "native"))

@@ -52,6 +52,9 @@ class EngineLauncherTests(unittest.TestCase):
         self.cetta = self.base / "cetta"
         self._script(
             self.cetta,
+            'case "$*" in *scripts/config_to_env_cetta.metta*) '
+            'printf "native-bootstrap:%s\\n" "$*" >>"$ENGINE_TEST_RESULT"; exit 0;; '
+            '*scripts/memory_health_cetta.metta*) exit 0;; esac; '
             'printf "cetta:%s:%s\\n" "$METTACLAW_ACTIVE_ENGINE" "$*" '
             '>>"$ENGINE_TEST_RESULT"; '
             'if [ "${CETTA_WAIT_FOR_TERM:-0}" = 1 ]; then '
@@ -134,13 +137,16 @@ class EngineLauncherTests(unittest.TestCase):
         self.assertNotIn(str(self.root / "src" / ""), line)
         self.assertNotIn(str(self.root / "lib_nal.metta"), line)
 
-    def test_terminating_a_probe_stops_its_engine_and_the_engine_children(self):
+    def test_terminating_native_health_or_probe_stops_its_engine_and_children(self):
         (self.root / "utility.metta").write_text("")
-        for engine, script in (("cetta", self.cetta),):
-            with self.subTest(engine=engine):
-                child_file = self.base / (engine + "-child")
+        for engine, script, phase in (("cetta", self.cetta, "health"), ("cetta", self.cetta, "probe")):
+            with self.subTest(engine=engine, phase=phase):
+                child_file = self.base / (engine + "-" + phase + "-child")
                 # Like PeTTa's run.sh, which waits on its SWI process.
-                self._script(script, 'sleep 300 & echo $! >"$PROBE_CHILD"; wait')
+                body = 'printf "%s\\n" "$*" >"$PROBE_CHILD.args"; sleep 300 & echo $! >"$PROBE_CHILD"; wait'
+                if phase == "probe":
+                    body = 'case "$*" in *scripts/memory_health_cetta.metta*) exit 0;; esac; ' + body
+                self._script(script, body)
                 env = dict(self.env, METTACLAW_ENGINE=engine, PROBE_CHILD=str(child_file))
                 launcher = subprocess.Popen([str(self.root / "run.sh"), "utility.metta"], env=env,
                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -150,6 +156,8 @@ class EngineLauncherTests(unittest.TestCase):
                         self.assertLess(time.monotonic(), deadline, "the probe never started")
                         time.sleep(0.05)
                     child = int(child_file.read_text())
+                    arguments = pathlib.Path(str(child_file) + ".args").read_text()
+                    self.assertIn("memory_health_cetta.metta" if phase == "health" else "utility.metta", arguments)
                     launcher.send_signal(signal.SIGTERM)
                     launcher.wait(timeout=10)
                     deadline = time.monotonic() + 5
@@ -188,17 +196,16 @@ class EngineLauncherTests(unittest.TestCase):
         self.assertIn("/fixture/channel.sock|fixture-token|\n", result.stdout)
         self.assertIn("client=metta", result.stdout)
 
-    def test_configuration_render_does_not_inherit_another_python_prefix(self):
+    def test_configuration_render_uses_the_native_engine_with_a_foreign_python_prefix(self):
         (self.root / "scripts").mkdir()
         (self.root / "config").mkdir()
         (self.root / "config/local.toml").write_text("")
-        (self.root / "scripts/config_ctl.py").write_text(
-            "import os\nassert 'PYTHONHOME' not in os.environ\n"
-            "assert 'PYTHONPATH' not in os.environ\n")
+        shutil.copy2(SOURCE_ROOT / "scripts/render_config_native.sh", self.root / "scripts")
         result = self.launch(CETTA_REQUEST_RECYCLE=1,
                              PYTHONHOME=str(self.base / "foreign-python-prefix"),
                              PYTHONPATH=str(self.base / "foreign-modules"))
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("scripts/config_to_env_cetta.metta", self.result_lines()[0])
 
     def test_clean_unrequested_stop_is_recorded(self):
         result = self.launch()

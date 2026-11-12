@@ -278,20 +278,18 @@ if [ "$TARGET" = "$ROOT/run.metta" ] && [ -f "$ROOT/modes/launch.py" ]; then
     esac
 fi
 
-# Memory startup diagnostic: the native memory service's state, to the service
-# journal, not the model prompt. Non-fatal, so a diagnostic cannot prevent boot.
-PYTHONPATH="$ROOT/src${python_site_paths:+:$python_site_paths}" \
-    "$PETTA_PY_ENV/bin/python3" "$ROOT/src/memory_health.py" 2>&1 || true
-
 # A probe runs as a child so that the EXIT trap can remove its state. A
 # shell waiting on a child runs its traps only after the child exits, so a
 # TERM from a timeout or Ctrl-C would stop neither of them, and the engine
 # would keep running orphaned. Forward the signal to the probe and to its
 # children, then return its status.
 run_probe() {
+    probe_stop_status=0
     "$@" <&0 &
     probe_pid=$!
-    trap 'pkill -TERM -P "$probe_pid" 2>/dev/null; kill -TERM "$probe_pid" 2>/dev/null' TERM INT HUP
+    trap 'probe_stop_status=143; pkill -TERM -P "$probe_pid" 2>/dev/null; kill -TERM "$probe_pid" 2>/dev/null' TERM
+    trap 'probe_stop_status=130; pkill -TERM -P "$probe_pid" 2>/dev/null; kill -TERM "$probe_pid" 2>/dev/null' INT
+    trap 'probe_stop_status=129; pkill -TERM -P "$probe_pid" 2>/dev/null; kill -TERM "$probe_pid" 2>/dev/null' HUP
     local status=0
     wait "$probe_pid" || status=$?
     while kill -0 "$probe_pid" 2>/dev/null; do
@@ -299,8 +297,16 @@ run_probe() {
         wait "$probe_pid" || status=$?
     done
     trap - TERM INT HUP
+    if [ "$probe_stop_status" != 0 ]; then return "$probe_stop_status"; fi
     return "$status"
 }
+
+# A diagnostic is non-fatal; an operator stop during it still ends startup.
+health_status=0
+METTACLAW_HEALTH_RUNTIME_ROOT="$ROOT" run_probe "${CETTA_BIN:-$CETTA_ROOT/cetta}" \
+    --no-results --lang petta --profile extended --import-mode ancestor-walk \
+    "$ROOT/scripts/memory_health_cetta.metta" 2>&1 || health_status=$?
+if [ "$probe_stop_status" != 0 ]; then exit "$health_status"; fi
 
 case "$METTACLAW_ENGINE" in
     cetta)

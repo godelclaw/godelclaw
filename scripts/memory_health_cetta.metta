@@ -1,0 +1,5 @@
+!(import! &self ../src/memory_health_cetta.metta)
+!(let* (($root (system:getenv-or-default "METTACLAW_HEALTH_RUNTIME_ROOT" ""))
+        ($report (memory-health:report $root))
+        ($written (collapse (system:write stdout (str:join "" ("[memory_health] " $report "\n"))))))
+   (if (== $written (())) (system:exit 0) (system:exit 1)))
