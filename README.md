@@ -14,14 +14,14 @@ execution gateway.
 
 `main` is the tested, shareable runtime. The matching CeTTa source is pinned
 in [CETTA_REF](CETTA_REF) and published on
-[godelclaw/CeTTa, branch cetta-ours](https://github.com/godelclaw/CeTTa/tree/cetta-ours).
+[godelclaw/CeTTa, branch experimental](https://github.com/godelclaw/CeTTa/tree/experimental).
 The installer and container build read that same pin.
 
 The integrated engine includes Prime's weighted evaluation, cost observations
 and parallel workers alongside the native agent I/O libraries. Agent loops
 continue to use CeTTa's PeTTa language profile. Run Prime programs explicitly
 with `--lang prime`; see the engine's
-[Prime examples](https://github.com/godelclaw/CeTTa/tree/cetta-ours/examples/prime).
+[Prime examples](https://github.com/godelclaw/CeTTa/tree/experimental/examples/prime).
 Integrating these mechanisms does not itself select an attention policy or
 change how the model orders its tools.
 
