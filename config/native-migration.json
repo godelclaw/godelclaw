@@ -315,6 +315,43 @@
         "No paid live canary or 24-hour soak claimed",
         "Whole runtime still uses the SDK Python backend"
       ]
+    },
+    {
+      "id": "versioned-evidence-handoffs",
+      "status": "qualified-and-deployed",
+      "native_modules": [
+        "src/handoff_evidence_cetta.metta",
+        "src/context_compaction.metta",
+        "src/task_context_views.metta"
+      ],
+      "runtime_commit": "723411145",
+      "engine_commit": "2eefbdff7af5020c9a6283bcb3908be3e78c9273",
+      "lean_commit": "d3fd3fcc8",
+      "release": "943d7dc3835de0ff30ad27b6a8d3519ba5e123468daa3ad15c3aa8b6aa6da403",
+      "test_orchestration": "CeTTa core without Python",
+      "checks": {
+        "shared_api_dialects": [
+          "petta",
+          "he"
+        ],
+        "production_integration_dialect": "petta",
+        "ledger_reopen": true,
+        "mutants_killed": 4,
+        "reference_runtime_probes": 30,
+        "paired_installed_verification": true,
+        "alternating_cold_view_pairs": 21,
+        "baseline_p95_ns": 149712981,
+        "candidate_p95_ns": 116628985,
+        "baseline_max_peak_rss_kib": 69508,
+        "candidate_max_peak_rss_kib": 69200
+      },
+      "limits": [
+        "Version agreement does not prove a claim",
+        "File versions are bounded observations, not immutable filesystem snapshots",
+        "Request fingerprints describe metadata headers",
+        "No paid live canary or 24-hour soak claimed",
+        "Whole runtime still uses the SDK Python backend"
+      ]
     }
   ]
 }
