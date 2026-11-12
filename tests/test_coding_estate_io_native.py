@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shlex
 import socket as sockets
 import stat
 import subprocess
@@ -1043,8 +1044,12 @@ class CodingEstateNativeIoTests(unittest.TestCase):
         self.make_session("work-native-blocks", status="stopped", bundle=self.bundle_current)
         marker = self.directory / "find-was-executed"
         forbidden = self.directory / "find"
-        forbidden.write_text("#!/bin/sh\n: > " + str(marker) + "\nexit 99\n")
+        forbidden.write_text("#!/bin/sh\n: > " + shlex.quote(str(marker)) + "\nexit 99\n")
         forbidden.chmod(0o755)
+        positive = subprocess.run([str(forbidden)], capture_output=True)
+        self.assertEqual(positive.returncode, 99)
+        self.assertTrue(marker.exists())
+        marker.unlink()
         for old_override in (str(self.directory / "missing-find"), str(forbidden)):
             result = self.run_native(
                 '!(println! (estate:load))\n!(println! (eio:local-date 0))\n',
