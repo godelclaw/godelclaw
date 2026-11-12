@@ -207,7 +207,15 @@
                                     (path:join $d "executions") (nt:environment $root) 30000 4096)))
           ($repaired (cio:execution-finish $d $bad "exited" 0 0.1))
           ($_ (nt:require malformed-output-is-text (nt:equal (str:utf8-error $repaired) StrUtf8WellFormedV1)))
-          ($_ (nt:require malformed-output-kept (and (nt:contains $repaired "ok") (nt:contains $repaired "done")))))
+          ($_ (nt:require malformed-output-kept (and (nt:contains $repaired "ok") (nt:contains $repaired "done"))))
+          ($long "4444444444444444dddddddddddddddd")
+          ($_ (cio:execution-create $d $long "printf"))
+          ($_ (nt:exit-ok (proc:run ("sh" "-c" (format-args "{ printf 'head\\377\\376mark'; head -c 100000 /dev/zero | tr '\\0' m; printf 'tail\\377end'; } > {}.log" ($long)))
+                                    (path:join $d "executions") (nt:environment $root) 30000 4096)))
+          ($cut (cio:execution-finish $d $long "exited" 0 0.1))
+          ($_ (nt:require long-output-is-text (nt:equal (str:utf8-error $cut) StrUtf8WellFormedV1)))
+          ($_ (nt:require head-malformed-replaced (nt:contains $cut "head��mark")))
+          ($_ (nt:require tail-malformed-replaced (nt:contains $cut "tail�end"))))
      True))
 
 ; A runtime tree as config/runtime-files.json selects it; its digest is the one

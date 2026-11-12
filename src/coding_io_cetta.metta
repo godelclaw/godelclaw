@@ -328,6 +328,7 @@
 
 ; The output, bounded: whole up to 40000 bytes, otherwise its first and last
 ; 20000 bytes. Only the bytes shown are read, whatever the log's size.
+; Malformed bytes read as U+FFFD, one per maximal subpart, in all parts.
 (= (cio:log-excerpt $log)
    (case (fs:metadata $log follow)
      (((fs:info regular $size $identity)
@@ -341,7 +342,7 @@
      (if (cio:failed? $reader) ""
        (let* (($bytes (cio:read-up-to $reader $limit ()))
               ($_ (fs:close $reader))
-              ($decoder (str:utf8-new ignore)))
+              ($decoder (str:utf8-new replace)))
          (case (str:utf8-feed $decoder $bytes True)
            (((Utf8DecodedV1 $text $next) $text) ($other "")))))))
 (= (cio:read-up-to $reader $left $chunks)
