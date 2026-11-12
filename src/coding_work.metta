@@ -254,9 +254,10 @@
               ($_ (proc:run ("systemctl" "--user" "stop" (str:concat (work:unit $id) ".scope"))
                             (system:cwd) inherit 10000 0 "merged"))
               ;; Every ending has the same report handover, including a stop
-              ;; that ends the scope before its worker can write a report.
-              ($_ (if (fs:is-file (path:join $dir "report.txt")) ()
-                    (work:ended $id $dir))))
+              ;; that ends the scope before its worker can record its ending.
+              ;; Settling is a no-op unless the state still says running; a
+              ;; report the worker wrote before it was stopped is kept in it.
+              ($_ (work:ended $id $dir)))
          (str:concat "WORK_STOPPED " $id))
        (str:concat "work-stop: no session " $id))))
 
