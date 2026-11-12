@@ -380,6 +380,20 @@
           ($_ (fs:write (path:join $d "state.json") (format-args "{\"status\":\"running\",\"worker_owner\":\"{}\"}" ((process:owner)))))
           ($_ (nt:require live-session-not-repinned (case (cio:repin $program $d) (((CodingLaunch running $r $b $t $x) True) ($o False))))))
      True))
+; A resume whose preparation fails after the manifest was replaced is
+; reported, never claimed: uncertain for a re-pin, failed for a pinned resume.
+(= (cit:preparation-failures $root)
+   (let* (($program (path:join $root "program-check"))
+          ($d (path:join (path:join $root "memory/coding") "work-unprepared")) ($_ (fs:make-directories $d 504))
+          ($_ (fs:write (path:join $d "task.json") "{\"task\":\"t\"}"))
+          ($_ (cio:freeze-runtime $program $d NoNote))
+          ($_ (fs:make-directories (path:join $d "inbox.jsonl") 504))
+          ($_ (nt:require repin-preparation-uncertain
+                (case (cio:repin $program $d) (((CodingLaunch uncertain $r $b $t $why) True) ($o False)))))
+          ($_ (nt:require resume-preparation-failed
+                (case (cio:freeze-runtime $program $d (cio:note-pinned))
+                  (((CodingLaunch failed $r $b $t $why) (nt:contains $why "could not prepare the resume")) ($o False))))))
+     True))
 (= (cio:nonblank $lines)
    (if (== $lines ()) ()
      (let $rest (cio:nonblank (cdr-atom $lines)) (if (== (str:trim (car-atom $lines)) "") $rest (cons-atom (car-atom $lines) $rest)))))
@@ -398,7 +412,8 @@
           ($_ (cit:run-tokens $root)) ($_ (cit:worker-writes $root)) ($_ (cit:stops $root))
           ($_ (cit:endings $root)) ($_ (cit:lock-exclusion $root)) ($_ (cit:append $root))
           ($_ (cit:executions $root)) ($_ (cit:freezing $root)) ($_ (cit:reservations $root))
-          ($_ (cit:launch-values $root)) ($_ (cit:repins $root)) ($_ (cit:verdicts)))
+          ($_ (cit:launch-values $root)) ($_ (cit:repins $root)) ($_ (cit:verdicts))
+          ($_ (cit:preparation-failures $root)))
      CodingIoContractsPassed))
 !(nt:require coding-io-contracts-completed (nt:equal (collapse (cit:run)) (CodingIoContractsPassed)))
 !(println! NATIVE_CODING_IO_PASSED)

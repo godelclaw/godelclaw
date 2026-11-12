@@ -87,9 +87,9 @@
          (if (cio:failed? $synced) $synced True)))))
 (= (cio:publish-json $path $value) (cio:publish $path (json-stringify $value)))
 
-; One line appended to a file; the line is written with one append call.
+; One line appended to a file, written with one append call: 1, or the failure.
 (= (cio:append-line $path $text)
-   (let $_ (fs:append-text $path (str:concat $text "\n")) 1))
+   (case (catch (fs:append-text $path (str:concat $text "\n"))) ((() 1) ($failure $failure))))
 ; A diagnostic for the session's run.log. It never fails its caller.
 (= (cio:log $dir $text)
    (let $_ (catch (fs:append-text (path:join $dir "run.log") (str:concat $text "\n"))) 0))
@@ -266,7 +266,8 @@
                     (if (or (== (coding:text $run) "") (== (coding:field $runtime "run") $run))
                       (cio:publish-json $runtime-path (cio:put $runtime "phase" (JsonString "ended"))) True)
                     True)))
-         (if (== $written True) 1 0)))))
+         (if (== $written True) 1
+           (cio:refuse $dir (format-args "settle error: could not record the {} ending: {}" ($status (repr $written)))))))))
 
 ;; -------------------------------------------------------- executions
 ; A command the worker runs is recorded before it starts and again when it
@@ -365,11 +366,15 @@
    (if (== $left ()) $right (cons-atom (car-atom $left) (cio:append-list (cdr-atom $left) $right))))
 (= (cio:replace $text $old $new) (str:join $new (str:split $old $text)))
 
-; The program root: the given root when it holds a runtime selection,
-; otherwise the nearest such ancestor of the entry program's directory.
+; The program root: the given root (the agent's working directory) when it
+; holds a runtime selection, as an agent's and a worker's always does; else
+; METTACLAW_RUNTIME_ROOT, for a caller elsewhere; else the nearest ancestor
+; of the entry program's directory that holds one.
 (= (cio:program-root $root)
    (if (fs:is-file (path:join $root "config/runtime-files.json")) $root
-     (cio:selection-ancestor (system:entry-directory))))
+     (let $named (system:getenv-or-default "METTACLAW_RUNTIME_ROOT" "")
+       (if (and (!= $named "") (fs:is-file (path:join $named "config/runtime-files.json"))) $named
+         (cio:selection-ancestor (system:entry-directory))))))
 (= (cio:selection-ancestor $dir)
    (if (fs:is-file (path:join $dir "config/runtime-files.json")) $dir
      (let $parent (path:dirname $dir)
@@ -520,8 +525,9 @@
                             "run" (JsonString $token)) "phase" (JsonString "reserved")) "at" (cio:now-json)))
               ($published (cio:publish-json $record $manifest)))
          (if (== $published True)
-           (let $_ (cio:prepare-resume $dir $note)
-             (CodingLaunch reserved $runtime (coding:text (coding:field $old "binary")) $token ""))
+           (case (cio:prepare-resume $dir $note)
+             ((True (CodingLaunch reserved $runtime (coding:text (coding:field $old "binary")) $token ""))
+              ((CioPrepareFailed $why) (CodingLaunch failed "" "" "" (str:concat "could not prepare the resume: " $why)))))
            (CodingLaunch failed "" "" "" (repr $published)))))))
 (= (cio:reserve-new $root $dir $record $existing $note)
    (case (cio:freeze-bundle $root (path:join (path:dirname (path:dirname $dir)) "coding-runtimes"))
@@ -535,23 +541,35 @@
                                       (JsonPair "at" (cio:now-json)))))
               ($published (cio:publish-json $record $manifest)))
          (if (== $published True)
-           (let $_ (if $existing (cio:prepare-resume $dir $note) ())
-             (CodingLaunch reserved $target $binary $token ""))
+           (case (if $existing (cio:prepare-resume $dir $note) True)
+             ((True (CodingLaunch reserved $target $binary $token ""))
+              ((CioPrepareFailed $why) (CodingLaunch failed "" "" "" (str:concat "could not prepare the resume: " $why)))))
            (CodingLaunch failed "" "" "" (repr $published)))))
       ((CioFreezeFailed $why) (CodingLaunch failed "" "" "" $why)))))
 
 ; A resumed run starts clean: no stop or recycle request, the last report kept
 ; as report.previous.txt, no hold or archive label, and the resume's note in
-; the inbox.
+; the inbox. True, or (CioPrepareFailed why) at the first step that failed.
 (= (cio:prepare-resume $dir $note)
-   (let* (($_ (if (fs:exists (path:join $dir "stop")) (fs:remove (path:join $dir "stop")) ()))
-          ($_ (if (fs:exists (path:join $dir "recycle.requested")) (fs:remove (path:join $dir "recycle.requested")) ()))
-          ($report (path:join $dir "report.txt"))
-          ($_ (if (fs:is-file $report)
-                (let $_ (fs:rename $report (path:join $dir "report.previous.txt")) (cio:sync-directory $dir)) ()))
-          ($_ (cio:clear-lifecycle $dir))
-          ($_ (if (== $note NoNote) () (cio:append-line (path:join $dir "inbox.jsonl") (json-stringify (JsonString $note))))))
-     True))
+   (cio:then (cio:remove-flag (path:join $dir "stop"))
+     (cio:then (cio:remove-flag (path:join $dir "recycle.requested"))
+       (cio:then (cio:keep-report $dir)
+         (cio:then (cio:clear-lifecycle $dir)
+           (if (== $note NoNote) True
+             (cio:then (cio:append-line (path:join $dir "inbox.jsonl") (json-stringify (JsonString $note))) True)))))))
+; Run the next step only after this one succeeded.
+(: cio:then (-> %Undefined% Atom %Undefined%))
+(= (cio:then $done $next)
+   (let $ok (cio:ok $done)
+     (if (== $ok True) (eval $next) (CioPrepareFailed (repr $ok)))))
+(= (cio:ok $result) (if (or (== $result True) (== $result 1)) True (if (cio:failed? $result) $result (case $result ((() True) ($other $other))))))
+(= (cio:remove-flag $path) (if (fs:exists $path) (fs:remove $path) True))
+(= (cio:keep-report $dir)
+   (let $report (path:join $dir "report.txt")
+     (if (fs:is-file $report)
+       (let $moved (fs:rename $report (path:join $dir "report.previous.txt"))
+         (if (cio:failed? $moved) $moved (cio:sync-directory $dir)))
+       True)))
 
 ; Hold and archive labels live in lifecycle.json under .lifecycle.lock.
 (: cio:lifecycle-locked (-> %Undefined% Atom %Undefined%))
@@ -733,6 +751,12 @@
      (let (JsonPair $name $value) (car-atom $pairs)
        (if (== $name $key) (cio:without-pairs (cdr-atom $pairs) $key)
          (cons-atom (JsonPair $name $value) (cio:without-pairs (cdr-atom $pairs) $key))))))
+; After the manifest was replaced, a resume whose preparation failed is
+; uncertain: the pin may have changed, and the next resume rechecks it.
+(= (cio:prepared-launch $dir $note $launch)
+   (case (cio:prepare-resume $dir $note)
+     ((True $launch)
+      ((CioPrepareFailed $why) (CodingLaunch uncertain "" "" "" $why)))))
 (= (cio:published-launch $published $status $root $binary $token)
    (case $published
      ((True (CodingLaunch $status $root $binary $token $token))
@@ -771,7 +795,7 @@
                 ($launch (cio:published-launch (cio:publish-json $record $manifest) same
                            (coding:text (coding:field $old "root")) (coding:text (coding:field $old "binary")) $token)))
            (case $launch
-             (((CodingLaunch same $r $b $t $d) (let $_ (cio:prepare-resume $dir (cio:note-pinned)) $launch))
+             (((CodingLaunch same $r $b $t $d) (cio:prepared-launch $dir (cio:note-pinned) $launch))
               ($other $other))))
          (RepinObserved (cio:checkpoint-revision $dir) (coding:field $old "run") $phase)))))
 (= (cio:repin-commit $dir $target $digest $binary $engine $revision $run $phase)
@@ -795,6 +819,6 @@
                (let $logged (cio:append-run $dir (JsonObject ((JsonPair "at" $now) (JsonPair "from" (coding:field $settled "digest"))
                                                                (JsonPair "to" (JsonString $digest)) (JsonPair "run" (JsonString $token)))))
                  (if (== $logged True)
-                   (let $_ (cio:prepare-resume $dir (cio:note-repinned)) $launch)
+                   (cio:prepared-launch $dir (cio:note-repinned) $launch)
                    (CodingLaunch uncertain "" "" "" (repr $logged)))))
               ($other $other))))))))
