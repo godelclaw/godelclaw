@@ -516,6 +516,62 @@
         "No paid live canary or 24-hour soak claimed",
         "Whole runtime still uses the SDK Python backend"
       ]
+    },
+    {
+      "id": "native-coding-management-batch-2",
+      "status": "qualified-and-deployed",
+      "native_modules": [
+        "src/coding_io_cetta.metta",
+        "src/apply_patch_cetta.metta",
+        "src/coding_session.metta"
+      ],
+      "deleted_python": [
+        "src/coding_io.py",
+        "src/apply_patch.py"
+      ],
+      "runtime_commit": "c40f8a8ee",
+      "engine_commit": "2eefbdff7af5020c9a6283bcb3908be3e78c9273",
+      "lean_commit": "d804e25f1",
+      "release": "cf73b2ecdd5dc060c4415eb53cef60870af76887caadfad7c02134995c331c55",
+      "test_orchestration": "CeTTa core without Python",
+      "checks": {
+        "production_integration_dialect": "petta",
+        "coding_authority_assertions": 64,
+        "python_entry_census": {
+          "coding-lifecycle": [
+            266,
+            253
+          ]
+        },
+        "sampled_oracle_cases": {
+          "coding_state": 1600,
+          "apply_patch": 1500
+        },
+        "oracle_mismatches": 0,
+        "mutants_killed": 3,
+        "reference_runtime_probes": 30,
+        "paired_installed_verification": true,
+        "paired_benchmark": {
+          "pairs_per_workload": 21,
+          "baseline_runtime_commit": "cf17d6622",
+          "p95_change_percent": {
+            "small": 0.7,
+            "large_1mib": -0.3,
+            "many_blocks_1mib": 0.5
+          },
+          "median_peak_rss_change_percent": {
+            "small": 0.0,
+            "large_1mib": 0.2,
+            "many_blocks_1mib": 0.0
+          }
+        }
+      },
+      "limits": [
+        "On engine 2eefbdff malformed UTF-8 in a long output head is dropped; the replacing decoder is on CeTTa experimental a7b9e69c and arrives with the next engine roll",
+        "Deleted Python files stay as unselected dead files in the instance roots, since the list-form selection cannot express removals",
+        "No paid live canary or 24-hour soak claimed",
+        "Whole runtime still uses the SDK Python backend"
+      ]
     }
   ]
 }
