@@ -77,12 +77,12 @@
    (if (and (== (cl:phase $id) "started") (== (cl:status $id) "running")) running
      (if (<= $left 0) (CodingProbeTimeout $id (cl:phase $id) (cl:status $id))
        (let $_ (cl:sleep) (cl:wait-running $id (- $left 1))))))
-; A command the worker started is recorded under executions/.
-(= (cl:wait-execution $id $left)
-   (let $dir (cl:file $id "executions")
-     (if (and (fs:exists $dir) (!= (fs:entries $dir) ())) started
-       (if (<= $left 0) (CodingProbeNoExecution $id (cl:status $id))
-         (let $_ (cl:sleep) (cl:wait-execution $id (- $left 1)))))))
+; The long command marks itself running a moment after it starts, when its
+; worker has long since recorded it and is polling it.
+(= (cl:wait-command $marker $id $left)
+   (if (fs:exists $marker) started
+     (if (<= $left 0) (CodingProbeNoCommand $id (cl:status $id))
+       (let $_ (cl:sleep) (cl:wait-command $marker $id (- $left 1))))))
 (= (cl:has $id $name $text) (and (fs:is-file (cl:file $id $name)) (nt:contains (fs:read-text (cl:file $id $name)) $text)))
 
 !(let* (($_ (cl:fixtures))
@@ -94,7 +94,8 @@
         ($_ (cl:reply 4 "Resumed on the pin." ()))
         ($_ (cl:reply 5 "Resumed on the current runtime." ()))
         ($_ (cl:reply 6 "" ((cl:call "c6" "exec_command"
-              (JsonObject ((JsonPair "cmd" (JsonString "sleep 30")) (JsonPair "yield_time_ms" (JsonNumber "60000"))))))))
+              (JsonObject ((JsonPair "cmd" (JsonString "sleep 0.3; touch census-command-running; exec sleep 30"))
+                           (JsonPair "yield_time_ms" (JsonNumber "60000"))))))))
         ;; Start: freeze the runtime, reserve a run token, launch the worker.
         ($started (work "Write the census files." $workspace))
         ($_ (nt:require work-started (nt:contains $started "WORK_STARTED work-")))
@@ -134,7 +135,8 @@
         ;; Stop a session whose worker waits on a long command.
         ($stopping (cl:session-id (work "Run the long command." $workspace)))
         ($_ (nt:require stopping-running (nt:equal (cl:wait-running $stopping 900) running)))
-        ($_ (nt:require stopping-waits-on-command (nt:equal (cl:wait-execution $stopping 900) started)))
+        ($_ (nt:require stopping-waits-on-command
+              (nt:equal (cl:wait-command (path:join $workspace "census-command-running") $stopping 900) started)))
         ($_ (nt:require stopped (nt:contains (work-stop $stopping) "WORK_STOPPED")))
         ($_ (nt:require stopped-recorded (nt:equal (cl:status $stopping) "stopped")))
         ($_ (nt:require stop-report (cl:has $stopping "report.txt" "Stopped by the requester.")))
