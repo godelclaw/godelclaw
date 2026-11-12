@@ -21,6 +21,7 @@ def build_flags(profile, prolog='auto', chatgpt=False, python_config=None,
              'ENABLE_DURABLE=1', 'ENABLE_SQLITE=1', 'SQLITE_PROVIDER=system',
              'ENABLE_MANAGED_SYMBOLS=1', 'ENABLE_LIB_PROLOG=' + ('0' if native else prolog),
              'ENABLE_JSON_GSLT=1', 'ENABLE_SIWC=' + str(int(native or chatgpt))]
+    flags.append('CETTA_TEST_ISOLATED=1')
     if not native:
         flags.append('PYTHON_CONFIG=' + python_config)
     if sqlite_cflags is not None:

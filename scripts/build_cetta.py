@@ -162,7 +162,7 @@ def main():
     flags = build_flags(args.profile, args.prolog, args.chatgpt, args.python_config,
                         args.sqlite_cflags, args.sqlite_libs)
     run(["make", "-j", str(args.jobs), *flags,
-         "cetta", "space-service", "value-worker", "telegram-service"], source)
+         "all", "space-service", "value-worker", "telegram-service"], source)
     # Ask Make for its resolved tagged paths; do not guess which older binary
     # in runtime/ belongs to this feature configuration.
     recipe = 'godelclaw-release-paths:;@printf "GODELCLAW_ARTIFACT=%s\\n" "$(BIN)" "$(SPACE_SERVICE_BIN)" "$(VALUE_WORKER_BIN)" "$(TELEGRAM_SERVICE_BIN)" "$(BIN).proc-scope"'
