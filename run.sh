@@ -72,8 +72,8 @@ fi
 # Isolated tests can explicitly keep their supplied environment and avoid
 # reading a developer checkout's private instance config or secrets.
 if [ "${METTACLAW_SKIP_CONFIG:-0}" != "1" ]; then
-    if [ -f "$ROOT/config/local.toml" ] && [ -f "$ROOT/scripts/config_ctl.py" ]; then
-        env -u PYTHONHOME -u PYTHONPATH "${PYTHON:-python3}" "$ROOT/scripts/config_ctl.py" render >/dev/null
+    if [ -f "$ROOT/config/local.toml" ]; then
+        bash "$ROOT/scripts/render_config_native.sh" "$ROOT" publish
     fi
 
     if [ -f "$ROOT/.env" ]; then

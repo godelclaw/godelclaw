@@ -374,5 +374,9 @@
   "docs/scoped-observations/README.md",
   "src/observation_range_cetta.metta",
   "src/observation_interfaces_cetta.metta",
-  "src/observation_reconcile_cetta.metta"
+  "src/observation_reconcile_cetta.metta",
+  "config/environment_fields.metta",
+  "scripts/config_to_env_cetta.metta",
+  "scripts/render_config_native.sh",
+  "src/configuration_cetta.metta"
 ]
