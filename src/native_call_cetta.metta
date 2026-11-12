@@ -1,7 +1,7 @@
 ; The native owner of a prepared provider call: its immutable call facts, the
 ; seal of its prepared transport, and its owned phase. Decisions and ledger
 ; metadata are computed here. The host plan remains only as the handle that
-; existing Python observers (display, health, completion effects) take; no
+; remaining host observers (display, turn health) take; no
 ; decision reads its fields.
 ;
 ; Phase: ready -> claiming -> claimed -> submitted, or -> refused, kept as one
@@ -32,7 +32,7 @@
 (= (call:release $owner) (call:forget (call:correlation $owner)))
 
 (= (call:native? $owner) (case $owner (((NativeCallOwnerV1 $h $f $s) True) ($other False))))
-; The handle Python observers take, for a native owner or a legacy plan.
+; The handle host observers take: an owner's, or a refused preparation's own.
 (= (call:host $owner) (case $owner (((NativeCallOwnerV1 $host $f $s) $host) ($legacy $legacy))))
 (= (call:fact (NativeCallOwnerV1 $host $facts $seal) $key $default) (lp:field $facts $key $default))
 (= (call:phase $owner)
@@ -48,7 +48,7 @@
 (= (call:protocol $owner) (call:fact $owner "protocol" ""))
 (= (call:compaction? $owner) (== (call:fact $owner "purpose" "turn") "compaction"))
 ; A command answers with a program; a structured call or a compaction answers
-; with its reply. A legacy plan is treated as a command here.
+; with its reply. A refused preparation's host handle answers as a command.
 (= (call:command? $owner)
    (if (call:native? $owner) (== (call:fact $owner "kind" "command") "command") True))
 (= (call:replies? $owner)
