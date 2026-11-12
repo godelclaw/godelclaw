@@ -4,6 +4,7 @@
 ; Call boundaries consume computed values in both extended dialects.
 (: pcall:begin (-> %Undefined% %Undefined% %Undefined%))
 (: pcall:command-plan (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
+(: pcall:command-plan-purpose (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (: pcall:contains (-> %Undefined% %Undefined% %Undefined%))
 (: pcall:encoded (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (: pcall:fact (-> %Undefined% %Undefined% %Undefined%))
@@ -83,7 +84,9 @@
                       (pcall:encoded $plan $facts $request $encoding $cache $profile $prompt $encoded)))))))
       ($invalid (pcall:refused $plan $invalid)))))
 (= (pcall:command-plan $selected $tokens $effort $prompt)
-   (let* ((($plan $text) (py-call (native_llm_host.native_command_seed $selected $tokens)))
+   (pcall:command-plan-purpose $selected $tokens $effort $prompt "command"))
+(= (pcall:command-plan-purpose $selected $tokens $effort $prompt $purpose)
+   (let* ((($plan $text) (py-call (native_llm_host.native_command_seed $selected $tokens $purpose)))
           ($facts (preq:parse $text)))
      (if (not (preq:truthy (preq:field $facts "ready"))) $plan
        (if (not (== (str:utf8-error $prompt) StrUtf8WellFormedV1)) (pcall:refused $plan invalid-prompt-utf8)

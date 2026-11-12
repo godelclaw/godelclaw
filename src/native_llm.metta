@@ -79,6 +79,10 @@
             ($ready (chatgpt:structured-plan $selected (json-parse $text) $ready)))))
        (py-call (native_llm_host.native_structured_json_plan $text)))))
 
+(: llm:owner (-> Atom %Undefined%))
+(= (llm:owner $plan)
+   (case $plan (((PreparedProviderCallV1 $owner $transport) $owner) ($legacy $legacy))))
+
 (= (llm:run $plan)
    (case $plan
      (((PreparedProviderCallV1 $owner $transport)

@@ -112,17 +112,19 @@
        (case $session
          (((ChatGPTUnavailable $_) (ContextPreparationFailed "context-compaction-account-unavailable"))
           ($ready (chatgpt:command-plan $model $tokens $effort $prompt $ready)))))
-     (py-call (native_llm_host.native_command_plan $model $tokens $effort $prompt))))
+     (let $selected (py-call (synthetic_llm.current_model $model))
+       (pcall:command-plan-purpose $selected $tokens $effort $prompt "compaction"))))
 (= (context:ask $model $tokens $effort $prompt)
    (let $planned (context:plan $model $tokens $effort $prompt)
      (case $planned
        (((ContextPreparationFailed $_) $planned)
         ($ready
-          (let* (($plan (py-call (native_llm_host.for_compaction $ready)))
+          (let* (($owner (llm:owner $ready))
+                 ($_ (py-call (native_llm_host.for_compaction $owner)))
                  ($path (path:join (path:dirname (system:getenv-or-default "METTACLAW_ENGINE_STATE_PATH" "memory/engine")) "compaction-reply.json")))
-            (case (catch (llm:run $plan))
-              (((Error $kind $detail) (context:failed-reply $plan $path))
-               ((Error $detail) (context:failed-reply $plan $path))
+            (case (catch (llm:run $ready))
+              (((Error $kind $detail) (context:failed-reply $owner $path))
+               ((Error $detail) (context:failed-reply $owner $path))
                ($box
                  (let $_ (py-call (native_llm_host.structured_json_result $box $path))
                    (context:validate-summary (json-parse (fs:read-text $path)))))))))))))

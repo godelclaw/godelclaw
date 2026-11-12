@@ -98,7 +98,7 @@ def enabled():
 def native_contract(plan):
     """Whether terminal command classification is owned by native MeTTa."""
     return (model_commentary.enabled()
-            and getattr(plan, "kind", "") == "command")
+            and getattr(plan, "kind", "") == "command" and not _compaction(plan))
 
 
 def native_classified(plan, status, program, commentary, code, publish):
@@ -305,21 +305,26 @@ def structured_json_plan(text):
 
 
 def native_command_plan(model, tokens, effort, prompt):
+    """Legacy-route command plan; production commands use native preparation."""
     return command_plan(model, tokens, effort, prompt, native_ledger=True)
 
 
-def native_command_seed(selected, tokens):
+def native_command_seed(selected, tokens, purpose="command"):
     """Capture small host facts once; request and prompt bytes stay native."""
+    if purpose not in {"command", "compaction"}:
+        raise ValueError("unsupported native command purpose")
     plan = _plan("command", selected, tokens, None, native_ledger=True)
     if plan.ready == "false":
         return plan, '{"ready":false}'
     del plan.request
+    if purpose == "compaction":
+        for_compaction(plan)
     facts = {name: getattr(plan, name) for name in (
         "epoch", "correlation", "protocol", "base", "headers", "wire_model",
         "provider", "stream", "timeout", "cap", "connect", "first", "idle")}
-    plan.native_visible = stream_sink.configured()
+    plan.native_visible = purpose == "command" and stream_sink.configured()
     facts.update(ready=True, visible=plan.native_visible,
-                 tool=model_commentary.tool_schema() if model_commentary.enabled() else None,
+                 tool=model_commentary.tool_schema() if purpose == "command" and model_commentary.enabled() else None,
                  ttl=os.environ.get("METTACLAW_ANTHROPIC_CACHE_TTL", "5m"))
     return plan, json.dumps(facts, ensure_ascii=False)
 
@@ -349,7 +354,8 @@ def _bind_native_command(plan, seal, encoded):
             encoding=value["encoding"], prompt_layout=value["prompt_layout"],
             prompt_bytes=value["prompt_bytes"], prompt_feedback=value["feedback_visible"],
             prompt_footer=value["footer_visible"], stream=value["stream"],
-            call_context=dict(call_id=plan.correlation,provider=plan.provider,model=plan.wire_model,purpose="turn"))
+            call_context=dict(call_id=plan.correlation,provider=plan.provider,model=plan.wire_model,
+                              purpose=getattr(plan, "purpose", "turn")))
         if plan.protocol == "anthropic":
             fields["cache_layout"] = value["cache_layout"]
         vars(plan).update(fields)
