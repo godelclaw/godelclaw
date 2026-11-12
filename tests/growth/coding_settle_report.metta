@@ -1,0 +1,11 @@
+; Growth workload: settling a dead run whose saved report has n KiB.
+!(import! &self ../growth_support.metta)
+!(import! &self ../../src/coding_io_cetta.metta)
+!(let* (($dir (nt:join (growth:directory) (format-args "work-settle-{}" ((system:uuid4-hex)))))
+        ($_ (fs:make-directories $dir 504))
+        ($_ (fs:write (path:join $dir "runtime.json") "{\"run\":\"r\",\"phase\":\"started\"}"))
+        ($_ (fs:write (path:join $dir "state.json")
+              "{\"status\":\"running\",\"worker_owner\":\"4194301:1\",\"run\":\"r\",\"steps\":2,\"progress\":\"half way\",\"updated\":5.0}"))
+        ($_ (nt:exit-ok (proc:run ("sh" "-c" (format-args "head -c {} /dev/zero | tr '\\0' r > report.txt" ((* 1024 (growth:size)))))
+                                  $dir (nt:environment $dir) 60000 4096))))
+   (growth:measure (cio:settle-ending $dir)))

@@ -3,6 +3,7 @@
 !(import! &self (library system))
 !(import! &self ./src/native_llm.metta)
 !(import! &self ./src/coding_session.metta)
+!(import! &self ./src/coding_io_cetta.metta)
 ; The session folder is the last argument, with or without a preceding --.
 ; The single-use run token must be consumed under .ending.lock before any
 ; stream event, state write, provider call or tool execution. When the session
@@ -10,7 +11,7 @@
 ; configured, noted there for the public view.
 !(let* (($dir (system:arg (- (system:argc) 1)))
         ($token (coding:run-token))
-        ($claimed (py-call (coding_io.consume_run $dir $token (process:owner) (system:cwd)))))
+        ($claimed (cio:consume-run $dir $token (process:owner) (system:cwd))))
    (if (== $claimed 1)
      (case (coding:start $dir)
        (((CodingFinished $status) (println! (coding:notify $dir $status)))

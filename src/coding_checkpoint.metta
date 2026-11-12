@@ -5,7 +5,7 @@
 !(import! &self (library path))
 !(import! &self (library str))
 !(import! &self (library json))
-!(import! &self ./src/coding_io.py)
+!(import! &self ./src/coding_io_cetta.metta)
 !(import! &self ./src/coding_values.metta)
 !(import! &self ./src/coding_guidance.metta)
 
@@ -34,7 +34,7 @@
                 (JsonPair "content" (JsonString $text)))))
 (= (coding:record $dir $message)
    (let* (($path (coding:file $dir "messages.jsonl")) ($line (json-stringify $message))
-          ($_ (py-call (coding_io.append_line $path $line))))
+          ($_ (cio:append-line $path $line)))
      $message))
 (= (coding:record-all $dir $messages $out)
    (if (== $messages ()) (coding:reverse $out ())
