@@ -20,8 +20,8 @@
 ; UTF-8 sequence. Whitespace is Python's (str.strip, str.split), from the
 ; generated src/undelivered_prose_unicode.metta.
 ;
-; The steering pattern, the bare-command vocabulary (skills_help's names, read
-; once) and the whitespace classes are src/undelivered_prose.metta's.
+; The steering pattern, the bare-command vocabulary (command_arity's names,
+; read once) and the whitespace classes are src/undelivered_prose.metta's.
 
 !(import! &self (library str))
 !(import! &self (library re))

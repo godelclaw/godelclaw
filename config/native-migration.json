@@ -125,6 +125,7 @@
       "finish": "Native agent-side adapters for every advertised tool, including enabled optional integrations. External tools may use their own language.",
       "python_files": [
         "src/claude_bridge.py",
+        "src/command_arity.py",
         "src/file_tools.py",
         "src/fsops.py",
         "src/ggb_bridge_ext.py",

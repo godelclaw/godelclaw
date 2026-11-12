@@ -296,6 +296,7 @@
   "src/sibling.py",
   "src/skills.metta",
   "src/skills_help.py",
+  "src/command_arity.py",
   "src/small_views_cetta.metta",
   "src/small_views_unicode.metta",
   "src/start_telegram_service.py",

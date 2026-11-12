@@ -104,8 +104,8 @@ def _is_bare_command(text):
     words = str(text).strip().split(None, 1)
     if not words:
         return False
-    import skills_help
-    return words[0] in skills_help.ARITY
+    import command_arity
+    return words[0] in command_arity.ARITY
 
 
 _AFFECT_TRACE = re.compile(r"⋄⟨[^⟩]*⟩")

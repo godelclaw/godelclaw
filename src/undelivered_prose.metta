@@ -19,7 +19,7 @@
 !(import! &self (library str))
 !(import! &self (library re))
 !(import! &self ./src/helper.py)
-!(import! &self ./src/skills_help.py)
+!(import! &self ./src/command_arity.py)
 !(import! &self ./src/undelivered_prose_unicode.metta)
 
 !(bind! &prose-steering (new-state (re:compile "[\\\\\"()]")))
@@ -30,10 +30,10 @@
 !(bind! &prose-word (new-state (re:compile (prose:pattern word))))
 !(bind! &prose-alnum (new-state (re:compile (prose:pattern alnum))))
 !(bind! &prose-affect (new-state (re:compile (prose:pattern affect-trace))))
-; The names helper._is_bare_command accepts, owned by skills_help and read
-; once. ARITY is settled when skills_help is imported and does not change.
+; The names helper._is_bare_command accepts, owned by command_arity and read
+; once. ARITY is settled when command_arity is imported and does not change.
 !(bind! &prose-skills
-   (new-state (str:set (str:split "\n" (py-call (skills_help.command_names_text))))))
+   (new-state (str:set (str:split "\n" (py-call (command_arity.names_text))))))
 ; A Python str comes back from py-call as the symbol it spells, so the loop's
 ; (repr (UNDELIVERED: $prose ...)) writes the prose unquoted. Prose is
 ; returned the same way; "" is the empty symbol py-call returns for it, which

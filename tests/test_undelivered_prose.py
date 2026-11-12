@@ -30,9 +30,9 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 import helper  # noqa: E402
-import skills_help  # noqa: E402
+import command_arity  # noqa: E402
 
-SKILLS = sorted(skills_help.ARITY)
+SKILLS = sorted(command_arity.ARITY)
 PYTHON_SPACE = [chr(c) for c in range(0x110000) if chr(c).isspace()]
 
 HANDWRITTEN = [
