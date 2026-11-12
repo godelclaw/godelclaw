@@ -15,6 +15,9 @@
           ($controls (growth-suite:import $root "tests/growth/controls.metta"))
           ($_ (nt:require growth-linear-control-passes
                 (growth:linear? $root $core-engine $env $fixture $directory $controls "growth-control:linear" 20000 4096)))
+          ($_ (nt:require growth-model-selection-linear
+                (growth:linear? $root $core-engine $env $fixture $directory
+                  (growth-suite:import $root "tests/growth/model_selection.metta") "model-growth:workload" 20000 4096)))
           ($_ (nt:require growth-quadratic-mutant-fails
                 (not (growth:linear? $root $core-engine $env $fixture $directory $controls "growth-control:quadratic" 500 4096)))))
      GrowthSuitePassedV1))

@@ -112,7 +112,7 @@
        (case $session
          (((ChatGPTUnavailable $_) (ContextPreparationFailed "context-compaction-account-unavailable"))
           ($ready (chatgpt:command-plan $model $tokens $effort $prompt $ready)))))
-     (let $selected (py-call (synthetic_llm.current_model $model))
+     (let $selected (model:current $model)
        (pcall:command-plan-purpose $selected $tokens $effort $prompt "compaction"))))
 (= (context:ask $model $tokens $effort $prompt)
    (let $planned (context:plan $model $tokens $effort $prompt)

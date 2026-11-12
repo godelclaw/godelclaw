@@ -1,0 +1,42 @@
+; Per-module unit tests of native ports. Each file runs in a fresh child of
+; the Python-disabled core with its own scratch directory, and must print its
+; marker. Run from the checkout root with NATIVE_TEST_CORE and
+; NATIVE_TEST_ARTIFACTS; pass one unit name as the first argument to run only it.
+!(import! &self ../tests/native_test_support.metta)
+
+(= (units:all)
+   (("tests/unit/model_selection.metta" "UNIT_MODEL_SELECTION_OK")))
+
+(= (units:env $directory)
+   (let $base (nt:environment $directory)
+     (cons-atom ("SYNTHETIC_MODEL" "unit-configured-model")
+       (cons-atom ("METTACLAW_MODEL_STATE_PATH" (nt:join $directory "model-state")) $base))))
+
+(= (units:one $root $engine $artifacts ($file $marker))
+   (let* (($directory (nt:join $artifacts (str:concat "unit-" (system:uuid4-hex))))
+          ($_ (fs:make-directories $directory 448))
+          ($output (nt:exit-ok (proc:run ($engine "--lang" "petta" "--profile" "extended" "--import-mode" "ancestor-walk" "--quiet" $file)
+                                         $root (units:env $directory) 120000 1048576)))
+          ($_ (nt:require unit-marker (nt:contains $output $marker)))
+          ($_ (println! (UNIT_PASSED $file)))) 1))
+
+(= (units:selected $all $only)
+   (if (== $all ()) ()
+     (let (($file $marker) $rest) ((car-atom $all) (cdr-atom $all))
+       (if (or (== $only "") (nt:contains $file $only))
+         (cons-atom ($file $marker) (units:selected $rest $only))
+         (units:selected $rest $only)))))
+
+(= (units:run $root $engine $artifacts $cases $count)
+   (if (== $cases ()) $count
+     (let $_ (units:one $root $engine $artifacts (car-atom $cases))
+       (units:run $root $engine $artifacts (cdr-atom $cases) (+ $count 1)))))
+
+(= (units:main)
+   (let* (($root (system:cwd)) ($engine (nt:join (nt:required-env "NATIVE_TEST_CORE") "cetta"))
+          ($artifacts (nt:required-env "NATIVE_TEST_ARTIFACTS"))
+          ($only (system:getenv-or-default "NATIVE_UNIT" ""))
+          ($cases (units:selected (units:all) $only))
+          ($_ (nt:require unit-selection-nonempty (not (== $cases ())))))
+     (units:run $root $engine $artifacts $cases 0)))
+!(let $count (units:main) (println! (NATIVE_UNITS_PASSED $count)))

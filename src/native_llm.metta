@@ -2,6 +2,7 @@
 ; Host lifecycle observations and credential configuration remain boundaries.
 !(import! &self ./src/native_llm_host.py)
 !(import! &self ./src/interop_flags_cetta.metta)
+!(import! &self ./src/model_selection_cetta.metta)
 ; A flag consumes a computed value. Atom would treat an inline host call as
 ; quoted syntax and silently classify it as false.
 (: llm:host-flag (-> %Undefined% Bool))
@@ -54,24 +55,24 @@
 (= (llm:command $model $tokens $effort $prompt)
    (if (not (llm:host-flag (py-call (native_llm_host.request_allowed)))) "()"
     (if (llm:native?)
-     (let $selected (py-call (synthetic_llm.current_model $model))
+     (let $selected (model:current $model)
        (if (str:starts-with $selected "chatgpt:")
          (chatgpt:command $selected $tokens $effort $prompt)
          (let $plan (pcall:command-plan $selected $tokens $effort $prompt) (llm:run $plan))))
-     (let* (($selected (py-call (synthetic_llm.current_model $model)))
+     (let* (($selected (model:current $model))
             ($subscription (llm:subscription-model? $selected)))
        (if $subscription
          (py-call (synthetic_llm.unavailable_action chatgpt-requires-native-cetta))
          (py-call (synthetic_llm.chat $model $tokens $effort $prompt)))))))
 
 (= (llm:structured $request)
-   (let* (($selected (py-call (synthetic_llm.current_model)))
+   (let* (($selected (model:current syn:large:text))
           ($subscription (llm:subscription-model? $selected)))
      (if $subscription (Error llm:structured chatgpt-command-mode-only)
        (let $plan (py-call (native_llm_host.native_structured_plan $request)) (llm:run $plan)))))
 
 (= (llm:structured-json-plan $text)
-   (let $selected (py-call (synthetic_llm.current_model))
+   (let $selected (model:current syn:large:text)
      (if (str:starts-with $selected "chatgpt:")
        (let $session (chatgpt:session)
          (case $session
