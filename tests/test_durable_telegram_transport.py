@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""The durable Telegram transport against a fake CeTTa channel service.
+"""Sends through the durable Telegram transport against a fake CeTTa channel
+service.
 
-The fake speaks CWP1 over a private seqpacket socket. It serves delivery and
-receipt tasks, records acknowledgments and keyed submissions, and can answer
-a submission with receipts, as the real service does after sending.
+The fake speaks CWP1 over a private seqpacket socket. It serves receipt
+tasks, records acknowledgments and keyed submissions, and can answer a
+submission with receipts, as the real service does after sending. A relay
+thread plays the MeTTa client, which hands those receipts back.
 """
 import importlib
 import json
@@ -140,12 +142,28 @@ class DurableTransportTest(unittest.TestCase):
         self.tg._durable_receipts = durable_telegram.Receipts()
         self.outbox_path = str(base / "outbox")
         self.tg._durable_outbox = durable_telegram.Outbox(self.tg._durable, self.outbox_path)
-        self.tg._running = True
-        self.loop = threading.Thread(target=self.tg._durable_loop, daemon=True)
+        self.relaying = True
+        self.loop = threading.Thread(target=self.relay, daemon=True)
         self.loop.start()
 
+    def relay(self):
+        """The MeTTa client's part: hand each receipt for this module's sends
+        to metta_foreign_receipt, and acknowledge every task."""
+        while self.relaying:
+            try:
+                tasks = self.tg._durable.pending(64)
+            except OSError:
+                time.sleep(0.05)
+                continue
+            for task, observation in tasks:
+                if json.loads(observation)[0] in ("delivery", "rejected", "released"):
+                    self.tg.metta_foreign_receipt(observation)
+                self.tg._durable.acknowledge(task)
+            if not tasks:
+                time.sleep(0.02)
+
     def tearDown(self):
-        self.tg._running = False
+        self.relaying = False
         self.loop.join(timeout=5)
         self.tg._durable_outbox.stop()
         self.service.close()
@@ -164,96 +182,6 @@ class DurableTransportTest(unittest.TestCase):
         if not self.log.exists():
             return []
         return [json.loads(line) for line in self.log.read_text().splitlines()]
-
-    def test_deliveries_are_processed_in_order_then_acknowledged(self):
-        order = []
-        updates = [{"update_id": 5, "message": {"text": "one"}},
-                   {"update_id": 6, "message": {"text": "two"}}]
-        original_ack = self.tg._durable.acknowledge
-
-        def ack(task):
-            order.append(("ack", task))
-            original_ack(task)
-
-        with mock.patch.object(self.tg, "_process_update",
-                               side_effect=lambda u: order.append(("process", u["update_id"]))), \
-             mock.patch.object(self.tg._durable, "acknowledge", side_effect=ack):
-            first = self.service.add(["input", "42.0", "message", "operator", updates[0]])
-            second = self.service.add(["input", "42.0", "message", "ordinary", updates[1]])
-            self.wait(lambda: len(order) == 4)
-        self.assertEqual(order, [("process", 5), ("ack", first), ("process", 6), ("ack", second)])
-        self.assertEqual(self.service.tasks, [])
-
-    def test_a_task_offered_again_is_acknowledged_without_handling_it_twice(self):
-        seen = []
-        refused = []
-        original_ack = self.tg._durable.acknowledge
-
-        def lost_once(task):
-            if not refused:
-                refused.append(task)  # the service stopped before committing
-                raise OSError("service stopped")
-            original_ack(task)
-
-        with mock.patch.object(self.tg, "_process_update", side_effect=lambda u: seen.append(u["update_id"])), \
-             mock.patch.object(self.tg._durable, "acknowledge", side_effect=lost_once), \
-             mock.patch.object(self.tg.time, "sleep"):
-            self.service.add(["input", "42.0", "message", "ordinary", {"update_id": 9, "message": {}}])
-            self.wait(lambda: not self.service.tasks)
-        self.assertEqual(seen, [9])
-        self.assertEqual(len(refused), 1)
-
-    def test_a_command_is_answered_by_its_own_thread(self):
-        with mock.patch.object(self.tg, "_command_answer", return_value="engine: cetta") as answer:
-            task = self.service.add(["command", "11", "/engine", "cetta", "42.0"])
-            self.wait(lambda: task in self.service.results)
-        answer.assert_called_once_with("/engine", "cetta", "42")
-        self.assertEqual(self.service.results[task], '["answer","engine: cetta"]')
-
-    def test_a_slow_command_never_holds_up_deliveries(self):
-        release = threading.Event()
-        seen = []
-
-        def slow(cmd, arg, chat):
-            release.wait(5)
-            return "late"
-
-        with mock.patch.object(self.tg, "_command_answer", side_effect=slow), \
-             mock.patch.object(self.tg, "_process_update", side_effect=lambda u: seen.append(u["update_id"])):
-            task = self.service.add(["command", "12", "/quota", "", "42.0"])
-            self.service.add(["input", "42.0", "message", "operator", {"update_id": 30, "message": {}}])
-            self.wait(lambda: seen == [30])
-            self.assertNotIn(task, self.service.results)
-            release.set()
-            self.wait(lambda: task in self.service.results)
-        self.assertEqual(self.service.results[task], '["answer","late"]')
-
-    def test_a_failed_or_silent_command_still_answers(self):
-        with mock.patch.object(self.tg, "_command_answer", side_effect=RuntimeError("boom")):
-            failed = self.service.add(["command", "13", "/health", "", "42.0"])
-            self.wait(lambda: failed in self.service.results)
-        self.assertEqual(self.service.results[failed], '["answer","/health failed: RuntimeError"]')
-        with mock.patch.object(self.tg, "_command_answer", return_value=None):
-            woken = self.service.add(["command", "14", "/wake", "", "42.0"])
-            self.wait(lambda: woken in self.service.results)
-        self.assertEqual(self.service.results[woken], '["answer","Waking."]')
-
-    def test_an_answer_is_resent_without_running_the_command_again(self):
-        calls = []
-        original = self.tg._durable.answer
-
-        def lost_once(task, text):
-            if not calls:
-                calls.append(task)
-                raise OSError("service restarting")
-            original(task, text)
-
-        with mock.patch.object(self.tg, "_command_answer", return_value="mode: loop") as answer, \
-             mock.patch.object(self.tg._durable, "answer", side_effect=lost_once):
-            task = self.service.add(["command", "15", "/mode", "loop", "42.0"])
-            self.wait(lambda: task in self.service.results)
-        answer.assert_called_once()
-        self.assertEqual(self.service.results[task], '["answer","mode: loop"]')
 
     def test_send_waits_for_its_receipt_and_logs_the_message_id(self):
         self.service.answer = delivered

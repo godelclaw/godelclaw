@@ -272,8 +272,7 @@ class RuntimeProbeTest(unittest.TestCase):
                         "METTACLAW_LIFECYCLE_PATH": os.fspath(lifecycle),
                         "METTACLAW_DEPLOYMENT_STATE_PATH": os.fspath(
                             deployment),
-                        # The MeTTa Telegram client, with no channel service.
-                        "METTACLAW_TELEGRAM_CLIENT": "metta",
+                        # The Telegram client runs with no channel service.
                         "METTACLAW_TELEGRAM_SERVICE_SOCKET": "",
                         "TMPDIR": os.fspath(probe_tmp),
                         "PATH": os.pathsep.join((

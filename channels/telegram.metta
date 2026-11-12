@@ -74,8 +74,8 @@
 
 (= (tg:env $name $default) (system:getenv-or-default $name $default))
 
-; Whether this client, not channels/telegram.py, is Lila's Telegram client.
-(= (tg:client-metta?) (== (tg:env "METTACLAW_TELEGRAM_CLIENT" "python") "metta"))
+; This is the only Telegram client; the context bundle's caller still asks.
+(= (tg:client-metta?) True)
 
 (= (tg:split-ids $raw)
    (tg:nonempty (tg:trim-all (str:split "," $raw))))

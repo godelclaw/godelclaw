@@ -266,9 +266,9 @@
 ;; Arming energy (persisted per-sender loop tiers) and sibling-claw control.
 ;; sibling-on/off always handle the watchdog pause marker too, so a stop
 ;; STAYS stopped and a start is not raced by the reviver.
-(= (energy) (if (tg:client-metta?) (energy:view) (py-call (telegram.energy_view))))
+(= (energy) (energy:view))
 (= (energy-set $who $tier)
-   (if (tg:client-metta?) (energy:set $who $tier) (py-call (telegram.energy_set $who $tier))))
+   (energy:set $who $tier))
 (= (sibling-status) (py-call (sibling.sibling_status)))
 (= (sibling-on) (py-call (sibling.sibling_on)))
 (= (sibling-off $reason)

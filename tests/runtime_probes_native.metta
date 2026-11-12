@@ -22,8 +22,8 @@
             ; Existing reference probes install scripted replies at this seam.
             ; Real native HTTP/settlement is exercised by test_provider_native.
             ("METTACLAW_LLM_TRANSPORT" "python")
-            ; Every probe runs the MeTTa Telegram client with no channel service.
-            ("METTACLAW_TELEGRAM_CLIENT" "metta") ("METTACLAW_TELEGRAM_SERVICE_SOCKET" "")
+            ; Every probe's Telegram client runs with no channel service.
+            ("METTACLAW_TELEGRAM_SERVICE_SOCKET" "")
             ("SYNTHETIC_API_KEY" "") ("ANTHROPIC_API_KEY" "") ("OPENAI_API_KEY" "") ("KIMI_API_KEY" "")
             ("CETTA_BIN" (nt:join $sdk "cetta")) ("PETTA_PY_ENV" (pcall:fact (preq:parse (fs:read-text (nt:join $sdk "build-manifest.json"))) "python_prefix"))
             ("METTACLAW_LLM_LEDGER_PATH" (nq:path $world "llm-budget.sqlite3"))
