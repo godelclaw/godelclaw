@@ -19,6 +19,7 @@
     (GrowthCheck "commentary-rewrite" "tests/growth/commentary_contract.metta" 40000 (GrowthBounds 6 2000000 4 8192))
     (GrowthCheck "native-call-owners" "tests/growth/native_call.metta" 500 (growth:linear))
     (GrowthCheck "structured-request" "tests/growth/structured_request.metta" 100 (growth:linear))
+    (GrowthCheck "command-request" "tests/growth/command_request.metta" 1000 (growth:linear))
     (GrowthCheck "completion-effects" "tests/growth/completion_effects.metta" 2000 (growth:linear))
     ; Streamed attempts leave no atoms: the workload asserts none remain at
     ; every size; evaluation temporaries keep memory linear, not bounded.

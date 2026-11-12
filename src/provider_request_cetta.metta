@@ -132,6 +132,9 @@
 
 ; Compute callers before crossing the shared syntax-taking codec boundary.
 (: preq:field (-> %Undefined% %Undefined% %Undefined%))
+(: preq:encode (-> %Undefined% %Undefined% %Undefined% %Undefined%))
+(: preq:value-wire (-> %Undefined% %Undefined% %Undefined% %Undefined%))
+(: preq:text-wire (-> %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (preq:field $object $key) (llm:v1:get $object $key))
 (: preq:member? (-> %Undefined% %Undefined% %Undefined%))
 (= (preq:member? $value $items) (llm:v1:member? $value $items))
@@ -618,6 +621,27 @@
      (preq:object ((preq:pair "version" (preq:number "1")) (preq:pair "scope" (preq:string $scope))
        (preq:pair "blocks" (preq:array (preq:cache-rows $system $hashes 0)))
        (preq:pair "messages_digest" (preq:string $messages-digest)) (preq:pair "regions" (preq:array $regions))))))
+; One render per request: the codec answers the checked wire with its body
+; still a value, and preq:wire adjusts that value and renders it once. An
+; engine without the value entries leaves the call unevaluated; there the
+; request is rendered, encoded as text and its body parsed back.
+(= (preq:encode $protocol $encoding $request)
+   (let $wire (preq:value-wire $protocol $encoding $request)
+     (case $wire
+       (((llm:v1:ok (llm:v1:wire $path $body)) $wire)
+        ((llm:v1:error $code) $wire)
+        ($unevaluated (preq:text-wire $protocol $encoding $request))))))
+(= (preq:value-wire $protocol $encoding $request)
+   (if (== $encoding "default") (llm:v1:encode-command-wire $protocol $request)
+     (llm:v1:encode-wire $protocol $request)))
+(= (preq:text-wire $protocol $encoding $request)
+   (let* (($text (preq:render $request))
+          ($encoded (if (== $encoding "default") (llm:v1:encode-command $protocol $text)
+                      (llm:v1:encode $protocol $text))))
+     (case $encoded
+       (((llm:v1:ok (llm:v1:encoded $path $body))
+         (let $value (preq:parse $body) (llm:v1:ok (llm:v1:wire $path $value))))
+        ($failed $failed)))))
 (= (preq:wire $body $provider $protocol $kind $stream $visible $cache)
    (let* (($base (if (and (== $protocol "responses") (== $kind "command")) (preq:drop $body "include") $body))
           ($adapted (if (== $provider "synthetic") (preq:synthetic $base) $base))
