@@ -569,6 +569,102 @@
         "No paid live canary or 24-hour soak claimed",
         "Whole runtime still uses the SDK Python backend"
       ]
+    },
+    {
+      "id": "native-provider-core-batch-2-and-coding-estate-batch-3",
+      "status": "qualified-and-deployed",
+      "native_modules": [
+        "src/completion_effects_cetta.metta",
+        "src/rejection_gate_cetta.metta",
+        "src/strategy_broker_cetta.metta",
+        "src/native_call_cetta.metta",
+        "src/coding_session.metta"
+      ],
+      "deleted_python": [
+        "src/coding_estate.py",
+        "src/coding_estate_snapshot.py"
+      ],
+      "removed_routes": [
+        "legacy provider plan route (20 MeTTa definitions and about 20 Python host functions)",
+        "Python Telegram client (37 functions in telegram.py)"
+      ],
+      "runtime_commit": "7527617bb",
+      "engine_commit": "2eefbdff7af5020c9a6283bcb3908be3e78c9273",
+      "lean_commit": "cff0796a8",
+      "release": "f1cff5676f35657096b08ebbf5203476c2a36ec5ae8debed2a8d266bf769ccee",
+      "test_orchestration": "CeTTa core without Python",
+      "checks": {
+        "shared_api_dialects": [
+          "petta",
+          "he"
+        ],
+        "production_integration_dialect": "petta",
+        "reference_runtime_probes": 30,
+        "request_contracts_per_dialect": 32,
+        "provider_scenarios": 23,
+        "growth_checks": 15,
+        "python_entry_census": {
+          "coding-two-turn": [
+            64,
+            60
+          ],
+          "activity-delivery": [
+            65,
+            76
+          ],
+          "background-jobs": [
+            2,
+            2
+          ],
+          "coding-lifecycle": [
+            253,
+            76
+          ],
+          "native-provider-command": [
+            20,
+            14
+          ]
+        },
+        "census_rebaselined": {
+          "coding-two-turn": [
+            64,
+            72
+          ],
+          "activity-delivery": [
+            65,
+            86
+          ],
+          "reason": "the probes now run the MeTTa Telegram client the agents use instead of the Python client no agent runs"
+        },
+        "sampled_oracle_cases": {
+          "structured_requests": 4800,
+          "completion_files": 4500,
+          "coding_estates": 20427
+        },
+        "oracle_mismatches": 0,
+        "paired_installed_verification": true,
+        "paired_benchmark": {
+          "pairs_per_workload": 21,
+          "baseline_runtime_commit": "11dce5ef1",
+          "exact_provider_wire": true,
+          "p95_change_percent": {
+            "small": 1.8,
+            "large_1mib": 1.6,
+            "many_blocks_1mib": 0.6
+          },
+          "median_peak_rss_change_percent": {
+            "small": 3.8,
+            "large_1mib": 3.7,
+            "many_blocks_1mib": 1.3
+          }
+        }
+      },
+      "limits": [
+        "Conversation encoders in the engine library grow superlinearly with message count; the linear rewrite is in progress",
+        "Deleted Python files stay as unselected dead files in the instance roots",
+        "No paid live canary or 24-hour soak claimed",
+        "Whole runtime still uses the SDK Python backend"
+      ]
     }
   ]
 }
