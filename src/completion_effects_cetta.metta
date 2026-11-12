@@ -16,6 +16,13 @@
 !(import! &self (library fs))
 !(import! &self ./llm_policy_cetta.metta)
 
+; A JSON file's object, or {} when it is missing, unreadable or no object. The
+; read is structured, so a missing file is a value in both dialects.
+(= (effects:read-object $path)
+   (case (fs:read-text-result $path 0 "raw")
+     ((("ok" $text)
+       (case (json:parse $text) (((JsonObject $pairs) (JsonObject $pairs)) ($other (JsonObject ())))))
+      ($unreadable (JsonObject ())))))
 ; A member of an ordinary JSON object; the last occurrence wins, as in Python.
 (= (effects:get $object $key $default)
    (case $object
@@ -149,8 +156,7 @@
                               (effects:get $usage "input_tokens" JsonNull))))
      (if (or (== $path "") (not (effects:positive-int? $count))) True
        (let* (($made (catch (fs:make-directories (path:dirname $path) 511)))
-              ($values (case (catch (json:parse (fs:read-text $path)))
-                         (((JsonObject $pairs) (JsonObject $pairs)) ($other (JsonObject ())))))
+              ($values (effects:read-object $path))
               ($ratio (/ (* 1.0 $bytes) (lp:python-int $count)))
               ($entry (JsonObject ((JsonPair "bytes_per_token" $ratio) (JsonPair "input_tokens" $count)))))
          (if (> $ratio 0)
@@ -198,8 +204,7 @@
      (if (or (== $input EffectsInvalidCountV1) (or (== $written EffectsInvalidCountV1)
             (or (== $read EffectsInvalidCountV1) (== $out EffectsInvalidCountV1)))) False
        (let* (($in (+ $input (+ $written $read)))
-              ($old (case (catch (json:parse (fs:read-text $path)))
-                      (((JsonObject $pairs) (JsonObject $pairs)) ($other (JsonObject ())))))
+              ($old (effects:read-object $path))
               ($since (effects:get $old "since" $today))
               ($old-in (effects:get $old "total_in" 0)) ($old-out (effects:get $old "total_out" 0))
               ($day (if (== (effects:get $old "today" JsonNull) $today) $old

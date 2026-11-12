@@ -12,6 +12,7 @@
     ("tests/unit/native_call.metta" "UNIT_NATIVE_CALL_KINDS_OK")
     ("tests/unit/structured_request.metta" "UNIT_STRUCTURED_REFUSALS_OK")
     ("tests/unit/completion_effects.metta" "UNIT_COMPLETION_EFFECTS_OK")
+    ("tests/unit/rejection_gate.metta" "UNIT_REJECTION_GATE_OK")
     ("tests/unit/stream_cursors.metta" "UNIT_STREAM_CURSORS_OK")
     ("tests/unit/ledger_result.metta" "UNIT_LEDGER_RESULT_OK")))
 

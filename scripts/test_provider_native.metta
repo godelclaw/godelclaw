@@ -36,7 +36,9 @@
           ($_ (nq:structured $root $sdk $core $artifacts $fixture "fixture-model" "chat-completions" "coding"))
           ($_ (nq:structured $root $sdk $core $artifacts $fixture "kimi:k3.1-pro" "responses" "turn"))
           ($_ (nq:structured $root $sdk $core $artifacts $fixture "openai:fixture" "responses" "compaction"))
-          ($_ (nq:structured $root $sdk $core $artifacts $fixture "claude-fixture" "anthropic" "coding")))
+          ($_ (nq:structured $root $sdk $core $artifacts $fixture "claude-fixture" "anthropic" "coding"))
+          ($_ (nq:rejection $root $sdk $core $artifacts $fixture False))
+          ($_ (nq:rejection $root $sdk $core $artifacts $fixture True)))
      NativeProviderSuitePassedV1))
 !(nt:require provider-driver-completed
    (nt:equal (collapse (native-provider-test:run)) (NativeProviderSuitePassedV1)))

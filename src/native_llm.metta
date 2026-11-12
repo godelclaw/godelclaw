@@ -6,6 +6,7 @@
 !(import! &self ./src/interop_flags_cetta.metta)
 !(import! &self ./src/model_selection_cetta.metta)
 !(import! &self ./src/native_call_cetta.metta)
+!(import! &self ./src/rejection_gate_cetta.metta)
 ; A flag consumes a computed value. Atom would treat an inline host call as
 ; quoted syntax and silently classify it as false.
 (: llm:host-flag (-> %Undefined% Bool))
@@ -36,8 +37,14 @@
        (if (== $model "") True (chatgpt:observe-window $model)))
      True))
 
+; A retained rejection is the host's to release; the fast path asks it only
+; when a block is possible (src/rejection_gate_cetta.metta).
+(= (llm:request-allowed?)
+   (if (gate:possible?)
+     (if (llm:host-flag (py-call (native_llm_host.request_allowed))) (gate:release) False)
+     True))
 (= (llm:command $model $tokens $effort $prompt)
-   (if (not (llm:host-flag (py-call (native_llm_host.request_allowed)))) "()"
+   (if (not (llm:request-allowed?)) "()"
     (if (llm:native?)
      (let $selected (model:current $model)
        (if (str:starts-with $selected "chatgpt:")

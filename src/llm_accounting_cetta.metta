@@ -5,6 +5,7 @@
 !(import! &self ./interop_flags_cetta.metta)
 !(import! &self ./native_call_cetta.metta)
 !(import! &self ./completion_effects_cetta.metta)
+!(import! &self ./rejection_gate_cetta.metta)
 
 (: account:ready (-> %Undefined% %Undefined%))
 (= (account:ready $plan) (call:ready? $plan))
@@ -83,7 +84,16 @@
       ((False $soft) 1))))
 (: account:failed (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 ; The host reports the failure with the owner's retry-after (-1 for none).
+; A deterministic rejection of a command turn latches the rejection gate first:
+; the host may hold its block in memory only.
 (= (account:failed $plan $correlation $kind $status)
+   (let $latched (if (account:rejection? $plan $kind $status) (gate:latch) False)
+     (account:failure $plan $correlation $kind $status)))
+(= (account:rejection? $plan $kind $status)
+   (if (== $kind http-status)
+     (if (call:command? $plan) (if (call:compaction? $plan) False (gate:invalid-request? $status)) False)
+     False))
+(= (account:failure $plan $correlation $kind $status)
    (if (account:ready $plan)
      (let* (($metadata (account:metadata $plan))
             ($retry (lp:field $metadata "retry_after" JsonNull))

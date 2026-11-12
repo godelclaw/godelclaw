@@ -316,3 +316,21 @@
           ($_ (nt:require structured-advertises-tool (nt:equal (preq:size (preq:items $body "tools")) 1)))
           ($_ (nt:require structured-ledger-purpose (nt:contains (repr (nq:rows $world "calls")) $purpose)))
           ($_ (nq:close $world))) 9))
+; A deterministic rejection is retained: the next turn asks the host, which
+; still blocks it, so no second request is sent. With the health record
+; unwritable the block lives only in the host's memory; the native latch still
+; sends the next turn to the host.
+(: nq:rejection (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
+(= (nq:rejection $root $sdk $core $artifacts $fixture $unwritable)
+   (let* (($world (nq:world $root $sdk $core $artifacts $fixture (if $unwritable "rejected-memory" "rejected-record")))
+          ($_ (fs:write (nq:path $world "status") "400"))
+          ($_ (fs:write (nq:path $world "response.body")
+                "{\"error\":{\"type\":\"invalid_request_error\",\"code\":\"invalid_value\",\"message\":\"fixture rejection\"}}"))
+          ($blocker (nq:path $world "blocked-record"))
+          ($_ (if $unwritable (fs:write $blocker "not a directory") True))
+          ($extra (if $unwritable (("METTACLAW_COGNITIVE_HEALTH_PATH" (nt:join $blocker "health.json"))) ()))
+          ($forms "!(nt:require first-turn-rejected (nt:equal (llm:command \"fixture-model\" 42 \"low\" \"input\") \"()\"))\n!(nt:require retained-turn-withheld (nt:equal (llm:command \"fixture-model\" 42 \"low\" \"input\") \"()\"))\n!(println! NATIVE_REJECTION_OK)")
+          ($output (nq:output (nq:guest $world "fixture-model" "petta" $forms $extra)))
+          ($_ (nt:require rejection-finished (nt:contains $output "NATIVE_REJECTION_OK")))
+          ($_ (nt:require rejection-sent-once (nt:equal (nq:posts $world) 1)))
+          ($_ (nq:close $world))) 3))
