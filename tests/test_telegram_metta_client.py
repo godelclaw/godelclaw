@@ -13,8 +13,8 @@ import json
 import os
 import pathlib
 import signal
+import re
 import socket
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -93,6 +93,46 @@ class BotAPI(Peer):
     def texts(self):
         with self.lock:
             return [(d.get("chat_id"), d.get("text")) for n, d in self.calls if n == "sendMessage"]
+
+
+def start_input_ledger(folder):
+    """A native input ledger server, as pettaclaw-input-ledger@ runs one beside an
+    agent: the observed strategy's checkpoint, settled inputs and notices live there."""
+    import input_ack
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / "s.sock"
+    server = subprocess.Popen(
+        [str(pathlib.Path(CETTA).with_name("cetta-value-worker")), "--value-bytes",
+         str(input_ack.LEDGER_VALUE_BYTES), "--serve", "--lang", "petta",
+         str(ROOT / "src/input_ledger_server.metta"), "db-server:configuration"],
+        env=dict(os.environ, CETTA_DB_SOURCE=str(folder / "store"), CETTA_DB_SOCKET=str(path)),
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    until = time.monotonic() + 30
+    while not path.exists():
+        assert server.poll() is None and time.monotonic() < until, "the input ledger server did not listen"
+        time.sleep(.05)
+    return server, path
+
+
+def ledger_notice(path, update_id):
+    """The input ledger's notice for one update, read through its server."""
+    program = path.parent / "notice.metta"
+    program.write_text(
+        '!(import! &self (library db))\n!(import! &self (library json))\n'
+        '!(let* (($db (db:connect "%s")) ($v (db:snapshot $db inputs)))'
+        ' (let $rows (collapse (match $v (input-notice $t $u $l $s $c $m $p $d $st $ch)'
+        ' (json-stringify (JsonArray ((JsonString $u) (JsonString (repr $m)) (JsonNumber (repr $p))'
+        ' (JsonString (repr $st)))))))'
+        ' (println! (ROWS $rows))))\n' % path)
+    done = subprocess.run([CETTA, "--lang", "petta", str(program)], capture_output=True, text=True,
+                          timeout=60, cwd=path.parent)
+    for text in re.findall(r'"(\[(?:[^"\\]|\\.)*\])"', done.stdout):
+        update, message, processed, state = json.loads(json.loads('"%s"' % text))
+        if update == str(update_id):
+            message = message.strip('"')
+            return dict(message_id=None if message == "none" else int(message),
+                        processed=int(processed), state=state)
+    return None
 
 
 def payload_lines(output):
@@ -189,6 +229,7 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
         # The command responder runs beside the loop throughout, as in
         # production (run.sh telegram-control).
         responder = start('!(import! &self ./channels/telegram_control.metta)\n!(tc:serve)\n', env)
+        notice_ledger = None
         try:
             out = temp / "out.txt"
 
@@ -500,7 +541,9 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
             responder[0].terminate()
             responder[0].communicate(timeout=10)
             os.unlink(responder[1])
+            notice_ledger, notice_socket = start_input_ledger(temp / "notice-ledger")
             notice_env = dict(env, METTACLAW_OBSERVED_STRATEGY="1",
+                              METTACLAW_INPUT_LEDGER_SOCKET=str(notice_socket),
                               METTACLAW_STRATEGY_PATH=str(temp / "notice-ledger.sqlite3"),
                               METTACLAW_WORKING_SET_PATH=str(temp / "notice-working.json"),
                               METTACLAW_HISTORY_PATH=str(temp / "notice-history.metta"),
@@ -551,10 +594,7 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
             await_(lambda: any(c == GROUP and t == notice for c, t in api.texts()),
                    "independent group receipt notice")
             def group_notice():
-                with sqlite3.connect(notice_env["METTACLAW_STRATEGY_PATH"]) as db:
-                    db.row_factory = sqlite3.Row
-                    row = db.execute("SELECT * FROM input_notices WHERE update_id='202'").fetchone()
-                    return dict(row) if row else None
+                return ledger_notice(notice_socket, 202)
             await_(lambda: group_notice() and group_notice()["message_id"] is not None,
                    "correlated group send receipt")
             target = group_notice()["message_id"]
@@ -618,6 +658,8 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
             print("responder: /mode answered in %.0f ms with no loop running, as the Python handler words it; "
                   "/wake ends a rest; /delete stays with the loop client (responder RSS %d kB)" % (latency * 1000, rss))
         finally:
+            if notice_ledger is not None:
+                notice_ledger.kill(); notice_ledger.wait()
             if responder[0].poll() is None:
                 responder[0].kill()
             responder[0].communicate(timeout=10); os.unlink(responder[1])
