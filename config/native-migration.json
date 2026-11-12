@@ -66,8 +66,7 @@
       "python_files": [
         "src/apply_patch.py",
         "src/coding_estate.py",
-        "src/coding_estate_snapshot.py",
-        "src/coding_io.py"
+        "src/coding_estate_snapshot.py"
       ]
     },
     {

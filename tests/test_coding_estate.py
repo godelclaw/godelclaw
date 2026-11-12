@@ -18,7 +18,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "tests"), str(ROOT / "src"), str(ROOT / "channels")]
 
 import coding_estate  # noqa: E402
-import coding_io  # noqa: E402
 import context_sources  # noqa: E402
 import input_ack  # noqa: E402
 
@@ -277,8 +276,6 @@ class CodingEstateTests(CodingEstateFixture):
             coding_estate.resume_problem(s_no_hash_gone),
             "its engine binary is gone",
         )
-        # Keep coding_io.engine_problem untouched for legacy callers/tests
-        self.assertEqual(coding_io.engine_problem(s_no_hash_gone), "")
 
         # 6. Hash equal -> resumable
         s_hash_equal = self.make_session("work-06-hash-equal")

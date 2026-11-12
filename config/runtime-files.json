@@ -162,7 +162,6 @@
   "src/coding_estate_cetta.metta",
   "src/coding_estate_io_cetta.metta",
   "src/coding_estate_snapshot.py",
-  "src/coding_io.py",
   "src/coding_io_cetta.metta",
   "src/coding_guidance.metta",
   "src/coding_session.metta",

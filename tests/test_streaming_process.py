@@ -65,9 +65,11 @@ class ProcessStreamTests(unittest.TestCase):
         self.assertEqual(len(list((self.directory/"executions").glob("*.log"))), 1)
 
     def test_new_runtime_observes_uncertainty_without_running(self):
-        import coding_io
         identity = "a"*32
-        log = coding_io.execution_create(self.directory, identity, "do not replay")
+        (self.directory / "executions").mkdir(exist_ok=True)
+        (self.directory / "executions" / (identity + ".json")).write_text(
+            json.dumps(dict(id=identity, command="do not replay", status="dispatching", started=0.0)))
+        log = self.directory / "executions" / (identity + ".log")
         Path(log).write_bytes(b"partial\xff")
         root = json.dumps(str(self.directory))
         args = json.dumps(json.dumps(dict(execution_id=identity)))
