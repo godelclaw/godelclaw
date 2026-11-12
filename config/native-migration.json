@@ -248,6 +248,35 @@
         "skipped": 0
       },
       "removed_runtime_source": "src/provider_stream.py"
+    },
+    {
+      "id": "provider-command-preparation",
+      "status": "qualified-and-deployed",
+      "native_modules": [
+        "src/provider_request_cetta.metta",
+        "src/provider_call_cetta.metta"
+      ],
+      "runtime_commit": "fae7dd8ee5b877220be065ff0a80d93996485e12",
+      "engine_commit": "2eefbdff7af5020c9a6283bcb3908be3e78c9273",
+      "release": "010225cea11fa51697735ed987e8006e026021978669e5aeb722e4e548778e9f",
+      "test_orchestration": "CeTTa core without Python",
+      "checks": {
+        "pure_contracts_per_dialect": 25,
+        "dialects": [
+          "petta",
+          "he"
+        ],
+        "integration_scenarios": 17,
+        "reference_runtime_probes": 30,
+        "assertion_refusal_controls": 4
+      },
+      "remaining_host_boundaries": [
+        "configuration capture",
+        "lifecycle observations",
+        "structured request preparation",
+        "ChatGPT request host state",
+        "opt-in request capture"
+      ]
     }
   ]
 }
