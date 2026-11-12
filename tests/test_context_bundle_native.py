@@ -119,7 +119,7 @@ class NativeContextBundleTest(unittest.TestCase):
             self.addCleanup(cache.stop)
         import telegram
         for name in ('_reply_chat_id', '_last_chat_id', '_primary_chat_id'):
-            route = mock.patch.object(telegram, name, '')
+            route = mock.patch.object(telegram, name, '', create=True)
             route.start()
             self.addCleanup(route.stop)
         self.temp = tempfile.TemporaryDirectory()

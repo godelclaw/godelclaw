@@ -178,7 +178,7 @@ class RuntimeContextTest(unittest.TestCase):
         globals_patch = mock.patch.multiple(host, _ledger=None, _booted=False, _turn=None,
             _sample=None, _ticket=None, _focus=None, _position=0, _runtime_projection=None)
         globals_patch.start(); self.addCleanup(globals_patch.stop)
-        with mock.patch.dict(sys.modules, {"telegram": SimpleNamespace(_current_batch_update_ids=set())}), \
+        with mock.patch.dict(sys.modules, {"telegram": SimpleNamespace(current_batch_update_ids=set, reply_chat_id=str)}), \
              mock.patch.object(host, "guard", return_value="control"), \
              mock.patch("lifecycle.cognition_enabled", return_value=1):
             host.begin(1, "operator-event", "retained human request")

@@ -40,7 +40,7 @@ class HandoverIdsTest(unittest.TestCase):
         stream = [(str(n), json.dumps(["input", "42.0", "message", "operator", {"update_id": n}])) for n in range(600)]
         with mock.patch.dict('os.environ', {"METTACLAW_TELEGRAM_SERVICE_SOCKET": "fixture"}), \
                 mock.patch('durable_telegram.Channel') as channel, \
-                mock.patch.object(telegram, '_current_batch_update_ids', [str(n) for n in range(256)]):
+                mock.patch.object(telegram, '_current_batch_update_ids', [str(n) for n in range(256)], create=True):
             channel.return_value.iter_pending.return_value = iter(stream)
             self.assertEqual(telegram._metta_unread_chats(), {"42"})
 

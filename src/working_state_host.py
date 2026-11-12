@@ -18,7 +18,7 @@ def commit_scope(has_activity):
     import strategy_host
     import telegram
     captured = strategy_host._turn_input_ids
-    ids = (tuple(telegram._current_batch_update_ids) if captured is None else captured) if int(has_activity) else ()
+    ids = (tuple(telegram.current_batch_update_ids()) if captured is None else captured) if int(has_activity) else ()
     request = strategy_host._message_focus
     return tuple(str(identity) for identity in ids), str(request) if request else ""
 

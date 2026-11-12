@@ -72,19 +72,21 @@ class HealthMergeTest(unittest.TestCase):
         client.write_text(json.dumps({"pid": os.getpid() + 1, "pending_count": 4, "reply_chat": "77"}))
         telegram._client_seen = None
         self.assertEqual(telegram.pendingActivityCount(), 4)
-        self.assertEqual(telegram._reply_chat_id, defaults["_reply_chat_id"])
+        self.assertEqual(telegram.reply_chat_id(), defaults["_reply_chat_id"])
         client.write_text(json.dumps({"pid": os.getpid(), "reply_chat": "77", "batch_update_ids": "5,6",
                                       "context_epoch": 3, "activity_epoch": 4, "context_frontier": 12,
                                       "titles": {"77": "Lab"}}))
         telegram._client_seen = None
         with mock.patch.dict(telegram._chat_titles, {}, clear=True):
-            self.assertEqual((telegram._reply_chat_id, telegram._current_batch_update_ids, telegram._context_activity_epoch,
-                              telegram._activity_epoch, telegram._context_frontier_bytes),
+            self.assertEqual((telegram.reply_chat_id(), telegram.current_batch_update_ids(),
+                              telegram._value("_context_activity_epoch"), telegram._value("_activity_epoch"),
+                              telegram._value("_context_frontier_bytes")),
                              ("77", {"5", "6"}, 3, 4, 12))
             self.assertEqual(telegram._chat_titles, {"77": "Lab"})
         # A test's assignment stands for the module's own code too.
-        with mock.patch.object(telegram, "_reply_chat_id", "11"):
+        with mock.patch.object(telegram, "_reply_chat_id", "11", create=True):
             self.assertEqual(telegram._reply_target(), "11")
+            self.assertEqual(telegram.reply_chat_id(), "11")
         self.assertEqual(telegram._reply_target(), "77")
         telegram._client_seen = None
 

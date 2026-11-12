@@ -47,7 +47,7 @@ class CooperativeAttentionTest(unittest.TestCase):
             "METTACLAW_TELEGRAM_BOT_USERNAME": "fixture_bot"})
         environment.start(); self.addCleanup(environment.stop)
         state = mock.patch.multiple(telegram, _effect_turn=None, _effect_activity_epoch=None,
-            _activity_epoch=0, _context_activity_epoch=0, _reply_chat_id="42")
+            _activity_epoch=0, _context_activity_epoch=0, _reply_chat_id="42", create=True)
         state.start(); self.addCleanup(state.stop)
         running = mock.patch("lifecycle.cognition_enabled", return_value=1)
         running.start(); self.addCleanup(running.stop)

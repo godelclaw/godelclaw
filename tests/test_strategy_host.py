@@ -34,7 +34,7 @@ class StrategyHostTest(unittest.TestCase):
         # in the snapshot restored by the temporary Telegram module patch,
         # otherwise later requests use a different Symbol class.
         import execution_gateway.cetta_worker  # noqa: F401
-        channels = mock.patch.dict(sys.modules, {"telegram": SimpleNamespace(_current_batch_update_ids=set())})
+        channels = mock.patch.dict(sys.modules, {"telegram": SimpleNamespace(current_batch_update_ids=set, reply_chat_id=str)})
         channels.start(); self.addCleanup(channels.stop)
         guard = mock.patch.object(host, "guard", return_value="captured-control")
         guard.start(); self.addCleanup(guard.stop)

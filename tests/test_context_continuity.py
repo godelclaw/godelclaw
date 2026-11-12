@@ -122,7 +122,7 @@ class ContextContinuityTest(unittest.TestCase):
 
     def test_future_edit_cannot_cross_the_context_frontier(self):
         self.append(update_id=50, message_id=10, text="visible now")
-        frontier = mock.patch.object(telegram, "_context_frontier_bytes", self.log.stat().st_size)
+        frontier = mock.patch.object(telegram, "_context_frontier_bytes", self.log.stat().st_size, create=True)
         frontier.start()
         self.addCleanup(frontier.stop)
         self.append(update_id=51, kind="edited_message", message_id=10,

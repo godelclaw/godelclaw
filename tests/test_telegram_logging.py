@@ -113,13 +113,13 @@ class AttachmentTest(TelegramModuleTest):
 class RouteTest(TelegramModuleTest):
     def test_primary_route_is_stable_under_cross_chat_activity(self):
         with mock.patch.multiple(telegram, _primary_chat_id="private-operator", _reply_chat_id="protobots",
-                                 _last_chat_id="another-chat"):
+                                 _last_chat_id="another-chat", create=True):
             self.assertEqual(telegram._reply_target(), "private-operator")
             self.assertEqual(telegram._reply_target("protobots"), "protobots")
             self.assertIn("bound to", telegram.route_view())
 
     def test_without_a_primary_the_reply_chat_routes(self):
-        with mock.patch.multiple(telegram, _reply_chat_id="current-chat", _last_chat_id="last-chat"):
+        with mock.patch.multiple(telegram, _reply_chat_id="current-chat", _last_chat_id="last-chat", create=True):
             self.assertEqual(telegram._reply_target(), "current-chat")
 
     def test_the_published_reply_chat_routes_once_it_changes(self):

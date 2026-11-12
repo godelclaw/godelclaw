@@ -1325,9 +1325,10 @@ def handover_ack(ids):
 
 
 # What this process's MeTTa client last published (_sync takes it up from its
-# file). Other modules read these under their own names, which stay out of the
-# module's globals so that a read always goes through __getattr__; a test may
-# assign one, and its value then stands for this module's code too.
+# file). The names stay out of the module's globals so that every read is
+# fresh: other modules call reply_chat_id() and current_batch_update_ids(),
+# this module reads _value. A test may assign one, and its value then stands
+# for both.
 _published = {"_reply_chat_id": "", "_activity_epoch": 0, "_context_activity_epoch": 0,
               "_context_frontier_bytes": None, "_current_batch_update_ids": frozenset()}
 
@@ -1340,10 +1341,14 @@ def _value(name):
     return _published[name]
 
 
-def __getattr__(name):
-    if name in _published:
-        return _value(name)
-    raise AttributeError("module %r has no attribute %r" % (__name__, name))
+def reply_chat_id():
+    """The reply chat the MeTTa client last published ("" before any)."""
+    return _value("_reply_chat_id")
+
+
+def current_batch_update_ids():
+    """The update ids of the activity batch the MeTTa client last published."""
+    return _value("_current_batch_update_ids")
 
 
 def _client_path():

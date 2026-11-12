@@ -96,7 +96,7 @@ class TurnCheckpointTests(unittest.TestCase):
         self.assertEqual(open_requests(), {"input:one": "active", "input:completion": "deferred",
                                            "input:newer": "active", "input:later": "deferred",
                                            "autonomous": "active"})
-        channel = SimpleNamespace(_current_batch_update_ids=set(), _reply_chat_id="room")
+        channel = SimpleNamespace(current_batch_update_ids=set, reply_chat_id=lambda: "room")
         with mock.patch.multiple(strategy_host, _ledger=self.store, _booted=True,
                                  _focus=None, _message_focus=None, _input_turn=False), \
                 mock.patch.object(strategy_host, "guard", return_value="test-control"), \

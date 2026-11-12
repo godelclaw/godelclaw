@@ -85,7 +85,7 @@ def begin(turn, source, message, delivery_ids=None):
     global _turn_input_ids
     if delivery_ids is None:
         import telegram
-        captured_ids = tuple(sorted(str(i) for i in telegram._current_batch_update_ids))
+        captured_ids = tuple(sorted(str(i) for i in telegram.current_batch_update_ids()))
     else:
         captured_ids = json.loads(str(delivery_ids))
         if not isinstance(captured_ids, list) or any(type(i) is not str or not i for i in captured_ids):
@@ -139,7 +139,7 @@ def begin(turn, source, message, delivery_ids=None):
             _focus = "autonomous"
             store.accept(_focus, "Ongoing autonomous work; rest and nop do not certify task completion.")
         task_context.begin(store, _focus, source, previous,
-                           getattr(telegram, "_reply_chat_id", ""), parent=resume_parent)
+                           telegram.reply_chat_id(), parent=resume_parent)
         return 1
 
 
