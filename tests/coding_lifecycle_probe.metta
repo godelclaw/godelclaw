@@ -117,7 +117,12 @@
         ($_ (nt:require hold-cleared (not (fs:is-file (cl:file $id "lifecycle.json")))))
         ($_ (nt:require pinned-report (cl:has $id "report.txt" "Resumed on the pin.")))
         ($_ (nt:require new-run-token (not (nt:equal (cl:run $id) $first-run))))
+        ;; Recorded as pinned to an older runtime: the current runtime checks a
+        ;; copy of the checkpoint before the session moves to it.
+        ($_ (fs:write (cl:file $id "runtime.json")
+              (json-stringify (cio:put (cl:json $id "runtime.json") "digest" (JsonString "older-runtime-digest")))))
         ($_ (nt:require current-resume (nt:contains (work-resume $id "current") "WORK_RESUMING")))
+        ($_ (nt:require repin-recorded (cl:has $id "runs.jsonl" "\"from\":\"older-runtime-digest\"")))
         ($_ (nt:require current-run-done (nt:equal (cl:wait-ended $id 900) "done")))
         ($_ (nt:require current-report (cl:has $id "report.txt" "Resumed on the current runtime.")))
         ($_ (work-archive $id "census archive"))

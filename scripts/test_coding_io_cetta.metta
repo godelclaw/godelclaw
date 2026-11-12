@@ -314,13 +314,87 @@
           ($_ (nt:require shell-quote-round-trip (nt:equal $echoed $tricky))))
      True))
 
+; Re-pinning checks a copy of the checkpoint with the current runtime's
+; checker; this fixture checker reads the copy (and, asked to, changes the
+; live session during the check).
+(= (cit:check-program $root)
+   (let* (($tree (path:join $root "program-check")) ($_ (fs:make-directories (path:join $tree "config") 504))
+          ($_ (fs:write (path:join $tree "coding_main.metta") "; fixture\n"))
+          ($_ (fs:write (path:join $tree "coding_check.metta") (str:join "" (
+                "!(import! &self (library fs))\n!(import! &self (library system))\n!(import! &self (library path))\n"
+                "!(let $dir (system:arg (- (system:argc) 1))\n"
+                "   (if (fs:is-file (path:join $dir \"mutate-live\"))\n"
+                "     (let $_ (fs:append-text (fs:read-text (path:join $dir \"mutate-live\")) \"x\\n\") (CheckpointReady 1))\n"
+                "     (if (fs:is-file (path:join $dir \"task.json\")) (CheckpointReady 2) (CheckpointFailed \"no task here\"))))\n"))))
+          ($_ (fs:write (path:join $tree "config/runtime-files.json")
+                "[\"coding_main.metta\", \"coding_check.metta\", \"config/runtime-files.json\"]")))
+     $tree))
+(= (cit:pin-elsewhere $dir)
+   (fs:write (path:join $dir "runtime.json")
+     (json-stringify (cio:put (cio:put (cio:json (path:join $dir "runtime.json")) "digest" (JsonString "old-digest")) "phase" (JsonString "ended")))))
+(= (cit:repins $root)
+   (let* (($program (cit:check-program $root))
+          ($sessions (path:join $root "memory/coding"))
+          ($d (path:join $sessions "work-repin")) ($_ (fs:make-directories $d 504))
+          ($_ (fs:write (path:join $d "task.json") "{\"task\":\"t\"}"))
+          ($_ (fs:write (path:join $d "messages.jsonl") "{\"role\":\"user\",\"content\":\"t\"}\n"))
+          ($_ (cio:freeze-runtime $program $d NoNote))
+          ($digest (coding:text (coding:field (cio:json (path:join $d "runtime.json")) "digest")))
+          ($_ (fs:write (path:join $d "inbox.jsonl") ""))
+          ($same (cio:repin $program $d))
+          ($_ (nt:require current-pin-is-same
+                (case $same (((CodingLaunch same $r $b $t $x) (nt:equal $t (coding:text (coding:field (cio:json (path:join $d "runtime.json")) "run")))) ($o False)))))
+          ($_ (nt:require same-note (nt:contains (fs:read-text (path:join $d "inbox.jsonl")) "Verify uncertain effects")))
+          ($_ (cit:pin-elsewhere $d))
+          ($_ (fs:write (path:join $d "runs.jsonl") "{\"from\":null,\"to\":\"a\"}\nnot json\n{\"torn\":"))
+          ($moved (cio:repin $program $d))
+          ($pin (cio:json (path:join $d "runtime.json")))
+          ($_ (nt:require older-pin-repinned (case $moved (((CodingLaunch repinned $r $b $t $x) True) ($o False)))))
+          ($_ (nt:require repinned-to-current (nt:equal (coding:field $pin "digest") (JsonString $digest))))
+          ($_ (nt:require checkpoint-recorded (nt:equal (coding:field $pin "checkpoint") (JsonString (cio:checkpoint-revision $d)))))
+          ($_ (nt:require previous-pin-kept (nt:equal (coding:field (coding:field $pin "previous") "digest") (JsonString "old-digest"))))
+          ($_ (nt:require repin-run-logged
+                (nt:contains (fs:read-text (path:join $d "runs.jsonl")) (str:concat "\"from\":\"old-digest\",\"to\":\"" $digest))))
+          ($_ (nt:require run-log-cleaned
+                (nt:equal (size-atom (cio:object-lines (str:split "\n" (fs:read-text (path:join $d "runs.jsonl")))))
+                          (size-atom (cio:nonblank (str:split "\n" (fs:read-text (path:join $d "runs.jsonl"))))))))
+          ($_ (nt:require repinned-note (nt:contains (fs:read-text (path:join $d "inbox.jsonl")) "newer runtime")))
+          ($_ (nt:require check-copy-removed (nt:equal (fs:entries (path:join $root "memory/coding-checks")) ())))
+          ;; A refused check leaves the pin.
+          ($_ (cit:pin-elsewhere $d)) ($_ (fs:remove (path:join $d "task.json")))
+          ($refused (cio:repin $program $d))
+          ($_ (nt:require refused-check-reported (case $refused (((CodingLaunch failed $r $b $t $why) (nt:equal $why "no task here")) ($o False)))))
+          ($_ (nt:require refused-pin-unchanged (nt:equal (coding:field (cio:json (path:join $d "runtime.json")) "digest") (JsonString "old-digest"))))
+          ;; A session that changes during the check is not moved.
+          ($_ (fs:write (path:join $d "task.json") "{\"task\":\"t\"}"))
+          ($_ (fs:write (path:join $d "mutate-live") (path:join $d "messages.jsonl")))
+          ($changed (cio:repin $program $d))
+          ($_ (fs:remove (path:join $d "mutate-live")))
+          ($_ (nt:require change-during-check-refused (case $changed (((CodingLaunch changed $r $b $t $why) True) ($o False)))))
+          ($_ (nt:require changed-pin-unchanged (nt:equal (coding:field (cio:json (path:join $d "runtime.json")) "digest") (JsonString "old-digest"))))
+          ;; A live session is left alone.
+          ($_ (fs:write (path:join $d "state.json") (format-args "{\"status\":\"running\",\"worker_owner\":\"{}\"}" ((process:owner)))))
+          ($_ (nt:require live-session-not-repinned (case (cio:repin $program $d) (((CodingLaunch running $r $b $t $x) True) ($o False))))))
+     True))
+(= (cio:nonblank $lines)
+   (if (== $lines ()) ()
+     (let $rest (cio:nonblank (cdr-atom $lines)) (if (== (str:trim (car-atom $lines)) "") $rest (cons-atom (car-atom $lines) $rest)))))
+(= (cit:verdicts)
+   (let* (($_ (nt:require ready-verdict (nt:equal (cio:check-verdict 0 "(CheckpointReady 12)") (CheckpointPassed))))
+          ($_ (nt:require ready-needs-success (nt:equal (cio:check-verdict 1 "(CheckpointReady 12)") (CheckpointRefused "the check produced no valid verdict"))))
+          ($_ (nt:require failed-verdict (nt:equal (cio:check-verdict 0 "(CheckpointFailed \"bad json\")") (CheckpointRefused "bad json"))))
+          ($_ (nt:require ready-inside-failure-is-failure
+                (nt:equal (cio:check-verdict 0 "(CheckpointFailed \"(CheckpointReady 3)\")") (CheckpointRefused "(CheckpointReady 3)"))))
+          ($_ (nt:require no-verdict (nt:equal (cio:check-verdict 0 "CheckpointReady 3") (CheckpointRefused "the check produced no valid verdict")))))
+     True))
+
 (= (cit:run)
    (let* (($root (nt:join (nt:required-env "NATIVE_TEST_ARTIFACTS") (str:concat "coding-io-" (system:uuid4-hex))))
           ($_ (fs:make-directories $root 504))
           ($_ (cit:run-tokens $root)) ($_ (cit:worker-writes $root)) ($_ (cit:stops $root))
           ($_ (cit:endings $root)) ($_ (cit:lock-exclusion $root)) ($_ (cit:append $root))
           ($_ (cit:executions $root)) ($_ (cit:freezing $root)) ($_ (cit:reservations $root))
-          ($_ (cit:launch-values $root)))
+          ($_ (cit:launch-values $root)) ($_ (cit:repins $root)) ($_ (cit:verdicts)))
      CodingIoContractsPassed))
 !(nt:require coding-io-contracts-completed (nt:equal (collapse (cit:run)) (CodingIoContractsPassed)))
 !(println! NATIVE_CODING_IO_PASSED)
