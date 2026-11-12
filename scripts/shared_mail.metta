@@ -50,6 +50,24 @@
               ($result $result))))))
       ($error $error))))
 
+;; A wait that names its waiter, the agent, with the waiter's generation:
+;; copies of one waiter hold one slot of the service, and the newest keeps it.
+;; An older copy's wait ends "superseded".
+(= (shared-mail:next-as $socket $agent $milliseconds $generation)
+   (case (shared-mail:identity $socket)
+     (((shared-mail:account $uid $login $role)
+       (let $name (str:join "" ("mail@" $login))
+         (let $space (mailbox:open $socket $name)
+           (case (mailbox:next-in $socket $space $agent)
+             (((mailbox:idle)
+               (if (> $milliseconds 0)
+                 (case (mailbox:watch-as $socket $space $milliseconds $agent $generation)
+                   (((reply $rid ok $changed) (mailbox:next $socket $name $agent))
+                    ($error $error)))
+                 (mailbox:idle)))
+              ($result $result))))))
+      ($error $error))))
+
 (= (shared-mail:ack $socket $agent $id)
    (case (shared-mail:identity $socket)
      (((shared-mail:account $uid $login $role)

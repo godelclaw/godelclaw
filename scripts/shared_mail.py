@@ -204,14 +204,26 @@ def main(argv=None):
         else:
             forever = args.command == 'wait' and (args.forever or args.timeout == 0)
             deadline = math.inf if forever else time.monotonic() + (args.timeout if args.command == 'wait' else 0)
+            # The waiter's generation: a newer waiter for the same name takes
+            # its slot, and this one ends.
+            generation = time.time_ns()
             failures = 0
             while True:
                 milliseconds = int(min(30000, max(0, (deadline - time.monotonic()) * 1000)))
+                request = (f'(shared-mail:next-as {q(args.socket)} {q(args.agent)} {milliseconds} {generation})'
+                           if args.command == 'wait' else
+                           f'(shared-mail:next {q(args.socket)} {q(args.agent)} {milliseconds})')
                 try:
-                    result = invoke(args, f'(shared-mail:next {q(args.socket)} {q(args.agent)} {milliseconds})',
-                                    timeout=milliseconds / 1000 + 30)
+                    result = invoke(args, request, timeout=milliseconds / 1000 + 30)
                 except subprocess.TimeoutExpired as error:
                     result = {'status': 'error', 'reason': str(error), 'retryable': True}
+                reason = str(result.get('reason', ''))
+                if result.get('status') == 'error' and 'error superseded' in reason:
+                    result = {'status': 'superseded', 'reason': 'a newer waiter for this name holds it'}
+                    break
+                if result.get('status') == 'error' and (
+                        'error watch-capacity' in reason or 'error account-watch-limit' in reason):
+                    result['retryable'] = True
                 if result.get('retryable') and args.command == 'wait':
                     failures += 1
                     if failures > args.retry_limit or time.monotonic() >= deadline:
@@ -228,6 +240,8 @@ def main(argv=None):
     if message_id:
         result.setdefault('id', message_id)
     emit(args, result)
+    if result['status'] == 'superseded':
+        return 4
     expected = {'whoami': {'identity'}, 'send': {'accepted', 'duplicate'}, 'inbox': {'inbox'},
                 'ack': {'settled', 'duplicate'}, 'next': {'delivery', 'idle'}, 'wait': {'delivery'}}
     if result['status'] in expected[args.command]:
