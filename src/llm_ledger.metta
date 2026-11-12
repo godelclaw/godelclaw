@@ -156,9 +156,10 @@
      ((((llm:call $i $e $pid $s $c $u $st $g $t $so $b $q $r $a $l $pu $n)) (== $e $epoch))
       ($other False))))
 
+; remove-atom takes its argument unevaluated: name the old result through
+; the match's own variables, never through car-atom.
 (= (llm-ledger:result-put $space $id $text)
-   (let* (($old (collapse (match $space (llm:result $id $r) (llm:result $id $r))))
-          ($_ (if (== $old ()) done (remove-atom $space (car-atom $old)))))
+   (let $old (collapse (match $space (llm:result $id $r) (remove-atom $space (llm:result $id $r))))
      (if (== $text none) done (add-atom $space (llm:result $id $text)))))
 
 (= (llm-ledger:result-of $space $id)

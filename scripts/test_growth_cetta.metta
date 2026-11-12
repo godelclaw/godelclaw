@@ -16,7 +16,10 @@
     (GrowthCheck "journal-append" "tests/growth/loop_host.metta" 20000 (growth:linear))
     ; Rewriting copies the prompt a fixed number of times: linear, with a larger constant.
     (GrowthCheck "commentary-rewrite" "tests/growth/commentary_contract.metta" 40000 (GrowthBounds 6 2000000 4 8192))
-    (GrowthCheck "native-call-owners" "tests/growth/native_call.metta" 500 (growth:linear))))
+    (GrowthCheck "native-call-owners" "tests/growth/native_call.metta" 500 (growth:linear))
+    ; Streamed attempts leave no atoms: the workload asserts none remain at
+    ; every size; evaluation temporaries keep memory linear, not bounded.
+    (GrowthCheck "stream-cursors" "tests/growth/stream_cursors.metta" 2000 (growth:linear))))
 ; Mutants the gate must reject, run whenever no single check is selected.
 (= (growth:mutants)
    ((GrowthCheck "quadratic-control" "tests/growth/quadratic_control.metta" 1000 (growth:linear))))

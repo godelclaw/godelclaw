@@ -9,7 +9,9 @@
     ("tests/unit/loop_host.metta" "UNIT_LOOP_HOST_OK")
     ("tests/unit/commentary_contract.metta" "UNIT_COMMENTARY_ON_OK" (("METTACLAW_MODEL_COMMENTARY" "1")))
     ("tests/unit/commentary_contract.metta" "UNIT_COMMENTARY_OFF_OK" (("METTACLAW_MODEL_COMMENTARY" "0")))
-    ("tests/unit/native_call.metta" "UNIT_NATIVE_CALL_OK")))
+    ("tests/unit/native_call.metta" "UNIT_NATIVE_CALL_OK")
+    ("tests/unit/stream_cursors.metta" "UNIT_STREAM_CURSORS_OK")
+    ("tests/unit/ledger_result.metta" "UNIT_LEDGER_RESULT_OK")))
 
 (= (units:env $directory)
    (let $base (nt:environment $directory)
