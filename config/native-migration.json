@@ -665,6 +665,47 @@
         "No paid live canary or 24-hour soak claimed",
         "Whole runtime still uses the SDK Python backend"
       ]
+    },
+    {
+      "id": "native-telegram-publishing-batch-4",
+      "status": "qualified-and-deployed",
+      "native_modules": [
+        "src/state_file_cetta.metta",
+        "channels/telegram.metta",
+        "src/coding_io_cetta.metta",
+        "src/loop.metta"
+      ],
+      "runtime_commit": "76e206f00",
+      "engine_commit": "2eefbdff7af5020c9a6283bcb3908be3e78c9273",
+      "lean_commit": "cff0796a8",
+      "release": "f248820a15d4247fcc2b18a93ade6535668393258052fe9478c3eb4f173fbc61",
+      "test_orchestration": "CeTTa core without Python",
+      "checks": {
+        "production_integration_dialect": "petta",
+        "native_drivers": 13,
+        "reference_runtime_probes": 33,
+        "state_file_module_checks": 28,
+        "mutants_killed": 4,
+        "python_entry_census": {
+          "coding-two-turn": [
+            60,
+            52
+          ],
+          "activity-delivery": [
+            76,
+            56
+          ]
+        },
+        "per_turn_metta_publish_calls_removed": 18,
+        "end_to_end_against_real_channel_service": "passes up to a step that already failed before this batch",
+        "paired_installed_verification": true
+      },
+      "limits": [
+        "telegram.py keeps a module __getattr__ shim so four Python readers see fresh batch state; it goes when they call functions",
+        "Runtime Python grew by 24 net lines for that shim and the health merge",
+        "The end-to-end acknowledgement step still fails because helper.working_set_save returns 0 there; assigned to the provider-core agent",
+        "No paid live canary or 24-hour soak claimed"
+      ]
     }
   ],
   "tuning_debt": [
