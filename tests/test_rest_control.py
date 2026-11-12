@@ -2,6 +2,7 @@
 
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -19,6 +20,14 @@ def woken():
 
 
 class RestControlTest(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        health = mock.patch.dict(os.environ, {"METTACLAW_TELEGRAM_HEALTH_PATH": os.path.join(directory.name, "health.json")})
+        health.start()
+        self.addCleanup(health.stop)
+        telegram._client_seen = None
+
     def tearDown(self):
         telegram._metta.pop("sleep_until", None)
         telegram._metta_events.clear()

@@ -17,7 +17,7 @@
    (if (== $pairs ()) False (let ($name $value) (car-atom $pairs) (if (== $name $key) True (cat:has-key $key (cdr-atom $pairs))))))
 (= (cat:append $left $right)
    (if (== $left ()) $right (cons-atom (car-atom $left) (cat:append (cdr-atom $left) $right))))
-(= (cat:field $dir $file $key) (coding:field (cio:json (path:join $dir $file)) $key))
+(= (cat:field $dir $file $key) (coding:field (sf:object (path:join $dir $file)) $key))
 (= (cat:run $dir) (coding:text (cat:field $dir "runtime.json" "run")))
 ; The frozen runtime a launch of this session runs from.
 (= (cat:root $dir) (coding:text (cat:field $dir "runtime.json" "root")))
@@ -31,10 +31,10 @@
 (= (cat:running $owner $run)
    (format-args "{\"status\":\"running\",\"steps\":5,\"progress\":\"step 5\",\"worker_owner\":\"{}\",\"run\":\"{}\",\"inbox\":0,\"updated\":5.0}" ($owner $run)))
 (= (cat:started $dir)
-   (fs:write (path:join $dir "runtime.json") (json-stringify (cio:put (cio:json (path:join $dir "runtime.json")) "phase" (JsonString "started")))))
+   (fs:write (path:join $dir "runtime.json") (json-stringify (sf:put (sf:object (path:join $dir "runtime.json")) "phase" (JsonString "started")))))
 (= (cat:pin-elsewhere $dir)
    (fs:write (path:join $dir "runtime.json")
-     (json-stringify (cio:put (cio:put (cio:json (path:join $dir "runtime.json")) "digest" (JsonString "old-digest")) "phase" (JsonString "ended")))))
+     (json-stringify (sf:put (sf:put (sf:object (path:join $dir "runtime.json")) "digest" (JsonString "old-digest")) "phase" (JsonString "ended")))))
 (= (cat:files-text $dir $names)
    (if (== $names ()) ""
      (let $name (car-atom $names)
@@ -89,7 +89,7 @@
 (= (cat:stale-reaper $root $program)
    (let* (($d (cat:session $root "work-stale-reaper" (cat:running (cat:dead) "r1")))
           ($_ (fs:write (path:join $d "runtime.json") "{\"root\":\"/nonexistent\",\"run\":\"r1\",\"phase\":\"started\"}"))
-          ($_ (fs:write (path:join $d "runtime.json") (json-stringify (cio:put (cio:json (path:join $d "runtime.json")) "root" (JsonString $program)))))
+          ($_ (fs:write (path:join $d "runtime.json") (json-stringify (sf:put (sf:object (path:join $d "runtime.json")) "root" (JsonString $program)))))
           ($resumed (cio:freeze-runtime $program $d (cio:note-pinned)))
           ($_ (nt:require resume-settles-dead-run-first
                 (nt:equal (cat:field $d "state.json" "status") (JsonString "interrupted"))))

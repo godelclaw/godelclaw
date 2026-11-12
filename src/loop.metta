@@ -188,7 +188,7 @@
 
 (= (applyHumanActivity $periphery $has-activity $is-human)
    (if (and $has-activity $is-human)
-       (let* (($wake (gk:human-wake (py-call (telegram.current_batch_identity))))
+       (let* (($wake (gk:human-wake (tg:current-batch-identity)))
               ($fresh (goal-bookkeeping:fresh $wake))
               ($message (goal-bookkeeping:message $wake)))
          (if (== $fresh 1)

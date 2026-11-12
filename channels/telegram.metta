@@ -22,12 +22,14 @@
 !(import! &self fs)
 !(import! &self cwp)
 !(import! &self system)
+!(import! &self (library path))
 !(import! &self ./src/helper.py)
 !(import! &self ./src/process_supervision.py)
 !(import! &self ./channels/energy.metta)
 !(import! &self ./channels/telegram_control_input.metta)
 !(import! &self ./channels/telegram_notice_cleanup.metta)
 !(import! &self ./src/job_io)
+!(import! &self ./src/state_file_cetta.metta)
 !(import! &self ./src/mail)
 ; The native idle provider initializes native memory.
 !(import! &self ./src/idle_cetta)
@@ -409,7 +411,7 @@
      (let $old (collapse (match &self (tg:title $chat $t) $t))
        (let $gone (tg:drop-titles $chat $old)
          (let $added (add-atom &self (tg:title $chat $title))
-           (py-call (telegram.metta_publish "title" (format-args "{}:{}" ($chat $title)))))))))
+           (tg:write-published))))))
 (= (tg:drop-titles $chat $titles)
    (if (== $titles ()) ()
      (let ($head $tail) (tg:uncons $titles)
@@ -428,7 +430,7 @@
    (let $seq (tg:next-number activity-seq)
      (let $added (add-atom &self (tg:pending $seq $task $chat $text $from-bot $tier $update-id))
        (let $epoch (tg:next-number activity-epoch)
-         (let $published (py-call (telegram.metta_publish "activity_epoch" $epoch))
+         (let $published (tg:publish "activity_epoch" $epoch)
            (if (== $wake False) True (tg:wake-request $wake)))))))
 
 ; A message from intake also records its kind and whether its sender wakes the
@@ -582,20 +584,20 @@
                           (let $epoch (tg:get activity-epoch 0)
                             (let $f1 (tg:set context-frontier $frontier)
                             (let $f2 (tg:set batch-ids $ids)
-                            (let $p1 (py-call (telegram.metta_publish "context_frontier" $frontier))
-                              (let $p2 (py-call (telegram.metta_publish "batch_update_ids" $ids))
-                                (let $p3 (py-call (telegram.metta_publish "context_epoch" $epoch))
-                                  $pending))))))))))))
+                            (let $f3 (tg:set context-epoch $epoch)
+                            (let $published (tg:publish-all (("context_frontier" $frontier) ("batch_update_ids" $ids)
+                                                             ("context_epoch" $epoch)))
+                              $pending)))))))))))
          (if (== $items ())
            (let $a (tg:set last-human 0)
              (let $b (tg:set last-tier "full")
                (let $frontier (tg:ledger-size)
                 (let $f1 (tg:set context-frontier $frontier)
                 (let $f2 (tg:set batch-ids "")
-                 (let $p1 (py-call (telegram.metta_publish "context_frontier" $frontier))
-                   (let $p2 (py-call (telegram.metta_publish "batch_update_ids" ""))
-                     (let $epoch (tg:get activity-epoch 0)
-                       (let $p3 (py-call (telegram.metta_publish "context_epoch" $epoch)) "")))))))))
+                 (let $epoch (tg:get activity-epoch 0)
+                   (let $f3 (tg:set context-epoch $epoch)
+                     (let $published (tg:publish-all (("context_frontier" $frontier) ("batch_update_ids" "")
+                                                      ("context_epoch" $epoch))) ""))))))))
            (let $routed (tg:route-batch $items () () ())
              (let $applied (tg:apply-route $routed)
                (let $published (tg:publish-counts)
@@ -632,7 +634,7 @@
        (let $a (tg:set last-human 1) (let $b (tg:set last-tier $tier) True)))
       (($chat $bot $tier)
        (let $a (tg:set reply-chat $chat)
-         (let $p (py-call (telegram.metta_publish "reply_chat" $chat))
+         (let $p (tg:publish "reply_chat" $chat)
            (let $b (tg:set last-human (if $bot 0 1))
              (let $c (tg:set last-tier (if $bot "full" $tier)) True))))))))
 
@@ -651,8 +653,9 @@
              (let $gone (tg:forget-items $prepared)
                (let $reset (tg:set prepared-upto 0)
                  (let $b (tg:set batch-ids "")
-                   (let $p (py-call (telegram.metta_publish "batch_update_ids" ""))
-                     (let $c (tg:publish-counts) 1)))))
+                   (let $p (tg:publish-all (("batch_update_ids" "") ("pending_count" (tg:pending-count))
+                                            ("prepared_count" (tg:prepared-count))))
+                     1))))
                0))
            0)
          0))))
@@ -691,10 +694,7 @@
 (= (tg:prepared-count) (size-atom (tg:prepared-items)))
 
 (= (tg:publish-counts)
-   (let $p (tg:pending-count)
-     (let $q (tg:prepared-count)
-       (let $a (py-call (telegram.metta_publish "pending_count" $p))
-         (py-call (telegram.metta_publish "prepared_count" $q))))))
+   (tg:publish-all (("pending_count" (tg:pending-count)) ("prepared_count" (tg:prepared-count)))))
 
 (= (tg:last-message-is-human) (tg:get last-human 0))
 (= (tg:last-message-arm-loops)
@@ -726,7 +726,7 @@
           ($_ (tg:set poll-after $cursor))
           ($events (tg:drain-runtime-events))
           ($now (tg:now)))
-     (py-call (telegram.metta_publish "last_poll" $now))))
+     (tg:health-merge ((JsonPair "poll_status" "ok") (JsonPair "last_poll_ok_at" $now)) False)))
 
 (= (tg:handle-tasks $tasks)
    (if (== $tasks ()) ()
@@ -932,10 +932,10 @@
          (let $b (tg:set rest-notice 0)
            ;; Notices and health show when the rest ends, not this capped wait.
            (let $c (tg:set sleep-until (max $deadline (py-call (helper.rest_until))))
-             (let $p (py-call (telegram.metta_publish "sleep_until" (tg:get sleep-until 0)))
+             (let $p (tg:publish-rest (tg:get sleep-until 0))
                (let $result (tg:rest-loop $deadline $n $enabled)
                  (let $d (tg:set sleep-until 0)
-                   (let $q (py-call (telegram.metta_publish "sleep_until" 0))
+                   (let $q (tg:publish-rest 0)
                      (let $e (tg:set wake-reason "")
                        (let $_ (py-call (process_supervision.progress "channel-resume")) $result))))))))))))))
 
@@ -1020,7 +1020,10 @@
 (= (tg:drop-newlines $text)
    (if (str:starts-with $text "\n") (tg:drop-newlines (str:char-slice $text 1 (str:char-length $text))) $text))
 
+; Without a configured service there is nowhere to submit: Telegram is off.
 (= (tg:submit $key $body $deadline)
+   (if (== (tg:socket) "") unconfigured (tg:submit-call $key $body $deadline)))
+(= (tg:submit-call $key $body $deadline)
    (case (tg:call 4 $key $body)
      (((cwp:reply 66 $n $b) stored)
       ((cwp:reply 71 $n $b) (tg:submit-later $key $body $deadline))
@@ -1029,7 +1032,7 @@
       ((cwp:reply $code $n $b) (refused $code)))))
 (= (tg:submit-later $key $body $deadline)
    (if (>= (tg:now) $deadline) queued
-     (let $slept (tg:sleep 0.2) (tg:submit $key $body $deadline))))
+     (let $slept (tg:sleep 0.2) (tg:submit-call $key $body $deadline))))
 
 (= (tg:receipts $key $count)
    (let $rejected (collapse (match &self (tg:receipt $key -1 $r) $r))
@@ -1078,7 +1081,8 @@
                  (let $mine (add-atom &self (tg:own-key $key))
                  (let $stored (tg:submit $key (tg:batch-body (tg:send-commands $pieces)) $deadline)
                    (case $stored
-                     ((queued (format-args "send queued: the Telegram service is not answering; retry later ({})" ($key)))
+                     ((unconfigured "send failed: the Telegram service is not configured")
+                      (queued (format-args "send queued: the Telegram service is not answering; retry later ({})" ($key)))
                       ((refused $code) (format-args "send failed: the Telegram service refused it ({})" ($code)))
                       (stored
                        (let $results (tg:await $key (size-atom $pieces) $deadline)
@@ -1136,7 +1140,8 @@
          (let $mine (add-atom &self (tg:own-key $key))
          (let $id (tg:jnum $message-id)
            (case (tg:submit $key (tg:batch-body ((JsonArray ((JsonString "delete") $id)))) $deadline)
-             ((queued "delete queued: the Telegram service is not answering")
+             ((unconfigured "delete failed: the Telegram service is not configured")
+              (queued "delete queued: the Telegram service is not answering")
               ((refused $code) (format-args "delete failed: the Telegram service refused it ({})" ($code)))
               (stored
                (case (tg:await $key 1 $deadline)
@@ -1467,3 +1472,77 @@
 (= (tg:start)
    (if (== (tg:socket) "") "telegram disabled: the durable service socket is not configured"
      (let $b (tg:poll) "telegram client started")))
+
+;; ------------------------------------------- what other code reads of her
+; The Python Telegram code (the effect scope, runtime events, sends and
+; uploads) and the command responder read this client's published values from
+; a file beside the health file, rewritten whole on each change. The health
+; file keeps the liveness facts a monitor reads (runtime_health); this client
+; and channels/telegram.py each merge their own facts into it under its lock.
+(= (tg:health-path)
+   (let $configured (tg:env "METTACLAW_TELEGRAM_HEALTH_PATH" "")
+     (if (not (== $configured "")) $configured
+       (str:join "/" ((tg:env "XDG_STATE_HOME" (str:concat (tg:env "HOME" "") "/.local/state"))
+                      "pettaclaw" (tg:env "METTACLAW_INSTANCE" "default") "telegram-health.json")))))
+(= (tg:client-state-path)
+   (let $health (tg:health-path)
+     (str:concat (if (str:ends-with $health ".json")
+                   (str:char-slice $health 0 (- (str:char-length $health) 5)) $health)
+                 ".client.json")))
+
+(= (tg:publish $name $value) (tg:publish-all (($name $value))))
+(= (tg:publish-all $pairs)
+   (let $set (tg:set-published $pairs) (tg:write-published)))
+(= (tg:set-published $pairs)
+   (if (== $pairs ()) ()
+     (let (($name $value) $rest) (tg:uncons $pairs)
+       (let $_ (tg:set (published $name) $value) (tg:set-published $rest)))))
+; The publishing process is named, so the Python code of another process
+; reads these values without taking them for its own.
+(= (tg:published-object)
+   (JsonObject
+     (cons-atom (JsonPair "pid" (system:pid))
+       (cons-atom (JsonPair "titles" (JsonObject (collapse (match &self (tg:title $chat $title) (JsonPair (tg:str $chat) $title)))))
+                  (collapse (match &self (tg:var (published $name) $value) (JsonPair $name $value)))))))
+(= (tg:write-published)
+   (let $path (tg:client-state-path)
+     (let $done (catch (let $made (fs:make-directories (path:dirname $path) 448)
+                         (sf:replace $path (json-stringify (tg:published-object)) 384 False)))
+       True)))
+
+; A rest, as the published value and as the liveness facts a monitor reads.
+(= (tg:publish-rest $until)
+   (let* (($now (tg:now))
+          ($_ (tg:publish "sleep_until" $until)))
+     (if (> $until 0)
+       (tg:health-merge ((JsonPair "loop_status" "waiting") (JsonPair "waiting_since" $now)
+                         (JsonPair "waiting_until" $until)) True)
+       (tg:health-merge ((JsonPair "loop_status" "awake") (JsonPair "waiting_until" 0.0)
+                         (JsonPair "last_wait_completed_at" $now)) True))))
+
+; Merge facts into the health file under its lock: at most every 15 seconds
+; unless forced, as the Python writer does. Each writer adds only its own
+; facts to what the file holds.
+(= (tg:health-merge $pairs $force)
+   (let $now (tg:now)
+     (if (and (not $force) (< (- $now (tg:get health-written 0)) 15)) False
+       (let $_ (tg:set health-written $now)
+         (catch (tg:health-merge-locked (tg:health-path) $pairs $now))))))
+(= (tg:health-merge-locked $path $pairs $now)
+   (let $made (fs:make-directories (path:dirname $path) 448)
+     (sf:locked (str:concat $path ".lock") 384
+       (sf:replace $path (json-stringify (sf:put-all (sf:object $path) (cons-atom (JsonPair "observed_at" $now) $pairs)))
+                   384 True))))
+
+; The identity of the input presented to this turn: the SHA-256 of the
+; context epoch and the batch's sorted update ids, NUL-separated, so input
+; presented again keeps its identity and any new occurrence changes it.
+(= (tg:current-batch-identity)
+   (let* (($nul (str:from-codepoints (0)))
+          ($ids (sort-strings (tg:nonempty-texts (str:split "," (tg:get batch-ids ""))))))
+     (str:sha256 (str:concat (format-args "{}" ((tg:get context-epoch 0)))
+                             (str:concat $nul (str:join $nul $ids))))))
+(= (tg:nonempty-texts $texts)
+   (if (== $texts ()) ()
+     (let $rest (tg:nonempty-texts (cdr-atom $texts))
+       (if (== (car-atom $texts) "") $rest (cons-atom (car-atom $texts) $rest)))))

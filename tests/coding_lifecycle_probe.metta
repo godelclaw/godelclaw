@@ -124,7 +124,7 @@
         ;; Recorded as pinned to an older runtime: the current runtime checks a
         ;; copy of the checkpoint before the session moves to it.
         ($_ (fs:write (cl:file $id "runtime.json")
-              (json-stringify (cio:put (cl:json $id "runtime.json") "digest" (JsonString "older-runtime-digest")))))
+              (json-stringify (sf:put (cl:json $id "runtime.json") "digest" (JsonString "older-runtime-digest")))))
         ($_ (nt:require current-resume (nt:contains (work-resume $id "current") "WORK_RESUMING")))
         ($_ (nt:require repin-recorded (cl:has $id "runs.jsonl" "\"from\":\"older-runtime-digest\"")))
         ($_ (nt:require current-run-done (nt:equal (cl:wait-ended $id 900) "done")))
