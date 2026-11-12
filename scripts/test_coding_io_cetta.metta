@@ -406,6 +406,33 @@
           ($_ (nt:require no-verdict (nt:equal (cio:check-verdict 0 "CheckpointReady 3") (CheckpointRefused "the check produced no valid verdict")))))
      True))
 
+; Context accounting: four bytes a token, or the provider's rate when higher.
+(= (cit:observe $dir $usage $size)
+   (let $_ (fs:write (path:join $dir "reply.json") (str:join "" ("{\"usage\":" $usage "}")))
+     (cio:context-observe $dir $size)))
+(= (cit:context $root)
+   (let* (($d (path:join $root "context")) ($_ (fs:make-directories $d 504))
+          ($_ (nt:require quarter-without-count (nt:equal (cio:context-tokens $d 4000) 1000)))
+          ($_ (nt:require no-input-count-no-record (nt:equal (cit:observe $d "{\"completion_tokens\":3}" 4000) 0)))
+          ($_ (nt:require still-quarter (nt:equal (cio:context-tokens $d 4000) 1000)))
+          ;; Anthropic: the cached and newly written prefix count toward the input.
+          ($_ (nt:require cache-counts-recorded
+                (nt:equal (cit:observe $d "{\"input_tokens\":2,\"cache_read_input_tokens\":1000,\"cache_creation_input_tokens\":998}" 6000) 1)))
+          ($_ (nt:require provider-rate-applies (nt:equal (cio:context-tokens $d 9000) 3000)))
+          ;; Responses: input_tokens is the whole input, cached part included.
+          ($_ (nt:require responses-input-recorded
+                (nt:equal (cit:observe $d "{\"input_tokens\":1500,\"input_tokens_details\":{\"cached_tokens\":1400}}" 6000) 1)))
+          ($_ (nt:require responses-rate-applies (nt:equal (cio:context-tokens $d 12000) 3000)))
+          ;; A provider counting fewer never lowers the four-byte estimate.
+          ($_ (nt:require lower-count-recorded (nt:equal (cit:observe $d "{\"prompt_tokens\":10}" 6000) 1)))
+          ($_ (nt:require quarter-is-the-floor (nt:equal (cio:context-tokens $d 12000) 3000)))
+          ($u (path:join $root "context-unreadable")) ($_ (fs:make-directories $u 504))
+          ($_ (nt:require missing-reply-ignored (nt:equal (cio:context-observe $u 100) 0)))
+          ($_ (fs:write (path:join $u "reply.json") "not json"))
+          ($_ (nt:require unreadable-reply-ignored (nt:equal (cio:context-observe $u 100) 0)))
+          ($_ (nt:require nothing-recorded (not (fs:exists (path:join $u "context.json"))))))
+     True))
+
 (= (cit:run)
    (let* (($root (nt:join (nt:required-env "NATIVE_TEST_ARTIFACTS") (str:concat "coding-io-" (system:uuid4-hex))))
           ($_ (fs:make-directories $root 504))
@@ -413,7 +440,7 @@
           ($_ (cit:endings $root)) ($_ (cit:lock-exclusion $root)) ($_ (cit:append $root))
           ($_ (cit:executions $root)) ($_ (cit:freezing $root)) ($_ (cit:reservations $root))
           ($_ (cit:launch-values $root)) ($_ (cit:repins $root)) ($_ (cit:verdicts))
-          ($_ (cit:preparation-failures $root)))
+          ($_ (cit:preparation-failures $root)) ($_ (cit:context $root)))
      CodingIoContractsPassed))
 !(nt:require coding-io-contracts-completed (nt:equal (collapse (cit:run)) (CodingIoContractsPassed)))
 !(println! NATIVE_CODING_IO_PASSED)
