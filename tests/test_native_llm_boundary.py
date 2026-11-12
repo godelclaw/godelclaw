@@ -307,7 +307,7 @@ def scope(name, lane):
             '        ($epoch (call:fact $plan "epoch" ""))\n'
             '        ($id (call:correlation $plan)))\n'
             '   (println! (RESULT (account:finished $plan (account:metadata $plan) $epoch $id\n'
-            f'       {legacy} "{{}}" (JsonObject ((JsonPair "prompt_tokens" 10) (JsonPair "completion_tokens" 2)))\n'
+            f'       {legacy} "{{}}" (JsonObject ((JsonPair "prompt_tokens" 10) (JsonPair "completion_tokens" 2))) CommentaryNotAppliedV1\n'
             '       (LedgerError (Error ledger-client:call uncertain))))))\n')
         self.assertIn('(nop)', out)
         self.assertEqual(self.peer.requests, [])

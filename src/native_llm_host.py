@@ -152,7 +152,8 @@ def _call_facts(plan):
     """The immutable facts a native call owner keeps; never request bytes."""
     facts = {name: getattr(plan, name) for name in (
         "epoch", "correlation", "protocol", "wire_model", "stream", "timeout",
-        "cap", "connect", "first", "idle", "soft", "kind", "activity", "lane", "guard")}
+        "cap", "connect", "first", "idle", "soft", "kind", "activity", "lane", "guard",
+        "selected_model")}
     facts.update(ready=True, visible=plan.native_visible, maximum=plan.max_output,
                  purpose=getattr(plan, "purpose", "turn"), origin=plan.call_origin)
     return facts
@@ -354,20 +355,6 @@ def policy_rejected(plan, reason, retry=-1):
     return "false"
 
 
-def policy_committed(plan, evidence):
-    usage = json.loads(str(evidence))
-    with _claim_lock:
-        if getattr(plan, "native_publication", "") in ("ready", "published"):
-            return 0
-        plan.native_publication = "ready"
-        plan.native_usage = usage
-    return 1
-
-
-def rejection_code(plan):
-    return getattr(plan, "command_rejection_code", "")
-
-
 def accounting_observation_error(plan, stage):
     # A progress write is not submission authority. Keep the owned HTTP call
     # attached; terminal usage must still commit before any commands return.
@@ -529,36 +516,15 @@ def _native_finish(plan):
     return decision["program"]
 
 
-def finish(plan, epoch, correlation, encoded, canonical):
-    if str(epoch) != plan.epoch or str(correlation) != plan.correlation:
-        return failed(plan, correlation, "correlation-error")
+def finish(plan, encoded):
+    """Host observers of a completion the native owner has published once.
+
+    The ledger, its effects (completion observation, calibration, usage tally)
+    and the answer of a structured call or a compaction are native. This
+    releases a command turn's program and feeds the display and turn health.
+    """
     result = json.loads(str(encoded))
     reason = result["choices"][0].get("finish_reason", "unknown")
-    if reason not in ("stop", "tool_calls", "length", "refusal", "content_filter"):
-        return failed(plan, correlation, "unfinished-provider-response")
-    if reason in ("refusal", "content_filter") and result["choices"][0]["message"].get("tool_calls"):
-        return failed(plan, correlation, "refused-tool-call")
-    if not isinstance(result.get("usage"), dict):
-        result["usage"] = {}
-    with _claim_lock:
-        accounted = getattr(plan, "native_publication", "") == "ready"
-        if accounted:
-            plan.native_publication = "published"
-    if not accounted:
-        return failed(plan, correlation, "uncommitted-native-accounting")
-    result["transport"] = "native"
-    try:
-        if not _compaction(plan):
-            synthetic_llm._completion_metadata(result, getattr(plan, "prompt_layout", None),
-                                               call_context=getattr(plan, "call_context", None),
-                                               usage_evidence=getattr(plan, "native_usage", None))
-        if getattr(plan, "prompt_bytes", 0) and not _compaction(plan):
-            import context_budget
-            context_budget.observe_bytes(plan.prompt_bytes, result.get("usage", {}), model=plan.selected_model)
-        if plan.provider == "anthropic":
-            synthetic_llm._tally_anthropic(result["usage"])
-    except Exception:
-        print("[native_llm] completion observation unavailable; committed answer retained", file=sys.stderr)
     # A compaction or a structured call answers with its reply, which the
     # native owner builds; only the effects of its completion remain here.
     if _compaction(plan):
@@ -577,7 +543,6 @@ def finish(plan, epoch, correlation, encoded, canonical):
         code = {"unfinished command output": "incomplete-output",
                 "invalid native tool output": "invalid-native-tool",
                 "refused or structured command output": "refused-or-structured-output"}.get(str(error), "invalid-envelope")
-        plan.command_rejection_code = code
         print("[command_contract] rejected; code=" + code +
               "; feedback_visible=" + str(getattr(plan, "prompt_feedback", False)).lower() +
               "; footer_visible=" + str(getattr(plan, "prompt_footer", False)).lower(), file=sys.stderr)
@@ -661,12 +626,10 @@ def _record_failure(plan, kind, status=0):
           file=sys.stderr)
 
 
-def response_retry_after(plan, seconds):
-    value = float(seconds)
-    plan.retry_after = value if value >= 0 else None
-    return 1
-
-def failed(plan, correlation, kind, status=0):
+def failed(plan, correlation, kind, status=0, retry_after=-1):
+    """Report a failed call; retry_after is the owner's (-1 for none)."""
+    if float(retry_after) >= 0:
+        plan.retry_after = float(retry_after)
     stream_sink.final(plan, reason=str(kind))
     _record_failure(plan, kind, status)
     error = getattr(plan, "error", OSError(str(kind)) if str(kind) == "transport-error" else RuntimeError(str(kind)))

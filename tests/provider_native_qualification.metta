@@ -180,7 +180,16 @@
           ($_ (nt:require provider-model-captured
                (nt:equal $wire-model (preq:string (if (nt:equal $model "kimi:k3.1-pro") "k3.1-pro"
                          (if (nt:equal $model "openai:fixture") "fixture" $model))))))
-          ($_ (nq:close $world))) 4))
+          ; The completion's effects are recorded natively: its observation and
+          ; usage line, the captured model's calibration, an Anthropic tally.
+          ($observed (fs:read-text (nq:path $world "llm-completion.json")))
+          ($_ (nt:require completion-observed (nt:contains $observed "\"transport\": \"native\"")))
+          ($_ (nt:require usage-line-observed (fs:exists (nq:path $world "llm-usage.jsonl"))))
+          ($calibration (preq:parse (fs:read-text (nq:path $world "context-token-calibration.json"))))
+          ($_ (nt:require calibration-of-the-captured-model (preq:has $calibration $model)))
+          ($tallied (fs:exists (nq:path $world "anthropic-usage.json")))
+          ($_ (nt:require tally-only-for-anthropic (nt:equal $tallied (nt:equal $protocol "anthropic"))))
+          ($_ (nq:close $world))) 8))
 (: nq:refusal (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (nq:refusal $root $sdk $core $artifacts $fixture $name $forms)
    (let* (($world (nq:world $root $sdk $core $artifacts $fixture $name))

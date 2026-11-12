@@ -151,9 +151,9 @@
      (((llm:v1:pending $epoch $correlation $protocol $id)
        (if (call:owns? $plan $epoch $correlation $id)
         (let* (($status (llm:status-http $id))
-              ($_ (llm:progress $plan $status))
-              ($_ (stream:progress $plan $id))
-              ($_ (llm:commentary-progress $plan $id))
+              ($progressed (llm:progress $plan $status))
+              ($displayed (stream:progress $plan $id))
+              ($observed (llm:commentary-progress $plan $id))
               ($event (llm:wait-http $id $milliseconds)))
          (llm:observe-plan $plan $state $epoch $correlation $protocol $id $event))
         (llm:v1:rejected ownership-error)))
@@ -172,10 +172,9 @@
      (((io:idle) $state)
       ((io:event $received (http:response-with-metadata $status $body (http:retry-after $seconds)))
        (if (== $id $received)
-         (let* (($native-retry (call:retry-after $plan $seconds))
-                ($host-retry (py-call (native_llm_host.response_retry_after (call:host $plan) $seconds))))
-                (llm:observe-plan $plan $state $epoch $correlation $protocol $id
-                  (io:event $received (http:response $status $body))))
+         (let $native-retry (call:retry-after $plan $seconds)
+           (llm:observe-plan $plan $state $epoch $correlation $protocol $id
+             (io:event $received (http:response $status $body))))
          $state))
       ((io:event $received (http:response $status $body))
        (if (== $id $received)
@@ -255,8 +254,8 @@
      (((llm:v1:ok $legacy-text)
        (case $canonical
          (((llm:v1:ok $canonical-text)
-           (let $_ (commentary:prepare $plan $legacy-text)
-             (account:complete $plan $epoch $correlation $legacy-text $canonical-text)))
+           (let $decision (commentary:prepare $plan $legacy-text)
+             (account:complete-classified $plan $epoch $correlation $legacy-text $canonical-text $decision)))
           ((llm:v1:error $code) (llm:failed-plan $plan $correlation $code 0)))))
       ((llm:v1:error $other-code) (llm:failed-plan $plan $correlation $other-code 0)))))
 

@@ -198,6 +198,9 @@
 ; call, and not when commentary is off.
 (= (commentary:native-contract? $owner)
    (and (commentary:enabled?) (and (call:command? $owner) (not (call:compaction? $owner)))))
+; Answers the decision, or CommentaryNotAppliedV1 when the contract does not
+; apply to this call.
 (= (commentary:prepare $plan $legacy)
    (if (commentary:native-contract? $plan)
-     (let $decision (commentary:classify $legacy) (commentary:store $plan $decision)) True))
+     (let* (($decision (commentary:classify $legacy)) ($stored (commentary:store $plan $decision))) $decision)
+     CommentaryNotAppliedV1))

@@ -91,8 +91,11 @@
           ($layout (if (== (pcall:fact $facts "protocol") "anthropic")
                      (lp:field (JsonObject $prepared) "cache_layout" JsonNull) JsonNull))
           ($stream (if $active true false))
+          ($prompt-layout (lp:field (JsonObject $prepared) "prompt_layout" JsonNull))
+          ($prompt-bytes (lp:field (JsonObject $prepared) "prompt_bytes" 0))
           ($pairs (call:append $seed ((JsonPair "fingerprint" $fingerprint) (JsonPair "prepared_stream" $stream)
-                                      (JsonPair "cache_layout" $layout)))))
+                                      (JsonPair "cache_layout" $layout) (JsonPair "prompt_layout" $prompt-layout)
+                                      (JsonPair "prompt_bytes" $prompt-bytes)))))
      (JsonObject $pairs)))
 (= (pcall:encoded $plan $facts $request $encoding $cache $profile $prompt $encoded)
    (case $encoded
@@ -167,8 +170,10 @@
        (if (not (account:claim $plan))
          (if (llm:plan-ready $plan) (llm:v1:failed duplicate duplicate duplicate-plan not-started)
            (llm:v1:failed unsubmitted unsubmitted admission-error not-started))
-         (let* (($_ (py-call (native_llm_host.gate)))
-                ($_ (py-call (native_llm_host.native_wire_started (call:host $plan)))))
+         ; Distinct names: HE unifies a repeated $_ binding.
+         (let* (($gated (py-call (native_llm_host.gate)))
+                ($shown (if (== (call:fact $plan "visible" false) true)
+                          (py-call (native_llm_host.native_wire_started (call:host $plan))) False)))
            (pcall:submit $plan $transport)))))))
 (= (pcall:submit $plan (PreparedProviderTransportV1 $epoch $correlation $protocol $url $headers-json $wire
                                               $timeout $cap $connect $first $idle))

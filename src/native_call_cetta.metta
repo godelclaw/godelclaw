@@ -92,6 +92,12 @@
           ($value (if (>= $seconds 0) $seconds JsonNull)))
      (call:set-phase $owner (CallPhaseV1 $status $t $s $r $soft $value $publication))))
 
+; The call context of a completion's usage line: id, provider, model, purpose.
+(= (call:context $owner)
+   (let* (($id (call:correlation $owner)) ($provider (call:fact $owner "provider" ""))
+          ($model (call:fact $owner "wire_model" "")) ($purpose (call:fact $owner "purpose" "turn")))
+     (JsonObject ((JsonPair "call_id" $id) (JsonPair "provider" $provider)
+                  (JsonPair "model" $model) (JsonPair "purpose" $purpose)))))
 ; Whether the soft wait has elapsed since submission, as 0 or 1.
 (= (call:soft-elapsed $owner $now)
    (let (CallPhaseV1 $status $t $submitted $r $soft $retry $publication) (call:phase $owner)

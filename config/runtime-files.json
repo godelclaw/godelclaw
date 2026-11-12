@@ -391,5 +391,6 @@
   "src/loop_host_cetta.metta",
   "src/commentary_contract_cetta.metta",
   "src/native_call_cetta.metta",
-  "src/stream_cursors_cetta.metta"
+  "src/stream_cursors_cetta.metta",
+  "src/completion_effects_cetta.metta"
 ]
