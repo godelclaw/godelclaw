@@ -19,6 +19,10 @@
           ($body (census:absolute-imports $root (fs:read-text (nt:join $root $probe)))))
      (str:concat (str:concat $head $body) "\n!(py-call (python_entry_census.finish))\n")))
 
+; A short world directory: its ledger socket path must stay within the
+; 108-byte Unix socket limit under a deep artifacts directory.
+(= (census:world-name $name) (str:concat "cn-" (str:byte-slice $name 0 8)))
+
 (: census:total (-> %Undefined% %Undefined% %Undefined%))
 (= (census:total $name $result)
    (let* (($census (preq:parse (fs:read-text $result)))
@@ -28,7 +32,7 @@
 
 (: census:probe (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (census:probe $root $sdk $core $artifacts $fixture $bin $name $probe $marker)
-   (let* (($world (nq:world $root $sdk $core $artifacts $fixture (str:concat "census-" $name)))
+   (let* (($world (nq:world $root $sdk $core $artifacts $fixture (census:world-name $name)))
           ($result (nq:path $world "census.json"))
           ($wrapper (nq:path $world "census-probe.metta"))
           ($_ (fs:write $wrapper (census:wrapper $root $probe $result)))
@@ -42,7 +46,7 @@
 ; commentary and a display stream, against the owned loopback provider.
 (: census:provider (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (census:provider $root $sdk $core $artifacts $fixture $name)
-   (let* (($world (nq:world $root $sdk $core $artifacts $fixture (str:concat "census-" $name)))
+   (let* (($world (nq:world $root $sdk $core $artifacts $fixture (census:world-name $name)))
           ($_ (fs:write (nq:path $world "response.body")
                "{\"id\":\"fixture\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"id\":\"t1\",\"type\":\"function\",\"function\":{\"name\":\"metta\",\"arguments\":\"{\\\"program\\\":\\\"((nop))\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":2}}"))
           ($result (nq:path $world "census.json"))
