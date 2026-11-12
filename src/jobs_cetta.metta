@@ -8,6 +8,7 @@
 !(import! &self (library path))
 !(import! &self (library json))
 !(import! &self (library space_service))
+!(import! &self ./input_scope_cetta.metta)
 
 (= (jobs:root) (system:getenv-or-default "METTACLAW_JOBS_DIR" "memory/jobs"))
 (= (jobs:path $id $suffix) (path:join (jobs:root) (str:concat $id $suffix)))
@@ -149,7 +150,14 @@
        (cons-atom (jobs:line (car-atom $records)) (jobs:lines (cdr-atom $records) 0)))))
 
 ; Finished jobs wait as durable activity until the loop acknowledges its turn.
-(= (jobs:pending?) (> (length (jobs:ready)) 0))
+(= (jobs:pending?)
+   (let $ready (jobs:ready)
+     (if (== $ready ()) False
+       (let* (($record (car-atom $ready)) ($id (jobs:field $record "id" ""))
+              ($identity (str:concat "job:" $id)))
+         (case (input-scope:settled $identity)
+           ((True (if (== (jobs:ack-list ($id)) 1) (jobs:pending?) False))
+            (False True) ($unavailable False)))))))
 (= (jobs:ready) (progn (jobs:harvest) (jobs:unnotified (jobs:records))))
 (= (jobs:unnotified $records)
    (if (== $records ()) ()
@@ -180,15 +188,22 @@
    (let $ready (jobs:ready)
      (if (== $ready ()) ""
        (let* (($record (car-atom $ready)) ($id (jobs:field $record "id" ""))
-              ($_ (if (jobs:active?) () (add-atom &self (job:prepared $id)))))
-         (str:join "" ("[job completion] " (jobs:line $record) "\n" (job-output $id 1500)))))))
+              ($identity (str:concat "job:" $id)))
+         (case (input-scope:settled $identity)
+           ((True (if (== (jobs:ack-list ($id)) 1) (jobs:receive) "JOB_ERROR: settled result acknowledgement failed"))
+            (False (let* (($_ (if (jobs:active?) () (add-atom &self (job:prepared $id))))
+                          ($_ (input-scope:prepare ($identity))))
+                     (str:join "" ("[job completion] " (jobs:line $record) "\n" (job-output $id 1500)))))
+            ($fault "JOB_ERROR: input settlement observation unavailable")))))))
 (= (jobs:ack)
    (jobs:ack-list (collapse (match &self (job:prepared $id) $id))))
 (= (jobs:ack-list $ids)
    (if (== $ids ()) 1
      (let $id (car-atom $ids)
-       (case (jobs:save (jobs:set (jobs:load $id) "notified" (JsonBool True)))
+       (let $identity (str:concat "job:" $id)
+        (if (not (input-scope:acknowledgeable $identity)) 0
+         (case (jobs:save (jobs:set (jobs:load $id) "notified" (JsonBool True)))
          ((("written" $_ $_ $_ $_)
            (progn (remove-atom &self (job:prepared $id)) (jobs:ack-list (cdr-atom $ids))))
-          ($error (progn (println! (JOB_ACK_ERROR $id $error)) 0))))))
+          ($error (progn (println! (JOB_ACK_ERROR $id $error)) 0))))))))
 )

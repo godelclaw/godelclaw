@@ -34,6 +34,7 @@ _context_preparation = None
 # bound to that prompt's digest by context_prepared, kept by capture for the exact prompt sent, and marked
 # observed once the model's answer to it is recorded (broker_begin).
 _context_presented = None
+_turn_input_ids = None
 
 def enabled():
     return os.environ.get("METTACLAW_OBSERVED_STRATEGY", "0") == "1"
@@ -79,8 +80,18 @@ def guard(include_topic=True):
     return "sequential-tools-v1"
 
 
-def begin(turn, source, message):
+def begin(turn, source, message, delivery_ids=None):
     global _turn, _sample, _ticket, _position, _focus, _input_turn, _message_focus, _runtime_projection, _context_trigger, _task_projection, _context_preparation, _context_presented
+    global _turn_input_ids
+    if delivery_ids is None:
+        import telegram
+        captured_ids = tuple(sorted(str(i) for i in telegram._current_batch_update_ids))
+    else:
+        captured_ids = json.loads(str(delivery_ids))
+        if not isinstance(captured_ids, list) or any(type(i) is not str or not i for i in captured_ids):
+            raise ValueError("input scope requires nonempty delivery identities")
+        captured_ids = tuple(sorted(set(captured_ids)))
+    _turn_input_ids = captured_ids
     if not enabled():
         return 1
     with _lock:
@@ -112,11 +123,9 @@ def begin(turn, source, message):
         store.control(mode=loop_modes.process_mode(), paused=not lifecycle.cognition_enabled(),
                       router_revision=guard())
         if str(message).strip() and str(source) in ("operator-event", "channel-event"):
-            ids = sorted(str(i) for i in telegram._current_batch_update_ids)
+            ids = list(captured_ids)
             if not ids:
-                # A non-Telegram adapter supplies its stable event identity.
-                # The message digest is a fallback only for offline adapters.
-                ids = ["content:" + strategy.digest(str(message))]
+                raise ValueError("input delivery identity was not prepared by its transport")
             _focus = "input:" + strategy.digest([os.environ.get("METTACLAW_INSTANCE", "default"), ids])
             _message_focus = _focus
             try:
@@ -608,12 +617,6 @@ def request_disposition(request, disposition, note):
         return "REQUEST_DISPOSITION_WITHHELD: unknown ID %s; (requests) lists request IDs" % request
     try:
         if store.disposition(request, str(disposition), helper.decode_safe_text(note)):
-            # A no-activity turn may explicitly defer an open input without
-            # focusing it. Settle that handled delivery with this turn, never
-            # replace a fresh turn's focus or another explicit defer target.
-            if (_message_focus is None and str(disposition) == "defer" and
-                    not record["processed"] and record["kind"] in ("message", "notification")):
-                _message_focus = request
             return "REQUEST_DISPOSITION_RECORDED"
         return "REQUEST_DISPOSITION_WITHHELD: %s (request %s)" % (store.refusal, request)
     except (ValueError, TypeError) as error:

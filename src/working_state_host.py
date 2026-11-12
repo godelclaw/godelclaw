@@ -14,10 +14,11 @@ def ledger_read():
 
 
 def commit_scope(has_activity):
-    """Sample delivery identities and request focus exactly once for this turn."""
+    """Carry the identities captured at turn begin, with the request focus."""
     import strategy_host
     import telegram
-    ids = tuple(telegram._current_batch_update_ids) if int(has_activity) else ()
+    captured = strategy_host._turn_input_ids
+    ids = (tuple(telegram._current_batch_update_ids) if captured is None else captured) if int(has_activity) else ()
     request = strategy_host._message_focus
     return tuple(str(identity) for identity in ids), str(request) if request else ""
 

@@ -1,9 +1,13 @@
 import socket, threading, random
+import json
+import uuid
 
 _running = False
 _sock = None
 _sock_lock = threading.Lock()
 _last_message = None
+_last_delivery_id = None
+_presented_delivery_ids = ()
 _msg_lock = threading.Lock()
 _channel = None
 _connected = False
@@ -14,13 +18,20 @@ def _send(cmd):
             _sock.sendall((cmd + "\r\n").encode())
 
 def _set_last(msg):
-    global _last_message
+    global _last_message, _last_delivery_id
     with _msg_lock:
         _last_message = msg
+        _last_delivery_id = "irc:" + uuid.uuid4().hex
 
 def getLastMessage():
+    global _presented_delivery_ids
     with _msg_lock:
-        return _last_message
+        _presented_delivery_ids = (_last_delivery_id,) if _last_delivery_id else ()
+        return _last_message or ""
+
+def prepared_input_ids_json():
+    with _msg_lock:
+        return json.dumps(_presented_delivery_ids)
 
 def _irc_loop(channel, server, port, nick):
     global _running, _sock, _connected

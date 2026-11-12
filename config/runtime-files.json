@@ -232,6 +232,7 @@
   "src/input_ack.py",
   "src/input_ledger.metta",
   "src/input_ledger_server.metta",
+  "src/input_scope_cetta.metta",
   "src/ledger_client.metta",
   "src/instruction_scope.metta",
   "src/interop_flags_cetta.metta",

@@ -34,6 +34,7 @@
                          (py-call (mattermost.start_mattermost (MM_URL) (MM_CHANNEL_ID) (MM_BOT_TOKEN))))))))
 
 ;Receive the latest user message considering all communication channels:
+!(import! &self ./src/input_scope_cetta.metta)
 (= (receive-channel)
    (if (== (commchannel) telegram)
        (if (tg:client-metta?) (tg:activity-batch) (py-call (telegram.getActivityBatch)))
@@ -44,10 +45,31 @@
 ; Conversation arrivals retain their own acknowledgement path. Native mail
 ; is its own input, so settling a conversation cannot settle unrelated mail.
 (= (receive)
-   (let* (($_ (mail:reset)) ($_ (jobs:reset)))
+   (let* (($_ (input-scope:reset)) ($_ (mail:reset)) ($_ (jobs:reset)))
      (let $conversation (receive-channel)
        (if (mail:empty? $conversation)
-         (let $mail (mail:receive) (if (mail:empty? $mail) (jobs:receive) $mail)) $conversation))))
+         (channel:receive-mail-or-job)
+         (channel:capture-conversation $conversation)))))
+(= (channel:capture-conversation $conversation)
+   (let $_
+     (if (== (commchannel) telegram)
+       (if (tg:client-metta?)
+         (let $ids (tg:update-ids (tg:prepared-items)) (input-scope:prepare $ids))
+         (let $encoded (py-call (telegram.prepared_input_ids_json)) (input-scope:prepare-json $encoded)))
+       (if (== (commchannel) irc)
+         (let $encoded (py-call (irc.prepared_input_ids_json)) (input-scope:prepare-json $encoded))
+         (let $encoded (py-call (mattermost.prepared_input_ids_json)) (input-scope:prepare-json $encoded))))
+     (if (input-scope:all-settled (input-scope:ids))
+       (let $_ (input-scope:reset) (channel:receive-mail-or-job)) $conversation)))
+; Transport diagnostics are observations, not fabricated deliveries. The
+; direct receive APIs retain their diagnostic text; the loop logs it.
+(= (channel:receive-mail-or-job)
+   (let $mail (mail:receive)
+     (if (mail:active?) $mail
+       (let* (($_ (if (mail:empty? $mail) True (println! (MAIL_RECEIVE_UNAVAILABLE $mail))))
+              ($job (jobs:receive)))
+         (if (jobs:active?) $job
+           (let $_ (if (mail:empty? $job) True (println! (JOB_RECEIVE_UNAVAILABLE $job))) ""))))))
 
 ;; Whether pending conversation may keep a parked agent waiting: see
 ;; tg:quiet-batch?. Other channels and clients always wake it.

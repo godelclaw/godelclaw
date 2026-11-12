@@ -2214,6 +2214,12 @@ def metta_value(name, default=None):
         return default
 
 
+def prepared_input_ids_json():
+    """Identities of the presentation already selected by the transport."""
+    with _msg_lock:
+        return json.dumps(sorted(str(value) for value in _current_batch_update_ids))
+
+
 def metta_publish(name, value):
     global _context_frontier_bytes, _current_batch_update_ids, _sleep_until
     global _reply_chat_id, _activity_epoch, _context_activity_epoch

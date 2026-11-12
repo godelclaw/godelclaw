@@ -433,10 +433,7 @@
                "autonomous work has no disposition"
                (if (and (== $disposition "addressed") (not (== $c "operator")))
                    "this request has its own checker and completes when the check passes"
-                   (if (and (== $disposition "addressed")
-                            (and (or (== $k "message") (== $k "notification")) (== $p none)))
-                       "a message is addressed only after a turn has processed it"
-                       ""))))))
+                   "")))))
 
 (= (input-ledger:disposition-status $disposition)
    (case $disposition
@@ -459,7 +456,11 @@
    (let $found (input-ledger:heads $space $id)
      (if (== $found ())
          (refused "unknown request ID")
-         (input-ledger:disposition-head $space (car-atom $found) $disposition $note))))
+         (case (input-ledger:disposition-head $space (car-atom $found) $disposition $note)
+           ((ok (let* (($now (system:wall-time))
+                       ($_ (input-ledger:settle-in $space $id $now))
+                       ($_ (input-ledger:record-all $space (input-ledger:inputs-of $space $id) $now))) ok))
+            ($refused $refused))))))
 
 ; UPDATE requests SET status=$to WHERE id=$id AND status IN (<$from>): True when
 ; the request had one of those statuses.
@@ -563,7 +564,12 @@
 (= (input-ledger:request-move $db $verb $id $from $to $request-id)
    (input-ledger:flag-answer $verb
      (input-ledger:request-write $db $verb (input-ledger:field $id) $request-id
-       (|-> ($space) (input-ledger:move-in $space $id $from $to)))))
+       (|-> ($space)
+         (let $moved (input-ledger:move-in $space $id $from $to)
+           (if (and $moved (== $to "addressed"))
+             (let* (($now (system:wall-time)) ($_ (input-ledger:settle-in $space $id $now))
+                    ($_ (input-ledger:record-all $space (input-ledger:inputs-of $space $id) $now))) $moved)
+             $moved))))))
 
 (= (input-ledger:request-retire $db $prefix $note $request-id)
    (input-ledger:retire-answer
@@ -2790,7 +2796,7 @@
 
 (= (input-ledger:open-request ($id $content $status $kind $note $seq) $focus)
    (or (== $id $focus)
-       (or (input-ledger:member $status ("active" "waiting-user" "deferred" "covered"))
+       (or (input-ledger:member $status ("active" "waiting-user" "deferred"))
            (and (== $status "processed") (or (== $kind "message") (== $kind "notification"))))))
 
 (= (input-ledger:excerpt-row ($id $content $status $kind $note $seq))

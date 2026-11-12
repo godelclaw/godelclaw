@@ -58,8 +58,12 @@
 (= (addition-reap-work)
    (work:reap))
 
+!(import! &self ./src/input_scope_cetta.metta)
 (= (addition-strategy-begin $turn $source $message)
-   (let $receipt (py-call (strategy_host.begin $turn $source $message))
+   (let $receipt
+       (if (input-scope:known?)
+         (let $ids (input-scope:json) (py-call (strategy_host.begin $turn $source $message $ids)))
+         (py-call (strategy_host.begin $turn $source $message)))
      (let* (($_ (hierarchy:begin $turn $source (py-call (strategy_host.view))))
             ($_ (ws:begin (hierarchy:task) $source
                   (if (and (== $source "operator-event") (tg:client-metta?))

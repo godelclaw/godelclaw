@@ -2,7 +2,7 @@
 !(import! &self ./provider_native_qualification.metta)
 (: nr:probe-env (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (nr:probe-env $world $name $bin $probe)
-   (let* (((NativeProviderTestWorldV1 $root $sdk $core $directory $socket $base $peer $server $env-base) $world)
+   (let* (((NativeProviderTestWorldV1 $root $sdk $core $directory $socket $base $peer $server $env-base $io_fixture) $world)
           ($env (nq:guest-env $world "fixture-model" ()))
           ($temporary (nq:path $world "tmp")) ($_ (fs:make-directories $temporary 448))
           ($prompt (nq:path $world "prompt.txt")) ($_ (fs:write $prompt "GODEL_NATIVE_ITER_PERSONA\n"))

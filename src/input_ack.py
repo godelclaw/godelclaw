@@ -811,7 +811,7 @@ def processed_update_ids(ids):
 
 
 def committed(ids):
-    """Only a durable checkpoint can authorize managed input acknowledgement."""
+    """Only durable ledger settlement can authorize managed acknowledgement."""
     if os.environ.get("METTACLAW_OBSERVED_STRATEGY", "0") != "1":
         return 1
     values = [str(value) for value in (ids.split(",") if isinstance(ids, str) else ids) if str(value)]

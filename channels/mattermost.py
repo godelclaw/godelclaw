@@ -2,11 +2,14 @@ import threading, json
 from collections import deque
 import requests, websocket
 import time
+import uuid
 
 _running = False
 _ws = None
 _ws_lock = threading.Lock()
 _pending_messages = deque()
+_pending_delivery_ids = deque()
+_presented_delivery_ids = ()
 _msg_lock = threading.Lock()
 _connected = False
 
@@ -27,15 +30,23 @@ def _get_bot_user_id():
     )
     return r.json()["id"]
 
-def _set_last(msg):
+def _set_last(msg, delivery_id=None):
     with _msg_lock:
         _pending_messages.append(str(msg))
+        _pending_delivery_ids.append("mattermost:" + str(delivery_id or uuid.uuid4().hex))
 
 def getLastMessage():
+    global _presented_delivery_ids
     with _msg_lock:
         messages = " | ".join(_pending_messages)
+        _presented_delivery_ids = tuple(_pending_delivery_ids)
         _pending_messages.clear()
+        _pending_delivery_ids.clear()
         return messages
+
+def prepared_input_ids_json():
+    with _msg_lock:
+        return json.dumps(_presented_delivery_ids)
 
 def _remember_post_id(post_id):
     if not post_id:
@@ -94,7 +105,7 @@ def _ws_loop():
                 if not _remember_post_id(post.get("id")):
                     continue
                 name = _get_display_name(post["user_id"])
-                _set_last(f"{name}: {post['message']}")
+                _set_last(f"{name}: {post['message']}", post["id"])
 
         except websocket.WebSocketTimeoutException:
             continue
