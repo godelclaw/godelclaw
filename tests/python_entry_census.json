@@ -5,12 +5,12 @@
     [
       "tests/integrated_coding_turn_probe.metta",
       "INTEGRATED_CODING_TURN_OK",
-      64
+      52
     ],
     [
       "tests/activity_delivery_full_turn_probe.metta",
       "ACTIVITY_DELIVERY_FULL_TURN_OK",
-      65
+      55
     ],
     [
       "tests/background_jobs_probe.metta",
@@ -20,13 +20,13 @@
     [
       "tests/coding_lifecycle_probe.metta",
       "CODING_LIFECYCLE_OK",
-      253,
+      97,
       "world"
     ],
     [
       "tests/provider_command_census_probe.metta",
       "CENSUS_PROVIDER_OK",
-      20,
+      14,
       "world",
       {
         "METTACLAW_MODEL_COMMENTARY": "1",

@@ -179,11 +179,6 @@
                 ($after (str:byte-slice $text (+ $at 16) (str:byte-length $text)))
                 ($next (llm:v1:append $stable ((JsonString $before)))))
            (chatgpt:split $after (- $remaining 1) $next)))))))
-(= (chatgpt:attributes $plan $fields)
-   (if (== $fields ()) $plan
-     (let* ((($key $value) (car-atom $fields))
-            ($_ (py-call (builtins.setattr $plan $key $value)))
-            ($rest (cdr-atom $fields))) (chatgpt:attributes $plan $rest))))
 (= (chatgpt:system-messages $parts)
    (if (== $parts ()) ()
      (let (JsonString $text) (car-atom $parts)
@@ -191,15 +186,20 @@
          (JsonObject ((JsonPair "role" (JsonString "system"))
                       (JsonPair "content" (JsonString $text))))
          (chatgpt:system-messages (cdr-atom $parts))))))
+; A subscription call is prepared natively and owned like an API-key call.
+; The account's session supplies the base, the credential alias and the
+; session id; the host keeps only the effects handle of the call.
 (= (chatgpt:command-plan $selected $tokens $effort $prompt $session)
-   (let* (($correction (py-call (native_llm_host.correction_context)))
-          ($model (str:byte-slice $selected 8 (str:byte-length $selected)))
+   (chatgpt:command-plan-purpose $selected $tokens $effort $prompt $session "turn"))
+(= (chatgpt:command-plan-purpose $selected $tokens $effort $prompt $session $purpose)
+   (let* (($model (str:byte-slice $selected 8 (str:byte-length $selected)))
           ($effort-text (str:concat "" $effort))
           ($frame (request:decode $prompt))
           ((ChatGPTPrompt $parts $user)
             (if (== $frame LegacyPrompt) (chatgpt:split $prompt 3 ()) (ChatGPTPrompt () "")))
           ($stable (chatgpt:chunk-parts $parts))
-          ($native (commentary:enabled?))
+          ; Only a command turn carries the command tool; a compaction never does.
+          ($native (and (commentary:enabled?) (== $purpose "turn")))
           ($tool (json-parse (commentary:tool-schema-text)))
           ($system-messages (chatgpt:system-messages $stable))
           ($messages (case $frame
@@ -227,55 +227,66 @@
              (llm:v1:with $base-request "reasoning" (JsonObject ((JsonPair "effort" (JsonString $effort-text)))))))
           ($request (llm:v1:with $reasoned-request "extensions"
              (JsonObject ((JsonPair "prompt_cache_key" (JsonString $cache))))))
-          ($wire-request (llm:v1:render $request))
-          ($account (llm:v1:get $session "value"))
-          ($alias-json (llm:v1:get $account "credential_alias")) ($alias (llm:v1:text $alias-json))
-          ($api-json (llm:v1:get $session "api_base")) ($api (llm:v1:text $api-json))
-          ($base (str:char-slice $api 0 (- (str:char-length $api) 1)))
-          ($session-id (chatgpt:session-id $model))
-          ($headers (llm:v1:render (JsonArray ((JsonArray ((JsonString "http:header") (JsonString "Content-Type") (JsonString "application/json")))
-                      (JsonArray ((JsonString "http:header") (JsonString "session_id") (JsonString $session-id)))
-                      (JsonArray ((JsonString "http:credential") (JsonString $alias)))))))
-          ($wait (py-call (native_llm_host.wait_settings)))
-          ($soft (py-call (operator.getitem $wait "soft")))
-          ($hard (py-call (operator.getitem $wait "hard")))
-          ($connect (py-call (operator.getitem $wait "connect")))
-          ($first (py-call (operator.getitem $wait "first")))
-          ($idle (py-call (operator.getitem $wait "idle")))
-          ($cap (chatgpt-policy "response-bytes"))
-          ($activity (py-call (native_llm_host.call_scope)))
-          ($lane (py-call (native_llm_host.call_lane)))
-          ; Subscription quotas are independent of API-key billing/cooldowns.
-          ($ticket (py-call (native_llm_host.ticket)))
-          ($plan (py-call (types.SimpleNamespace))))
-     ; Numeric false flags preserve Python truth values across the historical
-     ; PeTTa foreign bridge, whose ungrounded False spelling is a Python string.
-     (chatgpt:attributes $plan
-       (("kind" "command") ("encoding" "messages")
-        ("ready" "true") ("claimed" 0) ("sent" 0) ("stream" 0)
-        ("native_ledger" 1) ("max_output" $tokens) ("wire_model" $model)
-        ("request_profile" "chatgpt-plan") ("epoch" $ticket) ("correlation" $ticket)
-        ("provider" "openai") ("protocol" "responses") ("base" $base) ("headers" $headers)
-        ("request" $wire-request) ("timeout" $hard) ("soft" $soft) ("connect" $connect)
-        ("first" $first) ("idle" $idle) ("cap" $cap) ("prompt_text" $prompt)
-        ("activity" $activity) ("lane" $lane) ("correction_context" $correction)))))
+          ($profile (chatgpt:prompt-profile $prompt)))
+     (chatgpt:prepared $selected $tokens "command" $purpose $session $request
+       (CommandMetadataV1 $request "messages" $profile $prompt))))
+; Only sizes and digests of the prompt, as an API-key command observes them.
+(= (chatgpt:prompt-profile $prompt)
+   (let $frame (preq:frame $prompt)
+     (case $frame
+       (((ProviderPreparationRefusedV1 $why) (preq:observation $prompt LegacyPrompt))
+        ($valid (preq:observation $prompt $valid))))))
 
 ; Structured sessions use the same authenticated subscription route. Only the
-; request/encoding changes; admission, peer-owned credentials and recovery are
-; identical to ordinary agent calls.
+; request and its purpose change; admission, peer-owned credentials and
+; recovery are identical to ordinary agent calls.
 (= (chatgpt:structured-plan $selected $request $session)
-   (let* (((JsonNumber $token-text) (llm:v1:get $request "max_tokens"))
-          ($tokens (str:string->number $token-text))
-          ($plan (chatgpt:command-plan $selected $tokens "default" "" $session))
-          ($model (str:byte-slice $selected 8 (str:byte-length $selected)))
+   (chatgpt:structured-plan-purpose $selected $request $session "turn"))
+(= (chatgpt:structured-plan-purpose $selected $request $session $purpose)
+   (let* (($model (str:byte-slice $selected 8 (str:byte-length $selected)))
           ((JsonObject $fields) $request)
           ($uncached (llm:v1:without $fields "cache_messages"))
           ($remaining (llm:v1:without $uncached "cache_ttl"))
           ($portable (JsonObject $remaining))
           ($named (llm:v1:with $portable "model" (JsonString $model)))
-          ($canonical (llm:v1:with $named "role_policy" (JsonString "preserve")))
-          ($wire (llm:v1:render $canonical)))
-     (chatgpt:attributes $plan (("kind" "structured") ("request" $wire)))))
+          ($canonical (llm:v1:with $named "role_policy" (JsonString "preserve"))))
+     (chatgpt:prepared $selected (pcall:offered-tokens $request) "structured" $purpose $session $canonical
+       (StructuredMetadataV1 $canonical))))
+
+; The seed, wire and binding of a subscription call: the Responses encoding,
+; the display and command options of an API-key call, then this route's
+; profile (stream, store false, no output limit field).
+(= (chatgpt:prepared $selected $tokens $kind $purpose $session $request $spec)
+   (let* ((($plan $text) (py-call (native_llm_host.subscription_seed $selected $tokens $kind $purpose
+                                    (chatgpt-policy "response-bytes"))))
+          ($seed (preq:parse $text)))
+     (if (not (preq:truthy (preq:field $seed "ready"))) (RefusedProviderCallV1 $plan)
+       ; The llm:v1 codec takes syntax: bind each value before it crosses.
+       (let* (($account (llm:v1:get $session "value"))
+              ($alias-json (llm:v1:get $account "credential_alias")) ($alias (llm:v1:text $alias-json))
+              ($api-json (llm:v1:get $session "api_base")) ($api (llm:v1:text $api-json))
+              ($base (str:char-slice $api 0 (- (str:char-length $api) 1)))
+              ($session-id (chatgpt:session-id (pcall:fact $seed "wire_model")))
+              ($header-rows (JsonArray ((JsonArray ((JsonString "http:header") (JsonString "Content-Type") (JsonString "application/json")))
+                              (JsonArray ((JsonString "http:header") (JsonString "session_id") (JsonString $session-id)))
+                              (JsonArray ((JsonString "http:credential") (JsonString $alias))))))
+              ($headers (llm:v1:render $header-rows))
+              ($facts (preq:put (preq:put $seed "base" (preq:string $base)) "headers" (preq:string $headers)))
+              ($request-text (preq:render $request))
+              ($encoded (llm:v1:encode "responses" $request-text)))
+         (chatgpt:encoded $plan $facts $kind $spec $encoded)))))
+(= (chatgpt:encoded $plan $facts $kind $spec $encoded)
+   (case $encoded
+     (((llm:v1:ok (llm:v1:encoded $path $body))
+       (let $visible (preq:truthy (preq:field $facts "visible"))
+         (case (preq:wire (preq:parse $body) "chatgpt" "responses" $kind False $visible ProviderCacheNoneV1)
+           (((PreparedProviderWireV1 $wire $active $model $layout)
+             (let $profiled (chatgpt:wire $wire)
+               (if (== (get-type $profiled) String)
+                 (pcall:bound $plan $facts $path $spec (PreparedProviderWireV1 $profiled $active $model $layout))
+                 (pcall:refused $plan chatgpt-profile-refused))))
+            ($refused (pcall:refused $plan chatgpt-wire-refused))))))
+      ($invalid (pcall:refused $plan $invalid)))))
 (= (chatgpt:command $selected $tokens $effort $prompt)
    (let $session-value (chatgpt:session)
     (case $session-value
@@ -285,6 +296,3 @@
         (case $planned
          (((Error $source $reason) (py-call (synthetic_llm.unavailable_action chatgpt-plan-error)))
           ($plan (llm:run $plan))))))))))
-(= (chatgpt:plan? $plan)
-   (let* (($profile (py-call (builtins.getattr $plan "request_profile" "")))
-          ($text (str:concat "" $profile))) (== $text "chatgpt-plan")))

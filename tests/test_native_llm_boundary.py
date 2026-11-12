@@ -136,24 +136,21 @@ for name in ("claim", "submitted", "progress", "settle", "recover",
              "command_output_rejected", "transaction"):
     setattr(native_lifetime, name, forbidden)
 
-def draft():
+def turn(identity, trigger):
     import strategy_host
-    import native_llm_host
-    strategy_host._turn, strategy_host._context_trigger = "wake-7", "heartbeat-event"
-    plan = native_llm_host.native_command_plan("fixture-model", 42, "low", "input")
-    strategy_host._turn, strategy_host._context_trigger = "wake-8", "operator-event"
-    return plan
+    strategy_host._turn, strategy_host._context_trigger = str(identity), str(trigger)
+    return 1
 
 def abort_description():
-    # From the wire body on, the ledger refuses the request's description (the test's
-    # proxy drops every llm-describe connection once this file exists).
+    # From the bound preparation on, the ledger refuses the request's description
+    # (the test's proxy drops every llm-describe connection once this file exists).
     import os, native_llm_host
-    original = native_llm_host.wire_body
-    def wire(plan, body):
-        result = original(plan, body)
+    original = native_llm_host.bind_native_call
+    def bind(plan, seal, encoded):
+        result = original(plan, seal, encoded)
         open(os.environ["FIXTURE_DESCRIBE_FAULT"], "w").close()
         return result
-    native_llm_host.wire_body = wire
+    native_llm_host.bind_native_call = bind
     return 1
 ''')
         return f'!(import! &self "{module}")\n'
@@ -211,27 +208,28 @@ def retained():
     def test_capacity_refusal_is_distinct_from_replaying_a_claimed_plan(self):
         module = self.directory / 'fixture_modules/capacity_fixture.py'
         module.write_text('''
-import native_llm_host as host
-def draft(kind, scope):
-    make = host.native_command_plan if str(kind) == "native" else host.command_plan
-    plan = make("fixture-model", 42, "low", "input")
-    plan.activity, plan.lane = str(scope), "background"
-    return plan
+import os
+def scope(name, lane):
+    os.environ["METTACLAW_ACTIVITY_CALL_SCOPE"] = str(name)
+    os.environ["METTACLAW_ACTIVITY_CALL_LANE"] = str(lane)
+    return 1
 def error(plan):
     error = getattr(plan, "error", None)
     return type(error).__name__ + ": " + str(error)
 ''')
         self.env.update(METTACLAW_ACTIVITY_CALL_CAPACITY='2', METTACLAW_ACTIVITY_INTERACTIVE_RESERVE='1')
-        for kind in ('native', 'host'):
+        for kind in ('native',):
             with self.subTest(kind=kind):
                 self.fresh_ledger('capacity-' + kind)
                 out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n'
                     f'!(import! &self "{module}")\n'
-                    f'!(let* (($owner (py-call (capacity_fixture.draft "{kind}" "holder")))\n'
-                    '        ($owned (llm:plan-claim $owner))\n'
-                    f'        ($other (py-call (capacity_fixture.draft "{kind}" "contender")))\n'
+                    '!(let* (($_ (py-call (capacity_fixture.scope "holder" "background")))\n'
+                    '        ($owner (pcall:command-plan "fixture-model" 42 "low" "input"))\n'
+                    '        ($owned (account:claim (llm:owner $owner)))\n'
+                    '        ($_ (py-call (capacity_fixture.scope "contender" "background")))\n'
+                    '        ($other (pcall:command-plan "fixture-model" 42 "low" "input"))\n'
                     '        ($refused (llm:run $other)))\n'
-                    '   (progn (println! (CAPACITY (py-call (capacity_fixture.error $other))))\n'
+                    '   (progn (println! (CAPACITY (py-call (capacity_fixture.error (call:host (llm:owner $other))))))\n'
                     '          (println! (REPLAY (llm:begin $owner)))))\n')
                 self.assertIn('AdmissionDenied: native-call-capacity', out)
                 self.assertIn('; reason=native-call-capacity', self.last_stderr)
@@ -243,22 +241,22 @@ def error(plan):
     def test_invalid_activity_is_not_capacity_and_settles_its_unsent_request(self):
         module = self.directory / 'fixture_modules/invalid_activity_fixture.py'
         module.write_text('''
-import native_llm_host as host
-def draft(kind, scope, lane):
-    make = host.native_command_plan if str(kind) == "native" else host.command_plan
-    plan = make("fixture-model", 42, "low", "input")
-    plan.activity, plan.lane = str(scope), str(lane)
-    return plan
+import os
+def scope(name, lane):
+    os.environ["METTACLAW_ACTIVITY_CALL_SCOPE"] = str(name)
+    os.environ["METTACLAW_ACTIVITY_CALL_LANE"] = str(lane)
+    return 1
 ''')
         cases = [('bad activity', 'background'), ('x' * 65, 'background'), ('valid', 'sideways')]
-        for kind in ('native', 'host'):
+        for kind in ('native',):
             for index, (scope, lane) in enumerate(cases):
                 with self.subTest(kind=kind, scope=scope, lane=lane):
                     self.fresh_ledger('invalid-' + kind + '-' + str(index))
                     out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n'
                         f'!(import! &self "{module}")\n'
-                        f'!(let $plan (py-call (invalid_activity_fixture.draft "{kind}" {json.dumps(scope)} {json.dumps(lane)})) '
-                        '(println! (REFUSED (llm:run $plan))))\n')
+                        f'!(let* (($_ (py-call (invalid_activity_fixture.scope {json.dumps(scope)} {json.dumps(lane)})))\n'
+                        '        ($plan (pcall:command-plan "fixture-model" 42 "low" "input")))\n'
+                        '   (println! (REFUSED (llm:run $plan))))\n')
                     self.assertNotIn('native-call-capacity', out + self.last_stderr)
                     self.assertNotIn('duplicate native plan', out + self.last_stderr)
                     self.assertEqual(self.column('requests', 'status'), [('failed',)])
@@ -270,7 +268,9 @@ def draft(kind, scope, lane):
         self.peer.reply["usage"]["prompt_tokens_details"] = {"cached_tokens": 4}
         out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n' +
             self.disable_python_accounting() +
-            '!(let $plan (py-call (accounting_fixture.draft))\n'
+            '!(let* (($_ (py-call (accounting_fixture.turn "wake-7" "heartbeat-event")))\n'
+            '        ($plan (pcall:command-plan "fixture-model" 42 "low" "input"))\n'
+            '        ($_ (py-call (accounting_fixture.turn "wake-8" "operator-event"))))\n'
             '   (progn (println! (FIRST (llm:run $plan))) (println! (SECOND (llm:run $plan)))))\n')
         self.assertIn('(FIRST (nop))', out)
         self.assertIn('(SECOND ())', out)
@@ -302,12 +302,12 @@ def draft(kind, scope, lane):
         legacy = json.dumps(json.dumps(self.peer.reply))
         out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n' +
             self.disable_python_accounting() +
-            '!(let* (($plan (py-call (native_llm_host.native_command_plan "fixture-model" 42 "low" "input")))\n'
-            '        ($claim (llm:plan-claim $plan))\n'
-            '        ($epoch (py-call (native_llm_host.field $plan "epoch")))\n'
-            '        ($id (py-call (native_llm_host.field $plan "correlation"))))\n'
+            '!(let* (($plan (llm:owner (pcall:command-plan "fixture-model" 42 "low" "input")))\n'
+            '        ($claim (account:claim $plan))\n'
+            '        ($epoch (call:fact $plan "epoch" ""))\n'
+            '        ($id (call:correlation $plan)))\n'
             '   (println! (RESULT (account:finished $plan (account:metadata $plan) $epoch $id\n'
-            f'       {legacy} "{{}}" (JsonObject ((JsonPair "prompt_tokens" 10) (JsonPair "completion_tokens" 2)))\n'
+            f'       {legacy} "{{}}" (JsonObject ((JsonPair "prompt_tokens" 10) (JsonPair "completion_tokens" 2))) CommentaryNotAppliedV1\n'
             '       (LedgerError (Error ledger-client:call uncertain))))))\n')
         self.assertIn('(nop)', out)
         self.assertEqual(self.peer.requests, [])
@@ -320,9 +320,13 @@ def draft(kind, scope, lane):
     def test_precommit_evidence_rejection_releases_the_call(self):
         out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n' +
             self.disable_python_accounting() +
-            '!(let* (($plan (py-call (native_llm_host.native_command_plan "fixture-model" 42 "low" "input")))\n'
-            '        ($pending (llm:begin $plan)) ($injected (py-call (builtins.setattr $plan "cap" 1))))\n'
-            '   (println! (RESULT (llm:after-submit $plan $pending))))\n')
+            '(= (fixture:capped $pairs) (if (== $pairs ()) () (let (JsonPair $k $v) (car-atom $pairs) '
+            '(cons-atom (if (== $k "cap") (JsonPair "cap" 1) (JsonPair $k $v)) (fixture:capped (cdr-atom $pairs))))))\n'
+            '!(let* (($plan (pcall:command-plan "fixture-model" 42 "low" "input"))\n'
+            '        ($pending (llm:begin $plan))\n'
+            '        ((NativeCallOwnerV1 $host (JsonObject $facts) $seal) (llm:owner $plan))\n'
+            '        ($injected (NativeCallOwnerV1 $host (JsonObject (fixture:capped $facts)) $seal)))\n'
+            '   (println! (RESULT (llm:after-submit $injected $pending))))\n')
         self.assertIn('(RESULT ())', out)
         self.assertEqual(self.column('requests', 'status'), [('failed',)])
         self.assertEqual(self.column('calls', 'state'), [('failed',)])
@@ -366,8 +370,7 @@ def draft(kind, scope, lane):
                                  messages=[dict(role='user', content='input')]))
         out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n' +
             self.disable_python_accounting() +
-            f'!(let $plan (py-call (native_llm_host.native_structured_json_plan {json.dumps(request)}))\n'
-            '   (let $_ (py-call (native_llm_host.for_coding $plan)) (llm:run $plan)))\n'
+            f'!(llm:run (llm:structured-plan (json-parse {json.dumps(request)}) "coding"))\n'
             '!(llm:run (pcall:command-plan-purpose "fixture-model" 42 "low" "input" "compaction"))\n')
         self.assertEqual(len(self.peer.requests), 2, out + self.last_stderr)
         self.assertEqual(self.column('calls', 'purpose', 'state', order='created'),
@@ -399,7 +402,7 @@ def draft(kind, scope, lane):
             '($session (json-parse ' + json.dumps(json.dumps(session)) + ')) '
             '($plan (chatgpt:structured-plan "chatgpt:fixture-model" $request $session)) '
             '($reply (llm:run $plan))) '
-            '(py-call (native_llm_host.structured_json_result $reply ' + json.dumps(str(result)) + ')))\n')
+            '(llm:reply-file $reply ' + json.dumps(str(result)) + '))\n')
         self.assertTrue(result.is_file(), output + self.last_stderr)
         reply = json.loads(result.read_text())
         self.assertEqual(reply["finish"], "tool_calls")
@@ -501,7 +504,7 @@ def draft(kind, scope, lane):
     def test_a_plan_can_be_submitted_only_once(self):
         self.peer.delay = .01
         out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n'
-            '!(let $plan (py-call (native_llm_host.command_plan "fixture-model" 42 "low" "input"))\n'
+            '!(let $plan (pcall:command-plan "fixture-model" 42 "low" "input")\n'
             '   (progn (println! (llm:run $plan)) (println! (llm:run $plan))))\n')
         self.assertIn("(nop)", out)
         self.assertEqual(len(self.peer.requests), 1)
@@ -545,8 +548,7 @@ def draft(kind, scope, lane):
         for lang in ("petta",):
             text = json.dumps(json.dumps(request))
             self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n' + self.disable_python_accounting() +
-                f'!(let $plan (py-call (native_llm_host.native_structured_json_plan {text})) '
-                '(llm:run (py-call (native_llm_host.for_coding $plan))))\n', lang)
+                f'!(llm:run (llm:structured-plan (json-parse {text}) "coding"))\n', lang)
             body = self.peer.requests[-1][2]
             self.assertEqual([b["text"] for b in body["system"]], ["instructions", "policy"])
             self.assertEqual([i for i, b in enumerate(body["system"]) if "cache_control" in b], [1])
@@ -601,13 +603,11 @@ def draft(kind, scope, lane):
                 {"id": "c1", "type": "function", "function": {"name": "nop", "arguments": "{}"}}]},
             {"role": "tool", "tool_call_id": "c1", "content": "done"}], "max_tokens": 42,
             "reasoning": {"effort": "low"}, "extra_body": {"enable_thinking": True}}
-        fixture = self.directory / "request_fixture.py"
-        fixture.write_text('from iter_host import Box\nimport json\ndef request(): return Box(json.loads(' +
-                           repr(json.dumps(payload)) + '))\n')
-        forms = f'!(import! &self "{ROOT}/src/native_llm.metta")\n!(import! &self "{fixture}")\n'
-        forms += '!(let $r (llm:structured (py-call (request_fixture.request))) (println! (FINISH (py-call (iter_host.get $r "finish")))))\n'
+        forms = f'!(import! &self "{ROOT}/src/native_llm.metta")\n'
+        forms += (f'!(let (ProviderReplyV1 $r) (llm:run (llm:structured-plan (json-parse {json.dumps(json.dumps(payload))}) "turn")) '
+                  '(println! (FINISH (call:member $r "finish"))))\n')
         out = self.run_guest(forms)
-        self.assertIn("(FINISH tool_calls)", out)
+        self.assertIn('(FINISH (JsonString "tool_calls"))', out)
         self.assertEqual(len(self.peer.requests), 1)
         path, headers, body = self.peer.requests[0]
         self.assertEqual(path, "/v1/messages")
@@ -627,13 +627,14 @@ def draft(kind, scope, lane):
         self.peer.delay = .01
         self.peer.reply["choices"][0].update(finish_reason="length", message={"role": "assistant", "content": "",
             "tool_calls": [{"id": "partial", "type": "function", "function": {"name": "nop", "arguments": "{}"}}]})
-        fixture = self.directory / "request_fixture.py"
         request = {"messages": [{"role": "user", "content": "input"}], "max_tokens": 42}
-        fixture.write_text('from iter_host import Box\nimport json\ndef request(): return Box(json.loads(' +
-                           repr(json.dumps(request)) + '))\ndef check(box):\n    value=box.value\n    assert value["finish"] == "length"\n    assert value["message"]["tool_calls"][0]["id"] == "partial"\n    return "COMPLETE_CALL_KEPT"\n')
-        out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n!(import! &self "{fixture}")\n'
-            '!(let $box (llm:structured (py-call (request_fixture.request))) (println! (py-call (request_fixture.check $box))))\n')
-        self.assertIn("COMPLETE_CALL_KEPT", out)
+        reply = self.directory / "reply.json"
+        self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n'
+            f'!(llm:reply-file (llm:run (llm:structured-plan (json-parse {json.dumps(json.dumps(request))}) "turn")) '
+            f'{json.dumps(str(reply))})\n')
+        value = json.loads(reply.read_text())
+        self.assertEqual(value["finish"], "length")
+        self.assertEqual(value["message"]["tool_calls"][0]["id"], "partial")
         self.assertEqual(len(self.peer.requests), 1)
 
     def test_quota_cooldown_is_shared_and_upstream_can_bypass_it(self):

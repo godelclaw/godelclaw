@@ -84,7 +84,36 @@
      ($_ (nt:require role-content-keeps-inert-data
          (nt:equal (preq:field (preq:head (preq:items (preq:head (preq:items $role-body "messages")) "content")) "text")
                    (JsonString "(Error data value)"))))) 8))
+; Structured (coding and iter) requests: preparation, encoding and wire.
+(= (request-test:structured $provider $protocol $request-text)
+   (case (preq:prepare-structured $protocol "fixture" (preq:parse $request-text))
+     (((PreparedProviderStructuredV1 $request $tokens)
+       (let* (($text (preq:render $request)) ($encoded (llm:v1:encode $protocol $text)))
+         (case $encoded
+           (((llm:v1:ok (llm:v1:encoded $path $body))
+             (case (preq:wire (preq:parse $body) $provider $protocol "structured" False False ProviderCacheNoneV1)
+               (((PreparedProviderWireV1 $wire $active $model $layout) (preq:parse $wire)) ($bad $bad))))
+            ($bad $bad)))))
+      ($refused $refused))))
+(= (request-test:structured-contracts)
+   (let* (
+     ($request "{\"model\":\"session\",\"max_tokens\":64,\"messages\":[{\"role\":\"system\",\"content\":\"S\"},{\"role\":\"user\",\"content\":\"U\"}],\"cache_messages\":true,\"extra_body\":{\"enable_thinking\":true}}")
+     ($chat (request-test:structured "synthetic" "chat-completions" $request))
+     ($_ (nt:require structured-model-named (nt:equal (preq:field $chat "model") (JsonString "fixture"))))
+     ($_ (nt:require structured-extension-on-wire (nt:equal (preq:field $chat "enable_thinking") (JsonBool True))))
+     ($responses (request-test:structured "kimi" "responses" $request))
+     ($_ (nt:require structured-keeps-reasoning-replay (preq:has $responses "include")))
+     ($_ (nt:require structured-cache-key
+         (nt:equal (preq:field $responses "prompt_cache_key") (JsonString "openai:fixture:8de0b3c47f112c59745f717a"))))
+     ($anthropic (request-test:structured "anthropic" "anthropic" $request))
+     ($_ (nt:require structured-thinking
+         (nt:equal (preq:field (preq:field $anthropic "thinking") "type") (JsonString "adaptive"))))
+     ($_ (nt:require structured-cached-messages
+         (preq:has (preq:head (preq:items (preq:head (preq:items $anthropic "messages")) "content")) "cache_control")))
+     ($_ (nt:require structured-disabled-thinking-refused
+         (nt:equal (request-test:structured "anthropic" "anthropic" "{\"max_tokens\":1,\"extra_body\":{\"enable_thinking\":false}}")
+                   (ProviderPreparationRefusedV1 disabling-thinking-needs-capability))))) 7))
 (= (request-test:run)
    (let* (($a (request-test:split)) ($b (request-test:hash)) ($c (request-test:frame))
-          ($d (request-test:wire-contracts)))
-     (+ (+ $a $b) (+ $c $d))))
+          ($d (request-test:wire-contracts)) ($e (request-test:structured-contracts)))
+     (+ (+ (+ $a $b) (+ $c $d)) $e)))

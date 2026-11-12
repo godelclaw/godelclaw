@@ -1,7 +1,7 @@
 ; The native owner of a prepared provider call: its immutable call facts, the
 ; seal of its prepared transport, and its owned phase. Decisions and ledger
 ; metadata are computed here. The host plan remains only as the handle that
-; existing Python observers (display, health, completion effects) take; no
+; remaining host observers (display, turn health) take; no
 ; decision reads its fields.
 ;
 ; Phase: ready -> claiming -> claimed -> submitted, or -> refused, kept as one
@@ -32,7 +32,7 @@
 (= (call:release $owner) (call:forget (call:correlation $owner)))
 
 (= (call:native? $owner) (case $owner (((NativeCallOwnerV1 $h $f $s) True) ($other False))))
-; The handle Python observers take, for a native owner or a legacy plan.
+; The handle host observers take: an owner's, or a refused preparation's own.
 (= (call:host $owner) (case $owner (((NativeCallOwnerV1 $host $f $s) $host) ($legacy $legacy))))
 (= (call:fact (NativeCallOwnerV1 $host $facts $seal) $key $default) (lp:field $facts $key $default))
 (= (call:phase $owner)
@@ -47,6 +47,12 @@
 (= (call:correlation $owner) (call:fact $owner "correlation" ""))
 (= (call:protocol $owner) (call:fact $owner "protocol" ""))
 (= (call:compaction? $owner) (== (call:fact $owner "purpose" "turn") "compaction"))
+; A command answers with a program; a structured call or a compaction answers
+; with its reply. A refused preparation's host handle answers as a command.
+(= (call:command? $owner)
+   (if (call:native? $owner) (== (call:fact $owner "kind" "command") "command") True))
+(= (call:replies? $owner)
+   (if (call:native? $owner) (or (not (call:command? $owner)) (call:compaction? $owner)) False))
 ; The decoder's (stream cap) facts, as response_decode_config gave them.
 (= (call:decode-config $owner)
    (let* (($stream (if (== (call:fact $owner "prepared_stream" false) true) "true" "false"))
@@ -86,6 +92,12 @@
           ($value (if (>= $seconds 0) $seconds JsonNull)))
      (call:set-phase $owner (CallPhaseV1 $status $t $s $r $soft $value $publication))))
 
+; The call context of a completion's usage line: id, provider, model, purpose.
+(= (call:context $owner)
+   (let* (($id (call:correlation $owner)) ($provider (call:fact $owner "provider" ""))
+          ($model (call:fact $owner "wire_model" "")) ($purpose (call:fact $owner "purpose" "turn")))
+     (JsonObject ((JsonPair "call_id" $id) (JsonPair "provider" $provider)
+                  (JsonPair "model" $model) (JsonPair "purpose" $purpose)))))
 ; Whether the soft wait has elapsed since submission, as 0 or 1.
 (= (call:soft-elapsed $owner $now)
    (let (CallPhaseV1 $status $t $submitted $r $soft $retry $publication) (call:phase $owner)
@@ -108,7 +120,7 @@
        (let $_ (call:set-phase $owner (CallPhaseV1 $status $t $s $r $soft $retry ready)) True)
        False)))
 
-; The ledger's call metadata, as native_llm_host.policy_metadata gave it.
+; The ledger's call metadata: the call facts and its owned phase.
 (= (call:policy-metadata $owner)
    (let* (((CallPhaseV1 $status $t $s $r $last-soft $retry $publication) (call:phase $owner))
           ($sent (if (== $t ()) false true)) ($progress-soft (if (== $last-soft ()) 0 $last-soft))
@@ -147,3 +159,28 @@
 (= (call:append $front $back)
    (if (== $front ()) $back
      (let $rest (call:append (cdr-atom $front) $back) (cons-atom (car-atom $front) $rest))))
+
+; The reply of a structured call or a compaction, built from the decoded
+; result: the first choice's message, its finish reason, usage and the call id.
+; Model text stays a native value; it never crosses the host as a symbol.
+(= (call:member $object $key)
+   (case $object (((JsonObject $pairs) (call:pair-value $pairs $key)) ($other JsonNull))))
+(= (call:pair-value $pairs $key)
+   (if (== $pairs ()) JsonNull
+     (let (JsonPair $name $value) (car-atom $pairs)
+       (if (== $name $key) $value (call:pair-value (cdr-atom $pairs) $key)))))
+(= (call:reply $owner $legacy)
+   (let* (($result (json-parse $legacy))
+          ($choice (case (call:member $result "choices")
+                     (((JsonArray $items) (if (== $items ()) JsonNull (car-atom $items))) ($other JsonNull))))
+          ($message (call:member $choice "message")) ($finish (call:member $choice "finish_reason"))
+          ($usage (case (call:member $result "usage") (((JsonObject $pairs) (JsonObject $pairs)) ($other (JsonObject ())))))
+          ($id (call:correlation $owner)))
+     (ProviderReplyV1 (JsonObject ((JsonPair "message" $message) (JsonPair "finish" $finish)
+                                   (JsonPair "usage" $usage) (JsonPair "call_id" (JsonString $id)))))))
+; Written as structured_json_result wrote it (UTF-8, not ASCII-escaped), and
+; replaced atomically, so a reader never sees a partial reply.
+(= (call:write-reply $reply $path)
+   (let* (($temporary (str:concat $path ".tmp"))
+          ($_ (fs:write $temporary (json:stringify-python-with $reply ((ensure-ascii False)))))
+          ($_ (fs:rename $temporary $path))) $reply))

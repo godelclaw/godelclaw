@@ -63,7 +63,7 @@ def detail(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 def complete_elsewhere(plan):
-    purpose = json.loads(native_llm_host.policy_metadata(plan)).get("purpose", "turn")
+    purpose = getattr(plan, "purpose", "turn")
     usage = {"counts": {"input_tokens": 1, "output_tokens": 1}}
     llm_policy.native("llm-complete", (plan.correlation, plan.epoch, detail(usage), 1, "stop",
         detail({"finish": "stop"}), detail({"epoch": plan.epoch}), "different", 0, purpose,
@@ -129,18 +129,18 @@ def arm(kind):
         fixture = self.directory / 'fixture_modules/recovery_receipt.py'
         fixture.write_text('''
 import native_ledger
-def read(plan):
-    return native_ledger.llm_call(plan.correlation)["result"]
+def read(identity):
+    return native_ledger.llm_call(str(identity))["result"]
 ''')
         self.env["PYTHONPATH"] += os.pathsep + str(ROOT / "tests")
         legacy = json.dumps(json.dumps(self.peer.reply))
         self.peer.delay = .01
         out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n' +
             self.disable_python_accounting() + f'!(import! &self "{fixture}")\n' +
-            '!(let* (($plan (py-call (native_llm_host.native_command_plan "fixture-model" 100 "high" "input")))\n'
-            '        ($first (llm:run $plan)) ($receipt (py-call (recovery_receipt.read $plan)))\n'
-            '        ($epoch (py-call (native_llm_host.field $plan "epoch")))\n'
-            '        ($identity (py-call (native_llm_host.field $plan "correlation"))))\n'
+            '!(let* (($prepared (pcall:command-plan "fixture-model" 100 "high" "input"))\n'
+            '        ($plan (llm:owner $prepared))\n'
+            '        ($epoch (call:fact $plan "epoch" "")) ($identity (call:correlation $plan))\n'
+            '        ($first (llm:run $prepared)) ($receipt (py-call (recovery_receipt.read $identity))))\n'
             '   (progn (println! (FIRST $first))\n'
             f'     (println! (SECOND (account:complete $plan $epoch $identity {legacy} $receipt)))))\n')
         self.assertIn('(FIRST (nop))', out)
@@ -152,21 +152,17 @@ def read(plan):
         self.assertEqual(health.get('failed_count', 0), 0)
 
     def test_optional_observation_failure_does_not_discard_a_committed_answer(self):
-        module = self.directory / 'fixture_modules/recovery_observer.py'
-        module.write_text('''
-import synthetic_llm
-def arm():
-    def fail(*args,**kwargs): raise OSError('fixture metadata unavailable')
-    synthetic_llm._completion_metadata=fail
-    return 1
-''')
+        # The completion observation's directory is a file: no observation can
+        # be written, and the committed answer is still delivered once.
+        blocker = self.directory / 'observation-blocker'
+        blocker.write_text('not a directory')
+        self.env['METTACLAW_LLM_COMPLETION_PATH'] = str(blocker / 'llm-completion.json')
         self.peer.delay = .01
         out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n' +
-            self.disable_python_accounting() + f'!(import! &self "{module}")\n' +
-            '!(py-call (recovery_observer.arm))\n'
+            self.disable_python_accounting() +
             '!(println! (RESULT (llm:command "fixture-model" 100 "high" "input")))\n')
         self.assertIn('(nop)', out)
-        self.assertIn('completion observation unavailable', self.last_stderr)
+        self.assertFalse((blocker / 'llm-completion.json').exists())
         self.assertEqual(len(self.peer.requests), 1)
         self.assert_recorded_once()
 

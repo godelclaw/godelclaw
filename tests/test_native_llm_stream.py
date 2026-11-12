@@ -146,14 +146,11 @@ def report():
         self.assertEqual(native_ledger.llm_records("requests", self.socket), [])
 
     def test_conflicting_synthetic_extension_is_refused_before_admission(self):
-        fixture = self.directory / "effort_fixture.py"
-        fixture.write_text('from types import SimpleNamespace\nimport native_llm_host\n'
-            'def ready():\n'
-            '    request = dict(messages=[dict(role="user",content="input")], max_tokens=42,\n'
-            '        reasoning={"effort":"low"}, extensions={"reasoning_effort":"high"})\n'
-            '    return native_llm_host.structured_plan(SimpleNamespace(value=request)).ready\n')
+        request = dict(messages=[dict(role="user", content="input")], max_tokens=42,
+                       reasoning={"effort": "low"}, extensions={"reasoning_effort": "high"})
         output = self.run_guest(f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'
-            f'!(import! &self "{fixture}")\n!(println! (READY (py-call (effort_fixture.ready))))\n')
+            f'!(let $plan (llm:structured-plan (json-parse {json.dumps(json.dumps(request))}) "turn")\n'
+            '   (println! (READY (llm:plan-ready $plan))))\n')
         self.assertIn('(READY false)', output)
         self.assertEqual(len(self.peer.requests), 0)
         self.assertEqual(native_ledger.llm_records("requests", self.socket), [])
@@ -177,7 +174,7 @@ def report():
 
     def test_detached_wait_returns_pending_and_later_delivers_same_call(self):
         output = self.run_guest(f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'
-            '!(let $plan (py-call (native_llm_host.command_plan "fixture-model" 42 "low" "input"))\n'
+            '!(let $plan (pcall:command-plan "fixture-model" 42 "low" "input")\n'
             '  (let $state (llm:begin $plan)\n'
             '    (let $waiting (llm:wait-once $plan $state 20)\n'
             '      (progn (println! (DETACHED $waiting))\n'
@@ -193,7 +190,7 @@ def report():
                            '    return True\n')
         output = self.run_guest(f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'
             f'!(import! &self "{fixture}")\n'
-            '!(let $plan (py-call (native_llm_host.command_plan "fixture-model" 42 "low" "input"))\n'
+            '!(let $plan (pcall:command-plan "fixture-model" 42 "low" "input")\n'
             '  (let $state (llm:begin $plan)\n'
             '    (progn (py-call (recycle_fixture.request))\n'
             '           (println! (RESULT (llm:after-submit $plan $state))))))\n')
@@ -212,7 +209,7 @@ def report():
 
     def test_foreign_pending_state_cannot_consume_the_owned_answer(self):
         output = self.run_guest(f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'
-            '!(let $plan (py-call (native_llm_host.command_plan "fixture-model" 42 "low" "input"))\n'
+            '!(let $plan (pcall:command-plan "fixture-model" 42 "low" "input")\n'
             '  (let $state (llm:begin $plan)\n'
             '    (progn (println! (FOREIGN (llm:wait-once $plan (llm:v1:pending other other "chat-completions" 1) 20)))\n'
             '           (println! (RESULT (llm:after-submit $plan $state))))))\n')
@@ -227,7 +224,7 @@ def report():
             'def steer():\n    global revision\n    revision="steered"\n    return True\n')
         output = self.run_guest(f'!(import! &self "{boundary.ROOT}/src/native_llm.metta")\n'
             f'!(import! &self "{fixture}")\n'
-            '!(let $plan (py-call (native_llm_host.command_plan "fixture-model" 42 "low" "input"))\n'
+            '!(let $plan (pcall:command-plan "fixture-model" 42 "low" "input")\n'
             '  (let $state (llm:begin $plan)\n'
             '    (progn (py-call (guard_fixture.steer))\n'
             '           (println! (RESULT (llm:after-submit $plan $state))))))\n')
