@@ -1,0 +1,11 @@
+; Native compaction preparation against the owned loopback provider.
+!(import! &self ../tests/provider_native_qualification.metta)
+(= (compaction-test:run)
+   (let* (($root (system:cwd)) ($sdk (nt:required-env "NATIVE_TEST_SDK"))
+          ($core (nt:required-env "NATIVE_TEST_CORE")) ($artifacts (nt:required-env "NATIVE_TEST_ARTIFACTS"))
+          ($fixture (nt:join $artifacts "native-http-peer"))
+          ($_ (nt:exit-ok (proc:run ("cc" "-std=c11" "-O2" "-Wall" "-Wextra" "-Werror" "tests/fixtures/native_http_peer.c" "-o" $fixture)
+                                    $root (nq:base-env $root $artifacts) 30000 65536))))
+     (nq:compaction $root $sdk $core $artifacts $fixture)))
+!(nt:require compaction-driver-completed (nt:equal (collapse (compaction-test:run)) (6)))
+!(println! NATIVE_COMPACTION_PASSED)

@@ -368,8 +368,7 @@ def draft(kind, scope, lane):
             self.disable_python_accounting() +
             f'!(let $plan (py-call (native_llm_host.native_structured_json_plan {json.dumps(request)}))\n'
             '   (let $_ (py-call (native_llm_host.for_coding $plan)) (llm:run $plan)))\n'
-            '!(let $plan (py-call (native_llm_host.native_command_plan "fixture-model" 42 "low" "input"))\n'
-            '   (let $_ (py-call (native_llm_host.for_compaction $plan)) (llm:run $plan)))\n')
+            '!(llm:run (pcall:command-plan-purpose "fixture-model" 42 "low" "input" "compaction"))\n')
         self.assertEqual(len(self.peer.requests), 2, out + self.last_stderr)
         self.assertEqual(self.column('calls', 'purpose', 'state', order='created'),
                          [('coding', 'completed'), ('compaction', 'completed')])

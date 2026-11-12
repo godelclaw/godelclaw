@@ -398,17 +398,6 @@ def int_env(name, default):
         return int(default)
 
 
-def command_batch_limit(default):
-    """Managed-loop admission limit; each composite command counts once."""
-    limit = int_env("METTACLAW_COMMAND_BATCH_LIMIT", default)
-    return limit if limit > 0 else int(default)
-
-
-def text_nonempty(value):
-    """Return numeric truth for text crossing the Python/MeTTa boundary."""
-    return 1 if str(value or "") else 0
-
-
 def recycle_requested():
     """Return PeTTa's integer truth value for the boundary flag.
 
@@ -920,42 +909,6 @@ def relevant_files(path, limit=8, max_paths=25):
         return "(unavailable)"
 
 
-def history_append(addition):
-    """Append one internal turn to the configured conversation transcript.
-
-    This deliberately does not share the public ``append-file`` skill.  That
-    skill may stage protected source mutations; the runtime journal is an
-    observation sink, not a self-modification request.  The destination is
-    fixed by deployment configuration, so callers cannot turn this helper
-    into general file access.
-    """
-    path = os.environ.get("METTACLAW_HISTORY_PATH", "./memory/history.metta")
-    try:
-        parent = os.path.dirname(path)
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-        payload = normalize_string(addition)
-        if not payload.endswith("\n"):
-            payload += "\n"
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND,
-                             0o600)
-        try:
-            with os.fdopen(descriptor, "a", encoding="utf-8") as stream:
-                stream.write(payload)
-                stream.flush()
-                os.fsync(stream.fileno())
-        except Exception:
-            try:
-                os.close(descriptor)
-            except OSError:
-                pass
-            raise
-        return 1
-    except Exception as exc:
-        print("[helper] history append error:", type(exc).__name__)
-        return 0
-
-
 def local_clock(epoch):
     """Telegram's own send time, local, in the same format as TIME."""
     try:
@@ -1101,10 +1054,6 @@ def menu_choice_button(argument):
     if len(matches) != 1:
         raise ValueError("choice expired or ambiguous; reopen the menu")
     return matches[0]
-
-
-def str_env(name, default=""):
-    return os.environ.get(str(name), str(default))
 
 
 def complete_command_prefix(text):

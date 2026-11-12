@@ -581,7 +581,8 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
             os.unlink(responder[1])
             responder = start('!(import! &self ./channels/telegram_control.metta)\n!(tc:serve)\n', notice_env)
             lines, err = run('!(tg:start)\n!(tg:activity-batch)\n'
-                '!(py-call (helper.history_append "group processing history"))\n'
+                '!(import! &self ./src/loop_host_cetta.metta)\n'
+                '!(loop-host:history-append "group processing history")\n'
                 '!(py-call (helper.turn_commit_stage 1 1 1))\n'
                 '!(py-call (helper.working_set_save 10 1 "group successor" 0))\n'
                 '!(import! &self "' + str(ack_probe) + '")\n'

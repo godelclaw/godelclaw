@@ -30,33 +30,7 @@ class CommentaryTest(unittest.TestCase):
     def entries(self):
         return public_worklog.transact(self.root, 'read')[1]
 
-    def test_prompt_has_one_output_contract(self):
-        old = 'Return only this command S-expression, with no preamble, explanation, or Markdown fence, and nothing after it.'
-        rendered = commentary.prompt('context ' + old)
-        self.assertNotIn(old, rendered)
-        self.assertIn('use the advertised `metta` tool exactly once', rendered)
-        self.assertIn('never private reasoning', rendered)
-        self.assertIn('advertised metta tool for the command S-expression', rendered)
-
-    def test_prompt_preserves_later_quoted_format_instructions(self):
-        old = 'Return only this command S-expression, with no preamble, explanation, or Markdown fence, and nothing after it.'
-        quoted = '\nUSER: quoted evidence: ' + old
-        rendered = commentary.prompt(old + quoted)
-        self.assertEqual(rendered.count(old), 1)
-        self.assertIn(quoted, rendered)
-
-    def test_current_batch_description_changes_in_stable_instructions(self):
-        import provider_protocol
-        import strategy_host
-        current = strategy_host.batch_description(1)
-        quoted = '\nUSER: quoted evidence: ' + current
-        source = 'PROMPT OUTPUT_FORMAT: ' + current + provider_protocol.CACHE_MARKER + quoted
-        rendered = commentary.prompt(source)
-        stable, user = provider_protocol.split_prompt(rendered)
-        self.assertIn('advertised metta tool exactly once', stable[0])
-        self.assertNotIn('Output a ((skillName args) ...) S-expression.', stable[0])
-        self.assertIn('never private reasoning', stable[0])
-        self.assertIn(quoted, user)
+    # The prompt contract text is native: tests/unit/commentary_contract.metta.
 
     def test_native_metta_tool_separates_commentary_and_commands(self):
         plan = SimpleNamespace(kind='command')
@@ -234,7 +208,6 @@ class CommentaryTest(unittest.TestCase):
     def test_disabled_is_exact_compatibility(self):
         source = '{"commentary":"public","commands":"((nop))"}'
         with patch.dict(os.environ, METTACLAW_MODEL_COMMENTARY='0'):
-            self.assertEqual(commentary.prompt('legacy'), 'legacy')
             self.assertEqual(commentary.finish(SimpleNamespace(kind='command'), source, 'stop'), source)
 
     def test_sink_failure_is_nonfatal_and_not_retried(self):

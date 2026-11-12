@@ -4,6 +4,7 @@
 ; calls, but do not complete, acknowledge or fail the enclosing agent turn.
 !(import! &self ./src/task_context_views)
 !(import! &self ./src/native_llm.metta)
+!(import! &self ./src/commentary_contract_cetta.metta)
 
 (= (context:checkpoint $root)
    (let $saved (state:meta-text (task:window-key $root))
@@ -112,17 +113,19 @@
        (case $session
          (((ChatGPTUnavailable $_) (ContextPreparationFailed "context-compaction-account-unavailable"))
           ($ready (chatgpt:command-plan $model $tokens $effort $prompt $ready)))))
-     (py-call (native_llm_host.native_command_plan $model $tokens $effort $prompt))))
+     (let $selected (model:current $model)
+       (pcall:command-plan-purpose $selected $tokens $effort $prompt "compaction"))))
 (= (context:ask $model $tokens $effort $prompt)
    (let $planned (context:plan $model $tokens $effort $prompt)
      (case $planned
        (((ContextPreparationFailed $_) $planned)
         ($ready
-          (let* (($plan (py-call (native_llm_host.for_compaction $ready)))
+          (let* (($owner (call:host (llm:owner $ready)))
+                 ($_ (py-call (native_llm_host.for_compaction $owner)))
                  ($path (path:join (path:dirname (system:getenv-or-default "METTACLAW_ENGINE_STATE_PATH" "memory/engine")) "compaction-reply.json")))
-            (case (catch (llm:run $plan))
-              (((Error $kind $detail) (context:failed-reply $plan $path))
-               ((Error $detail) (context:failed-reply $plan $path))
+            (case (catch (llm:run $ready))
+              (((Error $kind $detail) (context:failed-reply $owner $path))
+               ((Error $detail) (context:failed-reply $owner $path))
                ($box
                  (let $_ (py-call (native_llm_host.structured_json_result $box $path))
                    (context:validate-summary (json-parse (fs:read-text $path)))))))))))))
@@ -303,7 +306,7 @@
 (= (context:prepare $base $focus $trigger $capacity $model $tokens $effort)
    (let* (($fresh (py-call (strategy_host.context_presented "[]")))
           ($assembled (request:append $base (topics:context)))
-          ($footer (str:concat "" (py-call (model_commentary.output_tail))))
+          ($footer (commentary:output-tail))
           ($ratio (context:ratio $model))
           ($window (if (== $capacity "") (task:fallback-window) (str:string->number $capacity)))
           ($render-window (max 0 (- $window (math:ceil (/ (str:byte-length $footer) $ratio)))))

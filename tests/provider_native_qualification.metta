@@ -268,3 +268,18 @@
           ($_ (nt:require tool-one-request (nt:equal (nq:posts $world) 1)))
           ($_ (nt:require advertised-one-tool (nt:equal (preq:size (preq:items (nq:request-body $world) "tools")) 1)))
           ($_ (nq:close $world))) 4))
+; Compaction uses the same native preparation as a command turn, without the
+; command tool or a visible attempt; the ledger records its own purpose.
+(: nq:compaction (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
+(= (nq:compaction $root $sdk $core $artifacts $fixture)
+   (let* (($world (nq:world $root $sdk $core $artifacts $fixture "compaction"))
+          ($reply (nq:path $world "compaction-reply.json"))
+          ($forms (format-args "!(let* (($prepared (pcall:command-plan-purpose \"fixture-model\" 42 \"low\" \"S_cache_boundary_U\" \"compaction\")) ($native (case $prepared (((PreparedProviderCallV1 $owner $transport) True) ($other False)))) ($_ (nt:require compaction-prepared-natively $native)) ($box (llm:run $prepared)) ($_ (py-call (native_llm_host.structured_json_result $box {})))) (println! NATIVE_COMPACTION_OK))" ((repr $reply))))
+          ($output (nq:output (nq:guest $world "fixture-model" "petta" $forms
+                     (("METTACLAW_MODEL_COMMENTARY" "1") ("METTACLAW_STREAM_DIR" (nq:path $world "display"))))))
+          ($_ (nt:require compaction-finished (nt:contains $output "NATIVE_COMPACTION_OK")))
+          ($_ (nt:require compaction-one-request (nt:equal (nq:posts $world) 1)))
+          ($_ (nt:require compaction-advertises-no-tool (not (preq:has (nq:request-body $world) "tools"))))
+          ($_ (nt:require compaction-reply-delivered (nt:contains (fs:read-text $reply) "(nop)")))
+          ($_ (nt:require compaction-ledger-purpose (nt:contains (repr (nq:rows $world "calls")) "compaction")))
+          ($_ (nq:close $world))) 6))

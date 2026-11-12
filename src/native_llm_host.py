@@ -91,14 +91,10 @@ def call_lane():
     return os.environ.get("METTACLAW_ACTIVITY_CALL_LANE") or ("interactive" if call_scope() else "")
 
 
-def enabled():
-    return "true" if os.environ.get("METTACLAW_LLM_TRANSPORT", "python") == "native" else "false"
-
-
 def native_contract(plan):
     """Whether terminal command classification is owned by native MeTTa."""
     return (model_commentary.enabled()
-            and getattr(plan, "kind", "") == "command")
+            and getattr(plan, "kind", "") == "command" and not _compaction(plan))
 
 
 def native_classified(plan, status, program, commentary, code, publish):
@@ -305,22 +301,30 @@ def structured_json_plan(text):
 
 
 def native_command_plan(model, tokens, effort, prompt):
+    """Legacy-route command plan; production commands use native preparation."""
     return command_plan(model, tokens, effort, prompt, native_ledger=True)
 
 
-def native_command_seed(selected, tokens):
+def native_command_seed(selected, tokens, purpose="command"):
     """Capture small host facts once; request and prompt bytes stay native."""
+    if purpose not in {"command", "compaction"}:
+        raise ValueError("unsupported native command purpose")
     plan = _plan("command", selected, tokens, None, native_ledger=True)
     if plan.ready == "false":
         return plan, '{"ready":false}'
     del plan.request
+    if purpose == "compaction":
+        for_compaction(plan)
     facts = {name: getattr(plan, name) for name in (
         "epoch", "correlation", "protocol", "base", "headers", "wire_model",
         "provider", "stream", "timeout", "cap", "connect", "first", "idle")}
-    plan.native_visible = stream_sink.configured()
+    plan.native_visible = purpose == "command" and stream_sink.configured()
     facts.update(ready=True, visible=plan.native_visible,
-                 tool=model_commentary.tool_schema() if model_commentary.enabled() else None,
-                 ttl=os.environ.get("METTACLAW_ANTHROPIC_CACHE_TTL", "5m"))
+                 tool=model_commentary.tool_schema() if purpose == "command" and model_commentary.enabled() else None,
+                 ttl=os.environ.get("METTACLAW_ANTHROPIC_CACHE_TTL", "5m"),
+                 # Immutable call facts the native owner keeps from here on.
+                 soft=plan.soft, maximum=plan.max_output, purpose=getattr(plan, "purpose", "turn"),
+                 activity=plan.activity, lane=plan.lane, guard=plan.guard, origin=plan.call_origin)
     return plan, json.dumps(facts, ensure_ascii=False)
 
 
@@ -349,7 +353,8 @@ def _bind_native_command(plan, seal, encoded):
             encoding=value["encoding"], prompt_layout=value["prompt_layout"],
             prompt_bytes=value["prompt_bytes"], prompt_feedback=value["feedback_visible"],
             prompt_footer=value["footer_visible"], stream=value["stream"],
-            call_context=dict(call_id=plan.correlation,provider=plan.provider,model=plan.wire_model,purpose="turn"))
+            call_context=dict(call_id=plan.correlation,provider=plan.provider,model=plan.wire_model,
+                              purpose=getattr(plan, "purpose", "turn")))
         if plan.protocol == "anthropic":
             fields["cache_layout"] = value["cache_layout"]
         vars(plan).update(fields)
@@ -358,10 +363,6 @@ def _bind_native_command(plan, seal, encoded):
     except (ValueError, TypeError, KeyError, AttributeError) as error:
         plan.error, plan.ready = error, "false"
         return "false"
-
-
-def native_prepared_matches(plan, seal):
-    return "true" if getattr(plan, "prepared_seal", None) == str(seal) else "false"
 
 
 def native_preparation_failed(plan, reason):
@@ -826,6 +827,15 @@ def waiting(plan, count=0, quiet=0):
         native_lifetime.progress(plan, count, quiet, soft)
     if not _compaction(plan):
         cognitive_health.provider_progress(count, quiet, soft, plan.timeout)
+    import process_supervision
+    process_supervision.provider_data(count)
+    return 1
+
+
+def progress_observed(plan, count, quiet, soft):
+    """Health and watchdog observers of a progress record the native owner paced."""
+    if not _compaction(plan):
+        cognitive_health.provider_progress(count, quiet, int(soft), plan.timeout)
     import process_supervision
     process_supervision.provider_data(count)
     return 1

@@ -67,11 +67,6 @@ class WorkingSetTests(unittest.TestCase):
         self.assertLessEqual(len(helper.boot_str("lastresults", "")),
                              helper._WORKING_CAP)
 
-    def test_text_nonempty_normalizes_boundary_values(self):
-        self.assertEqual(helper.text_nonempty(""), 0)
-        self.assertEqual(helper.text_nonempty(None), 0)
-        self.assertEqual(helper.text_nonempty([]), 0)
-        self.assertEqual(helper.text_nonempty("activity"), 1)
 
 
 class LoudEmptyReadTests(unittest.TestCase):

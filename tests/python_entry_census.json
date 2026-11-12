@@ -1,22 +1,37 @@
 {
   "schema": 1,
-  "about": "Ceilings for scripts/census_python_entries_cetta.metta: calls entering project Python per scenario. A port lowers its ceiling; no change may raise one.",
+  "about": "Ceilings for scripts/census_python_entries_cetta.metta: calls entering project Python per scenario. Each scenario is [file, marker, ceiling] with optional mode (\"probe\" or \"world\") and an optional object of environment settings. A port lowers its ceiling; no change may raise one.",
   "scenarios": [
+    [
+      "tests/integrated_coding_turn_probe.metta",
+      "INTEGRATED_CODING_TURN_OK",
+      64
+    ],
     [
       "tests/activity_delivery_full_turn_probe.metta",
       "ACTIVITY_DELIVERY_FULL_TURN_OK",
-      93
+      65
     ],
     [
       "tests/background_jobs_probe.metta",
       "BACKGROUND_JOBS_OK",
-      3
+      2
     ],
     [
       "tests/coding_lifecycle_probe.metta",
       "CODING_LIFECYCLE_OK",
-      269,
+      266,
       "world"
+    ],
+    [
+      "tests/provider_command_census_probe.metta",
+      "CENSUS_PROVIDER_OK",
+      20,
+      "world",
+      {
+        "METTACLAW_MODEL_COMMENTARY": "1",
+        "METTACLAW_STREAM_DIR": "display"
+      }
     ]
   ]
 }

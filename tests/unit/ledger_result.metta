@@ -1,0 +1,10 @@
+; Unit test of the native ledger's result replacement; no Python.
+!(import! &self ../native_test_support.metta)
+!(import! &self ../../src/llm_ledger.metta)
+!(bind! &results (new-space))
+!(let* (($_ (llm-ledger:result-put &results "c1" "first")) ($_ (llm-ledger:result-put &results "c1" "second")))
+   (nt:require replaced-result-read (nt:equal (llm-ledger:result-of &results "c1") "second")))
+!(let $_ (llm-ledger:result-put &results "c1" none)
+   (nt:require cleared-result (nt:equal (llm-ledger:result-of &results "c1") none)))
+!(nt:require no-stale-result-atoms (nt:equal (collapse (match &results (llm:result "c1" $r) $r)) ()))
+!(println! UNIT_LEDGER_RESULT_OK)

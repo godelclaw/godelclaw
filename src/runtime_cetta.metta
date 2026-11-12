@@ -14,7 +14,7 @@
 !(import! &self (library str))
 !(import! &self (library system))
 !(import! &self ./src/memory_health_cetta.metta)
-!(import! &self ./src/synthetic_llm.py)
+!(import! &self ./src/model_selection_cetta.metta)
 
 (= (rt:max-chars) 2400)
 (= (rt:receipt-window) 16)
@@ -388,7 +388,7 @@
                                        (rt:restarts))))))
         ($other None)))))
 (= (rt:model)
-   (let $name (py-call (synthetic_llm.current_model))
+   (let $name (model:current syn:large:text)
      (Val (JsonObject ((JsonPair "name" (JsonString (format-args "{}" ($name))))
                        (JsonPair "reasoningEffort" (JsonString (system:getenv-or-default "METTACLAW_REASONING_EFFORT" "default"))))))))
 

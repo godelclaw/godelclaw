@@ -2,6 +2,7 @@
 ;; part of the two-equation process kernel.
 
 !(import! &self ./src/working_state)
+!(import! &self ./src/loop_host_cetta.metta)
 !(bind! &loop-directives (new-state coordinates-empty))
 
 (= (loop-directives-clear)
@@ -94,8 +95,8 @@
 (= (policy-iter-transformations $selected)
    (coordinate-get-or iter-transformations 0 (policy-record $selected)))
 (= (policy-command-batch-limit $selected)
-   (py-call (helper.command_batch_limit
-     (coordinate-get-or command-batch-limit 5 (policy-record $selected)))))
+   (loop-host:command-batch-limit
+     (coordinate-get-or command-batch-limit 5 (policy-record $selected))))
 
 ;; Waiting for activity is explicit even with no budget left to bank.
 ;; Timed naps still use the banked budget and their existing continuation.

@@ -187,7 +187,7 @@ class ActivityBatchTests(unittest.TestCase):
         loop = (ROOT / "src" / "loop.metta").read_text(encoding="utf-8")
         self.assertIn('($message (eval (receive)))', loop)
         self.assertIn(
-            '($hasActivity\n            (and (== (py-call (helper.text_nonempty $message)) 1)',
+            '($hasActivity\n            (and (loop-host:nonempty? $message)',
             loop)
         self.assertNotIn(
             "($msgnew (prog1 (!= $msg (get-state &prevmsg))", loop)

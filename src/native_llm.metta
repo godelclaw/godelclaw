@@ -2,6 +2,8 @@
 ; Host lifecycle observations and credential configuration remain boundaries.
 !(import! &self ./src/native_llm_host.py)
 !(import! &self ./src/interop_flags_cetta.metta)
+!(import! &self ./src/model_selection_cetta.metta)
+!(import! &self ./src/native_call_cetta.metta)
 ; A flag consumes a computed value. Atom would treat an inline host call as
 ; quoted syntax and silently classify it as false.
 (: llm:host-flag (-> %Undefined% Bool))
@@ -20,11 +22,14 @@
           ($value (py-call (operator.call $method "chatgpt:"))))
      (llm:host-flag $value)))
 (= (llm:native?)
-   (let $value (py-call (native_llm_host.enabled)) (llm:host-flag $value)))
+   (== (system:getenv-or-default "METTACLAW_LLM_TRANSPORT" "python") "native"))
+; A native call owner answers from its own phase; a legacy plan from the host.
 (= (llm:plan-ready $plan)
-   (let $value (py-call (native_llm_host.field $plan "ready")) (llm:host-flag $value)))
+   (if (call:native? $plan) (call:ready? $plan)
+     (let $value (py-call (native_llm_host.field $plan "ready")) (llm:host-flag $value))))
 (= (llm:uses-native-ledger $plan)
-   (llm:host-flag (py-call (native_llm_host.native_accounting $plan))))
+   (if (call:native? $plan) True
+     (llm:host-flag (py-call (native_llm_host.native_accounting $plan)))))
 !(if (llm:native?)
      (let* (($command-module (import! &self llm:command))
             ($compat-module (import! &self llm:compat))
@@ -54,30 +59,34 @@
 (= (llm:command $model $tokens $effort $prompt)
    (if (not (llm:host-flag (py-call (native_llm_host.request_allowed)))) "()"
     (if (llm:native?)
-     (let $selected (py-call (synthetic_llm.current_model $model))
+     (let $selected (model:current $model)
        (if (str:starts-with $selected "chatgpt:")
          (chatgpt:command $selected $tokens $effort $prompt)
          (let $plan (pcall:command-plan $selected $tokens $effort $prompt) (llm:run $plan))))
-     (let* (($selected (py-call (synthetic_llm.current_model $model)))
+     (let* (($selected (model:current $model))
             ($subscription (llm:subscription-model? $selected)))
        (if $subscription
          (py-call (synthetic_llm.unavailable_action chatgpt-requires-native-cetta))
          (py-call (synthetic_llm.chat $model $tokens $effort $prompt)))))))
 
 (= (llm:structured $request)
-   (let* (($selected (py-call (synthetic_llm.current_model)))
+   (let* (($selected (model:current syn:large:text))
           ($subscription (llm:subscription-model? $selected)))
      (if $subscription (Error llm:structured chatgpt-command-mode-only)
        (let $plan (py-call (native_llm_host.native_structured_plan $request)) (llm:run $plan)))))
 
 (= (llm:structured-json-plan $text)
-   (let $selected (py-call (synthetic_llm.current_model))
+   (let $selected (model:current syn:large:text)
      (if (str:starts-with $selected "chatgpt:")
        (let $session (chatgpt:session)
          (case $session
            (((ChatGPTUnavailable $why) (Error llm:structured-json-plan $why))
             ($ready (chatgpt:structured-plan $selected (json-parse $text) $ready)))))
        (py-call (native_llm_host.native_structured_json_plan $text)))))
+
+(: llm:owner (-> Atom %Undefined%))
+(= (llm:owner $plan)
+   (case $plan (((PreparedProviderCallV1 $owner $transport) $owner) ($legacy $legacy))))
 
 (= (llm:run $plan)
    (case $plan
@@ -154,7 +163,7 @@
      (case $submitted
        (((io:pending $id)
          (let $_ (if (llm:uses-native-ledger $plan) (account:submitted $plan $id)
-                   (py-call (native_llm_host.submitted $plan $id)))
+                   (py-call (native_llm_host.submitted (call:host $plan) $id)))
            (llm:v1:pending $epoch $correlation $protocol $id)))
         ($other (llm:v1:failed $epoch $correlation submit-error not-started)))))
       (llm:v1:failed $epoch $correlation native-accounting-error not-started))))
@@ -186,8 +195,8 @@
      (((llm:v1:pending $epoch $correlation $protocol $id)
         (llm:await $plan $state))
       ((llm:v1:failed duplicate duplicate duplicate-plan not-started)
-        (py-call (native_llm_host.duplicate_plan $plan)))
-      ((llm:v1:rejected $reason) (py-call (native_llm_host.duplicate_plan $plan)))
+        (py-call (native_llm_host.duplicate_plan (call:host $plan))))
+      ((llm:v1:rejected $reason) (py-call (native_llm_host.duplicate_plan (call:host $plan))))
       ($other (llm:deliver $plan $state)))))
 
 (: llm:await (-> Atom Atom %Undefined%))
@@ -207,8 +216,9 @@
 (= (llm:wait-owned $plan $state $milliseconds)
    (case $state
      (((llm:v1:pending $epoch $correlation $protocol $id)
-       (let $owned (py-call (native_llm_host.owns $plan $epoch $correlation $id))
-        (if (llm:host-flag $owned)
+       (let $owned (if (call:native? $plan) (call:owns? $plan $epoch $correlation $id)
+                     (llm:host-flag (py-call (native_llm_host.owns $plan $epoch $correlation $id))))
+        (if $owned
         (let* (($status (llm:status-http $id))
               ($_ (llm:progress $plan $status))
               ($_ (stream:progress $plan $id))
@@ -232,7 +242,8 @@
      (((io:idle) $state)
       ((io:event $received (http:response-with-metadata $status $body (http:retry-after $seconds)))
        (if (== $id $received)
-         (let $_ (py-call (native_llm_host.response_retry_after $plan $seconds))
+         (let* (($native-retry (if (call:native? $plan) (call:retry-after $plan $seconds) ()))
+                ($host-retry (py-call (native_llm_host.response_retry_after (call:host $plan) $seconds))))
                 (llm:observe-plan $plan $state $epoch $correlation $protocol $id
                   (io:event $received (http:response $status $body))))
          $state))
@@ -241,12 +252,12 @@
          (if (and (>= $status 200) (< $status 300))
            (llm:decode-body $plan $epoch $correlation $protocol $body)
            ; Keep the provider's explanation, as Codex shows it.
-           (let $_ (py-call (native_llm_host.provider_error $plan $body))
+           (let $_ (py-call (native_llm_host.provider_error (call:host $plan) $body))
              (llm:v1:failed $epoch $correlation (http-status $status) response-received)))
          $state))
       ((io:event $received (NativeHttpFailureV1 $kind $code))
        (if (== $id $received)
-         (let $_ (py-call (native_llm_host.transport_failure $plan $kind $code))
+         (let $_ (py-call (native_llm_host.transport_failure (call:host $plan) $kind $code))
            (llm:v1:failed $epoch $correlation transport-error remote-outcome-unknown))
          $state))
       ($other (llm:v1:failed $epoch $correlation transport-error remote-outcome-unknown)))))
@@ -263,7 +274,8 @@
 
 (: llm:decode-legacy-body (-> Atom Atom Atom Atom Atom %Undefined%))
 (= (llm:decode-legacy-body $plan $epoch $correlation $protocol $body)
-   (case (py-call (native_llm_host.response_decode_config $plan))
+   (case (if (call:native? $plan) (call:decode-config $plan)
+           (py-call (native_llm_host.response_decode_config $plan)))
      ((($stream $limit)
        (let $enabled (llm:host-flag $stream)
          (llm:decode-received-body $plan $epoch $correlation $protocol $body $enabled $limit 0)))
@@ -277,7 +289,7 @@
      (((llm:v1:ok $text)
        (llm:v1:io-outcome $epoch $correlation $protocol (http:response 200 $text)))
       ((llm:v1:error stream-capacity)
-       (let $_ (py-call (native_llm_host.decoding_wait $plan $attempt))
+       (let $_ (py-call (native_llm_host.decoding_wait (call:host $plan) $attempt))
          (llm:decode-received-body $plan $epoch $correlation $protocol $body $stream $limit (+ $attempt 1))))
       ((llm:v1:error $why)
        (llm:v1:failed $epoch $correlation incomplete-stream response-received))
@@ -291,9 +303,12 @@
 
 (: llm:deliver (-> Atom Atom %Undefined%))
 (= (llm:deliver $plan $state)
-   (let* (($display-id (py-call (native_llm_host.field $plan "correlation")))
-          ($_ (stream:close $display-id)))
-     (llm:deliver-final $plan $state)))
+   (let* (($display-id (if (call:native? $plan) (call:correlation $plan)
+                          (py-call (native_llm_host.field $plan "correlation"))))
+          ($closed (stream:close $display-id))
+          ($answer (llm:deliver-final $plan $state))
+          ($released (if (call:native? $plan) (call:release $plan) ())))
+     $answer))
 
 (: llm:deliver-final (-> Atom Atom %Undefined%))
 (= (llm:deliver-final $plan $state)
@@ -313,7 +328,7 @@
       ($other (llm:failed-plan $plan unknown invalid-phase 0)))))
 (= (llm:failed-plan $plan $correlation $kind $status)
    (if (llm:uses-native-ledger $plan) (account:failed $plan $correlation $kind $status)
-     (py-call (native_llm_host.failed $plan $correlation $kind $status))))
+     (py-call (native_llm_host.failed (call:host $plan) $correlation $kind $status))))
 
 (: llm:finish-rendered (-> Atom Atom Atom Atom Atom %Undefined%))
 (= (llm:finish-rendered $plan $epoch $correlation $encoded $canonical)
@@ -324,7 +339,7 @@
            (let $_ (commentary:prepare $plan $legacy-text)
              (if (llm:uses-native-ledger $plan)
                (account:complete $plan $epoch $correlation $legacy-text $canonical-text)
-               (py-call (native_llm_host.finish $plan $epoch $correlation $legacy-text $canonical-text)))))
+               (py-call (native_llm_host.finish (call:host $plan) $epoch $correlation $legacy-text $canonical-text)))))
           ((llm:v1:error $code) (llm:failed-plan $plan $correlation $code 0)))))
       ((llm:v1:error $other-code) (llm:failed-plan $plan $correlation $other-code 0)))))
 
@@ -340,8 +355,8 @@
 
  ; Optional owned text observation. Only inert chunk values cross the portable
 ; function/return error boundary. Host publication runs outside that boundary.
-(= (llm:commentary-progress $plan $id)
-   (let $readable (py-call (native_llm_host.commentary_readable $plan))
+(= (llm:commentary-progress $owner $id)
+   (let* (($plan (call:host $owner)) ($readable (py-call (native_llm_host.commentary_readable $plan))))
      (if (llm:host-flag $readable)
        (let* (($offset (py-call (native_llm_host.commentary_offset $plan)))
               ($chunk (llm:commentary-read $id $offset)))

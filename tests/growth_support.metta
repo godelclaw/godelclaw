@@ -78,3 +78,24 @@
                                 (time-ratios (/ $t4 (max 1 $t1)) (/ $t16 (max 1 $t4)))))))
      (and (growth:within $name ($n $t1 $m1) ((* 4 $n) $t4 $m4) $bounds)
           (growth:within $name ((* 4 $n) $t4 $m4) ((* 16 $n) $t16 $m16) $bounds))))
+
+;; ------------------------------------------------- the gate's own mutant
+
+; Whether one 4x step stays within bounds, without failing the run.
+(= (growth:holds? $small $large $bounds)
+   (let* (((GrowthBounds $tr $ts $mr $ms) $bounds)
+          (($size-a $time-a $memory-a) $small) (($size-b $time-b $memory-b) $large))
+     (and (<= $time-b (+ (* $tr $time-a) $ts)) (<= $memory-b (+ (* $mr $memory-a) $ms)))))
+; A registered mutant must break the bounds in at least one step: this shows
+; the gate can fail.
+(= (growth:rejects $root $core $artifacts $name $script $n $bounds)
+   (let* (($dir (nt:join $artifacts (format-args "growth-{}-{}" ($name (system:uuid4-hex)))))
+          ($_ (fs:make-directories $dir 448))
+          (($t1 $m1) (growth:sample $root $core $script $n $dir))
+          (($t4 $m4) (growth:sample $root $core $script (* 4 $n) $dir))
+          (($t16 $m16) (growth:sample $root $core $script (* 16 $n) $dir))
+          ($_ (println! (GROWTH-MUTANT $name (size $n ns $t1 kib $m1) (size (* 4 $n) ns $t4 kib $m4)
+                                       (size (* 16 $n) ns $t16 kib $m16)
+                                       (time-ratios (/ $t4 (max 1 $t1)) (/ $t16 (max 1 $t4)))))))
+     (not (and (growth:holds? ($n $t1 $m1) ((* 4 $n) $t4 $m4) $bounds)
+               (growth:holds? ((* 4 $n) $t4 $m4) ((* 16 $n) $t16 $m16) $bounds)))))

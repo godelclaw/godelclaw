@@ -11,10 +11,10 @@
           ($plan (owner-test:seed)) ($metadata (owner-test:metadata "fixture-model"))
           ($bound (py-call (native_llm_host.bind_native_command $plan $seal $metadata)))
           ($_ (nt:require native-owner-bound (host:flag $bound)))
-          ($_ (nt:require matching-native-description
-                (host:flag (py-call (native_llm_host.native_prepared_matches $plan $seal)))))
-          ($_ (nt:require wrong-description-refused
-                (not (host:flag (py-call (native_llm_host.native_prepared_matches $plan "other"))))))
+          ($owner (call:owner $plan (JsonObject ((JsonPair "correlation" "owner-contract"))) $seal))
+          ($_ (nt:require matching-native-description (call:seal-matches? $owner $seal)))
+          ($_ (nt:require wrong-description-refused (not (call:seal-matches? $owner "other"))))
+          ($_ (call:release $owner))
           ($_ (nt:require rebind-refused
                 (not (host:flag (py-call (native_llm_host.bind_native_command $plan $seal "{broken"))))))
           ($_ (nt:require live-owner-not-revoked (nt:equal (py-call (native_llm_host.field $plan "ready")) "true")))

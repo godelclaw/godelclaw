@@ -1,0 +1,56 @@
+; Per-module unit tests of native ports. Each file runs in a fresh child of
+; the Python-disabled core with its own scratch directory, and must print its
+; marker. Run from the checkout root with NATIVE_TEST_CORE and
+; NATIVE_TEST_ARTIFACTS; pass one unit name as the first argument to run only it.
+!(import! &self ../tests/native_test_support.metta)
+
+(= (units:all)
+   (("tests/unit/model_selection.metta" "UNIT_MODEL_SELECTION_OK")
+    ("tests/unit/loop_host.metta" "UNIT_LOOP_HOST_OK")
+    ("tests/unit/commentary_contract.metta" "UNIT_COMMENTARY_ON_OK" (("METTACLAW_MODEL_COMMENTARY" "1")))
+    ("tests/unit/commentary_contract.metta" "UNIT_COMMENTARY_OFF_OK" (("METTACLAW_MODEL_COMMENTARY" "0")))
+    ("tests/unit/native_call.metta" "UNIT_NATIVE_CALL_OK")
+    ("tests/unit/stream_cursors.metta" "UNIT_STREAM_CURSORS_OK")
+    ("tests/unit/ledger_result.metta" "UNIT_LEDGER_RESULT_OK")))
+
+(= (units:env $directory)
+   (let $base (nt:environment $directory)
+     (preq-free:append
+       (("SYNTHETIC_MODEL" "unit-configured-model")
+        ("METTACLAW_MODEL_STATE_PATH" (nt:join $directory "model-state"))
+        ("METTACLAW_HEARTBEAT_INTERVAL_SECONDS" " 45 ") ("METTACLAW_COMMAND_BATCH_LIMIT" "0")
+        ("METTACLAW_HISTORY_PATH" (nt:join $directory "journal/history.metta")))
+       $base)))
+(= (preq-free:append $front $back)
+   (if (== $front ()) $back (cons-atom (car-atom $front) (preq-free:append (cdr-atom $front) $back))))
+
+(= (units:one $root $engine $artifacts ($file $marker))
+   (units:one $root $engine $artifacts ($file $marker ())))
+(= (units:one $root $engine $artifacts ($file $marker $extra))
+   (let* (($directory (nt:join $artifacts (str:concat "unit-" (system:uuid4-hex))))
+          ($_ (fs:make-directories $directory 448))
+          ($output (nt:exit-ok (proc:run ($engine "--lang" "petta" "--profile" "extended" "--import-mode" "ancestor-walk" "--quiet" $file)
+                                         $root (preq-free:append $extra (units:env $directory)) 120000 1048576)))
+          ($_ (nt:require unit-marker (nt:contains $output $marker)))
+          ($_ (println! (UNIT_PASSED $file)))) 1))
+
+(= (units:selected $all $only)
+   (if (== $all ()) ()
+     (let ($case $rest) ((car-atom $all) (cdr-atom $all))
+       (if (or (== $only "") (nt:contains (car-atom $case) $only))
+         (cons-atom $case (units:selected $rest $only))
+         (units:selected $rest $only)))))
+
+(= (units:run $root $engine $artifacts $cases $count)
+   (if (== $cases ()) $count
+     (let $_ (units:one $root $engine $artifacts (car-atom $cases))
+       (units:run $root $engine $artifacts (cdr-atom $cases) (+ $count 1)))))
+
+(= (units:main)
+   (let* (($root (system:cwd)) ($engine (nt:join (nt:required-env "NATIVE_TEST_CORE") "cetta"))
+          ($artifacts (nt:required-env "NATIVE_TEST_ARTIFACTS"))
+          ($only (system:getenv-or-default "NATIVE_UNIT" ""))
+          ($cases (units:selected (units:all) $only))
+          ($_ (nt:require unit-selection-nonempty (not (== $cases ())))))
+     (units:run $root $engine $artifacts $cases 0)))
+!(let $count (units:main) (println! (NATIVE_UNITS_PASSED $count)))

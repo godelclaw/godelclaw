@@ -69,29 +69,31 @@
 ;; directory: everything it creates (coding sessions, frozen runtimes, fixture
 ;; programs on PATH in <world>/scope-bin) stays inside the world, and the
 ;; world's loopback provider and ledger serve it.
-(= (census:command $root $sdk $world $bin $venv $directory $name probe)
+; $extra is the scenario's optional environment, applied last. A relative path
+; in it names a file inside the world, the working directory of world mode.
+(= (census:command $root $sdk $world $bin $venv $directory $name probe $extra)
    (CensusCommand ("./run.sh" $name) $root
-     (nq:overlay-env (nr:probe-env $world $name $bin $name)
+     (nq:overlay-env (nq:overlay-env (nr:probe-env $world $name $bin $name)
        (("PETTA_PY_ENV" $venv) ("PYTHON_ENTRY_CENSUS_DIR" $directory)
-        ("PYTHON_ENTRY_CENSUS_ROOT" $root)))))
-(= (census:command $root $sdk $world $bin $venv $directory $name world)
+        ("PYTHON_ENTRY_CENSUS_ROOT" $root))) $extra)))
+(= (census:command $root $sdk $world $bin $venv $directory $name world $extra)
    (let* (($cwd (nq:path $world ""))
           ($manifest (preq:parse (fs:read-text (nt:join $sdk "build-manifest.json"))))
           ($site (nt:join $venv (format-args "lib/python{}/site-packages" ((pcall:fact $manifest "python_version")))))
           ($path (format-args "{}scope-bin:{}:{}" ($cwd $bin (system:getenv-or-default "PATH" "/usr/bin:/bin")))))
      (CensusCommand ((nt:join $sdk "cetta") "--lang" "petta" "--import-mode" "ancestor-walk" (nt:join $root $name)) $cwd
-       (nq:guest-env $world "fixture-model"
+       (nq:overlay-env (nq:guest-env $world "fixture-model"
          (("PYTHONPATH" (format-args "{}/src:{}/modes:{}/modes/iter:{}/channels:{}" ($root $root $root $root $site)))
           ("PATH" $path) ("METTACLAW_INSTANCE" "census")
           ("METTACLAW_CODING_GUIDANCE_DIR" (nq:path $world "no-guidance"))
           ("METTACLAW_MAIL_NAME" "census-requester")
           ("METTACLAW_WORK_MAIL" (format-args "{}scope-bin/mailer" ($cwd)))
-          ("PYTHON_ENTRY_CENSUS_DIR" $directory) ("PYTHON_ENTRY_CENSUS_ROOT" $root))))))
+          ("PYTHON_ENTRY_CENSUS_DIR" $directory) ("PYTHON_ENTRY_CENSUS_ROOT" $root))) $extra))))
 
-(= (census:scenario $root $sdk $core $artifacts $fixture $bin $venv $name $marker $ceiling $mode $index)
+(= (census:scenario $root $sdk $core $artifacts $fixture $bin $venv $name $marker $ceiling $mode $extra $index)
    (let* (($world (nq:world $root $sdk $core $artifacts $fixture (format-args "census-{}" ($index))))
           ($directory (nq:path $world "census")) ($_ (fs:make-directories $directory 448))
-          ((CensusCommand $argv $cwd $env) (census:command $root $sdk $world $bin $venv $directory $name $mode))
+          ((CensusCommand $argv $cwd $env) (census:command $root $sdk $world $bin $venv $directory $name $mode $extra))
           ($start (system:monotonic-ns))
           ($result (proc:run $argv $cwd $env 300000 1048576))
           ($elapsed (/ (- (system:monotonic-ns) $start) 1000000))
@@ -108,14 +110,26 @@
      (if (<= $count $ceiling) True
        (let $_ (println! (PYTHON_ENTRY_CEILING_EXCEEDED $name $count $ceiling)) False))))
 
+; Optional fields after the ceiling: a mode ("probe", the default, or
+; "world"), then an object of environment settings for the scenario.
 (= (census:mode ()) probe)
+(= (census:mode ((JsonString "probe") $more)) probe)
+(= (census:mode ((JsonString "world") $more)) world)
 (= (census:mode ((JsonString "world"))) world)
+(= (census:extra-env ()) ())
+(= (census:extra-env ($mode)) ())
+(= (census:extra-env ($mode (JsonObject $pairs))) (census:env-pairs $pairs))
+(= (census:env-pairs $pairs)
+   (if (nt:equal $pairs ()) ()
+     (let (JsonPair $key (JsonString $value)) (preq:head $pairs)
+       (preq:cons ($key $value) (census:env-pairs (preq:tail $pairs))))))
 (= (census:run-scenarios $root $sdk $core $artifacts $fixture $bin $venv $scenarios $index $ok)
    (if (nt:equal $scenarios ()) $ok
      (let* (((JsonArray $fields) (preq:head $scenarios))
             (((JsonString $name) (JsonString $marker) (JsonNumber $ceiling)) (census:first-three $fields))
-            ($mode (census:mode (cdr-atom (cdr-atom (cdr-atom $fields)))))
-            ($passed (census:scenario $root $sdk $core $artifacts $fixture $bin $venv $name $marker (parse $ceiling) $mode $index)))
+            ($optional (cdr-atom (cdr-atom (cdr-atom $fields))))
+            ($mode (census:mode $optional)) ($extra (census:extra-env $optional))
+            ($passed (census:scenario $root $sdk $core $artifacts $fixture $bin $venv $name $marker (parse $ceiling) $mode $extra $index)))
        (census:run-scenarios $root $sdk $core $artifacts $fixture $bin $venv (preq:tail $scenarios) (+ $index 1)
          (and $ok $passed)))))
 

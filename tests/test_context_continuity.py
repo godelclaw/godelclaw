@@ -136,12 +136,9 @@ class ContextContinuityTest(unittest.TestCase):
         self.assertEqual(batch.count("current revision"), 1)
 
     def test_internal_history_append_does_not_use_public_mutation_skill(self):
-        self.assertEqual(helper.history_append("turn one"), 1)
-        self.assertEqual(helper.history_append("turn two\n"), 1)
-        self.assertEqual(self.history.read_text(encoding="utf-8"),
-                         "turn one\nturn two\n")
+        # The journal itself is covered by tests/unit/loop_host.metta.
         source = (ROOT / "src" / "memory.metta").read_text(encoding="utf-8")
-        self.assertIn("helper.history_append", source)
+        self.assertIn("(loop-host:history-append", source)
         self.assertNotIn("(append-file", source)
 
     def test_prompt_has_one_event_window_and_explicit_affect_gestalt(self):

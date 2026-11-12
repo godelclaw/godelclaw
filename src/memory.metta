@@ -12,12 +12,13 @@
           (configure maxRecentTurns 8)))
 
 (= (getPrompt)
-   (read-file (py-call (helper.path_from_env "METTACLAW_PROMPT_PATH" "./memory/soul.md"))))
+   (read-file (loop-host:prompt-path)))
 
 ;; The running proposal window: what the model requested over the last few
 ;; substantive turns. Broker receipts, not this transcript, say what ran.
 ;; No-op turns do not consume a slot.
 !(import! &self ./src/action_window_cetta)
+!(import! &self ./src/loop_host_cetta.metta)
 
 (= (recentActions)
    (action-window:recent (action-window:history-path) (maxRecentTurns)))
@@ -35,7 +36,7 @@
            (appendToHistory ((get_time_as_string) (newline) $response (newline) ERROR_FEEDBACK: (get-state &error))))))
 
 (= (appendToHistory $addition)
-   (py-call (helper.history_append (swrite $addition))))
+   (loop-host:history-append (swrite $addition)))
 
 ; The native memory service owns memory controls and durable write retries in MeTTa.
 !(import! &self ./src/semantic_memory_cetta)
