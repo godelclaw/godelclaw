@@ -277,6 +277,44 @@
         "ChatGPT request host state",
         "opt-in request capture"
       ]
+    },
+    {
+      "id": "input-delivery-scopes",
+      "status": "qualified-and-deployed",
+      "native_modules": [
+        "src/input_scope_cetta.metta",
+        "src/input_ledger.metta",
+        "src/mail_cetta.metta",
+        "src/jobs_cetta.metta"
+      ],
+      "runtime_commit": "7da2df5c83c62ac5e88119b6878efdbffd3937ed",
+      "engine_commit": "2eefbdff7af5020c9a6283bcb3908be3e78c9273",
+      "lean_commit": "2565249eb",
+      "release": "6bfb63a8759b68f9e1e7d8ea62f3acfe784a4d7ed23534f608555672632988e1",
+      "test_orchestration": "CeTTa core without Python",
+      "checks": {
+        "ledger_and_projection_controls": 35,
+        "scope_controls_per_dialect": 6,
+        "dialects": [
+          "petta",
+          "he"
+        ],
+        "mutants_killed": 3,
+        "provider_integration_scenarios": 17,
+        "reference_runtime_probes": 30,
+        "paired_installed_verification": true
+      },
+      "remaining_host_boundaries": [
+        "strategy envelope creation",
+        "working-state scope bridge",
+        "IRC and Mattermost ingress",
+        "evidence handoff integration"
+      ],
+      "limits": [
+        "Model is not an implementation refinement proof",
+        "No paid live canary or 24-hour soak claimed",
+        "Whole runtime still uses the SDK Python backend"
+      ]
     }
   ]
 }
