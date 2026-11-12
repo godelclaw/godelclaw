@@ -1,0 +1,7 @@
+!(import! &self ../tests/native_suite_cetta.metta)
+(= (handoff-suite:run)
+   (let* (($evidence (native-suite:one "scripts/test_handoff_evidence_cetta.metta" "NATIVE_HANDOFF_DRIVER_PASSED" "petta"))
+          ($mutants (native-suite:one "scripts/test_handoff_mutants_cetta.metta" "NATIVE_HANDOFF_MUTANTS_PASSED" "petta"))
+          ($regression (native-suite:one "scripts/test_input_delivery_cetta.metta" "NATIVE_INPUT_DELIVERY_SUITE_PASSED" "petta"))) NativeHandoffSuitePassedV1))
+!(nt:require handoff-suite-completed (nt:equal (collapse (handoff-suite:run)) (NativeHandoffSuitePassedV1)))
+!(println! NATIVE_HANDOFF_SUITE_PASSED)

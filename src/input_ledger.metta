@@ -1581,6 +1581,13 @@
       (("request-retire" ($prefix $note $request-id)) (input-ledger:request-retire $db $prefix $note $request-id))
       (("request-get" ($id $with)) (input-ledger:request-get $db $id $with))
       (("request-record" ($id $offset)) (input-ledger:request-record $db $id $offset))
+      (("request-head-observation" ($id))
+       (input-ledger:task-read $db input-ledger:request-head-observation
+         (|-> ($view)
+           (let* (($owner (input-ledger:state-of $view "owner"))
+                  ($heads (input-ledger:heads $view $id))
+                  ($head (if (== $heads ()) none (car-atom $heads))))
+             (RequestHeadObservationV1 $owner $head)))))
       (("request-page" ($offset $limit)) (input-ledger:request-page $db $offset $limit))
       (("request-protected" ($focus)) (input-ledger:request-protected $db $focus))
       (("request-rows" ($which)) (input-ledger:request-rows $db $which))
