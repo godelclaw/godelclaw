@@ -274,3 +274,83 @@
       ($other ("unavailable")))))
 (= (estate:load)
    (estate:load-answers (collapse (catch (estate:context-view-root (system:cwd) "")))))
+
+;; ------------------------------------------ work-status and resume on a pin
+; The agent's verbs observe sessions as the context view does: a snapshot of
+; the sessions and the one ledger-selection fact their verdicts need, taken
+; once per verb, with no runtime disk accounting.
+
+(= (estate:today) (system:format-time "%Y-%m-%d" (system:wall-time) "local"))
+(= (estate:selection-of $sessions)
+   (if (eio:any-matched? $sessions)
+     (JsonObject ((JsonPair "llm-ledger-sqlite" (eio:llm-ledger-selection)))) (JsonObject ())))
+(= (estate:facts $sessions)
+   (JsonObject ((JsonPair "today" (estate:today)) (JsonPair "selection" (estate:selection-of $sessions)))))
+; Every session under base/memory/coding: (EstateSessions facts sessions).
+(= (estate:sessions-view $base)
+   (let* (($_ (change-state! &eio-world-cache ()))
+          ($coding-dir (eio:child $base "memory/coding"))
+          (($available $ids) (eio:coding-subdirs $coding-dir))
+          ($sessions (map-atom $ids $sid (eio:session $coding-dir $sid))))
+     (EstateSessions (estate:facts $sessions) $sessions)))
+; One session observed alone: (EstateView facts session).
+(= (estate:session-view $base $id)
+   (let* (($_ (change-state! &eio-world-cache ()))
+          ($session (eio:session (eio:child $base "memory/coding") $id)))
+     (EstateView (estate:facts ($session)) $session)))
+
+; The status a session line shows: launching (a reservation whose scope is not
+; active), else the recorded status.
+(= (estate:effective-status $session $scope-active)
+   (if (and (estate:launching? $session) (not $scope-active))
+     (str:concat "launching since " (estate:field $session "launching_date" ""))
+     (estate:text-or (estate:field (estate:state $session) "status" JsonNull) "")))
+; The rest of a (work-status) line: the pin (just "unpinned" without one) and
+; any hold or archive label.
+(= (estate:status-suffix $facts $session)
+   (let (EstateVerdict $verdict $reason) (estate:classify $facts $session)
+     (str:join "" (" · " (if (== (estate:field $session "runtime_exists" False) False) "unpinned"
+                            (estate:pin-part $facts $session $verdict $reason))
+                   (estate:label-part $session)))))
+; (work-status "id") details: the pin's bundle and engine, and the lifecycle record.
+(= (estate:status-detail $facts $session)
+   (let (EstateVerdict $verdict $reason) (estate:classify $facts $session)
+     (str:join "" ("\n" (estate:pin-line $session $verdict $reason) "\n" (estate:lifecycle-line $session)))))
+(= (estate:pin-line $session $verdict $reason)
+   (if (== (estate:field $session "runtime_exists" False) False) (str:join "" ("pin: unpinned (" $reason ")"))
+     (let* (($runtime (estate:runtime $session))
+            ($digest (estate:text-or (estate:field $runtime "digest" JsonNull)
+                                     (estate:text-or (estate:field $session "root_name" "") "unknown")))
+            ($binary (estate:string-value (estate:field $runtime "binary" JsonNull)))
+            ($engine (if (== $binary "") "unknown" (eio:basename $binary)))
+            ($recorded (estate:text-or (estate:field $runtime "binary_sha256" JsonNull) "unrecorded"))
+            ($hash (estate:current-hash $session))
+            ($current (if (== $hash "") "missing" $hash)))
+       (str:join "" ("pin: bundle " $digest " · engine " $engine " (recorded " $recorded ", current " $current ")"
+                     (estate:repin-part $session) " · " (estate:verdict-text $verdict $reason))))))
+; The record as json.dumps(record, sort_keys=True) writes it.
+(= (estate:lifecycle-json $lifecycle) (json:stringify-python-with $lifecycle ((sort-keys True))))
+(= (estate:lifecycle-line $session)
+   (let $lifecycle (estate:lifecycle $session)
+     (case (estate:field $lifecycle "hold" JsonNull)
+       (((JsonObject $pairs)
+         (let* (($hold (estate:field $lifecycle "hold" (JsonObject ())))
+                ($review (estate:field $hold "review" JsonNull))
+                ($why (estate:text-or (estate:field $hold "why" "") "")))
+           (str:join "" ("lifecycle: " (if (estate:truth $review) (str:join "" ("hold until " (estate:text $review) ": " $why))
+                                           (str:concat "hold: " $why))
+                         " (" (estate:lifecycle-json $lifecycle) ")"))))
+        ($other
+         (case (estate:field $lifecycle "archive" JsonNull)
+           (((JsonObject $pairs)
+             (str:join "" ("lifecycle: archive: "
+                           (estate:text-or (estate:field (estate:field $lifecycle "archive" (JsonObject ())) "why" "") "")
+                           " (" (estate:lifecycle-json $lifecycle) ")")))
+            ($none "lifecycle: none"))))))))
+; Why a session cannot resume on its pin, or "". An unknown backend selection
+; refuses retryably.
+(= (estate:resume-problem $facts $session)
+   (let (EstateVerdict $verdict $reason) (estate:classify $facts $session)
+     (if (== $verdict "needs-current") $reason
+       (if (and (== $verdict "unverified") (str:starts-with $reason "the LLM ledger's backend selection is unavailable ("))
+         (str:concat $reason "; its pin cannot be checked now. Try again later.") ""))))

@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from test_context_bundle_native import CALLER, HEADER, ROOT, guest, guest_env, q, save_evidence
+from test_context_bundle_native import CALLER, HEADER, ROOT, guest, guest_env, native_coding_sessions, q, save_evidence
 import small_views_probe as probe
 import context_sources
 import helper
@@ -46,6 +46,13 @@ def oracle(source):
 
 
 class SmallViewsTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # A CeTTa guest renders coding-sessions natively; its oracle bundle
+        # shows that view of the same workspace.
+        with tempfile.TemporaryDirectory() as scratch, contextlib.chdir(ROOT):
+            cls.coding_sessions = native_coding_sessions(Path(scratch))
+
     def setUp(self):
         self.enterContext(contextlib.chdir(ROOT))
         self.temp = tempfile.TemporaryDirectory()
@@ -72,7 +79,9 @@ class SmallViewsTest(unittest.TestCase):
         initial = {name: (Path(name).read_bytes(), Path(name).stat())
                    if Path(name).is_file() else None for name in touched}
         env = guest_env(self.directory, "petta" if swi else "cetta", **self.settings)
-        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(
+        view = self.coding_sessions
+        with mock.patch.object(probe, "coding_sessions", None if swi else (lambda: view)), \
+                mock.patch.dict(os.environ, env, clear=True), mock.patch.object(
                 probe.engine_modes, "engine_command", probe.engine_command), mock.patch.object(
                 context_sources, "_loaders", probe.retained_loaders), mock.patch.object(
                 context_sources, "_PROJECTOR", context_sources.Projector()), mock.patch.object(

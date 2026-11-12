@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from test_context_bundle_native import ROOT, HEADER, CALLER, guest, guest_env, q, save_evidence
+from test_context_bundle_native import ROOT, HEADER, CALLER, guest, guest_env, native_coding_sessions, q, save_evidence
 from test_small_views_native import encoded
 import context_sources
 import goals
@@ -28,6 +28,13 @@ def goal(name="a", sti="0.5", lti="0.2", blocked="none", verified="never", note=
 
 
 class GoalViewsTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # A CeTTa guest renders coding-sessions natively; its oracle bundle
+        # shows that view of the same workspace.
+        with tempfile.TemporaryDirectory() as scratch, contextlib.chdir(ROOT):
+            cls.coding_sessions = native_coding_sessions(Path(scratch))
+
     def setUp(self):
         self.enterContext(contextlib.chdir(ROOT))
         self.temp = tempfile.TemporaryDirectory()
@@ -73,7 +80,9 @@ class GoalViewsTest(unittest.TestCase):
         expected, paths = [], []
         oracle_receipt_views = []
         env = guest_env(self.directory, "petta" if swi else "cetta", **self.settings)
-        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(
+        view = self.coding_sessions
+        with mock.patch.object(probe.base, "coding_sessions", None if swi else (lambda: view)), \
+                mock.patch.dict(os.environ, env, clear=True), mock.patch.object(
                 context_sources, "_loaders", probe.loaders), mock.patch.object(
                 context_sources, "_PROJECTOR", context_sources.Projector()), mock.patch.object(
                 effect_receipts, "view", probe.base.receipts.oracle_view):
@@ -105,6 +114,9 @@ class GoalViewsTest(unittest.TestCase):
             lines += ["!(import! &self ./src/goal_views_cetta.metta)"]
         lines += list(prelude)
         lines += ["!(py-call (goal_views_probe.setup %d %d))" % (not swi, caller)]
+        if mixed and not swi:
+            # The guest's own Python bundles show the native coding-sessions view too.
+            lines += ["!(py-call (small_views_probe.use_coding_sessions %s))" % q(json.dumps(view))]
         for i, path in enumerate(paths):
             lines += ["!(py-call (small_views_probe.apply %s))" % q(path)]
             if caller:
