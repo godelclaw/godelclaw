@@ -119,7 +119,7 @@ class NativeResponsesContextTests(unittest.TestCase):
                 if subscription:
                     plan = f'(chatgpt:structured-plan "chatgpt:fixture-model" $request (json-parse {self.subscription_session()}))'
                 else:
-                    plan = '(py-call (native_llm_host.native_structured_json_plan (fs:read-text ' + json.dumps(str(request)) + ')))'
+                    plan = '(llm:structured-plan $request "turn")'
                 self.run_guest(forms + f'!(let* (($request (json-parse (fs:read-text {json.dumps(str(request))}))) '
                                f'($plan {plan})) (println! (RESULT (llm:run $plan))))\n', timeout=40)
                 self.assert_wire(messages)

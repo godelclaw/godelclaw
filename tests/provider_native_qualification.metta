@@ -274,7 +274,7 @@
 (= (nq:compaction $root $sdk $core $artifacts $fixture)
    (let* (($world (nq:world $root $sdk $core $artifacts $fixture "compaction"))
           ($reply (nq:path $world "compaction-reply.json"))
-          ($forms (format-args "!(let* (($prepared (pcall:command-plan-purpose \"fixture-model\" 42 \"low\" \"S_cache_boundary_U\" \"compaction\")) ($native (case $prepared (((PreparedProviderCallV1 $owner $transport) True) ($other False)))) ($_ (nt:require compaction-prepared-natively $native)) ($box (llm:run $prepared)) ($_ (py-call (native_llm_host.structured_json_result $box {})))) (println! NATIVE_COMPACTION_OK))" ((repr $reply))))
+          ($forms (format-args "!(let* (($prepared (pcall:command-plan-purpose \"fixture-model\" 42 \"low\" \"S_cache_boundary_U\" \"compaction\")) ($native (case $prepared (((PreparedProviderCallV1 $owner $transport) True) ($other False)))) ($_ (nt:require compaction-prepared-natively $native)) ($answer (llm:run $prepared)) ($_ (nt:require compaction-native-reply (case $answer (((ProviderReplyV1 $value) True) ($other False))))) ($_ (llm:reply-file $answer {}))) (println! NATIVE_COMPACTION_OK))" ((repr $reply))))
           ($output (nq:output (nq:guest $world "fixture-model" "petta" $forms
                      (("METTACLAW_MODEL_COMMENTARY" "1") ("METTACLAW_STREAM_DIR" (nq:path $world "display"))))))
           ($_ (nt:require compaction-finished (nt:contains $output "NATIVE_COMPACTION_OK")))
@@ -283,3 +283,27 @@
           ($_ (nt:require compaction-reply-delivered (nt:contains (fs:read-text $reply) "(nop)")))
           ($_ (nt:require compaction-ledger-purpose (nt:contains (repr (nq:rows $world "calls")) "compaction")))
           ($_ (nq:close $world))) 6))
+
+; Structured (coding and iter) calls take the native owner: one request, the
+; ledger's purpose, and the reply as a native value its caller writes.
+(= (nq:structured-request)
+   "{\"model\":\"session\",\"max_tokens\":64,\"messages\":[{\"role\":\"system\",\"content\":\"S\"},{\"role\":\"user\",\"content\":\"U\"}],\"cache_messages\":true,\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"nop\",\"description\":\"Nothing.\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}}],\"extra_body\":{\"enable_thinking\":true}}")
+(: nq:structured (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
+(= (nq:structured $root $sdk $core $artifacts $fixture $model $protocol $purpose)
+   (let* (($world (nq:world $root $sdk $core $artifacts $fixture (str:concat "structured-" $protocol)))
+          ($_ (nq:reply $world $protocol))
+          ($reply (nq:path $world "structured-reply.json"))
+          ($forms (format-args "!(let* (($plan (llm:structured-plan (json-parse {}) {})) ($_ (nt:require structured-prepared-natively (case $plan (((PreparedProviderCallV1 $owner $transport) True) ($other False))))) ($answer (llm:run $plan)) ($_ (nt:require structured-native-reply (case $answer (((ProviderReplyV1 $value) True) ($other False))))) ($_ (llm:reply-file $answer {}))) (println! NATIVE_STRUCTURED_OK))"
+                     ((repr (nq:structured-request)) (repr $purpose) (repr $reply))))
+          ($output (nq:output (nq:guest $world $model "petta" $forms ())))
+          ($_ (nt:require structured-finished (nt:contains $output "NATIVE_STRUCTURED_OK")))
+          ($_ (nt:require structured-one-request (nt:equal (nq:posts $world) 1)))
+          ($_ (nt:require structured-one-completion (nt:equal (preq:size (nq:rows $world "results")) 1)))
+          ($written (preq:parse (fs:read-text $reply)))
+          ($_ (nt:require structured-reply-message (nt:contains (preq:render (preq:field $written "message")) "(nop)")))
+          ($_ (nt:require structured-reply-finish (nt:equal (preq:field $written "finish") (JsonString "stop"))))
+          ($body (nq:request-body $world))
+          ($_ (nt:require structured-extra-body-consumed (not (preq:has $body "extra_body"))))
+          ($_ (nt:require structured-advertises-tool (nt:equal (preq:size (preq:items $body "tools")) 1)))
+          ($_ (nt:require structured-ledger-purpose (nt:contains (repr (nq:rows $world "calls")) $purpose)))
+          ($_ (nq:close $world))) 9))

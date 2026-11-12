@@ -32,7 +32,11 @@
           ($_ (nq:failed-response $root $sdk $core $artifacts $fixture "disconnect-after-acceptance" True))
           ($_ (nq:commentary $root $sdk $core $artifacts $fixture "fixture-model" "chat-completions"))
           ($_ (nq:commentary $root $sdk $core $artifacts $fixture "kimi:k3.1-pro" "responses"))
-          ($_ (nq:commentary $root $sdk $core $artifacts $fixture "claude-fixture" "anthropic")))
+          ($_ (nq:commentary $root $sdk $core $artifacts $fixture "claude-fixture" "anthropic"))
+          ($_ (nq:structured $root $sdk $core $artifacts $fixture "fixture-model" "chat-completions" "coding"))
+          ($_ (nq:structured $root $sdk $core $artifacts $fixture "kimi:k3.1-pro" "responses" "turn"))
+          ($_ (nq:structured $root $sdk $core $artifacts $fixture "openai:fixture" "responses" "compaction"))
+          ($_ (nq:structured $root $sdk $core $artifacts $fixture "claude-fixture" "anthropic" "coding")))
      NativeProviderSuitePassedV1))
 !(nt:require provider-driver-completed
    (nt:equal (collapse (native-provider-test:run)) (NativeProviderSuitePassedV1)))

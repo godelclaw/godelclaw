@@ -132,18 +132,16 @@
    (if (== $messages ()) ()
      (let (JsonObject $fields) (car-atom $messages)
        (cons-atom (JsonObject (coding:wire-fields $fields)) (coding:wire-messages (cdr-atom $messages))))))
+; A request without tools is the session's history compaction.
 (= (coding:ask-once $dir $request)
    (let* (($text (json-stringify $request))
-          ($raw-plan (llm:structured-json-plan $text))
-          ($plan (if (== (coding:field $request "tools") JsonNull)
-                     (py-call (native_llm_host.for_compaction $raw-plan))
-                     (py-call (native_llm_host.for_coding $raw-plan))))
+          ($purpose (if (== (coding:field $request "tools") JsonNull) "compaction" "coding"))
+          ($plan (llm:structured-plan $request $purpose))
           ($pending (llm:begin $plan))
-          ($box (coding:wait-provider $plan $pending))
-          ($reply (coding:file $dir "reply.json"))
-          ($_ (py-call (native_llm_host.structured_json_result $box $reply)))
+          ($answer (coding:wait-provider $plan $pending))
+          ($value (llm:reply-file $answer (coding:file $dir "reply.json")))
           ($_ (py-call (coding_io.context_observe $dir (str:byte-length $text)))))
-     (json-parse (fs:read-text $reply))))
+     $value))
 
 ; This session schedules its own process owner while waiting on the same
 ; admitted provider request. No callback searches another module's local space.

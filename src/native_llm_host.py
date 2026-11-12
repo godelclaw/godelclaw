@@ -295,32 +295,37 @@ def command_plan(model, tokens, effort, prompt, *, native_ledger=False):
     return plan
 
 
-def structured_json_plan(text):
-    """A structured request given as JSON text, as the coding loop builds it."""
-    return structured_plan(json.loads(str(text)))
-
-
 def native_command_plan(model, tokens, effort, prompt):
     """Legacy-route command plan; production commands use native preparation."""
     return command_plan(model, tokens, effort, prompt, native_ledger=True)
 
 
-def native_command_seed(selected, tokens, purpose="command"):
+# Each native call is one kind (command or structured) for one ledger purpose.
+_NATIVE_CALLS = {("command", "turn"), ("command", "compaction"),
+                 ("structured", "turn"), ("structured", "coding"), ("structured", "compaction")}
+
+
+def native_call_seed(selected, tokens, kind="command", purpose="turn"):
     """Capture small host facts once; request and prompt bytes stay native."""
-    if purpose not in {"command", "compaction"}:
-        raise ValueError("unsupported native command purpose")
-    plan = _plan("command", selected, tokens, None, native_ledger=True)
+    kind, purpose = str(kind), str(purpose)
+    if (kind, purpose) not in _NATIVE_CALLS:
+        raise ValueError("unsupported native call purpose")
+    plan = _plan(kind, selected, tokens, None, native_ledger=True)
     if plan.ready == "false":
         return plan, '{"ready":false}'
     del plan.request
-    if purpose == "compaction":
-        for_compaction(plan)
+    if purpose != "turn":
+        if os.environ.get("METTACLAW_CODING_CHECK") == "1":
+            raise RuntimeError("provider calls are refused under METTACLAW_CODING_CHECK=1")
+        plan.purpose = purpose
     facts = {name: getattr(plan, name) for name in (
         "epoch", "correlation", "protocol", "base", "headers", "wire_model",
         "provider", "stream", "timeout", "cap", "connect", "first", "idle")}
-    plan.native_visible = purpose == "command" and stream_sink.configured()
-    facts.update(ready=True, visible=plan.native_visible,
-                 tool=model_commentary.tool_schema() if purpose == "command" and model_commentary.enabled() else None,
+    # A compaction is maintenance: the display shows no attempt for it.
+    plan.native_visible = purpose != "compaction" and stream_sink.configured()
+    command = kind == "command" and purpose == "turn"
+    facts.update(ready=True, visible=plan.native_visible, kind=kind,
+                 tool=model_commentary.tool_schema() if command and model_commentary.enabled() else None,
                  ttl=os.environ.get("METTACLAW_ANTHROPIC_CACHE_TTL", "5m"),
                  # Immutable call facts the native owner keeps from here on.
                  soft=plan.soft, maximum=plan.max_output, purpose=getattr(plan, "purpose", "turn"),
@@ -328,24 +333,28 @@ def native_command_seed(selected, tokens, purpose="command"):
     return plan, json.dumps(facts, ensure_ascii=False)
 
 
-def bind_native_command(plan, seal, encoded):
+def bind_native_call(plan, seal, encoded):
     """Bind native preparation to this owner before any admission or dispatch."""
     with _claim_lock:
         if plan.ready != "preparing" or getattr(plan, "claim_started", False):
             return "false"
-        return _bind_native_command(plan, seal, encoded)
+        return _bind_native_call(plan, seal, encoded)
 
 
-def _bind_native_command(plan, seal, encoded):
+def _bind_native_call(plan, seal, encoded):
     try:
         value = json.loads(str(encoded))
         fingerprint = value["fingerprint"]
+        # A structured request has no prompt: no layout, size or contract marks.
+        prompt = (type(value["prompt_layout"]) is dict if plan.kind == "command" else
+                  value["prompt_layout"] is None and value["prompt_bytes"] == 0 and
+                  value["feedback_visible"] is False and value["footer_visible"] is False)
         if (len(str(seal)) != 64 or len(fingerprint) != 64 or
                 any(c not in "0123456789abcdef" for c in str(seal) + fingerprint) or
                 value["model"] != plan.wire_model or
                 value["encoding"] not in ("default", "messages") or
                 type(value["prompt_bytes"]) is not int or value["prompt_bytes"] < 0 or
-                type(value["stream"]) is not bool or type(value["prompt_layout"]) is not dict or
+                type(value["stream"]) is not bool or not prompt or
                 type(value["feedback_visible"]) is not bool or type(value["footer_visible"]) is not bool or
                 (plan.protocol == "anthropic" and type(value["cache_layout"]) is not dict)):
             raise ValueError("invalid native preparation metadata")
@@ -380,14 +389,6 @@ def native_wire_started(plan):
             item=plan.correlation, model=plan.display_model, provider=plan.provider,
             status="awaiting", epoch=getattr(plan, "display_epoch", "initial")))
     return True
-
-
-def native_structured_plan(request):
-    return structured_plan(request, native_ledger=True)
-
-
-def native_structured_json_plan(text):
-    return structured_plan(json.loads(str(text)), native_ledger=True)
 
 
 def ticket():
@@ -590,57 +591,6 @@ def compaction_failure_result(plan, path):
         json.dump({"compaction_failure": failure}, stream)
     os.replace(temporary, str(path))
     return 1
-
-
-def structured_plan(request, *, native_ledger=False):
-    value = getattr(request, "value", request)
-    def conversation(protocol, selected):
-        result = copy.deepcopy(value)
-        result["model"] = selected
-        if protocol != "anthropic":
-            # Other providers reuse a repeated prefix without breakpoints.
-            result.pop("cache_messages", None)
-            result.pop("cache_ttl", None)
-        extra = result.pop("extra_body", {})
-        if not isinstance(extra, dict):
-            raise ValueError("extra_body must be an object")
-        if protocol == "chat-completions":
-            # Keep the imported compatible-provider request layout explicit.
-            result["chat_profile"] = "compatible"
-        if protocol == "responses":
-            result["role_policy"] = "preserve"
-        elif protocol == "anthropic":
-            # The imported loops already use this mapping. The generic library
-            # preserves developer roles unless a caller explicitly selects it.
-            result["role_policy"] = "merge-system-developer"
-        if protocol == "anthropic":
-            thinking = extra.pop("enable_thinking", None)
-            if thinking is False:
-                raise ValueError("disabling thinking requires a model capability")
-            if thinking is True:
-                result["thinking"] = {"type": "adaptive"}
-                result["tool_choice_policy"] = "auto-for-thinking"
-            if "reasoning" in extra:
-                result.setdefault("reasoning", extra.pop("reasoning"))
-        # Native extensions are explicit. Known common options never get
-        # overwritten by a provider-specific extra_body.
-        extensions = result.pop("extensions", {})
-        if not isinstance(extensions, dict):
-            raise ValueError("extensions must be an object")
-        if set(extensions).intersection(extra):
-            raise ValueError("duplicate native extension")
-        extensions.update(extra)
-        if protocol == "responses":
-            system = [m.get("content", "") for m in result["messages"]
-                      if m.get("role") in ("system", "developer")]
-            if system:
-                extensions.setdefault("prompt_cache_key", provider_protocol.cache_key(
-                    "openai", selected, "\n\n".join(system)))
-        if extensions:
-            result["extensions"] = extensions
-        return result
-    return _plan("structured", synthetic_llm.current_model(), value["max_tokens"],
-                 conversation, native_ledger=native_ledger)
 
 
 def field(plan, name):

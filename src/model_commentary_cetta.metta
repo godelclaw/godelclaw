@@ -194,10 +194,11 @@
        (py-call (native_llm_host.native_classified (call:host $owner) accepted $program "" "" false))))))
 (= (commentary:store $owner (CommentaryRejectedV1 $code))
    (py-call (native_llm_host.native_classified (call:host $owner) rejected "" "" $code false)))
-; A native owner is always a command call: the contract applies unless commentary
-; is off or the call is compaction.
+; For a native owner the contract applies to a command turn: not to a
+; compaction or a structured call, and not when commentary is off.
 (= (commentary:native-contract? $owner)
-   (if (call:native? $owner) (and (commentary:enabled?) (not (call:compaction? $owner)))
+   (if (call:native? $owner)
+     (and (commentary:enabled?) (and (call:command? $owner) (not (call:compaction? $owner))))
      (llm:host-flag (py-call (native_llm_host.native_contract $owner)))))
 (= (commentary:prepare $plan $legacy)
    (if (commentary:native-contract? $plan)

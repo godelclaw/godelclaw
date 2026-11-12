@@ -109,6 +109,14 @@
 (: preq:visible (-> %Undefined% %Undefined% %Undefined%))
 (: preq:visible-option (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (: preq:wire (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
+(: preq:prepare-structured (-> %Undefined% %Undefined% %Undefined% %Undefined%))
+(: preq:structured-request (-> %Undefined% %Undefined% %Undefined% %Undefined%))
+(: preq:structured-anthropic (-> %Undefined% %Undefined% %Undefined%))
+(: preq:structured-extensions (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
+(: preq:responses-cache-key (-> %Undefined% %Undefined% %Undefined% %Undefined%))
+(: preq:system-texts (-> %Undefined% %Undefined% %Undefined%))
+(: preq:shared-key? (-> %Undefined% %Undefined% %Undefined%))
+(: preq:structured-synthetic (-> %Undefined% %Undefined%))
 (= (preq:cons $head $tail) (cons-atom $head $tail))
 (= (preq:head $items) (car-atom $items))
 (= (preq:tail $items) (cdr-atom $items))
@@ -624,3 +632,114 @@
         ($valid (PreparedProviderWireV1 (preq:render $valid) $active
           (preq:field $valid "model")
           (if (== $protocol "anthropic") (preq:cache-observation $valid $cache) JsonNull)))))))
+
+; A structured (coding or iter) conversation, as the imported loops build it.
+; The caller's fields keep their order; the selected model replaces its name,
+; and only the provider's own choices are added. Python dictionaries update a
+; key in place and append a new one: preq:put does the same.
+(= (preq:prepare-structured $protocol $model $request)
+   (case $request
+     (((JsonObject $pairs)
+       (case (preq:get $request "max_tokens" JsonNull)
+         (((JsonNumber $text)
+           (if (preq:integer? (JsonNumber $text))
+             (let $prepared (preq:structured-request $protocol $model $request)
+               (case $prepared
+                 (((ProviderPreparationRefusedV1 $why) $prepared)
+                  ($valid (PreparedProviderStructuredV1 $valid (str:string->number $text))))))
+             (ProviderPreparationRefusedV1 invalid-max-tokens)))
+          ($other (ProviderPreparationRefusedV1 invalid-max-tokens)))))
+      ($other (ProviderPreparationRefusedV1 expected-object)))))
+(= (preq:structured-request $protocol $model $request)
+   (let* (($named (preq:put $request "model" (preq:string $model)))
+          ($portable (if (== $protocol "anthropic") $named (preq:drop-keys $named ("cache_messages" "cache_ttl"))))
+          ($extra (preq:get $portable "extra_body" (preq:object ()))))
+     (case $extra
+       (((JsonObject $extra-pairs)
+         (let* (($base (preq:drop $portable "extra_body"))
+                ($profiled (if (== $protocol "chat-completions")
+                             (preq:put $base "chat_profile" (preq:string "compatible")) $base))
+                ($roled (if (== $protocol "responses") (preq:put $profiled "role_policy" (preq:string "preserve"))
+                          (if (== $protocol "anthropic")
+                            (preq:put $profiled "role_policy" (preq:string "merge-system-developer")) $profiled))))
+           (if (== $protocol "anthropic") (preq:structured-anthropic $roled $extra)
+             (preq:structured-extensions $protocol $model $roled $extra))))
+        ($other (ProviderPreparationRefusedV1 invalid-extra-body))))))
+; Anthropic takes thinking and reasoning from extra_body; a request's own
+; reasoning wins over extra_body's, which is consumed either way.
+(= (preq:structured-anthropic $request $extra)
+   (let* (($thinking (preq:get $extra "enable_thinking" JsonNull))
+          ($rest (preq:drop $extra "enable_thinking")))
+     (case $thinking
+       (((JsonBool False) (ProviderPreparationRefusedV1 disabling-thinking-needs-capability))
+        ($other
+         (let* (($thought (case $thinking
+                  (((JsonBool True)
+                    (preq:put (preq:put $request "thinking" (preq:object ((preq:pair "type" (preq:string "adaptive")))))
+                              "tool_choice_policy" (preq:string "auto-for-thinking")))
+                   ($ignored $request))))
+                ($reasoned (if (and (preq:has $rest "reasoning") (not (preq:has $thought "reasoning")))
+                             (preq:put $thought "reasoning" (preq:field $rest "reasoning")) $thought))
+                ($remaining (preq:drop $rest "reasoning")))
+           (preq:structured-extensions "anthropic" "" $reasoned $remaining)))))))
+(= (preq:shared-key? $pairs $other)
+   (if (== $pairs ()) False
+     (let (JsonPair $key $value) (preq:head $pairs)
+       (if (preq:has $other $key) True (preq:shared-key? (preq:tail $pairs) $other)))))
+; Native extensions are explicit: extra_body may add to them, never overwrite.
+(= (preq:structured-extensions $protocol $model $request $extra)
+   (let $extensions (preq:get $request "extensions" (preq:object ()))
+     (case ($extensions $extra)
+       ((((JsonObject $own) (JsonObject $added))
+         (if (preq:shared-key? $own $extra) (ProviderPreparationRefusedV1 duplicate-native-extension)
+           (let* (($base (preq:drop $request "extensions"))
+                  ($merged (preq:object (preq:append $own $added)))
+                  ($keyed (if (== $protocol "responses") (preq:responses-cache-key $base $model $merged) $merged)))
+             (case $keyed
+               (((ProviderPreparationRefusedV1 $why) $keyed)
+                ((JsonObject ()) $base)
+                ($nonempty (preq:put $base "extensions" $nonempty)))))))
+        ($other (ProviderPreparationRefusedV1 invalid-extensions))))))
+; The Responses prefix-cache key covers the system and developer texts.
+(= (preq:responses-cache-key $request $model $extensions)
+   (case (preq:get $request "messages" JsonNull)
+     (((JsonArray $messages)
+       (case (preq:system-texts $messages ())
+         (((ProviderPreparationRefusedV1 $why) (ProviderPreparationRefusedV1 $why))
+          (() $extensions)
+          ($texts (if (preq:has $extensions "prompt_cache_key") $extensions
+                    (preq:put $extensions "prompt_cache_key"
+                      (preq:string (preq:cache-key "openai" $model (str:join "\n\n" $texts)))))))))
+      ($other (ProviderPreparationRefusedV1 invalid-messages)))))
+(= (preq:system-texts $messages $reversed)
+   (if (== $messages ()) (preq:reverse $reversed ())
+     (let $message (preq:head $messages)
+       (case $message
+         (((JsonObject $pairs)
+           (if (preq:member? (preq:get $message "role" JsonNull) ((preq:string "system") (preq:string "developer")))
+             (case (preq:get $message "content" (preq:string ""))
+               (((JsonString $text) (preq:system-texts (preq:tail $messages) (preq:cons $text $reversed)))
+                ($other (ProviderPreparationRefusedV1 invalid-system-content))))
+             (preq:system-texts (preq:tail $messages) $reversed)))
+          ($other (ProviderPreparationRefusedV1 invalid-message)))))))
+; Synthetic validation sees the extensions' reasoning fields as body fields.
+; Each case binds its own names: one function body shares its variables.
+(= (preq:structured-synthetic $request)
+   (let* (($extensions (preq:get $request "extensions" (preq:object ())))
+          ($with-reasoning
+            (if (preq:has $extensions "reasoning")
+              (if (preq:has $request "reasoning") (ProviderPreparationRefusedV1 conflicting-synthetic-reasoning)
+                (preq:put $request "reasoning" (preq:field $extensions "reasoning")))
+              $request))
+          ($options
+            (case $with-reasoning
+              (((ProviderPreparationRefusedV1 $first-why) $with-reasoning)
+               ($reasoned (if (preq:has $extensions "reasoning_effort")
+                            (if (preq:has $reasoned "reasoning_effort") (ProviderPreparationRefusedV1 conflicting-synthetic-reasoning)
+                              (preq:put $reasoned "reasoning_effort" (preq:field $extensions "reasoning_effort")))
+                            $reasoned))))))
+     (case $options
+       (((ProviderPreparationRefusedV1 $second-why) $options)
+        ($candidate (case (preq:synthetic $candidate)
+                      (((ProviderPreparationRefusedV1 $third-why) (ProviderPreparationRefusedV1 $third-why))
+                       ($checked $request))))))))

@@ -60,7 +60,7 @@
                   (py-call (iter_host.append $temporary (py-call (iter_host.message "user" (py-call (iter_host.memory_overflow $length)))))) True))
           ($surface (py-call (iter_host.memory_surface $memory (<= $length 3000))))
           ($response (if (llm:native?)
-                       (llm:structured (py-call (iter_host.request_plan $history $temporary $tools $surface)))
+                       (iter:structured $history $temporary $tools $surface)
                        (py-call (iter_host.request $history $temporary $tools $surface))))
           ($message (py-call (iter_host.get $response "message")))
           ($content (py-call (iter_host.optional $message "content")))
@@ -74,6 +74,15 @@
             (if (iter:true (py-call (iter_host.equal (py-call (iter_host.get $response "finish")) "length")))
                 "[OUTPUT TOKEN LIMIT REACHED. CALL THE REQUIRED TOOL CONCISELY.]"
                 (py-call (iter_host.retry_no_tool (py-call (iter_host.optional $message "content")))))))))
+
+; The native provider call. Its request and reply cross the host as JSON
+; files, so model text never becomes an interned symbol.
+(= (iter:structured $history $temporary $tools $surface)
+   (let* (($request ".iter-provider-request.json") ($reply ".iter-provider-reply.json")
+          ($_ (py-call (iter_host.request_file $history $temporary $tools $surface $request)))
+          ($plan (llm:structured-plan (json-parse (fs:read-text $request)) "turn"))
+          ($_ (llm:reply-file (llm:run $plan) $reply)))
+     (py-call (iter_host.reply_file $reply))))
 
 (= (iter:dynamic $tools $name $arguments)
    (let* (($job (py-call (iter_host.prepare_dynamic $tools $name $arguments)))

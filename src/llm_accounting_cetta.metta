@@ -108,17 +108,19 @@
      (py-call (native_llm_host.failed (call:host $plan) $correlation $kind $status))))
 (: account:note-rejection (-> %Undefined% %Undefined%))
 (= (account:note-rejection $plan)
+   (if (not (call:command? $plan)) 1
    (let $code (lp:text (py-call (native_llm_host.rejection_code (call:host $plan))))
      (if (ue:equal $code "") 1
        (case (nl:command-output-rejected (account:metadata $plan) $code (system:wall-time))
          (((LedgerError $ignored12) (py-call (native_llm_host.accounting_observation_error (call:host $plan) "rejection")))
-          ($recorded 1))))))
+          ($recorded 1)))))))
 (: account:publish (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (account:publish $plan $epoch $correlation $legacy $canonical $usage)
    (if (ue:equal (py-call (native_llm_host.policy_committed (call:host $plan) (json:stringify (ue:evidence $usage)))) 1)
     (let* (
           ($answer (py-call (native_llm_host.finish (call:host $plan) $epoch $correlation $legacy $canonical)))
-          ($ignored14 (account:note-rejection $plan))) $answer)
+          ($ignored14 (account:note-rejection $plan)))
+      (if (call:replies? $plan) (call:reply $plan $legacy) $answer))
     (py-call (native_llm_host.completion_duplicate (call:host $plan)))))
 (: account:finished (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (account:finished $plan $metadata $epoch $correlation $legacy $canonical $usage $answer)

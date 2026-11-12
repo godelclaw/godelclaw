@@ -366,8 +366,7 @@ def draft(kind, scope, lane):
                                  messages=[dict(role='user', content='input')]))
         out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n' +
             self.disable_python_accounting() +
-            f'!(let $plan (py-call (native_llm_host.native_structured_json_plan {json.dumps(request)}))\n'
-            '   (let $_ (py-call (native_llm_host.for_coding $plan)) (llm:run $plan)))\n'
+            f'!(llm:run (llm:structured-plan (json-parse {json.dumps(request)}) "coding"))\n'
             '!(llm:run (pcall:command-plan-purpose "fixture-model" 42 "low" "input" "compaction"))\n')
         self.assertEqual(len(self.peer.requests), 2, out + self.last_stderr)
         self.assertEqual(self.column('calls', 'purpose', 'state', order='created'),
@@ -545,8 +544,7 @@ def draft(kind, scope, lane):
         for lang in ("petta",):
             text = json.dumps(json.dumps(request))
             self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n' + self.disable_python_accounting() +
-                f'!(let $plan (py-call (native_llm_host.native_structured_json_plan {text})) '
-                '(llm:run (py-call (native_llm_host.for_coding $plan))))\n', lang)
+                f'!(llm:run (llm:structured-plan (json-parse {text}) "coding"))\n', lang)
             body = self.peer.requests[-1][2]
             self.assertEqual([b["text"] for b in body["system"]], ["instructions", "policy"])
             self.assertEqual([i for i, b in enumerate(body["system"]) if "cache_control" in b], [1])
@@ -601,13 +599,11 @@ def draft(kind, scope, lane):
                 {"id": "c1", "type": "function", "function": {"name": "nop", "arguments": "{}"}}]},
             {"role": "tool", "tool_call_id": "c1", "content": "done"}], "max_tokens": 42,
             "reasoning": {"effort": "low"}, "extra_body": {"enable_thinking": True}}
-        fixture = self.directory / "request_fixture.py"
-        fixture.write_text('from iter_host import Box\nimport json\ndef request(): return Box(json.loads(' +
-                           repr(json.dumps(payload)) + '))\n')
-        forms = f'!(import! &self "{ROOT}/src/native_llm.metta")\n!(import! &self "{fixture}")\n'
-        forms += '!(let $r (llm:structured (py-call (request_fixture.request))) (println! (FINISH (py-call (iter_host.get $r "finish")))))\n'
+        forms = f'!(import! &self "{ROOT}/src/native_llm.metta")\n'
+        forms += (f'!(let (ProviderReplyV1 $r) (llm:run (llm:structured-plan (json-parse {json.dumps(json.dumps(payload))}) "turn")) '
+                  '(println! (FINISH (call:member $r "finish"))))\n')
         out = self.run_guest(forms)
-        self.assertIn("(FINISH tool_calls)", out)
+        self.assertIn('(FINISH (JsonString "tool_calls"))', out)
         self.assertEqual(len(self.peer.requests), 1)
         path, headers, body = self.peer.requests[0]
         self.assertEqual(path, "/v1/messages")
@@ -627,13 +623,14 @@ def draft(kind, scope, lane):
         self.peer.delay = .01
         self.peer.reply["choices"][0].update(finish_reason="length", message={"role": "assistant", "content": "",
             "tool_calls": [{"id": "partial", "type": "function", "function": {"name": "nop", "arguments": "{}"}}]})
-        fixture = self.directory / "request_fixture.py"
         request = {"messages": [{"role": "user", "content": "input"}], "max_tokens": 42}
-        fixture.write_text('from iter_host import Box\nimport json\ndef request(): return Box(json.loads(' +
-                           repr(json.dumps(request)) + '))\ndef check(box):\n    value=box.value\n    assert value["finish"] == "length"\n    assert value["message"]["tool_calls"][0]["id"] == "partial"\n    return "COMPLETE_CALL_KEPT"\n')
-        out = self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n!(import! &self "{fixture}")\n'
-            '!(let $box (llm:structured (py-call (request_fixture.request))) (println! (py-call (request_fixture.check $box))))\n')
-        self.assertIn("COMPLETE_CALL_KEPT", out)
+        reply = self.directory / "reply.json"
+        self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n'
+            f'!(llm:reply-file (llm:run (llm:structured-plan (json-parse {json.dumps(json.dumps(request))}) "turn")) '
+            f'{json.dumps(str(reply))})\n')
+        value = json.loads(reply.read_text())
+        self.assertEqual(value["finish"], "length")
+        self.assertEqual(value["message"]["tool_calls"][0]["id"], "partial")
         self.assertEqual(len(self.peer.requests), 1)
 
     def test_quota_cooldown_is_shared_and_upstream_can_bypass_it(self):

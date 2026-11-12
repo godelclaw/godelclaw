@@ -50,7 +50,13 @@
           ((SSEError $why) (py-call (stream_sink.unavailable $plan $why))))))
      0)))
 ; The display observer keeps its state on the host plan of a native owner.
+; Without a configured display, or for a native compaction, nothing is readable.
+; `and` evaluates both sides: only a native owner may be asked its purpose.
+(= (stream:observed? $owner)
+   (if (== (str:strip-python (system:getenv-or-default "METTACLAW_STREAM_DIR" "")) "") False
+     (if (call:native? $owner) (not (call:compaction? $owner)) True)))
 (= (stream:progress $owner $handle)
+   (if (not (stream:observed? $owner)) 1
    (let* (($plan (call:host $owner)) ($readable (py-call (stream_sink.readable $plan))))
     (if (llm:host-flag $readable)
      (let* (($offset (py-call (stream_sink.offset $plan)))
@@ -58,4 +64,4 @@
        (case $chunk
          (((http:chunk $next $text $phase) (stream:chunk $plan $next $text))
           ($other (py-call (stream_sink.unavailable $plan))))))
-     1)))
+     1))))

@@ -39,8 +39,8 @@ class NativeCallConfigTests(unittest.TestCase):
         request = {'max_tokens': 42, 'messages': [{'role': 'user', 'content': 'Quote "λ" (data)'}],
                    'tools': []}
         out = self.run_guest(self.instrument() +
-            '!(let $plan (py-call (native_llm_host.native_structured_json_plan ' +
-            json.dumps(json.dumps(request)) + ')) (println! (RESULT (llm:run $plan))))\n'
+            '!(let $plan (llm:structured-plan (json-parse ' +
+            json.dumps(json.dumps(request)) + ') "turn") (println! (RESULT (llm:run $plan))))\n'
             '!(println! (CAPTURES (py-call (call_config_probe.count))))\n')
         self.assertIn('(CAPTURES 1)', out)
         self.assertEqual(len(self.peer.requests), 1)

@@ -69,20 +69,31 @@
          (py-call (synthetic_llm.unavailable_action chatgpt-requires-native-cetta))
          (py-call (synthetic_llm.chat $model $tokens $effort $prompt)))))))
 
-(= (llm:structured $request)
-   (let* (($selected (model:current syn:large:text))
-          ($subscription (llm:subscription-model? $selected)))
-     (if $subscription (Error llm:structured chatgpt-command-mode-only)
-       (let $plan (py-call (native_llm_host.native_structured_plan $request)) (llm:run $plan)))))
-
-(= (llm:structured-json-plan $text)
+; A structured (coding or iter) request is a tagged JSON value; its purpose is
+; the ledger's: "turn" (iter), "coding" or "compaction". Preparation captures
+; both, so a plan is never retargeted after it exists.
+(= (llm:structured-plan $request $purpose)
    (let $selected (model:current syn:large:text)
      (if (str:starts-with $selected "chatgpt:")
-       (let $session (chatgpt:session)
-         (case $session
-           (((ChatGPTUnavailable $why) (Error llm:structured-json-plan $why))
-            ($ready (chatgpt:structured-plan $selected (json-parse $text) $ready)))))
-       (py-call (native_llm_host.native_structured_json_plan $text)))))
+       (if (== $purpose "turn") (Error llm:structured-plan chatgpt-command-mode-only)
+         (let $session (chatgpt:session)
+           (case $session
+             (((ChatGPTUnavailable $why) (Error llm:structured-plan $why))
+              ($ready (llm:host-purpose (chatgpt:structured-plan $selected $request $ready) $purpose))))))
+       (pcall:structured-plan $selected $request $purpose))))
+; A subscription plan is still a host plan; its purpose is set on it.
+(= (llm:host-purpose $plan $purpose)
+   (if (== $purpose "coding") (py-call (native_llm_host.for_coding $plan))
+     (if (== $purpose "compaction") (py-call (native_llm_host.for_compaction $plan)) $plan)))
+
+; The reply of a structured call, written as JSON where its caller keeps it
+; (atomically) and returned as a value. A native owner's reply never crosses
+; the host; a subscription plan still answers with a host box.
+(= (llm:reply-file $answer $path)
+   (case $answer
+     (((ProviderReplyV1 $reply) (call:write-reply $reply $path))
+      ($box (let $_ (py-call (native_llm_host.structured_json_result $box $path))
+              (json-parse (fs:read-text $path)))))))
 
 (: llm:owner (-> Atom %Undefined%))
 (= (llm:owner $plan)
@@ -353,9 +364,14 @@
 (: llm:wait-http (-> Atom Number %Undefined%))
 (= (llm:wait-http $id $milliseconds) (llm-transport:wait $id $milliseconds))
 
- ; Optional owned text observation. Only inert chunk values cross the portable
+; Only a command turn with commentary on has an observer to feed.
+(= (llm:commentary-observed? $owner)
+   (if (call:native? $owner)
+     (and (commentary:enabled?) (and (call:command? $owner) (not (call:compaction? $owner)))) True))
+; Optional owned text observation. Only inert chunk values cross the portable
 ; function/return error boundary. Host publication runs outside that boundary.
 (= (llm:commentary-progress $owner $id)
+   (if (not (llm:commentary-observed? $owner)) 1
    (let* (($plan (call:host $owner)) ($readable (py-call (native_llm_host.commentary_readable $plan))))
      (if (llm:host-flag $readable)
        (let* (($offset (py-call (native_llm_host.commentary_offset $plan)))
@@ -363,7 +379,7 @@
          (case $chunk
            (((http:chunk $next $text $phase)
              (py-call (native_llm_host.commentary_chunk $plan $next $text $phase)))
-            ($other (py-call (native_llm_host.commentary_unavailable $plan)))))) 1)))
+            ($other (py-call (native_llm_host.commentary_unavailable $plan)))))) 1))))
 (= (llm:commentary-read $id $offset)
    (function (case (io:http-read $id $offset 65536)
      (((http:chunk $next $text $phase) (return (http:chunk $next $text $phase)))

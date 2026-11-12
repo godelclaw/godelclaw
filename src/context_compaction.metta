@@ -120,12 +120,16 @@
      (case $planned
        (((ContextPreparationFailed $_) $planned)
         ($ready
-          (let* (($owner (call:host (llm:owner $ready)))
-                 ($_ (py-call (native_llm_host.for_compaction $owner)))
+          ; A native owner was prepared for compaction; a subscription plan is
+          ; still a host plan and is marked here.
+          (let* (($native (call:native? (llm:owner $ready)))
+                 ($owner (call:host (llm:owner $ready)))
+                 ($_ (if $native () (py-call (native_llm_host.for_compaction $owner))))
                  ($path (path:join (path:dirname (system:getenv-or-default "METTACLAW_ENGINE_STATE_PATH" "memory/engine")) "compaction-reply.json")))
             (case (catch (llm:run $ready))
               (((Error $kind $detail) (context:failed-reply $owner $path))
                ((Error $detail) (context:failed-reply $owner $path))
+               ((ProviderReplyV1 $reply) (context:validate-summary $reply))
                ($box
                  (let $_ (py-call (native_llm_host.structured_json_result $box $path))
                    (context:validate-summary (json-parse (fs:read-text $path)))))))))))))

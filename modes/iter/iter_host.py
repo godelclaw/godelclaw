@@ -233,6 +233,20 @@ def request_plan(experience, temporary, loaded, surface):
                     extra_body={"enable_thinking": True}))
 
 
+def request_file(experience, temporary, loaded, surface, path):
+    """Write the provider request as JSON for the native call."""
+    text = json.dumps(unbox(request_plan(experience, temporary, loaded, surface)), ensure_ascii=False)
+    temporary_path = Path(str(path) + ".tmp")
+    temporary_path.write_text(text, encoding="utf-8")
+    os.replace(temporary_path, str(path))
+    return 1
+
+
+def reply_file(path):
+    """The native call's reply: message, finish reason and usage."""
+    return Box(json.loads(Path(str(path)).read_text(encoding="utf-8")))
+
+
 def request(experience, temporary, loaded, surface):
     response = client.chat.completions.create(**unbox(
         request_plan(experience, temporary, loaded, surface)))

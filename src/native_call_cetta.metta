@@ -47,6 +47,12 @@
 (= (call:correlation $owner) (call:fact $owner "correlation" ""))
 (= (call:protocol $owner) (call:fact $owner "protocol" ""))
 (= (call:compaction? $owner) (== (call:fact $owner "purpose" "turn") "compaction"))
+; A command answers with a program; a structured call or a compaction answers
+; with its reply. A legacy plan is treated as a command here.
+(= (call:command? $owner)
+   (if (call:native? $owner) (== (call:fact $owner "kind" "command") "command") True))
+(= (call:replies? $owner)
+   (if (call:native? $owner) (or (not (call:command? $owner)) (call:compaction? $owner)) False))
 ; The decoder's (stream cap) facts, as response_decode_config gave them.
 (= (call:decode-config $owner)
    (let* (($stream (if (== (call:fact $owner "prepared_stream" false) true) "true" "false"))
@@ -147,3 +153,28 @@
 (= (call:append $front $back)
    (if (== $front ()) $back
      (let $rest (call:append (cdr-atom $front) $back) (cons-atom (car-atom $front) $rest))))
+
+; The reply of a structured call or a compaction, built from the decoded
+; result: the first choice's message, its finish reason, usage and the call id.
+; Model text stays a native value; it never crosses the host as a symbol.
+(= (call:member $object $key)
+   (case $object (((JsonObject $pairs) (call:pair-value $pairs $key)) ($other JsonNull))))
+(= (call:pair-value $pairs $key)
+   (if (== $pairs ()) JsonNull
+     (let (JsonPair $name $value) (car-atom $pairs)
+       (if (== $name $key) $value (call:pair-value (cdr-atom $pairs) $key)))))
+(= (call:reply $owner $legacy)
+   (let* (($result (json-parse $legacy))
+          ($choice (case (call:member $result "choices")
+                     (((JsonArray $items) (if (== $items ()) JsonNull (car-atom $items))) ($other JsonNull))))
+          ($message (call:member $choice "message")) ($finish (call:member $choice "finish_reason"))
+          ($usage (case (call:member $result "usage") (((JsonObject $pairs) (JsonObject $pairs)) ($other (JsonObject ())))))
+          ($id (call:correlation $owner)))
+     (ProviderReplyV1 (JsonObject ((JsonPair "message" $message) (JsonPair "finish" $finish)
+                                   (JsonPair "usage" $usage) (JsonPair "call_id" (JsonString $id)))))))
+; Written as structured_json_result wrote it (UTF-8, not ASCII-escaped), and
+; replaced atomically, so a reader never sees a partial reply.
+(= (call:write-reply $reply $path)
+   (let* (($temporary (str:concat $path ".tmp"))
+          ($_ (fs:write $temporary (json:stringify-python-with $reply ((ensure-ascii False)))))
+          ($_ (fs:rename $temporary $path))) $reply))
