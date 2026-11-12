@@ -38,10 +38,12 @@
             ("METTACLAW_HISTORY_PATH" (nq:path $world "history.metta"))
             ("METTACLAW_WORKING_SET_PATH" (nq:path $world "working-set.json"))
             ("METTACLAW_DEPLOYMENT_STATE_PATH" $deployment) ("TMPDIR" $temporary) ("PATH" $path)))
-          ($special (if (nt:equal $name "tests/allowance_wake_loop_probe.metta")
-            (("METTACLAW_TELEGRAM_GROUP_WAKE_EVERY" "-100:3")
-             ("METTACLAW_TELEGRAM_BOT_USERNAME" "GodelTestBot") ("METTACLAW_TELEGRAM_OPERATOR_IDS" "777")) ())))
+          ($special (case (collapse (nr:probe-settings $name)) ((() ()) (($settings) $settings)))))
      (nq:overlay-env (nq:overlay-env $env $changes) $special)))
+; Settings a probe needs from process start, which the clients read once.
+(= (nr:probe-settings "tests/allowance_wake_loop_probe.metta")
+   (("METTACLAW_TELEGRAM_GROUP_WAKE_EVERY" "-100:3")
+    ("METTACLAW_TELEGRAM_BOT_USERNAME" "GodelTestBot") ("METTACLAW_TELEGRAM_OPERATOR_IDS" "777")))
 (: nr:run-cases (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (nr:run-cases $root $sdk $core $artifacts $fixture $bin $cases $passed)
    (if (nt:equal $cases ()) $passed

@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-import importlib
+"""What channels/telegram.py still does for the MeTTa client: logs the
+updates of the attachments it fetches, downloads them atomically under
+sanitized names, routes plain replies, keeps sends and uploads to allowed
+chats, and reports an upload's receipt. The
+client's own intake log and its one-send-per-turn rule are tested on the
+MeTTa client by tests/telegram_send_and_intake_probe.metta."""
 import json
 import os
 import pathlib
 import sys
 import tempfile
-import threading
-
+import unittest
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-
-
-def load_telegram():
-    from channels import telegram
-
-    return importlib.reload(telegram)
+sys.path.insert(0, str(ROOT / "channels"))
+import telegram  # noqa: E402
 
 
 class FakeResponse:
@@ -41,205 +41,131 @@ class FakeResponse:
         return False
 
 
-def test_channel_posts_are_logged_with_kind():
-    tg = load_telegram()
-    with tempfile.TemporaryDirectory() as tmp:
-        tg._log_path = str(pathlib.Path(tmp) / "telegram_updates.jsonl")
-        update = {
-            "update_id": 200,
-            "channel_post": {
-                "message_id": 20,
-                "chat": {"id": -100, "type": "channel", "title": "News"},
-                "text": "channel text",
-            },
-        }
-        kind, message = tg._extract_message(update)
-        assert kind == "channel_post"
-        assert tg._append_update_log(update, kind, message, True, True, "")
-        record = json.loads(pathlib.Path(tg._log_path).read_text(encoding="utf-8"))
-        assert record["kind"] == "channel_post"
-        assert record["chat_id"] == "-100"
-        assert record["raw"]["channel_post"]["text"] == "channel text"
+class TelegramModuleTest(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.directory = pathlib.Path(directory.name)
+        # No client file of another test or process is taken up.
+        environment = mock.patch.dict(os.environ, {
+            "METTACLAW_TELEGRAM_HEALTH_PATH": str(self.directory / "health.json"),
+            "METTACLAW_TELEGRAM_ATTACHMENTS_DIR": str(self.directory / "attachments")})
+        environment.start()
+        self.addCleanup(environment.stop)
+        state = mock.patch.multiple(telegram, _token="fake-token", _primary_chat_id="",
+                                    _last_chat_id="", _allowed_chat_ids=set(), _client_seen=None,
+                                    _log_path=str(self.directory / "telegram_updates.jsonl"))
+        state.start()
+        self.addCleanup(state.stop)
+        published = mock.patch.dict(telegram._published, dict(telegram._published))
+        published.start()
+        self.addCleanup(published.stop)
+        (self.directory / "attachments").mkdir()
 
 
-def test_attachment_download_is_atomic_and_sanitized():
-    tg = load_telegram()
-    message = {
-        "message_id": 7,
-        "document": {
-            "file_id": "file-1",
-            "file_name": "../../bad name.pdf",
-            "mime_type": "application/pdf",
-            "file_size": 6,
-        },
-    }
-
-    def fake_get(url, params=None, timeout=None, stream=False):
-        if url.endswith("/getFile"):
-            assert params == {"file_id": "file-1"}
-            return FakeResponse({"ok": True, "result": {"file_path": "docs/server.pdf"}})
-        assert stream is True
-        return FakeResponse(chunks=(b"abc", b"def"))
-
-    with tempfile.TemporaryDirectory() as tmp:
-        previous = os.environ.get("METTACLAW_TELEGRAM_ATTACHMENTS_DIR")
-        os.environ["METTACLAW_TELEGRAM_ATTACHMENTS_DIR"] = tmp
-        try:
-            tg.requests.get = fake_get
-            tg._token = "fake-token"
-            note = tg._download_attachment(message)
-        finally:
-            if previous is None:
-                os.environ.pop("METTACLAW_TELEGRAM_ATTACHMENTS_DIR", None)
-            else:
-                os.environ["METTACLAW_TELEGRAM_ATTACHMENTS_DIR"] = previous
-
-        saved = pathlib.Path(tmp) / "7-bad_name.pdf"
-        assert saved.read_bytes() == b"abcdef"
-        assert not list(pathlib.Path(tmp).glob("*.part"))
-        assert str(saved) in note
-        assert "fake-token" not in note
+class UpdateLogTest(TelegramModuleTest):
+    def test_channel_posts_are_logged_with_kind(self):
+        update = {"update_id": 200, "channel_post": {"message_id": 20, "text": "channel text",
+                                                     "chat": {"id": -100, "type": "channel", "title": "News"}}}
+        kind, message = telegram._extract_message(update)
+        self.assertEqual(kind, "channel_post")
+        self.assertTrue(telegram._append_update_log(update, kind, message, True, True, ""))
+        record = json.loads(pathlib.Path(telegram._log_path).read_text(encoding="utf-8"))
+        self.assertEqual((record["kind"], record["chat_id"]), ("channel_post", "-100"))
+        self.assertEqual(record["raw"]["channel_post"]["text"], "channel text")
 
 
-def test_oversized_attachment_leaves_no_partial_file():
-    tg = load_telegram()
-    tg._MAX_ATTACHMENT_BYTES = 5
-    message = {
-        "message_id": 8,
-        "document": {"file_id": "file-2", "file_name": "large.bin"},
-    }
+class AttachmentTest(TelegramModuleTest):
+    def test_download_is_atomic_and_sanitized(self):
+        message = {"message_id": 7, "document": {"file_id": "file-1", "file_name": "../../bad name.pdf",
+                                                 "mime_type": "application/pdf", "file_size": 6}}
 
-    def fake_get(url, params=None, timeout=None, stream=False):
-        if url.endswith("/getFile"):
-            return FakeResponse({"ok": True, "result": {"file_path": "docs/large.bin"}})
-        return FakeResponse(chunks=(b"1234", b"56"))
+        def fake_get(url, params=None, timeout=None, stream=False):
+            if url.endswith("/getFile"):
+                self.assertEqual(params, {"file_id": "file-1"})
+                return FakeResponse({"ok": True, "result": {"file_path": "docs/server.pdf"}})
+            self.assertIs(stream, True)
+            return FakeResponse(chunks=(b"abc", b"def"))
 
-    with tempfile.TemporaryDirectory() as tmp:
-        previous = os.environ.get("METTACLAW_TELEGRAM_ATTACHMENTS_DIR")
-        os.environ["METTACLAW_TELEGRAM_ATTACHMENTS_DIR"] = tmp
-        try:
-            tg.requests.get = fake_get
-            tg._token = "fake-token"
-            note = tg._download_attachment(message)
-        finally:
-            if previous is None:
-                os.environ.pop("METTACLAW_TELEGRAM_ATTACHMENTS_DIR", None)
-            else:
-                os.environ["METTACLAW_TELEGRAM_ATTACHMENTS_DIR"] = previous
+        with mock.patch.object(telegram.requests, "get", fake_get):
+            note = telegram._download_attachment(message)
+        saved = self.directory / "attachments" / "7-bad_name.pdf"
+        self.assertEqual(saved.read_bytes(), b"abcdef")
+        self.assertEqual(list((self.directory / "attachments").glob("*.part")), [])
+        self.assertIn(str(saved), note)
+        self.assertNotIn("fake-token", note)
 
-        assert "download failed: ValueError" in note
-        assert list(pathlib.Path(tmp).iterdir()) == []
+    def test_oversized_download_leaves_no_partial_file(self):
+        message = {"message_id": 8, "document": {"file_id": "file-2", "file_name": "large.bin"}}
 
+        def fake_get(url, params=None, timeout=None, stream=False):
+            if url.endswith("/getFile"):
+                return FakeResponse({"ok": True, "result": {"file_path": "docs/large.bin"}})
+            return FakeResponse(chunks=(b"1234", b"56"))
 
-def test_primary_route_is_stable_under_cross_chat_activity():
-    tg = load_telegram()
-    tg._primary_chat_id = "private-operator"
-    tg._reply_chat_id = "protobots"
-    tg._last_chat_id = "another-chat"
-    assert tg._reply_target() == "private-operator"
-    assert tg._reply_target("protobots") == "protobots"
-    assert "bound to" in tg.route_view()
+        with mock.patch.object(telegram.requests, "get", fake_get), \
+                mock.patch.object(telegram, "_MAX_ATTACHMENT_BYTES", 5):
+            note = telegram._download_attachment(message)
+        self.assertIn("download failed: ValueError", note)
+        self.assertEqual(list((self.directory / "attachments").iterdir()), [])
 
 
-def test_no_primary_retains_legacy_reply_route():
-    tg = load_telegram()
-    tg._primary_chat_id = ""
-    tg._reply_chat_id = "current-chat"
-    tg._last_chat_id = "last-chat"
-    assert tg._reply_target() == "current-chat"
+class RouteTest(TelegramModuleTest):
+    def test_primary_route_is_stable_under_cross_chat_activity(self):
+        with mock.patch.multiple(telegram, _primary_chat_id="private-operator", _reply_chat_id="protobots",
+                                 _last_chat_id="another-chat"):
+            self.assertEqual(telegram._reply_target(), "private-operator")
+            self.assertEqual(telegram._reply_target("protobots"), "protobots")
+            self.assertIn("bound to", telegram.route_view())
+
+    def test_without_a_primary_the_reply_chat_routes(self):
+        with mock.patch.multiple(telegram, _reply_chat_id="current-chat", _last_chat_id="last-chat"):
+            self.assertEqual(telegram._reply_target(), "current-chat")
+
+    def test_the_published_reply_chat_routes_once_it_changes(self):
+        client = pathlib.Path(telegram._client_path())
+        client.write_text('{"pid": %d, "reply_chat": "from-the-client"}' % os.getpid())
+        self.assertEqual(telegram._reply_target(), "from-the-client")
 
 
-def test_explicit_outbound_route_is_limited_to_allowed_chats():
-    tg = load_telegram()
-    tg._token = "fake-token"
-    tg._primary_chat_id = "operator-private"
-    tg._allowed_chat_ids = {"operator-private", "protobots"}
-    posts = []
+class OutboundTest(TelegramModuleTest):
+    def test_explicit_sends_reach_only_allowed_chats(self):
+        posts = []
 
-    def fake_post(url, json=None, timeout=None):
-        posts.append(json["chat_id"])
-        return FakeResponse({"ok": True, "result": {"message_id": 12}})
+        def fake_post(url, json=None, timeout=None):
+            posts.append(json["chat_id"])
+            return FakeResponse({"ok": True, "result": {"message_id": 12}})
 
-    tg.requests.post = fake_post
-    assert tg.send_message_to_chat("unknown-chat", "no").startswith(
-        "send failed: target chat is not allowed")
-    assert posts == []
-    assert tg.send_message_to_chat("protobots", "yes").startswith(
-        "sent message 12")
-    assert posts == ["protobots"]
+        with mock.patch.multiple(telegram, _primary_chat_id="operator-private",
+                                 _allowed_chat_ids={"operator-private", "protobots"}), \
+                mock.patch.object(telegram.requests, "post", fake_post):
+            self.assertTrue(telegram.send_message_to_chat("unknown-chat", "no").startswith(
+                "send failed: target chat is not allowed"))
+            self.assertEqual(posts, [])
+            self.assertTrue(telegram.send_message_to_chat("protobots", "yes").startswith("sent message 12"))
+            self.assertEqual(posts, ["protobots"])
 
-
-def test_upload_route_is_limited_to_allowed_chats():
-    tg = load_telegram()
-    tg._token = "fake-token"
-    tg._primary_chat_id = "operator-private"
-    tg._allowed_chat_ids = {"operator-private", "protobots"}
-    with tempfile.TemporaryDirectory() as tmp:
-        artifact = pathlib.Path(tmp) / "artifact.txt"
+    def test_uploads_reach_only_allowed_chats(self):
+        artifact = self.directory / "artifact.txt"
         artifact.write_text("test", encoding="utf-8")
-        assert tg.send_file(
-            str(artifact), "caption", "unknown-chat"
-        ).startswith("send failed: target chat is not allowed")
+        with mock.patch.multiple(telegram, _primary_chat_id="operator-private",
+                                 _allowed_chat_ids={"operator-private", "protobots"}):
+            self.assertTrue(telegram.send_file(str(artifact), "caption", "unknown-chat").startswith(
+                "send failed: target chat is not allowed"))
 
-
-def test_upload_success_receipt_matches_broker_prefix():
-    tg = load_telegram()
-    tg._token = "fake-token"
-    tg._primary_chat_id = "operator-private"
-    tg._allowed_chat_ids = {"operator-private"}
-
-    def fake_post(url, data=None, files=None, timeout=None):
-        return FakeResponse({"ok": True, "result": {"message_id": 44}})
-
-    tg.requests.post = fake_post
-    with tempfile.TemporaryDirectory() as tmp:
-        tg._log_path = str(pathlib.Path(tmp) / "telegram_updates.jsonl")
-        artifact = pathlib.Path(tmp) / "artifact.txt"
+    def test_an_upload_reports_its_receipt(self):
+        artifact = self.directory / "artifact.txt"
         artifact.write_text("test", encoding="utf-8")
-        result = tg.send_file(str(artifact), "caption")
-        assert result.startswith("sent ")
-        assert "msg 44" in result
 
+        def fake_post(url, data=None, files=None, timeout=None):
+            return FakeResponse({"ok": True, "result": {"message_id": 44}})
 
-def test_model_effect_send_is_at_most_once_per_turn():
-    tg = load_telegram()
-    posts = []
-
-    def fake_post(url, json=None, timeout=None):
-        posts.append((url, json, timeout))
-        return FakeResponse({
-            "ok": True,
-            "result": {"message_id": 100 + len(posts)},
-        })
-
-    with tempfile.TemporaryDirectory() as tmp:
-        tg.requests.post = fake_post
-        tg._token = "fake-token"
-        tg._log_path = str(pathlib.Path(tmp) / "telegram_updates.jsonl")
-
-        tg.begin_effect_turn("turn-1")
-        tg.send_effect_message_to_chat("-1", "same message")
-        tg.begin_effect_turn("turn-1")
-        assert tg.send_effect_message_to_chat(
-            "-1", "same message") == "duplicate send suppressed"
-        assert len(posts) == 1
-
-        tg.begin_effect_turn("turn-2")
-        tg.send_effect_message_to_chat("-1", "same message")
-        assert len(posts) == 2
-
-        # Control-plane replies do not share the model-effect receipt set.
-        tg.send_message_to_chat("-1", "same message")
-        assert len(posts) == 3
+        with mock.patch.multiple(telegram, _primary_chat_id="operator-private", _allowed_chat_ids={"operator-private"}), \
+                mock.patch.object(telegram.requests, "post", fake_post):
+            result = telegram.send_file(str(artifact), "caption")
+        self.assertTrue(result.startswith("sent "), result)
+        self.assertIn("msg 44", result)
 
 
 if __name__ == "__main__":
-    test_channel_posts_are_logged_with_kind()
-    test_attachment_download_is_atomic_and_sanitized()
-    test_oversized_attachment_leaves_no_partial_file()
-    test_model_effect_send_is_at_most_once_per_turn()
-    test_primary_route_is_stable_under_cross_chat_activity()
-    test_no_primary_retains_legacy_reply_route()
-    test_explicit_outbound_route_is_limited_to_allowed_chats()
-    test_upload_route_is_limited_to_allowed_chats()
-    test_upload_success_receipt_matches_broker_prefix()
+    unittest.main()

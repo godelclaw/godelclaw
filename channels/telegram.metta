@@ -1020,7 +1020,10 @@
 (= (tg:drop-newlines $text)
    (if (str:starts-with $text "\n") (tg:drop-newlines (str:char-slice $text 1 (str:char-length $text))) $text))
 
+; Without a configured service there is nowhere to submit: Telegram is off.
 (= (tg:submit $key $body $deadline)
+   (if (== (tg:socket) "") unconfigured (tg:submit-call $key $body $deadline)))
+(= (tg:submit-call $key $body $deadline)
    (case (tg:call 4 $key $body)
      (((cwp:reply 66 $n $b) stored)
       ((cwp:reply 71 $n $b) (tg:submit-later $key $body $deadline))
@@ -1029,7 +1032,7 @@
       ((cwp:reply $code $n $b) (refused $code)))))
 (= (tg:submit-later $key $body $deadline)
    (if (>= (tg:now) $deadline) queued
-     (let $slept (tg:sleep 0.2) (tg:submit $key $body $deadline))))
+     (let $slept (tg:sleep 0.2) (tg:submit-call $key $body $deadline))))
 
 (= (tg:receipts $key $count)
    (let $rejected (collapse (match &self (tg:receipt $key -1 $r) $r))
@@ -1078,7 +1081,8 @@
                  (let $mine (add-atom &self (tg:own-key $key))
                  (let $stored (tg:submit $key (tg:batch-body (tg:send-commands $pieces)) $deadline)
                    (case $stored
-                     ((queued (format-args "send queued: the Telegram service is not answering; retry later ({})" ($key)))
+                     ((unconfigured "send failed: the Telegram service is not configured")
+                      (queued (format-args "send queued: the Telegram service is not answering; retry later ({})" ($key)))
                       ((refused $code) (format-args "send failed: the Telegram service refused it ({})" ($code)))
                       (stored
                        (let $results (tg:await $key (size-atom $pieces) $deadline)
@@ -1136,7 +1140,8 @@
          (let $mine (add-atom &self (tg:own-key $key))
          (let $id (tg:jnum $message-id)
            (case (tg:submit $key (tg:batch-body ((JsonArray ((JsonString "delete") $id)))) $deadline)
-             ((queued "delete queued: the Telegram service is not answering")
+             ((unconfigured "delete failed: the Telegram service is not configured")
+              (queued "delete queued: the Telegram service is not answering")
               ((refused $code) (format-args "delete failed: the Telegram service refused it ({})" ($code)))
               (stored
                (case (tg:await $key 1 $deadline)
