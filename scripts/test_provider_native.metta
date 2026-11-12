@@ -37,6 +37,7 @@
           ($_ (nq:structured $root $sdk $core $artifacts $fixture "kimi:k3.1-pro" "responses" "turn"))
           ($_ (nq:structured $root $sdk $core $artifacts $fixture "openai:fixture" "responses" "compaction"))
           ($_ (nq:structured $root $sdk $core $artifacts $fixture "claude-fixture" "anthropic" "coding"))
+          ($_ (nq:coding-check $root $sdk $core $artifacts $fixture))
           ($_ (nq:rejection $root $sdk $core $artifacts $fixture False))
           ($_ (nq:rejection $root $sdk $core $artifacts $fixture True)))
      NativeProviderSuitePassedV1))

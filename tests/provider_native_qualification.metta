@@ -316,6 +316,23 @@
           ($_ (nt:require structured-advertises-tool (nt:equal (preq:size (preq:items $body "tools")) 1)))
           ($_ (nt:require structured-ledger-purpose (nt:contains (repr (nq:rows $world "calls")) $purpose)))
           ($_ (nq:close $world))) 9))
+; A checkpoint check (METTACLAW_CODING_CHECK=1) never calls a provider for a
+; coding session or a compaction: native_call_seed refuses before any plan,
+; claim or request exists. A turn's call is still prepared.
+(: nq:coding-check (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
+(= (nq:coding-check $root $sdk $core $artifacts $fixture)
+   (let* (($world (nq:world $root $sdk $core $artifacts $fixture "coding-check"))
+          ($_ (nq:reply $world "chat-completions"))
+          ($request (repr (nq:structured-request)))
+          ($forms (format-args "(= (cc:prepared $plans) (if (== $plans ()) False (case (car-atom $plans) (((PreparedProviderCallV1 $owner $transport) True) ($other (cc:prepared (cdr-atom $plans)))))))\n!(let* (($coding (collapse (catch (llm:structured-plan (json-parse {}) \"coding\")))) ($_ (nt:require coding-check-refuses-coding (nt:equal (cc:prepared $coding) False))) ($compaction (collapse (catch (llm:structured-plan (json-parse {}) \"compaction\")))) ($_ (nt:require coding-check-refuses-compaction (nt:equal (cc:prepared $compaction) False))) ($turn (collapse (llm:structured-plan (json-parse {}) \"turn\"))) ($_ (nt:require coding-check-prepares-turns (cc:prepared $turn)))) (println! NATIVE_CODING_CHECK_OK))"
+                     ($request $request $request)))
+          ($output (nq:output (nq:guest $world "fixture-model" "petta" $forms (("METTACLAW_CODING_CHECK" "1")))))
+          ($_ (nt:require coding-check-finished (nt:contains $output "NATIVE_CODING_CHECK_OK")))
+          ($_ (nt:require coding-check-sends-nothing (nt:equal (nq:posts $world) 0)))
+          ($calls (repr (nq:rows $world "calls")))
+          ($_ (nt:require coding-check-records-no-refused-call
+                (not (or (nt:contains $calls "coding") (nt:contains $calls "compaction")))))
+          ($_ (nq:close $world))) 5))
 ; A deterministic rejection is retained: the next turn asks the host, which
 ; still blocks it, so no second request is sent. With the health record
 ; unwritable the block lives only in the host's memory; the native latch still
