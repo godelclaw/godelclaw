@@ -350,3 +350,254 @@
         ($end (str:join "" (cio:reverse $chunks ())))))))
 (= (cio:reverse $items $out)
    (if (== $items ()) $out (cio:reverse (cdr-atom $items) (cons-atom (car-atom $items) $out))))
+
+;; ---------------------------------------------------------- freezing
+; A session runs on a frozen copy of the runtime files the release selects
+; (config/runtime-files.json), stored under the digest of their contents in
+; memory/coding-runtimes/, so every resume runs the program the session was
+; pinned to. The digest is that of the canonical JSON object mapping each
+; selected name to its file's SHA-256, as earlier runtimes computed it, so
+; existing pins and cached runtimes keep their names.
+
+(= (cio:append-list $left $right)
+   (if (== $left ()) $right (cons-atom (car-atom $left) (cio:append-list (cdr-atom $left) $right))))
+(= (cio:replace $text $old $new) (str:join $new (str:split $old $text)))
+
+; The program root: the given root when it holds a runtime selection,
+; otherwise the nearest such ancestor of the entry program's directory.
+(= (cio:program-root $root)
+   (if (fs:is-file (path:join $root "config/runtime-files.json")) $root
+     (cio:selection-ancestor (system:entry-directory))))
+(= (cio:selection-ancestor $dir)
+   (if (fs:is-file (path:join $dir "config/runtime-files.json")) $dir
+     (let $parent (path:dirname $dir)
+       (if (== $parent $dir) $dir (cio:selection-ancestor $parent)))))
+
+(= (cio:selection $root)
+   (case (cio:json-any (path:join $root "config/runtime-files.json"))
+     (((JsonArray $items) (cio:selected-names $items ()))
+      ((JsonObject $pairs) (case (coding:field (JsonObject $pairs) "files")
+                             (((JsonArray $items) (cio:selected-names $items ()))
+                              ($other (CioFreezeFailed "the runtime selection has no file list")))))
+      ($other (CioFreezeFailed "the runtime selection is unreadable")))))
+(= (cio:json-any $path)
+   (if (fs:is-file $path) (catch (json-parse (fs:read-text $path))) JsonNull))
+(= (cio:selected-names $items $names)
+   (if (== $items ()) (sort-strings $names)
+     (case (car-atom $items)
+       (((JsonString $name)
+         (if (or (str:starts-with $name "/") (cio:member ".." (str:split "/" $name)))
+           (CioFreezeFailed "runtime selection must be relative")
+           (cio:selected-names (cdr-atom $items) (cons-atom $name $names))))
+        ($other (CioFreezeFailed "runtime selection names must be text"))))))
+(= (cio:member $item $items)
+   (if (== $items ()) False (if (== (car-atom $items) $item) True (cio:member $item (cdr-atom $items)))))
+
+(= (cio:file-sha256 $path)
+   (case (fs:sha256-file $path) (((fs:hashed-v1 $hex $info) $hex) ($other (CioFreezeFailed (repr $other))))))
+; (name: hex, ...) as Python's json.dumps(..., sort_keys=True) renders it.
+(= (cio:digest-entries $root $names $entries)
+   (if (== $names ()) (cio:reverse $entries ())
+     (let* (($name (car-atom $names)) ($hex (cio:file-sha256 (path:join $root $name))))
+       (if (!= (get-metatype $hex) Grounded) $hex
+         (cio:digest-entries $root (cdr-atom $names)
+           (cons-atom (str:join "" ((json-stringify (JsonString $name)) ": \"" $hex "\"")) $entries))))))
+(= (cio:bundle-digest $root $names)
+   (case (cio:digest-entries $root $names ())
+     (((CioFreezeFailed $why) (CioFreezeFailed $why))
+      ($entries (str:sha256 (str:join "" ("{" (str:join ", " $entries) "}")))))))
+
+; (FrozenBundle root digest), or (CioFreezeFailed why).
+(= (cio:freeze-bundle $root $cache)
+   (let $names (cio:selection $root)
+     (case $names
+       (((CioFreezeFailed $why) (CioFreezeFailed $why))
+        ($list
+         (case (cio:bundle-digest $root $list)
+           (((CioFreezeFailed $why) (CioFreezeFailed $why))
+            ($digest
+             (let $target (path:join $cache $digest)
+               (if (fs:exists $target) (FrozenBundle $target $digest)
+                 (cio:stage-bundle $root $cache $list $target $digest)))))))))))
+; Copy into a staging folder, then rename it into place: a cached runtime is
+; either absent or complete. A concurrent freeze of the same digest may win
+; the rename; its copy is the same.
+(= (cio:stage-bundle $root $cache $names $target $digest)
+   (let* (($_ (fs:make-directories $cache 504))
+          ($stage (path:join $cache (str:concat ".stage-" (system:uuid4-hex))))
+          ($_ (fs:make-directories $stage 504))
+          ($copied (cio:copy-files $root $stage $names))
+          ($moved (if (== $copied True) (fs:rename $stage $target) $copied))
+          ($_ (if (fs:exists $stage) (proc:run ("rm" "-rf" "--" $stage) $cache inherit 60000 0 "merged") ())))
+     (if (fs:exists (path:join $target "coding_main.metta")) (FrozenBundle $target $digest)
+       (CioFreezeFailed (format-args "could not stage the runtime: {}" ((repr $moved)))))))
+(= (cio:copy-files $root $stage $names)
+   (if (== $names ()) True
+     (let $copied (cio:copy-file (path:join $root (car-atom $names)) (path:join $stage (car-atom $names)))
+       (if (== $copied True) (cio:copy-files $root $stage (cdr-atom $names)) $copied))))
+; The bytes and the permission bits, as shutil.copymode copies them.
+(= (cio:copy-file $source $target)
+   (case (fs:read-text-result $source 0 "raw")
+     ((("ok" $bytes)
+       (let* (($_ (fs:make-directories (path:dirname $target) 504))
+              ($writer (fs:open-write $target ("create" "exclusive") 384)))
+         (if (cio:failed? $writer) $writer
+           (let* (($wrote (fs:write-all $writer $bytes)) ($_ (fs:close $writer)))
+             (if (cio:failed? $wrote) $wrote
+               (case (fs:metadata $source follow-permissions)
+                 (((fs:info $kind $size $identity (fs:permissions $bits))
+                   (let $moded (fs:set-mode $target $bits) (if (cio:failed? $moded) $moded True)))
+                  ($other $other))))))))
+      ($other (CioFreezeFailed (format-args "cannot read {}: {}" ($source (repr $other))))))))
+
+; The engine a session runs on, pinned by its resolved file and content: a
+; resume after an upgrade or a link flip must not run a different engine.
+(= (cio:engine-binary)
+   (let $named (system:getenv-or-default "CETTA_BIN" "cetta")
+     (cio:canonical (case (str:find $named "/")
+                      (((TextNotFound $slash) (cio:which $named (str:split ":" (system:getenv-or-default "PATH" ""))))
+                       ($at $named))))))
+(= (cio:which $name $dirs)
+   (if (== $dirs ()) $name
+     (let $candidate (path:join (car-atom $dirs) $name)
+       (if (and (fs:is-file $candidate) (fs:access $candidate ("execute"))) $candidate
+         (cio:which $name (cdr-atom $dirs))))))
+(= (cio:engine-sha256 $binary)
+   (case (fs:sha256-file $binary) (((fs:hashed-v1 $hex $info) (JsonString $hex)) ($other JsonNull))))
+
+;; ------------------------------------------------------------ launch
+; A launch is (CodingLaunch status root binary run detail): status reserved
+; with a fresh single-use run token, running when the session is live (its
+; manifest is unchanged), or failed with the reason.
+
+(= (cio:instance) (system:getenv-or-default "METTACLAW_INSTANCE" "mettaclaw"))
+(= (cio:scope-active? $dir)
+   (case (proc:run ("systemctl" "--user" "is-active" "--quiet"
+                    (str:join "" ((cio:instance) "-" (cio:basename $dir) ".scope")))
+                   $dir inherit 5000 0 "merged")
+     (((proc:exited 0 $out $err) True) ($other False))))
+; Live: its recorded worker is alive, or (when the folder holds a session
+; that could have a scope) its scope is active.
+(= (cio:live? $dir $check-scope)
+   (let $state (cio:json (path:join $dir "state.json"))
+     (if (and (== (coding:field $state "status") (JsonString "running"))
+              (process:alive? (coding:text (coding:field $state "worker_owner")))) True
+       (if $check-scope (cio:scope-active? $dir) False))))
+(= (cio:running-launch $manifest)
+   (CodingLaunch running (coding:text (coding:field $manifest "root")) (coding:text (coding:field $manifest "binary"))
+                 (coding:text (coding:field $manifest "run")) "session is already running"))
+(= (cio:put-default $object $key $value)
+   (if (== (coding:field $object $key) JsonNull)
+     (case $object (((JsonObject $pairs) (if (cio:has-key $pairs $key) $object (cio:put $object $key $value)))))
+     $object))
+(= (cio:has-key $pairs $key)
+   (if (== $pairs ()) False
+     (let (JsonPair $name $value) (car-atom $pairs) (if (== $name $key) True (cio:has-key (cdr-atom $pairs) $key)))))
+
+; Reserve a launch on the session's pin, or pin a new session to a frozen copy
+; of the current runtime. Note is the guidance a resume leaves the session, or
+; NoNote. Under the session lock, after settling a dead earlier run.
+(= (cio:freeze-runtime $root $dir $note)
+   (cio:locked $dir (cio:freeze-runtime-locked (cio:program-root $root) $dir $note)))
+(= (cio:freeze-runtime-locked $root $dir $note)
+   (let* (($record (path:join $dir "runtime.json"))
+          ($pinned (fs:is-file $record))
+          ($old (cio:json $record))
+          ($existing (or $pinned (or (fs:exists (path:join $dir "state.json"))
+                                     (or (fs:exists (path:join $dir "messages.jsonl")) (!= $note NoNote))))))
+     (if (cio:live? $dir $existing) (cio:running-launch $old)
+       (let $_ (cio:settle-ending-locked $dir Observed RequireDead)
+         (if $pinned (cio:reserve-pinned $dir $record $old $note)
+           (cio:reserve-new $root $dir $record $existing $note))))))
+(= (cio:reserve-pinned $dir $record $old $note)
+   (let $runtime (coding:text (coding:field $old "root"))
+     (if (not (fs:is-file (path:join $runtime "coding_main.metta")))
+       (CodingLaunch failed "" "" "" "session runtime is missing; restore it before resuming")
+       (let* (($token (system:uuid4-hex))
+              ($manifest (cio:put (cio:put (cio:put (cio:put-default (cio:put-default $old "checkpoint" JsonNull) "previous" JsonNull)
+                            "run" (JsonString $token)) "phase" (JsonString "reserved")) "at" (cio:now-json)))
+              ($published (cio:publish-json $record $manifest)))
+         (if (== $published True)
+           (let $_ (cio:prepare-resume $dir $note)
+             (CodingLaunch reserved $runtime (coding:text (coding:field $old "binary")) $token ""))
+           (CodingLaunch failed "" "" "" (repr $published)))))))
+(= (cio:reserve-new $root $dir $record $existing $note)
+   (case (cio:freeze-bundle $root (path:join (path:dirname (path:dirname $dir)) "coding-runtimes"))
+     (((FrozenBundle $target $digest)
+       (let* (($binary (cio:engine-binary))
+              ($token (system:uuid4-hex))
+              ($manifest (JsonObject ((JsonPair "root" (JsonString $target)) (JsonPair "digest" (JsonString $digest))
+                                      (JsonPair "binary" (JsonString $binary)) (JsonPair "binary_sha256" (cio:engine-sha256 $binary))
+                                      (JsonPair "checkpoint" JsonNull) (JsonPair "previous" JsonNull)
+                                      (JsonPair "run" (JsonString $token)) (JsonPair "phase" (JsonString "reserved"))
+                                      (JsonPair "at" (cio:now-json)))))
+              ($published (cio:publish-json $record $manifest)))
+         (if (== $published True)
+           (let $_ (if $existing (cio:prepare-resume $dir $note) ())
+             (CodingLaunch reserved $target $binary $token ""))
+           (CodingLaunch failed "" "" "" (repr $published)))))
+      ((CioFreezeFailed $why) (CodingLaunch failed "" "" "" $why)))))
+
+; A resumed run starts clean: no stop or recycle request, the last report kept
+; as report.previous.txt, no hold or archive label, and the resume's note in
+; the inbox.
+(= (cio:prepare-resume $dir $note)
+   (let* (($_ (if (fs:exists (path:join $dir "stop")) (fs:remove (path:join $dir "stop")) ()))
+          ($_ (if (fs:exists (path:join $dir "recycle.requested")) (fs:remove (path:join $dir "recycle.requested")) ()))
+          ($report (path:join $dir "report.txt"))
+          ($_ (if (fs:is-file $report)
+                (let $_ (fs:rename $report (path:join $dir "report.previous.txt")) (cio:sync-directory $dir)) ()))
+          ($_ (cio:clear-lifecycle $dir))
+          ($_ (if (== $note NoNote) () (cio:append-line (path:join $dir "inbox.jsonl") (json-stringify (JsonString $note))))))
+     True))
+
+; Hold and archive labels live in lifecycle.json under .lifecycle.lock.
+(: cio:lifecycle-locked (-> %Undefined% Atom %Undefined%))
+(= (cio:lifecycle-locked $dir $body)
+   (let $lock (fs:open-write (path:join $dir ".lifecycle.lock") ("create" "append") 432)
+     (if (cio:failed? $lock) (CioLockFailed $lock)
+       (let* (($held (fs:lock $lock exclusive))
+              ($result (collapse (catch (eval $body))))
+              ($released (fs:unlock $lock))
+              ($closed (fs:close $lock)))
+         (if (== $result ()) (CioNoAnswer) (car-atom $result))))))
+(= (cio:clear-lifecycle $dir)
+   (cio:lifecycle-locked $dir
+     (let $path (path:join $dir "lifecycle.json")
+       (if (fs:is-file $path)
+         (let $_ (fs:rename $path (path:join $dir "lifecycle.previous.json")) (cio:sync-directory $dir))
+         True))))
+
+; The model a session keeps, recorded in its own model.metta so the agent's
+; model file never reaches the session: task.json's model; for a session
+; from before models were recorded, the one model.metta already names, or
+; else the fallback.
+(= (cio:session-model $dir $fallback)
+   (let* (($recorded (coding:text (coding:field (cio:json (path:join $dir "task.json")) "model")))
+          ($state (path:join $dir "model.metta"))
+          ($saved (if (and (== $recorded "") (fs:is-file $state)) (cio:active-model (fs:read-text $state)) ""))
+          ($model (if (!= $recorded "") $recorded (if (!= $saved "") $saved $fallback)))
+          ($text (format-args "(active-model {})\n" ($model)))
+          ($_ (if (and (fs:is-file $state) (== (fs:read-text $state) $text)) () (fs:write $state $text))))
+     $model))
+(= (cio:active-model $text)
+   (case (str:find $text "(active-model")
+     (((TextNotFound $missing) "")
+      ($at (let $rest (str:split-whitespace (car-atom (str:split ")" (str:char-slice $text (+ $at 13) (str:char-length $text)))))
+             (if (== $rest ()) "" (car-atom $rest)))))))
+
+; The session's Python module path: its runtime's own source folders, then the
+; agent's other entries, without the agent's own source folders.
+(= (cio:runtime-pythonpath $runtime $original)
+   (let* (($own ((path:join $runtime "src") (path:join $runtime "channels") (path:join $runtime "modes")))
+          ($skip ((path:join $original "src") (path:join $original "channels") (path:join $original "modes")))
+          ($inherited (cio:kept-entries (str:split ":" (system:getenv-or-default "PYTHONPATH" "")) $skip)))
+     (str:join ":" (cio:append-list $own $inherited))))
+(= (cio:kept-entries $entries $skip)
+   (if (== $entries ()) ()
+     (let $entry (car-atom $entries)
+       (if (or (== $entry "") (cio:member $entry $skip)) (cio:kept-entries (cdr-atom $entries) $skip)
+         (cons-atom $entry (cio:kept-entries (cdr-atom $entries) $skip))))))
+
+; A word for sh: single-quoted, with each single quote spelled '"'"'.
+(= (cio:shell-quote $text) (str:join "" ("'" (cio:replace $text "'" "'\"'\"'") "'")))

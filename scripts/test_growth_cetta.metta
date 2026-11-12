@@ -8,7 +8,8 @@
 (= (growth:registered)
    ((GrowthCheck "coding-transcript-append" "tests/growth/coding_transcript_append.metta" 500 (growth:linear))
     (GrowthCheck "coding-settle-report" "tests/growth/coding_settle_report.metta" 64 (growth:linear))
-    (GrowthCheck "coding-execution-result" "tests/growth/coding_execution_result.metta" 1024 (growth:bounded))))
+    (GrowthCheck "coding-execution-result" "tests/growth/coding_execution_result.metta" 1024 (growth:bounded))
+    (GrowthCheck "coding-freeze-bundle" "tests/growth/coding_freeze_bundle.metta" 50 (growth:linear))))
 
 (= (growth:run-all $root $core $artifacts $checks $only $ok)
    (if (== $checks ()) $ok

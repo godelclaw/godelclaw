@@ -206,12 +206,121 @@
           ($_ (nt:require malformed-output-kept (and (nt:contains $repaired "ok") (nt:contains $repaired "done")))))
      True))
 
+; A runtime tree as config/runtime-files.json selects it; its digest is the one
+; earlier runtimes computed for the same files, so cached runtimes keep names.
+(= (cit:fixture-root $root)
+   (let* (($tree (path:join $root "program"))
+          ($_ (nt:exit-ok (proc:run ("sh" "-c" (str:join "" (
+                "mkdir -p src bin config data && printf '; fixture\\n' > coding_main.metta && "
+                "printf '(= (a) 1)\\n' > src/a.metta && printf '#!/bin/sh\\necho hi\\n' > bin/tool.sh && "
+                "chmod 755 bin/tool.sh && printf '\\000\\377\\376 raw\\n' > data/bytes.bin && "
+                "printf '[\"coding_main.metta\", \"src/a.metta\", \"bin/tool.sh\", \"config/runtime-files.json\", \"data/bytes.bin\"]\\n' > config/runtime-files.json")))
+                (let $_ (fs:make-directories $tree 504) $tree) (nt:environment $root) 30000 4096))))
+     $tree))
+(= (cit:sha $path) (case (fs:sha256-file $path) (((fs:hashed-v1 $hex $info) $hex) ($other $other))))
+
+(= (cit:freezing $root)
+   (let* (($program (cit:fixture-root $root))
+          ($cache (path:join $root "runtimes"))
+          ($frozen (cio:freeze-bundle $program $cache))
+          ($digest "be914a006ebbb316bab87c226b2f8bbe9462c3fb9ab1306393573110773fae57")
+          ($_ (nt:require digest-compatible (nt:equal $frozen (FrozenBundle (path:join $cache $digest) $digest))))
+          ($copy (path:join $cache $digest))
+          ($_ (nt:require bytes-copied (nt:equal (cit:sha (path:join $copy "data/bytes.bin")) (cit:sha (path:join $program "data/bytes.bin")))))
+          ($_ (nt:require nested-copied (nt:equal (fs:read-text (path:join $copy "src/a.metta")) "(= (a) 1)\n")))
+          ($_ (nt:require mode-copied (nt:equal (cit:mode (path:join $copy "bin/tool.sh")) 493)))
+          ($_ (nt:require cache-reused (nt:equal (cio:freeze-bundle $program $cache) $frozen)))
+          ($_ (nt:require no-stage-left (nt:equal (fs:entries $cache) ($digest))))
+          ($_ (fs:write (path:join $program "config/runtime-files.json") "[\"../outside\"]"))
+          ($_ (nt:require escaping-selection-refused
+                (case (cio:freeze-bundle $program $cache) (((CioFreezeFailed $why) True) ($other False)))))
+          ($_ (fs:write (path:join $program "config/runtime-files.json") "[\"/etc/passwd\"]"))
+          ($_ (nt:require absolute-selection-refused
+                (case (cio:freeze-bundle $program $cache) (((CioFreezeFailed $why) True) ($other False)))))
+          ($_ (fs:write (path:join $program "config/runtime-files.json") "[\"coding_main.metta\", \"src/a.metta\"]")))
+     True))
+
+; A new session is pinned to a frozen copy; a pinned one gets a fresh token on
+; its own pin; a live one is left alone.
+(= (cit:reservations $root)
+   (let* (($program (path:join $root "program"))
+          ($sessions (path:join $root "memory/coding"))
+          ($new (path:join $sessions "work-new"))
+          ($_ (fs:make-directories $new 504))
+          ($first (cio:freeze-runtime $program $new NoNote))
+          ($manifest (cio:json (path:join $new "runtime.json")))
+          ($run (coding:text (coding:field $manifest "run")))
+          ($_ (nt:require new-session-reserved
+                (case $first (((CodingLaunch reserved $r $b $t "") (nt:equal $t $run)) ($other False)))))
+          ($_ (nt:require pinned-to-frozen-copy
+                (nt:equal (coding:text (coding:field $manifest "root"))
+                          (path:join (path:join $root "memory/coding-runtimes") (coding:text (coding:field $manifest "digest"))))))
+          ($_ (nt:require frozen-copy-runnable (fs:is-file (path:join (coding:text (coding:field $manifest "root")) "coding_main.metta"))))
+          ($_ (nt:require token-is-fresh (cio:execution-id? $run)))
+          ($_ (nt:require reservation-phase (nt:equal (coding:field $manifest "phase") (JsonString "reserved"))))
+          ($_ (nt:require no-checkpoint-yet (nt:equal (coding:field $manifest "checkpoint") JsonNull)))
+          ($_ (nt:require engine-recorded (nt:equal (coding:text (coding:field $manifest "binary")) (cio:engine-binary))))
+          ;; A resume after the run ended: flags cleared, report and label kept aside, note queued.
+          ($_ (fs:write (path:join $new "state.json") "{\"status\":\"done\",\"steps\":3}"))
+          ($_ (fs:write (path:join $new "stop") "")) ($_ (fs:write (path:join $new "recycle.requested") "x"))
+          ($_ (fs:write (path:join $new "report.txt") "old report"))
+          ($_ (fs:write (path:join $new "lifecycle.json") "{\"hold\":{\"why\":\"later\"}}"))
+          ($second (cio:freeze-runtime $program $new "Resume from the evidence."))
+          ($again (cio:json (path:join $new "runtime.json")))
+          ($_ (nt:require resume-reserved
+                (case $second (((CodingLaunch reserved $r $b $t "") (nt:equal $t (coding:text (coding:field $again "run")))) ($other False)))))
+          ($_ (nt:require resume-new-token (not (nt:equal (coding:text (coding:field $again "run")) $run))))
+          ($_ (nt:require resume-keeps-pin (nt:equal (coding:field $again "digest") (coding:field $manifest "digest"))))
+          ($_ (nt:require resume-clears-stop (not (fs:exists (path:join $new "stop")))))
+          ($_ (nt:require resume-clears-recycle (not (fs:exists (path:join $new "recycle.requested")))))
+          ($_ (nt:require resume-keeps-report (nt:equal (fs:read-text (path:join $new "report.previous.txt")) "old report")))
+          ($_ (nt:require resume-clears-label (and (not (fs:exists (path:join $new "lifecycle.json")))
+                                                    (fs:is-file (path:join $new "lifecycle.previous.json")))))
+          ($_ (nt:require resume-note-queued (nt:equal (fs:read-text (path:join $new "inbox.jsonl")) "\"Resume from the evidence.\"\n")))
+          ;; A live worker keeps its run.
+          ($_ (fs:write (path:join $new "state.json")
+                (format-args "{\"status\":\"running\",\"worker_owner\":\"{}\"}" ((process:owner)))))
+          ($before (fs:read-text (path:join $new "runtime.json")))
+          ($_ (nt:require live-session-running
+                (case (cio:freeze-runtime $program $new NoNote) (((CodingLaunch running $r $b $t $d) True) ($other False)))))
+          ($_ (nt:require live-manifest-unchanged (nt:equal (fs:read-text (path:join $new "runtime.json")) $before)))
+          ;; A dead run is settled before the next reservation.
+          ($_ (fs:write (path:join $new "state.json")
+                (format-args "{\"status\":\"running\",\"worker_owner\":\"4194301:1\",\"run\":\"{}\"}" ((coding:text (coding:field $again "run"))))))
+          ($_ (fs:write (path:join $new "runtime.json") (json-stringify (cio:put $again "phase" (JsonString "started")))))
+          ($_ (cio:freeze-runtime $program $new NoNote))
+          ($_ (nt:require dead-run-settled-first (nt:equal (coding:field (cio:json (path:join $new "state.json")) "status") (JsonString "interrupted"))))
+          ;; A pin whose runtime is gone cannot resume on it.
+          ($gone (path:join $sessions "work-gone")) ($_ (fs:make-directories $gone 504))
+          ($_ (fs:write (path:join $gone "runtime.json") "{\"root\":\"/nonexistent-runtime\",\"run\":\"x\",\"phase\":\"ended\"}"))
+          ($_ (nt:require missing-runtime-refused
+                (case (cio:freeze-runtime $program $gone NoNote) (((CodingLaunch failed $r $b $t $d) (nt:contains $d "runtime is missing")) ($other False))))))
+     True))
+
+(= (cit:launch-values $root)
+   (let* (($m (path:join $root "model-session")) ($_ (fs:make-directories $m 504))
+          ($_ (fs:write (path:join $m "task.json") "{\"model\":\"kimi-k2\"}"))
+          ($_ (nt:require recorded-model-kept (nt:equal (cio:session-model $m "agent-model") "kimi-k2")))
+          ($_ (nt:require model-state-written (nt:equal (fs:read-text (path:join $m "model.metta")) "(active-model kimi-k2)\n")))
+          ($o (path:join $root "old-session")) ($_ (fs:make-directories $o 504))
+          ($_ (fs:write (path:join $o "task.json") "{\"task\":\"t\"}"))
+          ($_ (fs:write (path:join $o "model.metta") "(active-model  syn:large:text )\n"))
+          ($_ (nt:require saved-model-kept (nt:equal (cio:session-model $o "agent-model") "syn:large:text")))
+          ($f (path:join $root "fresh-session")) ($_ (fs:make-directories $f 504))
+          ($_ (fs:write (path:join $f "task.json") "{\"task\":\"t\"}"))
+          ($_ (nt:require fallback-model (nt:equal (cio:session-model $f "agent-model") "agent-model")))
+          ($tricky "it's \"$HOME\" `x`\nnext; rm -rf /")
+          ($echoed (nt:exit-ok (proc:run ("sh" "-c" (str:concat "printf %s " (cio:shell-quote $tricky))) $root (nt:environment $root) 5000 4096)))
+          ($_ (nt:require shell-quote-round-trip (nt:equal $echoed $tricky))))
+     True))
+
 (= (cit:run)
    (let* (($root (nt:join (nt:required-env "NATIVE_TEST_ARTIFACTS") (str:concat "coding-io-" (system:uuid4-hex))))
           ($_ (fs:make-directories $root 504))
           ($_ (cit:run-tokens $root)) ($_ (cit:worker-writes $root)) ($_ (cit:stops $root))
           ($_ (cit:endings $root)) ($_ (cit:lock-exclusion $root)) ($_ (cit:append $root))
-          ($_ (cit:executions $root)))
+          ($_ (cit:executions $root)) ($_ (cit:freezing $root)) ($_ (cit:reservations $root))
+          ($_ (cit:launch-values $root)))
      CodingIoContractsPassed))
 !(nt:require coding-io-contracts-completed (nt:equal (collapse (cit:run)) (CodingIoContractsPassed)))
 !(println! NATIVE_CODING_IO_PASSED)

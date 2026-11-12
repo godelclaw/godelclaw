@@ -52,7 +52,7 @@
    (case $value (((JsonString $text) $text) ((JsonNumber $text) $text) ($other ""))))
 (= (work:json $path) (if (fs:is-file $path) (json-parse (fs:read-text $path)) (JsonObject ())))
 (= (work:shell $command) (proc:run ("bash" "-c" $command) (system:cwd) inherit 30000 0 "merged"))
-(= (work:quote $text) (py-call (shlex.quote $text)))
+(= (work:quote $text) (cio:shell-quote $text))
 (= (work:clip $text $limit)
    (if (<= (str:char-length $text) $limit) $text (str:concat (str:char-slice $text 0 $limit) " …")))
 
@@ -88,8 +88,8 @@
             ((GuidanceFailed $why) (str:concat "work: " $why)))))
         ((GuidanceFailed $why) (str:concat "work: " $why))))))
 (= (work:start-at $task $workdir $model $effort $guidance)
-   (let* (($stamp (py-call (time.strftime "%Y%m%d-%H%M%S")))
-          ($salt (py-call (secrets.token_hex 2)))
+   (let* (($stamp (system:format-time "%Y%m%d-%H%M%S" (system:wall-time) "local"))
+          ($salt (str:char-slice (system:uuid4-hex) 0 4))
           ($id (format-args "work-{}-{}" ($stamp $salt)))
           ($dir (work:dir $id))
           ($_ (proc:run ("mkdir" "-p" "--" $dir) (system:cwd) inherit 10000 0 "merged"))
@@ -99,27 +99,31 @@
                                    (JsonPair "requester" (JsonString $requester)) (JsonPair "effort" (JsonString $effort))
                                    (JsonPair "requester_space" (JsonString (system:getenv-or-default "METTACLAW_MAIL_SPACE" "agent-mail")))
                                    (JsonPair "model" (JsonString $model)) (JsonPair "guidance" $guidance))))
-          ($_ (fs:update-text (path:join $dir "task.json") "replace" (json-stringify $task-json) "" ""))
-          ($_ (work:launch $id)))
-     (str:join "" ("WORK_STARTED " $id ". It runs on its own and mails you its report when done; "
-                   "(work-status \"" $id "\") shows its progress, (work-steer \"" $id "\" \"text\") guides it, "
-                   "(work-stop \"" $id "\") stops it."))))
+          ($_ (fs:update-text (path:join $dir "task.json") "replace" (json-stringify $task-json) "" "")))
+     (case (work:launch $id)
+       (((WorkLaunched $launched)
+         (str:join "" ("WORK_STARTED " $id ". It runs on its own and mails you its report when done; "
+                       "(work-status \"" $id "\") shows its progress, (work-steer \"" $id "\" \"text\") guides it, "
+                       "(work-stop \"" $id "\") stops it.")))
+        ((WorkNotLaunched $why) (str:join "" ("work: session " $id " could not launch: " $why)))))))
 
 (= (work:launch $id)
-   (let $desc (py-call (coding_io.freeze_runtime (system:cwd) (work:dir $id)))
-     (work:launch-at $id $desc)))
+   (work:launch-at $id (cio:freeze-runtime (system:cwd) (work:dir $id) NoNote)))
+;; A reservation launches; anything else names why it did not.
 (= (work:launch-at $id $desc)
+   (case $desc
+     (((CodingLaunch reserved $runtime $binary $token $detail) (work:launch-reserved $id $runtime $binary $token))
+      ((CodingLaunch $status $runtime $binary $token $detail) (WorkNotLaunched (str:concat $status (str:concat ": " $detail))))
+      ($other (WorkNotLaunched (repr $other))))))
+(= (work:launch-reserved $id $runtime $binary $token)
    (let* (($dir (work:dir $id))
           ($tmp (path:join $dir "tmp"))
           ($_ (proc:run ("mkdir" "-p" "--" $tmp) (system:cwd) inherit 10000 0 "merged"))
           ;; The session reads its model from its own state file, never the
           ;; agent's; a session from before models were recorded keeps the
           ;; agent's model of the moment it resumes.
-          ($model (format-args "{}" ((py-call (coding_io.session_model $dir (work:agent-model))))))
-          ($runtime (format-args "{}" ((py-call (coding_io.descriptor_field $desc "root")))))
-          ($binary (format-args "{}" ((py-call (coding_io.descriptor_field $desc "binary")))))
-          ($token (format-args "{}" ((py-call (coding_io.descriptor_field $desc "run")))))
-          ($pythonpath (py-call (coding_io.runtime_pythonpath $runtime (system:cwd))))
+          ($model (cio:session-model $dir (work:agent-model)))
+          ($pythonpath (cio:runtime-pythonpath $runtime (system:cwd)))
           ;; The session shares the account's ledger and usage tally, as
           ;; Codex sub-agents share rate limits, but keeps its own health,
           ;; last-completion and restart files: its calls are not the agent's turns.
@@ -174,12 +178,12 @@
                  (str:concat "work-resume: " $problem)
                  (str:join "" ("work-resume: " $problem "; this session cannot resume on its pin. Move it to the current runtime with (work-resume \"" $id "\" \"current\"), start a new session with (work \"...\"), or set it aside with (work-archive \"" $id "\" \"why\").")))
                (let* (($_ (delivery:preserve $dir))
-                      ($desc (py-call (coding_io.freeze_runtime (system:cwd) $dir
+                      ($desc (cio:freeze-runtime (system:cwd) $dir
                                "Resume this session from its existing evidence and plan. Verify uncertain effects before choosing new actions.")))
-                      ($status (format-args "{}" ((py-call (coding_io.descriptor_field $desc "status"))))))
-                 (if (== $status "running")
-                   (str:concat "WORK_RUNNING " $id)
-                   (work:finish-resume $id $dir $desc)))))
+                 (case $desc
+                   (((CodingLaunch running $runtime $binary $token $detail) (str:concat "WORK_RUNNING " $id))
+                    ((CodingLaunch failed $runtime $binary $token $detail) (str:concat "work-resume: " $detail))
+                    ($reserved (work:finish-resume $id $dir $reserved)))))))
            (if (== $mode "current")
              (let* (($_ (delivery:preserve $dir))
                     ($raw (format-args "{}" ((py-call (coding_io.repin_session_json (system:cwd) $dir)))))
@@ -194,7 +198,9 @@
                      (str:join "" ("work-resume: re-pinning could not confirm durability after updating runtime.json: " $detail "; its pin may have changed and the next resume will recheck it."))
                      (if (== $status "changed")
                        (str:concat "work-resume: " $detail)
-                       (work:finish-resume $id $dir $raw))))))
+                       (work:finish-resume $id $dir
+                         (CodingLaunch reserved (work:text (work:field $outcome "root"))
+                           (work:text (work:field $outcome "binary")) (work:text (work:field $outcome "run")) "")))))))
              (str:join "" ("work-resume: unknown resume mode \"" $mode "\"; use \"pinned\" or \"current\"."))))))))
 
 (= (work:line $id)
