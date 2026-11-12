@@ -385,5 +385,8 @@
   "src/memory_health_cetta.metta",
   "scripts/memory_health_cetta.metta",
   "src/boot_state_cetta.metta",
-  "scripts/loop_bootstrap_cetta.metta"
+  "scripts/loop_bootstrap_cetta.metta",
+  "src/model_selection_cetta.metta",
+  "src/loop_host_cetta.metta",
+  "src/commentary_contract_cetta.metta"
 ]
