@@ -9,7 +9,7 @@
 ;; reply into that chat is withheld. With no new input in turn two, the full
 ;; batch runs.
 (= (probe-stimulus)
-   (py-call (telegram._set_last "probe" "new stimulus" False "full" 123)))
+   (tg:activity-add "" "probe" "new stimulus" False "full" "123" False))
 !(py-eval "__import__('helper').__dict__.__setitem__('_batch_probe_prompts', [])")
 !(py-eval "__import__('synthetic_llm').__dict__.__setitem__('chat', lambda *args: (__import__('helper')._batch_probe_prompts.append(str(args[-1])), __import__('cognitive_health').turn_started('probe'), __import__('cognitive_health').turn_completed(32), ('((probe-stimulus) (help _quote_query_quote_) (send-telegram-chat _quote_probe_quote_ _quote_stale-reply_quote_))' if len(__import__('helper')._batch_probe_prompts) == 1 else '((help _quote_send_quote_) (help _quote_query_quote_))'))[-1])")
 !(py-eval "__import__('helper').__dict__.__setitem__('stimulus_batch_probe_ok', lambda feedback: int(str(feedback).count('COMMAND_RETURN:') == 3 and 'COMMAND_BATCH_INTERRUPTED:' not in str(feedback) and 'stale-reply' in str(feedback)))")
