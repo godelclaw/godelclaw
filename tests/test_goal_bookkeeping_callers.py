@@ -63,6 +63,7 @@ def caller_prefix(native=True, trace_io=True):
 (= (get_time_as_string) "2026-01-02T03:04:05")
 (= (tg:client-metta?) True)
 (= (tg:last-message-arm-loops) 7)
+(= (tg:current-batch-identity) (py-call (telegram.current_batch_identity)))
 (= (caller:base) (coordinate loops 0 (coordinate last-heartbeat 0
   (coordinate sleep-interval 60 (coordinate burst-end idle
   (coordinate active-policy godelclaw coordinates-empty))))))
