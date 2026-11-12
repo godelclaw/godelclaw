@@ -17,8 +17,7 @@
 !(import! &self (library str))
 !(import! &self (library math))
 !(import! &self (library json))
-!(import! &self ./src/apply_patch.py)
-!(import! &self ./src/coding_io.py)
+!(import! &self ./src/apply_patch_cetta.metta)
 !(import! &self ./src/coding_io_cetta.metta)
 !(import! &self ./src/coding_values.metta)
 !(import! &self ./src/coding_guidance.metta)
@@ -55,7 +54,7 @@
 (= (coding:exec-report $code $seconds $output)
    (str:join "" ("Exit code: " $code "\nWall time: " (repr $seconds) " seconds\nOutput:\n" (coding:cut $output))))
 (= (coding:patch $workdir $patch)
-   (let $receipt (py-call (apply_patch.apply $patch $workdir)) (format-args "{}" ($receipt))))
+   (patch:apply $patch $workdir))
 (= (coding:plan $dir $args)
    (let* (($text (json-stringify $args))
           ($_ (fs:update-text (coding:file $dir "plan.json") "replace" $text "" ""))
@@ -142,7 +141,7 @@
           ($box (coding:wait-provider $plan $pending))
           ($reply (coding:file $dir "reply.json"))
           ($_ (py-call (native_llm_host.structured_json_result $box $reply)))
-          ($_ (py-call (coding_io.context_observe $dir (str:byte-length $text)))))
+          ($_ (cio:context-observe $dir (str:byte-length $text))))
      (json-parse (fs:read-text $reply))))
 
 ; This session schedules its own process owner while waiting on the same
@@ -193,7 +192,7 @@
 
 ; Tokens are estimated at four bytes each, as Codex estimates new items, or at
 ; the higher rate the provider counted for this session's last request.
-(= (coding:estimate $dir $request) (py-call (coding_io.context_tokens $dir (str:byte-length (json-stringify $request)))))
+(= (coding:estimate $dir $request) (cio:context-tokens $dir (str:byte-length (json-stringify $request))))
 ; Read at every step: the provider reports the model's window after the first.
 (= (coding:window)
    (let* (($_ (llm:observe-window)) ($capacity (py-call (strategy_host.context_capacity 32768)))

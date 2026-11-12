@@ -207,7 +207,20 @@
                                     (path:join $d "executions") (nt:environment $root) 30000 4096)))
           ($repaired (cio:execution-finish $d $bad "exited" 0 0.1))
           ($_ (nt:require malformed-output-is-text (nt:equal (str:utf8-error $repaired) StrUtf8WellFormedV1)))
-          ($_ (nt:require malformed-output-kept (and (nt:contains $repaired "ok") (nt:contains $repaired "done")))))
+          ($_ (nt:require malformed-output-kept (and (nt:contains $repaired "ok") (nt:contains $repaired "done"))))
+          ($long "4444444444444444dddddddddddddddd")
+          ($_ (cio:execution-create $d $long "printf"))
+          ($_ (nt:exit-ok (proc:run ("sh" "-c" (format-args "{ printf 'head\\377\\376mark'; head -c 100000 /dev/zero | tr '\\0' m; printf 'tail\\377end'; } > {}.log" ($long)))
+                                    (path:join $d "executions") (nt:environment $root) 30000 4096)))
+          ($cut (cio:execution-finish $d $long "exited" 0 0.1))
+          ($_ (nt:require long-output-is-text (nt:equal (str:utf8-error $cut) StrUtf8WellFormedV1)))
+          ;; U+FFFD where the engine has the replace policy; dropped bytes, but
+          ;; never a lost head, where it has not.
+          ($_ (nt:require head-malformed-shown
+                (case (str:utf8-new replace)
+                  (((Utf8DecoderV1 $policy $tail $seen) (nt:contains $cut "head��mark"))
+                   ($older (nt:contains $cut "headmark"))))))
+          ($_ (nt:require tail-malformed-replaced (nt:contains $cut "tail�end"))))
      True))
 
 ; A runtime tree as config/runtime-files.json selects it; its digest is the one
@@ -406,6 +419,33 @@
           ($_ (nt:require no-verdict (nt:equal (cio:check-verdict 0 "CheckpointReady 3") (CheckpointRefused "the check produced no valid verdict")))))
      True))
 
+; Context accounting: four bytes a token, or the provider's rate when higher.
+(= (cit:observe $dir $usage $size)
+   (let $_ (fs:write (path:join $dir "reply.json") (str:join "" ("{\"usage\":" $usage "}")))
+     (cio:context-observe $dir $size)))
+(= (cit:context $root)
+   (let* (($d (path:join $root "context")) ($_ (fs:make-directories $d 504))
+          ($_ (nt:require quarter-without-count (nt:equal (cio:context-tokens $d 4000) 1000)))
+          ($_ (nt:require no-input-count-no-record (nt:equal (cit:observe $d "{\"completion_tokens\":3}" 4000) 0)))
+          ($_ (nt:require still-quarter (nt:equal (cio:context-tokens $d 4000) 1000)))
+          ;; Anthropic: the cached and newly written prefix count toward the input.
+          ($_ (nt:require cache-counts-recorded
+                (nt:equal (cit:observe $d "{\"input_tokens\":2,\"cache_read_input_tokens\":1000,\"cache_creation_input_tokens\":998}" 6000) 1)))
+          ($_ (nt:require provider-rate-applies (nt:equal (cio:context-tokens $d 9000) 3000)))
+          ;; Responses: input_tokens is the whole input, cached part included.
+          ($_ (nt:require responses-input-recorded
+                (nt:equal (cit:observe $d "{\"input_tokens\":1500,\"input_tokens_details\":{\"cached_tokens\":1400}}" 6000) 1)))
+          ($_ (nt:require responses-rate-applies (nt:equal (cio:context-tokens $d 12000) 3000)))
+          ;; A provider counting fewer never lowers the four-byte estimate.
+          ($_ (nt:require lower-count-recorded (nt:equal (cit:observe $d "{\"prompt_tokens\":10}" 6000) 1)))
+          ($_ (nt:require quarter-is-the-floor (nt:equal (cio:context-tokens $d 12000) 3000)))
+          ($u (path:join $root "context-unreadable")) ($_ (fs:make-directories $u 504))
+          ($_ (nt:require missing-reply-ignored (nt:equal (cio:context-observe $u 100) 0)))
+          ($_ (fs:write (path:join $u "reply.json") "not json"))
+          ($_ (nt:require unreadable-reply-ignored (nt:equal (cio:context-observe $u 100) 0)))
+          ($_ (nt:require nothing-recorded (not (fs:exists (path:join $u "context.json"))))))
+     True))
+
 (= (cit:run)
    (let* (($root (nt:join (nt:required-env "NATIVE_TEST_ARTIFACTS") (str:concat "coding-io-" (system:uuid4-hex))))
           ($_ (fs:make-directories $root 504))
@@ -413,7 +453,7 @@
           ($_ (cit:endings $root)) ($_ (cit:lock-exclusion $root)) ($_ (cit:append $root))
           ($_ (cit:executions $root)) ($_ (cit:freezing $root)) ($_ (cit:reservations $root))
           ($_ (cit:launch-values $root)) ($_ (cit:repins $root)) ($_ (cit:verdicts))
-          ($_ (cit:preparation-failures $root)))
+          ($_ (cit:preparation-failures $root)) ($_ (cit:context $root)))
      CodingIoContractsPassed))
 !(nt:require coding-io-contracts-completed (nt:equal (collapse (cit:run)) (CodingIoContractsPassed)))
 !(println! NATIVE_CODING_IO_PASSED)

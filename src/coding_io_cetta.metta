@@ -18,6 +18,7 @@
 !(import! &self (library str))
 !(import! &self (library json))
 !(import! &self (library system))
+!(import! &self (library math))
 !(import! &self ./src/coding_values.metta)
 !(import! &self ./src/process_identity_cetta.metta)
 
@@ -327,6 +328,7 @@
 
 ; The output, bounded: whole up to 40000 bytes, otherwise its first and last
 ; 20000 bytes. Only the bytes shown are read, whatever the log's size.
+; Malformed bytes read as U+FFFD, one per maximal subpart, in all parts.
 (= (cio:log-excerpt $log)
    (case (fs:metadata $log follow)
      (((fs:info regular $size $identity)
@@ -340,9 +342,14 @@
      (if (cio:failed? $reader) ""
        (let* (($bytes (cio:read-up-to $reader $limit ()))
               ($_ (fs:close $reader))
-              ($decoder (str:utf8-new ignore)))
+              ($decoder (cio:replacing-decoder)))
          (case (str:utf8-feed $decoder $bytes True)
            (((Utf8DecodedV1 $text $next) $text) ($other "")))))))
+; U+FFFD for malformed bytes; an engine without the replace policy drops
+; them instead, rather than losing the head of the output.
+(= (cio:replacing-decoder)
+   (let $decoder (str:utf8-new replace)
+     (case $decoder (((Utf8DecoderV1 $policy $tail $seen) $decoder) ($refused (str:utf8-new ignore))))))
 (= (cio:read-up-to $reader $left $chunks)
    (if (<= $left 0) (str:join "" (cio:reverse $chunks ()))
      (case (fs:read-chunk $reader $left)
@@ -822,3 +829,42 @@
                    (cio:prepared-launch $dir (cio:note-repinned) $launch)
                    (CodingLaunch uncertain "" "" "" (repr $logged)))))
               ($other $other))))))))
+
+;; -------------------------------------------------- context accounting
+; A request's size in tokens, for compaction: four bytes a token, as Codex
+; estimates new items, or the rate the provider counted for this session's
+; last request when that was more.
+
+; A token count the provider reported: a non-negative JSON integer.
+(= (cio:token-count $value)
+   (case $value
+     (((JsonNumber $text) (if (and (!= $text "") (str:is-all-in digit $text)) (str:string->number $text) None))
+      ($other None))))
+(= (cio:count-or-zero $value) (let $count (cio:token-count $value) (if (== $count None) 0 $count)))
+; The input the provider counted for a request: its prompt (or input) tokens,
+; plus the cache reads and writes a provider that reports them separately
+; (Anthropic's cache_read_input_tokens) leaves out of that number. None when
+; nothing positive was reported.
+(= (cio:reported-input $usage)
+   (let $base (cio:token-count (if (!= (coding:field $usage "prompt_tokens") JsonNull)
+                                 (coding:field $usage "prompt_tokens") (coding:field $usage "input_tokens")))
+     (if (== $base None) None
+       (let $total (if (== (coding:field $usage "cache_read_input_tokens") JsonNull) $base
+                     (+ $base (+ (cio:count-or-zero (coding:field $usage "cache_read_input_tokens"))
+                                 (cio:count-or-zero (coding:field $usage "cache_creation_input_tokens")))))
+         (if (> $total 0) $total None)))))
+; Remember what the provider counted for the request just answered (reply.json).
+(= (cio:context-observe $dir $request-bytes)
+   (let $tokens (cio:reported-input (coding:field (cio:json (path:join $dir "reply.json")) "usage"))
+     (if (or (== $tokens None) (<= $request-bytes 0)) 0
+       (if (== (cio:publish-json (path:join $dir "context.json")
+                 (JsonObject ((JsonPair "bytes" (JsonNumber (repr $request-bytes)))
+                              (JsonPair "tokens" (JsonNumber (repr $tokens))))))
+               True) 1 0))))
+(= (cio:context-tokens $dir $request-bytes)
+   (let* (($record (cio:json (path:join $dir "context.json")))
+          ($bytes (cio:token-count (coding:field $record "bytes")))
+          ($tokens (cio:token-count (coding:field $record "tokens")))
+          ($quarter (math:floor (/ $request-bytes 4))))
+     (if (or (== $bytes None) (or (== $tokens None) (== $bytes 0))) $quarter
+       (max $quarter (math:ceil (/ (* $request-bytes $tokens) $bytes))))))
