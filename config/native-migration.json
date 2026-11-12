@@ -233,6 +233,21 @@
         "working_state_host.commit_scope",
         "process_supervision.progress"
       ]
+    },
+    {
+      "id": "buffered-provider-codec",
+      "status": "qualified-and-deployed",
+      "native_module": "lib/llm.metta:llm:v1:response-body",
+      "engine_commit": "49c88e9dba5b54946402dffec78ed7500dba9e81",
+      "runtime_commit": "38aeebf1f77d1169a179a04ed499b4d86e24c08d",
+      "release": "ef7a653adc67c4e3038ef8b35081b4e4bf59afdf4377dc36177f11b3043cc9fb",
+      "checks": {
+        "tests": 361,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "removed_runtime_source": "src/provider_stream.py"
     }
   ]
 }

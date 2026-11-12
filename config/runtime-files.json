@@ -281,6 +281,8 @@
   "src/public_worklog.py",
   "src/public_worklog_cetta.metta",
   "src/provider_protocol.py",
+  "src/provider_request_cetta.metta",
+  "src/provider_call_cetta.metta",
   "src/provider_rejection.py",
   "src/replay_evaluation.py",
   "src/responses_stream_cetta.metta",

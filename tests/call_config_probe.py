@@ -10,7 +10,7 @@ def _profile(frame, event, arg):
     global _captures
     if event != 'call' or not frame.f_code.co_filename.endswith('/native_llm_host.py'):
         return
-    if frame.f_code.co_name == 'transport_config':
+    if frame.f_code.co_name in ('transport_config', 'native_command_seed'):
         _captures += 1
     if frame.f_code.co_name == 'field' and str(frame.f_locals.get('name')) in _forbidden:
         print('CALL_CONFIG_FORBIDDEN_FIELD:' + str(frame.f_locals.get('name')), file=sys.stderr)

@@ -165,12 +165,15 @@ def _plan(kind, model, tokens, builder, *, native_ledger=False):
     ticket = None
     provider = None
     try:
-        selected = synthetic_llm.current_model(str(model))
+        if builder is None and not native_ledger:
+            raise ValueError("native preparation requires native accounting")
+        # Native preparation supplies the model already selected by its caller.
+        selected = str(model) if builder is None else synthetic_llm.current_model(str(model))
         provider = synthetic_llm._provider_for(selected)
         if not provider["key"]:
             raise RuntimeError("provider credential is not configured")
-        request = builder(provider["protocol"], provider.get("model", selected))
-        if provider["name"] == "synthetic":
+        request = builder(provider["protocol"], provider.get("model", selected)) if builder else None
+        if request is not None and provider["name"] == "synthetic":
             options = dict(request)
             for field in ("reasoning", "reasoning_effort"):
                 if field in request.get("extensions", {}):
@@ -182,7 +185,7 @@ def _plan(kind, model, tokens, builder, *, native_ledger=False):
         if call_scope() and call_lane() == "background":
             reserve = dict(reserved_output=int(os.environ.get("METTACLAW_ACTIVITY_RESERVED_OUTPUT", "0")),
                            reserved_requests=int(os.environ.get("METTACLAW_ACTIVITY_INTERACTIVE_RESERVE", "1")))
-        fingerprint = llm_policy.fingerprint(request)
+        fingerprint = llm_policy.fingerprint(request) if request is not None else ""
         if native_ledger:
             if any(value < 0 for value in reserve.values()):
                 raise ValueError("reserved capacity must be nonnegative")
@@ -209,13 +212,14 @@ def _plan(kind, model, tokens, builder, *, native_ledger=False):
             raise ValueError("model response bound must be between 1 KiB and 16 MiB")
         import strategy_host
         captured_guard = strategy_host.guard() if strategy_host.enabled() else None
-        return SimpleNamespace(kind=kind, encoding="default", ready="true", correlation=ticket, protocol=provider["protocol"],
+        return SimpleNamespace(kind=kind, encoding="default", ready="true" if request is not None else "preparing", correlation=ticket, protocol=provider["protocol"],
             correction_context=correction_context() if kind == "command" else None,
             native_ledger=bool(native_ledger), max_output=int(tokens),
-            request_fingerprint=fingerprint, wire_model=str(request.get("model", selected)),
+            request_fingerprint=fingerprint, selected_model=selected,
+            wire_model=str(request.get("model", selected) if request is not None else provider.get("model", selected)),
             activity=call_scope(), lane=call_lane(),
             epoch=_session_epoch, provider=provider["name"], base=provider["base"], headers=json.dumps(headers),
-            request=json.dumps(request, ensure_ascii=False), sent=False, claimed=False,
+            request=json.dumps(request, ensure_ascii=False) if request is not None else None, sent=False, claimed=False,
             guard=captured_guard, stream=stream, call_origin=strategy_host.accounting_origin(),
             timeout=settings["hard"], connect=settings["connect"], first=settings["first"],
             idle=settings["idle"], soft=settings["soft"],
@@ -302,6 +306,79 @@ def structured_json_plan(text):
 
 def native_command_plan(model, tokens, effort, prompt):
     return command_plan(model, tokens, effort, prompt, native_ledger=True)
+
+
+def native_command_seed(selected, tokens):
+    """Capture small host facts once; request and prompt bytes stay native."""
+    plan = _plan("command", selected, tokens, None, native_ledger=True)
+    if plan.ready == "false":
+        return plan, '{"ready":false}'
+    del plan.request
+    facts = {name: getattr(plan, name) for name in (
+        "epoch", "correlation", "protocol", "base", "headers", "wire_model",
+        "provider", "stream", "timeout", "cap", "connect", "first", "idle")}
+    plan.native_visible = stream_sink.configured()
+    facts.update(ready=True, visible=plan.native_visible,
+                 tool=model_commentary.tool_schema() if model_commentary.enabled() else None,
+                 ttl=os.environ.get("METTACLAW_ANTHROPIC_CACHE_TTL", "5m"))
+    return plan, json.dumps(facts, ensure_ascii=False)
+
+
+def bind_native_command(plan, seal, encoded):
+    """Bind native preparation to this owner before any admission or dispatch."""
+    with _claim_lock:
+        if plan.ready != "preparing" or getattr(plan, "claim_started", False):
+            return "false"
+        return _bind_native_command(plan, seal, encoded)
+
+
+def _bind_native_command(plan, seal, encoded):
+    try:
+        value = json.loads(str(encoded))
+        fingerprint = value["fingerprint"]
+        if (len(str(seal)) != 64 or len(fingerprint) != 64 or
+                any(c not in "0123456789abcdef" for c in str(seal) + fingerprint) or
+                value["model"] != plan.wire_model or
+                value["encoding"] not in ("default", "messages") or
+                type(value["prompt_bytes"]) is not int or value["prompt_bytes"] < 0 or
+                type(value["stream"]) is not bool or type(value["prompt_layout"]) is not dict or
+                type(value["feedback_visible"]) is not bool or type(value["footer_visible"]) is not bool or
+                (plan.protocol == "anthropic" and type(value["cache_layout"]) is not dict)):
+            raise ValueError("invalid native preparation metadata")
+        fields = dict(request_fingerprint=fingerprint, prepared_seal=str(seal),
+            encoding=value["encoding"], prompt_layout=value["prompt_layout"],
+            prompt_bytes=value["prompt_bytes"], prompt_feedback=value["feedback_visible"],
+            prompt_footer=value["footer_visible"], stream=value["stream"],
+            call_context=dict(call_id=plan.correlation,provider=plan.provider,model=plan.wire_model,purpose="turn"))
+        if plan.protocol == "anthropic":
+            fields["cache_layout"] = value["cache_layout"]
+        vars(plan).update(fields)
+        plan.ready = "true"
+        return "true"
+    except (ValueError, TypeError, KeyError, AttributeError) as error:
+        plan.error, plan.ready = error, "false"
+        return "false"
+
+
+def native_prepared_matches(plan, seal):
+    return "true" if getattr(plan, "prepared_seal", None) == str(seal) else "false"
+
+
+def native_preparation_failed(plan, reason):
+    with _claim_lock:
+        if plan.ready == "preparing":
+            plan.error, plan.ready = ValueError(str(reason)), "false"
+    return plan
+
+
+def native_wire_started(plan):
+    """Publish attempt metadata after the same claim boundary as legacy wire."""
+    if plan.stream and plan.native_visible:
+        plan.display_model = plan.wire_model
+        stream_sink.emit(dict(kind="attempt.open", attempt=plan.correlation,
+            item=plan.correlation, model=plan.display_model, provider=plan.provider,
+            status="awaiting", epoch=getattr(plan, "display_epoch", "initial")))
+    return True
 
 
 def native_structured_plan(request):
@@ -803,6 +880,9 @@ def finish(plan, epoch, correlation, encoded, canonical):
         if getattr(plan, "prompt_text", None) and not _compaction(plan):
             import context_budget
             context_budget.observe(plan.prompt_text, result.get("usage", {}))
+        elif getattr(plan, "prompt_bytes", 0) and not _compaction(plan):
+            import context_budget
+            context_budget.observe_bytes(plan.prompt_bytes, result.get("usage", {}), model=plan.selected_model)
         if plan.provider == "anthropic":
             synthetic_llm._tally_anthropic(result["usage"])
     except Exception:
@@ -834,8 +914,8 @@ def finish(plan, epoch, correlation, encoded, canonical):
             native_lifetime.command_output_rejected(plan, code)
         observed_prompt = str(getattr(plan, "prompt_text", ""))
         print("[command_contract] rejected; code=" + code +
-              "; feedback_visible=" + str("PREVIOUS_COMMAND_OUTPUT_REJECTED" in observed_prompt).lower() +
-              "; footer_visible=" + str("REQUIRED_COMMAND_OUTPUT" in observed_prompt).lower(), file=sys.stderr)
+              "; feedback_visible=" + str(getattr(plan, "prompt_feedback", "PREVIOUS_COMMAND_OUTPUT_REJECTED" in observed_prompt)).lower() +
+              "; footer_visible=" + str(getattr(plan, "prompt_footer", "REQUIRED_COMMAND_OUTPUT" in observed_prompt)).lower(), file=sys.stderr)
         return synthetic_llm._empty_action(error)
     if reason == "length":
         import helper

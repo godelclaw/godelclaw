@@ -76,17 +76,18 @@ class NativeCallConfigTests(unittest.TestCase):
         out = self.run_guest(self.instrument() +
             '!(println! (RESULT (llm:command "fixture-model" 42 "low" "input")))\n'
             '!(println! (CAPTURES (py-call (call_config_probe.count))))\n', lang='he')
-        self.assertIn('(nop)', out)
+        self.assertIn('(nop)', out, self.last_stderr)
         self.assertIn('(CAPTURES 1)', out)
         self.assertEqual(len(self.peer.requests), 1)
         self.assertEqual(self.column('calls', 'state'), [('completed',)])
 
     def test_old_individual_field_rule_is_caught_before_any_provider_effect(self):
         source = (boundary.ROOT / 'src/native_llm.metta').read_text()
-        marker = '($config (llm:configuration $plan))'
+        marker = '(let $state (pcall:begin $owner $transport) (llm:after-submit $owner $state))'
         self.assertEqual(source.count(marker), 1)
         source = source.replace(marker,
-            '($old (py-call (native_llm_host.field $plan "base"))) ' + marker)
+            '(let* (($old (py-call (native_llm_host.field $owner "base"))) '
+            '($state (pcall:begin $owner $transport))) (llm:after-submit $owner $state))')
         source = re.sub(r'(import!\s+&self\s+)(\./src/[^\s()]+)',
                         lambda match: match[1] + json.dumps(str(boundary.ROOT / match[2][2:])), source)
         mutant = self.directory / 'individual-field-mutant.metta'

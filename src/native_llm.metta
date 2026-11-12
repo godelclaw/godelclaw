@@ -1,5 +1,5 @@
-; Provider transport and policy transactions run in CeTTa. Model selection,
-; credential packaging and upstream transformations remain host boundaries.
+; Provider transport, command preparation and policy transactions run in CeTTa.
+; Host lifecycle observations and credential configuration remain boundaries.
 !(import! &self ./src/native_llm_host.py)
 !(import! &self ./src/interop_flags_cetta.metta)
 ; A flag consumes a computed value. Atom would treat an inline host call as
@@ -34,7 +34,8 @@
             ($commentary-module (import! &self ./src/model_commentary_cetta.metta))
             ($responses-module (import! &self ./src/responses_stream_cetta.metta))
             ($chatgpt-module (import! &self ./src/chatgpt_agent_cetta.metta)))
-       (import! &self ./src/stream_runtime.metta)) True)
+       (let $_ (import! &self ./src/provider_call_cetta.metta)
+         (import! &self ./src/stream_runtime.metta))) True)
 
 (= (llm:plan-claim $plan)
    (if (llm:uses-native-ledger $plan) (account:claim $plan)
@@ -56,7 +57,7 @@
      (let $selected (py-call (synthetic_llm.current_model $model))
        (if (str:starts-with $selected "chatgpt:")
          (chatgpt:command $selected $tokens $effort $prompt)
-         (let $plan (py-call (native_llm_host.native_command_plan $model $tokens $effort $prompt)) (llm:run $plan))))
+         (let $plan (pcall:command-plan $selected $tokens $effort $prompt) (llm:run $plan))))
      (let* (($selected (py-call (synthetic_llm.current_model $model)))
             ($subscription (llm:subscription-model? $selected)))
        (if $subscription
@@ -79,11 +80,18 @@
        (py-call (native_llm_host.native_structured_json_plan $text)))))
 
 (= (llm:run $plan)
-   (let $state (llm:begin $plan) (llm:after-submit $plan $state)))
+   (case $plan
+     (((PreparedProviderCallV1 $owner $transport)
+       (let $state (pcall:begin $owner $transport) (llm:after-submit $owner $state)))
+      ($legacy (let $state (llm:begin $plan) (llm:after-submit $plan $state))))))
 
 ; Programs may retain this owned pending value, poll it later, or wait for a
 ; bounded interval. A soft wait returns the same call; it never cancels it.
 (= (llm:begin $plan)
+   (case $plan
+     (((PreparedProviderCallV1 $owner $transport) (pcall:begin $owner $transport))
+      ($legacy (llm:begin-owned $plan)))))
+(= (llm:begin-owned $plan)
    (if (llm:plan-ready $plan)
     (if (llm:plan-claim $plan)
      (let* (($_ (py-call (native_llm_host.gate)))
@@ -134,8 +142,13 @@
                      (NativeCallWaitsV1 $connect $first $idle))
    (let* (($legacy-wire (py-call (native_llm_host.wire_body $plan $body)))
           ($profiled (if (chatgpt:plan? $plan) (chatgpt:wire $legacy-wire) $legacy-wire))
-          ($wire (llm:observe-wire $plan $profiled))
-          ($described (if (llm:uses-native-ledger $plan) (account:describe $plan) True)))
+          ($wire (llm:observe-wire $plan $profiled)))
+     (llm:network-ready $plan $epoch $correlation $protocol $url $headers $wire $timeout $cap
+                        (NativeCallWaitsV1 $connect $first $idle))))
+(: llm:network-ready (-> Atom Atom Atom Atom Atom Atom Atom Atom Atom Atom %Undefined%))
+(= (llm:network-ready $plan $epoch $correlation $protocol $url $headers $wire $timeout $cap
+                     (NativeCallWaitsV1 $connect $first $idle))
+   (let $described (if (llm:uses-native-ledger $plan) (account:describe $plan) True)
      (if $described
       (let $submitted (llm:submit-http $url $headers $wire $timeout $cap $connect $first $idle)
      (case $submitted
@@ -164,11 +177,17 @@
 
 (: llm:after-submit (-> Atom Atom %Undefined%))
 (= (llm:after-submit $plan $state)
+   (case $plan
+     (((PreparedProviderCallV1 $owner $transport) (llm:after-owned $owner $state))
+      ($legacy (llm:after-owned $plan $state)))))
+(: llm:after-owned (-> Atom Atom %Undefined%))
+(= (llm:after-owned $plan $state)
    (case $state
      (((llm:v1:pending $epoch $correlation $protocol $id)
         (llm:await $plan $state))
       ((llm:v1:failed duplicate duplicate duplicate-plan not-started)
         (py-call (native_llm_host.duplicate_plan $plan)))
+      ((llm:v1:rejected $reason) (py-call (native_llm_host.duplicate_plan $plan)))
       ($other (llm:deliver $plan $state)))))
 
 (: llm:await (-> Atom Atom %Undefined%))
@@ -181,6 +200,11 @@
 
 (: llm:wait-once (-> Atom Atom Number %Undefined%))
 (= (llm:wait-once $plan $state $milliseconds)
+   (case $plan
+     (((PreparedProviderCallV1 $owner $transport) (llm:wait-owned $owner $state $milliseconds))
+      ($legacy (llm:wait-owned $plan $state $milliseconds)))))
+(: llm:wait-owned (-> Atom Atom Number %Undefined%))
+(= (llm:wait-owned $plan $state $milliseconds)
    (case $state
      (((llm:v1:pending $epoch $correlation $protocol $id)
        (let $owned (py-call (native_llm_host.owns $plan $epoch $correlation $id))

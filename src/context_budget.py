@@ -57,6 +57,11 @@ def available(prefix, capacity):
 
 
 def observe(prompt, usage):
+    return observe_bytes(len(str(prompt).encode()), usage)
+
+
+def observe_bytes(byte_count, usage, *, model=None):
+    """The native request path supplies its measured UTF-8 byte count."""
     from provider_protocol import cache_observation
     observation = cache_observation(usage)
     count = observation.get('input_tokens') or usage.get('prompt_tokens') or usage.get('input_tokens')
@@ -71,9 +76,9 @@ def observe(prompt, usage):
             values = json.loads(path.read_text())
         except (OSError, ValueError):
             values = {}
-        ratio = len(str(prompt).encode()) / count
+        ratio = byte_count / count
         if ratio <= 0:
             return
-        values[_model()] = {'bytes_per_token': ratio, 'input_tokens': count}
+        values[_model() if model is None else str(model)] = {'bytes_per_token': ratio, 'input_tokens': count}
         temporary.write_text(json.dumps(values))
         temporary.replace(path)
