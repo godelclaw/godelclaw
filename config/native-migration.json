@@ -707,6 +707,46 @@
         "The end-to-end acknowledgement step still fails because helper.working_set_save returns 0 there; assigned to the provider-core agent",
         "No paid live canary or 24-hour soak claimed"
       ]
+    },
+    {
+      "id": "provider-core-cleanups-batch-3",
+      "status": "qualified-and-deployed",
+      "native_modules": [
+        "channels/telegram.metta"
+      ],
+      "python_modules": [
+        "src/command_arity.py"
+      ],
+      "runtime_commit": "b4d4fce64",
+      "engine_commit": "2eefbdff7af5020c9a6283bcb3908be3e78c9273",
+      "release": "54321d671e57144103e7ae15edf64252c81426d7a736ee5877b10fd814d4f07c",
+      "test_orchestration": "CeTTa core without Python",
+      "checks": {
+        "production_integration_dialect": "petta",
+        "native_suites_passed": "22 of 23 (the snapshot suite needs the deployment plan)",
+        "reference_runtime_probes": 32,
+        "python_entry_census": "unchanged: fixes and cleanups only",
+        "end_to_end_telegram_acknowledgement": "passes: the test now runs a native input ledger",
+        "paired_installed_verification": true,
+        "paired_benchmark": {
+          "pairs_per_workload": 21,
+          "baseline_runtime_commit": "cd50b9b03",
+          "p95_change_percent": {
+            "small": -0.7,
+            "large_1mib": 0.3,
+            "many_blocks_1mib": -4.1
+          },
+          "median_peak_rss_change_percent": {
+            "small": 0.0,
+            "large_1mib": 0.0,
+            "many_blocks_1mib": 0.0
+          }
+        }
+      },
+      "limits": [
+        "The linear conversation encoders and the codec failure fix are engine commits on CeTTa experimental; they reach the agents with the next engine roll",
+        "No paid live canary or 24-hour soak claimed"
+      ]
     }
   ],
   "tuning_debt": [
