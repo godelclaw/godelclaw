@@ -3,8 +3,9 @@
 ; running session and reaping a dead one. Workers really run coding_main.metta
 ; against the world's loopback provider, which serves response-<n>.body to
 ; request n. POSIX shell programs in ./scope-bin stand in for the user service
-; manager (a stop ends the scope's whole process tree, as a cgroup stop does)
-; and the mailer. Run with the test world as the working directory
+; manager and the mailer. A stop lets the worker end itself on its stop flag
+; (it polls the flag), then ends whatever is left of the scope's process tree,
+; as a cgroup stop would. Run with the test world as the working directory
 ; (scripts/census_python_entries_cetta.metta, world mode).
 !(import! &self (library lib_import))
 !(import! &self ./native_test_support.metta)
@@ -23,7 +24,7 @@
           ($_ (fs:make-directories $scopes 448))
           ($_ (fs:make-directories (cl:here "scope-bin") 448))
           ($alive (str:concat "alive() { s=$(sed 's/.*) //' /proc/$1/stat 2>/dev/null | cut -d' ' -f1); [ -n \"$s\" ] && [ \"$s\" != Z ]; }\n"
-                    "tree() { for c in $(pgrep -P \"$1\"); do tree \"$c\"; done; kill -TERM \"$1\" 2>/dev/null; }\n"))
+                    "tree() { for c in $(pgrep -P \"$1\"); do tree \"$c\"; done; echo \"$1\"; }\n"))
           ($_ (cl:program "systemd-run" (str:join "" ("#!/bin/sh\nunit=\"\"\nwhile [ $# -gt 0 ] && [ \"$1\" != \"--\" ]; do\n"
               "  case \"$1\" in --unit=*) unit=\"${1#--unit=}\" ;; esac\n  shift\ndone\nshift\n"
               "echo $$ > " $scopes "/\"$unit.scope\"\nexec \"$@\"\n"))))
@@ -32,7 +33,9 @@
               "  is-active) shift; [ \"$1\" = --quiet ] && shift; f=" $scopes "/\"$1\"\n"
               "    [ -f \"$f\" ] && alive \"$(cat \"$f\")\" && exit 0; exit 3 ;;\n"
               "  stop) f=" $scopes "/\"$2\"\n"
-              "    if [ -f \"$f\" ]; then pid=$(cat \"$f\"); tree \"$pid\"; i=0\n"
+              "    if [ -f \"$f\" ]; then pid=$(cat \"$f\"); left=$(tree \"$pid\"); i=0\n"
+              "      while alive \"$pid\" && [ $i -lt 100 ]; do sleep 0.05; i=$((i+1)); done\n"
+              "      for p in $left; do kill -TERM \"$p\" 2>/dev/null; done; i=0\n"
               "      while alive \"$pid\" && [ $i -lt 200 ]; do sleep 0.05; i=$((i+1)); done; rm -f \"$f\"; fi; exit 0 ;;\n"
               "  *) exit 1 ;;\nesac\n"))))
           ($_ (cl:program "mailer" "#!/bin/sh\nprintf '{\"status\":\"accepted\",\"id\":\"%s\"}\\n' \"$5\"\n")))
