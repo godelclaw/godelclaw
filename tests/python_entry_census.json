@@ -5,12 +5,12 @@
     [
       "tests/integrated_coding_turn_probe.metta",
       "INTEGRATED_CODING_TURN_OK",
-      52
+      60
     ],
     [
       "tests/activity_delivery_full_turn_probe.metta",
       "ACTIVITY_DELIVERY_FULL_TURN_OK",
-      55
+      76
     ],
     [
       "tests/background_jobs_probe.metta",
@@ -20,7 +20,7 @@
     [
       "tests/coding_lifecycle_probe.metta",
       "CODING_LIFECYCLE_OK",
-      97,
+      76,
       "world"
     ],
     [

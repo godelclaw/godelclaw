@@ -128,8 +128,6 @@ class RuntimeProbeTest(unittest.TestCase):
     # Settings a probe needs from process start, which the clients read once.
     PROBE_ENV = {
         "tests/allowance_wake_loop_probe.metta": {
-            "METTACLAW_TELEGRAM_CLIENT": "metta",
-            "METTACLAW_TELEGRAM_SERVICE_SOCKET": "",
             "METTACLAW_TELEGRAM_GROUP_WAKE_EVERY": "-100:3",
             "METTACLAW_TELEGRAM_BOT_USERNAME": "GodelTestBot",
             "METTACLAW_TELEGRAM_OPERATOR_IDS": "777",
@@ -274,6 +272,8 @@ class RuntimeProbeTest(unittest.TestCase):
                         "METTACLAW_LIFECYCLE_PATH": os.fspath(lifecycle),
                         "METTACLAW_DEPLOYMENT_STATE_PATH": os.fspath(
                             deployment),
+                        # The Telegram client runs with no channel service.
+                        "METTACLAW_TELEGRAM_SERVICE_SOCKET": "",
                         "TMPDIR": os.fspath(probe_tmp),
                         "PATH": os.pathsep.join((
                             os.fspath(test_bin), env.get("PATH", ""),

@@ -27,6 +27,9 @@ def loaders(conversation=None, views=None):
             pass
         elif spec.source_id in retained_views:
             loader = lambda source=spec.source_id: retained_views[source]
+        elif spec.source_id == "coding-sessions" and base.coding_sessions is not None:
+            # The native estate's view of the workspace (small_views_probe).
+            loader = base.coding_sessions
         elif spec.source_id not in base.MODULES and spec.source_id not in {
                 "work-state", "affect-gestalt", "pins", "effect-receipts", "recent-proposals", "relevant-files", "coding-sessions"}:
             loader = lambda source=spec.source_id: "fixture " + source

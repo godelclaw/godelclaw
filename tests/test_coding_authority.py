@@ -3,8 +3,8 @@
 The authority protocol itself (run tokens, endings, reservations, re-pinning,
 checkpoint checks and durability faults) is tested natively in
 scripts/test_coding_authority_cetta.metta. What stays here runs the agent's
-verbs (coding_work.metta) and the estate views, which are still
-coding_estate.py:
+verbs (coding_work.metta) through MeTTa probes; the estate verdicts are
+tested natively in scripts/test_coding_estate_cetta.metta:
 - `test_launching_reservation_displayed_and_superseded_by_next_resume`:
   `CodingSessionAuthority.reserve`, `fixed_reservation_is_newest`; a reserved, unconsumed
   manifest shows `launching since <date>`.
@@ -12,8 +12,6 @@ coding_estate.py:
   pre-token bundles lack `"phase"` and require a `"current"` re-pin.
 - `test_torn_runs_jsonl_tail_ignored_and_resume_setting_current`:
   `runs.jsonl` torn-tail resilience and `(setting "work" "resume" "current")`.
-- `test_world_selection_map_supports_multiple_retirements`:
-  `CodingSessionLifecycle` multi-retirement `World.selection` map.
 - `test_delayed_launch_keeps_own_descriptor_and_worker_checks_bundle_binding`:
   `CodingSessionLaunch.delayedLaunch`, `fixed_launch_keeps_own_token`, `fixed_live_authority_is_bound`.
 """
@@ -39,7 +37,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "tests"), str(ROOT / "src"), str(ROOT / "channels")]
 
 from isolated_env import isolated_environ  # noqa: E402
-import coding_estate  # noqa: E402
 import native_ledger  # noqa: E402
 import native_lifetime  # noqa: E402
 import native_llm_host  # noqa: E402
@@ -87,8 +84,6 @@ class CodingAuthorityAndRepinTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name)
         self.socket = native_ledger.start(self, self.directory)
-        coding_estate._engine_digest_cache.clear()
-        coding_estate._runtime_blocks_cache.clear()
 
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _CountingHandler)
         self.server.requests = []
@@ -294,7 +289,8 @@ class CodingAuthorityAndRepinTests(unittest.TestCase):
         manifest1 = json.loads((session / "runtime.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest1.get("phase"), "reserved")
 
-        view = coding_estate.context_view(self.directory, world=coding_estate.World(today="2026-11-06"))
+        view = self.run_work_probe('!(println! (estate:context-view-root %s "2026-11-06"))\n'
+                                   % json.dumps(str(self.directory))).stdout
         self.assertIn("1 launching", view)
         self.assertRegex(view, r"work-launching launching since \d{4}-\d{2}-\d{2}")
 
@@ -329,10 +325,6 @@ class CodingAuthorityAndRepinTests(unittest.TestCase):
             manifest.pop(key, None)
         (session / "runtime.json").write_text(json.dumps(manifest), encoding="utf-8")
 
-        self.assertEqual(
-            coding_estate.classify(session),
-            ("needs-current", "its runtime predates run tokens"),
-        )
         res = self.run_work_probe('!(println! (work-resume "work-pretoken"))\n')
         self.assertIn(
             'work-resume: its runtime predates run tokens; this session cannot resume on its pin. '
@@ -366,9 +358,6 @@ class CodingAuthorityAndRepinTests(unittest.TestCase):
             + '{"at": 1761200100.0, "from": "torn-line-without-closing-brace',
             encoding="utf-8",
         )
-        runs = coding_estate.read_runs(session)
-        self.assertEqual(len(runs), 1)
-        self.assertEqual(runs[0]["run"], "r1")
 
         # Configure (setting "work" "resume" "current") and invoke 1-arg (work-resume "id")
         res = self.run_work_probe(
@@ -381,36 +370,11 @@ class CodingAuthorityAndRepinTests(unittest.TestCase):
         self.assertIn('(WorkConfigured "resume" "current"', res.stdout)
         self.assertIn("WORK_RESUMING work-torn-and-setting", res.stdout)
 
-        runs_after = coding_estate.read_runs(session)
+        # The torn line is dropped; the re-pin's record follows the earlier one.
+        runs_after = [json.loads(line) for line in (session / "runs.jsonl").read_text(encoding="utf-8").splitlines()]
+        self.assertEqual([r["run"] for r in runs_after][:1], ["r1"])
         self.assertEqual(len(runs_after), 2)
 
-    def test_world_selection_map_supports_multiple_retirements(self):
-        """`World.selection` is a map from retirement name to outcome, so adding a second entry
-        in `RETIREMENTS` requires no change to `World` or `classify`.
-        """
-        session = self.make_session("work-multi-retire", status="stopped", owner="960:1")
-        self.freeze(session)
-
-        extra_retirement = coding_estate.Retirement(
-            name="second-service",
-            text="the retired second service",
-            live_fact=lambda: "native",
-            bundle_test=lambda bundle: True,
-        )
-        with mock.patch.object(
-            coding_estate, "RETIREMENTS", coding_estate.RETIREMENTS + (extra_retirement,)
-        ):
-            w_retired = coding_estate.World(
-                selection={"llm-ledger-sqlite": "legacy", "second-service": "native"}
-            )
-            self.assertEqual(
-                coding_estate.classify(session, world=w_retired),
-                ("needs-current", "it uses the retired second service"),
-            )
-            w_ok = coding_estate.World(
-                selection={"llm-ledger-sqlite": "legacy", "second-service": "legacy"}
-            )
-            self.assertEqual(coding_estate.classify(session, world=w_ok), ("resumable", ""))
 
     def test_delayed_launch_keeps_own_descriptor_and_worker_checks_bundle_binding(self):
         """`CodingSessionLaunch.delayedLaunch`, `current_launch_takes_other_token`,

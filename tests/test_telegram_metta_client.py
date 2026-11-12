@@ -384,14 +384,6 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
             assert lines[-2:] == ["2", "2"], lines
             api.add(105, CHAT, OPERATOR, "newer in 42")
             time.sleep(1.0)
-            lines, err = run('!(tg:start)\n!(fs:write "%s" (tg:activity-batch))\n'
-                             '!(py-call (telegram.begin_effect_turn "t9"))\n'
-                             '!(py-call (telegram.metta_publish "batch_update_ids" "104"))\n'
-                             '!(py-call (telegram.effect_command_unaffected "t9" ("send-telegram-chat" "42" "x")))\n'
-                             '!(py-call (telegram.effect_command_unaffected "t9" ("send-telegram-chat" "%d" "x")))\n'
-                             % (out, GROUP), env)
-            # New input queues; neither emitted reply is discarded.
-            assert lines[-2:] == ["1", "1"], (lines, err[-500:])
             lines, err = run('!(tg:start)\n!(fs:write "%s" (tg:activity-batch))\n!(tg:ack-activity-batch)\n'
                              '!(py-call (telegram.pendingActivityCount))\n' % out, env)
             assert lines[-2:] == ["1", "0"], lines
@@ -462,8 +454,6 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
             py._current_batch_update_ids = {"115", "116"}
             expected = py.conversation_window(max_events=64)
             assert mine == expected, ("window", mine[-600:], expected[-600:])
-            assert recent_file.read_text() == py.recent_activity(5, "lab", 40), (
-                recent_file.read_text(), py.recent_activity(5, "lab", 40))
             assert "…" in recent_file.read_text() and "Ahoj" in recent_file.read_text()
             # A history that fills the budget still leaves the route line in.
             big = "\n".join(json.dumps({"received_at": "2026-09-29T10:00:00+0200", "kind": "message", "allowed": True,

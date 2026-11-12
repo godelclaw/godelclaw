@@ -11,6 +11,9 @@ calls = {}
 forbidden_calls = 0
 fixture = {}
 receipts = ReceiptViewWitness()
+# The native estate is the only coding-sessions renderer. An oracle bundle
+# takes, through this callable, the view that renderer gave of the workspace.
+coding_sessions = None
 
 
 class BrokenText:
@@ -54,6 +57,8 @@ def fixture_loaders(conversation=None, views=None):
             calls[spec.source_id] = calls.get(spec.source_id, 0) + 1
             assert spec.source_id != "effect-receipts" or spec.source_id not in fixture
             if spec.source_id not in fixture:
+                if spec.source_id == "coding-sessions" and coding_sessions is not None:
+                    return coding_sessions()
                 return loader()
             value = fixture[spec.source_id]
             if isinstance(value, dict) and value.get("raises"):

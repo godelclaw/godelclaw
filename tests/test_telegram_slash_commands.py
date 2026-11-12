@@ -19,6 +19,11 @@ _REAL_SET_MODEL = synthetic_llm.set_model
 _REAL_CURRENT_MODEL = synthetic_llm.current_model
 
 
+
+def woken():
+    """The reasons of the wakes queued for the MeTTa client."""
+    return [event["wake_only"] for event in telegram._metta_events if "wake_only" in event]
+
 class SlashCommandTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -136,31 +141,6 @@ class SlashCommandTest(unittest.TestCase):
                          ["fuel:saturate", "fuel:accumulate",
                           "fuel:carry", "fuel:decay", "fuel:unlimited"])
 
-    def test_fuel_callback_is_operator_only(self):
-        cq = {"id": "91", "data": "fuel:accumulate", "from": {"id": 222000222},
-              "message": {"message_id": 5, "chat": {"id": -4321}}}
-        with mock.patch.object(telegram, "_chat_is_allowed",
-                               lambda chat: True), \
-             mock.patch.object(telegram.requests, "post",
-                               lambda url, json=None, timeout=None: mock.Mock()):
-            self.assertEqual(telegram._handle_callback_query(cq),
-                             "callback_not_operator")
-
-    def test_fuel_callback_switches_and_redraws(self):
-        import fuel_modes
-        posts = []
-        cq = {"id": "92", "data": "fuel:decay", "from": {"id": 111000111},
-              "message": {"message_id": 5, "chat": {"id": -4321}}}
-        with mock.patch.object(telegram, "_chat_is_allowed",
-                               lambda chat: True), \
-             mock.patch.object(telegram.requests, "post",
-                               lambda url, json=None, timeout=None:
-                               posts.append((url, json)) or mock.Mock()):
-            self.assertEqual(telegram._handle_callback_query(cq),
-                             "callback_fuel_switch")
-        self.assertEqual(fuel_modes.current_fuel(), "decay")
-        self.assertTrue(any("editMessageText" in u for u, _ in posts))
-
     def handle(self, text, sender=None):
         return telegram._handle_slash_command(
             self.chat, self.operator if sender is None else sender, text)
@@ -182,142 +162,6 @@ class SlashCommandTest(unittest.TestCase):
         self.assertEqual([r[0]["callback_data"] for r in kb],
                          ["menu:model:synthetic:0"])
 
-    def _model_callback(self, data, posts, sender=None):
-        cq = {"id": "77", "data": data,
-              "from": self.operator if sender is None else sender,
-              "message": {"message_id": 5, "chat": {"id": -4321}}}
-        with mock.patch.object(telegram, "_chat_is_allowed",
-                               lambda chat: True), \
-             mock.patch.object(telegram.requests, "post",
-                               lambda url, json=None, timeout=None:
-                               posts.append((url, json)) or mock.Mock()):
-            return telegram._handle_callback_query(cq)
-
-    def test_model_root_provider_and_selection_persist_exact_choice(self):
-        state_path = os.path.join(self.tmp.name, "model-state.metta")
-        with open(state_path, "w", encoding="utf-8") as stream:
-            stream.write("(unrelated-state retained)\n")
-        posts = []
-        with mock.patch.dict(os.environ, {
-                "METTACLAW_MODEL_STATE_PATH": state_path,
-                "SYNTHETIC_MODEL": "modelA"}), \
-             mock.patch.object(synthetic_llm, "set_model", _REAL_SET_MODEL), \
-             mock.patch.object(synthetic_llm, "current_model",
-                               _REAL_CURRENT_MODEL), \
-             mock.patch.object(telegram.requests, "post",
-                               lambda url, json=None, timeout=None:
-                               posts.append((url, json)) or mock.Mock()):
-            self.assertEqual(self.handle("/models"), "slash_command:/models")
-            self.assertEqual(
-                self._model_callback("menu:model:synthetic:0", posts),
-                "callback_menu_page")
-            page = posts[-1][1]
-            choices = [button["callback_data"]
-                       for row in page["reply_markup"]["inline_keyboard"]
-                       for button in row
-                       if button["callback_data"].startswith("model:")]
-            self.assertEqual(choices, ["model:modelA", "model:modelB"])
-            self.assertEqual(self._model_callback("model:modelB", posts),
-                             "callback_model_switch")
-            self.assertEqual(synthetic_llm.current_model(), "modelB")
-        with open(state_path, encoding="utf-8") as stream:
-            state = stream.read()
-        self.assertIn("(active-model modelB)", state)
-        self.assertIn("(unrelated-state retained)", state)
-
-    def test_model_provider_back_and_pagination_boundaries(self):
-        names = ["model%02d" % n for n in range(25)]
-        posts = []
-        with mock.patch.object(synthetic_llm, "model_ids", return_value=names):
-            self.assertEqual(
-                self._model_callback("menu:model:synthetic:0", posts),
-                "callback_menu_page")
-            first = posts[-1][1]["reply_markup"]["inline_keyboard"]
-            first_callbacks = [button["callback_data"] for row in first
-                               for button in row]
-            self.assertEqual(len([callback for callback in first_callbacks
-                                  if callback.startswith("model:")]), 24)
-            self.assertIn("menu:model:synthetic:24", first_callbacks)
-            self.assertEqual(
-                self._model_callback("menu:model:synthetic:24", posts),
-                "callback_menu_page")
-            last = posts[-1][1]["reply_markup"]["inline_keyboard"]
-            self.assertEqual(last[0][0]["callback_data"], "model:model24")
-            navigation = [button["callback_data"] for button in last[1]]
-            self.assertEqual(navigation, ["menu:model:synthetic:0"])
-            self.assertEqual(last[-1][0]["callback_data"], "menu:model:providers")
-            self.assertEqual(
-                self._model_callback("menu:model:synthetic:0", posts),
-                "callback_menu_page")
-            self.assertEqual(
-                self._model_callback("menu:model:providers", posts),
-                "callback_menu_page")
-            root = posts[-1][1]["reply_markup"]["inline_keyboard"]
-            self.assertEqual([row[0]["callback_data"] for row in root],
-                             ["menu:model:synthetic:0"])
-
-    def test_model_menu_and_selection_callbacks_require_operator(self):
-        posts = []
-        outsider = {"id": 222000222}
-        with mock.patch.object(synthetic_llm, "set_model") as set_model:
-            self.assertEqual(
-                self._model_callback("menu:model:synthetic:0", posts, outsider),
-                "callback_not_operator")
-            self.assertEqual(
-                self._model_callback("model:modelB", posts, outsider),
-                "callback_not_operator")
-        set_model.assert_not_called()
-        self.assertFalse(any("editMessageText" in url for url, _ in posts))
-
-    def test_model_provider_pages_keep_same_family_routes_distinct(self):
-        names = ["hf:moonshotai/Kimi-K3.1-Pro", "kimi:k3.1-pro"]
-        posts = []
-        seen = {}
-        with mock.patch.object(synthetic_llm, "model_ids", return_value=names), \
-             mock.patch.object(telegram.requests, "post",
-                               lambda url, json=None, timeout=None:
-                               posts.append((url, json)) or mock.Mock()):
-            self.assertEqual(self.handle("/models"), "slash_command:/models")
-            root = posts[-1][1]["reply_markup"]["inline_keyboard"]
-            callbacks = [row[0]["callback_data"] for row in root]
-            self.assertCountEqual(
-                callbacks, ["menu:model:synthetic:0", "menu:model:kimi:0"])
-            for callback in callbacks:
-                provider = callback.split(":")[2]
-                self.assertEqual(self._model_callback(callback, posts),
-                                 "callback_menu_page")
-                page = posts[-1][1]["reply_markup"]["inline_keyboard"]
-                choices = [button["callback_data"] for row in page
-                           for button in row
-                           if button["callback_data"].startswith("model:")]
-                self.assertEqual(len(choices), 1)
-                seen[provider] = choices[0][len("model:"):]
-                self.assertEqual(page[-1][0]["callback_data"],
-                                 "menu:model:providers")
-        self.assertEqual(seen, {"synthetic": names[0], "kimi": names[1]})
-
-    def test_callback_switches_model(self):
-        posts = []
-        cq = {"id": "77", "data": "model:modelB", "from": {"id": 111000111},
-              "message": {"message_id": 5, "chat": {"id": -4321}}}
-        with mock.patch.object(telegram, "_chat_is_allowed",
-                               lambda chat: True), \
-             mock.patch.object(telegram.requests, "post",
-                               lambda url, json=None, timeout=None:
-                               posts.append((url, json)) or mock.Mock()):
-            note = telegram._handle_callback_query(cq)
-        self.assertEqual(note, "callback_model_switch")
-        self.assertTrue(any("answerCallbackQuery" in u for u, _ in posts))
-        self.assertTrue(any("editMessageText" in u for u, _ in posts))
-
-    def test_callback_disallowed_chat_ignored(self):
-        cq = {"id": "78", "data": "model:modelB", "from": {"id": 111000111},
-              "message": {"message_id": 5, "chat": {"id": 999}}}
-        with mock.patch.object(telegram, "_chat_is_allowed",
-                               lambda chat: False):
-            self.assertEqual(telegram._handle_callback_query(cq),
-                             "callback_disallowed_chat")
-
     def test_quota(self):
         self.assertEqual(self.handle("/quota"), "slash_command:/quota")
         self.assertIn("weekly=ok", self.sent[-1][1])
@@ -331,14 +175,14 @@ class SlashCommandTest(unittest.TestCase):
         self.assertEqual(self.sent[-1][1], "runtime ok")
 
     def test_activity_is_deterministic_and_does_not_wake_loop(self):
-        telegram._wake_event.clear()
+        telegram._metta_events.clear()
         with mock.patch("runtime_health.activity_report",
                         return_value="activity: idle"), \
              mock.patch.object(synthetic_llm, "current_model") as model:
             self.assertEqual(self.handle("/activity"),
                              "slash_command:/activity")
         model.assert_not_called()
-        self.assertFalse(telegram._wake_event.is_set())
+        self.assertFalse(woken())
         self.assertEqual(self.sent[-1][1], "activity: idle")
 
     def test_every_control_uses_an_independent_lane(self):
@@ -408,15 +252,15 @@ class SlashCommandTest(unittest.TestCase):
         self.assertTrue(os.path.exists(os.environ["METTACLAW_RECYCLE_REQUEST_PATH"]))
 
     def test_mode_switch_persists_and_wakes_loop(self):
-        telegram._wake_event.clear()
+        telegram._metta_events.clear()
         try:
             self.assertEqual(self.handle("/mode coding"),
                              "slash_command:/mode")
             self.assertEqual(loop_modes.current_mode(), "coding")
-            self.assertTrue(telegram._wake_event.is_set())
+            self.assertTrue(woken())
             self.assertIn("persists", self.sent[-1][1])
         finally:
-            telegram._wake_event.clear()
+            telegram._metta_events.clear()
 
     def test_modes_sends_keyboard(self):
         posts = []
@@ -462,33 +306,6 @@ class SlashCommandTest(unittest.TestCase):
         self.assertNotIn("token", health.lower())
         self.assertNotIn("chat_id", health.lower())
 
-    def test_rest_deadline_is_externally_observable(self):
-        with mock.patch.object(telegram, "_health_update") as health, \
-             mock.patch.object(telegram._wake_event, "wait",
-                               return_value=True):
-            telegram.sleep_until_message(30)
-        updates = [call.kwargs for call in health.call_args_list]
-        self.assertTrue(any(item.get("loop_status") == "waiting"
-                            and item.get("waiting_until", 0) > time.time()
-                            for item in updates))
-        self.assertEqual(updates[-1]["loop_status"], "awake")
-
-    def test_callback_switches_mode(self):
-        posts = []
-        cq = {"id": "88", "data": "mode:coding",
-              "from": {"id": 111000111},
-              "message": {"message_id": 6, "chat": {"id": -4321}}}
-        with mock.patch.object(telegram, "_chat_is_allowed",
-                               lambda chat: True), \
-             mock.patch.object(telegram.requests, "post",
-                               lambda url, json=None, timeout=None:
-                               posts.append((url, json)) or mock.Mock()):
-            note = telegram._handle_callback_query(cq)
-        self.assertEqual(note, "callback_mode_switch")
-        self.assertEqual(loop_modes.current_mode(), "coding")
-        self.assertTrue(any("answerCallbackQuery" in u for u, _ in posts))
-        self.assertTrue(any("editMessageText" in u for u, _ in posts))
-
     def test_wake_is_poll_fast_path(self):
         self.assertEqual(
             telegram._peek_slash_command("/wake", self.operator),
@@ -525,7 +342,7 @@ class SlashCommandTest(unittest.TestCase):
                 raise ImportError("model backend unavailable")
             return real_import(name, *args, **kwargs)
 
-        telegram._wake_event.clear()
+        telegram._metta_events.clear()
         try:
             with mock.patch.object(telegram, "rest_status",
                                    return_value=(True, 125)), \
@@ -533,154 +350,23 @@ class SlashCommandTest(unittest.TestCase):
                             side_effect=guarded_import):
                 self.assertEqual(self.handle("/wake"),
                                  "slash_command:/wake")
-            self.assertTrue(telegram._wake_event.is_set())
+            self.assertTrue(woken())
             self.assertEqual(self.sent, [])
         finally:
-            telegram._wake_event.clear()
+            telegram._metta_events.clear()
 
     def test_wake_for_other_bot_is_consumed_without_waking(self):
         telegram._bot_username = "SomeBot"
-        telegram._wake_event.clear()
+        telegram._metta_events.clear()
         try:
             self.assertEqual(
                 self.handle("/wake@OtherBot"),
                 "slash_command_other_bot:otherbot")
-            self.assertFalse(telegram._wake_event.is_set())
+            self.assertFalse(woken())
             self.assertEqual(self.sent, [])
         finally:
             telegram._bot_username = None
-            telegram._wake_event.clear()
-
-    def test_poll_dispatches_wake_without_false_queue_notice(self):
-        update = {
-            "update_id": 77,
-            "message": {
-                "message_id": 12,
-                "chat": {"id": -4321, "type": "group"},
-                "from": self.operator,
-                "text": "/wake",
-            },
-        }
-        response = mock.Mock()
-        response.raise_for_status.return_value = None
-        response.json.return_value = {"result": [update]}
-
-        def one_poll(*args, **kwargs):
-            telegram._running = False
-            return response
-
-        telegram._running = True
-        try:
-            with mock.patch.object(telegram.requests, "get",
-                                   side_effect=one_poll), \
-                 mock.patch.object(telegram, "_chat_is_allowed",
-                                   return_value=True), \
-                 mock.patch.object(telegram, "_download_attachment",
-                                   return_value=None), \
-                 mock.patch.object(telegram, "_append_update_log",
-                                   return_value=True), \
-                 mock.patch.object(telegram, "_save_offset"), \
-                 mock.patch.object(telegram, "_set_last") as queued, \
-                 mock.patch.object(telegram, "_maybe_rest_notice") as notice, \
-                 mock.patch.object(telegram, "_dispatch_slash_command") as dispatch:
-                telegram._poll_loop()
-        finally:
-            telegram._running = False
-
-        dispatch.assert_called_once_with(
-            update["message"]["chat"], self.operator, "/wake")
-        notice.assert_not_called()
-        queued.assert_not_called()
-
-    def test_wake_peer_message_wakes_and_queues_with_its_bot_flag(self):
-        peer = {"id": 333000333, "is_bot": True, "username": "PeerBot"}
-        update = {
-            "update_id": 78,
-            "message": {
-                "message_id": 13,
-                "chat": {"id": 333000333, "type": "private"},
-                "from": peer,
-                "text": "/stop is only words from a peer",
-            },
-        }
-        response = mock.Mock()
-        response.raise_for_status.return_value = None
-        response.json.return_value = {"result": [update]}
-
-        def one_poll(*args, **kwargs):
-            telegram._running = False
-            return response
-
-        telegram._running = True
-        telegram._wake_event.clear()
-        telegram._wake_reason = ""
-        try:
-            with mock.patch.dict(os.environ, {
-                     "METTACLAW_TELEGRAM_WAKE_IDS": "333000333",
-                     "METTACLAW_ENERGY_PATH": os.path.join(
-                         self.tmp.name, "energy.json")}), \
-                 mock.patch.object(telegram.requests, "get",
-                                   side_effect=one_poll), \
-                 mock.patch.object(telegram, "_chat_is_allowed",
-                                   return_value=True), \
-                 mock.patch.object(telegram, "_append_update_log",
-                                   return_value=True), \
-                 mock.patch.object(telegram, "_save_offset"), \
-                 mock.patch.object(telegram, "_set_last") as queued, \
-                 mock.patch.object(telegram, "_dispatch_slash_command") as dispatch:
-                telegram._poll_loop()
-            woke = telegram._wake_event.is_set()
-            reason = telegram._wake_reason
-        finally:
-            telegram._running = False
-            telegram._wake_event.clear()
-            telegram._wake_reason = ""
-
-        dispatch.assert_not_called()
-        queued.assert_called_once()
-        self.assertTrue(queued.call_args.args[2],
-                        "a waking peer keeps its bot flag, so it arms nothing")
-        self.assertTrue(woke)
-        self.assertEqual(reason, "peer message")
-
-    def test_captioned_fast_control_never_waits_for_attachment(self):
-        update = {
-            "update_id": 78,
-            "message": {
-                "message_id": 13,
-                "chat": {"id": -4321, "type": "group"},
-                "from": self.operator,
-                "caption": "/activity",
-                "document": {"file_id": "slow-file", "file_size": 10},
-            },
-        }
-        response = mock.Mock()
-        response.raise_for_status.return_value = None
-        response.json.return_value = {"result": [update]}
-
-        def one_poll(*_args, **_kwargs):
-            telegram._running = False
-            return response
-
-        telegram._running = True
-        try:
-            with mock.patch.object(telegram.requests, "get",
-                                   side_effect=one_poll), \
-                 mock.patch.object(telegram, "_chat_is_allowed",
-                                   return_value=True), \
-                 mock.patch.object(telegram, "_dispatch_slash_command") \
-                         as dispatch, \
-                 mock.patch.object(telegram, "_enqueue_attachment") \
-                         as attachment, \
-                 mock.patch.object(telegram, "_append_update_log",
-                                   return_value=True), \
-                 mock.patch.object(telegram, "_save_offset"):
-                telegram._poll_loop()
-        finally:
-            telegram._running = False
-        dispatch.assert_called_once_with(
-            update["message"]["chat"], self.operator, "/activity")
-        attachment.assert_not_called()
+            telegram._metta_events.clear()
 
     def test_pending_attachment_is_recovered_from_durable_ledger(self):
         update = {

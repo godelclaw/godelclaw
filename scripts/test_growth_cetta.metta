@@ -11,6 +11,7 @@
     (GrowthCheck "coding-execution-result" "tests/growth/coding_execution_result.metta" 1024 (growth:bounded))
     (GrowthCheck "coding-freeze-bundle" "tests/growth/coding_freeze_bundle.metta" 200 (growth:linear))
     (GrowthCheck "coding-repin-checkpoint" "tests/growth/coding_repin_checkpoint.metta" 256 (growth:linear))
+    (GrowthCheck "coding-estate-listing" "tests/growth/coding_estate_listing.metta" 40 (growth:linear))
     (GrowthCheck "linear-control" "tests/growth/linear_control.metta" 20000 (growth:linear))
     (GrowthCheck "model-selection" "tests/growth/model_selection.metta" 20000 (growth:linear))
     (GrowthCheck "journal-append" "tests/growth/loop_host.metta" 20000 (growth:linear))

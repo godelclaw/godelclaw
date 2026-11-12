@@ -435,11 +435,3 @@ class Receipts:
 def lane_of(key):
     """CHAT.THREAD of a LANE.SEQUENCE key."""
     return key.rsplit(".", 1)[0]
-
-
-def parse(observation):
-    """Classify one task observation from the channel service."""
-    value = json.loads(observation)
-    if not isinstance(value, list) or not value or not isinstance(value[0], str):
-        raise ChannelError("malformed observation")
-    return value

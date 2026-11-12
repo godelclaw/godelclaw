@@ -195,7 +195,7 @@
            (let* (($_ (working:rest-release))
                   ($armed
                 (max (loop-budget $periphery)
-                     (if (tg:client-metta?) (tg:last-message-arm-loops) (py-call (telegram.lastMessageArmLoops))))))
+                     (tg:last-message-arm-loops))))
                 (progn
                   (println! $message)
                   (coordinate-set last-heartbeat (get_time)
@@ -597,8 +597,7 @@
          (coordinate-get-or rest-await-input 0 $periphery))))
 
 (= (settleActivityBatch)
-   (let $channel (catch (if (tg:client-metta?) (tg:ack-activity-batch)
-                           (py-call (telegram.ackActivityBatch))))
+   (let $channel (catch (tg:ack-activity-batch))
      (if (== $channel 1)
        (if (== (mail:ack) 1) (jobs:ack) 0) 0)))
 

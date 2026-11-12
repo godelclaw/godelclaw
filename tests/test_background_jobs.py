@@ -24,15 +24,10 @@ import telegram  # noqa: E402
 
 def _reset_queue():
     with telegram._msg_lock:
-        del telegram._pending_messages[:]
-        del telegram._prepared_messages[:]
         telegram._activity_epoch = 0
         telegram._reply_chat_id = ""
-        telegram._last_message_is_human = False
-        telegram._last_from_bot = False
-        telegram._last_arm_tier = "full"
-    telegram._wake_event.clear()
-    telegram._wake_reason = ""
+    with telegram._metta_lock:
+        telegram._metta_events.clear()
 
 
 class BackgroundJobTest(unittest.TestCase):
@@ -91,24 +86,6 @@ class RuntimeEventRoutingTest(unittest.TestCase):
 
     def tearDown(self):
         _reset_queue()
-
-    def test_runtime_event_wakes_and_keeps_the_reply_target(self):
-        telegram._reply_chat_id = "181"
-        telegram.enqueue_runtime_event("job 2 finished with exit 0", "job 2")
-        self.assertTrue(telegram._wake_event.is_set())
-        batch = telegram.getActivityBatch()
-        self.assertIn("[runtime] job 2 finished", batch)
-        self.assertEqual(telegram._reply_chat_id, "181")
-        self.assertEqual(telegram.lastMessageIsHuman(), 1)
-        self.assertEqual(telegram._last_arm_tier, "light")
-
-    def test_a_message_beside_the_event_still_decides_the_reply(self):
-        telegram.enqueue_runtime_event("job 3 finished", "job 3")
-        telegram._set_last("555", "hello", from_bot=False, arm_tier="full")
-        telegram.getActivityBatch()
-        self.assertEqual(telegram._reply_chat_id, "555")
-        self.assertEqual(telegram._last_arm_tier, "full")
-
 
 class VitalsTest(unittest.TestCase):
     def test_vitals_reports_the_machine(self):

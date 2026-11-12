@@ -22,6 +22,8 @@
             ; Existing reference probes install scripted replies at this seam.
             ; Real native HTTP/settlement is exercised by test_provider_native.
             ("METTACLAW_LLM_TRANSPORT" "python")
+            ; Every probe's Telegram client runs with no channel service.
+            ("METTACLAW_TELEGRAM_SERVICE_SOCKET" "")
             ("SYNTHETIC_API_KEY" "") ("ANTHROPIC_API_KEY" "") ("OPENAI_API_KEY" "") ("KIMI_API_KEY" "")
             ("CETTA_BIN" (nt:join $sdk "cetta")) ("PETTA_PY_ENV" (pcall:fact (preq:parse (fs:read-text (nt:join $sdk "build-manifest.json"))) "python_prefix"))
             ("METTACLAW_LLM_LEDGER_PATH" (nq:path $world "llm-budget.sqlite3"))
@@ -37,8 +39,7 @@
             ("METTACLAW_WORKING_SET_PATH" (nq:path $world "working-set.json"))
             ("METTACLAW_DEPLOYMENT_STATE_PATH" $deployment) ("TMPDIR" $temporary) ("PATH" $path)))
           ($special (if (nt:equal $name "tests/allowance_wake_loop_probe.metta")
-            (("METTACLAW_TELEGRAM_CLIENT" "metta") ("METTACLAW_TELEGRAM_SERVICE_SOCKET" "")
-             ("METTACLAW_TELEGRAM_GROUP_WAKE_EVERY" "-100:3")
+            (("METTACLAW_TELEGRAM_GROUP_WAKE_EVERY" "-100:3")
              ("METTACLAW_TELEGRAM_BOT_USERNAME" "GodelTestBot") ("METTACLAW_TELEGRAM_OPERATOR_IDS" "777")) ())))
      (nq:overlay-env (nq:overlay-env $env $changes) $special)))
 (: nr:run-cases (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))

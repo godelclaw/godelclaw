@@ -1,4 +1,5 @@
-"""Native coding-estate observation parity, sentinel, read-only, and cache tests."""
+"""Native coding-estate observation: corrupt and unreadable estates, ledger
+selections, read-only observation, and caches."""
 
 import hashlib
 import json
@@ -19,83 +20,26 @@ from isolated_env import isolated_environ
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "tests"), str(ROOT / "src"), str(ROOT / "channels")]
 
-import coding_estate  # noqa: E402
-import coding_estate_snapshot  # noqa: E402
+from estate_blocks import allocated_blocks  # noqa: E402
 from test_input_ledger_remote import DbServer, WORKER, available as ledger_available  # noqa: E402
-
-
-SENTINEL_SOURCE = """\
-import json
-from pathlib import Path
-import sys
-
-import coding_estate
-import coding_estate_snapshot
-import input_ack
-
-FORBIDDEN_FILES = ("/coding_estate_snapshot.py", "/coding_estate.py")
-PROFILE_EVENTS = []
-
-# Capture original callables BEFORE forbid() replaces module attributes,
-# so positive-control tests can prove sys.setprofile catches retained callables.
-CAPTURED_SNAPSHOT = coding_estate_snapshot.snapshot
-CAPTURED_CLASSIFY = coding_estate.classify
-
-
-def forbidden(*args, **kwargs):
-    raise AssertionError("forbidden Python coding-estate helper invoked")
-
-
-def _profile(frame, event, arg):
-    if event != "call":
-        return
-    code = frame.f_code
-    filename = code.co_filename.replace("\\\\", "/")
-    if filename.endswith(FORBIDDEN_FILES) and code.co_name != "<module>":
-        entry = "%s:%s" % (Path(filename).name, code.co_name)
-        PROFILE_EVENTS.append(entry)
-        raise AssertionError("native path entered Python %s" % entry)
-    if filename.endswith("/input_ack.py") and code.co_name == "_ledger_call":
-        if frame.f_locals.get("op") == "llm-selection":
-            PROFILE_EVENTS.append("input_ack.py:_ledger_call(llm-selection)")
-            raise AssertionError("native path called input_ack._ledger_call('llm-selection')")
-
-
-def arm():
-    for attr in ("snapshot", "_session", "_date"):
-        setattr(coding_estate_snapshot, attr, forbidden)
-    for attr in (
-        "classify", "listed", "context_view", "_read_json", "read_runs",
-        "read_lifecycle", "_engine_sha256", "_dir_blocks", "llm_ledger_selection",
-        "_matched_retirements", "snapshot_world", "snapshot_session_world",
-        "_status_date", "launching_date", "work_setting", "_runtimes_summary",
-    ):
-        setattr(coding_estate, attr, forbidden)
-    sys.setprofile(_profile)
-    return 1
-
-
-def call_captured_snapshot(root):
-    return CAPTURED_SNAPSHOT(root, "2026-10-25")
-
-
-def get_events():
-    return json.dumps(PROFILE_EVENTS)
-
-
-def write_text(path, text):
-    Path(path).write_text(str(text), encoding="utf-8")
-    return len(PROFILE_EVENTS)
-
-
-def write_json(path, payload):
-    Path(path).write_text(json.dumps(payload), encoding="utf-8")
-    return len(PROFILE_EVENTS)
-"""
 
 
 def _sha256_bytes(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def _day(timestamp):
+    """The local calendar date of a POSIX timestamp."""
+    return time.strftime("%Y-%m-%d", time.localtime(timestamp))
+
+
+def _mtime_day(path):
+    """The local date a file's modification time names, read as a float."""
+    return _day(os.stat(path).st_mtime)
+
+
+VERBS = ('verbs: (work-status "id") (work-resume "id" ["current"]) '
+         '(work-hold "id" "why" ["YYYY-MM-DD"]) (work-archive "id" "why")')
 
 
 def _tree_manifest(root):
@@ -144,12 +88,6 @@ class CodingEstateNativeIoTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name)
-        coding_estate._engine_digest_cache.clear()
-        coding_estate._runtime_blocks_cache.clear()
-
-        self.sentinel = self.directory / "estate_io_sentinel.py"
-        self.sentinel.write_text(SENTINEL_SOURCE, encoding="utf-8")
-
         self.probe_dir = self.directory / "probe_root"
         self.probe_dir.mkdir(parents=True, exist_ok=True)
         for subdir in ("src", "channels", "tests"):
@@ -185,12 +123,6 @@ class CodingEstateNativeIoTests(unittest.TestCase):
             **isolated_environ(),
             "PYTHONHOME": sys.prefix,
             "LD_LIBRARY_PATH": str(Path(sys.prefix) / "lib"),
-            "PYTHONPATH": os.pathsep.join([
-                str(self.directory),
-                str(ROOT / "tests"),
-                str(ROOT / "src"),
-                str(ROOT / "channels"),
-            ]),
         }
         self._seq = 0
 
@@ -256,19 +188,21 @@ class CodingEstateNativeIoTests(unittest.TestCase):
         os.utime(session, (self.fixed_ts, self.fixed_ts))
         return session
 
+    def label(self, session, kind, why, review=None):
+        """A hold or archive label as (work-hold) and (work-archive) record it."""
+        payload = {"why": why, "at": self.fixed_ts}
+        if kind == "hold":
+            payload["review"] = review
+        (Path(session) / "lifecycle.json").write_text(json.dumps({kind: payload}, sort_keys=True) + "\n",
+                                                      encoding="utf-8")
+
     def _metta_quote(self, value):
         return json.dumps(str(value), ensure_ascii=False)
 
     def run_native(self, body, *, socket_path="", cwd=None, extra_env=None, check=True, timeout=45):
         self._seq += 1
         probe = self.probe_dir / ("probe_%d.metta" % self._seq)
-        script = (
-            "!(import! &self (library lib_import))\n"
-            "!(import! &self %s)\n" % self._metta_quote(self.sentinel)
-            + "!(py-call (estate_io_sentinel.arm))\n"
-            + "!(import! &self ./src/coding_estate_cetta.metta)\n"
-            + body
-        )
+        script = "!(import! &self ./src/coding_estate_cetta.metta)\n" + body
         probe.write_text(script, encoding="utf-8")
         env = dict(self.base_env)
         if socket_path:
@@ -292,49 +226,25 @@ class CodingEstateNativeIoTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return result
 
-    def observe_both(self, root=None, *, today="2026-10-25", socket_path=""):
+    def observe(self, root=None, *, today="2026-10-25", socket_path=""):
+        """The native snapshot, context view (None when absent) and source load."""
         target = self.estate if root is None else Path(root)
         self._seq += 1
         snap_file = self.directory / ("snap_%d.json" % self._seq)
         view_file = self.directory / ("view_%d.txt" % self._seq)
         load_file = self.directory / ("load_%d.txt" % self._seq)
         body = (
-            '!(let $s (estate:snapshot %s %s)\n'
-            '   (py-call (estate_io_sentinel.write_text %s\n'
-            '     (json:stringify-python-with $s ((separators "," ":"))))))\n'
-            % (self._metta_quote(target), self._metta_quote(today), self._metta_quote(snap_file))
+            '!(fs:write %s (json:stringify-python-with (estate:snapshot %s %s) ((separators "," ":"))))\n'
+            % (self._metta_quote(snap_file), self._metta_quote(target), self._metta_quote(today))
             + '!(let $v (estate:context-view-root %s %s)\n'
-            '   (py-call (estate_io_sentinel.write_text %s (if (== $v EstateMissing) "__MISSING__" $v))))\n'
+            '   (fs:write %s (if (== $v EstateMissing) "__MISSING__" $v)))\n'
             % (self._metta_quote(target), self._metta_quote(today), self._metta_quote(view_file))
-            + "!(py-call (estate_io_sentinel.write_text %s (repr (estate:load))))\n"
-            % self._metta_quote(load_file)
+            + "!(fs:write %s (repr (estate:load)))\n" % self._metta_quote(load_file)
         )
         self.run_native(body, socket_path=socket_path, cwd=target)
-        nat_snap = json.loads(snap_file.read_text(encoding="utf-8"))
-        raw_view = view_file.read_text(encoding="utf-8")
-        nat_view = None if raw_view == "__MISSING__" else raw_view
-        nat_load = load_file.read_text(encoding="utf-8").strip()
-
-        old_sock = os.environ.get("METTACLAW_INPUT_LEDGER_SOCKET")
-        if socket_path:
-            os.environ["METTACLAW_INPUT_LEDGER_SOCKET"] = str(socket_path)
-        else:
-            os.environ.pop("METTACLAW_INPUT_LEDGER_SOCKET", None)
-        try:
-            coding_estate._engine_digest_cache.clear()
-            coding_estate._runtime_blocks_cache.clear()
-            py_snap = json.loads(coding_estate_snapshot.snapshot(target, today))
-            py_view = coding_estate.context_view(
-                target,
-                world=coding_estate.World(today=today if today else None),
-            )
-        finally:
-            if old_sock is None:
-                os.environ.pop("METTACLAW_INPUT_LEDGER_SOCKET", None)
-            else:
-                os.environ["METTACLAW_INPUT_LEDGER_SOCKET"] = old_sock
-
-        return nat_snap, py_snap, nat_view, py_view, nat_load
+        snapshot = json.loads(snap_file.read_text(encoding="utf-8"))
+        view = view_file.read_text(encoding="utf-8")
+        return snapshot, None if view == "__MISSING__" else view, load_file.read_text(encoding="utf-8").strip()
 
     def _start_counting_socket(self, upstream=None, mode="relay"):
         """Wrap an upstream socket (or simulate hang/drop) and count requests."""
@@ -486,57 +396,30 @@ class CodingEstateNativeIoTests(unittest.TestCase):
             time.sleep(0.02)
         raise AssertionError("custom ledger server timed out starting")
 
-    def test_pre_import_and_profile_sentinel_catches_retained_python_callables(self):
-        self.make_session("work-ok", status="stopped")
-        # Positive control: even a callable captured BEFORE arm() is caught by sys.setprofile.
-        caught = self.run_native(
-            "!(println! (collapse (catch (py-call (estate_io_sentinel.call_captured_snapshot %s)))))\n"
-            "!(println! (py-call (estate_io_sentinel.get_events)))\n"
-            % self._metta_quote(self.estate)
-        )
-        self.assertIn("AssertionError", caught.stdout)
-        self.assertIn("coding_estate_snapshot.py:snapshot", caught.stdout)
-
-        # Native path itself triggers zero forbidden calls.
-        nat_snap, py_snap, nat_view, py_view, nat_load = self.observe_both()
-        self.assertEqual(nat_snap, py_snap)
-        self.assertEqual(nat_view, py_view)
-        self.assertTrue(nat_load.startswith('("value" '))
-
-    def test_snapshot_and_view_parity_across_missing_malformed_and_corrupt_files(self):
-        # 1. Missing memory/coding directory -> available=False, EstateMissing / ("missing")
+    def test_missing_malformed_corrupt_and_unreadable_estates(self):
+        # A missing memory/coding, or a file in its place: no view, a missing source.
         empty_root = self.directory / "no_coding_root"
         empty_root.mkdir()
-        nat_snap, py_snap, nat_view, py_view, nat_load = self.observe_both(empty_root)
-        self.assertEqual(nat_snap, py_snap)
-        self.assertFalse(nat_snap["available"])
-        self.assertIsNone(nat_view)
-        self.assertIsNone(py_view)
-        self.assertEqual(nat_load, '("missing")')
-
-        # 2. memory/coding is a regular file instead of a directory
         file_root = self.directory / "file_coding_root"
         (file_root / "memory").mkdir(parents=True)
         (file_root / "memory" / "coding").write_text("not a dir\n", encoding="utf-8")
-        nat_snap, py_snap, nat_view, py_view, nat_load = self.observe_both(file_root)
-        self.assertEqual(nat_snap, py_snap)
-        self.assertIsNone(nat_view)
-        self.assertEqual(nat_load, '("missing")')
+        for root in (empty_root, file_root):
+            snapshot, view, load = self.observe(root)
+            self.assertFalse(snapshot["available"])
+            self.assertEqual((snapshot["sessions"], view, load), ([], None, '("missing")'))
 
-        # 3. Malformed JSON, non-dict JSON roots, duplicate keys, CRLF, invalid UTF-8
+        # Malformed JSON, non-object roots, duplicate keys, CRLF, invalid UTF-8,
+        # hidden entries, and a session without state or task.
         (self.estate / "memory" / "coding-settings.json").write_bytes(b"\xff\xfe{\"context\":\"off\"}")
         (self.coding / ".hidden-session").mkdir()
         (self.runtimes / ".hidden-runtime").mkdir()
-
         s_bad_json = self.make_session("work-01-bad-json", status="stopped")
         (s_bad_json / "state.json").write_text("{corrupt", encoding="utf-8")
         (s_bad_json / "lifecycle.json").write_text("[1, 2, 3]", encoding="utf-8")
-
         s_non_dict = self.make_session("work-02-non-dict", status="stopped")
         (s_non_dict / "state.json").write_text('"just-a-string"\r\n', encoding="utf-8")
         (s_non_dict / "runtime.json").write_text("42", encoding="utf-8")
         (s_non_dict / "lifecycle.json").write_bytes(b'{"hold":{"why":"\xffbad-utf8"}}')
-
         s_dup = self.make_session("work-03-dup-keys", status="running")
         (s_dup / "state.json").write_text(
             '{"status":"running","status":"failed","updated":%s}\r\n' % json.dumps(self.fixed_ts),
@@ -546,49 +429,61 @@ class CodingEstateNativeIoTests(unittest.TestCase):
             '{"hold":{"why":"first","review":"2026-10-20"},"hold":{"why":"second","review":"2026-10-21"}}',
             encoding="utf-8",
         )
-
         s_nostate = self.make_session("work-04-nostate-notask", write_state=False, write_task=False, pin=False)
         os.utime(s_nostate, (self.fixed_ts, self.fixed_ts))
 
-        nat_snap, py_snap, nat_view, py_view, _ = self.observe_both()
-        self.assertEqual(nat_snap, py_snap)
-        self.assertEqual(nat_view, py_view)
+        snapshot, view, load = self.observe()
+        self.assertEqual(snapshot["mode"], "open")
+        by_id = {entry["id"]: entry for entry in snapshot["sessions"]}
+        self.assertEqual(sorted(by_id), ["work-01-bad-json", "work-02-non-dict", "work-03-dup-keys",
+                                         "work-04-nostate-notask"])
+        self.assertEqual([entry["id"] for entry in snapshot["runtimes"]],
+                         [self.bundle_old_digest, self.bundle_current_digest])
+        self.assertEqual((by_id["work-01-bad-json"]["state"], by_id["work-01-bad-json"]["lifecycle"]), ({}, {}))
+        self.assertEqual((by_id["work-02-non-dict"]["state"], by_id["work-02-non-dict"]["runtime"]), ({}, {}))
+        self.assertTrue(by_id["work-02-non-dict"]["runtime_exists"])
+        self.assertEqual(by_id["work-03-dup-keys"]["state"]["status"], "failed")
+        self.assertEqual(by_id["work-03-dup-keys"]["lifecycle"], {"hold": {"why": "second", "review": "2026-10-21"}})
+        bad_day, odd_day = _mtime_day(s_bad_json / "state.json"), _mtime_day(s_non_dict / "state.json")
+        lines = [
+            "work-01-bad-json unknown %s · pin aaaa1111 2026-10-22 · resumable" % bad_day,
+            "work-02-non-dict unknown %s · pin  %s · needs-current: its frozen runtime is gone"
+            % (odd_day, _mtime_day(s_non_dict / "runtime.json")),
+            "work-03-dup-keys failed 2026-10-23 · pin aaaa1111 2026-10-22 · resumable · held until 2026-10-21: second",
+            "work-04-nostate-notask unknown 2026-10-23 · unpinned: a resume pins the current runtime",
+            VERBS,
+        ]
+        head = "CODING_SESSIONS 4: 3 unknown · 1 held · needs-current 1 · resumable 2 · unpinned 1 · runtimes %s"
+        self.assertEqual(view, "\n".join([head % "2 (0 MB; 1 used by no open session)"] + lines))
+        self.assertTrue(load.startswith('("value" '))
 
-        # 4. Unreadable directories (when non-root):
-        #    - 0o111 on runtimes: stat of pinned child succeeds, opendir fails -> runtimes=[]
-        #    - 0o000 on runtimes while session references child: Python raises PermissionError -> ("unavailable")
-        #    - 0o000 on coding: is_dir() is True, opendir fails -> available=False -> ("missing")
+        # Unreadable directories (when not root): a runtimes directory that can
+        # be searched but not listed counts no runtimes; one that cannot be
+        # searched makes the source unavailable; an unlistable memory/coding
+        # is missing.
         if os.geteuid() != 0:
             os.chmod(self.runtimes, 0o111)
             self.addCleanup(lambda: os.chmod(self.runtimes, 0o755))
-            nat_snap_r, py_snap_r, nat_view_r, py_view_r, _ = self.observe_both()
-            self.assertEqual(nat_snap_r, py_snap_r)
-            self.assertEqual(nat_snap_r["runtimes"], [])
-            self.assertEqual(nat_view_r, py_view_r)
+            snapshot, view, _ = self.observe()
+            self.assertEqual(snapshot["runtimes"], [])
+            self.assertEqual(view, "\n".join([head % "0 (0 MB; 0 used by no open session)"] + lines))
 
             os.chmod(self.runtimes, 0o000)
-            with self.assertRaises(PermissionError):
-                coding_estate_snapshot.snapshot(self.estate, "2026-10-25")
-            unavail = self.run_native("!(println! (estate:load))\n", cwd=self.estate)
-            self.assertIn('("unavailable")', unavail.stdout)
+            unavailable = self.run_native("!(println! (estate:load))\n", cwd=self.estate)
+            self.assertIn('("unavailable")', unavailable.stdout)
             os.chmod(self.runtimes, 0o755)
 
             os.chmod(self.coding, 0o000)
             self.addCleanup(lambda: os.chmod(self.coding, 0o755))
-            nat_snap_c, py_snap_c, nat_view_c, py_view_c, nat_load_c = self.observe_both()
-            self.assertEqual(nat_snap_c, py_snap_c)
-            self.assertFalse(nat_snap_c["available"])
-            self.assertIsNone(nat_view_c)
-            self.assertIsNone(py_view_c)
-            self.assertEqual(nat_load_c, '("missing")')
+            snapshot, view, load = self.observe()
+            self.assertFalse(snapshot["available"])
+            self.assertEqual((view, load), (None, '("missing")'))
             os.chmod(self.coding, 0o755)
 
     def test_embedded_nul_path_cannot_observe_an_existing_prefix(self):
+        # An engine path with an embedded NUL is never hashed by its valid
+        # prefix: the view becomes unavailable.
         self.make_session("work-nul-engine", binary=str(self.engine) + "\0suffix")
-        # Python's hashing path rejects embedded NUL rather than hashing the
-        # valid prefix. The native view must likewise become unavailable.
-        with self.assertRaises(ValueError):
-            coding_estate_snapshot.snapshot(self.estate, "2026-10-25")
         bad_file = '(str:concat %s (str:concat (str:from-codepoints (0)) "suffix"))' % self._metta_quote(self.engine)
         bad_dir = '(str:concat %s (str:concat (str:from-codepoints (0)) "suffix"))' % self._metta_quote(self.directory)
         result = self.run_native(
@@ -610,7 +505,7 @@ class CodingEstateNativeIoTests(unittest.TestCase):
             '!(let $rows (map-atom %s $p\n'
             '    (let $normal (eio:path $p)\n'
             '      (JsonArray ($normal (eio:basename $p) (eio:child $normal "state.json")))))\n'
-            '   (py-call (estate_io_sentinel.write_text %s (json:stringify-python (JsonArray $rows)))))\n'
+            '   (fs:write %s (json:stringify-python (JsonArray $rows))))\n'
             % (values, self._metta_quote(output)))
         expected = [[str(PurePosixPath(value)), PurePosixPath(value).name,
                      str(PurePosixPath(value) / 'state.json')] for value in cases]
@@ -623,10 +518,9 @@ class CodingEstateNativeIoTests(unittest.TestCase):
         output = self.directory / 'world-refresh.json'
         self.run_native(
             '!(let* (($first (eio:snapshot %s "2026-10-25"))\n'
-            '         ($_ (py-call (estate_io_sentinel.write_text %s %s)))\n'
+            '         ($_ (fs:write %s %s))\n'
             '         ($second (eio:snapshot %s "2026-10-25")))\n'
-            '   (py-call (estate_io_sentinel.write_text %s\n'
-            '     (json:stringify-python (JsonArray ($first $second))))))\n'
+            '   (fs:write %s (json:stringify-python (JsonArray ($first $second)))))\n'
             % (self._metta_quote(self.estate), self._metta_quote(self.engine),
                self._metta_quote(changed), self._metta_quote(self.estate), self._metta_quote(output)))
         before, after = json.loads(output.read_text())
@@ -636,8 +530,7 @@ class CodingEstateNativeIoTests(unittest.TestCase):
 
     def test_runs_jsonl_torn_tails_non_dicts_invalid_utf8_and_repin_dates(self):
         repin_ts = time.mktime(time.strptime("2026-10-24 16:30:00", "%Y-%m-%d %H:%M:%S"))
-
-        # Torn final line dropped; malformed middle line skipped; non-dict lines ignored.
+        # Torn final line dropped; malformed middle line skipped; non-object lines ignored.
         s1 = self.make_session("work-runs-torn", status="stopped")
         (s1 / "runs.jsonl").write_text(
             "\n"
@@ -646,37 +539,38 @@ class CodingEstateNativeIoTests(unittest.TestCase):
             + "{malformed middle line}\n"
             + "null\n"
             + "123\n"
-            + '{"run": 2, "at": %s}\u2028' % repin_ts
+            + '{"run": 2, "at": %s} ' % repin_ts
             + '{"run": 3, "torn_tail": ',
             encoding="utf-8",
         )
-
-        # Invalid UTF-8 inside string replaced via U+FFFD; missing/non-numeric "at" falls back to pin_date.
+        # Invalid UTF-8 inside a string is replaced; a non-numeric "at" falls back to the pin date.
         s2 = self.make_session("work-runs-utf8-fallback", status="stopped")
-        (s2 / "runs.jsonl").write_bytes(
-            b'{"note": "bad\xffbyte", "at": "not-a-number"}\n'
-        )
-
-        # Boolean "at": True/False is an instance of int in Python (1.0 / 0.0 epoch seconds).
+        (s2 / "runs.jsonl").write_bytes(b'{"note": "bad\xffbyte", "at": "not-a-number"}\n')
+        # A boolean "at" reads as 1 or 0 epoch seconds.
         s3 = self.make_session("work-runs-bool-at", status="stopped")
         (s3 / "runs.jsonl").write_text('{"at": true}\n', encoding="utf-8")
-
-        # runs.jsonl is a directory -> treated as absent ([]).
+        # runs.jsonl as a directory reads as no runs.
         s4 = self.make_session("work-runs-dir", status="stopped")
         (s4 / "runs.jsonl").mkdir()
 
-        nat_snap, py_snap, nat_view, py_view, _ = self.observe_both()
-        self.assertEqual(nat_snap, py_snap)
-        self.assertEqual(nat_view, py_view)
-        by_id = {entry["id"]: entry for entry in nat_snap["sessions"]}
-        self.assertEqual(by_id["work-runs-torn"]["runs_count"], 2)
-        self.assertEqual(by_id["work-runs-torn"]["repin_date"], "2026-10-24")
-        self.assertEqual(by_id["work-runs-utf8-fallback"]["runs_count"], 1)
-        self.assertEqual(by_id["work-runs-utf8-fallback"]["repin_date"], "2026-10-22")
+        snapshot, view, _ = self.observe()
+        by_id = {entry["id"]: entry for entry in snapshot["sessions"]}
+        self.assertEqual((by_id["work-runs-torn"]["runs_count"], by_id["work-runs-torn"]["repin_date"]), (2, "2026-10-24"))
+        self.assertEqual((by_id["work-runs-utf8-fallback"]["runs_count"], by_id["work-runs-utf8-fallback"]["repin_date"]),
+                         (1, "2026-10-22"))
+        self.assertEqual((by_id["work-runs-bool-at"]["runs_count"], by_id["work-runs-bool-at"]["repin_date"]), (1, _day(1.0)))
+        self.assertEqual((by_id["work-runs-dir"]["runs_count"], by_id["work-runs-dir"]["repin_date"]), (0, None))
+        self.assertEqual(view, "\n".join([
+            "CODING_SESSIONS 4: 4 stopped · resumable 4 · runtimes 2 (0 MB; 1 used by no open session)",
+            "work-runs-bool-at stopped 2026-10-23 · pin aaaa1111 2026-10-22 · run 2 · re-pinned %s · resumable" % _day(1.0),
+            "work-runs-dir stopped 2026-10-23 · pin aaaa1111 2026-10-22 · resumable",
+            "work-runs-torn stopped 2026-10-23 · pin aaaa1111 2026-10-22 · run 3 · re-pinned 2026-10-24 · resumable",
+            "work-runs-utf8-fallback stopped 2026-10-23 · pin aaaa1111 2026-10-22 · run 2 · re-pinned 2026-10-22 · resumable",
+            VERBS]))
 
     @unittest.skipUnless(ledger_available(), "native ledger worker binary unavailable")
     def test_all_six_ledger_selection_outcomes_and_at_most_once_socket_rule(self):
-        # A. Zero matched sessions -> 0 socket connections even when socket is configured.
+        # A. No session on a pre-ledger runtime: no query, even with a socket.
         self.make_session("work-current-only", status="stopped", bundle=self.bundle_current)
         ledger_dir = self.directory / "ledger_native"
         ledger_dir.mkdir()
@@ -685,95 +579,79 @@ class CodingEstateNativeIoTests(unittest.TestCase):
         self.addCleanup(db_server.stop)
 
         sock_zero, calls_zero = self._start_counting_socket(db_server.socket)
-        nat_snap, py_snap, nat_view, py_view, _ = self.observe_both(socket_path=sock_zero)
-        self.assertEqual(nat_snap, py_snap)
-        self.assertEqual(nat_view, py_view)
-        self.assertEqual(nat_snap["selection"], {})
+        snapshot, view, _ = self.observe(socket_path=sock_zero)
+        self.assertEqual(snapshot["selection"], {})
+        self.assertIn("work-current-only stopped 2026-10-23 · pin aaaa1111 2026-10-22 · resumable", view)
         self.assertEqual(calls_zero, [])
 
-        # B. Five matched sessions + "native" -> exactly 1 selection query per snapshot/view.
+        # B. Five sessions on a pre-ledger runtime and a "native" ledger: one
+        # query per observation, whatever the number of sessions.
         for idx in range(5):
             self.make_session("work-old-%d" % idx, status="stopped", bundle=self.bundle_old)
         sock_nat, calls_nat = self._start_counting_socket(db_server.socket)
         single_out = self.directory / "single_nat_view.txt"
         self.run_native(
-            '!(py-call (estate_io_sentinel.write_text %s (estate:context-view-root %s "2026-10-25")))\n'
+            '!(fs:write %s (estate:context-view-root %s "2026-10-25"))\n'
             % (self._metta_quote(single_out), self._metta_quote(self.estate)),
             socket_path=sock_nat,
         )
         self.assertEqual(calls_nat, ["llm-selection"])
         calls_nat.clear()
-        nat_snap, py_snap, nat_view, py_view, _ = self.observe_both(socket_path=sock_nat)
-        self.assertEqual(nat_snap, py_snap)
-        self.assertEqual(nat_view, py_view)
-        self.assertEqual(nat_snap["selection"], {"llm-ledger-sqlite": "native"})
-        # observe_both runs 3 native snapshots + 2 Python oracle snapshots = 5 total (1 per snapshot across 5 sessions).
-        self.assertEqual(len(calls_nat), 5)
-        self.assertIn("needs-current: it uses the retired SQLite LLM ledger", nat_view)
+        snapshot, view, _ = self.observe(socket_path=sock_nat)
+        self.assertEqual(snapshot["selection"], {"llm-ledger-sqlite": "native"})
+        # The snapshot, the view and the source load each ask once.
+        self.assertEqual(len(calls_nat), 3)
+        self.assertIn("work-old-0 stopped 2026-10-23 · pin 8acffdbd 2026-10-22 · needs-current: it uses the retired SQLite LLM ledger", view)
+        self.assertEqual(single_out.read_text(encoding="utf-8"), view)
 
-        # C. "legacy" over real ValueServiceV2 socket -> resumable!
+        # C. "legacy" over a real ValueServiceV2 socket: resumable.
         raw_legacy = self._start_custom_ledger_server("legacy")
         sock_leg, calls_leg = self._start_counting_socket(raw_legacy)
-        nat_snap, py_snap, nat_view, py_view, _ = self.observe_both(socket_path=sock_leg)
-        self.assertEqual(nat_snap, py_snap)
-        self.assertEqual(nat_view, py_view)
-        self.assertEqual(nat_snap["selection"], {"llm-ledger-sqlite": "legacy"})
-        self.assertEqual(len(calls_leg), 5)
-        self.assertIn("work-old-0 stopped 2026-10-23 · pin 8acffdbd 2026-10-22 · resumable", nat_view)
+        snapshot, view, _ = self.observe(socket_path=sock_leg)
+        self.assertEqual(snapshot["selection"], {"llm-ledger-sqlite": "legacy"})
+        self.assertEqual(len(calls_leg), 3)
+        self.assertIn("work-old-0 stopped 2026-10-23 · pin 8acffdbd 2026-10-22 · resumable", view)
 
-        # D. "importing" over real ValueServiceV2 socket -> ["unknown", "importing"] / unverified.
+        # D. "importing": unknown, the view says unverified.
         raw_imp = self._start_custom_ledger_server(
             "(Error llm-ledger:selection (unsupported ((llm-ledger-importing 1762000000))))"
         )
         sock_imp, calls_imp = self._start_counting_socket(raw_imp)
-        nat_snap, py_snap, nat_view, py_view, _ = self.observe_both(socket_path=sock_imp)
-        self.assertEqual(nat_snap, py_snap)
-        self.assertEqual(nat_view, py_view)
-        self.assertEqual(nat_snap["selection"], {"llm-ledger-sqlite": ["unknown", "importing"]})
-        self.assertEqual(len(calls_imp), 5)
-        self.assertIn("unverified: the LLM ledger's backend selection is unavailable (importing)", nat_view)
+        snapshot, view, _ = self.observe(socket_path=sock_imp)
+        self.assertEqual(snapshot["selection"], {"llm-ledger-sqlite": ["unknown", "importing"]})
+        self.assertEqual(len(calls_imp), 3)
+        self.assertIn("unverified: the LLM ledger's backend selection is unavailable (importing)", view)
 
-        # E. "unsupported" over real ValueServiceV2 socket -> ["unknown", "unsupported"] / unverified.
+        # E. An unrecognized state: unknown, unsupported.
         raw_unsup = self._start_custom_ledger_server(
             "(Error llm-ledger:selection (unsupported ((bogus-state))))"
         )
         sock_unsup, calls_unsup = self._start_counting_socket(raw_unsup)
-        nat_snap, py_snap, nat_view, py_view, _ = self.observe_both(socket_path=sock_unsup)
-        self.assertEqual(nat_snap, py_snap)
-        self.assertEqual(nat_view, py_view)
-        self.assertEqual(nat_snap["selection"], {"llm-ledger-sqlite": ["unknown", "unsupported"]})
-        self.assertEqual(len(calls_unsup), 5)
-        self.assertIn("unverified: the LLM ledger's backend selection is unavailable (unsupported)", nat_view)
+        snapshot, view, _ = self.observe(socket_path=sock_unsup)
+        self.assertEqual(snapshot["selection"], {"llm-ledger-sqlite": ["unknown", "unsupported"]})
+        self.assertEqual(len(calls_unsup), 3)
+        self.assertIn("unverified: the LLM ledger's backend selection is unavailable (unsupported)", view)
 
-        # F. "timeout" on hung AF_UNIX listener -> ["unknown", "timeout"] / unverified.
+        # F. A listener that never answers: unknown, timeout.
         sock_to, calls_to = self._start_counting_socket(mode="timeout")
-        nat_snap, py_snap, nat_view, py_view, _ = self.observe_both(socket_path=sock_to)
-        self.assertEqual(nat_snap, py_snap)
-        self.assertEqual(nat_view, py_view)
-        self.assertEqual(nat_snap["selection"], {"llm-ledger-sqlite": ["unknown", "timeout"]})
+        snapshot, view, _ = self.observe(socket_path=sock_to)
+        self.assertEqual(snapshot["selection"], {"llm-ledger-sqlite": ["unknown", "timeout"]})
         self.assertGreaterEqual(len(calls_to), 1)
-        self.assertIn("unverified: the LLM ledger's backend selection is unavailable (timeout)", nat_view)
+        self.assertIn("unverified: the LLM ledger's backend selection is unavailable (timeout)", view)
 
-        # G. "unreachable" across absent socket, regular file, dropped socket, and >107-byte path.
+        # G. Unreachable: an absent socket, a regular file, a dropped
+        # connection, and a path too long for a Unix socket.
         regular_file_sock = self.directory / "not-a-socket.sock"
         regular_file_sock.write_text("", encoding="utf-8")
         overlong_sock = self.directory / ("x" * 120 + ".sock")
         overlong_sock.write_text("", encoding="utf-8")
         sock_drop, _ = self._start_counting_socket(mode="drop")
-
-        for bad_sock in (
-            str(self.directory / "missing.sock"),
-            str(regular_file_sock),
-            sock_drop,
-            str(overlong_sock),
-        ):
-            nat_snap, py_snap, nat_view, py_view, _ = self.observe_both(socket_path=bad_sock)
-            self.assertEqual(nat_snap, py_snap)
-            self.assertEqual(nat_view, py_view)
-            self.assertEqual(nat_snap["selection"], {"llm-ledger-sqlite": ["unknown", "unreachable"]})
+        for bad_sock in (str(self.directory / "missing.sock"), str(regular_file_sock), sock_drop, str(overlong_sock)):
+            snapshot, view, _ = self.observe(socket_path=bad_sock)
+            self.assertEqual(snapshot["selection"], {"llm-ledger-sqlite": ["unknown", "unreachable"]})
+            self.assertIn("unverified: the LLM ledger's backend selection is unavailable (unreachable)", view)
 
     def test_engine_symlinks_nanosecond_mtime_rounding_negative_ts_and_unavailable_guard(self):
-        # Symlinked engine binary (valid) and broken engine symlink + directory engine.
         engine_link = self.directory / "engine-symlink"
         engine_link.symlink_to(self.engine)
         broken_link = self.directory / "engine-broken"
@@ -788,33 +666,42 @@ class CodingEstateNativeIoTests(unittest.TestCase):
                           at=time.mktime(time.strptime("2026-10-21 08:00:00", "%Y-%m-%d %H:%M:%S")))
         self.make_session("work-05-launching-fallback", status="stopped", phase="reserved", at=None)
         self.make_session("work-06-neg-ts", status="stopped", updated=-0.25)
-
-        # Nanosecond mtime 23:59:59.999999900 local time (rounds in IEEE-754 float to next day).
+        # 23:59:59.999999900 local time reads as the next day once the
+        # modification time is a float, as it always has.
         s_ns = self.make_session("work-07-ns-midnight", status="stopped", updated=None)
         almost_midnight_sec = int(time.mktime(time.strptime("2026-10-23 23:59:59", "%Y-%m-%d %H:%M:%S")))
         ns_stamp = almost_midnight_sec * 1_000_000_000 + 999_999_900
         os.utime(s_ns / "state.json", ns=(ns_stamp, ns_stamp))
 
-        nat_snap, py_snap, nat_view, py_view, _ = self.observe_both()
-        self.assertEqual(nat_snap, py_snap)
-        self.assertEqual(nat_view, py_view)
+        snapshot, view, _ = self.observe()
+        hashes = {entry["id"]: entry["engine_hash"] for entry in snapshot["sessions"]}
+        self.assertEqual(hashes["work-01-symlink-engine"], self.engine_hash)
+        self.assertEqual((hashes["work-02-broken-engine"], hashes["work-03-dir-engine"]), (None, None))
+        self.assertEqual(view, "\n".join([
+            "CODING_SESSIONS 7: 5 stopped · 2 launching · needs-current 2 · resumable 5 · runtimes 2 (0 MB; 1 used by no open session)",
+            "work-01-symlink-engine stopped 2026-10-23 · pin aaaa1111 2026-10-22 · resumable",
+            "work-02-broken-engine stopped 2026-10-23 · pin aaaa1111 2026-10-22 · needs-current: its engine binary is gone",
+            "work-03-dir-engine stopped 2026-10-23 · pin aaaa1111 2026-10-22 · needs-current: its engine binary is gone",
+            "work-04-launching-at launching since 2026-10-21 · pin aaaa1111 2026-10-22 · resumable",
+            "work-05-launching-fallback launching since 2026-10-23 · pin aaaa1111 2026-10-22 · resumable",
+            "work-06-neg-ts stopped %s · pin aaaa1111 2026-10-22 · resumable" % _day(-0.25),
+            "work-07-ns-midnight stopped %s · pin aaaa1111 2026-10-22 · resumable" % _mtime_day(s_ns / "state.json"),
+            VERBS]))
+        self.assertEqual(_mtime_day(s_ns / "state.json"), "2026-10-24")
 
-        # Out-of-range timestamp in even an unlisted "done" session causes estate:load -> ("unavailable").
+        # An out-of-range timestamp, even in an unlisted done session, makes the source unavailable.
         bad_estate = self.directory / "bad_ts_estate"
         self.make_session("work-bad-ts", root=bad_estate, status="done", updated=10**20, pin=False)
-        res = self.run_native(
-            "!(println! (estate:load))\n",
-            cwd=bad_estate,
-        )
+        res = self.run_native("!(println! (estate:load))\n", cwd=bad_estate)
         self.assertIn('("unavailable")', res.stdout)
 
     def test_unicode_quotes_symlinks_hardlinks_and_runtime_block_accounting(self):
-        # Populate runtime with real multi-KB payload, hardlink, internal symlink, external dir symlink,
-        # leading-dash entry, and unreadable subdirectory.
+        # A runtime with a multi-megabyte payload, a hard link, an internal
+        # symlink, an external directory symlink, a leading-dash entry and an
+        # unreadable subdirectory.
         ext_dir = self.directory / "external_target_dir"
         ext_dir.mkdir()
         (ext_dir / "big_external.bin").write_bytes(b"E" * (512 * 1024))
-
         payload = self.bundle_current / "payload.bin"
         payload.write_bytes(b"P" * (1600 * 1024))
         os.link(payload, self.bundle_current / "payload-hardlink.bin")
@@ -823,12 +710,11 @@ class CodingEstateNativeIoTests(unittest.TestCase):
         dash_dir = self.bundle_current / "-leading-dash-(dir)"
         dash_dir.mkdir()
         (dash_dir / "-dash-file.txt").write_text("dash\n", encoding="utf-8")
-
         locked_sub = self.bundle_current / "locked-sub"
         locked_sub.mkdir()
         (locked_sub / "secret.bin").write_bytes(b"S" * 65536)
 
-        # Symlinked runtime root under memory/coding-runtimes
+        # A symlinked runtime root under memory/coding-runtimes.
         real_rt = self.directory / "real_symlinked_runtime"
         (real_rt / "src").mkdir(parents=True)
         (real_rt / "src" / "llm_ledger.metta").write_text("; native\n", encoding="utf-8")
@@ -836,19 +722,15 @@ class CodingEstateNativeIoTests(unittest.TestCase):
         sym_rt = self.runtimes / ("dddd4444" + "0" * 56)
         sym_rt.symlink_to(real_rt)
 
-        # Unicode + quotes in session IDs, hold/archive reasons, and symlinked session dir.
+        # Unicode and quotes in session ids and labels, and a symlinked session.
         s_uni = self.make_session('work-café-λ-"quoted"', status="stopped", bundle=sym_rt)
-        coding_estate.hold_session(s_uni, 'čekání na "překlad" · αβγ', "2026-10-20", now=self.fixed_ts)
-
+        self.label(s_uni, "hold", 'čekání na "překlad" · αβγ', "2026-10-20")
         s_arch = self.make_session("work-archived-émoji-✨", status="failed")
-        coding_estate.archive_session(s_arch, 'archived "reason" — Ω', now=self.fixed_ts)
-
+        self.label(s_arch, "archive", 'archived "reason" — Ω')
         ext_session = self.directory / "external_session_target"
         ext_session.mkdir()
         (ext_session / "task.json").write_text('{"task":"sym"}\n', encoding="utf-8")
-        (ext_session / "state.json").write_text(
-            json.dumps({"status": "running", "updated": self.fixed_ts}), encoding="utf-8"
-        )
+        (ext_session / "state.json").write_text(json.dumps({"status": "running", "updated": self.fixed_ts}), encoding="utf-8")
         os.utime(ext_session, (self.fixed_ts, self.fixed_ts))
         (self.coding / "work-symlinked-session").symlink_to(ext_session)
 
@@ -856,60 +738,56 @@ class CodingEstateNativeIoTests(unittest.TestCase):
             os.chmod(locked_sub, 0o000)
             self.addCleanup(lambda: os.chmod(locked_sub, 0o755))
         try:
-            nat_snap, py_snap, nat_view, py_view, _ = self.observe_both()
+            snapshot, view, _ = self.observe()
+            blocks = {path.name: allocated_blocks(path) for path in (self.bundle_old, self.bundle_current, sym_rt)}
         finally:
             if os.geteuid() != 0:
                 os.chmod(locked_sub, 0o755)
 
-        self.assertEqual(nat_snap, py_snap)
-        self.assertEqual(nat_view, py_view)
-        self.assertIn('work-café-λ-"quoted"', nat_view)
-        self.assertIn('čekání na "překlad" · αβγ', nat_view)
-        self.assertIn("work-symlinked-session running", nat_view)
+        self.assertEqual({entry["id"]: entry["blocks"] for entry in snapshot["runtimes"]}, blocks)
+        megabytes = round(sum(blocks.values()) * 512 / (1024 * 1024))
+        self.assertEqual(view, "\n".join([
+            "CODING_SESSIONS 3: 1 running · 1 held · 1 archived · resumable 2 · unpinned 1 · "
+            "runtimes 3 (%d MB; 2 used by no open session)" % megabytes,
+            'work-café-λ-"quoted" stopped 2026-10-23 · pin dddd4444 2026-10-22 · resumable · '
+            'held until 2026-10-20: čekání na "překlad" · αβγ',
+            "work-symlinked-session running 2026-10-23 · unpinned: a resume pins the current runtime",
+            VERBS]))
+        archived = {entry["id"]: entry for entry in snapshot["sessions"]}["work-archived-émoji-✨"]
+        self.assertEqual(archived["lifecycle"], {"archive": {"why": 'archived "reason" — Ω', "at": self.fixed_ts}})
 
     def test_read_only_filesystem_control_zero_mutations_and_chmod_readonly_tree(self):
         s_open = self.make_session("work-ro-1-open", status="stopped")
         (s_open / "runs.jsonl").write_text('{"run":1,"at":%s}\n' % self.fixed_ts, encoding="utf-8")
         s_hold = self.make_session("work-ro-2-held", status="stopped")
-        coding_estate.hold_session(s_hold, "do not mutate", "2026-10-20", now=self.fixed_ts)
+        self.label(s_hold, "hold", "do not mutate", "2026-10-20")
         s_arch = self.make_session("work-ro-3-arch", status="stopped")
-        coding_estate.archive_session(s_arch, "frozen", now=self.fixed_ts)
-        # Remove helper lockfiles created by setup's hold_session/archive_session before read-only check.
-        for lock_file in self.estate.rglob(".lifecycle.lock"):
-            lock_file.unlink()
+        self.label(s_arch, "archive", "frozen")
         for session_dir in (s_open, s_hold, s_arch):
             os.utime(session_dir, (self.fixed_ts, self.fixed_ts))
+        expected_view = "\n".join([
+            "CODING_SESSIONS 3: 1 stopped · 1 held · 1 archived · resumable 3 · runtimes 2 (0 MB; 1 used by no open session)",
+            "work-ro-1-open stopped 2026-10-23 · pin aaaa1111 2026-10-22 · run 2 · re-pinned 2026-10-23 · resumable",
+            "work-ro-2-held stopped 2026-10-23 · pin aaaa1111 2026-10-22 · resumable · held until 2026-10-20: do not mutate",
+            VERBS])
 
-        coding_estate._engine_digest_cache.clear()
-        coding_estate._runtime_blocks_cache.clear()
-        expected_snap = json.loads(coding_estate_snapshot.snapshot(self.estate, "2026-10-25"))
-        expected_view = coding_estate.context_view(
-            self.estate, world=coding_estate.World(today="2026-10-25")
-        )
-
-        # Part A: Writable tree must experience ZERO file creations, lockfiles, byte edits, or mtime changes.
+        # A. Observing a writable tree creates, edits and touches nothing.
         before = _tree_manifest(self.estate)
         snap_out = self.directory / "ro_snap.json"
         view_out = self.directory / "ro_view.txt"
         self.run_native(
-            '!(py-call (estate_io_sentinel.write_text %s\n'
-            '   (json:stringify-python-with (estate:snapshot %s "2026-10-25") ((separators "," ":")))))\n'
-            '!(py-call (estate_io_sentinel.write_text %s (estate:context-view-root %s "2026-10-25")))\n'
+            '!(fs:write %s (json:stringify-python-with (estate:snapshot %s "2026-10-25") ((separators "," ":"))))\n'
+            '!(fs:write %s (estate:context-view-root %s "2026-10-25"))\n'
             '!(println! (estate:load))\n'
-            % (
-                self._metta_quote(snap_out),
-                self._metta_quote(self.estate),
-                self._metta_quote(view_out),
-                self._metta_quote(self.estate),
-            ),
+            % (self._metta_quote(snap_out), self._metta_quote(self.estate),
+               self._metta_quote(view_out), self._metta_quote(self.estate)),
             cwd=self.estate,
         )
-        after = _tree_manifest(self.estate)
-        self.assertEqual(before, after)
-        self.assertEqual(json.loads(snap_out.read_text(encoding="utf-8")), expected_snap)
+        self.assertEqual(_tree_manifest(self.estate), before)
         self.assertEqual(view_out.read_text(encoding="utf-8"), expected_view)
+        writable_snapshot = json.loads(snap_out.read_text(encoding="utf-8"))
 
-        # Part B: OS-enforced read-only mode (0555 dirs, 0444 files) still renders identically.
+        # B. A tree the OS keeps read-only (0555 directories, 0444 files) shows the same.
         if os.geteuid() != 0:
             chmod_targets = []
             for dirpath, dirnames, filenames in os.walk(self.estate, topdown=False):
@@ -931,13 +809,17 @@ class CodingEstateNativeIoTests(unittest.TestCase):
 
             self.addCleanup(restore_modes)
             view_ro_out = self.directory / "ro_enforced_view.txt"
+            snap_ro_out = self.directory / "ro_enforced_snap.json"
             res_ro = self.run_native(
-                '!(py-call (estate_io_sentinel.write_text %s (estate:context-view-root %s "2026-10-25")))\n'
+                '!(fs:write %s (estate:context-view-root %s "2026-10-25"))\n'
+                '!(fs:write %s (json:stringify-python-with (estate:snapshot %s "2026-10-25") ((separators "," ":"))))\n'
                 '!(println! (estate:load))\n'
-                % (self._metta_quote(view_ro_out), self._metta_quote(self.estate)),
+                % (self._metta_quote(view_ro_out), self._metta_quote(self.estate),
+                   self._metta_quote(snap_ro_out), self._metta_quote(self.estate)),
                 cwd=self.estate,
             )
             self.assertEqual(view_ro_out.read_text(encoding="utf-8"), expected_view)
+            self.assertEqual(json.loads(snap_ro_out.read_text(encoding="utf-8")), writable_snapshot)
             self.assertIn('("value" ', res_ro.stdout)
             restore_modes()
 
@@ -965,25 +847,12 @@ class CodingEstateNativeIoTests(unittest.TestCase):
             )
 
         bench_out = self.directory / "bench.json"
-        mutator = self.directory / "bench_mutator.py"
-        mutator.write_text(
-            "from pathlib import Path\n"
-            "import os, time\n"
-            "def mutate(engine_path, rt_path):\n"
-            "    p = Path(engine_path)\n"
-            "    p.write_bytes(p.read_bytes() + b'CHANGED')\n"
-            "    now = time.time() + 5.0\n"
-            "    os.utime(p, (now, now))\n"
-            "    added = Path(rt_path) / 'added_2mb.bin'\n"
-            "    added.write_bytes(b'Z' * (2 * 1024 * 1024))\n"
-            "    os.utime(rt_path, (now, now))\n"
-            "    return 1\n",
-            encoding="utf-8",
-        )
-
+        # Grow the engine and add 2 MB to a runtime, both dated five seconds ahead.
+        mutate = ('printf CHANGED >> "$1" && head -c 2097152 /dev/zero | tr "\\000" Z > "$2/added_2mb.bin" '
+                  '&& touch -d "@$(( $(date +%s) + 5 ))" "$1" "$2"')
         self.run_native(
-            "!(import! &self %s)\n" % self._metta_quote(mutator)
-            + "!(let* (($_ (eio:clear-caches!))\n"
+            "!(import! &self (library proc))\n"
+            "!(let* (($_ (eio:clear-caches!))\n"
             + "        ($t0 (system:monotonic-ns))\n"
             + '        ($cold (estate:context-view-root %s "2026-10-25"))\n' % self._metta_quote(self.estate)
             + "        ($t1 (system:monotonic-ns))\n"
@@ -993,12 +862,12 @@ class CodingEstateNativeIoTests(unittest.TestCase):
             + "        ($t3 (system:monotonic-ns))\n"
             + '        ($w3 (estate:context-view-root %s "2026-10-25"))\n' % self._metta_quote(self.estate)
             + "        ($t4 (system:monotonic-ns))\n"
-            + "        ($_m (py-call (bench_mutator.mutate %s %s)))\n"
-            % (self._metta_quote(self.engine), self._metta_quote(self.bundle_current))
+            + '        ($mutation (proc:run ("sh" "-c" %s "sh" %s %s) "/" inherit 60000 4096))\n'
+            % (self._metta_quote(mutate), self._metta_quote(self.engine), self._metta_quote(self.bundle_current))
             + "        ($t5 (system:monotonic-ns))\n"
             + '        ($after (estate:context-view-root %s "2026-10-25"))\n' % self._metta_quote(self.estate)
             + "        ($t6 (system:monotonic-ns)))\n"
-            + "   (py-call (estate_io_sentinel.write_text %s\n" % self._metta_quote(bench_out)
+            + "   (fs:write %s\n" % self._metta_quote(bench_out)
             + "     (json:stringify-python\n"
             + "       (JsonObject (\n"
             + '         (JsonPair "cold_ms" (/ (- $t1 $t0) 1000000.0))\n'
@@ -1007,14 +876,16 @@ class CodingEstateNativeIoTests(unittest.TestCase):
             + '         (JsonPair "warm3_ms" (/ (- $t4 $t3) 1000000.0))\n'
             + '         (JsonPair "invalidated_ms" (/ (- $t6 $t5) 1000000.0))\n'
             + '         (JsonPair "cold_view" $cold)\n'
+            + '         (JsonPair "mutated" (case $mutation (((proc:exited 0 $o $e) True) ($other False))))\n'
             + '         (JsonPair "warm_equal" (and (== $cold $w1) (and (== $cold $w2) (== $cold $w3))))\n'
-            + '         (JsonPair "after_view" $after)))))))\n',
+            + '         (JsonPair "after_view" $after))))))\n',
             cwd=self.estate,
         )
 
         receipt = json.loads(bench_out.read_text(encoding="utf-8"))
         self.assertTrue(receipt["warm_equal"])
         self.assertIn("resumable 12", receipt["cold_view"])
+        self.assertTrue(receipt["mutated"])
         self.assertIn("needs-current 12", receipt["after_view"])
         self.assertIn("its engine binary has changed", receipt["after_view"])
         self.assertNotEqual(receipt["cold_view"], receipt["after_view"])

@@ -22,6 +22,7 @@
   ["tests/interrupted_cognitive_turn_probe.metta", "INTERRUPTED_COGNITIVE_TURN_OK"],
   ["tests/activity_delivery_probe.metta", "ACTIVITY_DELIVERY_OK"],
   ["tests/activity_delivery_full_turn_probe.metta", "ACTIVITY_DELIVERY_FULL_TURN_OK"],
+  ["tests/telegram_batch_probe.metta", "TELEGRAM_BATCH_OK"],
   ["tests/prompt_cache_layout_probe.metta", "PROMPT_CACHE_LAYOUT_OK"],
   ["tests/change_marker_turn_probe.metta", "CHANGE_MARKER_TURN_OK"],
   ["tests/py_str_native_probe.metta", "PY_STR_NATIVE_OK"],

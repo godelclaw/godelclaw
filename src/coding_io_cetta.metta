@@ -578,12 +578,14 @@
          (if (cio:failed? $moved) $moved (cio:sync-directory $dir)))
        True)))
 
-; Hold and archive labels live in lifecycle.json under .lifecycle.lock.
+; Hold and archive labels live in lifecycle.json under .lifecycle.lock, which
+; stays writable by the shared group (0660) whatever the umask.
 (: cio:lifecycle-locked (-> %Undefined% Atom %Undefined%))
 (= (cio:lifecycle-locked $dir $body)
    (let $lock (fs:open-write (path:join $dir ".lifecycle.lock") ("create" "append") 432)
      (if (cio:failed? $lock) (CioLockFailed $lock)
-       (let* (($held (fs:lock $lock exclusive))
+       (let* (($moded (fs:set-mode $lock 432))
+              ($held (fs:lock $lock exclusive))
               ($result (collapse (catch (eval $body))))
               ($released (fs:unlock $lock))
               ($closed (fs:close $lock)))
@@ -868,3 +870,58 @@
           ($quarter (math:floor (/ $request-bytes 4))))
      (if (or (== $bytes None) (or (== $tokens None) (== $bytes 0))) $quarter
        (max $quarter (math:ceil (/ (* $request-bytes $tokens) $bytes))))))
+
+;; ------------------------------------------------------ hold, archive
+; A hold or archive label is the agent's own note about a session; a resume
+; sets it aside (cio:prepare-resume). Written whole under .lifecycle.lock.
+
+(= (cio:leap? $year) (or (and (== (% $year 4) 0) (!= (% $year 100) 0)) (== (% $year 400) 0)))
+(= (cio:month-days $year $month)
+   (if (== $month 2) (if (cio:leap? $year) 29 28)
+     (if (cio:member $month (4 6 9 11)) 30 31)))
+; A calendar date written YYYY-MM-DD.
+(= (cio:review-date? $text)
+   (let $parts (str:split "-" $text)
+     (if (!= (size-atom $parts) 3) False
+       (let ($y $m $d) $parts
+         (if (not (and (and (== (str:byte-length $y) 4) (== (str:byte-length $m) 2))
+                       (and (== (str:byte-length $d) 2)
+                            (and (str:is-all-in digit $y) (and (str:is-all-in digit $m) (str:is-all-in digit $d))))))
+           False
+           (let* (($year (str:string->number $y)) ($month (str:string->number $m)) ($day (str:string->number $d)))
+             (and (and (>= $month 1) (<= $month 12))
+                  (and (>= $day 1) (<= $day (cio:month-days $year $month))))))))))
+(= (cio:label $dir $label)
+   (let $written (cio:lifecycle-locked $dir (cio:publish-json (path:join $dir "lifecycle.json") $label))
+     (if (== $written True) True (CioLabelFailed $written))))
+(= (cio:hold-session $dir $why $review)
+   (let $id (cio:basename $dir)
+     (if (not (fs:is-file (path:join $dir "task.json"))) (str:concat "work-hold: no session " $id)
+       (if (and (!= $review "") (not (cio:review-date? $review)))
+         (str:join "" ("work-hold: invalid review date \"" $review "\"; use YYYY-MM-DD"))
+         (let $written (cio:label $dir (JsonObject ((JsonPair "hold" (JsonObject (
+                         (JsonPair "why" (JsonString $why))
+                         (JsonPair "review" (if (== $review "") JsonNull (JsonString $review)))
+                         (JsonPair "at" (cio:now-json))))))))
+           (if (!= $written True) (str:concat "work-hold: " (repr $written))
+             (if (== $review "") (str:concat "WORK_HELD " $id) (str:join "" ("WORK_HELD_UNTIL " $review " " $id)))))))))
+(= (cio:archive-session $dir $why)
+   (let $id (cio:basename $dir)
+     (if (not (fs:is-file (path:join $dir "task.json"))) (str:concat "work-archive: no session " $id)
+       (let $written (cio:label $dir (JsonObject ((JsonPair "archive" (JsonObject (
+                       (JsonPair "why" (JsonString $why)) (JsonPair "at" (cio:now-json))))))))
+         (if (!= $written True) (str:concat "work-archive: " (repr $written)) (str:concat "WORK_ARCHIVED " $id))))))
+
+;; ----------------------------------------------------------- settings
+; The agent's coding settings, in memory/coding-settings.json: the context
+; source mode (open, summary or off) and the default resume mode (pinned or
+; current). An unknown recorded value reads as the default.
+(= (cio:settings-path $root) (path:join $root "memory/coding-settings.json"))
+(= (cio:work-setting $root $key)
+   (let $value (coding:text (coding:field (cio:json (cio:settings-path $root)) $key))
+     (if (== $key "context") (if (cio:member $value ("open" "summary" "off")) $value "open")
+       (if (== $key "resume") (if (cio:member $value ("pinned" "current")) $value "pinned") $value))))
+(= (cio:set-work-setting $root $key $value)
+   (let* (($path (cio:settings-path $root))
+          ($written (cio:publish-json $path (cio:put (cio:json $path) $key (JsonString $value)))))
+     (if (== $written True) $path (CioSettingFailed $written))))

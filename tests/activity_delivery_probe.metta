@@ -4,11 +4,10 @@
 (= (assertEqual $A $B) (assert (== $A $B)))
 
 !(configure commchannel telegram)
-!(py-call (telegram._set_last "probe" "stable input" False "full" 701))
+!(tg:activity-add "" "probe" "stable input" False "full" "701" False)
 
-;; Both observations cross the real SWI-PeTTa/Janus boundary. Relational
-;; re-entry must see one stable prepared batch; only the explicit settlement
-;; receipt removes it.
+;; Relational re-entry must see one stable prepared batch; only the explicit
+;; settlement receipt removes it.
 !(let* (($first (eval (receive)))
          ($_ (cut))
          ($second (eval (receive)))
@@ -17,7 +16,7 @@
          ($_ (println! (ACTIVITY_DELIVERY_SECOND $second)))
          ($_ (assertEqual $first $second))
          ($_ (assertEqual (loop-host:nonempty? $first) True))
-         ($ack (py-call (telegram.ackActivityBatch)))
+         ($ack (tg:ack-activity-batch))
          ($_ (println! (ACTIVITY_DELIVERY_ACK $ack)))
          ($_ (assertEqual $ack 1))
          ($afterAck (eval (receive)))

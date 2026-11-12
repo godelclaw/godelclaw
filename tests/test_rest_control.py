@@ -12,35 +12,16 @@ sys.path.insert(0, os.fspath(ROOT / "channels"))
 import telegram  # noqa: E402
 
 
+
+def woken():
+    """The reasons of the wakes queued for the MeTTa client."""
+    return [event["wake_only"] for event in telegram._metta_events if "wake_only" in event]
+
+
 class RestControlTest(unittest.TestCase):
     def tearDown(self):
-        telegram._sleep_until = 0.0
-        telegram._wake_event.clear()
-        telegram._wake_reason = ""
-
-    def test_wake_event_is_cleared_before_rest_is_published(self):
-        observations = []
-
-        class ProbeEvent:
-            def clear(self):
-                observations.append(telegram.rest_status()[0])
-
-            def wait(self, timeout):
-                telegram._wake_reason = "/wake"
-                return True
-
-        original = telegram._wake_event
-        telegram._wake_event = ProbeEvent()
-        try:
-            self.assertEqual(telegram.sleep_until_message(30),
-                             "woken by /wake")
-        finally:
-            telegram._wake_event = original
-
-        self.assertGreaterEqual(len(observations), 1)
-        self.assertFalse(
-            observations[0],
-            "publishing rest before clearing a stale event can lose /wake")
+        telegram._metta.pop("sleep_until", None)
+        telegram._metta_events.clear()
 
     def test_operator_message_requests_wake(self):
         with mock.patch.dict(
@@ -48,8 +29,7 @@ class RestControlTest(unittest.TestCase):
                 {"METTACLAW_TELEGRAM_OPERATOR_IDS": "111000111"}):
             self.assertTrue(telegram._wake_for_operator_message(
                 {"id": 111000111, "is_bot": False}))
-        self.assertTrue(telegram._wake_event.is_set())
-        self.assertEqual(telegram._wake_reason, "operator message")
+        self.assertEqual(woken(), ["operator message"])
 
     def test_non_operator_message_does_not_request_wake(self):
         with mock.patch.dict(
@@ -57,8 +37,7 @@ class RestControlTest(unittest.TestCase):
                 {"METTACLAW_TELEGRAM_OPERATOR_IDS": "111000111"}):
             self.assertFalse(telegram._wake_for_operator_message(
                 {"id": 222000222, "is_bot": False}))
-        self.assertFalse(telegram._wake_event.is_set())
-        self.assertEqual(telegram._wake_reason, "")
+        self.assertEqual(woken(), [])
 
     def test_wake_peer_message_requests_wake_without_operator_control(self):
         peer = {"id": 333000333, "is_bot": True}
@@ -69,8 +48,7 @@ class RestControlTest(unittest.TestCase):
             self.assertTrue(telegram._wake_for_operator_message(peer))
             self.assertFalse(telegram._is_operator(peer))
             self.assertIsNone(telegram._peek_slash_command("/stop", peer))
-        self.assertTrue(telegram._wake_event.is_set())
-        self.assertEqual(telegram._wake_reason, "peer message")
+        self.assertEqual(woken(), ["peer message"])
 
     def test_unlisted_bot_message_does_not_request_wake(self):
         with mock.patch.dict(
@@ -79,25 +57,7 @@ class RestControlTest(unittest.TestCase):
                  "METTACLAW_TELEGRAM_WAKE_IDS": "333000333"}):
             self.assertFalse(telegram._wake_for_operator_message(
                 {"id": 444000444, "is_bot": True}))
-        self.assertFalse(telegram._wake_event.is_set())
-        self.assertEqual(telegram._wake_reason, "")
-
-    def test_timed_rest_reports_operator_message_wake(self):
-        class MessageWakeEvent:
-            def clear(self):
-                pass
-
-            def wait(self, timeout):
-                telegram._wake_reason = "operator message"
-                return True
-
-        original = telegram._wake_event
-        telegram._wake_event = MessageWakeEvent()
-        try:
-            self.assertEqual(telegram.sleep_until_message(30),
-                             "woken by operator message")
-        finally:
-            telegram._wake_event = original
+        self.assertEqual(woken(), [])
 
     def test_agent_requested_rest_has_no_hidden_upper_clamp(self):
         source = (ROOT / "src" / "skills.metta").read_text(encoding="utf-8")
@@ -158,7 +118,7 @@ class RestControlTest(unittest.TestCase):
         self.assertIn("(= (rest $seconds $why)", source)
 
     def test_positive_fractional_remainder_is_reported_as_one_second(self):
-        telegram._sleep_until = 100.1
+        telegram._metta["sleep_until"] = 100.1
         with mock.patch.object(telegram.time, "time", return_value=100.0):
             self.assertEqual(telegram.rest_status(), (True, 1))
 

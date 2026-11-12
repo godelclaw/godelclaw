@@ -47,11 +47,8 @@ class CooperativeAttentionTest(unittest.TestCase):
             "METTACLAW_TELEGRAM_BOT_USERNAME": "fixture_bot"})
         environment.start(); self.addCleanup(environment.stop)
         state = mock.patch.multiple(telegram, _effect_turn=None, _effect_activity_epoch=None,
-            _effect_attention_revision=None, _activity_epoch=0, _context_activity_epoch=0,
-            _pending_messages=[], _prepared_messages=[], _reply_chat_id="42")
+            _activity_epoch=0, _context_activity_epoch=0, _reply_chat_id="42")
         state.start(); self.addCleanup(state.stop)
-        native = mock.patch.object(telegram, "metta_client", return_value=False)
-        native.start(); self.addCleanup(native.stop)
         running = mock.patch("lifecycle.cognition_enabled", return_value=1)
         running.start(); self.addCleanup(running.stop)
         notices = mock.patch.multiple(input_ack, _pending={}, _last_notice={})
@@ -72,18 +69,9 @@ class CooperativeAttentionTest(unittest.TestCase):
         peer.receipts[key] = [["delivered", 500]]
         return peer, key
 
-    def test_ordinary_arrival_keeps_all_emitted_decisions(self):
-        telegram.begin_effect_turn(1)
-        telegram._set_last("42", "later ordinary message", update_id=1)
-        self.assertEqual(telegram.effect_turn_stimulus_free(1), 1)
-        self.assertEqual(telegram.effect_command_unaffected(1, ["send", "drafted answer"]), 1)
-        self.assertEqual(telegram.effect_command_unaffected(1, ["rest"]), 1)
-        self.assertEqual(len(telegram._pending_messages), 1)
-
     def test_steer_is_ordinary_input_without_invented_control_authority(self):
         telegram.begin_effect_turn(1)
         self.assertEqual(attention.ingress('input-1', 'operator', self.update('/steer correction')), 0)
-        self.assertEqual(telegram.effect_turn_stimulus_free(1), 1)
         self.assertEqual(attention.revision(), 0)
 
     def test_peer_or_other_bot_cannot_steer(self):

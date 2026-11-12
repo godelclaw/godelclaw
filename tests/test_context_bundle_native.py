@@ -75,10 +75,35 @@ CALLER = ["!(import! &self ./src/memory)", "!(import! &self ./src/turn_additions
           "(= (tg:client-metta?) False)"]
 
 
+def native_coding_sessions(directory):
+    """The coding-sessions view the native estate renders for this workspace."""
+    kind, text = directory / "coding-sessions.kind", directory / "coding-sessions.text"
+    guest(directory, HEADER + [
+        "!(import! &self ./src/coding_estate_cetta.metta)",
+        "!(case (estate:load) (((\"value\" $text) (py-call (context_bundle_probe.note %s $text)))"
+        " ($other (py-call (context_bundle_probe.note %s (repr $other))))))" % (q(text), q(kind))])
+    if text.exists():
+        return text.read_text(encoding="utf-8")
+    if kind.read_text(encoding="utf-8") == '("missing")':
+        return None
+    raise AssertionError("coding-sessions unavailable: " + kind.read_text(encoding="utf-8"))
+
+
 class NativeContextBundleTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # The oracle bundle shows the native coding-sessions view of the same
+        # workspace (tests/test_coding_estate.py and the native estate suite
+        # cover that view), so the comparison covers both bundles' projection
+        # and placement of the source.
+        with tempfile.TemporaryDirectory() as scratch, contextlib.chdir(ROOT):
+            cls.coding_sessions = native_coding_sessions(Path(scratch))
+
     def setUp(self):
         # The oracle observes the same workspace as the native subprocess.
         self.enterContext(contextlib.chdir(ROOT))
+        view = self.coding_sessions
+        self.enterContext(mock.patch.object(probe, "coding_sessions", lambda: view))
         # Each native guest starts a fresh process. Its Python oracle needs
         # the same initial loader-cache state, independent of test ordering.
         import project_evidence

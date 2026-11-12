@@ -3,7 +3,7 @@
 
 (= (assertEqual $A $B) (assert (== $A $B)))
 (= (probe-stimulus)
-   (py-call (telegram._set_last "probe" "new stimulus" False "full" 811)))
+   (tg:activity-add "" "probe" "new stimulus" False "full" "811" False))
 !(py-eval "__import__('synthetic_llm').__dict__.__setitem__('chat', lambda *args: (__import__('cognitive_health').turn_started('probe'), __import__('cognitive_health').turn_completed(64), '((probe-stimulus) (pin _quote_pin-after-new-input-lands_quote_) (send-telegram-chat _quote_probe_quote_ _quote_stale-reply-must-not-be-sent_quote_) (pin _quote_pin-after-withheld-send-must-not-land_quote_))')[-1])")
 !(py-eval "__import__('helper').__dict__.__setitem__('_working_boot_cache', {})")
 !(initMemory)

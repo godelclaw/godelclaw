@@ -186,13 +186,11 @@ def main():
     emit("METTACLAW_CHANNEL", channel.get("kind"))
 
     emit("METTACLAW_TELEGRAM_ALLOW_PRIVATE", telegram.get("allow_private"))
-    # "durable": a CeTTa channel service is the bot's only poller and sender;
-    # service_socket is its private client socket. Absent: the Bot API poller.
+    # "durable": a CeTTa channel service is the bot's only poller and sender,
+    # and channels/telegram.metta its client; service_socket is its private
+    # client socket. Absent: no Telegram client runs.
     emit("METTACLAW_TELEGRAM_TRANSPORT", telegram.get("transport"))
     emit("METTACLAW_TELEGRAM_SERVICE_SOCKET", expand(telegram.get("service_socket"), root))
-    # "metta": channels/telegram.metta is the client of that service; absent
-    # or "python": channels/telegram.py is.
-    emit("METTACLAW_TELEGRAM_CLIENT", telegram.get("client"))
     emit("METTACLAW_TELEGRAM_POLL_LIMIT", telegram.get("poll_limit"))
     # Telegram identities and authorization sets intentionally do not pass
     # through generated .env. Keep them in mode-600 config/secrets.env, which

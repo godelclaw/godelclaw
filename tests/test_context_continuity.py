@@ -28,9 +28,6 @@ class ContextContinuityTest(unittest.TestCase):
         telegram._log_path = str(self.log)
         telegram._context_frontier_bytes = None
         telegram._current_batch_update_ids = set()
-        with telegram._msg_lock:
-            telegram._pending_messages.clear()
-            telegram._prepared_messages.clear()
         self.old_history = os.environ.get("METTACLAW_HISTORY_PATH")
         os.environ["METTACLAW_HISTORY_PATH"] = str(self.history)
 
@@ -38,9 +35,6 @@ class ContextContinuityTest(unittest.TestCase):
         telegram._log_path = self.old_log
         telegram._context_frontier_bytes = self.old_frontier
         telegram._current_batch_update_ids = self.old_excluded
-        with telegram._msg_lock:
-            telegram._pending_messages.clear()
-            telegram._prepared_messages.clear()
         if self.old_history is None:
             os.environ.pop("METTACLAW_HISTORY_PATH", None)
         else:
@@ -64,15 +58,19 @@ class ContextContinuityTest(unittest.TestCase):
         with self.log.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(record, ensure_ascii=False) + "\n")
 
+    def prepare(self, update_ids):
+        """What the MeTTa client publishes when it prepares a batch: the
+        ledger's end as the context frontier, and the batch's update ids."""
+        telegram.metta_publish("context_frontier", self.log.stat().st_size)
+        telegram.metta_publish("batch_update_ids", ",".join(update_ids))
+
     def test_window_is_causal_and_current_batch_appears_once(self):
         self.append(update_id=10, message_id=10, text="prior human")
         self.append(kind="outbound", queued=False, note="own_send",
                     update_id=None, message_id=11, from_="me",
                     text="prior answer")
         self.append(update_id=12, message_id=12, text="current correction")
-        telegram._set_last("7", "CURRENT FORMATTED\ncurrent correction",
-                           update_id=12)
-        batch = telegram.getActivityBatch()
+        self.prepare(["12"])
         # This arrives after the frontier and must wait for the next turn.
         self.append(update_id=13, message_id=13, text="future input")
 
@@ -81,7 +79,6 @@ class ContextContinuityTest(unittest.TestCase):
         self.assertIn("prior answer", window)
         self.assertNotIn("current correction", window)
         self.assertNotIn("future input", window)
-        self.assertEqual(batch.count("current correction"), 1)
 
     def test_control_chatter_is_not_conversation(self):
         self.append(update_id=20, note="slash_command:/activity",
@@ -89,7 +86,7 @@ class ContextContinuityTest(unittest.TestCase):
         self.append(kind="outbound", queued=False, note="own_send",
                     update_id=None, text="activity: idle | steps=0")
         self.append(update_id=21, text="real conversation")
-        telegram.getActivityBatch()  # fixes a frontier; no queued test items
+        self.prepare([])
         window = telegram.conversation_window()
         self.assertNotIn("/activity", window)
         self.assertNotIn("steps=0", window)
@@ -127,13 +124,10 @@ class ContextContinuityTest(unittest.TestCase):
         self.append(update_id=60, message_id=11, text="prior revision")
         self.append(update_id=61, kind="edited_message", message_id=11,
                     text="current revision")
-        telegram._set_last("7", "CURRENT FORMATTED\ncurrent revision",
-                           update_id=61)
-        batch = telegram.getActivityBatch()
+        self.prepare(["61"])
         window = telegram.conversation_window()
         self.assertIn("prior revision", window)
         self.assertNotIn("current revision", window)
-        self.assertEqual(batch.count("current revision"), 1)
 
     def test_internal_history_append_does_not_use_public_mutation_skill(self):
         # The journal itself is covered by tests/unit/loop_host.metta.

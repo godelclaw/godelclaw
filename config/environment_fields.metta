@@ -49,7 +49,6 @@
    (ConfigFieldV1 "METTACLAW_TELEGRAM_ALLOW_PRIVATE" "telegram" "allow_private" JsonNull plain)
    (ConfigFieldV1 "METTACLAW_TELEGRAM_TRANSPORT" "telegram" "transport" JsonNull plain)
    (ConfigFieldV1 "METTACLAW_TELEGRAM_SERVICE_SOCKET" "telegram" "service_socket" JsonNull expand)
-   (ConfigFieldV1 "METTACLAW_TELEGRAM_CLIENT" "telegram" "client" JsonNull plain)
    (ConfigFieldV1 "METTACLAW_TELEGRAM_POLL_LIMIT" "telegram" "poll_limit" JsonNull plain)
    (ConfigFieldV1 "METTACLAW_SEARCH_PROVIDER" "search" "provider" JsonNull plain)
    (ConfigFieldV1 "METTACLAW_RECENT_ACTION_TURNS" "context" "recent_action_turns" JsonNull plain)

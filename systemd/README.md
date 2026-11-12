@@ -58,8 +58,8 @@ host. Keep credentials and both environment files private, outside Git.
 `EnvironmentFile` values must contain actual paths: shell variables and `~`
 are not expanded there.
 
-In `config/local.toml`, set `[telegram]` to `transport = "durable"`,
-`client = "metta"`, and `service_socket` to this instance's **client** socket.
+In `config/local.toml`, set `[telegram]` to `transport = "durable"` and
+`service_socket` to this instance's **client** socket.
 This socket is also used by the command responder. Configure identical routing
 and authorization values in the channel environment and `config/secrets.env`.
 The separate operator socket is reserved for the service's administrative
@@ -202,5 +202,5 @@ require peer control. Adapt that optional integration separately if you need it.
 
 For expected request, checkpoint and restart behavior, see the
 [mode guide](../modes/README.md). For fixture-based checks of the service boundary,
-see `tests/test_durable_telegram_service.py` and
+see `tests/test_telegram_metta_client.py` and
 `tests/test_mode_control_boundary.py`.

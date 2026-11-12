@@ -28,6 +28,9 @@ MODULES = {
 forbidden_calls = 0
 calls = {}
 engine_calls = 0
+# The native estate is the only coding-sessions renderer. An oracle bundle
+# takes, through this callable, the view that renderer gave of the workspace.
+coding_sessions = None
 boundary_calls = {}
 inside_python = False
 command = None
@@ -109,6 +112,14 @@ def forbidden(*args, **kwargs):
     raise AssertionError("ported Python loader used on native route")
 
 
+def use_coding_sessions(encoded):
+    """Show this native coding-sessions view (JSON; null when absent) in Python bundles."""
+    global coding_sessions
+    view = json.loads(encoded)
+    coding_sessions = lambda: view
+    return 1
+
+
 def retained_loaders(conversation=None, views=None):
     result = []
     for spec, loader in original_loaders(conversation, views):
@@ -118,6 +129,8 @@ def retained_loaders(conversation=None, views=None):
                 "work-state", "affect-gestalt", "pins", "effect-receipts", "recent-proposals", "relevant-files",
                 "coding-sessions"}:
             loader = lambda source=spec.source_id: "fixture " + source
+        elif spec.source_id == "coding-sessions" and coding_sessions is not None:
+            loader = coding_sessions
         result.append((spec, loader))
     return result
 
