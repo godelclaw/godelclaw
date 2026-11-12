@@ -493,14 +493,10 @@ class NativeTaskContext(unittest.TestCase):
                    METTACLAW_MODEL_COMMENTARY="1",
                    METTACLAW_TELEGRAM_LOG_PATH=str(fixture.path.parent / "updates.jsonl"))
         module = fixture.path.parent / 'projection_probe.py'
-        module.write_text('import task_context, model_commentary\ndef disable():\n'
+        # The prompt formatter is native now; only the projection is guarded.
+        module.write_text('import task_context\ndef disable():\n'
                           '    def fail(*args, **kwargs): raise AssertionError("Python projection used")\n'
-                          '    task_context.projection = fail\n    task_context.compact = fail\n'
-                          '    original = model_commentary.prompt\n'
-                          '    def format_base(text):\n'
-                          '        assert "ORIGINAL_FINDING_RETAINED" not in text, "protected history crossed the Python formatter"\n'
-                          '        return original(text)\n'
-                          '    model_commentary.prompt = format_base\n    return 1\n')
+                          '    task_context.projection = fail\n    task_context.compact = fail\n    return 1\n')
         with tempfile.NamedTemporaryFile('w', dir=ROOT, suffix='.metta') as source:
             source.write('!(import! &self '+json.dumps(str(module))+')\n'
                          '!(py-call (projection_probe.disable))\n'

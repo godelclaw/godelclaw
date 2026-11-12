@@ -6,7 +6,9 @@
 
 (= (units:all)
    (("tests/unit/model_selection.metta" "UNIT_MODEL_SELECTION_OK")
-    ("tests/unit/loop_host.metta" "UNIT_LOOP_HOST_OK")))
+    ("tests/unit/loop_host.metta" "UNIT_LOOP_HOST_OK")
+    ("tests/unit/commentary_contract.metta" "UNIT_COMMENTARY_ON_OK" (("METTACLAW_MODEL_COMMENTARY" "1")))
+    ("tests/unit/commentary_contract.metta" "UNIT_COMMENTARY_OFF_OK" (("METTACLAW_MODEL_COMMENTARY" "0")))))
 
 (= (units:env $directory)
    (let $base (nt:environment $directory)
@@ -20,18 +22,20 @@
    (if (== $front ()) $back (cons-atom (car-atom $front) (preq-free:append (cdr-atom $front) $back))))
 
 (= (units:one $root $engine $artifacts ($file $marker))
+   (units:one $root $engine $artifacts ($file $marker ())))
+(= (units:one $root $engine $artifacts ($file $marker $extra))
    (let* (($directory (nt:join $artifacts (str:concat "unit-" (system:uuid4-hex))))
           ($_ (fs:make-directories $directory 448))
           ($output (nt:exit-ok (proc:run ($engine "--lang" "petta" "--profile" "extended" "--import-mode" "ancestor-walk" "--quiet" $file)
-                                         $root (units:env $directory) 120000 1048576)))
+                                         $root (preq-free:append $extra (units:env $directory)) 120000 1048576)))
           ($_ (nt:require unit-marker (nt:contains $output $marker)))
           ($_ (println! (UNIT_PASSED $file)))) 1))
 
 (= (units:selected $all $only)
    (if (== $all ()) ()
-     (let (($file $marker) $rest) ((car-atom $all) (cdr-atom $all))
-       (if (or (== $only "") (nt:contains $file $only))
-         (cons-atom ($file $marker) (units:selected $rest $only))
+     (let ($case $rest) ((car-atom $all) (cdr-atom $all))
+       (if (or (== $only "") (nt:contains (car-atom $case) $only))
+         (cons-atom $case (units:selected $rest $only))
          (units:selected $rest $only)))))
 
 (= (units:run $root $engine $artifacts $cases $count)

@@ -91,10 +91,6 @@ def call_lane():
     return os.environ.get("METTACLAW_ACTIVITY_CALL_LANE") or ("interactive" if call_scope() else "")
 
 
-def enabled():
-    return "true" if os.environ.get("METTACLAW_LLM_TRANSPORT", "python") == "native" else "false"
-
-
 def native_contract(plan):
     """Whether terminal command classification is owned by native MeTTa."""
     return (model_commentary.enabled()

@@ -4,6 +4,7 @@
 !(import! &self ./src/chatgpt_plan_cetta.metta)
 !(import! &self ./src/api_registry.metta)
 !(import! &self ./src/request_context)
+!(import! &self ./src/commentary_contract_cetta.metta)
 !(import! &self io)
 !(import! &self fs)
 !(import! &self (library path))
@@ -198,8 +199,8 @@
           ((ChatGPTPrompt $parts $user)
             (if (== $frame LegacyPrompt) (chatgpt:split $prompt 3 ()) (ChatGPTPrompt () "")))
           ($stable (chatgpt:chunk-parts $parts))
-          ($native (== (str:concat "" (py-call (model_commentary.enabled_flag))) "true"))
-          ($tool (json-parse (py-call (model_commentary.tool_schema_json))))
+          ($native (commentary:enabled?))
+          ($tool (json-parse (commentary:tool-schema-text)))
           ($system-messages (chatgpt:system-messages $stable))
           ($messages (case $frame
              (((RoleMessages $explicit $_) $explicit)

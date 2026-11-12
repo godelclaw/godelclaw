@@ -21,7 +21,7 @@
           ($value (py-call (operator.call $method "chatgpt:"))))
      (llm:host-flag $value)))
 (= (llm:native?)
-   (let $value (py-call (native_llm_host.enabled)) (llm:host-flag $value)))
+   (== (system:getenv-or-default "METTACLAW_LLM_TRANSPORT" "python") "native"))
 (= (llm:plan-ready $plan)
    (let $value (py-call (native_llm_host.field $plan "ready")) (llm:host-flag $value)))
 (= (llm:uses-native-ledger $plan)

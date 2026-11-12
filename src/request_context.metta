@@ -5,7 +5,7 @@
 ; Prolog/git import helpers, none of which the request renderer calls.
 !(import! &self (library json))
 !(import! &self (library str))
-!(import! &self ./src/model_commentary.py)
+!(import! &self ./src/commentary_contract_cetta.metta)
 
 
 (= (request:text $value)
@@ -41,14 +41,14 @@
    (coding-message-list
      (coding-message $role
        (if (or (== $role system) (== $role developer))
-         (str:concat "" (py-call (model_commentary.rewrite_instruction (request:text $text)))) $text))
+         (commentary:rewrite (request:text $text)) $text))
      (request:rewrite-messages $tail)))
 (= (request:format $request)
    (case $request
      (((RoleContext $messages $advertised $observations $history $index $data $instructions)
        (RoleContext (request:rewrite-messages $messages) $advertised $observations $history $index $data
-         (str:join "\n\n" ($instructions (str:concat "" (py-call (model_commentary.instruction_tail)))))))
-      ($plain (py-call (model_commentary.prompt $plain))))))
+         (str:join "\n\n" ($instructions (commentary:instruction-tail)))))
+      ($plain (commentary:prompt (request:text $plain))))))
 (= (request:place
      (RoleContext $messages $advertised $observations $history $old-index $data $instructions) $chunks $index)
    (RoleContext $messages $advertised $observations $chunks $index $data $instructions))

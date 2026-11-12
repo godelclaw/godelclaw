@@ -4,6 +4,7 @@
 ; calls, but do not complete, acknowledge or fail the enclosing agent turn.
 !(import! &self ./src/task_context_views)
 !(import! &self ./src/native_llm.metta)
+!(import! &self ./src/commentary_contract_cetta.metta)
 
 (= (context:checkpoint $root)
    (let $saved (state:meta-text (task:window-key $root))
@@ -305,7 +306,7 @@
 (= (context:prepare $base $focus $trigger $capacity $model $tokens $effort)
    (let* (($fresh (py-call (strategy_host.context_presented "[]")))
           ($assembled (request:append $base (topics:context)))
-          ($footer (str:concat "" (py-call (model_commentary.output_tail))))
+          ($footer (commentary:output-tail))
           ($ratio (context:ratio $model))
           ($window (if (== $capacity "") (task:fallback-window) (str:string->number $capacity)))
           ($render-window (max 0 (- $window (math:ceil (/ (str:byte-length $footer) $ratio)))))
