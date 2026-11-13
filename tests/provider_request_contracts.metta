@@ -109,12 +109,21 @@
      ($_ (nt:require structured-disabled-thinking-refused
          (nt:equal (request-test:structured "anthropic" "anthropic" "{\"max_tokens\":1,\"extra_body\":{\"enable_thinking\":false}}")
                    (ProviderPreparationRefusedV1 disabling-thinking-needs-capability))))) 7))
-; The codec's value route and its text route prepare the same wire: same
-; path, and preq:wire renders the same bytes with the same observation. An
-; engine without the value entries takes the text route.
+; The runtime encodes on the codec's value route only. The codec's text
+; entries are its independent oracle here: the request rendered, encoded as
+; text and its body parsed back must give the same wire, same path, and
+; preq:wire must render the same bytes with the same observation.
+(= (request-test:text-oracle $protocol $encoding $request)
+   (let* (($text (preq:render $request))
+          ($encoded (if (== $encoding "default") (llm:v1:encode-command $protocol $text)
+                      (llm:v1:encode $protocol $text))))
+     (case $encoded
+       (((llm:v1:ok (llm:v1:encoded $path $body))
+         (let $value (preq:parse $body) (llm:v1:ok (llm:v1:wire $path $value))))
+        ($failed $failed)))))
 (= (request-test:routes-agree $provider $protocol $kind $request $encoding $cache $visible)
-   (let* (($value (preq:value-wire $protocol $encoding $request))
-          ($text (preq:text-wire $protocol $encoding $request)))
+   (let* (($value (preq:encode $protocol $encoding $request))
+          ($text (request-test:text-oracle $protocol $encoding $request)))
      (case $value
        (((llm:v1:ok (llm:v1:wire $path $body))
          (case $text
@@ -124,7 +133,7 @@
                             (preq:wire $text-body $provider $protocol $kind False $visible $cache))))
             ($other False))))
         ((llm:v1:error $code) (nt:equal $value $text))
-        ($unevaluated (nt:equal (preq:encode $protocol $encoding $request) $text))))))
+        ($other False)))))
 (= (request-test:command-routes $provider $protocol $prompt $visible)
    (case (preq:prepare-command $protocol "fixture" 42 "low" $prompt JsonNull "1h")
      (((PreparedProviderCommandV1 $request $encoding $cache $profile)
@@ -135,14 +144,15 @@
      (((PreparedProviderStructuredV1 $request $tokens)
        (request-test:routes-agree $provider $protocol "structured" $request "messages" ProviderCacheNoneV1 False))
       ($bad False))))
+; The engine has the value entries: a missing entry leaves its call unevaluated.
 (= (request-test:route)
    (case (preq:value-wire "chat-completions" "messages" (preq:parse "{\"model\":\"m\",\"max_tokens\":1,\"messages\":[]}"))
-     (((llm:v1:ok $wire) value) ((llm:v1:error $code) value) ($unevaluated text))))
+     (((llm:v1:ok $wire) value) ((llm:v1:error $code) value) ($unevaluated missing))))
 (= (request-test:route-contracts)
    (let* (
      ($role "{\"kind\":\"role-context-v1\",\"messages\":[{\"role\":\"system\",\"content\":\"policy \\\"q\\\"\\n\"},{\"role\":\"assistant\",\"content\":\"(Error data value)\"},{\"role\":\"user\",\"content\":\"λ\"}],\"cache_points\":[-1,0,100]}")
      ($structured "{\"model\":\"session\",\"max_tokens\":64,\"messages\":[{\"role\":\"system\",\"content\":\"S\"},{\"role\":\"user\",\"content\":\"U\"}],\"cache_messages\":true,\"extra_body\":{\"enable_thinking\":true}}")
-     ($route (println! (REQUEST_ENCODE_ROUTE (request-test:route))))
+     ($_ (nt:require value-codec-route (nt:equal (request-test:route) value)))
      ($_ (nt:require route-command-default (request-test:command-routes "openai" "chat-completions" "S_cache_boundary_U" False)))
      ($_ (nt:require route-command-synthetic-visible (request-test:command-routes "synthetic" "chat-completions" "(Error data value)" True)))
      ($_ (nt:require route-command-responses (request-test:command-routes "kimi" "responses" "S_cache_boundary_U" True)))
@@ -152,8 +162,12 @@
      ($_ (nt:require route-structured-chat (request-test:structured-routes "synthetic" "chat-completions" $structured)))
      ($_ (nt:require route-structured-responses (request-test:structured-routes "kimi" "responses" $structured)))
      ($_ (nt:require route-structured-anthropic (request-test:structured-routes "anthropic" "anthropic" $structured)))
+     ; The subscription route's own request: tools, reasoning and its cache key.
+     ($chatgpt "{\"model\":\"gpt-fixture\",\"max_tokens\":42,\"messages\":[{\"role\":\"system\",\"content\":\"policy\"},{\"role\":\"system\",\"content\":\"memory\"},{\"role\":\"user\",\"content\":\"λ input\"}],\"role_policy\":\"preserve\",\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"metta\",\"description\":\"Run one complete GödelClaw MeTTa command batch.\",\"parameters\":{\"type\":\"object\",\"properties\":{\"program\":{\"type\":\"string\",\"description\":\"Complete ((skillName args) ...) S-expression.\"}},\"required\":[\"program\"],\"additionalProperties\":false}}}],\"tool_choice\":\"auto\",\"reasoning\":{\"effort\":\"low\"},\"extensions\":{\"prompt_cache_key\":\"0123abcd\"}}")
+     ($_ (nt:require route-chatgpt-command
+         (request-test:routes-agree "chatgpt" "responses" "command" (preq:parse $chatgpt) "messages" ProviderCacheNoneV1 True)))
      ($_ (nt:require route-codec-refusal
-         (request-test:structured-routes "openai" "responses" "{\"model\":\"m\",\"max_tokens\":5,\"messages\":[{\"role\":\"narrator\",\"content\":\"x\"}]}")))) 10))
+         (request-test:structured-routes "openai" "responses" "{\"model\":\"m\",\"max_tokens\":5,\"messages\":[{\"role\":\"narrator\",\"content\":\"x\"}]}")))) 12))
 (= (request-test:run)
    (let* (($a (request-test:split)) ($b (request-test:hash)) ($c (request-test:frame))
           ($d (request-test:wire-contracts)) ($e (request-test:structured-contracts))

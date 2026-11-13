@@ -272,14 +272,15 @@
                               (JsonArray ((JsonString "http:credential") (JsonString $alias))))))
               ($headers (llm:v1:render $header-rows))
               ($facts (preq:put (preq:put $seed "base" (preq:string $base)) "headers" (preq:string $headers)))
-              ($request-text (preq:render $request))
-              ($encoded (llm:v1:encode "responses" $request-text)))
+              ($encoded (preq:encode "responses" "messages" $request)))
          (chatgpt:encoded $plan $facts $kind $spec $encoded)))))
+; The codec answers the wire with its body still a value: rendered once, by
+; preq:wire, as on the API-key route.
 (= (chatgpt:encoded $plan $facts $kind $spec $encoded)
    (case $encoded
-     (((llm:v1:ok (llm:v1:encoded $path $body))
+     (((llm:v1:ok (llm:v1:wire $path $body))
        (let $visible (preq:truthy (preq:field $facts "visible"))
-         (case (preq:wire (preq:parse $body) "chatgpt" "responses" $kind False $visible ProviderCacheNoneV1)
+         (case (preq:wire $body "chatgpt" "responses" $kind False $visible ProviderCacheNoneV1)
            (((PreparedProviderWireV1 $wire $active $model $layout)
              (let $profiled (chatgpt:wire $wire)
                (if (== (get-type $profiled) String)
