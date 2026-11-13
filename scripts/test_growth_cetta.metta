@@ -27,7 +27,7 @@
     (GrowthCheck "stream-cursors" "tests/growth/stream_cursors.metta" 2000 (growth:linear))
     (GrowthCheck "apply-patch-lines" "tests/growth/apply_patch_lines.metta" 500 (growth:linear))
     (GrowthCheck "access-policy-decide" "tests/growth/access_policy_decide.metta" 200 (growth:linear))
-    (GrowthCheck "turn-health" "tests/growth/turn_health.metta" 1000 (growth:linear))))
+    (GrowthCheck "turn-health" "tests/growth/turn_health.metta" 8000 (growth:linear))))
 ; Mutants the gate must reject, run whenever no single check is selected.
 (= (growth:mutants)
    ((GrowthCheck "quadratic-control" "tests/growth/quadratic_control.metta" 1000 (growth:linear))))

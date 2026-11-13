@@ -76,12 +76,19 @@
    (let* (($text (health:text $value))
           ($kept (if (== $text "") ""
                    (str:from-python-codepoints
-                     (health:label-codepoints (str:python-codepoints (str:python-lower $text)))))))
-     (if (== $kept "") $default (str:char-slice $kept 0 64))))
-(= (health:label-codepoints $codes)
-   (if (== $codes ()) ()
-     (let* (($code (car-atom $codes)) ($rest (health:label-codepoints (cdr-atom $codes))))
-       (if (health:label-code? $code) (cons-atom $code $rest) $rest))))
+                     (health:label-kept (str:python-codepoints (str:python-lower $text)) () 0)))))
+     (if (== $kept "") $default $kept)))
+; The first 64 kept codes, in order: a loop that stops once it has them.
+(= (health:label-kept $codes $kept $count)
+   (if (or (== $codes ()) (>= $count 64)) (health:reverse $kept ())
+     (let* (($code (car-atom $codes)) ($rest (cdr-atom $codes)))
+       (if (health:label-code? $code)
+         (let $more (cons-atom $code $kept) (health:label-kept $rest $more (+ $count 1)))
+         (health:label-kept $rest $kept $count)))))
+(= (health:reverse $items $done)
+   (if (== $items ()) $done
+     (let* (($head (car-atom $items)) ($tail (cdr-atom $items)) ($more (cons-atom $head $done)))
+       (health:reverse $tail $more))))
 (= (health:label-code? $code)
    (or (or (and (>= $code 48) (<= $code 57)) (and (>= $code 97) (<= $code 122)))
        (or (and (>= $code 65) (<= $code 90)) (or (== $code 45) (== $code 95)))))
