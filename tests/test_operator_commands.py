@@ -58,6 +58,60 @@ class CommandNameTest(unittest.TestCase):
             self.assertEqual(declared_names(path.read_text(encoding="utf-8")), ["Gödel"])
 
 
+class LauncherAccessTest(unittest.TestCase):
+    """telegram.allow_private and the access policy's facts file reach the service."""
+
+    def argv(self, extra, repo=ROOT):
+        with tempfile.TemporaryDirectory() as directory:
+            env = {"CETTA_TELEGRAM_SERVICE_BIN": "/bin/true",
+                   "CETTA_TELEGRAM_SERVICE_ROOT": os.environ.get("CETTA_ROOT", "/"),
+                   "METTACLAW_TELEGRAM_PRIMARY_CHAT_ID": "42", "METTACLAW_TELEGRAM_OPERATOR_IDS": "7"}
+            env.update(extra)
+            with mock.patch.dict(os.environ, env):
+                for name in ("METTACLAW_TELEGRAM_ALLOW_PRIVATE", "METTACLAW_ACCESS_POLICY_PATH"):
+                    if name not in extra:
+                        os.environ.pop(name, None)
+                return launcher.command(repo, pathlib.Path(directory) / "state", pathlib.Path(directory) / "token")
+
+    def test_private_chats_are_admitted_only_when_allowed(self):
+        self.assertNotIn("--allow-private", self.argv({}))
+        self.assertNotIn("--allow-private", self.argv({"METTACLAW_TELEGRAM_ALLOW_PRIVATE": "0"}))
+        self.assertIn("--allow-private", self.argv({"METTACLAW_TELEGRAM_ALLOW_PRIVATE": "1"}))
+        self.assertIn("--allow-private", self.argv({"METTACLAW_TELEGRAM_ALLOW_PRIVATE": "true"}))
+
+    def test_the_instance_setting_is_read_from_its_rendered_environment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = pathlib.Path(directory)
+            self.assertFalse(launcher.allow_private(repo))
+            (repo / ".env").write_text("# Generated\nexport METTACLAW_TELEGRAM_ALLOW_PRIVATE='1'\n", encoding="utf-8")
+            with mock.patch.dict(os.environ, {}):
+                os.environ.pop("METTACLAW_TELEGRAM_ALLOW_PRIVATE", None)
+                self.assertTrue(launcher.allow_private(repo))
+                os.environ["METTACLAW_TELEGRAM_ALLOW_PRIVATE"] = "0"
+                self.assertFalse(launcher.allow_private(repo))
+
+    @unittest.skipUnless(os.environ.get("CETTA_ROOT"), "set CETTA_ROOT to an engine bundle")
+    def test_the_facts_file_adds_chats_owners_and_private_chats(self):
+        with tempfile.TemporaryDirectory() as directory:
+            facts = pathlib.Path(directory) / "access.metta"
+            facts.write_text('; who else\n(owner (sender telegram "66"))\n'
+                             '(allow-sender everywhere (sender telegram "55"))\n'
+                             '(access (group telegram "-400") groups open)\n'
+                             '(access (channel telegram) direct open)\n', encoding="utf-8")
+            argv = self.argv({"METTACLAW_ACCESS_POLICY_PATH": str(facts)})
+            chats = {argv[i + 1] for i, a in enumerate(argv) if a == "--chat"}
+            operators = {argv[i + 1] for i, a in enumerate(argv) if a == "--operator"}
+            self.assertEqual(chats, {"42", "55", "66", "-400"})
+            self.assertEqual(operators, {"7", "66"})
+            self.assertIn("--allow-private", argv)
+            facts.write_text('(access (channel telegram) direct allowlist)\n', encoding="utf-8")
+            argv = self.argv({"METTACLAW_ACCESS_POLICY_PATH": str(facts), "METTACLAW_TELEGRAM_ALLOW_PRIVATE": "1"})
+            self.assertNotIn("--allow-private", argv)
+            facts.write_text('(owner (sender telegram 66))\n', encoding="utf-8")
+            with self.assertRaises(ValueError):
+                self.argv({"METTACLAW_ACCESS_POLICY_PATH": str(facts)})
+
+
 class ResumeSelfTest(unittest.TestCase):
     def test_start_clears_own_pause_and_starts_the_service(self):
         with tempfile.TemporaryDirectory() as directory:

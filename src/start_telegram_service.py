@@ -4,6 +4,8 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
+import sys
 import urllib.request
 
 
@@ -63,6 +65,53 @@ def register_menu(commands_path, credential, timeout=10):
         return False
 
 
+def _truthy(value):
+    return str(value or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _rendered_setting(repo, name):
+    """A setting from the instance's generated .env, rendered from its TOML."""
+    try:
+        lines = (Path(repo) / ".env").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        line = line.strip()
+        if line.startswith("export "):
+            line = line[len("export "):]
+        key, sep, value = line.partition("=")
+        if sep and key.strip() == name:
+            return value.strip().strip("'\"")
+    return None
+
+
+def allow_private(repo):
+    """telegram.allow_private: every private chat reaches the agent, not only
+    the listed ones. The channel environment may state it; otherwise it is
+    the instance's own setting, as the agent reads it."""
+    value = os.environ.get("METTACLAW_TELEGRAM_ALLOW_PRIVATE")
+    if value is None:
+        value = _rendered_setting(repo, "METTACLAW_TELEGRAM_ALLOW_PRIVATE")
+    return _truthy(value)
+
+
+def policy_admission(repo, root, private):
+    """What the access policy's facts file adds to the chats this service
+    admits, as the policy itself computes it; None without a facts file."""
+    if not os.environ.get("METTACLAW_ACCESS_POLICY_PATH", "").strip():
+        return None
+    environment = dict(os.environ, METTACLAW_TELEGRAM_ALLOW_PRIVATE="1" if private else "0")
+    result = subprocess.run([str(Path(root) / "cetta"), "--lang", "petta", "--import-mode", "ancestor-walk",
+                             "--quiet", str(Path(repo) / "scripts/telegram_admission.metta")],
+                            cwd=str(repo), env=environment, capture_output=True, text=True, timeout=60)
+    for line in result.stdout.splitlines():
+        if result.returncode == 0 and line.startswith("TELEGRAM_ADMISSION "):
+            return json.loads(line[len("TELEGRAM_ADMISSION "):])
+    print("the access policy's facts file was refused: %s"
+          % (result.stdout + result.stderr).strip()[-600:], file=sys.stderr, flush=True)
+    raise ValueError("refused access policy")
+
+
 def command(repo, state, credential):
     def required(name):
         value = os.environ.get(name, "").strip()
@@ -74,7 +123,16 @@ def command(repo, state, credential):
     chats = {int(x.strip()) for name in ("METTACLAW_TELEGRAM_PRIMARY_CHAT_ID", "METTACLAW_TELEGRAM_ALLOWED_CHAT_IDS")
              for x in os.environ.get(name, "").split(",") if x.strip()}
     operators = {int(x.strip()) for x in required("METTACLAW_TELEGRAM_OPERATOR_IDS").split(",") if x.strip()}
-    if not chats or 0 in chats or not operators or min(operators) <= 0:
+    private = allow_private(repo)
+    admission = policy_admission(repo, root, private)
+    if admission is not None:
+        chats |= {int(x) for x in admission["chats"]}
+        operators |= {int(x) for x in admission["owners"]}
+        private = bool(admission["private"])
+        if admission["all_groups"]:
+            print("the access policy hears every Telegram group; the channel service admits only "
+                  "the groups it names", file=sys.stderr, flush=True)
+    if not chats or 0 in chats or not operators or min(operators) <= 0 or len(chats) > 128 or len(operators) > 16:
         raise ValueError("invalid channel allowlist")
     argv = [binary, "--run", "--root", root, "--state-dir", str(state),
             "--worker", os.environ.get("METTACLAW_INSTANCE", "agent"), "--program", "channel",
@@ -87,6 +145,8 @@ def command(repo, state, credential):
         argv += ["--peer", str(peer)]
     for operator in sorted(operators):
         argv += ["--operator", str(operator)]
+    if private:
+        argv.append("--allow-private")
     offset = os.environ.get("METTACLAW_TELEGRAM_INITIAL_OFFSET", "")
     if offset:
         argv += ["--initial-offset", str(int(offset))]

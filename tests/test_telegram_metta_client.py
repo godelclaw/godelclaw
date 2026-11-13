@@ -216,15 +216,15 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
     (temp / "energy.json").write_text(json.dumps({"default": "full", "senders": {str(FRIEND): "light"}}))
     with peer("http/1.1", None, None, BotAPI) as (api, origin):
         env["METTACLAW_TELEGRAM_BASE_URL"] = origin
-        service = subprocess.Popen([SERVICE, "--run", "--root", str(CETTA_ROOT), "--state-dir", str(state),
-                                    "--worker", "lila", "--chat", str(CHAT), "--chat", str(GROUP),
-                                    "--operator", str(OPERATOR), "--program", "channel",
-                                    "--peer", str(bot_peer),
-                                    "--commands", str(ROOT / "channels" / "telegram_commands.metta"),
-                                    "--command-deadline-ms", "3000",
-                                    "--credential-file", str(token), "--mock-origin", origin,
-                                    "--listener-fd", str(listener.fileno())],
-                                   pass_fds=(listener.fileno(),), stdout=subprocess.PIPE,
+        service_args = [SERVICE, "--run", "--root", str(CETTA_ROOT), "--state-dir", str(state),
+                        "--worker", "lila", "--chat", str(CHAT), "--chat", str(GROUP),
+                        "--operator", str(OPERATOR), "--program", "channel",
+                        "--peer", str(bot_peer),
+                        "--commands", str(ROOT / "channels" / "telegram_commands.metta"),
+                        "--command-deadline-ms", "3000",
+                        "--credential-file", str(token), "--mock-origin", origin,
+                        "--listener-fd", str(listener.fileno())]
+        service = subprocess.Popen(service_args, pass_fds=(listener.fileno(),), stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE, text=True)
         # The command responder runs beside the loop throughout, as in
         # production (run.sh telegram-control).
@@ -659,6 +659,33 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
             assert lines[-1].startswith('"sent message ') and lines[-1].endswith(' to chat 77"'), (lines, err[-1000:])
             assert (bot_peer, "peer bot reply") in api.texts()
             print("bot peer: one service declaration routes, wakes and sends despite stale client settings")
+
+            # allow_private: the service admits every private chat and lets her
+            # answer there; her own setting decides whether a stranger's
+            # message is recorded, labelled, or dropped with nothing kept.
+            STRANGER = 9
+            service.send_signal(signal.SIGTERM); service.communicate(timeout=15)
+            service = subprocess.Popen(service_args + ["--allow-private"], pass_fds=(listener.fileno(),),
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            env["METTACLAW_TELEGRAM_ALLOW_PRIVATE"] = "1"
+            api.add(301, STRANGER, STRANGER, "a stranger writes")
+            time.sleep(1.5)
+            text, lines, err = batch()
+            assert text is not None and "a stranger writes" in text, (text, err[-1000:])
+            item = [part for part in text.split("[telegram ") if "a stranger writes" in part][0]
+            assert 'provenance="untrusted stranger"' in item, item
+            lines, err = run('!(tg:start)\n!(tg:send "welcome" "%d")\n' % STRANGER, env)
+            assert lines[-1].startswith('"sent message '), (lines, err[-1000:])
+            assert (STRANGER, "welcome") in api.texts()
+            env["METTACLAW_TELEGRAM_ALLOW_PRIVATE"] = "0"
+            api.add(302, STRANGER, STRANGER, "still here")
+            time.sleep(1.5)
+            text, lines, err = batch()
+            assert "still here" not in (text or ""), text
+            record = [json.loads(x) for x in ledger.read_text().splitlines() if json.loads(x).get("update_id") == 302][-1]
+            assert record["note"] == "access_dropped" and not record["allowed"] and record["text"] is None, record
+            print("allow_private: the service admits a stranger's private chat; she records it labelled and "
+                  "answers, or drops it, keeping nothing, when her setting is off")
 
             print("responder: /mode answered in %.0f ms with no loop running, as the Python handler words it; "
                   "/wake ends a rest; /delete stays with the loop client (responder RSS %d kB)" % (latency * 1000, rss))
