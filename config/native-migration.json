@@ -1439,6 +1439,61 @@
         "an operator's bare /command in a group was exercised end to end, not yet live",
         "No paid live canary or 24-hour soak claimed"
       ]
+    },
+    {
+      "id": "provider-batch-a10-native-model-controls-progress-receipts-and-growth-memory-median",
+      "status": "qualified-and-deployed",
+      "native_modules": [
+        "src/model_menu_cetta.metta (model:menu-state, model:set, model:quota, the listing and the coding model check; a stale catalog is refreshed by a detached child under a file lock)",
+        "src/provider_observation_main.metta (the detached catalog refresh, given a credential alias so the key never leaves the environment)",
+        "src/progress_receipt_cetta.metta (progress receipts and the systemd watchdog renewal through system:notify; submitted, progress_observed, the answer receipt, the ChatGPT sign-in waits, the turn checkpoint and the command receipt)"
+      ],
+      "python_removed": [
+        "synthetic_llm.models and session_model_error",
+        "provider_data and the coding IO's size helper",
+        "the env shell line of the coding launch and work delivery (now inherit)"
+      ],
+      "runtime_python_lines_removed": 75,
+      "census_ceilings_lowered": {
+        "two-turn coding": [
+          40,
+          36
+        ],
+        "activity delivery": [
+          40,
+          35
+        ],
+        "coding lifecycle": [
+          36,
+          18
+        ],
+        "provider command": [
+          4,
+          2
+        ]
+      },
+      "harness": "growth memory takes the median of three readings (time keeps the fastest); a new quadratic-memory control is rejected on memory; the linear control margin is 5.2 to 7.8 percent over 12 runs",
+      "runtime_commit": "3c837b8a9a",
+      "engine_commit": "39e38c7f81b3cb8ab1abf97629a2f48ad5accf34",
+      "release": "048da66a",
+      "gateway_release": "048da66a",
+      "test_orchestration": "CeTTa core without Python",
+      "checks": {
+        "native_suites_passed": "24 of 24 on the 39e38c7f bundle",
+        "chatgpt_route": "13 of 13",
+        "python_suite": "the same 26 tests fail on main and on the branch after the test-only fifth commit",
+        "growth": "every check passes and both controls are rejected",
+        "mutants": "41, all killed but one (a consed concatenation of the menu id lists passes the growth check at the sizes used)",
+        "benchmark": "every paired interval includes zero and matches the A/A control",
+        "live_observation": "Release 048da66a at 23:10: both agents ran 8.5 minutes, nearly three watchdog windows of 3 min 10 s, with the watchdog renewed natively, no watchdog timeout and no restart; Gödel's live turn at 23:19 ran (llm-quota) natively, which answered the current model and the remaining weekly quota, and every unit came up with no runtime errors",
+        "paired_installed_verification": true
+      },
+      "limits": [
+        "the Telegram responder still calls the Python menu functions until the channels lane switches it",
+        "the Python transport (seam probes, fixtures, upstream modes) is not moved yet",
+        "the failure report still reads the error object, the provider's stated error and the correction context from the host plan",
+        "No paid live canary or 24-hour soak claimed"
+      ]
     }
   ],
   "tuning_debt": [
