@@ -1,5 +1,6 @@
 """Rest remains agent-directed while Telegram can report and interrupt it."""
 
+import shutil
 import os
 import sys
 import tempfile
@@ -16,7 +17,7 @@ import telegram  # noqa: E402
 
 def woken():
     """The reasons of the wakes queued for the MeTTa client."""
-    return [event["wake_only"] for event in telegram._metta_events if "wake_only" in event]
+    return [event["wake_only"] for event in telegram.spooled_events() if "wake_only" in event]
 
 
 class RestControlTest(unittest.TestCase):
@@ -30,7 +31,7 @@ class RestControlTest(unittest.TestCase):
 
     def tearDown(self):
         telegram._metta.pop("sleep_until", None)
-        telegram._metta_events.clear()
+        shutil.rmtree(telegram.runtime_spool(), ignore_errors=True)
 
     def test_operator_message_requests_wake(self):
         with mock.patch.dict(

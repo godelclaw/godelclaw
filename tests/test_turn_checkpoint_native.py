@@ -545,7 +545,7 @@ print(json.dumps({
     "working": helper._working_read(),
     "committed": [input_ack.already_committed(i) for i in ("runtime:101", "102", "103")],
     "gate": [input_ack.committed(["runtime:101", "102"]), input_ack.committed(["runtime:101", "103"])],
-    "queued": [event.get("update_id") for event in telegram._metta_events],
+    "queued": [event.get("update_id") for event in telegram.spooled_events()],
     "ack_runtime": telegram.activity_source_ack(["runtime:101"]),
 }), flush=True)
 """

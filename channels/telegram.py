@@ -613,8 +613,9 @@ def _set_last(chat_id, text, from_bot=False, arm_tier="full", update_id=None):
                   "tier": str(arm_tier), "update_id": "" if update_id is None else str(update_id)})
 
 
-# Runtime events, such as a finished background job, arrive through the same
-# activity queue as messages.  Their pseudo chat is never a reply target.
+# Runtime events, such as a finished background job, are spooled for the
+# native client, which presents them as activity.  Their pseudo chat is
+# never a reply target.
 RUNTIME_CHAT = "runtime"
 
 
@@ -627,10 +628,9 @@ def enqueue_runtime_event(text, reason="runtime event", *, identity=None):
     _sync()
     if identity in _value("_current_batch_update_ids"): return True
     with _metta_lock:
-        if any(e.get("update_id") == identity for e in _metta_events): return True
-        _metta_events.append({"chat": RUNTIME_CHAT, "text": "[runtime] " + str(text), "from_bot": False,
-                             "tier": "light", "update_id": identity, "wake": str(reason)})
-    if _host_notice is not None: _host_notice()
+        if _spooled(identity): return True
+        _metta_queue({"chat": RUNTIME_CHAT, "text": "[runtime] " + str(text), "from_bot": False,
+                      "tier": "light", "update_id": identity, "wake": str(reason)}, identity)
     return True
 
 
@@ -1232,34 +1232,77 @@ def _register_menu_commands():
 _metta = {}
 _client_seen = None
 _metta_lock = threading.Lock()
-_metta_events = []
-_handover_offered = set()
+_spool_lock = threading.Lock()
+_spool_last = 0
 
 
-def _metta_queue(item):
-    with _metta_lock:
-        _metta_events.append(item)
+def runtime_spool():
+    """runtime-events/ beside the health record: the native client takes
+    each event from here (src/runtime_events_cetta.metta)."""
+    return os.path.join(os.path.dirname(_health_path()), "runtime-events")
+
+
+def _event_digest(identity):
+    return hashlib.sha256(str(identity).encode("utf-8")).hexdigest()[:24]
+
+
+def _metta_queue(item, identity=None):
+    """Spool one runtime event for the native client: a whole file, synced
+    and renamed into place, named in arrival order and by its identity's
+    digest. The host notice ends the client's wait at once."""
+    global _spool_last
+    folder = runtime_spool()
+    os.makedirs(folder, exist_ok=True)
+    data = json.dumps(item, ensure_ascii=False).encode("utf-8")
+    with _spool_lock:
+        _spool_last = max(time.time_ns(), _spool_last + 1)
+        name = "%020d-%s.json" % (_spool_last, _event_digest(
+            identity if identity is not None else uuid.uuid4().hex))
+    descriptor, temporary = tempfile.mkstemp(prefix=".event-", dir=folder)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, os.path.join(folder, name))
+        directory = os.open(folder, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
     if _host_notice is not None: _host_notice()
 
 
-def metta_take_runtime_events():
-    """Runtime events, finished attachments and wake requests, oldest first,
-    as one JSON array; each is handed over once."""
-    with _metta_lock:
-        items = _metta_events[:]
-        del _metta_events[:]
-    import mode_channel
-    for uid, update in mode_channel.handover_inputs():
-        if not update or uid in _handover_offered:
+def _spooled(identity):
+    """An event with this identity waits in the spool."""
+    suffix = "-" + _event_digest(identity) + ".json"
+    try:
+        return any(name.endswith(suffix) for name in os.listdir(runtime_spool()))
+    except OSError:
+        return False
+
+
+def spooled_events():
+    """The events the native client has not yet taken, oldest first."""
+    folder = runtime_spool()
+    try:
+        names = sorted(n for n in os.listdir(folder) if n.endswith(".json") and not n.startswith("."))
+    except OSError:
+        return []
+    events = []
+    for name in names:
+        try:
+            with open(os.path.join(folder, name), encoding="utf-8") as stream:
+                events.append(json.load(stream))
+        except (OSError, ValueError):
             continue
-        kind, message = _extract_message(update)
-        if message:
-            sender = message.get("from", {})
-            items.append({"chat": str(message["chat"]["id"]),
-                          "text": _format_message(update, kind, message, message.get("text") or message.get("caption") or "[attachment]"),
-                          "from_bot": bool(sender.get("is_bot")), "tier": _tier_for_sender(sender), "update_id": uid})
-            _handover_offered.add(uid)
-    return json.dumps(items, ensure_ascii=False)
+    return events
 
 
 def handover_ids(ids):

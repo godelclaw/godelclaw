@@ -1,4 +1,5 @@
 """Runtime occurrences survive replay without identifying events by their text."""
+import shutil
 import json
 import hashlib
 import os
@@ -24,7 +25,8 @@ class RuntimeIdentityTest(unittest.TestCase):
                               METTACLAW_STRATEGY_PATH=str(self.ledger.path),
                               METTACLAW_TELEGRAM_CLIENT="metta")
         env.start(); self.addCleanup(env.stop)
-        events = mock.patch.object(telegram, "_metta_events", [])
+        spool = tempfile.TemporaryDirectory(); self.addCleanup(spool.cleanup)
+        events = mock.patch.object(telegram, "runtime_spool", return_value=spool.name)
         events.start(); self.addCleanup(events.stop)
         wake = mock.patch.object(telegram, "_request_wake")
         self.wake = wake.start(); self.addCleanup(wake.stop)
@@ -32,7 +34,7 @@ class RuntimeIdentityTest(unittest.TestCase):
     def test_identical_text_is_two_occurrences(self):
         telegram.enqueue_runtime_event("same text")
         telegram.enqueue_runtime_event("same text")
-        ids = [event["update_id"] for event in telegram._metta_events]
+        ids = [event["update_id"] for event in telegram.spooled_events()]
         self.assertEqual(len(ids), 2)
         self.assertEqual(len(set(ids)), 2)
         self.assertTrue(all(identity.startswith("runtime:") for identity in ids))
@@ -41,17 +43,17 @@ class RuntimeIdentityTest(unittest.TestCase):
         identity = "runtime:model-call:receipt-1:late"
         telegram.enqueue_runtime_event("retained receipt", identity=identity)
         telegram.enqueue_runtime_event("retained receipt", identity=identity)
-        self.assertEqual(len(telegram._metta_events), 1)
-        self.assertEqual(telegram._metta_events[0]["wake"], "runtime event")
+        self.assertEqual(len(telegram.spooled_events()), 1)
+        self.assertEqual(telegram.spooled_events()[0]["wake"], "runtime event")
         self.assertEqual(telegram.activity_source_ack(identity), 0)
         self.ledger.checkpoint({"saved_at": 1}, [identity])
         with mock.patch.object(telegram, "handover_ack", return_value=1) as handover:
             self.assertEqual(telegram.activity_source_ack(identity), 1)
             handover.assert_not_called()
         # A new process's queue is empty, but its checkpoint retains the ID.
-        telegram._metta_events.clear()
+        shutil.rmtree(telegram.runtime_spool(), ignore_errors=True)
         telegram.enqueue_runtime_event("retained receipt", identity=identity)
-        self.assertEqual(telegram._metta_events, [])
+        self.assertEqual(telegram.spooled_events(), [])
         self.assertFalse(self.wake.called)
 
     def test_complete_batch_is_validated_before_any_source_is_settled(self):

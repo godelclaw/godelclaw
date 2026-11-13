@@ -31,6 +31,7 @@
 !(import! &self ./channels/telegram_notice_cleanup.metta)
 !(import! &self ./src/job_io)
 !(import! &self ./src/activity_source_cetta.metta)
+!(import! &self ./src/runtime_events_cetta.metta)
 !(import! &self ./src/state_file_cetta.metta)
 !(import! &self ./src/mail)
 ; The native idle provider initializes native memory.
@@ -905,14 +906,31 @@
 (= (tg:wake-for-note $note $reason $chat-id $sender-id)
    (if (== $note sender-wake) (tg:wake-request $reason) (tg:maybe-rest-notice $chat-id $sender-id)))
 
-;; Runtime events and finished attachments, queued by Python threads.
+;; Runtime events, finished attachments and wake requests, which Python
+;; producers spool as files, and retained handover inputs. Both are read here,
+;; without the host (src/runtime_events_cetta.metta).
 (= (tg:drain-runtime-events)
-   (let $lines (py-call (telegram.metta_take_runtime_events))
-     (tg:runtime-events (json-parse $lines))))
-(= (tg:runtime-events $value)
-   (case $value
-     (((JsonArray $items) (tg:runtime-items $items))
-      ($other ()))))
+   (let* (($taken (rtev:take (rtev:spool (tg:health-path)) tg:runtime-item))
+          ($handover (tg:handover-items (rtev:handover (activity-source:mode-root)))))
+     $taken))
+(= (tg:runtime-item $item) (tg:runtime-items ($item)))
+;; A retained handover input is presented as the message it is; it is
+;; acknowledged with its turn (activity-source:handover).
+(= (tg:handover-items $pairs)
+   (if (== $pairs ()) ()
+     (let* ((($uid $update) (car-atom $pairs))
+            ($added (tg:handover-item $uid $update)))
+       (tg:handover-items (cdr-atom $pairs)))))
+(= (tg:handover-item $uid $update)
+   (let ($kind $message) (tg:message-of $update)
+     (if (== $kind "unsupported") False
+       (let* (($sender (tg:at $message "from"))
+              ($said (tg:message-text $message))
+              ($text (if (== $said "") "[attachment]" $said))
+              ($tier (tg:tier-for (tg:str (tg:at $sender "id")))))
+         (tg:activity-add "" (tg:str (tg:at (tg:at $message "chat") "id"))
+                          (tg:format-message $update $kind $message $text)
+                          (tg:truthy (tg:at $sender "is_bot")) (if (tg:tier? $tier) $tier "full") $uid False)))))
 (= (tg:runtime-items $items)
    (if (== $items ()) ()
      (let ($head $tail) (tg:uncons $items)

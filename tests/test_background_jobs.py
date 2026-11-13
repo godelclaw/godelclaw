@@ -5,6 +5,7 @@ turn waiting, and its end arrives as a [runtime] activity line that also ends
 a rest.  The event never redirects where a plain send goes.
 """
 
+import shutil
 import os
 import sys
 import tempfile
@@ -27,7 +28,7 @@ def _reset_queue():
         telegram._activity_epoch = 0
         telegram._reply_chat_id = ""
     with telegram._metta_lock:
-        telegram._metta_events.clear()
+        shutil.rmtree(telegram.runtime_spool(), ignore_errors=True)
 
 
 class BackgroundJobTest(unittest.TestCase):

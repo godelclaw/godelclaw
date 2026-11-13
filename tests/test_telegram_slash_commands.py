@@ -1,4 +1,5 @@
 """Deterministic controls are answered without entering the agent loop."""
+import shutil
 import os
 import json
 import sys
@@ -22,7 +23,7 @@ _REAL_CURRENT_MODEL = synthetic_llm.current_model
 
 def woken():
     """The reasons of the wakes queued for the MeTTa client."""
-    return [event["wake_only"] for event in telegram._metta_events if "wake_only" in event]
+    return [event["wake_only"] for event in telegram.spooled_events() if "wake_only" in event]
 
 class SlashCommandTest(unittest.TestCase):
     def setUp(self):
@@ -174,7 +175,7 @@ class SlashCommandTest(unittest.TestCase):
         self.assertEqual(self.sent[-1][1], "runtime ok")
 
     def test_activity_is_deterministic_and_does_not_wake_loop(self):
-        telegram._metta_events.clear()
+        shutil.rmtree(telegram.runtime_spool(), ignore_errors=True)
         with mock.patch("runtime_health.activity_report",
                         return_value="activity: idle"), \
              mock.patch.object(synthetic_llm, "current_model") as model:
@@ -251,7 +252,7 @@ class SlashCommandTest(unittest.TestCase):
         self.assertTrue(os.path.exists(os.environ["METTACLAW_RECYCLE_REQUEST_PATH"]))
 
     def test_mode_switch_persists_and_wakes_loop(self):
-        telegram._metta_events.clear()
+        shutil.rmtree(telegram.runtime_spool(), ignore_errors=True)
         try:
             self.assertEqual(self.handle("/mode coding"),
                              "slash_command:/mode")
@@ -259,7 +260,7 @@ class SlashCommandTest(unittest.TestCase):
             self.assertTrue(woken())
             self.assertIn("persists", self.sent[-1][1])
         finally:
-            telegram._metta_events.clear()
+            shutil.rmtree(telegram.runtime_spool(), ignore_errors=True)
 
     def test_modes_sends_keyboard(self):
         posts = []
@@ -341,7 +342,7 @@ class SlashCommandTest(unittest.TestCase):
                 raise ImportError("model backend unavailable")
             return real_import(name, *args, **kwargs)
 
-        telegram._metta_events.clear()
+        shutil.rmtree(telegram.runtime_spool(), ignore_errors=True)
         try:
             with mock.patch.object(telegram, "rest_status",
                                    return_value=(True, 125)), \
@@ -352,11 +353,11 @@ class SlashCommandTest(unittest.TestCase):
             self.assertTrue(woken())
             self.assertEqual(self.sent, [])
         finally:
-            telegram._metta_events.clear()
+            shutil.rmtree(telegram.runtime_spool(), ignore_errors=True)
 
     def test_wake_for_other_bot_is_consumed_without_waking(self):
         telegram._bot_username = "SomeBot"
-        telegram._metta_events.clear()
+        shutil.rmtree(telegram.runtime_spool(), ignore_errors=True)
         try:
             self.assertEqual(
                 self.handle("/wake@OtherBot"),
@@ -365,7 +366,7 @@ class SlashCommandTest(unittest.TestCase):
             self.assertEqual(self.sent, [])
         finally:
             telegram._bot_username = None
-            telegram._metta_events.clear()
+            shutil.rmtree(telegram.runtime_spool(), ignore_errors=True)
 
     def test_pending_attachment_is_recovered_from_durable_ledger(self):
         update = {

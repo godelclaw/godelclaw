@@ -109,15 +109,12 @@ class ControlBoundaryTests(unittest.TestCase):
         update = {"update_id": 21, "message": {"chat": {"id": -84, "type": "group"},
                   "from": {"id": 9, "is_bot": True}, "text": "pending sibling input"}}
         mode_channel.store(self.base / "modes/channel-handover/21.json", update)
-        with mock.patch.object(telegram, "_handover_offered", set()), mock.patch.object(telegram, "_metta_events", []):
-            items = json.loads(telegram.metta_take_runtime_events())
-            self.assertEqual(len(items), 1)
-            self.assertIn('chat_type="group"', items[0]["text"])
-            self.assertEqual(items[0]["update_id"], "21")
-            self.assertEqual(json.loads(telegram.metta_take_runtime_events()), [])
-            self.assertEqual(len(mode_channel.handover_inputs()), 1)
-            telegram.handover_ack("21")
-            self.assertFalse(mode_channel.handover_inputs())
+        # The native client offers it (src/runtime_events_cetta.metta,
+        # tests/unit/runtime_events.metta); its turn's acknowledgement is the
+        # same receipt.
+        self.assertEqual(len(mode_channel.handover_inputs()), 1)
+        telegram.handover_ack("21")
+        self.assertFalse(mode_channel.handover_inputs())
 
     def test_control_heartbeat_records_unavailable_channel_without_cognition(self):
         with mock.patch.object(mode_channel, "_last_health_at", 0), mock.patch.object(time, "monotonic", return_value=100):
