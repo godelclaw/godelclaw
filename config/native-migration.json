@@ -1138,6 +1138,34 @@
         "The full effect-receipts qualification was not rerun; its dispatcher scenario was replayed with the real latch",
         "No paid live canary or 24-hour soak claimed"
       ]
+    },
+    {
+      "id": "channels-batch-c2-conversation-window-and-bare-command-declaration",
+      "status": "qualified-and-deployed",
+      "native_modules": [
+        "channels/telegram.metta (the conversation window, now tested natively)",
+        "src/start_telegram_service.py (declares bare commands in groups only to a service that knows the declaration)"
+      ],
+      "python_removed": [
+        "telegram.conversation_window, its two revision helpers and route_view (160 lines)"
+      ],
+      "runtime_commit": "538278110d",
+      "engine_commit": "4374a1df0d15c6a1bb839746ec2d1447798ad072",
+      "release": "9072ef74",
+      "gateway_release": "9072ef74",
+      "test_orchestration": "CeTTa core without Python",
+      "checks": {
+        "native_suites_passed": "24 of 24",
+        "python_suite": "the same 26 tests fail on main and on the branch",
+        "telegram_end_to_end": "passes against the live 4374a1df channel service and against a service that knows the declaration",
+        "live_observation": "both channel services restarted on the new launcher; neither commands file carries the declaration the live service does not know; both registered their 16 menu commands",
+        "paired_installed_verification": true
+      },
+      "pending_with_engine_roll": "the channels commit that removes the Python command path (migrate-c2-roll) needs the engine change that lets a deployment declare bare commands in groups, and three tests that fail only on that branch must be explained first",
+      "limits": [
+        "An operator bare /command in a group still runs through the Python command path until the engine roll",
+        "No paid live canary or 24-hour soak claimed"
+      ]
     }
   ],
   "tuning_debt": [
