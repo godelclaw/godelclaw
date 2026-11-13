@@ -201,6 +201,13 @@
            (let $_ (py-call (native_llm_host.provider_error (call:host $plan) $body))
              (llm:v1:failed $epoch $correlation (http-status $status) response-received)))
          $state))
+      ; The answer reached the engine, which refused to keep it: it is named,
+      ; never a transport error with no status.
+      ((io:event $received (NativeHttpRefusedV1 $reason $bound))
+       (if (== $id $received)
+         (let $_ (py-call (native_llm_host.response_refused (call:host $plan) $reason $bound))
+           (llm:v1:failed $epoch $correlation $reason response-received))
+         $state))
       ((io:event $received (NativeHttpFailureV1 $kind $code))
        (if (== $id $received)
          (let $_ (py-call (native_llm_host.transport_failure (call:host $plan) $kind $code))

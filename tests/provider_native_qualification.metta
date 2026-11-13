@@ -266,6 +266,28 @@
           ($_ (nt:require remote-failure-not-resubmitted (nt:equal (nq:posts $world) 1)))
           ($_ (nt:require no-completed-result-on-remote-failure (nt:equal (nq:rows $world "results") ())))
           ($_ (nq:close $world))) 4))
+; An answer past the call's response bound is refused by the engine and named
+; as such, with the bound; it was once reported as a transport error with no
+; status. The turn fails and is not resubmitted.
+(= (nq:stderr (NativeTestGuestResultV1 $elapsed (proc:exited $code $out $err))) $err)
+(: nq:oversized-response (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
+(= (nq:oversized-response $root $sdk $core $artifacts $fixture)
+   (let* (($world (nq:world $root $sdk $core $artifacts $fixture "oversized"))
+          ($content (str:join "" (nq:copies "an answer far longer than any bound allows. " 25000 ())))
+          ($_ (fs:write (nq:path $world "response.body")
+                (str:join "" ("{\"id\":\"big\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\""
+                              $content "\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":2}}"))))
+          ($_ (nt:require oversized-past-the-bound (> (str:byte-length $content) 1048576)))
+          ($forms "!(nt:require oversized-is-not-an-answer (nt:equal (llm:command \"fixture-model\" 42 \"low\" \"input\") \"()\"))\n!(nt:require oversized-turn-failed (nt:equal (health:turn-succeeded) 0))\n!(println! NATIVE_OVERSIZED_OK)")
+          ($result (nq:guest $world "fixture-model" "petta" $forms ()))
+          ($_ (nt:require oversized-returned (nt:contains (nq:output $result) "NATIVE_OVERSIZED_OK")))
+          ($err (nq:stderr $result))
+          ($_ (nt:require oversized-named (nt:contains $err "failed request: response-too-large; provider=synthetic; status=0; sent=true")))
+          ($_ (nt:require oversized-bound-reported (nt:contains $err "; response_bound=1048576")))
+          ($_ (nt:require oversized-not-transport-error (not (nt:contains $err "transport-error"))))
+          ($_ (nt:require oversized-paced (nt:contains $err "failed provider turn: response-too-large; retry in")))
+          ($_ (nt:require oversized-not-resubmitted (nt:equal (nq:posts $world) 1)))
+          ($_ (nq:close $world))) 6))
 (: nq:commentary (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (nq:commentary $root $sdk $core $artifacts $fixture $model $protocol)
    (let* (($name (str:concat "tool-" $protocol))

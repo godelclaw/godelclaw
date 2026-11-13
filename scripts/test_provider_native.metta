@@ -30,6 +30,7 @@
           ($_ (nq:stream-case $root $sdk $core $artifacts $fixture))
           ($_ (nq:failed-response $root $sdk $core $artifacts $fixture "unfinished" False))
           ($_ (nq:failed-response $root $sdk $core $artifacts $fixture "disconnect-after-acceptance" True))
+          ($_ (nq:oversized-response $root $sdk $core $artifacts $fixture))
           ($_ (nq:commentary $root $sdk $core $artifacts $fixture "fixture-model" "chat-completions"))
           ($_ (nq:commentary $root $sdk $core $artifacts $fixture "kimi:k3.1-pro" "responses"))
           ($_ (nq:commentary $root $sdk $core $artifacts $fixture "claude-fixture" "anthropic"))

@@ -611,13 +611,36 @@ def transport_failure(plan, kind, code):
     return 1
 
 
+class ResponseRefused(RuntimeError):
+    """The provider answered; the engine refused to keep the answer."""
+
+    def __init__(self, reason):
+        super().__init__(reason)
+        self.reason_code = reason
+
+
+REFUSED_RESPONSES = ("response-too-large", "response-budget-exceeded",
+                     "non-text-response", "credential-in-response")
+
+
+def response_refused(plan, reason, bound):
+    """Name a received body the engine refused, with the bound it passed."""
+    reason = str(reason)
+    if reason not in REFUSED_RESPONSES:
+        return 0
+    plan.error = ResponseRefused(reason)
+    if type(bound) is int and bound > 0:
+        plan.native_response_bound = bound
+    return 1
+
+
 def _record_failure(plan, kind, status=0):
     """Keep diagnostic categories and the provider's stated reason, without
     logging request or response bytes."""
     known = {"admission-error", "submit-error", "transport-error", "decode-error",
              "http-status", "correlation-error", "duplicate-completion",
              "invalid-phase", "retired-handle", "unfinished-provider-response",
-             "refused-tool-call", "incomplete-stream", "ownership-error"}
+             "refused-tool-call", "incomplete-stream", "ownership-error", *REFUSED_RESPONSES}
     code = str(kind)
     code = code if code in known else "provider-error"
     provider = getattr(plan, "provider", "unknown")
@@ -640,6 +663,9 @@ def _record_failure(plan, kind, status=0):
     native_kind = getattr(plan, "native_transport_kind", None)
     if type(native_code) is int and 0 < native_code <= 65535 and native_kind in ("timeout", "transport"):
         detail += f"; transport_code={native_code}; transport_kind={native_kind}"
+    bound = getattr(plan, "native_response_bound", None)
+    if type(bound) is int and bound > 0:
+        detail += f"; response_bound={bound}"
     print(f"[native_llm] failed request: {code}; provider={provider}; "
           f"status={status}; sent={sent}; elapsed_ms={elapsed}; deadline_ms={deadline}{detail}",
           file=sys.stderr)

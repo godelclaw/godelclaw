@@ -17,7 +17,8 @@
     ("tests/unit/stream_cursors.metta" "UNIT_STREAM_CURSORS_OK")
     ("tests/unit/ledger_result.metta" "UNIT_LEDGER_RESULT_OK")
     ("tests/unit/coding_launch.metta" "UNIT_CODING_LAUNCH_OK")
-    ("tests/unit/activity_source.metta" "UNIT_ACTIVITY_SOURCE_LEDGER_OK")))
+    ("tests/unit/activity_source.metta" "UNIT_ACTIVITY_SOURCE_LEDGER_OK")
+    ("tests/unit/native_transport.metta" "UNIT_NATIVE_TRANSPORT_OK")))
 
 (= (units:env $directory)
    (let $base (nt:environment $directory)
