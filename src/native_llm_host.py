@@ -532,9 +532,9 @@ def finish(plan, encoded):
     The ledger, its effects (completion observation, calibration, usage tally),
     turn health and the answer of a structured call or a compaction are
     native. This releases a command turn's program and feeds the display, and
-    answers its decision: ("completed", program, bytes) or ("failed", program)
-    for a command turn, ("completed", bytes) for a structured call, 1 for a
-    compaction.
+    answers its decision: ("completed", program, bytes) or the failure facts
+    the native owner paces (synthetic_llm.failure_facts) for a command turn,
+    ("completed", bytes) for a structured call, 1 for a compaction.
     """
     result = json.loads(str(encoded))
     reason = result["choices"][0].get("finish_reason", "unknown")
@@ -559,12 +559,12 @@ def finish(plan, encoded):
         print("[command_contract] rejected; code=" + code +
               "; feedback_visible=" + str(getattr(plan, "prompt_feedback", False)).lower() +
               "; footer_visible=" + str(getattr(plan, "prompt_footer", False)).lower(), file=sys.stderr)
-        return ("failed", synthetic_llm._empty_action(error))
+        return synthetic_llm.failure_facts(error)
     if reason == "length":
         import helper
         content = helper.complete_command_prefix(content or "")
     if not isinstance(content, str) or not content.strip():
-        return ("failed", synthetic_llm._empty_action(synthetic_llm.EmptyResponse()))
+        return synthetic_llm.failure_facts(synthetic_llm.EmptyResponse())
     synthetic_llm._note_answered()
     stream_sink.final(plan, result["choices"][0]["message"], reason)
     _answered()
@@ -580,7 +580,7 @@ def _answered():
 def duplicate_plan(plan):
     # Do not mutate the original plan's in-flight admission transaction.
     if plan.kind == "command" and not _compaction(plan):
-        return synthetic_llm._empty_action(RuntimeError("duplicate native plan"))
+        return synthetic_llm.failure_facts(RuntimeError("duplicate native plan"))
     raise RuntimeError("duplicate native plan")
 
 
@@ -668,7 +668,7 @@ def failed(plan, correlation, kind, status=0, retry_after=-1):
         import provider_rejection
         code, message = getattr(plan, "provider_error", ("", ""))
         provider_rejection.record(int(status), code, message, getattr(plan, "correction_context", None))
-        return synthetic_llm._empty_action(error)
+        return synthetic_llm.failure_facts(error)
     synthetic_llm._empty_action(error)
     if os.environ.get("METTACLAW_MODE_RUNTIME"):
         import runtime_host

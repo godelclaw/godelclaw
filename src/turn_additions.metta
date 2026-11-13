@@ -85,7 +85,7 @@
 (= (addition-model-call $model $tokens $reasoning $request $wake)
    (let $begun (health:begin-turn)
      (case $request
-       (((ContextPreparationFailed $reason) (py-call (strategy_host.preparation_failed $reason)))
+       (((ContextPreparationFailed $reason) (health:paced (py-call (strategy_host.preparation_failed $reason))))
         ($ready
           (if (== (py-call (strategy_host.capture $ready $wake)) 1)
               (llm:command $model $tokens $reasoning $ready)

@@ -340,10 +340,10 @@ def provider_failed():
 
 
 def preparation_failed(reason):
-    """Retain this input and use the ordinary retry pacing before admission."""
+    """Retain this input; the native owner paces it as any failed turn."""
     import synthetic_llm
     from admission_frontier import ContextPreparationFailure
-    return synthetic_llm._empty_action(ContextPreparationFailure(reason))
+    return synthetic_llm.failure_facts(ContextPreparationFailure(reason))
 
 
 def broker_turn(turn):

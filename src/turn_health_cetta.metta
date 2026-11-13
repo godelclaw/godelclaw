@@ -5,6 +5,8 @@
 ;   come from the environment the process was started with.
 ; - The outcome is a phase this process owns. A turn begins pending; the owner
 ;   of its provider call ends it completed or failed. The host is never asked.
+; - A failed turn's wait is a pure function of the failure's facts and the
+;   streak of transient failures before it; the streak is owned here too.
 ; - The record (cognitive-health.json) is the durable receipt that operator
 ;   status, the failure notice and the rejection gate read. Each update is a
 ;   pure function of the record, the event and the time, written whole through
@@ -228,3 +230,79 @@
 (= (health:completions)
    (let $record (health:read)
      (+ (health:counted $record "completed_count") (health:counted $record "completion_without_admission_count"))))
+
+; ------------------------------------------------------------- the pacing
+
+; HE has no min and max of numbers.
+(= (health:min $a $b) (if (< $b $a) $b $a))
+(= (health:max $a $b) (if (< $a $b) $b $a))
+
+; The configured backoff in seconds, never below 0: SYNTHETIC_EMPTY_BACKOFF
+; (15) and SYNTHETIC_EMPTY_BACKOFF_CAP (300). Text that is not a number keeps
+; the default, as synthetic_llm._float_env does.
+(= (health:env-seconds $name $default)
+   (let $text (system:getenv-or-default $name "")
+     (if (== $text "") $default
+       (let $parsed (json:parse $text)
+         (if (health:number? $parsed) (health:max (health:float $parsed) 0.0) $default)))))
+
+; A client error the provider would give again for the same request; a
+; timeout, conflict, too-early or rate limit can pass on a later try.
+(= (health:rejected-status? $status)
+   (if (and (>= $status 400) (< $status 500))
+     (not (or (or (== $status 408) (== $status 409)) (or (== $status 425) (== $status 429))))
+     False))
+
+; The pacing of a failed turn, a pure function of its facts and the streak
+; of transient failures before it; it answers (wait streak).
+; - A transient failure backs off from base, doubling up to cap; any other
+;   failure waits base and ends the streak. Zero delay would turn one
+;   deterministic fault into an unbounded model and ledger loop.
+; - The provider's retry-after (-1 for none) replaces that wait.
+; - A deterministic rejection waits at least cap.
+; - A retained rejection block waits 0: corrective input, not time, ends it.
+(= (health:failure-wait $transient $streak $base $cap $retry $status $blocked)
+   (let* (($next (if $transient (+ $streak 1) 0))
+          ($backoff (if (and $transient (> $base 0))
+                      (health:min $cap (* $base (pow-math 2 (health:min (- $next 1) 20))))
+                      $base))
+          ($stated (if (>= $retry 0) (health:float $retry) $backoff))
+          ($floored (if (health:rejected-status? $status) (health:max $stated $cap) $stated))
+          ($wait (if $blocked 0 $floored)))
+     ($wait $next)))
+
+; The streak of transient failures this process has paced.
+(= (health:streak)
+   (case (collapse (match &self (TurnPacingV1 $streak) $streak))
+     ((() 0)
+      ($streaks (car-atom $streaks)))))
+(= (health:set-streak $streak)
+   (let* (($removed (collapse (match &self (TurnPacingV1 $old) (remove-atom &self (TurnPacingV1 $old)))))
+          ($added (add-atom &self (TurnPacingV1 $streak))))
+     $streak))
+; A real answer ends the streak.
+(= (health:answered) (health:set-streak 0))
+
+; A failed turn the host classified, as synthetic_llm.failure_facts gives
+; it: the native owner paces it, records it, fails the phase and reports it,
+; then answers the empty command list. Any other answer passes through.
+(= (health:paced $answer)
+   (case $answer
+     ((("failed" $code $status $transient $retry $blocked $preparation)
+       (let* (($base (health:env-seconds "SYNTHETIC_EMPTY_BACKOFF" 15.0))
+              ($cap (health:env-seconds "SYNTHETIC_EMPTY_BACKOFF_CAP" 300.0))
+              (($wait $streak) (health:failure-wait $transient (health:streak) $base $cap $retry $status $blocked))
+              ($kept (health:set-streak $streak))
+              ($recorded (health:fail $code $wait))
+              ($phase (health:turn-failed))
+              ($line (health:failure-line $code $wait $blocked $preparation))
+              ($reported (system:write stderr $line)))
+         "()"))
+      ($other $other))))
+; Only the code and the wait: exception text may carry URLs or bodies.
+(= (health:failure-line $code $wait $blocked $preparation)
+   (let* (($label (if $preparation "[context] preparation withheld: " "[synthetic_llm] failed provider turn: "))
+          ($seconds (str:format-fixed $wait 0))
+          ($tail (if $blocked "; awaiting corrective input or configuration\n"
+                   (str:join "" ("; retry in " $seconds "s\n")))))
+     (str:join "" ($label $code $tail))))

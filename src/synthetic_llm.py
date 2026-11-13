@@ -102,36 +102,62 @@ def _rejected_status(status):
     return isinstance(status, int) and 400 <= status < 500 and status not in (408, 409, 425, 429)
 
 
-def _empty_action(reason):
-    """Record failure and let the independent, interruptible loop own waiting."""
-    global _consecutive_empty
+def failure_facts(reason):
+    """Classify a failed turn for its pacer, without exception text.
+
+    ("failed", code, status, transient, retry, blocked, preparation): the
+    failure code, the HTTP status (0 for none), whether a later try can pass,
+    the provider's retry-after in seconds (-1 for none), whether a retained
+    rejection blocks retries, and whether context preparation withheld the
+    turn. The native owner paces these (src/turn_health_cetta.metta).
+    """
     status = getattr(reason, "code", getattr(reason, "status", None))
     transient = (isinstance(reason, (TimeoutError, ConnectionError, urllib.error.URLError))
                  and not isinstance(reason, urllib.error.HTTPError)) or status == 429 or (isinstance(status, int) and status >= 500)
-    _consecutive_empty = _consecutive_empty + 1 if transient else 0
-    base = _float_env("SYNTHETIC_EMPTY_BACKOFF", 15.0, 0.0)
-    cap = _float_env("SYNTHETIC_EMPTY_BACKOFF_CAP", 300.0, 0.0)
-    # A local or otherwise non-retriable failure still needs pacing.  Zero
-    # delay turns one deterministic fault into an unbounded model/ledger loop.
-    wait = (min(cap, base * (2 ** min(_consecutive_empty - 1, 20)))
-            if transient and base else base)
     retry = getattr(reason, "retry_after", None)
     retry = retry if retry is not None else retry_after_seconds(getattr(reason, "headers", None))
-    if retry is not None:
-        wait = max(0, float(retry))
     import admission_frontier
     code = admission_frontier.failure_code(reason)
     if _rejected_status(status):
-        wait = max(wait, cap)
         code = "provider-rejected-%d" % status
     import provider_rejection
-    blocked = provider_rejection.blocked()
+    return ("failed", code, status if isinstance(status, int) and not isinstance(status, bool) else 0,
+            bool(transient), -1.0 if retry is None else max(0.0, float(retry)),
+            bool(provider_rejection.blocked()),
+            isinstance(reason, admission_frontier.ContextPreparationFailure))
+
+
+def pacing(transient, streak, retry, status, blocked):
+    """The wait of a failed turn and the next transient streak: a pure function.
+
+    A transient failure backs off from the base, doubling up to the cap; any
+    other failure still waits the base, since zero delay turns one
+    deterministic fault into an unbounded model/ledger loop. The provider's
+    retry-after replaces that; a deterministic rejection waits at least the
+    cap; a retained block waits 0. The native pacer is the same function.
+    """
+    streak = streak + 1 if transient else 0
+    base = _float_env("SYNTHETIC_EMPTY_BACKOFF", 15.0, 0.0)
+    cap = _float_env("SYNTHETIC_EMPTY_BACKOFF_CAP", 300.0, 0.0)
+    wait = (min(cap, base * (2 ** min(streak - 1, 20)))
+            if transient and base else base)
+    if retry >= 0:
+        wait = max(0, float(retry))
+    if _rejected_status(status):
+        wait = max(wait, cap)
     if blocked:
         wait = 0
+    return wait, streak
+
+
+def _empty_action(reason):
+    """Pace and record a failed turn of the Python transport."""
+    global _consecutive_empty
+    _, code, status, transient, retry, blocked, preparation = failure_facts(reason)
+    wait, _consecutive_empty = pacing(transient, _consecutive_empty, retry, status, blocked)
     cognitive_health.turn_failed(code, retry_after=wait)
     # Exception messages may contain URLs, headers or response bodies.
-    label = ("[context] preparation withheld: "
-             if isinstance(reason, admission_frontier.ContextPreparationFailure)
+    label = ("[context] preparation withheld: " if preparation
              else "[synthetic_llm] failed provider turn: ")
     print(label + code +
           ("; awaiting corrective input or configuration" if blocked else f"; retry in {wait:.0f}s"),
@@ -389,7 +415,8 @@ class ProviderUnavailable(RuntimeError):
 
 
 def unavailable_action(reason):
-    return _empty_action(ProviderUnavailable(reason))
+    """The failure facts of an unavailable provider, for the native pacer."""
+    return failure_facts(ProviderUnavailable(reason))
 
 
 def _authenticated_request(provider, endpoint, body):

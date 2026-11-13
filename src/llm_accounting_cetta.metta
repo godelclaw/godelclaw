@@ -93,12 +93,11 @@
 ; The host reports the failure with the owner's retry-after (-1 for none).
 ; A deterministic rejection of a command turn latches the rejection gate first:
 ; the host may hold its block in memory only.
+; A failed command turn comes back as its facts, which the native owner paces
+; and records (src/turn_health_cetta.metta).
 (= (account:failed $plan $correlation $kind $status)
-   (let* (($latched (if (account:rejection? $plan $kind $status) (gate:latch) False))
-          ($phase (if (account:turn? $plan) (health:turn-failed) none)))
-     (account:failure $plan $correlation $kind $status)))
-; The loop's own model call: a command that is not a compaction.
-(= (account:turn? $plan) (if (call:command? $plan) (not (call:compaction? $plan)) False))
+   (let $latched (if (account:rejection? $plan $kind $status) (gate:latch) False)
+     (health:paced (account:failure $plan $correlation $kind $status))))
 (= (account:rejection? $plan $kind $status)
    (if (== $kind http-status)
      (if (call:command? $plan) (if (call:compaction? $plan) False (gate:invalid-request? $status)) False)
@@ -143,8 +142,8 @@
 ; The committed completion is published once: its effects, the host's display
 ; and program release, the turn's health, then the answer. A replayed
 ; completion publishes nothing. The host's decision ends the turn's phase: a
-; released program completes it; a rejected or empty output fails it, and the
-; host has paced and recorded that failure.
+; released program completes it; a rejected or empty output comes back as
+; failure facts, paced and recorded natively.
 (: account:publish (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (account:publish $plan $epoch $correlation $legacy $canonical $usage $decision)
    (if (call:publication-ready $plan)
@@ -156,10 +155,10 @@
 (= (account:health $decision)
    (case $decision
      ((("completed" $program $bytes)
-       (let* (($recorded (health:complete $bytes)) ($phase (health:turn-completed))) $program))
+       (let* (($recorded (health:complete $bytes)) ($answered (health:answered)) ($phase (health:turn-completed)))
+         $program))
       (("completed" $bytes) (let $recorded (health:complete $bytes) 1))
-      (("failed" $program) (let $phase (health:turn-failed) $program))
-      ($maintenance $maintenance))))
+      ($other (health:paced $other)))))
 (: account:finished (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (account:finished $plan $metadata $epoch $correlation $legacy $canonical $usage $decision $answer)
    (account:finished-step $plan $metadata $epoch $correlation $legacy $canonical $usage $decision 0 $answer))
@@ -170,7 +169,7 @@
       ((LedgerChanged False) (account:reconcile $plan $metadata $epoch $correlation $legacy $canonical $usage $decision $attempt))
       ((LedgerInvalid $invalid) (account:failed $plan $correlation invalid-native-evidence 0))
       ((LedgerError $storage) (account:reconcile $plan $metadata $epoch $correlation $legacy $canonical $usage $decision $attempt))
-      ($invalid (py-call (native_llm_host.completion_conflict (call:host $plan)))))))
+      ($invalid (health:paced (py-call (native_llm_host.completion_conflict (call:host $plan))))))))
 
 ; Keep the received answer in this owned continuation. Local write/read errors
 ; never escape into a caller's provider-retry loop, and never release the lease.
@@ -187,7 +186,7 @@
       ((LedgerError $unreadable)
        (let $wait (account:recording-wait $plan $attempt)
          (account:reconcile $plan $metadata $epoch $correlation $legacy $canonical $usage $decision (+ $attempt 1))))
-      ($conflict (py-call (native_llm_host.completion_conflict (call:host $plan)))))))
+      ($conflict (health:paced (py-call (native_llm_host.completion_conflict (call:host $plan))))))))
 ; A received answer waits for local storage: the health record says so, and
 ; the host paces the retry.
 (= (account:recording-wait $plan $attempt)

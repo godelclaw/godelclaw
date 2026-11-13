@@ -53,7 +53,7 @@
          (let $plan (pcall:command-plan $selected $tokens $effort $prompt) (llm:run $plan))))
      (let $selected (model:current $model)
        (if (str:starts-with $selected "chatgpt:")
-         (py-call (synthetic_llm.unavailable_action chatgpt-requires-native-cetta))
+         (health:paced (py-call (synthetic_llm.unavailable_action chatgpt-requires-native-cetta)))
          (llm:host-command $model $tokens $effort $prompt))))))
 
 ; The Python transport keeps the health record itself. Its turn completed
@@ -100,8 +100,7 @@
        (let $state (pcall:begin $owner $transport) (llm:after-submit $owner $state)))
       ((RefusedProviderCallV1 $host) (llm:refused $host)))))
 (= (llm:refused $host)
-   (let $phase (health:turn-failed)
-     (py-call (native_llm_host.failed $host "unsubmitted" admission-error 0))))
+   (health:paced (py-call (native_llm_host.failed $host "unsubmitted" admission-error 0))))
 
 ; Programs may retain this owned pending value, poll it later, or wait for a
 ; bounded interval. A soft wait returns the same call; it never cancels it.
@@ -145,8 +144,8 @@
      (((llm:v1:pending $epoch $correlation $protocol $id)
         (llm:await $plan $state))
       ((llm:v1:failed duplicate duplicate duplicate-plan not-started)
-        (py-call (native_llm_host.duplicate_plan (call:host $plan))))
-      ((llm:v1:rejected $reason) (py-call (native_llm_host.duplicate_plan (call:host $plan))))
+        (health:paced (py-call (native_llm_host.duplicate_plan (call:host $plan)))))
+      ((llm:v1:rejected $reason) (health:paced (py-call (native_llm_host.duplicate_plan (call:host $plan)))))
       ($other (llm:deliver $plan $state)))))
 
 (: llm:await (-> Atom Atom %Undefined%))

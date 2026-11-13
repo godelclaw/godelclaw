@@ -15,37 +15,26 @@ import synthetic_llm
 
 
 class ContextFailureFeedbackTests(unittest.TestCase):
-    def test_failed_preparation_cannot_settle_input_as_an_empty_success(self):
-        import cognitive_health
+    def test_failed_preparation_is_paced_as_a_failed_turn(self):
+        """The host classifies a withheld preparation; the native owner paces and
+        records it (src/turn_health_cetta.metta), so its phase never completes."""
+        with mock.patch("provider_rejection.blocked", return_value=False):
+            facts = strategy_host.preparation_failed("context-compaction-required")
+        self.assertEqual(facts, ("failed", "context-compaction-required", 0, False, -1.0, False, True))
         import helper
-        import process_supervision
-        with tempfile.TemporaryDirectory() as temporary, \
-             mock.patch.dict(os.environ, {
-                 "METTACLAW_COGNITIVE_HEALTH_PATH": str(Path(temporary) / "health.json"),
-                 "SYNTHETIC_EMPTY_BACKOFF": "0"}), \
-             mock.patch("provider_rejection.blocked", return_value=False), \
-             mock.patch.object(process_supervision, "progress"), \
-             mock.patch.object(helper, "_turn_commit", ((), None)), \
-             contextlib.redirect_stderr(io.StringIO()):
-            cognitive_health.expect_turn("godelclaw", now=100)
-            self.assertEqual(strategy_host.preparation_failed("context-compaction-required"), "()")
-            import json
-            health = json.loads((Path(temporary) / "health.json").read_text())
-            self.assertEqual(health["obligation_since"], 100)
-            self.assertEqual(health["last_failure_type"], "context-compaction-required")
-            self.assertEqual(health.get("completed_count", 0), 0)
-            # The turn's phase stays pending (src/turn_health_cetta.metta), so
-            # the loop stages 0 for the provider.
+        with mock.patch.object(helper, "_turn_commit", ((), None)):
             helper.turn_commit_stage(0, 1, 1)
             self.assertEqual(helper.turn_commit_ready(), 0)
 
     def test_typed_code_survives_the_actual_health_reporting_path(self):
+        """The Python transport paces the same facts itself."""
         stderr = io.StringIO()
         with mock.patch.dict(os.environ, {"SYNTHETIC_EMPTY_BACKOFF": "0"}), \
              mock.patch("provider_rejection.blocked", return_value=False), \
              mock.patch.object(synthetic_llm.cognitive_health, "turn_failed") as failed, \
              contextlib.redirect_stderr(stderr):
-            result = strategy_host.preparation_failed("context-compaction-required")
+            result = synthetic_llm._empty_action(
+                admission_frontier.ContextPreparationFailure("context-compaction-required"))
         self.assertEqual(result, "()")
         failed.assert_called_once_with("context-compaction-required", retry_after=0.0)
         self.assertIn("[context] preparation withheld:", stderr.getvalue())

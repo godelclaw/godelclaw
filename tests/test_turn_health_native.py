@@ -186,6 +186,64 @@ class NativeTurnHealthRecord(unittest.TestCase):
         self.assertEqual(path.read_bytes(),
                          (json.dumps(record, ensure_ascii=True, sort_keys=True) + "\n").encode())
 
+    def run_program(self, lines, env=None):
+        program = self.directory / ("program-%d.metta" % len(list(self.directory.iterdir())))
+        program.write_text("\n".join(
+            ["!(import! &self %s)" % json.dumps(str(ROOT / "src/turn_health_cetta.metta"))] + lines) + "\n",
+            encoding="utf-8")
+        result = subprocess.run([str(self.binary), "--lang", "petta", "--import-mode", "ancestor-walk",
+                                 str(program)], cwd=ROOT, env=env, capture_output=True, text=True, timeout=300)
+        self.assertEqual(result.returncode, 0, result.stdout[-3000:] + result.stderr[-3000:])
+        return result
+
+    def test_pacing_is_the_same_function(self):
+        """health:failure-wait against synthetic_llm.pacing over a grid of facts."""
+        import synthetic_llm
+        grid = [(transient, streak, retry, status, blocked, base, cap)
+                for transient in (False, True) for streak in (0, 1, 5, 25)
+                for retry in (-1.0, 0.0, 2.5) for status in (0, 400, 404, 408, 429, 503)
+                for blocked in (False, True) for base, cap in ((15.0, 300.0), (0.0, 300.0), (7.0, 30.0))]
+        lines = ['!(println! (PACED %d (health:failure-wait %s %d %s %s %s %d %s)))'
+                 % (index, "True" if transient else "False", streak, repr(base), repr(cap), repr(retry),
+                    status, "True" if blocked else "False")
+                 for index, (transient, streak, retry, status, blocked, base, cap) in enumerate(grid)]
+        native = {}
+        for line in self.run_program(lines).stdout.splitlines():
+            if line.startswith("(PACED "):
+                index, wait, streak = line[len("(PACED "):].rstrip(")").replace("(", " ").split()
+                native[int(index)] = (float(wait), int(streak))
+        self.assertEqual(len(native), len(grid))
+        for index, (transient, streak, retry, status, blocked, base, cap) in enumerate(grid):
+            with mock.patch.dict(os.environ, {"SYNTHETIC_EMPTY_BACKOFF": repr(base),
+                                              "SYNTHETIC_EMPTY_BACKOFF_CAP": repr(cap)}):
+                wait, following = synthetic_llm.pacing(transient, streak, retry, status, blocked)
+            self.assertEqual(native[index], (float(wait), following), grid[index])
+
+    def test_a_paced_failure_is_recorded_and_reported(self):
+        path = self.directory / "paced.json"
+        env = dict(os.environ, METTACLAW_COGNITIVE_HEALTH_PATH=str(path),
+                   SYNTHETIC_EMPTY_BACKOFF="7", SYNTHETIC_EMPTY_BACKOFF_CAP="20")
+        result = self.run_program([
+            '!(health:begin-turn)',
+            '!(println! (FIRST (health:paced ("failed" "TimeoutError" 0 True -1.0 False False))))',
+            '!(println! (SECOND (health:paced ("failed" "TimeoutError" 0 True -1.0 False False))))',
+            '!(println! (STREAK (health:streak) (health:turn-succeeded)))',
+            '!(println! (THIRD (health:paced ("failed" "provider-rejected-401" 401 False -1.0 False False))))',
+            '!(println! (FOURTH (health:paced ("failed" "context-x" 0 False -1.0 True True))))',
+            '!(println! (OTHER (health:paced "((nop))")))'], env=env)
+        self.assertIn('(FIRST "()")', result.stdout)
+        self.assertIn("(STREAK 2 0)", result.stdout)
+        self.assertIn('(OTHER "((nop))")', result.stdout)
+        self.assertEqual(result.stderr.splitlines(), [
+            "[synthetic_llm] failed provider turn: TimeoutError; retry in 7s",
+            "[synthetic_llm] failed provider turn: TimeoutError; retry in 14s",
+            "[synthetic_llm] failed provider turn: provider-rejected-401; retry in 20s",
+            "[context] preparation withheld: context-x; awaiting corrective input or configuration"])
+        record = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(record["local_failure_count"], 4)
+        self.assertEqual(record["last_failure_type"], "context-x")
+        self.assertEqual(record["retry_at"], record["last_failed_at"])
+
 
 if __name__ == "__main__":
     unittest.main()
