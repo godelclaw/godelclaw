@@ -2,8 +2,8 @@
 ; preparation (transform, synthetic check, fingerprint) for each protocol, its
 ; chat-completions encoding and wire, and one reply of n parts built and
 ; written. Coding transcripts grow with a session, so each step must stay
-; linear. The library's Responses and Anthropic encoders are measured
-; separately: they are superlinear in the message count (an engine need).
+; linear. The engine's Responses and Anthropic encoders are measured
+; separately, on the SDK engine (tests/growth/encoder_support.metta).
 !(import! &self ../growth_support.metta)
 !(import! &self ../../src/provider_request_cetta.metta)
 !(import! &self ../../src/native_call_cetta.metta)

@@ -1,7 +1,8 @@
 ; Growth checks without wall-clock thresholds.
 ;
 ; A workload runs at sizes n, 4n and 16n, each size in fresh processes on the
-; Python-disabled core engine. Only ratios between neighbouring sizes are
+; Python-disabled core engine, or on the SDK engine for a check of the engine
+; library the agents load. Only ratios between neighbouring sizes are
 ; asserted: a linear path may take at most about 6x the time and 4x the memory
 ; (plus a constant) per 4x of input, so a quadratic path (16x) fails while
 ; host noise, which scales both sizes alike, does not. Each size runs three
@@ -45,20 +46,20 @@
 ; A bounded path: its cost may not follow its input at all.
 (= (growth:bounded) (GrowthBounds 2 2000000 2 2048))
 
-(= (growth:run-once $root $core $script $size $dir $index)
+(= (growth:run-once $root $engine $script $size $dir $index)
    (let* (($result (nt:join $dir (format-args "result-{}-{}" ($size $index))))
           ($env (growth:append (nt:environment $dir)
                   (("GROWTH_SIZE" (repr $size)) ("GROWTH_DIR" $dir) ("GROWTH_RESULT" $result))))
-          ($run (proc:run ((nt:join $core "cetta") "--lang" "petta" "--import-mode" "ancestor-walk" "--quiet"
+          ($run (proc:run ((nt:join $engine "cetta") "--lang" "petta" "--import-mode" "ancestor-walk" "--quiet"
                            (nt:join $root $script)) $root $env 600000 1048576))
           ($_ (nt:exit-ok $run))
           ($fields (str:split " " (fs:read-text $result))))
      ((str:string->number (car-atom $fields)) (str:string->number (car-atom (cdr-atom $fields))))))
 (= (growth:minimum $a $b) (if (< $a $b) $a $b))
-(= (growth:sample $root $core $script $size $dir)
-   (let* ((($t1 $m1) (growth:run-once $root $core $script $size $dir 1))
-          (($t2 $m2) (growth:run-once $root $core $script $size $dir 2))
-          (($t3 $m3) (growth:run-once $root $core $script $size $dir 3)))
+(= (growth:sample $root $engine $script $size $dir)
+   (let* ((($t1 $m1) (growth:run-once $root $engine $script $size $dir 1))
+          (($t2 $m2) (growth:run-once $root $engine $script $size $dir 2))
+          (($t3 $m3) (growth:run-once $root $engine $script $size $dir 3)))
      ((growth:minimum $t1 (growth:minimum $t2 $t3)) (growth:minimum $m1 (growth:minimum $m2 $m3)))))
 (= (growth:within $name $small $large $bounds)
    (let* (((GrowthBounds $tr $ts $mr $ms) $bounds)
@@ -67,12 +68,12 @@
           ($_ (nt:require (GrowthMemory $name $size-a $size-b) (<= $memory-b (+ (* $mr $memory-a) $ms)))))
      True))
 ; Run one registered check at n, 4n and 16n and assert both neighbouring ratios.
-(= (growth:check $root $core $artifacts $name $script $n $bounds)
+(= (growth:check $root $engine $artifacts $name $script $n $bounds)
    (let* (($dir (nt:join $artifacts (format-args "growth-{}-{}" ($name (system:uuid4-hex)))))
           ($_ (fs:make-directories $dir 448))
-          (($t1 $m1) (growth:sample $root $core $script $n $dir))
-          (($t4 $m4) (growth:sample $root $core $script (* 4 $n) $dir))
-          (($t16 $m16) (growth:sample $root $core $script (* 16 $n) $dir))
+          (($t1 $m1) (growth:sample $root $engine $script $n $dir))
+          (($t4 $m4) (growth:sample $root $engine $script (* 4 $n) $dir))
+          (($t16 $m16) (growth:sample $root $engine $script (* 16 $n) $dir))
           ($_ (println! (GROWTH $name (size $n ns $t1 kib $m1) (size (* 4 $n) ns $t4 kib $m4)
                                 (size (* 16 $n) ns $t16 kib $m16)
                                 (time-ratios (/ $t4 (max 1 $t1)) (/ $t16 (max 1 $t4)))))))
@@ -88,12 +89,12 @@
      (and (<= $time-b (+ (* $tr $time-a) $ts)) (<= $memory-b (+ (* $mr $memory-a) $ms)))))
 ; A registered mutant must break the bounds in at least one step: this shows
 ; the gate can fail.
-(= (growth:rejects $root $core $artifacts $name $script $n $bounds)
+(= (growth:rejects $root $engine $artifacts $name $script $n $bounds)
    (let* (($dir (nt:join $artifacts (format-args "growth-{}-{}" ($name (system:uuid4-hex)))))
           ($_ (fs:make-directories $dir 448))
-          (($t1 $m1) (growth:sample $root $core $script $n $dir))
-          (($t4 $m4) (growth:sample $root $core $script (* 4 $n) $dir))
-          (($t16 $m16) (growth:sample $root $core $script (* 16 $n) $dir))
+          (($t1 $m1) (growth:sample $root $engine $script $n $dir))
+          (($t4 $m4) (growth:sample $root $engine $script (* 4 $n) $dir))
+          (($t16 $m16) (growth:sample $root $engine $script (* 16 $n) $dir))
           ($_ (println! (GROWTH-MUTANT $name (size $n ns $t1 kib $m1) (size (* 4 $n) ns $t4 kib $m4)
                                        (size (* 16 $n) ns $t16 kib $m16)
                                        (time-ratios (/ $t4 (max 1 $t1)) (/ $t16 (max 1 $t4)))))))

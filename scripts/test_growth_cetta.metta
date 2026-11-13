@@ -1,10 +1,12 @@
 ; Growth checks of native paths ported from Python (tests/growth_support.metta).
-; Each registered check runs its workload at n, 4n and 16n on the core engine.
-;   NATIVE_TEST_CORE=... NATIVE_TEST_ARTIFACTS=... [GROWTH_ONLY=name] \
+; Each registered check runs its workload at n, 4n and 16n: a GrowthCheck on
+; the core engine, an SdkGrowthCheck on the SDK engine, for the engine
+; library the agents load.
+;   NATIVE_TEST_CORE=... NATIVE_TEST_SDK=... NATIVE_TEST_ARTIFACTS=... [GROWTH_ONLY=name] \
 ;     $NATIVE_TEST_CORE/cetta --lang petta --import-mode ancestor-walk --quiet scripts/test_growth_cetta.metta
 !(import! &self ../tests/growth_support.metta)
 
-; (GrowthCheck name workload n bounds)
+; (GrowthCheck name workload n bounds), (SdkGrowthCheck name workload n bounds)
 (= (growth:registered)
    ((GrowthCheck "coding-transcript-append" "tests/growth/coding_transcript_append.metta" 500 (growth:linear))
     (GrowthCheck "coding-settle-report" "tests/growth/coding_settle_report.metta" 64 (growth:linear))
@@ -27,26 +29,41 @@
     (GrowthCheck "stream-cursors" "tests/growth/stream_cursors.metta" 2000 (growth:linear))
     (GrowthCheck "apply-patch-lines" "tests/growth/apply_patch_lines.metta" 500 (growth:linear))
     (GrowthCheck "access-policy-decide" "tests/growth/access_policy_decide.metta" 200 (growth:linear))
-    (GrowthCheck "turn-health" "tests/growth/turn_health.metta" 8000 (growth:linear))))
+    (GrowthCheck "turn-health" "tests/growth/turn_health.metta" 8000 (growth:linear))
+    (SdkGrowthCheck "responses-encoder" "tests/growth/responses_encoder.metta" 100 (growth:linear))))
 ; Mutants the gate must reject, run whenever no single check is selected.
 (= (growth:mutants)
    ((GrowthCheck "quadratic-control" "tests/growth/quadratic_control.metta" 1000 (growth:linear))))
-(= (growth:reject-all $root $core $artifacts $mutants)
-   (if (== $mutants ()) True
-     (let* (((GrowthCheck $name $script $n $bounds) (car-atom $mutants))
-            ($_ (nt:require (GrowthMutantRejected $name) (growth:rejects $root $core $artifacts $name $script $n $bounds))))
-       (growth:reject-all $root $core $artifacts (cdr-atom $mutants)))))
+; Engine needs: bounds the SDK engine does not meet yet, held as strict
+; expected failures. Each must still break its bounds; when an engine roll
+; meets one, the gate fails until the check moves to the registered list.
+; - anthropic-encoder: llm:v1:anthropic-conversation is quadratic in the
+;   message count on engine dc2b3bcb.
+(= (growth:engine-needs)
+   ((SdkGrowthCheck "anthropic-encoder" "tests/growth/anthropic_encoder.metta" 200 (growth:linear))))
+; The engine a check's children run on, and the check's own fields.
+(= (growth:on (GrowthCheck $name $script $n $bounds) $core $sdk) ($core $name $script $n $bounds))
+(= (growth:on (SdkGrowthCheck $name $script $n $bounds) $core $sdk) ($sdk $name $script $n $bounds))
+; Every check must break its bounds; $label names the requirement.
+(= (growth:reject-all $root $core $sdk $artifacts $checks $label)
+   (if (== $checks ()) True
+     (let* ((($engine $name $script $n $bounds) (growth:on (car-atom $checks) $core $sdk))
+            ($_ (nt:require ($label $name) (growth:rejects $root $engine $artifacts $name $script $n $bounds))))
+       (growth:reject-all $root $core $sdk $artifacts (cdr-atom $checks) $label))))
 
-(= (growth:run-all $root $core $artifacts $checks $only $ok)
+(= (growth:run-all $root $core $sdk $artifacts $checks $only $ok)
    (if (== $checks ()) $ok
-     (let* (((GrowthCheck $name $script $n $bounds) (car-atom $checks))
+     (let* ((($engine $name $script $n $bounds) (growth:on (car-atom $checks) $core $sdk))
             ($selected (or (== $only "") (nt:contains $name $only)))
-            ($passed (if $selected (growth:check $root $core $artifacts $name $script $n $bounds) True)))
-       (growth:run-all $root $core $artifacts (cdr-atom $checks) $only (and $ok $passed)))))
+            ($passed (if $selected (growth:check $root $engine $artifacts $name $script $n $bounds) True)))
+       (growth:run-all $root $core $sdk $artifacts (cdr-atom $checks) $only (and $ok $passed)))))
 !(nt:require growth-checks-within-bounds
-   (growth:run-all (system:cwd) (nt:required-env "NATIVE_TEST_CORE") (nt:required-env "NATIVE_TEST_ARTIFACTS")
-     (growth:registered) (system:getenv-or-default "GROWTH_ONLY" "") True))
+   (growth:run-all (system:cwd) (nt:required-env "NATIVE_TEST_CORE") (nt:required-env "NATIVE_TEST_SDK")
+     (nt:required-env "NATIVE_TEST_ARTIFACTS") (growth:registered) (system:getenv-or-default "GROWTH_ONLY" "") True))
 !(if (== (system:getenv-or-default "GROWTH_ONLY" "") "")
-   (growth:reject-all (system:cwd) (nt:required-env "NATIVE_TEST_CORE") (nt:required-env "NATIVE_TEST_ARTIFACTS") (growth:mutants))
+   (let* (($root (system:cwd)) ($core (nt:required-env "NATIVE_TEST_CORE")) ($sdk (nt:required-env "NATIVE_TEST_SDK"))
+          ($artifacts (nt:required-env "NATIVE_TEST_ARTIFACTS"))
+          ($_ (growth:reject-all $root $core $sdk $artifacts (growth:mutants) GrowthMutantRejected)))
+     (growth:reject-all $root $core $sdk $artifacts (growth:engine-needs) GrowthEngineNeedOpen))
    True)
 !(println! NATIVE_GROWTH_CHECKS_PASSED)
