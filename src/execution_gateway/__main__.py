@@ -14,7 +14,7 @@ def main():
     gateway = Gateway(config)
 
     def stop(_signum, _frame):
-        raise KeyboardInterrupt
+        gateway.stop_requested = True
 
     signal.signal(signal.SIGTERM, stop)
     gateway.run()
