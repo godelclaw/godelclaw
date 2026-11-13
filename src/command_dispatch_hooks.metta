@@ -1,13 +1,14 @@
 ; Existing host services, kept separate from the shared MeTTa interpreter.
 ; State/history ports can replace these without a second dispatcher.
 !(import! &self ./src/effect_receipts.metta)
+!(import! &self ./src/skills_help.metta)
 (= (dispatch:reserve $turn $command)
    (py-call (strategy_host.reserve_command $turn $command)))
 (= (dispatch:stopped) (py-call (strategy_host.stopped)))
 (= (dispatch:shadow $command) (py-call (effect_backend.dispatch $command)))
 (= (dispatch:argument-error $command)
    (case (api:argument-error $command)
-     (((APINotRegistered $name) (py-call (skills_help.command_error $command)))
+     (((APINotRegistered $name) (help:command-error $command))
       ($result $result))))
 (= (dispatch:normalize $value)
    (case $value

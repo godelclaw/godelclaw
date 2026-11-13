@@ -1,5 +1,6 @@
 !(import! &self ./src/topic_jobs.py)
 !(import! &self ./src/mode_state.metta)
+!(import! &self ./src/skills_help.metta)
 (= (getLegacySkills)
    (;INTERNAL:
     "- Coding mode for real work: (work \"task\") or (work \"task\" \"workdir\") starts a session that keeps working (plan, commands, patches, tests) until done and mails you its report; meanwhile you stay free. (work-status) lists sessions, (work-status \"id\") shows plan and report, (work-steer \"id\" \"text\") adds guidance, (work-resume \"id\" [\"current\"]) continues the same finished or interrupted session on its pin or after checking and re-pinning to the current runtime, (work-stop \"id\") stops it, (work-hold \"id\" \"why\" [\"YYYY-MM-DD\"]) holds it until a review date or indefinitely, and (work-archive \"id\" \"why\") sets it aside. Open sessions and pin verdicts appear in the coding-sessions context source, controlled by (setting \"work\" \"context\" \"open\"|\"summary\"|\"off\") and (setting \"work\" \"resume\" \"pinned\"|\"current\"). CeTTa only."
@@ -232,7 +233,7 @@
 ;; Progressive disclosure: one-line catalog above, full page on demand.
 ;; check parses with the loop's OWN reader (sread), so its verdict is the
 ;; loop's verdict — nothing is executed either way.
-(= (help) (string_concat (py-call (skills_help.help "")) (api:help-index)))
+(= (help) (string_concat (help:index) (api:help-index)))
 ; A skill name is syntax: asking for help must never invoke that skill.
 (: help (-> Atom %Undefined%))
 (= (help $name)
@@ -246,7 +247,7 @@
      (((APINotRegistered $key)
        (if (or (== $name "settings") (== $name "setting"))
          (SettingsHelp (settings:protocol) (settings))
-         (py-call (skills_help.help (utils:decode-safe $name)))))
+         (help:lookup (utils:decode-safe $name))))
       ($page $page))))
 (= (check $str)
    ;; repr BEFORE the bridge: a caught syntax_error compound cannot cross
@@ -256,7 +257,7 @@
              (case (api:check $parsed)
                (((APINotRegistered $name)
                  (let $rendered (repr $parsed)
-                   (py-call (skills_help.verdict $decoded $rendered))))
+                   (help:verdict $decoded $rendered)))
                 ($verdict $verdict))))))
 
 ;; Pins: real, persisted working memory (previously catalog-only — the call

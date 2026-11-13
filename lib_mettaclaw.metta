@@ -7,7 +7,7 @@
 !(import! &self ./src/helper.py)
 !(import! &self ./src/context_sources.py)
 !(import! &self ./src/effect_receipts.py)
-!(import! &self ./src/skills_help.py)
+!(import! &self ./src/skills_help.metta)
 !(import! &self ./src/iter_authoring.py)
 !(import! &self ./src/synthetic_llm.py)
 !(import! &self ./src/mcp_bridge.py)

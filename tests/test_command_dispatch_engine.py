@@ -396,6 +396,45 @@ class CommandDispatchEngineTest(unittest.TestCase):
             self.assertEqual(receipts[0]["disposition"], "returned")
             self.assertEqual(receipt_path.stat().st_mode & 0o777, 0o600)
 
+    def test_cetta_dispatches_grounded_legacy_command_heads(self):
+        petta = self._petta_root()
+        cetta = self._cetta_binary()
+        if not cetta.is_file() or not (petta / "lib" / "lib_import.metta").is_file():
+            self.skipTest("CeTTa/PeTTa checkouts are unavailable")
+        with tempfile.TemporaryDirectory() as directory:
+            directory = pathlib.Path(directory)
+            lifecycle = directory / "lifecycle.json"
+            lifecycle.write_text('{"schema":1,"state":"running"}\n',
+                                 encoding="ascii")
+            probe = directory / "grounded-commands.metta"
+            probe.write_text(
+                "!(println! (run-command-batch-once 424245 5 "
+                "(quote ((nop) (help \"send\")))))\n",
+                encoding="utf-8",
+            )
+            environment = self._cetta_env()
+            environment.update({
+                "METTACLAW_LIFECYCLE_PATH": os.fspath(lifecycle),
+                "METTACLAW_OBSERVED_STRATEGY": "0",
+                "METTACLAW_EFFECT_RECEIPT_PATH": os.fspath(
+                    directory / "effect-receipts.jsonl"),
+            })
+            result = subprocess.run(
+                [os.fspath(cetta), "--lang", "petta", "--import-mode",
+                 "ancestor-walk", os.fspath(petta / "lib" / "lib_import.metta"),
+                 os.fspath(ROOT / "src" / "api_registry.metta"),
+                 os.fspath(ROOT / "src" / "skills.metta"), os.fspath(probe)],
+                cwd=ROOT, env=environment, stdin=subprocess.DEVNULL,
+                capture_output=True, text=True, timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr[-2000:])
+            self.assertEqual(result.stdout.count("COMMAND_RETURN:"), 2,
+                             result.stdout)
+            self.assertIn("BURST_COMPLETE", result.stdout)
+            self.assertIn("usage: (send", result.stdout)
+            self.assertNotIn("COMMAND_ERROR: expected (skill arguments...)",
+                             result.stdout)
+
     def test_cetta_queues_new_stimulus_without_discarding_emitted_call(self):
         petta = self._petta_root()
         cetta = self._cetta_binary()
