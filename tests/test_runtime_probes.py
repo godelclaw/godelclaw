@@ -211,11 +211,6 @@ class RuntimeProbeTest(unittest.TestCase):
                 encoding="utf-8",
             )
             systemctl.chmod(0o755)
-            lifecycle = pathlib.Path(directory) / "lifecycle.json"
-            lifecycle.write_text(
-                json.dumps({"schema": 1, "state": "running"}) + "\n",
-                encoding="utf-8",
-            )
             deployment = pathlib.Path(directory) / "deployment.json"
             head = subprocess.run(
                 ["git", "rev-parse", "HEAD"], cwd=ROOT,
@@ -238,6 +233,13 @@ class RuntimeProbeTest(unittest.TestCase):
                     probe_state.mkdir(exist_ok=True)
                     probe_tmp = probe_state / "tmp"
                     probe_tmp.mkdir(exist_ok=True)
+                    # Each probe starts running: one that stops cognition
+                    # must not stop the probes after it.
+                    lifecycle = probe_state / "lifecycle.json"
+                    lifecycle.write_text(
+                        json.dumps({"schema": 1, "state": "running"}) + "\n",
+                        encoding="utf-8",
+                    )
                     iter_directory = (
                         pathlib.Path(directory) / "native-iter-multiturn"
                         if probe == "tests/native_iter_multiturn_probe.metta"
