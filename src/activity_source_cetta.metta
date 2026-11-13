@@ -48,25 +48,25 @@
               (or (< $length 19) (< (str:compare $id "9223372036854775808") 0)))))))
 
 ; The batch's runtime ids and its update ids, each in order and the update
-; ids without repeats, or ActivityBatchRefusedV1.
+; ids without repeats (unique-atom keeps each first occurrence in linear
+; expected time), or ActivityBatchRefusedV1.
 (= (activity-source:batch $text)
    (activity-source:classify (if (== $text "") () (str:split "," $text)) () ()))
 (= (activity-source:classify $ids $runtime $updates)
    (if (== $ids ())
-     (ActivityBatchV1 (activity-source:reversed $runtime ()) (activity-source:reversed $updates ()))
+     (let* (($in-order (activity-source:reversed $runtime ()))
+            ($distinct (unique-atom (activity-source:reversed $updates ()))))
+       (ActivityBatchV1 $in-order $distinct))
      (let* (($id (car-atom $ids)) ($rest (cdr-atom $ids)))
        (if (str:starts-with $id "runtime:")
          (if (activity-source:runtime-id? $id)
            (activity-source:classify $rest (cons-atom $id $runtime) $updates)
            ActivityBatchRefusedV1)
          (if (activity-source:update-id? $id)
-           (activity-source:classify $rest $runtime
-             (if (activity-source:member? $id $updates) $updates (cons-atom $id $updates)))
+           (activity-source:classify $rest $runtime (cons-atom $id $updates))
            ActivityBatchRefusedV1)))))
 (= (activity-source:reversed $items $out)
    (if (== $items ()) $out (activity-source:reversed (cdr-atom $items) (cons-atom (car-atom $items) $out))))
-(= (activity-source:member? $item $items)
-   (if (== $items ()) False (if (== $item (car-atom $items)) True (activity-source:member? $item (cdr-atom $items)))))
 
 (= (activity-source:nonempty $items $out)
    (if (== $items ()) (activity-source:reversed $out ())
