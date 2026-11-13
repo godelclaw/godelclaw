@@ -888,7 +888,7 @@
      (let $handled (py-call (telegram.metta_slash_command (json-stringify $update) $mkind))
        (let $l (tg:log-update $update $mkind $message True False $handled) (tg:acknowledge $task)))
      (let $arming (if (== $tier "") (tg:tier-for $sender-id) $tier)
-       (if (py-call (telegram.metta_has_attachment (json-stringify $message)))
+       (if (tg:attachment? $message)
          (let $w (tg:wake-for-note $note $reason $chat-id $sender-id)
            (let $l (tg:log-update $update $mkind $message True False "attachment_dispatched" $provenance)
              (let $d (py-call (telegram.metta_attachment (json-stringify $update) $mkind $text $provenance $arming))
@@ -902,6 +902,15 @@
                                                     $formatted $bot $arming (tg:str (tg:at $update "update_id")) $reason)
                    (let $notice (if (== $note sender-wake) () (tg:maybe-rest-notice $chat-id $sender-id))
                      (tg:publish-counts)))))))))))
+
+; A message carries a file for her: a photo, or one of Telegram's single-file
+; kinds. An empty field carries none.
+(= (tg:attachment? $message)
+   (tg:any-field? $message ("document" "video" "audio" "voice" "animation" "video_note" "sticker" "photo")))
+(= (tg:any-field? $object $keys)
+   (if (== $keys ()) False
+     (if (tg:truthy (tg:at $object (car-atom $keys))) True
+       (tg:any-field? $object (cdr-atom $keys)))))
 
 ; A sender wake asks her to wake now; anything else may tell a resting
 ; operator when she will.

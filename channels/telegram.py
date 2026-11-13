@@ -1246,13 +1246,6 @@ def metta_effect_turn():
         return "" if _effect_turn is None else str(_effect_turn)
 
 
-def metta_has_attachment(message_json):
-    try:
-        return bool(_attachment_info(json.loads(message_json)))
-    except ValueError:
-        return False
-
-
 def metta_attachment(update_json, kind, text, provenance="", tier=""):
     update = json.loads(update_json)
     message = update.get(kind) or {}

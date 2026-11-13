@@ -37,6 +37,17 @@
           ($_ (assertEqual (tg:delete "-1" 5) "delete failed: the Telegram service is not configured")))
      (println! EFFECT_SEND_ONCE_OK)))
 
+; Which messages carry a file for her, as Telegram shapes them.
+(= (intake:attachment-kinds)
+   (let* (($_ (assertEqual (tg:attachment? (json-parse "{\"document\": {\"file_id\": \"d\"}}")) True))
+          ($_ (assertEqual (tg:attachment? (json-parse "{\"photo\": [{\"file_id\": \"s\"}, {\"file_id\": \"b\"}]}")) True))
+          ($_ (assertEqual (tg:attachment? (json-parse "{\"video_note\": {\"file_id\": \"v\"}, \"caption\": \"c\"}")) True))
+          ($_ (assertEqual (tg:attachment? (json-parse "{\"sticker\": {\"file_id\": \"k\"}}")) True))
+          ($_ (assertEqual (tg:attachment? (json-parse "{\"text\": \"document photo\"}")) False))
+          ($_ (assertEqual (tg:attachment? (json-parse "{\"photo\": [], \"document\": {}}")) False))
+          ($_ (assertEqual (tg:attachment? (json-parse "{\"caption\": \"no file\"}")) False)))
+     (println! INTAKE_ATTACHMENT_KINDS_OK)))
+
 ; Every section must answer before the witness.
-!(let* (($a (intake:channel-post)) ($b (send:once-per-turn)))
+!(let* (($a (intake:channel-post)) ($b (send:once-per-turn)) ($c (intake:attachment-kinds)))
    (println! TELEGRAM_SEND_AND_INTAKE_OK))
