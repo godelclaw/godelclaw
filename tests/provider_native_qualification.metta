@@ -266,6 +266,22 @@
           ($_ (nt:require remote-failure-not-resubmitted (nt:equal (nq:posts $world) 1)))
           ($_ (nt:require no-completed-result-on-remote-failure (nt:equal (nq:rows $world "results") ())))
           ($_ (nq:close $world))) 4))
+; The loop's policy names a reasoning effort as a symbol. The request carries
+; it as text and is answered; an effort no protocol knows is refused before
+; any request, and the failure line names the refusal.
+(: nq:reasoning-effort (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
+(= (nq:reasoning-effort $root $sdk $core $artifacts $fixture)
+   (let* (($world (nq:world $root $sdk $core $artifacts $fixture "effort"))
+          ($_ (nq:reply $world "anthropic"))
+          ($forms "!(nt:require symbol-effort-answered (nt:equal (llm:command \"claude-fixture\" 42 high \"S_cache_boundary_U\") \"(nop)\"))\n!(nt:require unknown-effort-is-not-an-answer (nt:equal (llm:command \"claude-fixture\" 42 \"extreme\" \"S_cache_boundary_U\") \"()\"))\n!(println! NATIVE_EFFORT_OK)")
+          ($result (nq:guest $world "claude-fixture" "petta" $forms ()))
+          ($_ (nt:require effort-finished (nt:contains (nq:output $result) "NATIVE_EFFORT_OK")))
+          ($_ (nt:require refused-effort-sent-nothing (nt:equal (nq:posts $world) 1)))
+          ($_ (nt:require symbol-effort-on-the-wire
+                (nt:equal (preq:field (preq:field (nq:request-body $world) "output_config") "effort") (JsonString "high"))))
+          ($_ (nt:require refusal-named
+                (nt:contains (nq:stderr $result) "; preparation=unsupported-reasoning-effort")))
+          ($_ (nq:close $world))) 5))
 ; An answer past the call's response bound is refused by the engine and named
 ; as such, with the bound; it was once reported as a transport error with no
 ; status. The turn fails and is not resubmitted.

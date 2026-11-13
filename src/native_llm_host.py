@@ -298,6 +298,7 @@ def subscription_seed(selected, tokens, kind, purpose, cap):
 def native_preparation_failed(plan, reason):
     if plan.ready == "preparing":
         plan.error, plan.ready = ValueError(str(reason)), "false"
+        plan.preparation_refusal = str(reason)
     return plan
 
 
@@ -624,6 +625,11 @@ def _record_failure(plan, kind, status=0):
     bound = getattr(plan, "native_response_bound", None)
     if type(bound) is int and bound > 0:
         detail += f"; response_bound={bound}"
+    # A refused preparation is named by its code; any other reason may quote
+    # the request and stays out of the log.
+    refusal = getattr(plan, "preparation_refusal", "")
+    if 0 < len(refusal) <= 64 and all(c.isascii() and (c.isalnum() or c == "-") for c in refusal):
+        detail += "; preparation=" + refusal
     print(f"[native_llm] failed request: {code}; provider={provider}; "
           f"status={status}; sent={sent}; elapsed_ms={elapsed}; deadline_ms={deadline}{detail}",
           file=sys.stderr)

@@ -13,6 +13,7 @@
 (: pcall:metadata (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (: pcall:prepared (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (: pcall:refused (-> %Undefined% %Undefined% %Undefined%))
+(: pcall:refusal-code (-> %Undefined% %Undefined%))
 (: pcall:seal (-> %Undefined% %Undefined%))
 (: pcall:submit (-> %Undefined% %Undefined% %Undefined%))
 (: pcall:transport (-> %Undefined% %Undefined% %Undefined% %Undefined%))
@@ -60,9 +61,12 @@
 ; A refused preparation keeps its host handle for the failure it settles as;
 ; it never becomes a call owner.
 (= (pcall:refused $plan $reason)
-   (let* (($text (preq:repr $reason))
+   (let* (($text (preq:repr (pcall:refusal-code $reason)))
           ($host (py-call (native_llm_host.native_preparation_failed $plan $text))))
      (RefusedProviderCallV1 $host)))
+; The codec's refusal is named by its code, as a preparation's own is.
+(= (pcall:refusal-code $reason)
+   (case $reason (((llm:v1:error $code) $code) ($other $other))))
 ; A command's metadata measures its prompt; a structured request has none.
 (= (pcall:metadata-of (CommandMetadataV1 $request $encoding $profile $prompt) $active $model $layout)
    (pcall:metadata $request $encoding $profile $prompt $active $model $layout))
