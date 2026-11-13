@@ -934,11 +934,6 @@ def rest_notice_text(left, now=None):
             "and will be read then; send /wake to end the rest now." % (span, wake_at))
 
 
-def claude_code_toggle():
-    import claude_bridge
-    return claude_bridge.set_authorized(not claude_bridge.authorized())
-
-
 def menu_state(kind):
     """What one operator settings menu offers, as JSON for the command
     responder, which lays out the buttons: the choices and which are

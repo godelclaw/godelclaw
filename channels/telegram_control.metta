@@ -17,6 +17,7 @@
 !(import! &self fs)
 !(import! &self cwp)
 !(import! &self system)
+!(import! &self (library path))
 !(import! &self ./src/helper.py)
 !(import! &self ./src/mode_state.metta)
 !(import! &self ./src/fuel_io)
@@ -26,6 +27,8 @@
 !(import! &self ./channels/telegram_control_input.metta)
 !(import! &self ./channels/telegram_notice_cleanup.metta)
 !(import! &self ./channels/telegram_control_io.metta)
+!(import! &self ./src/sibling_cetta.metta)
+!(import! &self ./src/model_selection_cetta.metta)
 
 (= (tc:env $name $default) (system:getenv-or-default $name $default))
 (= (tc:socket) (tc:env "METTACLAW_TELEGRAM_SERVICE_SOCKET" ""))
@@ -116,7 +119,7 @@
    (case $value
      (((Error $call $why) (Error $call $why))
       ($reply
-       (let $resumed (py-call (sibling.resume_self))
+       (let $resumed (sibling:resume-self)
          (case (lifecycle:enabled)
            (((Error $call $why) (Error $call $why))
             (1 (let $woken (tc:wake "operator start")
@@ -193,12 +196,26 @@
                                        (tc:energy-menu $reply))))))
                   ($other (format-args "unknown button {}" ($data)))))))))))
 
+; Claude Code's authorization is the flag file the bridge (src/claude_bridge.py)
+; reads before every headless turn; the command turns it over.
+(= (tc:claude-code-flag) (system:expanduser "~/.config/pettaclaw/claude_code_authorized"))
+(= (tc:claude-code-authorized? $flag)
+   (case (fs:read-text-result $flag 0 "raw") ((("ok" $text) (== (str:trim $text) "1")) ($unreadable False))))
+(= (tc:claude-code-toggle)
+   (let* (($flag (tc:claude-code-flag))
+          ($on (not (tc:claude-code-authorized? $flag)))
+          ($_ (fs:make-directories (path:dirname $flag) 511))
+          ($written (fs:write $flag (if $on "1" "0"))))
+     (case $written
+       (((fs:failed $reason $operation $path $code $progress $message) (Error tc:claude-code-toggle $message))
+        ($done (format-args "claude-code authorization: {}" ((if $on "ON" "OFF"))))))))
+
 (= (tc:answer $name $args)
    (case $name
      (("/start" (tc:lifecycle-start (lifecycle:start)))
       ("/stop" (tc:lifecycle-stop (lifecycle:stop)))
       ("/wake" (let $woken (tc:wake "/wake") "Waking."))
-      ("/claude_code_authorization" (tc:text (py-call (helper.claude_code_toggle))))
+      ("/claude_code_authorization" (tc:claude-code-toggle))
       ("/health" (tc:text (py-call (runtime_health.report))))
       ("/activity" (tc:text (py-call (runtime_health.activity_report))))
       ("/modes" (tc:settings-menu "modes" "mode" ""))
@@ -216,7 +233,7 @@
       ("/quota" (tc:text (py-call (synthetic_llm.quota))))
       ("/model"
        (if (== $args "")
-         (let $model (tc:text (py-call (synthetic_llm.current_model)))
+         (let $model (model:current "syn:large:text")
            (format-args "selected model: {} — applied at the next provider request; /model <name> to switch, /models to list, /quota for budget" ($model)))
          (tc:text (py-call (synthetic_llm.set_model $args)))))
       ($other (format-args "unknown command {}" ($name))))))

@@ -295,7 +295,7 @@
   "src/settings_registry.metta",
   "src/shell_io.metta",
   "src/shell_io_cetta.metta",
-  "src/sibling.py",
+  "src/sibling_cetta.metta",
   "src/skills.metta",
   "src/skills_help.metta",
   "src/skills_help_pages.metta",

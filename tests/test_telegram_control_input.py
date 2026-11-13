@@ -99,6 +99,22 @@ class ControlInputTests(unittest.TestCase):
         'METTACLAW_INPUT_LEDGER_SOCKET': '{folder}/no-ledger.sock', 'METTACLAW_TELEGRAM_SERVICE_SOCKET': '{folder}/no-service.sock'})
         self.assertIn('(NOTICE error error none)', output)
 
+    def test_claude_code_authorization_turns_over_the_bridge_flag(self):
+        output = self.probe('''
+!(let* (($first (tc:answer "/claude_code_authorization" ""))
+        ($flag (fs:read-text (tc:claude-code-flag)))
+        ($second (tc:answer "/claude_code_authorization" "")))
+   (println! (TOGGLE $first $flag $second (fs:read-text (tc:claude-code-flag)))))
+''', {'HOME': '{folder}'})
+        self.assertIn('(TOGGLE "claude-code authorization: ON" "1" "claude-code authorization: OFF" "0")', output)
+
+    def test_the_model_shown_is_the_recorded_choice_else_the_configured_one(self):
+        command = '!(println! (MODEL (tc:answer "/model" "")))'
+        recorded = self.probe('!(fs:write (system:getenv-or-default "METTACLAW_MODEL_STATE_PATH" "") "(other atom)\\n(active-model kimi:k2)\\n")\n' + command,
+                              {'METTACLAW_MODEL_STATE_PATH': '{folder}/model-state', 'SYNTHETIC_MODEL': 'configured-model'})
+        configured = self.probe(command, {'METTACLAW_MODEL_STATE_PATH': '{folder}/missing', 'SYNTHETIC_MODEL': 'configured-model'})
+        self.assertIn('selected model: kimi:k2 — applied at the next provider request', recorded)
+        self.assertIn('selected model: configured-model — applied at the next provider request', configured)
 
 if __name__ == '__main__':
     unittest.main()
