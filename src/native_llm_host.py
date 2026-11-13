@@ -159,6 +159,23 @@ def _call_facts(plan):
     return facts
 
 
+def _visible(purpose):
+    """Whether a call streams to the display. A compaction is maintenance:
+    the display shows no attempt for it."""
+    return purpose != "compaction" and stream_sink.configured()
+
+
+def _response_cap(streams):
+    """The bound on a call's received body. A streamed body carries every
+    delta's event framing: a long reasoning summary alone is thousands of
+    events, past a megabyte, though the answer it ends in is small. So a call
+    that streams, for any protocol, has the stream bound."""
+    cap = int(os.environ.get("METTACLAW_LLM_RESPONSE_BYTES", 8 * 1048576 if streams else 1048576))
+    if not 1024 <= cap <= 16 * 1048576:
+        raise ValueError("model response bound must be between 1 KiB and 16 MiB")
+    return cap
+
+
 def _host_plan(kind, purpose, selected, tokens, **fields):
     """One call's host handle: waits, scope, guard and origin. No request bytes."""
     import strategy_host
@@ -173,8 +190,7 @@ def _host_plan(kind, purpose, selected, tokens, **fields):
         idle=settings["idle"], soft=settings["soft"], **fields)
     if purpose != "turn":
         plan.purpose = purpose
-    # A compaction is maintenance: the display shows no attempt for it.
-    plan.native_visible = purpose != "compaction" and stream_sink.configured()
+    plan.native_visible = _visible(purpose)
     if call_scope() and call_lane() == "background":
         reserve = (int(os.environ.get("METTACLAW_ACTIVITY_RESERVED_OUTPUT", "0")),
                    int(os.environ.get("METTACLAW_ACTIVITY_INTERACTIVE_RESERVE", "1")))
@@ -228,9 +244,9 @@ def native_call_seed(selected, tokens, kind="command", purpose="turn"):
         if provider["name"] == "anthropic":
             headers.append(["http:header", "anthropic-version", "2023-06-01"])
         stream = provider["protocol"] == "chat-completions" and wait_settings()["stream"]
-        cap = int(os.environ.get("METTACLAW_LLM_RESPONSE_BYTES", 8 * 1048576 if stream else 1048576))
-        if not 1024 <= cap <= 16 * 1048576:
-            raise ValueError("model response bound must be between 1 KiB and 16 MiB")
+        # The request streams when its stream is configured or the display
+        # shows it (preq:wire), whatever the protocol.
+        cap = _response_cap(stream or _visible(purpose))
         plan = _host_plan(kind, purpose, selected, tokens, correlation=uuid.uuid4().hex,
             epoch=_session_epoch, protocol=provider["protocol"], provider=provider["name"],
             wire_model=str(provider.get("model", selected)), stream=stream, cap=cap)
