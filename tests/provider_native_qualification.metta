@@ -288,6 +288,14 @@
           ($_ (nt:require oversized-paced (nt:contains $err "failed provider turn: response-too-large; retry in")))
           ($_ (nt:require oversized-not-resubmitted (nt:equal (nq:posts $world) 1)))
           ($_ (nq:close $world))) 6))
+; Every display record the world's calls wrote, as one text; none without a display.
+(= (nq:display $world)
+   (let $directory (nq:path $world "display")
+     (if (fs:exists $directory) (nq:display-of $directory (fs:entries $directory) "") "")))
+(= (nq:display-of $directory $names $text)
+   (if (nt:equal $names ()) $text
+     (nq:display-of $directory (preq:tail $names)
+       (str:concat $text (fs:read-text (nt:join $directory (preq:head $names)))))))
 (: nq:commentary (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (nq:commentary $root $sdk $core $artifacts $fixture $model $protocol)
    (let* (($name (str:concat "tool-" $protocol))
@@ -319,6 +327,9 @@
           ($_ (nt:require compaction-advertises-no-tool (not (preq:has (nq:request-body $world) "tools"))))
           ($_ (nt:require compaction-reply-delivered (nt:contains (fs:read-text $reply) "(nop)")))
           ($_ (nt:require compaction-ledger-purpose (nt:contains (repr (nq:rows $world "calls")) "compaction")))
+          ; The claim opens the display's maintenance line: its only host effect.
+          ($_ (nt:require compaction-shown-as-maintenance
+                (nt:contains (nq:display $world) "Compacting task history")))
           ($_ (nq:close $world))) 6))
 
 ; Structured (coding and iter) calls take the native owner: one request, the
@@ -392,6 +403,11 @@
                      (("METTACLAW_STREAM_DIR" (nq:path $world "display"))))))
           ($_ (nt:require long-stream-answered (nt:contains $output "NATIVE_STRUCTURED_OK")))
           ($_ (nt:require long-stream-one-request (nt:equal (nq:posts $world) 1)))
+          ; The claim opens the attempt and the submitted wire names its model.
+          ($shown (nq:display $world))
+          ($_ (nt:require long-stream-attempt-shown (nt:contains $shown "\"purpose\":\"coding\"")))
+          ($_ (nt:require long-stream-attempt-opened-twice
+                (nt:equal (preq:size (str:split "\"kind\":\"attempt.open\"" $shown)) 3)))
           ($_ (nt:require long-stream-reply (nt:contains (preq:render (preq:field (preq:parse (fs:read-text $reply)) "message")) "(nop)")))
           ($body (nq:request-body $world))
           ($_ (nt:require long-stream-requested (nt:equal (preq:field $body "stream") (JsonBool True))))

@@ -19,7 +19,7 @@ def arm():
     return 1
 
 
-def finish(plan, content):
+def finish(plan, content, fingerprint=""):
     import native_lifetime
     import llm_policy
     row = native_lifetime.call_state(plan)
@@ -33,8 +33,8 @@ def finish(plan, content):
     result = {"kind": "model", "status": status,
               "call_id": plan.correlation, "value": str(content) if state == "completed" else "",
               "reason": reason}
-    if getattr(plan, "request_fingerprint", ""):
-        result["request_fingerprint"] = plan.request_fingerprint
+    if str(fingerprint):
+        result["request_fingerprint"] = str(fingerprint)
     encoded = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode()
     if len(encoded) > 65536:
         encoded = json.dumps({"kind": "model", "status": "failed", "call_id": plan.correlation,
