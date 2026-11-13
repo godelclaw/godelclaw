@@ -747,6 +747,44 @@
         "The linear conversation encoders and the codec failure fix are engine commits on CeTTa experimental; they reach the agents with the next engine roll",
         "No paid live canary or 24-hour soak claimed"
       ]
+    },
+    {
+      "id": "streamed-response-bound-and-telegram-access-policy",
+      "status": "qualified-and-deployed",
+      "native_modules": [
+        "channels/access_policy.metta",
+        "scripts/telegram_admission.metta",
+        "src/provider_call_cetta.metta"
+      ],
+      "runtime_commit": "612af1103",
+      "engine_commit": "2eefbdff7af5020c9a6283bcb3908be3e78c9273",
+      "lean_commit": "557744f7b",
+      "release": "c219c4a7cb121d74d121df4f623ae5addc18a62086f580c07de70f793a78ed50",
+      "gateway_release": "c219c4a7cb121d74d121df4f623ae5addc18a62086f580c07de70f793a78ed50",
+      "test_orchestration": "CeTTa core without Python",
+      "checks": {
+        "native_suites_passed": "23 of 24 (the snapshot suite needs the deployment plan)",
+        "access_policy_checks": 68,
+        "mutants_killed": 9,
+        "python_entry_census": "unchanged: 52 / 56 / 2 / 76 / 14",
+        "streamed_answer_over_1mib": "passes for Kimi (Responses) and Anthropic coding calls with the display on",
+        "paired_installed_verification": true,
+        "paired_benchmark": {
+          "pairs_per_workload": 21,
+          "baseline_runtime_commit": "eaacea460",
+          "p95_change_percent": {
+            "small": 12.6,
+            "large_1mib": 3.0,
+            "many_blocks_1mib": 4.9
+          },
+          "note": "the benchmark calls do not stream, so their path is unchanged; the differences are host load"
+        }
+      },
+      "limits": [
+        "Coding sessions still launch without --value-bytes, so a very large answer can wait in local storage",
+        "Telegram admission (requests and invites) is designed and proved but not built",
+        "No paid live canary or 24-hour soak claimed"
+      ]
     }
   ],
   "tuning_debt": [
