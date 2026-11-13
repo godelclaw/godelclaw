@@ -1392,6 +1392,53 @@
       "limits": [
         "most of the remaining journal is other history (commits, outbox, outcomes), which needs its own retention rule from the service owner"
       ]
+    },
+    {
+      "id": "engine-roll-39e38c7f-and-telegram-commands-leave-python",
+      "status": "qualified-and-deployed",
+      "engine": {
+        "from": "4374a1df0d15c6a1bb839746ec2d1447798ad072",
+        "to": "39e38c7f81b3cb8ab1abf97629a2f48ad5accf34",
+        "contains": [
+          "libs-c2: a Telegram commands file may declare bare commands in groups",
+          "engine-e1: system:notify, system:wall-time-ns, a first != without starting SWI-Prolog, a linear Anthropic conversation encoder, proc environment overrides, children that die with the engine, fs:size, fs:changed options"
+        ]
+      },
+      "native_modules": [
+        "channels/telegram.metta and the channel service answer Telegram commands; an operator bare /command in a group is a command only where the commands file declares it"
+      ],
+      "python_removed": [
+        "channels/telegram.py's command path: slash-command dispatch, menus and keyboards, the durable send and delete paths, metta_slash_command and metta_foreign_receipt (596 lines of telegram.py; 1,183 lines with tests)"
+      ],
+      "behaviour_changes": [
+        "an edited bare command message is not run again",
+        "replies the Python path had queued in .durable-outbox would not be sent after a restart (none were queued at the roll)",
+        "direct child processes die with their engine; coding sessions are unaffected",
+        "the Anthropic encoder check is registered in the growth gate"
+      ],
+      "runtime_commit": "6ddb3ff9bd",
+      "release": "b5767a74",
+      "gateway_release": "b5767a74",
+      "test_orchestration": "CeTTa core without Python",
+      "checks": {
+        "engine_gate": "make test 653 pass, 0 fail; Prime normal 8/0; outcome library; E1 checks; 11 Telegram checks; LLM library, I/O and stream suites; spellings; encoder growth worst step 5.25 against 8",
+        "native_suites_passed": "24 of 24 on the new bundle; census 40/40/1/36/4, unchanged",
+        "python_suite": "the same 26 tests fail on the branch with the new bundle as on main with the live bundle; 40 tests removed with the command path",
+        "telegram_end_to_end": "passes against the new channel service, an operator's bare /modes in a group answered with the menu and a friend's taken as input",
+        "chatgpt_route": "13 of 13 on a SIWC_TEST build of the same engine",
+        "benchmark_paired_median_ms": {
+          "small": "-17.5 (-29.2 to -7.0)",
+          "large": "-28.8 (-44.4 to -10.4)",
+          "many-blocks": "-27.8 (-60.0 to -8.9)",
+          "note": "A/A controls straddle zero; peak RSS 5 to 6 percent lower"
+        },
+        "live_observation": "Gödel's live turn at 21:22 on engine 39e38c7f: the model call returned and (help \"send\") answered normally; every loop, responder, ledger and channel service runs the 39e38c7f bundle; both commands files now declare bare commands in groups (19 command lines), both menus registered, and Lila's channel is ready",
+        "paired_installed_verification": true
+      },
+      "limits": [
+        "an operator's bare /command in a group was exercised end to end, not yet live",
+        "No paid live canary or 24-hour soak claimed"
+      ]
     }
   ],
   "tuning_debt": [
