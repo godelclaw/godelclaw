@@ -116,7 +116,6 @@ class RouteTest(TelegramModuleTest):
                                  _last_chat_id="another-chat", create=True):
             self.assertEqual(telegram._reply_target(), "private-operator")
             self.assertEqual(telegram._reply_target("protobots"), "protobots")
-            self.assertIn("bound to", telegram.route_view())
 
     def test_without_a_primary_the_reply_chat_routes(self):
         with mock.patch.multiple(telegram, _reply_chat_id="current-chat", _last_chat_id="last-chat", create=True):

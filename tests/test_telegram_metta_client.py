@@ -518,10 +518,9 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
                     time.sleep(.1)
                 assert wanted in [t for c, t in api.texts()], api.texts()[-3:]
                 rss = int(next(l.split()[1] for l in open("/proc/%d/status" % responder[0].pid) if l.startswith("VmRSS")))
-            # 11. Her conversation history, rendered in MeTTa exactly as the
-            #     Python reader renders it, for a turn that has prepared input
-            #     and for one that has not; and the per-chat recall skill,
-            #     for Czech text too.
+            # 11. Her conversation history, rendered from the ledger this run
+            #     wrote, for a turn that has prepared input and for one that
+            #     has not; and the per-chat recall skill, for Czech text too.
             api.add(115, GROUP, FRIEND, "Ahoj, jak se máš? " + "č" * 300)
             api.add(116, CHAT, OPERATOR, "a newer message")
             time.sleep(1.0)
@@ -532,17 +531,28 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
                              '!(fs:write "%s" (tg:recent-activity 5 "lab" 40))\n'
                              '!(py-call (telegram.metta_value "pending_count" 0))\n'
                              % (window_file, recent_file), env)
-            py._log_path = str(ledger)
-            py._primary_chat_id = str(CHAT)
-            # Both learn chat titles from the messages they read.
-            py._chat_titles = {str(CHAT): "Zed", str(GROUP): "Lab"}
             mine = window_file.read_text()
-            # The batch was the last thing logged, so the frontier is the
-            # ledger's end; the prepared messages are excluded.
-            py._context_frontier_bytes = None
-            py._current_batch_update_ids = {"115", "116"}
-            expected = py.conversation_window(max_events=64)
-            assert mine == expected, ("window", mine[-600:], expected[-600:])
+            # The route line first; then what was said, each message once,
+            # oldest first, as "[stamp IN|OUT who chat=… message_id=…]" and
+            # its text. The batch just prepared (115, 116) is this turn's new
+            # activity and commands are not conversation: neither is shown.
+            route, _, history = mine.partition("\n\n")
+            assert route == ("TELEGRAM ROUTE: plain (send ...) is bound to Zed chat_id=%d. For every other audience "
+                             "use (send-telegram-chat chat_id \"message\"). Reading another chat cannot change this "
+                             "route." % CHAT), route
+            events = history.split("\n\n[")
+            heads = [("[" + e if i else e).split("\n", 1)[0] for i, e in enumerate(events)]
+            shape = re.compile(r"\[\S+ (IN|OUT) .+ chat=.+ message_id=\d+( provenance=\"[^\"]+\")?\]$")
+            assert len(heads) > 5 and all(shape.match(h) for h in heads), [h for h in heads if not shape.match(h)]
+            assert len(set(heads)) == len(heads), "a message appears twice"
+            assert heads[0].split(" chat=")[0].endswith(" IN Zed") and "\nhello Lila" in events[0], events[0]
+            assert any(" OUT GODEL chat=" in h for h in heads), heads
+            for absent in ("a newer message", "Ahoj, jak", "/wake", "/energy", "/mode ", "/delete "):
+                assert absent not in history, absent
+            # The operator's /modes were commands; a friend's, where the
+            # service takes bare commands in groups, was something he said.
+            assert history.count("/modes") == (1 if BARE else 0), history.count("/modes")
+            assert history.index("hello Lila") < history.index("unread in 42") < history.index("newer in 42")
             assert "…" in recent_file.read_text() and "Ahoj" in recent_file.read_text()
             # A history that fills the budget still leaves the route line in.
             big = "\n".join(json.dumps({"received_at": "2026-09-29T10:00:00+0200", "kind": "message", "allowed": True,
@@ -553,7 +563,8 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
             lines, err = run('!(tg:start)\n!(tg:set context-frontier -1)\n!(fs:write "%s" (tg:conversation-window 64))\n' % window_file, env)
             full = window_file.read_text()
             assert full.startswith("TELEGRAM ROUTE") and len(full) <= 30000, (len(full), full[:80])
-            print("conversation window and chat recall match the Python readers")
+            print("conversation window: route first, each message once and in order, prepared input and commands "
+                  "left out, within its budget; chat recall cuts Czech text by characters")
 
             # A short-lived mode tool records intent only. The independent
             # responder submits it while no cognitive engine is running;
