@@ -106,19 +106,6 @@ class SlashCommandTest(unittest.TestCase):
             os.environ["METTACLAW_FUEL_MODE_PATH"] = self.previous_fuel_path
         self.tmp.cleanup()
 
-    def test_menu_describes_operator_latch_truthfully(self):
-        descriptions = dict(telegram._MENU_COMMANDS)
-        self.assertEqual(
-            descriptions["start"],
-            "Enable cognition with the operator latch",
-        )
-        self.assertEqual(
-            descriptions["stop"],
-            "Stop cognition with the operator latch",
-        )
-        self.assertNotIn("watcher", descriptions["start"])
-        self.assertNotIn("watcher", descriptions["stop"])
-
     def test_fuel_shows_and_switches_the_discipline(self):
         import fuel_modes
         self.assertEqual(self.handle("/fuel"), "slash_command:/fuel")
@@ -273,29 +260,6 @@ class SlashCommandTest(unittest.TestCase):
         callbacks = [row[0]["callback_data"]
                      for row in payload["reply_markup"]["inline_keyboard"]]
         self.assertEqual(callbacks, ["mode:godelclaw", "mode:coding", "mode:iter", "mode:omega"])
-
-    def test_command_menu_registers_mode_controls(self):
-        response = mock.Mock()
-        response.raise_for_status.return_value = None
-        response.json.return_value = {"ok": True, "result": True}
-        with mock.patch.object(telegram.requests, "post",
-                               return_value=response) as post:
-            telegram._register_menu_commands()
-        payload = post.call_args.kwargs["json"]
-        names = [item["command"] for item in payload["commands"]]
-        self.assertIn("mode", names)
-        self.assertIn("modes", names)
-        self.assertIn("start", names)
-        self.assertIn("stop", names)
-        self.assertNotIn("engine", names)    # one engine: nothing to show or switch
-        self.assertNotIn("engines", names)
-        self.assertIn("health", names)
-        self.assertEqual(len(names), len(set(names)))
-
-    def test_command_menu_failure_does_not_raise(self):
-        with mock.patch.object(telegram.requests, "post",
-                               side_effect=RuntimeError("offline")):
-            telegram._register_menu_commands()
 
     def test_health_file_has_liveness_but_no_credentials(self):
         telegram._health_update(poll_status="ok",

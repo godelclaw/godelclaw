@@ -105,8 +105,6 @@ def status(now=None):
     stale_after = _positive_seconds(
         "METTACLAW_COGNITIVE_STALE_SECONDS", 900)
     problems = []
-    if not control and channel.get("menu_status") != "ok":
-        problems.append("command-menu-not-registered")
     if control:
         if control_age > 30:
             problems.append("operator-control-stale")
@@ -137,7 +135,6 @@ def status(now=None):
         "lifecycle": lifecycle.view(),
         "problems": problems,
         "generation": _generation(),
-        "menu": channel.get("menu_status", "unknown"),
         "telegram_poll_age_seconds": poll_age,
         "channel_health_source": "independent-control" if control else "loop-client",
         "operator_control_age_seconds": control_age,
@@ -163,14 +160,14 @@ def report():
     problems = ",".join(value["problems"]) or "none"
     return (
         "runtime-health: {state} | lifecycle={lifecycle} | "
-        "generation={generation} | menu={menu} | "
+        "generation={generation} | "
         "telegram={transport} | loop={loop} | working-set-age={working}s | "
         "model-turn-age={turn}s | model-turn-pending={pending}s | "
         "memory={memory} | engine-failure={engine_failure} | problems={problems}"
     ).format(
         state=value["state"], lifecycle=value["lifecycle"],
         generation=value["generation"],
-        menu=value["menu"], transport=("service-ready=%s, control-age=%ss (polling owned by transport)" %
+        transport=("service-ready=%s, control-age=%ss (polling owned by transport)" %
             (value["channel_service_ready"], value["operator_control_age_seconds"]))
             if value["channel_health_source"] == "independent-control" else
             "poll-age=%ss" % value["telegram_poll_age_seconds"],

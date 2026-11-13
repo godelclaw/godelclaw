@@ -54,22 +54,6 @@ _CONTROL_COMMANDS = (
     "/claude_code_authorization",
 )
 
-_MENU_COMMANDS = (
-    ("start", "Enable cognition with the operator latch"),
-    ("stop", "Stop cognition with the operator latch"),
-    ("fuel", "Show or switch what a renewal does to the budget"),
-    ("fuels", "List fuel disciplines"),
-    ("mode", "Show or switch the cognitive loop mode"),
-    ("modes", "List cognitive loop modes"),
-    ("model", "Show or switch the language model"),
-    ("models", "List language models"),
-    ("energy", "Show per-sender arming energy"),
-    ("health", "Show runtime, channel, and memory health"),
-    ("activity", "Show whether cognition is working, resting, or idle"),
-    ("quota", "Show model budget"),
-    ("wake", "End the current rest"),
-)
-
 # Every authenticated operator control has its own execution lane.  State
 # modules serialize their own short local mutations; external delivery of one
 # response must never hold up receipt or execution of another control.
@@ -1036,36 +1020,6 @@ def _durable_delete_message(target, message_id):
     return "delete failed: %s" % result[1:]
 
 
-def _register_menu_commands():
-    """Publish the deterministic controls to Telegram's slash-command menu."""
-    try:
-        response = requests.post(
-            _api("setMyCommands"),
-            json={
-                "commands": [
-                    {"command": command, "description": description}
-                    for command, description in _MENU_COMMANDS
-                ]
-            },
-            timeout=15,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        if not payload.get("ok", False):
-            raise RuntimeError("Telegram rejected the command menu")
-        _health_update(menu_status="ok",
-                       menu_registered_at=time.time())
-    except Exception as exc:
-        # Menu discoverability is not allowed to take down message polling;
-        # typed slash commands continue to work and the health watch records
-        # registration failures from the service journal.
-        _health_update(menu_status="error",
-                       menu_error_at=time.time(),
-                       menu_error_type=type(exc).__name__)
-        print("[telegram] command menu registration failed:",
-              type(exc).__name__)
-
-
 # ---- MeTTa client ----------------------------------------------------------
 # With METTACLAW_TELEGRAM_CLIENT=metta, channels/telegram.metta is Lila's
 # Telegram client and this module starts no thread of its own. It keeps what
@@ -1342,8 +1296,7 @@ def start_telegram(token="", chat_id=""):
             if entry:
                 _durable_pending[key] = dict(entry, seen=set())
     _health_update(running=True, started_at=time.time(),
-                   client="metta", menu_status="pending", poll_status="starting")
-    threading.Thread(target=_register_menu_commands, daemon=True).start()
+                   client="metta", poll_status="starting")
     _recover_pending_attachments()
     return "metta"
 

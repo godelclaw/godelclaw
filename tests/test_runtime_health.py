@@ -52,7 +52,7 @@ class RuntimeHealthTest(unittest.TestCase):
         self.assertNotIn("activity: working", report)
 
     def test_health_reports_native_memory_without_chroma_counts(self):
-        self.write(self.channel, {"last_poll_ok_at": 995, "menu_status": "ok"})
+        self.write(self.channel, {"last_poll_ok_at": 995})
         self.write(self.working, {"saved_at": 999})
         self.write(self.cognitive, {"schema": 2, "last_completed_at": 997, "last_settled_at": 998})
         native = {"mode": "native", "name": "memories-test", "socket": "/nonexistent/memory.sock"}
@@ -71,7 +71,7 @@ class RuntimeHealthTest(unittest.TestCase):
             receipt = root / "modes/control-status.json"
             receipt.parent.mkdir()
             self.write(receipt, {"observed_at": 995, "channel_ready": True})
-            self.write(self.channel, {"last_poll_ok_at": 1, "menu_status": "unknown"})
+            self.write(self.channel, {"last_poll_ok_at": 1})
             self.write(self.working, {"saved_at": 1})
             self.write(self.mode, {"mode": "iter"})
             self.write(self.cognitive, {"schema": 2, "last_completed_at": 997, "last_settled_at": 998})
@@ -120,7 +120,7 @@ class RuntimeHealthTest(unittest.TestCase):
 
     def test_stopped_lifecycle_needs_channel_but_not_cognition(self):
         self.write(self.channel, {
-            "menu_status": "ok", "last_poll_ok_at": 999,
+            "last_poll_ok_at": 999,
             "loop_status": "awake", "waiting_until": 0,
         })
         self.write(self.working, {"saved_at": 1, "loops": 50})
@@ -149,7 +149,7 @@ class RuntimeHealthTest(unittest.TestCase):
 
     def test_healthy_wait_is_not_mistaken_for_a_hang(self):
         self.write(self.channel, {
-            "menu_status": "ok", "last_poll_ok_at": 999,
+            "last_poll_ok_at": 999,
             "loop_status": "waiting", "waiting_until": 1200,
         })
         self.write(self.working, {"saved_at": 1})
@@ -161,7 +161,7 @@ class RuntimeHealthTest(unittest.TestCase):
 
     def test_stale_poll_and_awake_loop_fail_independently(self):
         self.write(self.channel, {
-            "menu_status": "ok", "last_poll_ok_at": 100,
+            "last_poll_ok_at": 100,
             "loop_status": "awake", "waiting_until": 0,
         })
         self.write(self.working, {"saved_at": 1})
@@ -171,7 +171,7 @@ class RuntimeHealthTest(unittest.TestCase):
 
     def test_fresh_completed_model_turn_is_healthy_when_armed(self):
         self.write(self.channel, {
-            "menu_status": "ok", "last_poll_ok_at": 999,
+            "last_poll_ok_at": 999,
             "loop_status": "waiting", "waiting_until": 1200,
         })
         self.write(self.working, {"saved_at": 999, "loops": 5})
@@ -185,7 +185,7 @@ class RuntimeHealthTest(unittest.TestCase):
 
     def test_old_pending_turn_detects_empty_spinning(self):
         self.write(self.channel, {
-            "menu_status": "ok", "last_poll_ok_at": 999,
+            "last_poll_ok_at": 999,
             "loop_status": "waiting", "waiting_until": 1200,
         })
         self.write(self.working, {"saved_at": 999, "loops": 42})
@@ -199,7 +199,7 @@ class RuntimeHealthTest(unittest.TestCase):
 
     def test_new_pending_turn_gets_grace_despite_old_completion(self):
         self.write(self.channel, {
-            "menu_status": "ok", "last_poll_ok_at": 999,
+            "last_poll_ok_at": 999,
             "loop_status": "awake", "waiting_until": 0,
         })
         self.write(self.working, {"saved_at": 999, "loops": 5})
@@ -213,7 +213,7 @@ class RuntimeHealthTest(unittest.TestCase):
 
     def test_intentional_default_idle_needs_no_model_receipt(self):
         self.write(self.channel, {
-            "menu_status": "ok", "last_poll_ok_at": 999,
+            "last_poll_ok_at": 999,
             "loop_status": "waiting", "waiting_until": 1200,
             "started_at": 1,
         })
@@ -346,7 +346,7 @@ class RuntimeHealthTest(unittest.TestCase):
         for mode in ("godelclaw", "coding"):
             with self.subTest(mode=mode):
                 self.write(self.channel, {
-                    "menu_status": "ok", "last_poll_ok_at": 999,
+                    "last_poll_ok_at": 999,
                     "loop_status": "waiting", "waiting_until": 1200,
                 })
                 self.write(self.working, {"saved_at": 999, "loops": 0})
