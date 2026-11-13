@@ -8,7 +8,6 @@ import json
 import os
 from pathlib import Path
 import shutil
-import sqlite3
 import subprocess
 import unittest
 
@@ -19,6 +18,9 @@ import test_native_llm_boundary as boundary
                      'set native engine and synthetic SIWC fixture paths')
 class ChatGPTAgentTests(unittest.TestCase):
     run_guest = boundary.NativeBoundaryTests.run_guest
+    # The native ledger's records, read as the API-key boundary tests read them.
+    records = boundary.NativeBoundaryTests.records
+    column = boundary.NativeBoundaryTests.column
 
     @classmethod
     def setUpClass(cls):
@@ -74,12 +76,11 @@ class ChatGPTAgentTests(unittest.TestCase):
                                          {'role': 'system', 'content': 'api'},
                                          {'role': 'user', 'content': 'user _cache_boundary_ literal'}])
         self.assertEqual(body['reasoning'], {'effort': 'high'})
-        with sqlite3.connect(self.directory/'ledger.db') as db:
-            state, canonical = db.execute('SELECT state,result FROM native_calls').fetchone()
-            self.assertEqual(state, 'completed')
-            raw = json.loads(canonical)['native']
-            self.assertEqual(raw['output'][0]['encrypted_content'], 'opaque-fixture')
-            self.assertEqual(raw['usage'], {'input_tokens': 10, 'output_tokens': 2})
+        [(state, canonical)] = self.column('calls', 'state', 'result')
+        self.assertEqual(state, 'completed')
+        raw = json.loads(canonical)['native']
+        self.assertEqual(raw['output'][0]['encrypted_content'], 'opaque-fixture')
+        self.assertEqual(raw['usage'], {'input_tokens': 10, 'output_tokens': 2})
 
     def test_commentary_route_keeps_stable_parts_out_of_instructions(self):
         # The live route caps `instructions` at 1,048,576 characters, and the
@@ -192,9 +193,8 @@ class ChatGPTAgentTests(unittest.TestCase):
                          '!(println! (RESULT (llm:command "chatgpt:fixture-model" 42 "high" "hello")))\n')
         self.assertIn('(RESULT (nop))', out)
         self.assertEqual(len(self.identity_provider.api_requests), 1)
-        with sqlite3.connect(self.directory/'ledger.db') as db:
-            self.assertEqual(db.execute('SELECT provider FROM requests ORDER BY started').fetchall(),
-                             [('openai',), ('chatgpt',)])
+        self.assertEqual(self.column('requests', 'provider', order='started'),
+                         [('openai',), ('chatgpt',)])
 
     def test_legacy_sdk_is_lazy_and_reused_when_explicitly_called(self):
         module = self.directory/'fixture_modules/openai.py'
@@ -222,8 +222,7 @@ class ChatGPTAgentTests(unittest.TestCase):
         self.identity_provider.options['quota_failure'] = True
         out = self.guest('!(println! (RESULT (llm:command "chatgpt:fixture-model" 42 "high" "hello")))\n')
         self.assertIn('(RESULT ())', out); self.assertEqual(len(self.identity_provider.api_requests), 1)
-        with sqlite3.connect(self.directory/'ledger.db') as db:
-            self.assertEqual(db.execute('SELECT state FROM native_calls').fetchall(), [('failed',)])
+        self.assertEqual(self.column('calls', 'state'), [('failed',)])
 
     def test_reflected_bearer_never_enters_metta_or_diagnostics(self):
         self.identity_provider.options['reflect_token'] = True

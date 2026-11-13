@@ -1055,6 +1055,89 @@
         "A leftover that ignores SIGTERM keeps its scope deactivating until systemd kills it",
         "No paid live canary or 24-hour soak claimed"
       ]
+    },
+    {
+      "id": "provider-core-batch-7-call-boundary-and-honest-probes",
+      "status": "qualified-and-deployed",
+      "native_modules": [
+        "src/call_gate_cetta.metta",
+        "src/native_call_cetta.metta",
+        "src/provider_request_cetta.metta"
+      ],
+      "host_functions_removed": [
+        "native_llm_host.bind_native_call",
+        "native_llm_host.note_admitted",
+        "strategy_host.stopped",
+        "input_ack.request_finish",
+        "input_ack.turn_dump"
+      ],
+      "runtime_commit": "2d3dd0cd7a",
+      "engine_commit": "4374a1df0d15c6a1bb839746ec2d1447798ad072",
+      "lean_commit": "b33f6beef",
+      "release": "5cf5e991",
+      "gateway_release": "5cf5e991",
+      "test_orchestration": "CeTTa core without Python",
+      "checks": {
+        "native_suites_passed": "24 of 24",
+        "chatgpt_route_on_siwc_test_engine": "13 of 13 (three tests now read the native ledger)",
+        "python_suite": "26 failing on the branch and on main, none only on the branch",
+        "python_entry_census": {
+          "coding-two-turn": [
+            36,
+            42
+          ],
+          "activity-delivery": [
+            34,
+            41
+          ],
+          "coding-lifecycle": [
+            76,
+            52
+          ],
+          "native-provider-command": [
+            14,
+            11
+          ]
+        },
+        "census_rebaselined": {
+          "coding-two-turn": [
+            36,
+            44
+          ],
+          "activity-delivery": [
+            34,
+            42
+          ],
+          "reason": "the two turn probes now run on the native transport instead of a replaced host chat function, so the four remaining host entries of each call are counted; without the call-boundary port the rise would have been 16 each"
+        },
+        "live_observation": "a real provider call and a native help command completed on the deployed release",
+        "paired_benchmark": {
+          "pairs_per_workload": 21,
+          "baseline_runtime_commit": "f5ccd6cd7e",
+          "paired_median_ms": {
+            "small": 40.5,
+            "large_1mib": 32.4,
+            "many_blocks_1mib": 25.8
+          },
+          "same_tree_control_ms": {
+            "small": -0.6,
+            "large_1mib": -0.3,
+            "many_blocks_1mib": -1.7
+          },
+          "peak_rss_change_percent": {
+            "small": 10.6,
+            "large_1mib": 10.2,
+            "many_blocks_1mib": 9.2
+          }
+        },
+        "paired_installed_verification": true
+      },
+      "limits": [
+        "A one-call process pays 25-40 ms and about 10% peak RSS once, at its first provider call (see tuning debt)",
+        "native_call_seed, submitted, progress_observed and finish still enter the host on each call",
+        "The full effect-receipts qualification was not rerun; its dispatcher scenario was replayed with the real latch",
+        "No paid live canary or 24-hour soak claimed"
+      ]
     }
   ],
   "tuning_debt": [
@@ -1094,6 +1177,12 @@
       "likely_cause": "more synced writes of the health record per turn on the native path (each fsync is about 6 ms)",
       "direction": "count fsyncs per turn native against Python, rerun interleaved on a quiet host, and batch the record writes",
       "resolved": "refuted: identical fsync counts and per-write cost before and after; an A/A run of identical code shows +7.4% p95 from noise alone; a 61-pair run gives a paired median of +12.5 ms with a 95% interval spanning zero"
+    },
+    {
+      "area": "first use of != in a process",
+      "measured": "the first != a process evaluates costs 13-17 ms and about 5 MiB on engines dc2b3bcb and 4374a1df; later uses cost 15 microseconds; a first (not (== a b)) costs 23 microseconds",
+      "likely_cause": "the engine resolves != lazily on first use",
+      "direction": "implement != beside == in the engine or resolve it at startup; do not rewrite the runtime modules that use it"
     }
   ]
 }

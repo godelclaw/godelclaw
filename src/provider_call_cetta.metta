@@ -1,6 +1,7 @@
 ; Native request preparation bound to an existing owned provider lifecycle.
 !(import! &self ./provider_request_cetta.metta)
 !(import! &self ./native_call_cetta.metta)
+!(import! &self ./call_gate_cetta.metta)
 
 ; Call boundaries consume computed values in both extended dialects.
 (: pcall:begin (-> %Undefined% %Undefined% %Undefined%))
@@ -12,10 +13,12 @@
 (: pcall:metadata (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (: pcall:prepared (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (: pcall:refused (-> %Undefined% %Undefined% %Undefined%))
+(: pcall:refusal-code (-> %Undefined% %Undefined%))
 (: pcall:seal (-> %Undefined% %Undefined%))
 (: pcall:submit (-> %Undefined% %Undefined% %Undefined%))
 (: pcall:transport (-> %Undefined% %Undefined% %Undefined% %Undefined%))
 (: pcall:bound (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
+(: pcall:bindable? (-> %Undefined% %Undefined% %Undefined%))
 (: pcall:metadata-of (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (: pcall:structured-plan (-> %Undefined% %Undefined% %Undefined% %Undefined%))
 (: pcall:structured-prepared (-> %Undefined% %Undefined% %Undefined% %Undefined%))
@@ -58,9 +61,12 @@
 ; A refused preparation keeps its host handle for the failure it settles as;
 ; it never becomes a call owner.
 (= (pcall:refused $plan $reason)
-   (let* (($text (preq:repr $reason))
+   (let* (($text (preq:repr (pcall:refusal-code $reason)))
           ($host (py-call (native_llm_host.native_preparation_failed $plan $text))))
      (RefusedProviderCallV1 $host)))
+; The codec's refusal is named by its code, as a preparation's own is.
+(= (pcall:refusal-code $reason)
+   (case $reason (((llm:v1:error $code) $code) ($other $other))))
 ; A command's metadata measures its prompt; a structured request has none.
 (= (pcall:metadata-of (CommandMetadataV1 $request $encoding $profile $prompt) $active $model $layout)
    (pcall:metadata $request $encoding $profile $prompt $active $model $layout))
@@ -71,18 +77,21 @@
        (preq:pair "prompt_bytes" (preq:number "0"))
        (preq:pair "feedback_visible" (preq:bool False)) (preq:pair "footer_visible" (preq:bool False))
        (preq:pair "stream" (preq:bool $active)) (preq:pair "model" $model) (preq:pair "cache_layout" $layout)))))
-; The prepared wire is sealed, bound to its host handle, and owned natively.
+; The prepared wire is sealed and owned natively. The owner's phase is the
+; binding: a call is bound once, to a wire for the model its seed named. The
+; host handle takes no part; it is only what the remaining host observers hold.
 (= (pcall:bound $plan $facts $path $spec $result)
    (case $result
      (((PreparedProviderWireV1 $wire $active $model $layout)
-       (let* (($transport (pcall:transport $facts $path $wire)) ($seal (pcall:seal $transport))
-              ($metadata (pcall:metadata-of $spec $active $model $layout))
-              ($metadata-text (preq:render $metadata))
-              ($bound (py-call (native_llm_host.bind_native_call $plan $seal $metadata-text))))
-         (if (host:flag $bound)
-           (PreparedProviderCallV1 (call:owner $plan (pcall:owner-facts $facts $metadata $active) $seal) $transport)
-           (pcall:refused $plan native-binding-refused))))
+       (if (pcall:bindable? $facts $model)
+         (let* (($transport (pcall:transport $facts $path $wire)) ($seal (pcall:seal $transport))
+                ($metadata (pcall:metadata-of $spec $active $model $layout)))
+           (PreparedProviderCallV1 (call:owner $plan (pcall:owner-facts $facts $metadata $active) $seal) $transport))
+         (pcall:refused $plan native-binding-refused)))
       ($invalid (pcall:refused $plan $invalid)))))
+(= (pcall:bindable? $facts $model)
+   (and (== $model (preq:string (pcall:fact $facts "wire_model")))
+        (not (call:live? (pcall:fact $facts "correlation")))))
 ; The owner's immutable facts: the seed's, plus what preparation fixed.
 (= (pcall:owner-facts $facts $metadata $active)
    (let* (((JsonObject $seed) (json:parse (preq:render $facts)))
@@ -93,9 +102,12 @@
           ($stream (if $active true false))
           ($prompt-layout (lp:field (JsonObject $prepared) "prompt_layout" JsonNull))
           ($prompt-bytes (lp:field (JsonObject $prepared) "prompt_bytes" 0))
+          ($feedback (lp:field (JsonObject $prepared) "feedback_visible" false))
+          ($footer (lp:field (JsonObject $prepared) "footer_visible" false))
           ($pairs (call:append $seed ((JsonPair "fingerprint" $fingerprint) (JsonPair "prepared_stream" $stream)
                                       (JsonPair "cache_layout" $layout) (JsonPair "prompt_layout" $prompt-layout)
-                                      (JsonPair "prompt_bytes" $prompt-bytes)))))
+                                      (JsonPair "prompt_bytes" $prompt-bytes)
+                                      (JsonPair "feedback_visible" $feedback) (JsonPair "footer_visible" $footer)))))
      (JsonObject $pairs)))
 (= (pcall:encoded $plan $facts $request $encoding $cache $profile $prompt $encoded)
    (case $encoded
@@ -169,7 +181,7 @@
          (if (llm:plan-ready $plan) (llm:v1:failed duplicate duplicate duplicate-plan not-started)
            (llm:v1:failed unsubmitted unsubmitted admission-error not-started))
          ; Distinct names: HE unifies a repeated $_ binding.
-         (let* (($gated (py-call (native_llm_host.gate)))
+         (let* (($gated (call-gate:pass))
                 ($shown (if (== (call:fact $plan "visible" false) true)
                           (py-call (native_llm_host.native_wire_started (call:host $plan))) False)))
            (pcall:submit $plan $transport)))))))

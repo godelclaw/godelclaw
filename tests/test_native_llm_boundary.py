@@ -142,15 +142,16 @@ def turn(identity, trigger):
     return 1
 
 def abort_description():
-    # From the bound preparation on, the ledger refuses the request's description
+    # From the call's seed on, the ledger refuses the request's description
     # (the test's proxy drops every llm-describe connection once this file exists).
+    # Preparation and binding follow the seed natively and describe nothing.
     import os, native_llm_host
-    original = native_llm_host.bind_native_call
-    def bind(plan, seal, encoded):
-        result = original(plan, seal, encoded)
+    original = native_llm_host.native_call_seed
+    def seed(*arguments):
+        result = original(*arguments)
         open(os.environ["FIXTURE_DESCRIBE_FAULT"], "w").close()
         return result
-    native_llm_host.bind_native_call = bind
+    native_llm_host.native_call_seed = seed
     return 1
 ''')
         return f'!(import! &self "{module}")\n'

@@ -5,6 +5,9 @@
 ; admission, one submission, and its state read back from the native ledger.
 (= (activity:field $request $key)
    (case (llm:v1:get $request $key) (((JsonString $text) $text) ((JsonNumber $text) (parse $text)) ($other $other))))
+; The request's fingerprint is the native owner's fact; a refused preparation has none.
+(= (activity:fingerprint $owner)
+   (if (call:native? $owner) (call:fact $owner "fingerprint" "") ""))
 ; A worker can await serially: the separate durable owner keeps living.
 ; once avoids enumerating the successful submission a second time.
 !(once (let* (($request (json-parse (fs:read-text (system:getenv-or-default "METTACLAW_ACTIVITY_INPUT" ""))))
@@ -12,4 +15,4 @@
               ($plan (pcall:command-plan $selected (activity:field $request "tokens")
                                          (activity:field $request "effort") (activity:field $request "prompt")))
               ($result (llm:run $plan)))
-          (py-call (activity_model_host.finish (call:host (llm:owner $plan)) $result))))
+          (py-call (activity_model_host.finish (call:host (llm:owner $plan)) $result (activity:fingerprint (llm:owner $plan))))))

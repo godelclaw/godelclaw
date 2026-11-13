@@ -6,7 +6,26 @@
 ;; Two real turns through the shared PeTTa loop.  The first executes a real
 ;; deterministic help command.  The second request must contain both that
 ;; result and the Iter fixture's appended message before its model call.
-!(py-eval "(__import__('helper').__dict__.__setitem__('_coding_probe_prompts', []), __import__('synthetic_llm').__dict__.__setitem__('chat', lambda *args: (__import__('helper')._coding_probe_prompts.append(str(args[-1])), __import__('cognitive_health').turn_started('probe'), __import__('cognitive_health').turn_completed(16), ('((help _quote_send_quote_))' if len(__import__('helper')._coding_probe_prompts)==1 else '((nop))'))[-1]), __import__('helper').__dict__.__setitem__('coding_probe_ok', lambda: int(len(__import__('helper')._coding_probe_prompts)>=2 and ('user: native-iter' in __import__('helper')._coding_probe_prompts[0] or '\"role\":\"user\",\"content\":\"native-iter\"' in __import__('helper')._coding_probe_prompts[0]) and 'LAST_SKILL_USE_RESULTS:' in __import__('helper')._coding_probe_prompts[1] and ('usage: (send' in __import__('helper')._coding_probe_prompts[1] or 'api:help' in __import__('helper')._coding_probe_prompts[1]))))")
+;; The provider is the test world's loopback peer, on the native transport: its
+;; scripted replies and the requests it received are files in the world.
+(= (probe:world $name) (str:concat (system:getenv-or-default "NATIVE_TEST_WORLD" "") $name))
+(= (probe:reply $content)
+   (str:join "" ("{\"id\":\"fixture\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"" $content
+                 "\"}],\"stop_reason\":\"end_turn\",\"usage\":{\"input_tokens\":10,\"output_tokens\":2}}")))
+(= (probe:has $text $needle)
+   (case (str:find $text $needle) (((TextNotFound $missing) False) ($found True))))
+(= (probe:coding-ok)
+   (let* (($count (json:parse (str:strip-python (fs:read-text (probe:world "count")))))
+          ($first (fs:read-text (probe:world "request-1.body")))
+          ($second (fs:read-text (probe:world "request-2.body"))))
+     (and (>= $count 2)
+          (and (probe:has $first "native-iter")
+               (and (probe:has $second "LAST_SKILL_USE_RESULTS:")
+                    (or (probe:has $second "usage: (send") (probe:has $second "api:help")))))))
+;; Without the test world there is no provider to script: stop before any write.
+!(assert (not (== (system:getenv-or-default "NATIVE_TEST_WORLD" "") "")))
+!(fs:write (probe:world "response-1.body") (probe:reply "((help \\\"send\\\"))"))
+!(fs:write (probe:world "response-2.body") (probe:reply "((nop))"))
 !(py-eval "(__import__('helper').__dict__.__setitem__('_working_boot_cache', {}), __import__('helper').__dict__.__setitem__('working_boot', lambda: 1))")
 !(initMemory)
 !(configure commchannel telegram)
@@ -22,5 +41,5 @@
             (turnProcess (process-periphery $after-first))))
          ($_ (cut))
          ($_ (assertEqual (process-root $after-second) weak-process-core-v1))
-         ($_ (assertEqual (py-call (helper.coding_probe_ok)) 1)))
+         ($_ (assertEqual (probe:coding-ok) True)))
      (println! INTEGRATED_CODING_TURN_OK))

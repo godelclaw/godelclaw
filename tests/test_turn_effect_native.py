@@ -19,6 +19,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path[:0] = [str(HERE), str(ROOT / "src"), str(ROOT / "channels")]
 import input_ack
+import native_ledger
 import llm_policy
 from observed_strategy import Ledger, digest, encoded
 from native_ledger_client import NativeRunner
@@ -258,7 +259,7 @@ class TurnEffectNativeTest(NativeSides):
             first = store.capture("a", "b", ROUTER, 0)
             store.accept("b", "second")
             second = store.capture("b", "b", ROUTER, 0)
-            _, turns, arrivals = input_ack.turn_dump()
+            _, turns, arrivals = native_ledger.turn_dump()
             positions = {turn["serial"]: turn["position"] for turn in turns}
             self.assertLess(arrivals["a"], positions[first["serial"]])
             self.assertLess(positions[first["serial"]], arrivals["b"])

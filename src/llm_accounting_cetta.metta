@@ -26,7 +26,7 @@
 (= (account:claimed $plan $metadata $answer)
    (case $answer
      (((LedgerChanged True)
-       (if (host:flag (py-call (native_llm_host.claim_effect (call:host $plan))))
+       (if (account:shown $plan)
          (let $_ (call:claimed $plan) True)
          (account:cleanup-unsent $plan $metadata)))
       ((LedgerChanged False)
@@ -34,13 +34,18 @@
          (((LedgerError $ignored2) (account:reject $plan "native-claim-error" -1))
           ($settled (account:reject $plan "native-call-capacity" -1)))))
       ($error (account:cleanup-unsent $plan $metadata)))))
+; A claimed call opens the display and the commentary observer on the host
+; when either is configured. A call nothing observes has no host effect here.
+(: account:shown (-> %Undefined% %Undefined%))
+(= (account:shown $plan)
+   (if (or (== (call:fact $plan "display" false) true) (== (call:fact $plan "commentary" false) true))
+     (host:flag (py-call (native_llm_host.claim_effect (call:host $plan)
+                           (if (== (call:fact $plan "prepared_stream" false) true) "true" "false"))))
+     True))
 (: account:admitted (-> %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (account:admitted $plan $metadata $answer)
    (case $answer
-     (((LedgerAdmitted $ignored3)
-       (if (host:flag (py-call (native_llm_host.note_admitted (call:host $plan))))
-         (account:claimed $plan $metadata (nl:claim $metadata (system:wall-time)))
-         (account:cleanup-unsent $plan $metadata)))
+     (((LedgerAdmitted $ignored3) (account:claimed $plan $metadata (nl:claim $metadata (system:wall-time))))
       ((LedgerDenied $reason $retry) (account:reject $plan $reason $retry))
       ($error (account:reject $plan "native-admission-error" -1)))))
 (: account:claim (-> %Undefined% %Undefined%))
@@ -120,10 +125,22 @@
 (= (account:note-rejection $plan $decision)
    (case $decision
      (((CommentaryRejectedV1 $code)
-       (case (nl:command-output-rejected (account:metadata $plan) (lp:text $code) (system:wall-time))
-         (((LedgerError $ignored12) (py-call (native_llm_host.accounting_observation_error (call:host $plan) "rejection")))
-          ($recorded 1))))
+       (let $logged (system:write stderr (account:rejection-line $plan (lp:text $code)))
+         (case (nl:command-output-rejected (account:metadata $plan) (lp:text $code) (system:wall-time))
+           (((LedgerError $ignored12) (py-call (native_llm_host.accounting_observation_error (call:host $plan) "rejection")))
+            ($recorded 1)))))
       ($other 1))))
+; The operator's line for a rejected command output: its code and whether the
+; prompt showed the rejection feedback and the required-output footer.
+(: account:rejection-line (-> %Undefined% %Undefined% %Undefined%))
+(= (account:rejection-line $plan $code)
+   (let* (($known (or (== $code "incomplete-output") (or (== $code "invalid-native-tool")
+                                                         (== $code "refused-or-structured-output"))))
+          ($name (if $known $code "invalid-envelope"))
+          ($feedback (if (== (call:fact $plan "feedback_visible" false) true) "true" "false"))
+          ($footer (if (== (call:fact $plan "footer_visible" false) true) "true" "false")))
+     (str:join "" ("[command_contract] rejected; code=" $name "; feedback_visible=" $feedback
+                   "; footer_visible=" $footer "\n"))))
 ; The completion's effects, recorded once: its observation, the calibration
 ; of the model the call captured, and an Anthropic call's usage tally. A
 ; compaction is maintenance: it is tallied only. No effect can fail delivery.

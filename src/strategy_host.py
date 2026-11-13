@@ -410,11 +410,6 @@ def begin_continuation(turn, commands):
     return actual
 
 
-def stopped():
-    import lifecycle
-    return int(not lifecycle.cognition_enabled())
-
-
 def broker_feedback():
     """Explain admission without changing or granting tool authority."""
     with _lock:

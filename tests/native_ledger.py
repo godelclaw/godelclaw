@@ -168,3 +168,20 @@ def llm_events(call_id=None, socket=None):
     """llm_call_history rows in sequence order, optionally of one call."""
     rows = sorted(llm_records("events", socket), key=lambda row: row["sequence"])
     return [row for row in rows if call_id is None or row["call_id"] == call_id]
+
+
+def turn_dump(socket=None):
+    """(meta keys, turns, arrivals): every turn as a dict and every request's arrival
+    position. A whole-store read that only tests make."""
+    import input_ack
+    from execution_gateway.cetta_worker import S
+    answer = input_ack._ledger_call("turn-dump", (), input_ack.WHOLE_READ_SECONDS, socket)
+    if not (isinstance(answer, tuple) and len(answer) == 4 and answer[0] == S("dump")):
+        raise input_ack.LedgerUnavailable("input ledger turn-dump: unexpected answer %s" % input_ack._show(answer))
+    state = {entry[0]: None if input_ack._is_none(entry[1]) else entry[1]
+             for entry in input_ack._entries(answer[1], "turn-dump")}
+    turns = [dict(serial=t[1], status=t[2], revision=t[3], mode=t[4], owner=t[5], focus=t[6],
+                  boundary_digest=t[7], router=t[8], guard=t[9], position=t[10])
+             for t in input_ack._entries(answer[2], "turn-dump")]
+    arrivals = {entry[0]: entry[1] for entry in input_ack._entries(answer[3], "turn-dump")}
+    return state, sorted(turns, key=lambda turn: turn["serial"]), arrivals

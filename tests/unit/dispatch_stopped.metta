@@ -1,0 +1,16 @@
+; Unit tests of dispatch:stopped (src/command_dispatch_hooks.metta); no Python.
+; Commands are withheld unless the operator latch reads as running.
+!(import! &self ../native_test_support.metta)
+!(import! &self ../../src/command_dispatch_hooks.metta)
+!(let* (($_ (nt:require no-latch-withholds (nt:equal (dispatch:stopped) 1)))
+        ($_ (lifecycle-native:start))
+        ($_ (nt:require running-admits (nt:equal (dispatch:stopped) 0)))
+        ($_ (lifecycle-native:stop))
+        ($_ (nt:require stopped-withholds (nt:equal (dispatch:stopped) 1)))
+        ($_ (lifecycle-native:start))
+        ($_ (nt:require restarted-admits (nt:equal (dispatch:stopped) 0)))
+        ($_ (fs:write (mode-path:lifecycle) "{broken"))
+        ($_ (nt:require torn-latch-withholds (nt:equal (dispatch:stopped) 1)))
+        ($_ (fs:write (mode-path:lifecycle) "{\"schema\": 2, \"state\": \"running\"}"))
+        ($_ (nt:require foreign-latch-withholds (nt:equal (dispatch:stopped) 1))))
+   (println! UNIT_DISPATCH_STOPPED_OK))

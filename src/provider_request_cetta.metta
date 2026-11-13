@@ -27,6 +27,7 @@
 (: preq:chunks (-> %Undefined% %Undefined%))
 (: preq:command-request (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (: preq:commentary-legacy (-> %Undefined% %Undefined% %Undefined% %Undefined%))
+(: preq:effort-text (-> %Undefined% %Undefined%))
 (: preq:cons (-> %Undefined% %Undefined% %Undefined%))
 (: preq:conversation-blocks (-> %Undefined% %Undefined%))
 (: preq:drop (-> %Undefined% %Undefined% %Undefined%))
@@ -395,8 +396,14 @@
    (if (== $protocol "anthropic")
      (let $cached (preq:put $request "cache_system" (preq:bool True))
        (if (== $ttl "5m") $cached (preq:put $cached "cache_ttl" (preq:string $ttl)))) $request))
-(= (preq:command-request $protocol $model $tokens $effort $parts $frame $tool $ttl)
+; The loop's policy names an effort as a symbol (high); configuration gives
+; text. The request carries text: a symbol inside a JSON string matches no
+; effort a protocol accepts, and the call would be refused.
+(= (preq:effort-text $effort)
+   (if (== (get-metatype $effort) Symbol) (preq:repr $effort) $effort))
+(= (preq:command-request $protocol $model $tokens $requested $parts $frame $tool $ttl)
    (let* (($base (preq:base-command $protocol $model $tokens $parts $frame $tool $ttl))
+          ($effort (preq:effort-text $requested))
           ($reasoned (if (preq:member? $effort ("default" "" "None")) $base
                         (preq:put $base "reasoning" (preq:object ((preq:pair "effort" (preq:string $effort))))))))
      (if (== $tool JsonNull) $reasoned

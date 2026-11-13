@@ -60,7 +60,9 @@ def setup():
     strategy_host.command_result = result
     strategy_host.command_identity = identity
     strategy_host.reserve_command = reserve
-    strategy_host.stopped = lambda: 0
+    # The dispatcher reads the operator latch itself: grant cognition.
+    import lifecycle
+    lifecycle.start()
     # Keep the full registry: Qualification provides generated paths for every
     # native source. Receipt view remains forbidden on Python, so the complete
     # context caller cannot hide a receipt fallback behind a scoped registry.
@@ -78,6 +80,7 @@ def observe(value):
 
 
 def stopped(value):
-    import strategy_host
-    strategy_host.stopped=lambda:int(value)
+    """Set the operator latch the dispatcher reads."""
+    import lifecycle
+    lifecycle.stop() if int(value) else lifecycle.start()
     return 1

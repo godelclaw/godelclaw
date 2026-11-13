@@ -19,9 +19,11 @@
           ($iteration (if (nt:equal $name "tests/native_iter_multiturn_probe.metta")
              (nq:path $world "native-iter-multiturn") (nt:join $root "tests/fixtures/native_iter_transformations")))
           ($changes (("METTACLAW_SKIP_INITIALIZE" "1") ("METTACLAW_SKIP_CONFIG" "1")
-            ; Existing reference probes install scripted replies at this seam.
-            ; Real native HTTP/settlement is exercised by test_provider_native.
-            ("METTACLAW_LLM_TRANSPORT" "python")
+            ; Most reference probes still install scripted replies at the host's
+            ; chat seam. A probe that nr:probe-settings puts on the native
+            ; transport is answered by the world's loopback provider instead:
+            ; its replies and requests are files in NATIVE_TEST_WORLD.
+            ("METTACLAW_LLM_TRANSPORT" "python") ("NATIVE_TEST_WORLD" (nq:path $world ""))
             ; Every probe's Telegram client runs with no channel service.
             ("METTACLAW_TELEGRAM_SERVICE_SOCKET" "")
             ("SYNTHETIC_API_KEY" "") ("ANTHROPIC_API_KEY" "") ("OPENAI_API_KEY" "") ("KIMI_API_KEY" "")
@@ -38,7 +40,12 @@
             ("METTACLAW_HISTORY_PATH" (nq:path $world "history.metta"))
             ("METTACLAW_WORKING_SET_PATH" (nq:path $world "working-set.json"))
             ("METTACLAW_DEPLOYMENT_STATE_PATH" $deployment) ("TMPDIR" $temporary) ("PATH" $path)))
-          ($special (case (collapse (nr:probe-settings $name)) ((() ()) (($settings) $settings)))))
+          ($special (case (collapse (nr:probe-settings $name)) ((() ()) (($settings) $settings))))
+          ; On the native transport a mode selected after boot ends the
+          ; process at the next call's gate, as it must. The coding probe
+          ; therefore boots in its mode, as an agent does after that recycle.
+          ($_ (if (nt:equal $name "tests/integrated_coding_turn_probe.metta")
+                (fs:write (nq:path $world "loop-mode.json") "{\"mode\": \"coding\"}") True)))
      (nq:overlay-env (nq:overlay-env $env $changes) $special)))
 ; Settings a probe needs from process start, which the clients read once.
 (= (nr:probe-settings "tests/telegram_access_probe.metta")
@@ -47,6 +54,12 @@
 (= (nr:probe-settings "tests/telegram_window_probe.metta")
    (("METTACLAW_TELEGRAM_OPERATOR_IDS" "7") ("METTACLAW_TELEGRAM_PRIMARY_CHAT_ID" "42")
     ("METTACLAW_TELEGRAM_ALLOWED_CHAT_IDS" "42,-100")))
+; The census scenarios run the path the agents run: the native transport.
+(= (nr:native-transport) (("METTACLAW_LLM_TRANSPORT" "native") ("SYNTHETIC_API_KEY" "fixture-secret")))
+(= (nr:probe-settings "tests/activity_delivery_full_turn_probe.metta") (nr:native-transport))
+; Coding mode asks for a reasoning effort the Anthropic protocol carries.
+(= (nr:probe-settings "tests/integrated_coding_turn_probe.metta")
+   (("METTACLAW_LLM_TRANSPORT" "native") ("ANTHROPIC_API_KEY" "fixture-secret") ("SYNTHETIC_MODEL" "claude-fixture")))
 (= (nr:probe-settings "tests/allowance_wake_loop_probe.metta")
    (("METTACLAW_TELEGRAM_GROUP_WAKE_EVERY" "-100:3")
     ("METTACLAW_TELEGRAM_BOT_USERNAME" "GodelTestBot") ("METTACLAW_TELEGRAM_OPERATOR_IDS" "777")))

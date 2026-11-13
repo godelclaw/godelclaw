@@ -9,6 +9,18 @@
          (((llm:v1:ok (llm:v1:wire $path $body))
            (preq:wire $body $provider $protocol "command" False $visible $cache))
           ($bad $bad)))) ($bad $bad))))
+; The wire body of a command prepared with the given reasoning effort, checked
+; and encoded as a call prepares it (src/provider_call_cetta.metta).
+(= (request-test:effort-body $provider $protocol $effort)
+   (case (preq:prepare-command $protocol "fixture" 42 $effort "S_cache_boundary_U" JsonNull "1h")
+     (((PreparedProviderCommandV1 $request $encoding $cache $profile)
+       (case (if (nt:equal $provider "synthetic") (preq:synthetic $request) $request)
+         (((ProviderPreparationRefusedV1 $why) (ProviderPreparationRefusedV1 $why))
+          ($valid (case (preq:encode $protocol $encoding $request)
+            (((llm:v1:ok (llm:v1:wire $path $body))
+              (case (preq:wire $body $provider $protocol "command" False False $cache)
+                (((PreparedProviderWireV1 $wire $active $model $layout) (preq:parse $wire)) ($bad $bad))))
+             ($bad $bad))))))) ($bad $bad))))
 (= (request-test:body $provider $protocol $prompt $visible)
    (case (request-test:wire $provider $protocol $prompt $visible)
      (((PreparedProviderWireV1 $wire $active $model $layout) (preq:parse $wire)) ($bad $bad))))
@@ -64,6 +76,17 @@
          (nt:equal (preq:field $chat "messages")
              (preq:parse "[{\"role\":\"system\",\"content\":\"S\"},{\"role\":\"user\",\"content\":\"U\"}]"))))
      ($_ (nt:require synthetic-reasoning (nt:equal (preq:field $chat "reasoning_effort") (JsonString "low"))))
+     ; The loop's policy names its effort as a symbol; the wire carries text.
+     ($_ (nt:require symbol-effort-is-text-on-chat-completions
+         (nt:equal (preq:field (request-test:effort-body "synthetic" "chat-completions" high) "reasoning_effort") (JsonString "high"))))
+     ($_ (nt:require symbol-effort-is-text-on-anthropic
+         (nt:equal (preq:field (preq:field (request-test:effort-body "anthropic" "anthropic" high) "output_config") "effort") (JsonString "high"))))
+     ($_ (nt:require symbol-effort-is-text-on-responses
+         (nt:equal (preq:field (preq:field (request-test:effort-body "kimi" "responses" high) "reasoning") "effort") (JsonString "high"))))
+     ($_ (nt:require text-effort-unchanged
+         (nt:equal (preq:field (preq:field (request-test:effort-body "anthropic" "anthropic" "max") "output_config") "effort") (JsonString "max"))))
+     ($_ (nt:require default-symbol-effort-sends-none
+         (not (preq:has (request-test:effort-body "anthropic" "anthropic" default) "output_config"))))
      ($responses (request-test:body "kimi" "responses" "S_cache_boundary_U" True))
      ($_ (nt:require command-reasoning-is-not-replay (not (preq:has $responses "include"))))
      ($_ (nt:require visible-response-reasoning

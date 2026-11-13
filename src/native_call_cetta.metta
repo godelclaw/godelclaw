@@ -30,6 +30,9 @@
 (= (call:forget $id)
    (collapse (match &self (NativeCallPhaseV1 $id $phase) (remove-atom &self (NativeCallPhaseV1 $id $phase)))))
 (= (call:release $owner) (call:forget (call:correlation $owner)))
+; A live call: its phase exists from its binding until its release.
+(= (call:live? $id)
+   (not (== (collapse (match &self (NativeCallPhaseV1 $id $phase) True)) ())))
 
 (= (call:native? $owner) (case $owner (((NativeCallOwnerV1 $h $f $s) True) ($other False))))
 ; The handle host observers take: an owner's, or a refused preparation's own.

@@ -11,7 +11,6 @@ from pathlib import Path
 import sys
 import time
 from types import SimpleNamespace
-import threading
 import uuid
 
 # Standalone pinned-core runners need not configure the framework's PYTHONPATH.
@@ -23,7 +22,6 @@ import model_commentary
 import stream_sink
 
 _session_epoch = uuid.uuid4().hex
-_claim_lock = threading.Lock()
 
 
 def capture_request(plan, body):
@@ -167,8 +165,11 @@ def _call_facts(plan):
         "epoch", "correlation", "protocol", "wire_model", "stream", "timeout",
         "cap", "connect", "first", "idle", "soft", "kind", "activity", "lane", "guard",
         "selected_model")}
+    purpose = getattr(plan, "purpose", "turn")
+    # display and commentary say whether the claim has a host effect at all.
     facts.update(ready=True, visible=plan.native_visible, maximum=plan.max_output,
-                 purpose=getattr(plan, "purpose", "turn"), origin=plan.call_origin)
+                 purpose=purpose, origin=plan.call_origin, display=stream_sink.configured(),
+                 commentary=(plan.kind, purpose) == ("command", "turn") and model_commentary.enabled())
     return facts
 
 
@@ -194,7 +195,7 @@ def _host_plan(kind, purpose, selected, tokens, **fields):
     import strategy_host
     settings = wait_settings()
     plan = SimpleNamespace(kind=kind, encoding="default", ready="preparing", native_ledger=True,
-        max_output=int(tokens), selected_model=str(selected), sent=False, claimed=False,
+        max_output=int(tokens), selected_model=str(selected), sent=False,
         activity=call_scope(), lane=call_lane(),
         guard=strategy_host.guard() if strategy_host.enabled() else None,
         call_origin=strategy_host.accounting_origin(),
@@ -294,52 +295,10 @@ def subscription_seed(selected, tokens, kind, purpose, cap):
     return plan, json.dumps(facts, ensure_ascii=False)
 
 
-def bind_native_call(plan, seal, encoded):
-    """Bind native preparation to this owner before any admission or dispatch."""
-    with _claim_lock:
-        if plan.ready != "preparing" or getattr(plan, "claim_started", False):
-            return "false"
-        return _bind_native_call(plan, seal, encoded)
-
-
-def _bind_native_call(plan, seal, encoded):
-    try:
-        value = json.loads(str(encoded))
-        fingerprint = value["fingerprint"]
-        # A structured request has no prompt: no layout, size or contract marks.
-        prompt = (type(value["prompt_layout"]) is dict if plan.kind == "command" else
-                  value["prompt_layout"] is None and value["prompt_bytes"] == 0 and
-                  value["feedback_visible"] is False and value["footer_visible"] is False)
-        if (len(str(seal)) != 64 or len(fingerprint) != 64 or
-                any(c not in "0123456789abcdef" for c in str(seal) + fingerprint) or
-                value["model"] != plan.wire_model or
-                value["encoding"] not in ("default", "messages") or
-                type(value["prompt_bytes"]) is not int or value["prompt_bytes"] < 0 or
-                type(value["stream"]) is not bool or not prompt or
-                type(value["feedback_visible"]) is not bool or type(value["footer_visible"]) is not bool or
-                (plan.protocol == "anthropic" and type(value["cache_layout"]) is not dict)):
-            raise ValueError("invalid native preparation metadata")
-        fields = dict(request_fingerprint=fingerprint, prepared_seal=str(seal),
-            encoding=value["encoding"], prompt_layout=value["prompt_layout"],
-            prompt_bytes=value["prompt_bytes"], prompt_feedback=value["feedback_visible"],
-            prompt_footer=value["footer_visible"], stream=value["stream"],
-            call_context=dict(call_id=plan.correlation, model=plan.wire_model,
-                              provider="chatgpt" if getattr(plan, "request_profile", "") == "chatgpt-plan" else plan.provider,
-                              purpose=getattr(plan, "purpose", "turn")))
-        if plan.protocol == "anthropic":
-            fields["cache_layout"] = value["cache_layout"]
-        vars(plan).update(fields)
-        plan.ready = "true"
-        return "true"
-    except (ValueError, TypeError, KeyError, AttributeError) as error:
-        plan.error, plan.ready = error, "false"
-        return "false"
-
-
 def native_preparation_failed(plan, reason):
-    with _claim_lock:
-        if plan.ready == "preparing":
-            plan.error, plan.ready = ValueError(str(reason)), "false"
+    if plan.ready == "preparing":
+        plan.error, plan.ready = ValueError(str(reason)), "false"
+        plan.preparation_refusal = str(reason)
     return plan
 
 
@@ -353,18 +312,11 @@ def native_wire_started(plan):
     return True
 
 
-def note_admitted(plan):
-    try:
-        import strategy_host
-        strategy_host.provider_admitted(plan.correlation)
-        return "true"
-    except Exception as error:
-        plan.error = error
-        return "false"
-
-
-def claim_effect(plan):
-    plan.claimed = True
+def claim_effect(plan, stream):
+    """Open the display and the commentary observer of a claimed call. The
+    native owner asks only when one of them is configured; $stream is whether
+    the prepared request streams."""
+    plan.stream = str(stream) == "true"
     try:
         stream_sink.begin(plan)
         model_commentary.begin(plan)
@@ -566,12 +518,6 @@ def finish(plan, encoded):
             content = _native_finish(plan)
     except model_commentary.OutputError as error:
         stream_sink.final(plan, result["choices"][0]["message"], "rejected")
-        code = {"unfinished command output": "incomplete-output",
-                "invalid native tool output": "invalid-native-tool",
-                "refused or structured command output": "refused-or-structured-output"}.get(str(error), "invalid-envelope")
-        print("[command_contract] rejected; code=" + code +
-              "; feedback_visible=" + str(getattr(plan, "prompt_feedback", False)).lower() +
-              "; footer_visible=" + str(getattr(plan, "prompt_footer", False)).lower(), file=sys.stderr)
         return synthetic_llm.failure_facts(error)
     if reason == "length":
         import helper
@@ -679,6 +625,11 @@ def _record_failure(plan, kind, status=0):
     bound = getattr(plan, "native_response_bound", None)
     if type(bound) is int and bound > 0:
         detail += f"; response_bound={bound}"
+    # A refused preparation is named by its code; any other reason may quote
+    # the request and stays out of the log.
+    refusal = getattr(plan, "preparation_refusal", "")
+    if 0 < len(refusal) <= 64 and all(c.isascii() and (c.isalnum() or c == "-") for c in refusal):
+        detail += "; preparation=" + refusal
     print(f"[native_llm] failed request: {code}; provider={provider}; "
           f"status={status}; sent={sent}; elapsed_ms={elapsed}; deadline_ms={deadline}{detail}",
           file=sys.stderr)
