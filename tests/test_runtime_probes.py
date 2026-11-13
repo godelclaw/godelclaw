@@ -117,11 +117,13 @@ def _require_cetta(paths):
     return dict(paths, python_env=prefix)
 
 
-# These run on the native transport against the native test world's loopback
-# provider, which only the native runner builds
-# (scripts/test_runtime_probes_cetta.metta); it and the census run them.
+# These run in the native test world, which only the native runner builds
+# (scripts/test_runtime_probes_cetta.metta): on the native transport against its
+# loopback provider, or with the observed strategy on its ledger and display.
+# The native runner and the census run them.
 NATIVE_WORLD_PROBES = ("tests/activity_delivery_full_turn_probe.metta",
-                       "tests/integrated_coding_turn_probe.metta")
+                       "tests/integrated_coding_turn_probe.metta",
+                       "tests/strategy_continuation_attempt_probe.metta")
 
 
 class RuntimeProbeTest(unittest.TestCase):
