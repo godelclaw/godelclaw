@@ -37,23 +37,29 @@
     (GrowthCheck "commentary-observer-prefix" "tests/growth/commentary_observer_prefix.metta" 1000 (growth:linear))
     (SdkGrowthCheck "responses-encoder" "tests/growth/responses_encoder.metta" 100 (growth:linear))
     (SdkGrowthCheck "anthropic-encoder" "tests/growth/anthropic_encoder.metta" 200 (growth:linear))))
-; Mutants the gate must reject, run whenever no single check is selected.
+; Mutants the gate must reject, run whenever no single check is selected:
+; (GrowthBreaks dimension check), where dimension is the bound the mutant
+; must break, time or memory.
 (= (growth:mutants)
-   ((GrowthCheck "quadratic-control" "tests/growth/quadratic_control.metta" 1000 (growth:linear))))
+   ((GrowthBreaks time (GrowthCheck "quadratic-control" "tests/growth/quadratic_control.metta" 1000 (growth:linear)))
+    (GrowthBreaks memory (GrowthCheck "quadratic-memory-control" "tests/growth/quadratic_memory_control.metta" 250 (growth:linear)))))
 ; Engine needs: bounds the SDK engine does not meet yet, held as strict
-; expected failures. Each must still break its bounds; when an engine roll
-; meets one, the gate fails until the check moves to the registered list.
-; None is open: anthropic-encoder moved to the registered list when the
-; engine's Anthropic conversation encoder became linear (engine 39e38c7f).
+; expected failures, as (GrowthBreaks either check). Each must still break its
+; bounds; when an engine roll meets one, the gate fails until the check moves
+; to the registered list. None is open: anthropic-encoder moved to the
+; registered list when the engine's Anthropic conversation encoder became
+; linear (engine 39e38c7f).
 (= (growth:engine-needs) ())
 ; The engine a check's children run on, and the check's own fields.
 (= (growth:on (GrowthCheck $name $script $n $bounds) $core $sdk) ($core $name $script $n $bounds))
 (= (growth:on (SdkGrowthCheck $name $script $n $bounds) $core $sdk) ($sdk $name $script $n $bounds))
-; Every check must break its bounds; $label names the requirement.
+; Every check must break its bound; $label names the requirement.
 (= (growth:reject-all $root $core $sdk $artifacts $checks $label)
    (if (== $checks ()) True
-     (let* ((($engine $name $script $n $bounds) (growth:on (car-atom $checks) $core $sdk))
-            ($_ (nt:require ($label $name) (growth:rejects $root $engine $artifacts $name $script $n $bounds))))
+     (let* (((GrowthBreaks $dimension $check) (car-atom $checks))
+            (($engine $name $script $n $bounds) (growth:on $check $core $sdk))
+            ($_ (nt:require ($label $name $dimension)
+                  (growth:rejects $root $engine $artifacts $name $script $n $bounds $dimension))))
        (growth:reject-all $root $core $sdk $artifacts (cdr-atom $checks) $label))))
 
 (= (growth:run-all $root $core $sdk $artifacts $checks $only $ok)
