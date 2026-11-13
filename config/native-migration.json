@@ -1360,6 +1360,38 @@
         "native_call_seed still needs the host plan for failures",
         "No paid live canary or 24-hour soak claimed"
       ]
+    },
+    {
+      "id": "channels-batch-c5-telegram-journal-retention-through-the-native-store",
+      "status": "qualified-and-deployed",
+      "native_modules": [
+        "scripts/telegram_journal_retention.metta and scripts/telegram_journal_retention_main.metta (archive and remove old received updates through the engine store, keeping the newest N and every update still waiting in the inbox)"
+      ],
+      "python_removed": [
+        "scripts/telegram_journal_retention.py (141 lines) and its test"
+      ],
+      "runtime_python_lines_removed": 141,
+      "defects_fixed": [
+        "the weekly Telegram journal retention had failed since 11-09: it opened the native journal with sqlite3 (\"file is not a database\"), so the journals grew unchecked"
+      ],
+      "host_change": "telegram-journal-retention.service runs the native program with the engine named by godelclaw runtime.env, so it follows engine rolls (it read a stale October engine file before)",
+      "runtime_commit": "5d8259ae7f",
+      "branch_tip": "818e1c7489",
+      "engine_commit": "4374a1df0d15c6a1bb839746ec2d1447798ad072",
+      "release": "29f3008b",
+      "gateway_release": "29f3008b",
+      "test_orchestration": "CeTTa core without Python",
+      "checks": {
+        "native_suites_passed": "24 of 24 on the branch (probes passed when rerun alone after a load timeout); units and census on the merge",
+        "python_suite": "the same 26 tests fail on main and on the branch",
+        "telegram_end_to_end": "passes",
+        "mutants": "6 caught",
+        "live_observation": "First native run at 20:22 under supervision: Gödel's journal archived 178 received records (22.4 to 16.4 MB) and Lila's 33 (24.7 to 13.1 MB), each archive checked by digest and line count; both channel services and sockets restarted and registered their menus, Lila's channel is ready, and the next weekly run is Monday 04:40",
+        "paired_installed_verification": true
+      },
+      "limits": [
+        "most of the remaining journal is other history (commits, outbox, outcomes), which needs its own retention rule from the service owner"
+      ]
     }
   ],
   "tuning_debt": [
