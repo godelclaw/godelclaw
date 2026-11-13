@@ -6,8 +6,8 @@ MeTTa client with Lila's own modules. Each step is a separate process, as a
 restart would be: what the service holds survives it.
 
 Environment: CETTA_CHANNEL_ROOT (CeTTa checkout with telegram-channel/1 and
-lib/cwp), CETTA_SERVICE_BIN (its Telegram service), CETTA_BIN (a cetta with
-Python for Lila's modules).
+lib/cwp), CETTA_SERVICE_BIN (its Telegram service, one that takes
+--allow-private), CETTA_BIN (a cetta with Python for Lila's modules).
 """
 import json
 import os
@@ -176,6 +176,14 @@ def run(program, env):
     return lines, p.stderr
 
 
+def require_running(service, step):
+    """The channel service a step relies on is up; if it ended, say how."""
+    code = service.poll()
+    if code is not None:
+        out, err = service.communicate()
+        raise AssertionError("%s: the channel service exited %d: %s" % (step, code, (err or out)[-800:].strip()))
+
+
 def expect(lines, err, wanted, label):
     for w in wanted:
         assert any(w in line for line in lines), (label, w, lines[-12:], err[-2000:])
@@ -245,6 +253,7 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
             api.add(72, GROUP, FRIEND, "hi all", reply_to_message={"message_id": 70, "text": "earlier",
                                                                      "from": {"id": OPERATOR, "username": "zed"}})
             time.sleep(1.5)
+            require_running(service, "first batch")
             text, lines, err = batch("!(tg:last-message-is-human)\n!(tg:last-message-arm-loops)\n!(tg:pending-count)\n")
             sys.path[:0] = [str(ROOT / "src"), str(ROOT / "channels")]
             os.environ.update({k: v for k, v in env.items() if k.startswith("METTACLAW_")})
@@ -676,6 +685,8 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
             env["METTACLAW_TELEGRAM_ALLOW_PRIVATE"] = "1"
             api.add(301, STRANGER, STRANGER, "a stranger writes")
             time.sleep(1.5)
+            # A service from before --allow-private refuses the flag and exits.
+            require_running(service, "allow_private")
             text, lines, err = batch()
             assert text is not None and "a stranger writes" in text, (text, err[-1000:])
             item = [part for part in text.split("[telegram ") if "a stranger writes" in part][0]

@@ -55,6 +55,9 @@ class Gateway:
                 raise ValueError("gateway endpoint is not a socket")
             self.socket_path.unlink()
         self.stop = threading.Event()
+        # Set when a supervisor or operator asks the gateway to stop. Such a
+        # stop also ends the store worker, so store calls in flight fail.
+        self.stop_requested = False
         self.ready = threading.Event()
         self.failure = None
 
@@ -182,7 +185,8 @@ class Gateway:
             if process is not None and process.poll() is None:
                 self.terminate(process)
             state = "uncertain" if process is not None and job["effect"] == "write" else "failed"
-            self.store.finish(request["id"], state, error=type(exc).__name__)
+            error = "gateway-stopped" if self.stop_requested else type(exc).__name__
+            self.store.finish(request["id"], state, error=error)
 
     def consume(self):
         try:
@@ -229,10 +233,10 @@ class Gateway:
             listener.start()
             consumer.start()
             try:
-                while not self.stop.wait(0.05):
+                while not (self.stop_requested or self.stop.wait(0.05)):
                     pass
             except KeyboardInterrupt:
-                pass
+                self.stop_requested = True
             finally:
                 self.stop.set()
                 self.ready.set()
@@ -242,5 +246,7 @@ class Gateway:
                 self.store.close()
         self.socket_path.unlink(missing_ok=True)
         self.lock.close()
-        if self.failure:
+        # A requested stop is not a dispatch failure: what was in flight is
+        # reconciled from the durable store on the next start.
+        if self.failure and not self.stop_requested:
             raise RuntimeError("gateway dispatch stopped: " + self.failure)

@@ -259,6 +259,70 @@ class GatewayTest(unittest.TestCase):
         client.submit("after-restart", "echo", input="healthy")
         self.assertEqual(self.wait("after-restart")["state"], "succeeded")
 
+    def store_worker(self, agent="alpha"):
+        """The gateway's store worker: its child that runs the configured worker binary."""
+        wanted = os.path.realpath(resolve_gateway_worker(os.environ.get("CETTA_VALUE_WORKER_BIN")))
+        children = subprocess.run(["pgrep", "-P", str(self.workers[agent].pid)],
+                                  capture_output=True, text=True).stdout.split()
+        for child in children:
+            try:
+                program = Path("/proc", child, "cmdline").read_bytes().split(b"\0")[0].decode()
+            except OSError:
+                continue
+            if os.path.realpath(program) == wanted:
+                return int(child)
+        self.fail("the gateway has no store worker")
+
+    def stop_with_store_call_in_flight(self, agent="alpha"):
+        """A supervisor's stop, which reaches the gateway and its store worker
+        alike, while the dispatch thread waits for the worker's reply. The
+        worker is held still so that a call is certainly in flight; it ends
+        after the gateway has been asked to stop. The gateway's exit status."""
+        worker = self.store_worker(agent)
+
+        def end_worker():
+            try:
+                os.kill(worker, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+        self.addCleanup(end_worker)
+        os.kill(worker, signal.SIGSTOP)
+        time.sleep(0.3)   # the dispatch thread asks the store every 50 ms
+        self.workers[agent].terminate()
+        time.sleep(1)     # an interrupted tool is ended and its recording begun
+        end_worker()
+        code = self.workers[agent].wait(timeout=10)
+        self.logs[agent].close()
+        return code
+
+    def test_requested_stop_with_a_store_call_in_flight_ends_cleanly(self):
+        code = self.stop_with_store_call_in_flight()
+        self.assertEqual(code, 0, (self.base / "alpha/worker.log").read_text()[-2000:])
+        client = self.start("alpha")
+        client.submit("after-stop", "echo", input="healthy")
+        self.assertEqual(self.wait("after-stop")["state"], "succeeded")
+
+    def test_requested_stop_during_dispatch_ends_cleanly_and_is_reconciled(self):
+        client = self.clients["alpha"]
+        path = self.base / "stopped.txt"
+        value = {"path": str(path), "delay": 5}
+        client.submit("stopped-in-flight", "write", input=value)
+        until = time.monotonic() + 5
+        while not path.exists() and time.monotonic() < until:
+            time.sleep(0.01)
+        self.assertTrue(path.exists())
+        code = self.stop_with_store_call_in_flight()
+        self.assertEqual(code, 0, (self.base / "alpha/worker.log").read_text()[-2000:])
+        # The started write is not replayed, and its receipt names the stop.
+        client = self.start("alpha")
+        receipt = client.submit("stopped-in-flight", "write", input=value)
+        self.assertEqual(receipt["state"], "uncertain")
+        self.assertIn(receipt["error"], ("gateway-stopped", "gateway-restarted"))
+        self.assertEqual(path.read_text(), "effect\n")
+        client.submit("after-stop", "echo", input="healthy")
+        self.assertEqual(self.wait("after-stop")["state"], "succeeded")
+
     def test_failed_and_cancelled_started_writes_are_uncertain(self):
         client = self.clients["alpha"]
         path = self.base / "partial-write.txt"

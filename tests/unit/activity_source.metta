@@ -1,6 +1,7 @@
 ; Unit tests of src/activity_source_cetta.metta; no Python. The expected
-; answers are telegram.activity_source_ack's, input_ack.committed's and
-; input_ack.already_committed's for the same batches and configuration.
+; answers are those of the Python it replaced (the Telegram module's
+; acknowledgement, since deleted, and input_ack.committed and
+; input_ack.already_committed) for the same batches and configuration.
 !(import! &self ../native_test_support.metta)
 !(import! &self ../../src/activity_source_cetta.metta)
 

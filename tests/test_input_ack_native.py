@@ -482,14 +482,11 @@ class FailureTest(NativeCase):
             with mock.patch.object(input_ack, "_ledger_worker", return_value=Stub(conflict)):
                 with self.assertRaises(input_ack.LedgerBusy) as raised:
                     input_ack.processed_update_ids(["a"])
-                self.assertEqual(telegram.handover_ack("1,2"), 0)  # retried at the next boundary, no exception
             for reply in (refused, uncertain):
                 with mock.patch.object(input_ack, "_ledger_worker", return_value=Stub(reply)):
                     with self.assertRaises(input_ack.LedgerUnavailable) as raised:
                         input_ack.processed_update_ids(["a"])
                     self.assertNotIsInstance(raised.exception, input_ack.LedgerBusy)
-                    # An unavailable ledger is retried at the next boundary too; nothing is replayed.
-                    self.assertEqual(telegram.handover_ack("1,2"), 0)
 
     def test_a_reply_lost_between_python_and_the_worker_is_repeated_with_the_same_request(self):
         self.session()

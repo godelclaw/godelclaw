@@ -1,4 +1,6 @@
-"""The exact queue-receipt regression and the foreign-value trust boundary."""
+"""The unread scan reads every pending item, and an incomplete scan establishes
+nothing. Handover ids are validated and settled natively
+(src/activity_source_cetta.metta, tests/unit/activity_source.metta)."""
 import sys
 from pathlib import Path
 import unittest
@@ -7,34 +9,9 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT / "channels")]
 import telegram
-import input_ack
-import mode_channel
 
 
 class HandoverIdsTest(unittest.TestCase):
-    def test_complete_csv_and_native_list_agree(self):
-        for values in ("150402591,150402592", [150402591, 150402592],
-                       ["150402591", "150402592"]):
-            self.assertEqual(telegram.handover_ids(values), ["150402591", "150402592"])
-        self.assertEqual(telegram.handover_ids(""), [])
-        self.assertEqual(telegram.handover_ids("1,1"), ["1"])
-
-    def test_error_atoms_and_partial_batches_cannot_authorize_cleanup(self):
-        for values in (["Error", ["str:join", ["150402591"], ","], "expected separator"],
-                       "['150402591', '150402592']", "1,,2", "1, 2", "01", "١", True,
-                       [1, False], "-1", str(2**63)):
-            with self.subTest(values=values), mock.patch.object(input_ack, "processed_update_ids") as processed:
-                with self.assertRaises(ValueError):
-                    telegram.handover_ack(values)
-                processed.assert_not_called()
-
-    def test_large_batches_preserve_order_and_validate_the_tail(self):
-        values = [str(i) for i in range(1024)]
-        self.assertEqual(telegram.handover_ids(values + values), values)
-        with mock.patch.object(mode_channel, "acknowledge_handover") as acknowledge:
-            with self.assertRaises(ValueError): telegram.handover_ack(values + ["bad"])
-            acknowledge.assert_not_called()
-
     def test_unread_scan_includes_items_beyond_the_first_page(self):
         import json
         stream = [(str(n), json.dumps(["input", "42.0", "message", "operator", {"update_id": n}])) for n in range(600)]
@@ -53,30 +30,6 @@ class HandoverIdsTest(unittest.TestCase):
                 mock.patch('durable_telegram.Channel') as channel:
             channel.return_value.iter_pending.return_value = interrupted()
             self.assertIsNone(telegram._metta_unread_chats())
-
-    def test_settlement_metadata_retries_after_the_ledger_was_unavailable(self):
-        with mock.patch.object(mode_channel, "acknowledge_handover", return_value=True) as ack, \
-             mock.patch.object(input_ack, "processed_update_ids",
-                               side_effect=[input_ack.LedgerUnavailable("input ledger: worker unavailable"), 1]):
-            self.assertEqual(telegram.handover_ack("1,2"), 0)
-            self.assertEqual(telegram.handover_ack("1,2"), 1)
-            self.assertEqual(ack.call_args_list, [mock.call(["1", "2"]), mock.call(["1", "2"])])
-        # Only an unavailable ledger is retried at the next boundary; any other failure surfaces.
-        with mock.patch.object(mode_channel, "acknowledge_handover", return_value=True), \
-             mock.patch.object(input_ack, "processed_update_ids", side_effect=RuntimeError("unexpected")):
-            with self.assertRaises(RuntimeError): telegram.handover_ack("1")
-
-    def test_durable_ack_precedes_notice_processing(self):
-        events = []
-        with mock.patch.object(mode_channel, "acknowledge_handover", side_effect=lambda ids: events.append(("ack", ids)) or True), \
-             mock.patch.object(input_ack, "processed_update_ids", side_effect=lambda ids: events.append(("processed", ids))):
-            self.assertTrue(telegram.handover_ack("1,2"))
-        self.assertEqual(events, [("ack", ["1", "2"]), ("processed", ["1", "2"])])
-        with mock.patch.object(mode_channel, "acknowledge_handover", return_value=False), \
-             mock.patch.object(input_ack, "processed_update_ids") as processed:
-            self.assertFalse(telegram.handover_ack("1"))
-            processed.assert_not_called()
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -586,8 +586,10 @@
 
 (= (tg:ledger-size)
    (let $path (tg:ledger)
-     (if (== $path "") 0
-       (if (py-call (os.path.exists $path)) (py-call (os.path.getsize $path)) 0))))
+     (if (== $path "") 0 (tg:file-size $path))))
+; A file's size in bytes; 0 when there is none.
+(= (tg:file-size $path)
+   (case (fs:metadata $path follow) (((fs:info regular $size $identity) $size) ($other 0))))
 
 (= (tg:activity-batch)
    (let $recovered (tg:recover-committed (tg:pending-items))
@@ -983,16 +985,16 @@
 ; the Python client: a new rest starts from a clean request.
 (= (tg:drop-wake-request)
    (let $file (tg:wake-file)
-     (if (or (== $file "") (not (py-call (os.path.exists $file)))) ()
-       (py-call (os.remove $file)))))
+     (if (or (== $file "") (not (fs:exists $file))) ()
+       (fs:remove $file))))
 
 ; A wake request from the command responder, which runs in its own process.
 (= (tg:wake-file) (tg:env "METTACLAW_WAKE_REQUEST_PATH" ""))
 (= (tg:take-wake-request)
    (let $file (tg:wake-file)
-     (if (or (== $file "") (not (py-call (os.path.exists $file)))) ()
+     (if (or (== $file "") (not (fs:exists $file))) ()
        (let $reason (str:trim (fs:read-text $file))
-         (let $gone (py-call (os.remove $file))
+         (let $gone (fs:remove $file)
            (tg:wake-request (if (== $reason "") "wake request" $reason)))))))
 
 (= (tg:rest-loop $deadline $seconds $enabled)
@@ -1199,7 +1201,7 @@
 ; Own sends to a chat, oldest first, less those already deleted.
 (= (tg:own-sends $chat)
    (let $path (tg:ledger)
-     (if (or (== $path "") (not (py-call (os.path.exists $path)))) ()
+     (if (or (== $path "") (not (fs:exists $path))) ()
        (tg:live-sends (tg:own-records (fs:read-lines $path) $chat () ()) ))))
 (= (tg:own-records $lines $chat $sent $deleted)
    (if (== $lines ()) ($sent $deleted)
@@ -1252,31 +1254,28 @@
          (let $rest (tg:delete-each $chat $tail) (cons-atom $one $rest))))))
 
 ;; ------------------------------------------------------ operator commands
-;; The service asks about delegated commands; the answer is its reply.
+;; The service asks this client about one delegated command, /delete, which
+;; acts through this client's sends and receipts; the answer is its reply.
+;; Every other command is the responder's (channels/telegram_control.metta).
 
-(= (tg:command $task $name $args $lane)
-   (let $chat (car-atom (str:split "." $lane))
-     (let $text (tg:command-text $name $args $chat)
-       (let $answered (tg:answer-task $task $text)
-         (if $answered (tg:unsee $task) ())))))
+(= (tg:command $task "/delete" $args $lane)
+   (let $text (tg:delete-command $args)
+     (let $answered (tg:answer-task $task $text)
+       (if $answered (tg:unsee $task) ()))))
 
-(= (tg:command-text $name $args $chat)
-   (case $name
-     (("/wake" (let $w (tg:wake-request "/wake") "Waking."))
-      ("/delete"
-       (let $fields (str:split-whitespace $args)
-         (if (not (== (size-atom $fields) 2)) "usage: /delete <known-chat-id-or-title> <message-id>"
-           (let ($who $mid) $fields
-             (let $target (tg:resolve-chat $who)
-               (if (== $target "") "delete refused: chat is not in the local ledger"
-                 (tg:delete $target (parse $mid))))))))
-      ($other (py-call (telegram.metta_command_answer $name $args $chat))))))
+(= (tg:delete-command $args)
+   (let $fields (str:split-whitespace $args)
+     (if (not (== (size-atom $fields) 2)) "usage: /delete <known-chat-id-or-title> <message-id>"
+       (let ($who $mid) $fields
+         (let $target (tg:resolve-chat $who)
+           (if (== $target "") "delete refused: chat is not in the local ledger"
+             (tg:delete $target (parse $mid))))))))
 
 ;; One chat named by its exact id or exact title in the ledger, or "".
 (= (tg:resolve-chat $who)
    (let $wanted (str:trim $who)
      (let $path (tg:ledger)
-       (if (or (== $wanted "") (or (== $path "") (not (py-call (os.path.exists $path))))) ""
+       (if (or (== $wanted "") (or (== $path "") (not (fs:exists $path)))) ""
          (let $by-id (format-args "\"chat_id\":{}" ((tg:quote $wanted)))
            (let $by-title (format-args "\"chat_title\":{}" ((tg:quote $wanted)))
              (let $ids (tg:chats-named (fs:read-lines $path) $by-id $by-title ())
@@ -1319,9 +1318,9 @@
 (= (tg:conversation-window-for $max-events $chat)
    (let $route (tg:route-view)
      (let $path (tg:ledger)
-       (if (or (== $path "") (not (py-call (os.path.exists $path))))
+       (if (or (== $path "") (not (fs:exists $path)))
          (format-args "{}\n\n(no prior conversation events)" ($route))
-         (let $size (py-call (os.path.getsize $path))
+         (let $size (tg:file-size $path)
            (let $frontier (tg:get context-frontier -1)
              (let $end (if (or (< $frontier 0) (> $frontier $size)) $size $frontier)
                (let $start (if (> $end 524288) (- $end 524288) 0)
@@ -1442,7 +1441,7 @@
 ; sides, as "[hh:mm chat sender: text…]".
 (= (tg:recent-activity $n $chat $snippet)
    (let $path (tg:ledger)
-     (if (or (<= $n 0) (or (== $path "") (not (py-call (os.path.exists $path))))) ""
+     (if (or (<= $n 0) (or (== $path "") (not (fs:exists $path)))) ""
        (let $needle (str:lower (format-args "{}" ($chat)))
          (let $reader (py-call (helper.reverse_lines_open $path))
            (let $entries (catch (tg:recent-backward $reader $n $needle $snippet ()))

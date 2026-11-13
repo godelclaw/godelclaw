@@ -163,6 +163,8 @@
       ((proc:exited 4 $out $err) inactive)
       ($other unknown))))
 (= (work:running? $id) (== (work:scope-state $id) active))
+; Running, once what an earlier run left in the scope has been ended.
+(= (work:occupied? $id) (let $_ (cio:end-leftovers (work:dir $id)) (work:running? $id)))
 
 ; Resumption keeps this session's task, transcript, plan and inbox identities.
 ; Resume file preparation happens inside .ending.lock when the reservation is made.
@@ -176,7 +178,7 @@
 (= (work-resume $id $mode)
    (let* (($dir (work:dir $id)) ($task-path (path:join $dir "task.json")))
      (if (not (fs:is-file $task-path)) (str:concat "work-resume: no session " $id)
-       (if (work:running? $id) (str:concat "WORK_RUNNING " $id)
+       (if (work:occupied? $id) (str:concat "WORK_RUNNING " $id)
          (if (== $mode "pinned")
            (let $problem (let (EstateView $facts $session) (estate:session-view (system:cwd) $id)
                            (estate:resume-problem $facts $session))
@@ -265,18 +267,33 @@
 ; A session marked running whose scope is gone ended without its report: it
 ; was stopped, killed or crashed, and so could not say so itself. Its report
 ; records that, and its requester is told as for any other ending, once.
+; A scope still active after its run is over holds only what the run's
+; commands left behind; it is ended first (cio:end-leftovers), so a finished
+; session keeps no processes and a dead one is still reaped. The active scopes
+; are listed once for all sessions.
 (= (work:reap)
    (case (proc:run ("ls" "-1" "--" (work:root)) (system:cwd) inherit 10000 0 "merged")
-     (((proc:exited 0 $out $err) (work:reap-ids (str:split "\n" $out) 0))
+     (((proc:exited 0 $out $err) (work:reap-ids (str:split "\n" $out) (work:active-scopes) 0))
       ($other 0))))
-(= (work:reap-ids $ids $count)
+(= (work:active-scopes)
+   (case (proc:run ("systemctl" "--user" "list-units" "--type=scope" "--state=active" "--plain" "--no-legend"
+                    (str:concat (work:unit "") "*"))
+                  (system:cwd) inherit 10000 0 "merged")
+     (((proc:exited 0 $out $err) (work:first-words (str:split "\n" $out)))
+      ($other ()))))
+(= (work:first-words $lines)
+   (if (== $lines ()) ()
+     (let* (($words (str:split-whitespace (car-atom $lines))) ($rest (work:first-words (cdr-atom $lines))))
+       (if (== $words ()) $rest (cons-atom (car-atom $words) $rest)))))
+(= (work:reap-ids $ids $active $count)
    (if (== $ids ()) $count
      (let $id (str:trim (car-atom $ids))
-       (work:reap-ids (cdr-atom $ids) (+ $count (if (== $id "") 0 (work:reap-one $id)))))))
+       (work:reap-ids (cdr-atom $ids) $active (+ $count (if (== $id "") 0 (work:reap-one $id $active)))))))
 (= (work:reap-error $dir $where $why)
    (cio:log $dir (format-args "reap error ({}): {}" ((repr $where) (repr $why)))))
-(= (work:reap-one $id)
+(= (work:reap-one $id $active)
    (let* (($dir (work:dir $id))
+          ($_ (if (cio:member (str:concat (work:unit $id) ".scope") $active) (cio:end-leftovers $dir) False))
           ($state (work:json (path:join $dir "state.json")))
           ($_ (delivery:preserve $dir))
           ($_ (delivery:flush $dir))
