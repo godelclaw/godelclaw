@@ -51,9 +51,11 @@ class ProcessStreamTests(unittest.TestCase):
         root = json.dumps(str(self.directory))
         command = "echo once >> count; printf start; sleep 4; printf finish"
         args = json.dumps(json.dumps(dict(cmd=command,yield_time_ms=0)))
+        # The poll yields 1.5 s before the cancel, so the login shell has run
+        # its first command even on a loaded host; the command still sleeps.
         forms = f'''!(let* (($report (coding:exec-owned {root} {root} (json-parse {args})))
               ($id (str:trim (car-atom (cdr-atom (str:split ":" (car-atom (str:split "\\n" $report)))))))
-              ($args (JsonObject ((JsonPair "execution_id" (JsonString $id)) (JsonPair "yield_time_ms" (JsonNumber "200"))))))
+              ($args (JsonObject ((JsonPair "execution_id" (JsonString $id)) (JsonPair "yield_time_ms" (JsonNumber "1500"))))))
             (progn (println! (INITIAL $report))
               (println! (POLL (coding:poll {root} $args)))
               (println! (CANCEL (coding:cancel {root} $args)))
