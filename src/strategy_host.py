@@ -621,11 +621,6 @@ def focus_request(request):
     return "REQUEST_FOCUSED " + request
 
 
-def retry_seconds():
-    # Provider transport retry policy lives in llm_policy/cognitive_health.
-    return 0
-
-
 def wake(now):
     return 0
 

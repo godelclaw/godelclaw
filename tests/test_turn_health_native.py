@@ -219,6 +219,71 @@ class NativeTurnHealthRecord(unittest.TestCase):
                 wait, following = synthetic_llm.pacing(transient, streak, retry, status, blocked)
             self.assertEqual(native[index], (float(wait), following), grid[index])
 
+    def test_retry_wait_is_the_same_function(self):
+        """gate:retry-wait-at against cognitive_health.retry_wait_seconds where no block is possible.
+
+        Every writer stores retry_at as a number. A numeric string, which none
+        writes, is no backoff natively (health:stamp) but a float to Python.
+        """
+        records = {"missing": None, "torn": "{broken", "list": "[1, 2]", "empty": "{}",
+                   "null": {"retry_at": None}, "zero": {"retry_at": 0}, "past": {"retry_at": 99.5},
+                   "now": {"retry_at": 100}, "tiny": {"retry_at": 100.0001},
+                   "fraction": {"retry_at": 107.25}, "whole": {"retry_at": 110},
+                   "far": {"retry_at": 1.0e9}, "word": {"retry_at": "soon"}, "flag": {"retry_at": True},
+                   "not-a-block": {"retry_at": 104.5, "provider_rejection": None}}
+        nows = (100, 100.5)
+        lines = ["!(import! &self %s)" % json.dumps(str(ROOT / "src/rejection_gate_cetta.metta"))]
+        for name, record in records.items():
+            path = self.directory / ("retry-%s.json" % name)
+            if record is not None:
+                path.write_text(record if isinstance(record, str) else json.dumps(record), encoding="utf-8")
+            for now in nows:
+                lines.append("!(println! (WAIT %s %r (gate:retry-wait-at %s %r)))"
+                             % (json.dumps(name), now, json.dumps(str(path)), now))
+        native = {}
+        for line in self.run_program(lines).stdout.splitlines():
+            if line.startswith("(WAIT "):
+                name, now, wait = line[len("(WAIT "):].rstrip(")").split()
+                native[(json.loads(name), float(now))] = wait
+        self.assertEqual(len(native), len(records) * len(nows))
+        for name in records:
+            path = self.directory / ("retry-%s.json" % name)
+            for now in nows:
+                with mock.patch.dict(os.environ, {"METTACLAW_COGNITIVE_HEALTH_PATH": str(path)}):
+                    expected = cognitive_health.retry_wait_seconds(now)
+                self.assertEqual(native[(name, float(now))], str(expected), (name, now))
+
+    def test_a_possible_block_is_the_hosts_to_decide(self):
+        """A retained block is decided by provider_rejection, and the native wait keeps its answer.
+
+        A changed model releases the block and its backoff; an unchanged context
+        holds the loop at 1 s; a requested context repair answers 0.
+        """
+        cases = {"released": ({"model": "no-such-model"}, None, 0),
+                 "blocked": ({}, None, 1), "repair": ({}, "requested", 0)}
+        for name, (context, repair, expected) in cases.items():
+            with self.subTest(case=name):
+                path = self.directory / ("hold-%s" % name) / "cognitive-health.json"
+                path.parent.mkdir()
+                block = dict(id=name, status=400, code="", message="x", context=context, reason="invalid-request")
+                if repair:
+                    block["repair"] = repair
+                path.write_text(json.dumps({"schema": 2, "retry_at": 1.0e12, "provider_rejection": block}),
+                                encoding="utf-8")
+                env = {key: value for key, value in os.environ.items()
+                       if key not in ("METTACLAW_INPUT_LEDGER_SOCKET", "METTACLAW_MODE_RUNTIME",
+                                      "METTACLAW_MODE_STATE_ROOT")}
+                env.update(METTACLAW_COGNITIVE_HEALTH_PATH=str(path),
+                           PYTHONPATH=os.pathsep.join([str(ROOT / "src"), os.environ.get("PYTHONPATH", "")]))
+                result = self.run_program([
+                    "!(import! &self %s)" % json.dumps(str(ROOT / "src/rejection_gate_cetta.metta")),
+                    "!(import! &self %s)" % json.dumps(str(ROOT / "src/native_llm_host.py")),
+                    "!(println! (HOLD (gate:retry-wait)))"], env=env)
+                self.assertIn("(HOLD %d)" % expected, result.stdout)
+                record = json.loads(path.read_text(encoding="utf-8"))
+                self.assertEqual("provider_rejection" in record, name != "released")
+                self.assertEqual(record["retry_at"], 0 if name == "released" else 1.0e12)
+
     def test_a_paced_failure_is_recorded_and_reported(self):
         path = self.directory / "paced.json"
         env = dict(os.environ, METTACLAW_COGNITIVE_HEALTH_PATH=str(path),
@@ -243,6 +308,17 @@ class NativeTurnHealthRecord(unittest.TestCase):
         self.assertEqual(record["local_failure_count"], 4)
         self.assertEqual(record["last_failure_type"], "context-x")
         self.assertEqual(record["retry_at"], record["last_failed_at"])
+
+
+class RejectionHold(unittest.TestCase):
+    def test_the_hold_names_the_hosts_decision(self):
+        import native_llm_host
+        import provider_rejection
+        for blocked, repair, hold in ((False, False, "clear"), (False, True, "clear"),
+                                      (True, False, "blocked"), (True, True, "repair")):
+            with mock.patch.object(provider_rejection, "blocked", return_value=blocked), \
+                    mock.patch.object(provider_rejection, "repair_pending", return_value=repair):
+                self.assertEqual(native_llm_host.rejection_hold(), hold)
 
 
 if __name__ == "__main__":

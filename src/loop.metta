@@ -3,6 +3,7 @@
 !(import! &self ./src/goal_bookkeeping.metta)
 !(import! &self ./src/interop_flags_cetta.metta)
 !(import! &self ./src/turn_health_cetta.metta)
+!(import! &self ./src/rejection_gate_cetta.metta)
 !(import! &self ./src/loop_host_cetta.metta)
 !(import! &self ./src/model_selection_cetta.metta)
 !(import! &self ./src/strategy_broker_cetta.metta)
@@ -543,10 +544,7 @@
                 (policy-wait-seconds $policy $loops
                                      (loop-wait-sleep $periphery) $paused)
                 60))
-          ($retryWait (if $enabled
-                         (max (py-call (strategy_host.retry_seconds))
-                              (py-call (cognitive_health.retry_wait_seconds)))
-                         0))
+          ($retryWait (if $enabled (gate:retry-wait) 0))
           ($requestedWait (if $enabled
                      (max $policyWait $retryWait)
                      $policyWait))

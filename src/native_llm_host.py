@@ -103,6 +103,19 @@ def request_allowed():
     return "false" if provider_rejection.blocked() else "true"
 
 
+def rejection_hold():
+    """A retained rejection's hold on the loop's wait (src/rejection_gate_cetta.metta).
+
+    "repair" when a context repair is pending, "blocked" while the block waits
+    for corrective input, "clear" when corrective state released it or there
+    is none. The native gate asks only when a block is possible.
+    """
+    import provider_rejection
+    if not provider_rejection.blocked():
+        return "clear"
+    return "repair" if provider_rejection.repair_pending() else "blocked"
+
+
 def correction_context():
     import provider_rejection
     return provider_rejection.context()
