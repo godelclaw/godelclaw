@@ -9,7 +9,9 @@
 !(fs:write "response.body" "{\"id\":\"fixture\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Census note.\",\"tool_calls\":[{\"id\":\"t1\",\"type\":\"function\",\"function\":{\"name\":\"metta\",\"arguments\":\"{\\\"program\\\":\\\"((nop))\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":2}}")
 !(nt:require census-provider-answer (nt:equal (llm:command "fixture-model" 42 "low" "S_cache_boundary_U") "((nop))"))
 !(nt:require census-provider-single-post (nt:equal (json:parse (str:strip-python (fs:read-text "count"))) 1))
-!(nt:require census-commentary-shared (nt:contains (fs:read-text "worklog/notes.jsonl") "Census note."))
+; nt:contains answers True for an Error operand: the file must exist.
+!(nt:require census-commentary-shared
+   (if (fs:exists "worklog/notes.jsonl") (nt:contains (fs:read-text "worklog/notes.jsonl") "Census note.") False))
 !(nt:require census-observer-released
    (nt:equal (collapse (match &observer-calls $call $call)) ()))
 !(println! CENSUS_PROVIDER_OK)
