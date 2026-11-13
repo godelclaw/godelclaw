@@ -173,8 +173,10 @@
                                                  (JsonPair "output_index" 1) (JsonPair "content_index" 0) (JsonPair "delta" "\"bad\","))))))
         ; A first delta whose output part is no index is no source.
         ($_ (nt:require negative-index-stops
-              (ot:mixed-output "x4" (JsonObject ((JsonPair "type" "response.output_text.delta") (JsonPair "item_id" "msg")
-                                                 (JsonPair "output_index" -1) (JsonPair "content_index" 0) (JsonPair "delta" "\"bad\","))))))
+              (ot:stops? "x4" "responses"
+                (ot:event (JsonObject ((JsonPair "type" "response.output_text.delta") (JsonPair "item_id" "msg")
+                                       (JsonPair "output_index" -1) (JsonPair "content_index" 0)
+                                       (JsonPair "delta" "{\"commentary\":\"bad\",")))))))
         ; An escaped quote does not end the field: its comma is the field's text.
         ($before-e (ot:count)) ($_ (ot:call "q3"))
         ($_ (ot:feed "q3" (ot:content "{\"commentary\": \"a \\\"b, c\\\" d\", \"commands\": \"((nop))\"}") 100000))
