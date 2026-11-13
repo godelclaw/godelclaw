@@ -54,6 +54,29 @@
    (let* (($times (nb:sort-values $samples time ())) ($rss (nb:sort-values $samples rss ()))
           ($median (preq:nth $times 10)) ($p95 (preq:nth $times 19)) ($memory (preq:nth $rss 10)))
      (NativeBenchStatisticsV1 $median $p95 $memory)))
+; The pairs' own differences, candidate less baseline. Host load moves both
+; samples of a pair alike, so their median and the count of pairs where the
+; candidate was slower say more than either side's p95 of 21 samples, which is
+; its second-largest sample.
+(: nb:differences (-> %Undefined% %Undefined% %Undefined% %Undefined%))
+(= (nb:differences $old $new $out)
+   (if (nt:equal $old ()) $out
+     (let $difference (- (nb:time (preq:head $new)) (nb:time (preq:head $old)))
+       (nb:differences (preq:tail $old) (preq:tail $new) (preq:cons $difference $out)))))
+(: nb:sorted (-> %Undefined% %Undefined% %Undefined%))
+(= (nb:sorted $values $sorted)
+   (if (nt:equal $values ()) $sorted
+     (nb:sorted (preq:tail $values) (nb:insert (preq:head $values) $sorted))))
+(: nb:slower (-> %Undefined% %Undefined% %Undefined%))
+(= (nb:slower $differences $count)
+   (if (nt:equal $differences ()) $count
+     (nb:slower (preq:tail $differences) (if (> (preq:head $differences) 0) (+ $count 1) $count))))
+(: nb:paired (-> %Undefined% %Undefined% %Undefined%))
+(= (nb:paired $old $new)
+   (let* (($differences (nb:differences $old $new ()))
+          ($median (preq:nth (nb:sorted $differences ()) 10)))
+     (preq:object ((preq:pair "median_difference_ns" (preq:number (preq:repr $median)))
+                   (preq:pair "candidate_slower_pairs" (preq:number (preq:repr (nb:slower $differences 0))))))))
 (: nb:report-stats (-> %Undefined% %Undefined%))
 (= (nb:report-stats (NativeBenchStatisticsV1 $median $p95 $rss))
    (preq:object ((preq:pair "median_ns" (preq:number (preq:repr $median)))
@@ -76,7 +99,8 @@
           ($row (preq:object ((preq:pair "workload" (preq:string $name))
             (preq:pair "prompt_bytes" (preq:number (preq:repr (str:byte-length $prompt))))
             (preq:pair "pairs" (JsonNumber "21")) (preq:pair "within_initial_budget" (preq:bool $within))
-            (preq:pair "baseline" (nb:report-stats $old-stats)) (preq:pair "candidate" (nb:report-stats $new-stats)))))
+            (preq:pair "baseline" (nb:report-stats $old-stats)) (preq:pair "candidate" (nb:report-stats $new-stats))
+            (preq:pair "paired" (nb:paired $old $new)))))
           ($path (nt:join $artifacts (str:concat "benchmark-" (str:concat $name ".json"))))
           ($_ (fs:write $path (preq:render $row)))
           ($_ (println! (NATIVE_BENCHMARK $row)))
