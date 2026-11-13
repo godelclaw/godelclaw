@@ -16,7 +16,6 @@ from stream_lifecycle import TRANSITIONS
 
 _writers = {}
 _lock = threading.Lock()
-_item_epochs = {}
 KINDS = frozenset(("attempt.open", "attempt.finished", "text.delta", "text.snapshot",
     "text.reconcile", "tool.forming", "tool.dispatching", "tool.started", "tool.output",
     "tool.finished", "plan", "patch", "steering", "session.open", "session.finished",
@@ -164,12 +163,6 @@ class Writer:
             time.sleep(min(.005, remaining))
 
 
-def receipt(identity, command, result, disposition):
-    epoch = _item_epochs.pop(str(identity), control(os.environ.get("METTACLAW_STREAM_DIR", ""))[1])
-    return emit(dict(kind="tool.finished",item=str(identity),command=str(command),text=str(result),
-                     status=str(disposition),source="executor",epoch=epoch))
-
-
 def writer():
     root = os.environ.get("METTACLAW_STREAM_DIR", "").strip()
     if not root:
@@ -188,17 +181,6 @@ def emit(value):
         return sink.emit(event) if sink else 0
     except Exception:
         return 0
-
-
-def event(kind, item="", text="", status="", name="", attempt=""):
-    value = dict(kind=str(kind), item=str(item), text=str(text),
-        status=str(status), name=str(name), attempt=str(attempt), source="executor")
-    if str(kind) in ("tool.dispatching", "tool.started"):
-        value["command"], value["text"] = value["text"], ""
-        _item_epochs.setdefault(str(item), control(os.environ.get("METTACLAW_STREAM_DIR", ""))[1])
-    if str(item) in _item_epochs:
-        value["epoch"] = _item_epochs[str(item)]
-    return emit(value)
 
 
 def flush():

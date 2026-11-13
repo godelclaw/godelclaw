@@ -51,7 +51,9 @@ class SourceTest(unittest.TestCase):
             self.assertNotRegex(text,r'py-call\s+\((effect_receipts|public_worklog)\.')
         self.assertIn('effect_receipts_plugin.status',sink)
         self.assertIn('effect_receipts_plugin.add',sink)
-        self.assertIn('stream_sink.receipt',source)
+        self.assertIn('display:receipt',source)
+        self.assertNotIn('stream_sink',source)
+        self.assertNotIn('command_identity',source)
 
 
 if __name__=='__main__':unittest.main()

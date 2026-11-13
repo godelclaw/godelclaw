@@ -70,8 +70,7 @@ def encoding(c):
         actual=rows(c.run('strict-encoding-%d'%i,source,{'METTACLAW_EFFECT_RECEIPT_PATH':str(path)}))
         expected_path=c.directory/('oracle-encoding-%d'%i)/'receipt.jsonl'
         env={**c.environment(),'METTACLAW_EFFECT_RECEIPT_PATH':str(expected_path)}
-        import stream_sink
-        with mock.patch.dict(os.environ,env,clear=True),mock.patch.object(oracle.time,'time',return_value=1704067200.125),mock.patch.object(stream_sink,'receipt',return_value=1):
+        with mock.patch.dict(os.environ,env,clear=True),mock.patch.object(oracle.time,'time',return_value=1704067200.125):
             expected=outcome(oracle.record_command,3,'returned',['shell','fixture'],result,'encoding-id')
         effects=[p.read_bytes().hex() if p.exists() else None for p in (path,expected_path)]
         records.append({'points':[ord(ch) for ch in result],'actual':actual,'expected':expected,

@@ -14,6 +14,15 @@ import native_ledger
 import strategy_host as host
 
 
+def attempt(command):
+    """Record $command as the native dispatcher records it before it runs
+    (src/strategy_attempts_cetta.metta): the next attempt of the broker's
+    ticket. Answers the attempt's identity, <ticket>:<position>."""
+    position = len(input_ack.attempts(host._ticket))
+    assert input_ack.attempt_begin(host._ticket, position, host.strategy.encoded(command))
+    return "%s:%d" % (host._ticket, position)
+
+
 class StrategyHostTest(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
@@ -28,7 +37,7 @@ class StrategyHostTest(unittest.TestCase):
         self.environment.start(); self.addCleanup(self.environment.stop)
         globals_patch = mock.patch.multiple(host, _ledger=None, _booted=False,
                                            _turn=None, _sample=None, _ticket=None,
-                                           _focus=None, _position=0)
+                                           _focus=None)
         globals_patch.start(); self.addCleanup(globals_patch.stop)
         # The ledger worker survives between tests. Keep its transport module
         # in the snapshot restored by the temporary Telegram module patch,
@@ -151,9 +160,8 @@ class StrategyHostTest(unittest.TestCase):
     def test_real_receipt_callback_and_next_prepared_request(self):
         self.capture()
         command = ["shell", "printf witness"]
-        self.assertEqual(host.broker_begin(1, [command]), 1)
-        self.assertEqual(host.reserve_command(1, command), 1)
-        effect_receipts.record_command(1, "returned", command, "witness")
+        self.assertEqual(host.broker_begin(1, [command])[0], 1)
+        effect_receipts.record_command(1, "returned", command, "witness", attempt(command))
         host.broker_end(1, [["COMMAND_RETURN:", [command, "witness"]]])
         host.begin(2, "continuation-tick", "")
         self.assertEqual(host.capture("alternate context", 60), 1)
@@ -167,9 +175,8 @@ class StrategyHostTest(unittest.TestCase):
         """Turn 1 issues one command whose result returns; the next turn's prompt carries it."""
         self.capture()
         command = ["shell", "printf witness"]
-        self.assertEqual(host.broker_begin(1, [command]), 1)
-        self.assertEqual(host.reserve_command(1, command), 1)
-        effect_receipts.record_command(1, "returned", command, "witness")
+        self.assertEqual(host.broker_begin(1, [command])[0], 1)
+        effect_receipts.record_command(1, "returned", command, "witness", attempt(command))
         host.broker_end(1, [["COMMAND_RETURN:", [command, "witness"]]])
         host.begin(2, "continuation-tick", "")
         return host.ledger().projection()["actions"][0]["ticket"]
@@ -183,7 +190,7 @@ class StrategyHostTest(unittest.TestCase):
         prompt = self.capture()
         self.assertIn("witness", prompt)
         self.assertEqual(self.observed(ticket), 0)              # carried, not yet answered
-        self.assertEqual(host.broker_begin(2, []), 1)           # the model answered it
+        self.assertEqual(host.broker_begin(2, [])[0], 1)           # the model answered it
         self.assertEqual(self.observed(ticket), 1)
 
     def test_a_failed_provider_call_marks_nothing(self):
@@ -193,21 +200,21 @@ class StrategyHostTest(unittest.TestCase):
         self.assertEqual(self.observed(ticket), 0)
         host.begin(3, "continuation-tick", "")
         self.capture()
-        self.assertEqual(host.broker_begin(3, [["shell", "true"]]), 1)
+        self.assertEqual(host.broker_begin(3, [["shell", "true"]])[0], 1)
         self.assertEqual(self.observed(ticket), 1)
 
     def test_a_prompt_other_than_the_prepared_one_marks_nothing(self):
         ticket = self.returned_call()
         prompt = host.prepare("visible request")
         self.assertEqual(host.capture(prompt + " edited", 60), 1)
-        self.assertEqual(host.broker_begin(2, []), 1)
+        self.assertEqual(host.broker_begin(2, [])[0], 1)
         self.assertEqual(self.observed(ticket), 0)
 
     def test_a_failed_marking_never_fails_the_answered_turn(self):
         ticket = self.returned_call()
         self.capture()
         with mock.patch.object(type(host.ledger()), "observe_presented", side_effect=RuntimeError("ledger down")):
-            self.assertEqual(host.broker_begin(2, [["shell", "true"]]), 1)
+            self.assertEqual(host.broker_begin(2, [["shell", "true"]])[0], 1)
         self.assertEqual(self.observed(ticket), 0)
         self.assertIsNotNone(host._ticket)                       # the decision itself was recorded
 
@@ -224,10 +231,10 @@ class StrategyHostTest(unittest.TestCase):
         self.assertEqual(host.normalize_response(raw), '((pin "note") (send "message"))')
         commands = [["pin", "note"], ["send", "message"]]
         self.capture()
-        self.assertEqual(host.broker_begin(1, commands, 2), 1)
-        self.assertEqual(host.reserve_command(1, commands[0]), 1)
-        host.command_result(1, "returned", commands[0], "pinned")
-        self.assertEqual(host.reserve_command(1, commands[1]), 1)
+        self.assertEqual(host.broker_begin(1, commands, 2)[0], 1)
+        self.assertEqual(attempt(commands[0]), host._ticket + ":0")
+        host.command_result(1, "returned", commands[0], "pinned", 0)
+        self.assertEqual(attempt(commands[1]), host._ticket + ":1")
         action = host.ledger().projection()["actions"][0]
         self.assertEqual(json.loads(action["command"])["limit"], 2)
 
@@ -240,22 +247,39 @@ class StrategyHostTest(unittest.TestCase):
     def test_restart_recovers_complete_saved_result_without_repeating(self):
         self.capture()
         command = ["shell", "printf witness"]
-        host.broker_begin(1, [command]); host.reserve_command(1, command)
-        effect_receipts.record_command(1, "returned", command, "witness")
+        host.broker_begin(1, [command])
+        effect_receipts.record_command(1, "returned", command, "witness", attempt(command))
         # Crash before broker_end: the saved per-command receipt is sufficient.
         host._ledger = None; host._booted = False
         recovered = host.ledger()
         self.assertEqual(recovered.projection()["actions"][0]["status"], "returned")
         self.assertIn("recovered_results", recovered.projection()["actions"][0]["receipt"])
 
+    def test_the_broker_answers_its_ticket(self):
+        self.capture()
+        self.assertEqual(host.broker_begin(5, [["help"]]), (0, ""))          # not the captured turn
+        admitted, ticket = host.broker_begin(1, [["help"]])
+        self.assertEqual((admitted, ticket), (1, host._ticket))
+        self.assertTrue(ticket)
+        host.begin(2, "continuation-tick", "")
+        self.capture()
+        self.assertEqual(host.broker_begin(2, []), (1, ""))                  # nothing to record
+
+    def test_an_attempt_the_dispatcher_could_not_record_fails_the_batch(self):
+        import llm_policy
+        with self.assertRaisesRegex(llm_policy.IntegrityError, "command attempt t/3 is already recorded"):
+            host.attempt_not_recorded("t", 3, "exists")
+        with self.assertRaisesRegex(input_ack.LedgerUnavailable, "attempt-begin: .*unavailable"):
+            host.attempt_not_recorded("t", 3, "(Error ledger-client:call unavailable)")
+
     def test_restart_keeps_unreturned_effect_uncertain(self):
         self.capture(); host.broker_begin(1, [["shell", "mutation"]])
-        host.reserve_command(1, ["shell", "mutation"])
+        attempt(["shell", "mutation"])
         host._ledger = None; host._booted = False
         self.assertEqual(host.ledger().projection()["actions"][0]["status"], "uncertain")
         host.begin(2, "continuation-tick", "")
         self.assertEqual(host.capture(host.prepare("reconsider"), 60), 1)
-        self.assertEqual(host.broker_begin(2, [["shell", "another mutation"]]), 1)
+        self.assertEqual(host.broker_begin(2, [["shell", "another mutation"]])[0], 1)
         self.assertEqual(host.ledger().projection()["actions"][0]["status"], "uncertain")
 
     def test_exact_task_checker_finishes_only_its_observed_result(self):
@@ -274,16 +298,16 @@ class StrategyHostTest(unittest.TestCase):
     def test_late_receipt_does_not_cancel_fresh_command(self):
         self.capture()
         old = ["recent-messages", "room", 6]
-        self.assertEqual(host.broker_begin(1, [old]), 1)
-        self.assertEqual(host.reserve_command(1, old), 1)
+        self.assertEqual(host.broker_begin(1, [old])[0], 1)
+        attempt(old)
         old_ticket = host._ticket
         host._ledger = None; host._booted = False
         host.begin(2, "continuation-tick", "")
         self.capture()
         new = ["shell", "fresh mutation"]
-        self.assertEqual(host.broker_begin(2, [new]), 1)
+        self.assertEqual(host.broker_begin(2, [new])[0], 1)
         self.assertTrue(host.ledger().report(old_ticket, "late information"))
-        self.assertEqual(host.reserve_command(2, new), 1)
+        self.assertEqual(attempt(new), host._ticket + ":0")
 
 
 
@@ -293,11 +317,10 @@ class StrategyHostTest(unittest.TestCase):
     def test_metadata_edits_and_bad_calls_do_not_cancel_the_batch(self):
         self.capture()
         commands = [['read-file','missing'], ['unknown-tool'], ['shell','printf later']]
-        self.assertEqual(host.broker_begin(1, commands), 1)
+        self.assertEqual(host.broker_begin(1, commands)[0], 1)
         for command in commands:
             host.ledger().control(router_revision='changed')
-            self.assertEqual(host.reserve_command(1, command), 1)
-            host.command_result(1, 'returned', command, 'result')
+            host.command_result(1, 'returned', command, 'result', int(attempt(command).rpartition(":")[2]))
         self.assertEqual(len(input_ack.attempts(host._ticket)), 3)
 
     def test_receipts_page_large_results_without_losing_content(self):
@@ -333,8 +356,8 @@ class StrategyHostTest(unittest.TestCase):
 
     def test_failed_provider_does_not_drop_presented_result(self):
         self.capture(); command = ["help", "shell"]
-        host.broker_begin(1, [command]); host.reserve_command(1, command)
-        effect_receipts.record_command(1, "returned", command, "durable witness")
+        host.broker_begin(1, [command])
+        effect_receipts.record_command(1, "returned", command, "durable witness", attempt(command))
         host.broker_end(1, "durable witness")
         host.begin(2, "continuation-tick", "")
         self.capture(); host.provider_failed()
@@ -344,7 +367,7 @@ class StrategyHostTest(unittest.TestCase):
     def test_failed_provider_cannot_admit_an_empty_or_stale_batch(self):
         self.capture()
         host.provider_failed()
-        self.assertEqual(host.broker_begin(1, [[]]), 0)
+        self.assertEqual(host.broker_begin(1, [[]])[0], 0)
         self.assertEqual(json.loads(host.broker_feedback())["reason"],
                          "capture-already-settled")
         view = input_ack.task_view("all")
@@ -356,16 +379,15 @@ class StrategyHostTest(unittest.TestCase):
         first_turn = host.broker_turn(1)
         command = ["shell", "printf first"]
         host.broker_begin(first_turn, [command])
-        host.reserve_command(first_turn, command)
-        effect_receipts.record_command(first_turn, "returned", command, "first")
+        effect_receipts.record_command(first_turn, "returned", command, "first", attempt(command))
         with mock.patch("cognitive_health.turn_failed", return_value=1):
             host.fault()
         host.begin(1, "continuation-tick", "")
         self.assertIn("first", self.capture())
         second_turn = host.broker_turn(1)
         self.assertNotEqual(first_turn, second_turn)
-        self.assertEqual(host.broker_begin(first_turn, [["help", "shell"]]), 0)
-        self.assertEqual(host.broker_begin(second_turn, [["help", "shell"]]), 1)
+        self.assertEqual(host.broker_begin(first_turn, [["help", "shell"]])[0], 0)
+        self.assertEqual(host.broker_begin(second_turn, [["help", "shell"]])[0], 1)
         actions = host.ledger().projection()["actions"]
         self.assertEqual([a["serial"] for a in actions], [0, 1])
         self.assertEqual([a["status"] for a in actions], ["returned", "issued"])

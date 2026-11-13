@@ -20,7 +20,6 @@ ROOT = HERE.parent
 sys.path[:0] = [str(HERE), str(ROOT / "src"), str(ROOT / "channels")]
 import input_ack
 import native_ledger
-import llm_policy
 from observed_strategy import Ledger, digest, encoded
 from native_ledger_client import NativeRunner
 from test_input_ack_native import NativeCase, SKIP
@@ -44,7 +43,8 @@ def presented(store, ticket):
 
 
 def record_attempt(store, ticket, position, command, result):
-    """strategy_host's reserve_command and command_result for one command."""
+    """The native dispatcher's attempt (src/strategy_attempts_cetta.metta) and
+    strategy_host.command_result for one command."""
     command_text, result_text = encoded(command), encoded(result)
     input_ack.attempt_begin(ticket, position, command_text)
     if result is not None:
@@ -222,20 +222,17 @@ class TurnEffectNativeTest(NativeSides):
         big = {"disposition": "returned", "result": "\U0001f9ea \"quoted\"\\n" * 3000}
 
         def scenario(store, note):
-            with mock.patch.multiple(host, _ledger=store, _turn="1", _ticket="t", _position=0), \
+            with mock.patch.multiple(host, _ledger=store, _turn="1", _ticket="t"), \
                     mock.patch.dict(os.environ, {"METTACLAW_OBSERVED_STRATEGY": "1"}):
                 with mock.patch.object(host, "_close_answered_message"), \
-                        mock.patch.dict(sys.modules, {"process_supervision": mock.Mock(), "stream_sink": mock.Mock()}):
+                        mock.patch.dict(sys.modules, {"process_supervision": mock.Mock()}):
+                    # Each attempt as the native dispatcher records it, at its position.
                     for number, command in enumerate((["help"], ["shell", "ls"], ["cat", "x"])):
-                        note("reserve", host.reserve_command("1", command))
+                        note("reserve", input_ack.attempt_begin("t", number, encoded(command)))
                         if number != 1:
-                            host.command_result("1", "returned", command, big["result"] if number == 0 else "small")
-                    host._position = 0
-                    try:
-                        host.reserve_command("1", ["help"])
-                        note("repeat", "accepted")
-                    except llm_policy.IntegrityError as error:
-                        note("repeat", str(error))
+                            host.command_result("1", "returned", command,
+                                                big["result"] if number == 0 else "small", number)
+                    note("repeat", "accepted" if input_ack.attempt_begin("t", 0, encoded(["help"])) else "exists")
                 cursor, pages = "", []
                 while True:
                     page = json.loads(host.command_receipts(cursor))

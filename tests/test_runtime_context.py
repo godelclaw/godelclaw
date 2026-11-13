@@ -176,7 +176,7 @@ class RuntimeContextTest(unittest.TestCase):
 
     def test_prepare_appends_and_capture_requires_exact_observed_packet(self):
         globals_patch = mock.patch.multiple(host, _ledger=None, _booted=False, _turn=None,
-            _sample=None, _ticket=None, _focus=None, _position=0, _runtime_projection=None)
+            _sample=None, _ticket=None, _focus=None, _runtime_projection=None)
         globals_patch.start(); self.addCleanup(globals_patch.stop)
         with mock.patch.dict(sys.modules, {"telegram": SimpleNamespace(current_batch_update_ids=set, reply_chat_id=str)}), \
              mock.patch.object(host, "guard", return_value="control"), \

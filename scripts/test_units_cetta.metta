@@ -30,7 +30,10 @@
       ("METTACLAW_ACTIVITY_CALL_SCOPE" "coding a/b") ("METTACLAW_STREAM_PARENT" "parent-1")))
     ("tests/unit/display.metta" "UNIT_DISPLAY_OFF_OK")
     ("tests/unit/commentary_observer.metta" "UNIT_COMMENTARY_OBSERVER_OK"
-     (("METTACLAW_MODEL_COMMENTARY" "1") ("METTACLAW_PUBLIC_WORK_DIR" "{home}/worklog")))))
+     (("METTACLAW_MODEL_COMMENTARY" "1") ("METTACLAW_PUBLIC_WORK_DIR" "{home}/worklog")))
+    ("tests/unit/strategy_attempts.metta" "UNIT_STRATEGY_ATTEMPTS_OK"
+     (("METTACLAW_STREAM_DIR" "{home}/display") ("METTACLAW_INSTANCE" "unit")
+      ("METTACLAW_INPUT_LEDGER_SOCKET" "{home}/l.sock")))))
 
 (= (units:env $directory)
    (let $base (nt:environment $directory)

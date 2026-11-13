@@ -1,6 +1,6 @@
-; Native effect receipts. Explicit host boundaries: strategy bookkeeping,
-; stream receipt observation, and configuration-selected worklog plugins
-; (src/worklog_sink_cetta.metta) ONLY.
+; Native effect receipts. Explicit host boundaries: strategy bookkeeping and
+; configuration-selected worklog plugins (src/worklog_sink_cetta.metta) ONLY.
+; The receipt's display record is native (src/display_cetta.metta).
 !(import! &self (library fs))
 !(import! &self (library str))
 !(import! &self (library json))
@@ -12,7 +12,8 @@
 !(import! &self ./src/worklog_sink_cetta.metta)
 !(import! &self ./src/strategy_host.py)
 !(import! &self ./src/strategy_broker_cetta.metta)
-!(import! &self ./src/stream_sink.py)
+!(import! &self ./src/strategy_attempts_cetta.metta)
+!(import! &self ./src/display_cetta.metta)
 
 ; Reviewer mail2b51e0f80b544595b546a6effb97187b: one serial evaluator per
 ; runtime process reaches these hooks. This is evaluator-local reentry state,
@@ -159,12 +160,20 @@
               ($committed (er:append $entry)))
          (if (== $committed 1)
            (let $_ (er:publish $turn $disposition $command $result $now $occurrence) 1) $committed)))))
+; The broker records the result at the batch's attempt this receipt belongs to
+; (src/strategy_attempts_cetta.metta), whose identity is the occurrence when
+; the caller named none.
 (= (er:strategy $turn $disposition $command $result $occurrence)
    (if (== (system:getenv-or-default "METTACLAW_OBSERVED_STRATEGY" "0") "1")
-     (let $outcome (er:answer (collapse (catch (py-call (strategy_host.command_result $turn $disposition $command $result)))))
+     (let* (($attempt (strategy:attempt $turn))
+            ($outcome (er:answer (collapse (catch (py-call (strategy_host.command_result $turn $disposition $command $result
+                                                             (er:attempt-position $attempt))))))))
        (if (er:failed? $outcome) $outcome
-         (if (erv:truth $occurrence) $occurrence
-           (erv:cross (py-call (strategy_host.command_identity $turn)))))) $occurrence))
+         (if (erv:truth $occurrence) $occurrence (er:attempt-identity $attempt)))) $occurrence))
+(= (er:attempt-position $attempt)
+   (case $attempt (((StrategyAttemptV1 $identity $position) $position) ($none -1))))
+(= (er:attempt-identity $attempt)
+   (case $attempt (((StrategyAttemptV1 $identity $position) $identity) ($none JsonNull))))
 (= (er:record $turn $disposition $command $result $occurrence)
    (er:record-occurrence $turn $disposition $command $result (erv:cross $occurrence)))
 ; Only the omitted-argument facade supplies Python None. An explicitly supplied
@@ -178,8 +187,14 @@
            (let $committed (er:commit (erv:cross $turn) (erv:cross $disposition) (erv:cross $command)
                              (erv:cross $result) $identity $now)
              (if (== $committed 1)
-               (let $_ (collapse (catch (py-call (stream_sink.receipt (erv:host-array $identity) $command $result $disposition)))) 1)
+               (let $_ (collapse (catch (display:receipt (er:text $identity) (er:shown $command) (er:shown $result)
+                                                         (er:shown $disposition)))) 1)
                $committed)))))))
+; Python's str() of a value as it crosses, for the display; never a failure.
+; The identity has crossed already.
+(= (er:shown $value) (er:text (erv:cross $value)))
+(= (er:text $value)
+   (let $text (erv:str $value) (if (erv:failed? $text) (repr $value) $text)))
 (= (er:suffix $turn $disposition $commands $reason)
    (let* (($now (system:wall-time)) ($number (erv:int (erv:cross $turn)))
           ($d (erv:text (erv:cross $disposition) 80)) ($c (erv:text (erv:cross $commands) 6000))

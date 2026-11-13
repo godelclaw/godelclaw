@@ -400,6 +400,7 @@
   "src/completion_effects_cetta.metta",
   "src/rejection_gate_cetta.metta",
   "src/strategy_broker_cetta.metta",
+  "src/strategy_attempts_cetta.metta",
   "src/session_engine_cetta.metta",
   "src/activity_source_cetta.metta",
   "src/turn_health_cetta.metta",

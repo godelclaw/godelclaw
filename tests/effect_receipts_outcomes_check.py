@@ -17,7 +17,6 @@ from effect_receipts_support import IMPORTS, Qualification, ROOT, emit, limit, q
 def check(c):
     sys.path.insert(0,str(ROOT/'src'))
     import effect_receipts as oracle
-    import stream_sink
     # These are native arguments at the real facade boundary, not already
     # decoded JSON values: Bool and JsonNull atoms cross as Python strings.
     fixtures=[('',None,'fixture-uuid-1'),(' 0',0,'fixture-uuid-2'),
@@ -27,26 +26,32 @@ def check(c):
               (' (quote (fixture (nested 4)))',['fixture',['nested',4]],['fixture',['nested',4]])]
     source=IMPORTS+'!(import! &self ./src/effect_receipts.metta)\n'
     source+='!(import! &self ./tests/effect_receipts_caller_probe.py)\n!(py-call (effect_receipts_caller_probe.setup))\n'+FREEZE+WIRE
+    # The receipt's display record (src/display_cetta.metta) fails here: the
+    # durable receipt stands. The failing display records what it was shown.
+    source+='''!(match &self (= (display:receipt $identity $command $result $disposition) $body)
+  (remove-atom &self (= (display:receipt $identity $command $result $disposition) $body)))
+(= (display:receipt $identity $command $result $disposition)
+   (let $_ (add-atom &self (ShownReceipt ($identity $command $result $disposition))) (Error fixture display-failed)))
+'''
     for suffix,_,_ in fixtures:
         source+=emit('(rt:wire (effect-receipts:record-command 3 returned (quote (shell "fixture")) (quote (answer True 3))%s))'%suffix)
-    source+='!(println! (Summary (py-call (effect_receipts_caller_probe.summary))))\n'
-    raw=c.run('raw-occurrences-and-stream-failure',source,{'EFFECT_TEST_STREAM_FAIL':'1'})
-    actual=rows(raw);data=(c.directory/'receipts.jsonl').read_bytes()
+    source+=emit('(JsonArray (collapse (match &self (ShownReceipt $shown) (JsonArray $shown))))')
+    raw=c.run('raw-occurrences-and-display-failure',source)
+    actual=rows(raw);shown=actual.pop();data=(c.directory/'receipts.jsonl').read_bytes()
     entries=[json.loads(line) for line in data.splitlines()]
-    summary=json.loads(next(s[len('(Summary '):-1] for s in raw.splitlines() if s.startswith('(Summary ')))
     expected_path=c.directory/'oracle.jsonl'
     with mock.patch.dict(os.environ,{**c.environment(),'METTACLAW_EFFECT_RECEIPT_PATH':str(expected_path)},clear=True),\
             mock.patch.object(oracle.time,'time',return_value=1704067200.125),\
-            mock.patch.object(oracle.uuid,'uuid4',side_effect=[SimpleNamespace(hex='fixture-uuid-%d'%i) for i in range(1,5)]),\
-            mock.patch.object(stream_sink,'receipt',side_effect=RuntimeError('fixture stream failed')):
+            mock.patch.object(oracle.uuid,'uuid4',side_effect=[SimpleNamespace(hex='fixture-uuid-%d'%i) for i in range(1,5)]):
         for _,identity,_ in fixtures:
             assert oracle.record_command(3,'returned',['shell','fixture'],['answer','true',3],identity)==1
     c.save('raw-occurrences.json',{'actual':actual,'entries':entries,'expected_occurrences':[v[2] for v in fixtures],
-        'stream_observations':summary,'native_hex':data.hex(),'oracle_hex':expected_path.read_bytes().hex()})
+        'display_observations':shown,'native_hex':data.hex(),'oracle_hex':expected_path.read_bytes().hex()})
     assert actual==[['value',1]]*len(fixtures)
     assert [e['occurrence'] for e in entries]==[v[2] for v in fixtures]
     assert data==expected_path.read_bytes()
-    assert [e['identity'] for e in summary['events']]==[v[2] for v in fixtures],summary
+    # Each committed receipt is shown as Python's str() of its crossed values.
+    assert shown==[[str(v[2]),str(['shell','fixture']),str(['answer','true',3]),'returned'] for v in fixtures],shown
 
     # No configured receipt means no projection/stream; postcommit projection
     # failure, off and absent sinks must never undo or fail the durable receipt.
@@ -55,8 +60,10 @@ def check(c):
         root=c.directory/('work-'+mode);root.mkdir()
         (root/'state.json').write_text('{"enabled": false, "seq": 0, "epoch": 7}')
         path=c.directory/('receipt-'+mode+'.jsonl')
+        display=c.directory/('display-'+mode)
         settings={'METTACLAW_EFFECT_RECEIPT_PATH':'' if mode=='no-path' else str(path),
-                  'METTACLAW_PUBLIC_TOOL_RECEIPTS':'1','METTACLAW_PUBLIC_WORK_DIR':'' if mode=='no-sink' else str(root)}
+                  'METTACLAW_PUBLIC_TOOL_RECEIPTS':'1','METTACLAW_PUBLIC_WORK_DIR':'' if mode=='no-sink' else str(root),
+                  'METTACLAW_STREAM_DIR':str(display)}
         source=HEADER+'!(import! &self ./tests/effect_receipts_caller_probe.py)\n!(py-call (effect_receipts_caller_probe.setup))\n'+WIRE
         source+='!(change-state! &er-captured ((3 7)))\n'
         if mode=='sink-failed':
@@ -65,12 +72,11 @@ def check(c):
 '''
         source+=emit('(rt:wire (er:record 3 returned (quote (shell "fixture")) "result" "outcome-id"))')
         source+=emit('(JsonArray ((get-state &er-reporting) (size-atom (get-state &er-in-flight)) (size-atom (get-state &er-published))))')
-        source+='!(println! (Summary (py-call (effect_receipts_caller_probe.summary))))\n'
         raw=c.run('postcommit-'+mode,source,settings);actual=rows(raw)
-        summary=json.loads(next(s[len('(Summary '):-1] for s in raw.splitlines() if s.startswith('(Summary ')))
-        outcomes.append({'mode':mode,'actual':actual,'summary':summary,'receipt_hex':path.read_bytes().hex() if path.exists() else None})
+        shown=[json.loads(line) for p in display.glob('*.jsonl') for line in p.read_text().splitlines() if line]
+        outcomes.append({'mode':mode,'actual':actual,'display':shown,'receipt_hex':path.read_bytes().hex() if path.exists() else None})
         assert actual==[['value',0 if mode=='no-path' else 1],[False,0,0]]
-        assert summary['counts'].get('stream',0)==(0 if mode=='no-path' else 1)
+        assert [r['item'] for r in shown if r['kind']=='tool.finished']==([] if mode=='no-path' else ['outcome-id'])
         assert not (root/'notes.jsonl').exists()
     c.save('postcommit-outcomes.json',outcomes)
 
@@ -97,16 +103,19 @@ def check(c):
 (= (query $value) (quote (answer True 3)))
 '''
     source+='!(run-command-batch-once 41 5 (quote ((query %s))))\n'%json.dumps(secret,ensure_ascii=False)
-    source+='!(println! (Summary (py-call (effect_receipts_caller_probe.summary))))\n'
+    display=c.directory/'batch-display'
     raw=c.run('actual-structured-result-batch',source,{'METTACLAW_EFFECT_RECEIPT_PATH':str(path),
-        'METTACLAW_PUBLIC_TOOL_RECEIPTS':'1','METTACLAW_PUBLIC_WORK_DIR':str(root)})
-    summary=json.loads(next(s[len('(Summary '):-1] for s in raw.splitlines() if s.startswith('(Summary ')))
-    data=path.read_bytes();entry=json.loads(data);event=summary['events'][0]
+        'METTACLAW_PUBLIC_TOOL_RECEIPTS':'1','METTACLAW_PUBLIC_WORK_DIR':str(root),'METTACLAW_STREAM_DIR':str(display)})
+    shown=[json.loads(line) for p in display.glob('*.jsonl') for line in p.read_text().splitlines() if line]
+    summary={'display':shown}
+    data=path.read_bytes();entry=json.loads(data)
     expected_path=c.directory/'oracle-batch.jsonl'
     with mock.patch.dict(os.environ,{**c.environment(),'METTACLAW_EFFECT_RECEIPT_PATH':str(expected_path)},clear=True),\
-            mock.patch.object(oracle.time,'time',return_value=entry['recorded_at']),mock.patch.object(stream_sink,'receipt',return_value=1):
-        assert oracle.record_command(41,'returned',event['command'],event['result'],entry['occurrence'])==1
-    assert expected_path.read_bytes()==data and summary['counts']['stream']==1
+            mock.patch.object(oracle.time,'time',return_value=entry['recorded_at']):
+        # The dispatcher's command as it crosses; its normalized result is text.
+        assert oracle.record_command(41,'returned',['query',secret],entry['result'],entry['occurrence'])==1
+    finished=[r for r in shown if r['kind']=='tool.finished']
+    assert expected_path.read_bytes()==data and [r['item'] for r in finished]==[entry['occurrence']]
     assert secret not in (root/'notes.jsonl').read_text()
     c.save('structured-result-batch.json',{'summary':summary,'entry':entry,'native_hex':data.hex(),
         'notes_hex':(root/'notes.jsonl').read_bytes().hex(),'generated_secret':secret,'oracle_hex':expected_path.read_bytes().hex(),

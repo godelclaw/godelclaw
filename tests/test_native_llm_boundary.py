@@ -168,8 +168,11 @@ def prepare(kind):
     host.begin(1, "autonomous-trigger", "")
     assert host.capture(host.prepare("first request"), 60) == 1
     command = ["help", "shell"] if kind == "observation" else ["shell", "not executed"]
-    assert host.broker_begin(1, [command]) == 1
-    assert host.reserve_command(1, command) == 1
+    admitted, ticket = host.broker_begin(1, [command])
+    assert admitted == 1
+    # The native dispatcher's attempt, before the command runs.
+    import input_ack
+    assert input_ack.attempt_begin(ticket, 0, host.strategy.encoded(command))
     host.ledger().restore()
     host.begin(2, "continuation-tick", "")
     prompt = host.prepare("fresh context")

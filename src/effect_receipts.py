@@ -233,11 +233,17 @@ def _publish_public_event(turn, disposition, command, result, at, occurrence=Non
 
 
 def record_command(turn, disposition, command, result, occurrence=None) -> int:
-    """Record one command after the dispatcher has classified its return."""
+    """Record one command after the dispatcher has classified its return.
+
+    With the observed strategy the broker records the result at the batch's
+    attempt, whose identity (<ticket>:<position>) is the occurrence, as the
+    native dispatcher's receipt names it (src/effect_receipts_cetta.metta).
+    """
     if os.environ.get("METTACLAW_OBSERVED_STRATEGY", "0") == "1":
         import strategy_host
-        strategy_host.command_result(turn, disposition, command, result)
-        occurrence = occurrence or strategy_host.command_identity(turn)
+        ticket, separator, position = str(occurrence or "").rpartition(":")
+        strategy_host.command_result(turn, disposition, command, result,
+                                     int(position) if separator and position.isdigit() else -1)
     occurrence = occurrence or uuid.uuid4().hex
     now = time.time()
     entry = {
@@ -254,11 +260,6 @@ def record_command(turn, disposition, command, result, occurrence=None) -> int:
         # After the durable append, outside every transaction: a sink
         # failure cannot fail or undo the receipt.
         _publish_public_event(turn, disposition, command, result, now, occurrence)
-        try:
-            import stream_sink
-            stream_sink.receipt(occurrence, command, result, disposition)
-        except Exception:
-            pass
     return committed
 
 

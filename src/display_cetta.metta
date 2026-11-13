@@ -14,9 +14,10 @@
 ; - Records are appended as they come, without the Python writer's queue and
 ;   thread: nothing is dropped for want of room, so no record carries a gap.
 ;
-; Entries: display:emit, display:event and display:tool-finished for the
-; executor; display:call-begin, -wire, -readable?, -offset, -advance,
-; -projected, -unavailable and -final for a provider call.
+; Entries: display:emit, display:event, display:receipt and
+; display:tool-finished for the executor; display:call-begin, -wire,
+; -readable?, -offset, -advance, -projected, -unavailable and -final for a
+; provider call.
 !(import! &self (library json))
 !(import! &self (library str))
 !(import! &self (library re))
@@ -159,6 +160,17 @@
           (JsonPair "source" (JsonString "executor"))
           (if $command (JsonPair "command" (JsonString (display:text $text))) ())
           (if (== $epoch none) () (JsonPair "epoch" (JsonString $epoch))))))))
+
+; A dispatched command's end, from its effect receipt: its command, result and
+; disposition as text, in the epoch its dispatch kept, or the console's.
+(= (display:receipt $identity $command $result $disposition)
+   (if (not (display:configured?)) 0
+     (let $epoch (display:release-epoch $identity)
+       (display:emit
+         ((JsonPair "kind" (JsonString "tool.finished")) (JsonPair "item" (JsonString $identity))
+          (JsonPair "command" (JsonString $command)) (JsonPair "text" (JsonString $result))
+          (JsonPair "status" (JsonString $disposition)) (JsonPair "source" (JsonString "executor"))
+          (JsonPair "epoch" (JsonString $epoch)))))))
 
 ; A tool's end, with the last 12000 bytes of its output artifact.
 (= (display:tool-finished $item $state $code $artifact)
