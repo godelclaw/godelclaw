@@ -30,7 +30,6 @@
       "python_files": [
         "src/llm_policy.py",
         "src/model_commentary.py",
-        "src/commentary_stream.py",
         "src/native_llm_host.py",
         "src/native_lifetime.py",
         "src/provider_protocol.py",
@@ -1300,6 +1299,65 @@
       "limits": [
         "the responder's menus, /health, /activity, set_model, quota and notify_failure still call Python; the menus need the provider lane's model catalog entries",
         "neither live agent uses IRC or Mattermost; the chat channel unit is not installed",
+        "No paid live canary or 24-hour soak claimed"
+      ]
+    },
+    {
+      "id": "provider-batch-a9-native-commentary-observer-and-command-attempts",
+      "status": "qualified-and-deployed",
+      "native_modules": [
+        "src/commentary_observer_cetta.metta (at most one worklog note per call, from the stream or the accepted output)",
+        "src/worklog_sink_cetta.metta (the worklog sink, shared with the receipts module, loaded only where commentary is on)",
+        "src/strategy_attempts_cetta.metta (the broker's command attempts, recorded in the ledger before each command runs, with the receipt's display record)"
+      ],
+      "python_removed": [
+        "src/commentary_stream.py",
+        "native_llm_host.claim_effect, the four commentary entries, native_classified and _native_finish",
+        "strategy_host.reserve_command, command_identity and _position",
+        "stream_sink.event and receipt, and the held item epochs"
+      ],
+      "runtime_python_lines_removed": 290,
+      "census_ceilings_lowered": {
+        "two-turn coding": [
+          42,
+          40
+        ],
+        "activity delivery": [
+          41,
+          40
+        ],
+        "provider command": [
+          7,
+          4
+        ]
+      },
+      "defects_fixed": [
+        "with the strategy on, a command that is not a call (for example a bare number) made _close_answered_message raise, and the dispatcher dropped that command's receipt and result without a message"
+      ],
+      "behaviour_changes": [
+        "with the strategy on, each command enters the host once instead of four times",
+        "the commentary observer can no longer fail a call"
+      ],
+      "runtime_commit": "80978b5502",
+      "branch_tip": "ea387cba2e",
+      "engine_commit": "4374a1df0d15c6a1bb839746ec2d1447798ad072",
+      "release": "a9cdee00",
+      "gateway_release": "a9cdee00",
+      "test_orchestration": "CeTTa core without Python",
+      "checks": {
+        "native_suites_passed": "24 of 24 on the merge with channels batch C4 (the growth suite passed when rerun alone; its linear control failed once on a low small-size memory reading)",
+        "chatgpt_route": "13 of 13",
+        "python_suite": "the same 26 tests fail on main and on the merge",
+        "telegram_end_to_end": "passes on the merge against the live service",
+        "growth": "commentary observer events 3.54 and 3.81, prefix 3.44 and 4.43 (bound 6); a quadratic prefix mutant is rejected",
+        "mutants": "34 unit and 11 wiring mutants killed",
+        "benchmark": "two paired runs at load 17 to 31; no consistent cost, RSS +1.5 to 1.9 percent",
+        "live_observation": "Gödel's live turn on release a9cdee00 at 20:15 with the strategy on: he ran (help \"send\") and (sibling-status) in one turn; each command returned exactly once (sibling-status answered that Lila is active), with no error line, and the mail that woke him was settled; every unit, both responders and both input ledgers came up with no runtime errors",
+        "paired_installed_verification": true
+      },
+      "limits": [
+        "the seam probes, fixtures and upstream modes still use the Python transport; llm:host-command remains until they move",
+        "native_call_seed still needs the host plan for failures",
         "No paid live canary or 24-hour soak claimed"
       ]
     }
