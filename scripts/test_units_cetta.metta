@@ -43,6 +43,14 @@
     ("tests/unit/journal_retention.metta" "UNIT_JOURNAL_RETENTION_OK" (("PATH" "{home}/bin:/usr/bin:/bin")))
     ("tests/unit/control_io.metta" "UNIT_CONTROL_IO_OK"
      (("METTACLAW_TELEGRAM_SERVICE_SOCKET" "{home}/cwp.sock") ("METTACLAW_MODE_STATE_ROOT" "{home}/modes")))
+    ("tests/unit/runtime_health.metta" "UNIT_RUNTIME_HEALTH_OK"
+     (("PATH" "{home}/bin:/usr/bin:/bin")
+      ("METTACLAW_TELEGRAM_HEALTH_PATH" "{home}/telegram-health.json") ("METTACLAW_WORKING_SET_PATH" "{home}/working.json")
+      ("METTACLAW_COGNITIVE_HEALTH_PATH" "{home}/cognitive.json") ("METTACLAW_LOOP_MODE_PATH" "{home}/mode.json")
+      ("METTACLAW_ENGINE_STATE_PATH" "{home}/engine") ("METTACLAW_LIFECYCLE_PATH" "{home}/lifecycle.json")
+      ("METTACLAW_FUEL_MODE_PATH" "{home}/fuel.json") ("METTACLAW_ENGINE_FAILURE_PATH" "{home}/engine-failure")
+      ("METTACLAW_MEMORY_BACKEND_CONFIG" "{home}/memory.json") ("METTACLAW_DEPLOYED_COMMIT" "abcdef0123456789")
+      ("METTACLAW_COGNITIVE_STALE_SECONDS" "300")))
     ("tests/unit/display.metta" "UNIT_DISPLAY_OK"
      (("METTACLAW_STREAM_DIR" "{home}/display") ("METTACLAW_INSTANCE" "unit")
       ("METTACLAW_ACTIVITY_CALL_SCOPE" "coding a/b") ("METTACLAW_STREAM_PARENT" "parent-1")))

@@ -66,10 +66,6 @@ def status():
     return strategy.encoded([dict(id=row[0], topic=row[1], state=row[2]) for row in _call("model-jobs")])
 
 
-def activity():
-    return "use model-jobs for archived results"
-
-
 def notify(store=None):
     return 0
 

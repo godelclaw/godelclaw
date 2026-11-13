@@ -1,4 +1,7 @@
-"""Privacy-safe runtime health summary for operators and supervisors."""
+"""Privacy-safe runtime health status for the deployment watcher.
+
+scripts/runtime_watch.py reads status(); the command responder's /health
+and /activity are native (src/runtime_health_cetta.metta)."""
 
 import json
 import os
@@ -6,7 +9,6 @@ import subprocess
 import time
 
 import cognitive_health
-import engine_modes
 import loop_modes
 import memory_health
 
@@ -153,184 +155,6 @@ def status(now=None):
         "model_turn_last_outcome": cognition.get("last_outcome", "none"),
         "memory": configured["mode"],
     }
-
-
-def report():
-    value = status()
-    problems = ",".join(value["problems"]) or "none"
-    return (
-        "runtime-health: {state} | lifecycle={lifecycle} | "
-        "generation={generation} | "
-        "telegram={transport} | loop={loop} | working-set-age={working}s | "
-        "model-turn-age={turn}s | model-turn-pending={pending}s | "
-        "memory={memory} | engine-failure={engine_failure} | problems={problems}"
-    ).format(
-        state=value["state"], lifecycle=value["lifecycle"],
-        generation=value["generation"],
-        transport=("service-ready=%s, control-age=%ss (polling owned by transport)" %
-            (value["channel_service_ready"], value["operator_control_age_seconds"]))
-            if value["channel_health_source"] == "independent-control" else
-            "poll-age=%ss" % value["telegram_poll_age_seconds"],
-        loop=value["loop"], working=value["working_set_age_seconds"],
-        turn=value["model_turn_age_seconds"],
-        pending=value["model_turn_pending_age_seconds"],
-        memory=value["memory"],
-        engine_failure=engine_modes.failure_view(), problems=problems,
-    )
-
-
-def activity_report(now=None):
-    """Human-facing cognitive activity, derived from existing receipts.
-
-    This is observation only: it does not wake the loop, alter its budget, or
-    infer whether the current work is semantically good.
-    """
-    now = time.time() if now is None else float(now)
-    working = _read_json(os.environ.get(
-        "METTACLAW_WORKING_SET_PATH", "memory/working_set.json"))
-    cognition = cognitive_health.snapshot()
-    try:
-        loops = max(0, int(working.get("loops", 0) or 0))
-    except (TypeError, ValueError):
-        loops = 0
-    try:
-        banked = max(0, int(working.get("banked_loops", 0) or 0))
-    except (TypeError, ValueError):
-        banked = 0
-    saved_at = float(working.get("saved_at", 0) or 0)
-    completed_at = float(cognition.get("last_completed_at", 0) or 0)
-    schema = int(cognition.get("schema", 1) or 1)
-    pending_at = float(cognition.get("in_flight_since", 0) or 0)
-    obligation_at = float(cognition.get("obligation_since", 0) or 0)
-    if schema < 2:
-        legacy_pending = float(cognition.get("pending_since", 0) or 0)
-        if cognition.get("last_outcome") == "failed":
-            obligation_at = obligation_at or legacy_pending
-        else:
-            pending_at = pending_at or legacy_pending
-    checkpoint_age = None if not saved_at else max(0, int(now - saved_at))
-    turn_age = None if not completed_at else max(0, int(now - completed_at))
-    pending_age = None if not pending_at else max(0, int(now - pending_at))
-    obligation_age = (None if not obligation_at
-                      else max(0, int(now - obligation_at)))
-
-    import loop_modes
-    import synthetic_llm
-    import telegram
-    continuation = bool(working.get("continuation_pending"))
-    actually_resting, rest_left = telegram.rest_status()
-    import lifecycle
-    lifecycle_enabled = bool(lifecycle.cognition_enabled())
-    pending_inputs = telegram.pendingActivityCount()
-    prepared_inputs = telegram.preparedActivityCount()
-    rest_intent = str(working.get("intent", "") or "").strip()
-    if not lifecycle_enabled:
-        state = "stopped"
-        wake = "/start"
-        steps = 0
-        steps_source = "operator-latch"
-    elif cognition.get("provider_rejection"):
-        state, wake = "blocked", "input-or-configuration"
-        steps, steps_source = loops, "checkpoint"
-    elif pending_age is not None:
-        state = "recording-result" if cognition.get("local_commit_pending") is True else "working"
-        wake = "local-storage" if state == "recording-result" else "now"
-        try:
-            steps = max(0, int(cognition.get("budget_at_start", loops)))
-        except (TypeError, ValueError):
-            steps = loops
-        steps_source = "turn-start"
-    elif loops > 0:
-        state = "working"
-        wake = "now"
-        steps = loops
-        steps_source = "checkpoint"
-    elif continuation:
-        state = "scheduled"
-        wake = "timer-or-human"
-        steps = max(loops, banked)
-        steps_source = "banked" if banked > loops else "checkpoint"
-    elif actually_resting:
-        # Rest banks the budget rather than spending it, so the energy the
-        # agent wakes owing is the honest number to show while it sleeps.
-        state = "resting"
-        wake = "timer-or-human"
-        steps = max(loops, banked)
-        steps_source = "banked" if banked > loops else "checkpoint"
-    else:
-        state = "idle"
-        wake = "human-or-heartbeat"
-        steps = loops
-        steps_source = "checkpoint"
-    if state == "working" and pending_age is None and cognition.get("last_outcome") == "failed":
-        state = "retrying"
-        delay = max(0, int(float(cognition.get("retry_at", 0) or 0) - now))
-        wake = "human-or-%ss" % delay if delay else "retry-ready"
-    import process_supervision
-    progress = process_supervision.observation(now)
-    if lifecycle_enabled and state in ("working", "retrying", "recording-result"):
-        if progress["state"] in ("stalled", "memory-pressure"):
-            state, wake = progress["state"], "supervisor"
-        elif state == "recording-result":
-            pass
-        elif progress["state"] == "waiting":
-            state, wake = "waiting", "provider-or-deadline"
-        elif (progress["state"] == "unknown" and checkpoint_age is not None
-              and checkpoint_age > 180 and (pending_age is None or pending_age > 180)):
-            state, wake = "unconfirmed", "check-supervisor"
-    age = lambda value: "never" if value is None else "%ss" % value
-    if pending_age is not None:
-        turn = ("recording-result:%s" if cognition.get("local_commit_pending") is True else "pending:%s") % age(pending_age)
-    elif cognition.get("last_outcome") == "failed":
-        failed_at = float(cognition.get("last_failed_at", 0) or 0)
-        failed_age = None if not failed_at else max(0, int(now - failed_at))
-        turn = "failed:%s-ago" % age(failed_age)
-    else:
-        turn = "completed:%s-ago" % age(turn_age)
-    obligation = ("retry:%s" % age(obligation_age)
-                  if obligation_age is not None else "none")
-    input_state = ("prepared:%d/pending:%d" %
-                   (prepared_inputs, pending_inputs)
-                   if prepared_inputs else
-                   "pending:%d" % pending_inputs
-                   if pending_inputs else "none")
-    rest = "%ss-left" % rest_left if actually_resting else "none"
-    # The stored intention is consumed at boot, so it outlives a rest that
-    # ended by waking. Report it only while there is a rest to attach it to.
-    if rest_intent and actually_resting:
-        rest += ":" + " ".join(rest_intent.split())[:120]
-    import fuel_modes
-    import topic_jobs
-    return (
-        "activity: {state} | steps={steps}@{steps_source} | fuel={fuel} | "
-        "mode={mode} | "
-        "model={model} | wake={wake} | "
-        "rest={rest} | continuation={continuation} | "
-        "checkpoint-age={checkpoint} | "
-        "turn={turn} | last-success={success} | input={input_state} | "
-        "obligation={obligation} | failure-streak={failure_streak} | "
-        "last-outcome={outcome} | progress={progress} | background={background}"
-    ).format(
-        state=state, steps=steps, steps_source=steps_source,
-        fuel=fuel_modes.current_fuel(),
-        mode=loop_modes.current_mode(),
-        model=synthetic_llm.current_model(),
-        wake=wake,
-        rest=rest,
-        continuation=("pending" if continuation else "none"),
-        checkpoint=age(checkpoint_age), turn=turn,
-        success=("never" if turn_age is None else "%ss-ago" % turn_age),
-        input_state=input_state,
-        obligation=obligation,
-        failure_streak=int(cognition.get("failure_streak", 0) or 0),
-        outcome=cognition.get("last_outcome", "none"),
-        progress=progress["state"],
-        background=topic_jobs.activity(),
-    ) + ((" | provider-rejection=HTTP %s %s: %s" %
-           (cognition['provider_rejection'].get('status', '?'),
-            cognition['provider_rejection'].get('code', ''),
-            cognition['provider_rejection'].get('message', '')))[:240]
-          if cognition.get('provider_rejection') else "")
 
 
 if __name__ == "__main__":

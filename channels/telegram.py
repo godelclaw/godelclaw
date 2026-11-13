@@ -2,7 +2,6 @@ import os
 import fcntl
 import hashlib
 import json
-import math
 import subprocess
 import tempfile
 import re
@@ -565,16 +564,6 @@ def enqueue_runtime_event(text, reason="runtime event", *, identity=None):
     return True
 
 
-def pendingActivityCount():
-    """Number of ordinary inputs not yet history-acknowledged."""
-    return int(metta_value("pending_count", 0) or 0)
-
-
-def preparedActivityCount():
-    """Number of those inputs frozen into the current stable observation."""
-    return int(metta_value("prepared_count", 0) or 0)
-
-
 def _operator_ids():
     """Sender ids allowed to use the model/quota controls (spending levers)."""
     raw = os.environ.get("METTACLAW_TELEGRAM_OPERATOR_IDS", "")
@@ -625,7 +614,6 @@ def _wake_for_operator_message(sender):
 # MeTTa client publishes here, and checks the channel service itself where
 # an answer must be current (the unread-input guard on sends).
 
-_metta = {}
 _client_seen = None
 _metta_lock = threading.Lock()
 _spool_lock = threading.Lock()
@@ -726,7 +714,7 @@ def _client_path():
 def _sync():
     """Take up what the MeTTa client of this process last published, once its
     file changed. It rewrites the file whole, so a new identity is a new
-    value; another process's client is read through metta_value only."""
+    value; another process's publication is not taken up."""
     global _client_seen
     try:
         status = os.stat(_client_path())
@@ -744,8 +732,6 @@ def _sync():
         return
     with _msg_lock:
         _client_seen = seen
-        _metta.clear()
-        _metta.update(published)
         if published.get("pid") != os.getpid():
             return
         frontier = published.get("context_frontier")
@@ -758,12 +744,6 @@ def _sync():
         titles = published.get("titles")
         if isinstance(titles, dict):
             _chat_titles.update({str(chat): str(title) for chat, title in titles.items()})
-
-
-def metta_value(name, default=None):
-    """What the MeTTa client published, in this process or another."""
-    _sync()
-    return _metta.get(name, default)
 
 
 def _metta_unread_chats():
@@ -921,13 +901,6 @@ def begin_effect_turn(turn):
             turn, _effect_activity_epoch, _value("_activity_epoch")
         )
     return turn
-
-
-def rest_status():
-    """(is_resting, seconds_left) as seen from outside the sleeping loop."""
-    until = float(metta_value("sleep_until", 0) or 0)
-    left = until - time.time()
-    return (left > 0, math.ceil(left) if left > 0 else 0)
 
 
 def _send_upload(method, field, path, caption, chat_id):

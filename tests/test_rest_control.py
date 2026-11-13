@@ -31,7 +31,6 @@ class RestControlTest(unittest.TestCase):
         telegram._client_seen = None
 
     def tearDown(self):
-        telegram._metta.pop("sleep_until", None)
         shutil.rmtree(telegram.runtime_spool(), ignore_errors=True)
 
     def test_operator_message_requests_wake(self):
@@ -126,11 +125,6 @@ class RestControlTest(unittest.TestCase):
         source = (ROOT / "src" / "skills.metta").read_text(encoding="utf-8")
         self.assertIn("(continuation-value $continuation)", source)
         self.assertIn("(= (rest $seconds $why)", source)
-
-    def test_positive_fractional_remainder_is_reported_as_one_second(self):
-        telegram._metta["sleep_until"] = 100.1
-        with mock.patch.object(telegram.time, "time", return_value=100.0):
-            self.assertEqual(telegram.rest_status(), (True, 1))
 
 
 if __name__ == "__main__":

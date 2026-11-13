@@ -1,41 +1,10 @@
-"""The CeTTa process: its command, its last failure receipt, and the recycle request.
+"""The CeTTa process: its command and the recycle request.
 
 godelclaw is PeTTa-dialect MeTTa on CeTTa: there is one engine and nothing to select.
 """
 
 import os
 import time
-
-
-def _failure_path():
-    configured = os.environ.get("METTACLAW_ENGINE_FAILURE_PATH", "")
-    if configured:
-        return configured
-    state_home = os.environ.get(
-        "XDG_STATE_HOME", os.path.expanduser("~/.local/state"))
-    instance = os.environ.get("METTACLAW_INSTANCE", "default")
-    return os.path.join(state_home, instance, "engine-failure")
-
-
-def last_failure():
-    """The receipt run.sh wrote when CeTTa last exited without a recycle request, or None."""
-    fields = {}
-    try:
-        with open(_failure_path(), "r", encoding="utf-8") as stream:
-            for line in stream:
-                key, separator, value = line.rstrip("\n").partition("=")
-                if separator:
-                    fields[key] = value
-    except OSError:
-        return None
-    return fields if fields.get("reason") else None
-
-
-def failure_view():
-    failure = last_failure()
-    if not failure:
-        return "none"
-    return "%s (status %s)" % (failure["reason"], failure.get("status", "unknown"))
 
 
 def engine_command(name="cetta"):

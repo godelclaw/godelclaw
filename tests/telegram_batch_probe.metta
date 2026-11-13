@@ -3,8 +3,9 @@
 ; acknowledged; the batch is routed and armed by its newest human input; a
 ; bot-only batch does not arm as human; input that arrives after a batch was
 ; prepared survives its acknowledgment; a runtime event keeps the reply
-; target, which a message beside it decides. The Python Telegram code sees
-; what the client publishes, and the health file shows its poll and rest.
+; target, which a message beside it decides. The file beside the health file
+; holds what the client publishes for other processes (the command responder
+; reads its rest and counts), and the health file shows its poll and rest.
 !(import! &self (library lib_import))
 !(import! &self ./lib_mettaclaw)
 
@@ -14,6 +15,7 @@
      ((((TextNotFound $x) $y) False) (($x (TextNotFound $y)) False) (($i $j) (< $i $j)))))
 (= (has? $text $part) (case (str:find $text $part) (((TextNotFound $x) False) ($i True))))
 (= (health-field $name) (json-plain (json:get (sf:object (tg:health-path)) $name)))
+(= (client-published $name $default) (sf:get (sf:native-object (tg:client-state-path)) $name $default))
 (= (json-plain $value)
    (case $value (((JsonString $s) $s) ((JsonNumber $n) (str:string->number $n)) ($other $other))))
 !(configure commchannel telegram)
@@ -35,7 +37,7 @@
      (tg:set batch-ids $ids)))
 
 ; Chronological, stable until acknowledged, routed by the newest human; the
-; Python code sees the counts and the reply chat.
+; counts are published and the Python code sees the reply chat.
 (= (batch:stable)
    (let* (($_ (tg:activity-add "" "1" "first" False "full" "1" False))
           ($_ (tg:activity-add "" "1" "second" True "full" "2" False))
@@ -44,8 +46,8 @@
           ($two (tg:activity-batch))
           ($_ (assertEqual $one $two))
           ($_ (batch:identity))
-          ($_ (assertEqual (py-call (telegram.pendingActivityCount)) 3))
-          ($_ (assertEqual (py-call (telegram.preparedActivityCount)) 3))
+          ($_ (assertEqual (client-published "pending_count" -1) 3))
+          ($_ (assertEqual (client-published "prepared_count" -1) 3))
           ($_ (assertEqual (py-call (telegram._reply_target "")) "1"))
           ($_ (assertEqual (health-field "poll_status") "ok"))
           ($_ (assertEqual (before? $one "first" "second") True))
@@ -58,7 +60,7 @@
           ($_ (assertEqual (tg:ack-activity-batch) 1))
           ($_ (assertEqual (tg:pending-count) 0))
           ($_ (assertEqual (tg:prepared-count) 0))
-          ($_ (assertEqual (py-call (telegram.pendingActivityCount)) 0))
+          ($_ (assertEqual (client-published "pending_count" -1) 0))
           ($_ (assertEqual (tg:activity-batch) ""))
           ($_ (assertEqual (tg:last-message-is-human) 0)))
      (println! BATCH_STABLE_OK)))
@@ -119,16 +121,16 @@
           ($_ (assertEqual (tg:ack-activity-batch) 1)))
      (println! BATCH_RUNTIME_EVENT_OK)))
 
-; A rest, as the Python code and a monitor see it.
+; A rest, as other processes and a monitor see it.
 (= (batch:published-rest)
    (let* (($until (+ (tg:now) 300))
           ($_ (tg:publish-rest $until))
-          ($_ (assertEqual (py-call (telegram.metta_value "sleep_until" 0)) $until))
+          ($_ (assertEqual (client-published "sleep_until" 0) $until))
           ($_ (assertEqual (health-field "loop_status") "waiting"))
           ($_ (assertEqual (health-field "waiting_until") $until))
           ($_ (tg:publish-rest 0))
           ($_ (assertEqual (health-field "loop_status") "awake"))
-          ($_ (assertEqual (py-call (telegram.metta_value "sleep_until" 1)) 0)))
+          ($_ (assertEqual (client-published "sleep_until" 1) 0)))
      (println! BATCH_PUBLISHED_REST_OK)))
 
 ; Every section must answer before the witness.

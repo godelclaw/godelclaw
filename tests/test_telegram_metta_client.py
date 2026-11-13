@@ -458,7 +458,7 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
                 print("bare group commands: this channel service does not know the declaration; not exercised")
 
             # 9. Runtime events from Python threads (a finished job) become
-            #    activity; Python and Prolog callers read the client's state.
+            #    activity; other processes read the counts the client publishes.
             api.add(104, CHAT, OPERATOR, "unread in 42")
             import durable_telegram
             await_(lambda: any('"unread in 42"' in body for _, body in
@@ -466,15 +466,15 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
                    "input durable before freezing the activity frontier")
             lines, err = run('!(tg:start)\n!(py-call (telegram.enqueue_runtime_event "job 7 done" "job"))\n'
                              '!(fs:write "%s" (tg:activity-batch))\n'
-                             '!(py-call (telegram.pendingActivityCount))\n'
-                             '!(py-call (telegram.preparedActivityCount))\n' % out, env)
+                             '!(sf:get (sf:native-object (tg:client-state-path)) "pending_count" -1)\n'
+                             '!(sf:get (sf:native-object (tg:client-state-path)) "prepared_count" -1)\n' % out, env)
             batch_text = out.read_text()
             assert "[runtime] job 7 done" in batch_text and "unread in 42" in batch_text, (batch_text, lines[-6:], err[-1500:])
             assert lines[-2:] == ["2", "2"], lines
             api.add(105, CHAT, OPERATOR, "newer in 42")
             time.sleep(1.0)
             lines, err = run('!(tg:start)\n!(fs:write "%s" (tg:activity-batch))\n!(tg:ack-activity-batch)\n'
-                             '!(py-call (telegram.pendingActivityCount))\n' % out, env)
+                             '!(sf:get (sf:native-object (tg:client-state-path)) "pending_count" -1)\n' % out, env)
             assert lines[-2:] == ["1", "0"], lines
             print("runtime events, published counts and queued new input work from the MeTTa client")
 
@@ -529,7 +529,7 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
             lines, err = run('!(tg:start)\n!(tg:activity-batch)\n'
                              '!(fs:write "%s" (tg:conversation-window 64))\n'
                              '!(fs:write "%s" (tg:recent-activity 5 "lab" 40))\n'
-                             '!(py-call (telegram.metta_value "pending_count" 0))\n'
+                             '!(sf:get (sf:native-object (tg:client-state-path)) "pending_count" 0)\n'
                              % (window_file, recent_file), env)
             mine = window_file.read_text()
             # The route line first; then what was said, each message once,
