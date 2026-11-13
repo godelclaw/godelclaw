@@ -444,11 +444,28 @@
 ; manifest is unchanged), or failed with the reason.
 
 (= (cio:instance) (system:getenv-or-default "METTACLAW_INSTANCE" "mettaclaw"))
+(= (cio:scope-unit $dir) (str:join "" ((cio:instance) "-" (cio:basename $dir) ".scope")))
 (= (cio:scope-active? $dir)
-   (case (proc:run ("systemctl" "--user" "is-active" "--quiet"
-                    (str:join "" ((cio:instance) "-" (cio:basename $dir) ".scope")))
+   (case (proc:run ("systemctl" "--user" "is-active" "--quiet" (cio:scope-unit $dir))
                    $dir inherit 5000 0 "merged")
      (((proc:exited 0 $out $err) True) ($other False))))
+; A scope outlives its run when a command left something running: a
+; background job belongs to the scope, not to the command or the worker that
+; started it. Once a claimed run is over (its manifest says started or ended,
+; and the worker its state records is gone), whatever its scope still holds
+; belongs to nobody, and the scope is stopped. A reserved launch and a living
+; worker are never touched. Under the session lock, so that no launch is
+; reserved meanwhile. True when a scope was stopped.
+(= (cio:end-leftovers $dir) (cio:locked $dir (cio:end-leftovers-locked $dir)))
+(= (cio:end-leftovers-locked $dir)
+   (let* (($phase (coding:field (sf:object (path:join $dir "runtime.json")) "phase"))
+          ($owner (coding:text (coding:field (sf:object (path:join $dir "state.json")) "worker_owner"))))
+     (if (and (cio:member $phase ((JsonString "started") (JsonString "ended")))
+              (and (!= $owner "") (and (not (process:alive? $owner)) (cio:scope-active? $dir))))
+       (let* (($stopped (proc:run ("systemctl" "--user" "stop" (cio:scope-unit $dir)) $dir inherit 10000 0 "merged"))
+              ($_ (cio:log $dir (format-args "ended what the run left in {}: {}" ((cio:scope-unit $dir) (repr $stopped))))))
+         True)
+       False)))
 ; Live: its recorded worker is alive, or (when the folder holds a session
 ; that could have a scope) its scope is active.
 (= (cio:live? $dir $check-scope)
@@ -456,6 +473,10 @@
      (if (and (== (coding:field $state "status") (JsonString "running"))
               (process:alive? (coding:text (coding:field $state "worker_owner")))) True
        (if $check-scope (cio:scope-active? $dir) False))))
+; Live, once what an earlier run left in the scope has been ended: a leftover
+; is not a running session. Under the session lock.
+(= (cio:occupied? $dir $check-scope)
+   (let $_ (if $check-scope (cio:end-leftovers-locked $dir) False) (cio:live? $dir $check-scope)))
 (= (cio:running-launch $manifest)
    (CodingLaunch running (coding:text (coding:field $manifest "root")) (coding:text (coding:field $manifest "binary"))
                  (coding:text (coding:field $manifest "run")) "session is already running"))
@@ -478,7 +499,7 @@
           ($old (sf:object $record))
           ($existing (or $pinned (or (fs:exists (path:join $dir "state.json"))
                                      (or (fs:exists (path:join $dir "messages.jsonl")) (!= $note NoNote))))))
-     (if (cio:live? $dir $existing) (cio:running-launch $old)
+     (if (cio:occupied? $dir $existing) (cio:running-launch $old)
        (let $_ (cio:settle-ending-locked $dir Observed RequireDead)
          (if $pinned (cio:reserve-pinned $dir $record $old $note)
            (cio:reserve-new $root $dir $record $existing $note))))))
@@ -742,7 +763,7 @@
             ($decided $decided))))))))
 (= (cio:repin-observe $dir $target $digest $binary $engine)
    (let* (($record (path:join $dir "runtime.json")) ($old (sf:object $record)) ($phase (coding:field $old "phase")))
-     (if (cio:live? $dir True) (cio:running-launch $old)
+     (if (cio:occupied? $dir True) (cio:running-launch $old)
        (if (and (!= $old (JsonObject ()))
                 (and (== (coding:field $old "digest") (JsonString $digest))
                      (and (== (coding:field $old "binary") (JsonString $binary))
@@ -761,7 +782,7 @@
          (RepinObserved (cio:checkpoint-revision $dir) (coding:field $old "run") $phase)))))
 (= (cio:repin-commit $dir $target $digest $binary $engine $revision $run $phase)
    (let* (($record (path:join $dir "runtime.json")) ($current (sf:object $record)))
-     (if (cio:live? $dir True) (cio:running-launch $current)
+     (if (cio:occupied? $dir True) (cio:running-launch $current)
        (if (or (!= (cio:checkpoint-revision $dir) $revision)
                (or (!= (coding:field $current "run") $run) (!= (coding:field $current "phase") $phase)))
          (CodingLaunch changed "" "" "" "the session changed during the check; try again.")
