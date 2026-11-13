@@ -7,10 +7,11 @@
 ; <ticket>:<position>, and keeps the epoch it saw until the receipt
 ; (display:receipt).
 ;
-; - The batch is this process's own: one at a time, replaced by the next
-;   batch the broker admits, and closed when the broker reports it or a new
-;   turn begins. A command of a turn without an open batch runs unrecorded,
-;   as it did before the broker existed.
+; - The batch is this process's own: one at a time, closed when the broker
+;   reports it, and replaced by the next batch the broker admits (a batch a
+;   failure left open is never reused: broker turns do not repeat). A command
+;   of a turn without an open batch runs unrecorded, as it did before the
+;   broker existed.
 ; - An attempt the ledger did not record as new (it exists, or the ledger did
 ;   not answer) is the host's failure, raised as its own failures are
 ;   (strategy_host.attempt_not_recorded): the batch fails there and its

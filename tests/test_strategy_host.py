@@ -265,6 +265,17 @@ class StrategyHostTest(unittest.TestCase):
         self.capture()
         self.assertEqual(host.broker_begin(2, []), (1, ""))                  # nothing to record
 
+    def test_a_command_that_is_no_call_keeps_its_result(self):
+        # A bare number in the model's batch reaches the dispatcher; its
+        # result must be recorded, not lost to an error in the answer check.
+        self.capture()
+        host.broker_begin(1, [3])
+        position = int(attempt(3).rpartition(":")[2])
+        self.assertEqual(host.command_result(1, "returned", 3, "COMMAND_ERROR: expected (skill arguments...)", position), 1)
+        recorded = input_ack.attempts(host._ticket)
+        self.assertEqual(len(recorded), 1)
+        self.assertIsNotNone(recorded[0]["result"])
+
     def test_an_attempt_the_dispatcher_could_not_record_fails_the_batch(self):
         import llm_policy
         with self.assertRaisesRegex(llm_policy.IntegrityError, "command attempt t/3 is already recorded"):

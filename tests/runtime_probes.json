@@ -32,6 +32,6 @@
   ["tests/advertised_skills_probe.metta", "ADVERTISED_SKILLS_OK"],
   ["tests/background_jobs_probe.metta", "BACKGROUND_JOBS_OK"],
   ["tests/command_error_labels_probe.metta", "COMMAND_ERROR_LABELS_OK"],
-  ["tests/burst_end_and_prose_probe.metta", "BURST_END_AND_PROSE_OK"]
-
+  ["tests/burst_end_and_prose_probe.metta", "BURST_END_AND_PROSE_OK"],
+  ["tests/strategy_continuation_attempt_probe.metta", "STRATEGY_CONTINUATION_ATTEMPT_OK"]
 ]

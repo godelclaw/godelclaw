@@ -450,7 +450,9 @@ def _close_answered_message(command, result):
     This is a delivery/workflow status, never a theorem of task achievement.
     The task transcript remains available when an ongoing burst continues.
     """
-    if not command or not _focus:
+    # A command that is no call (a bare number the model emitted) answers
+    # nothing; its result is still recorded.
+    if not isinstance(command, (list, tuple)) or not command or not _focus:
         return
     if _sample and _sample.get("context_incomplete"):
         return  # A delivered status/uncertainty message is not work closure.

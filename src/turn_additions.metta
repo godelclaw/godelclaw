@@ -59,13 +59,11 @@
    (work:reap))
 
 !(import! &self ./src/input_scope_cetta.metta)
-; A new turn closes the broker's batch, as the host's begin forgets its ticket.
 (= (addition-strategy-begin $turn $source $message)
-   (let* (($closed (strategy:close-batch))
-          ($receipt
+   (let $receipt
        (if (input-scope:known?)
          (let $ids (input-scope:json) (py-call (strategy_host.begin $turn $source $message $ids)))
-         (py-call (strategy_host.begin $turn $source $message)))))
+         (py-call (strategy_host.begin $turn $source $message)))
      (let* (($_ (hierarchy:begin $turn $source (py-call (strategy_host.view))))
             ($_ (ws:begin (hierarchy:task) $source
                   (if (== $source "operator-event")
