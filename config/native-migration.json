@@ -1166,6 +1166,43 @@
         "An operator bare /command in a group still runs through the Python command path until the engine roll",
         "No paid live canary or 24-hour soak claimed"
       ]
+    },
+    {
+      "id": "channels-batch-c3-responder-lifecycle-authority-native-attachment-check-and-one-menu",
+      "status": "qualified-and-deployed",
+      "native_modules": [
+        "channels/telegram.metta (whether a message carries a file: tg:attachment?)",
+        "scripts/runtime_watch.py (a rollback target qualifies when either the Python client or the native responder carries /start and /stop to the lifecycle)"
+      ],
+      "python_removed": [
+        "telegram.metta_has_attachment",
+        "the loop client's duplicate command menu: _MENU_COMMANDS, _register_menu_commands and its thread (48 lines); the launcher publishes the menu at each channel service start",
+        "runtime_health's menu fact and the command-menu-not-registered problem"
+      ],
+      "defects_fixed": [
+        "the deployment watch recognised only the Python command dispatch, so after the engine roll every rollback to that roll's generation would have been refused as a lifecycle regression",
+        "the Python probe runner shared one lifecycle file across probes, so a probe that sends /stop left every later probe with cognition stopped",
+        "after any loop restart Telegram showed the loop client's stale 13-command menu instead of the launcher's 16"
+      ],
+      "runtime_commit": "28f54b1ced",
+      "engine_commit": "4374a1df0d15c6a1bb839746ec2d1447798ad072",
+      "release": "6968bc07",
+      "gateway_release": "6968bc07",
+      "net_lines": -29,
+      "test_orchestration": "CeTTa core without Python",
+      "checks": {
+        "native_suites_passed": "24 of 24",
+        "python_suite": "the same 26 tests fail on main and on the branch; three tests of the deleted menu list are removed",
+        "telegram_end_to_end": "passes against the live 4374a1df channel service and against a service built from the next engine change",
+        "mutants": "four mutants of the rollback fence are caught: always admits, never admits, reads comments, asks only for start",
+        "live_observation": "Gödel's live turn on release 6968bc07 at 17:42: the model call returned, tools were available, and no call was refused and no error line appeared; his client recorded a live group message through the native attachment check; both channel services restarted and registered their 16 menu commands, and no loop client overwrote them",
+        "paired_installed_verification": true
+      },
+      "pending_with_engine_roll": "migrate-c2-roll is now migrate-c3 plus one commit (a4f73be38d) that removes the Python command path (1,009 lines); it needs CeTTa de2a4d48. Its three branch-only failures are explained and fixed here: the deployment watch's fence and the probe runner's shared lifecycle file",
+      "limits": [
+        "Attachment downloads and uploads stay in Python until the engine carries binary HTTP bodies (save to file, multipart)",
+        "No paid live canary or 24-hour soak claimed"
+      ]
     }
   ],
   "tuning_debt": [
