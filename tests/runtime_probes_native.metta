@@ -46,7 +46,11 @@
           ; therefore boots in its mode, as an agent does after that recycle.
           ($_ (if (nt:equal $name "tests/integrated_coding_turn_probe.metta")
                 (fs:write (nq:path $world "loop-mode.json") "{\"mode\": \"coding\"}") True)))
-     (nq:overlay-env (nq:overlay-env $env $changes) $special)))
+     (nq:overlay-env (nq:overlay-env (nq:overlay-env $env $changes) $special) (nr:probe-world-settings $name $world))))
+; Settings a probe needs inside its world.
+(= (nr:probe-world-settings $name $world)
+   (if (nt:equal $name "tests/strategy_continuation_attempt_probe.metta")
+     (("METTACLAW_STREAM_DIR" (nq:path $world "display"))) ()))
 ; Settings a probe needs from process start, which the clients read once.
 (= (nr:probe-settings "tests/telegram_access_probe.metta")
    (("METTACLAW_TELEGRAM_BOT_USERNAME" "GodelTestBot") ("METTACLAW_TELEGRAM_OPERATOR_IDS" "7")
