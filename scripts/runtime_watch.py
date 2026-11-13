@@ -247,10 +247,18 @@ def _metta_calls(source, definition, marker):
     return body is not None and marker in " ".join(body.split())
 
 
+def _native_lifecycle_commands(source):
+    """The command responder answers /start and /stop through the lifecycle."""
+    code = _metta_code(source)
+    return all(_metta_calls(code, "tc:answer", "(lifecycle:%s)" % name)
+               for name in ("start", "stop"))
+
+
 def _generation_has_lifecycle_authority(root, revision):
     """Refuse rollback across the operator-authority safety boundary."""
     paths = (
-        "channels/telegram.py", "src/lifecycle.py", "src/lifecycle_cetta.metta",
+        "channels/telegram.py", "channels/telegram_control.metta",
+        "src/lifecycle.py", "src/lifecycle_cetta.metta",
         "src/loop.metta", "src/mode_state.metta",
     )
     sources = {}
@@ -263,8 +271,12 @@ def _generation_has_lifecycle_authority(root, revision):
     except (OSError, subprocess.SubprocessError):
         return False
 
-    commands = sources["channels/telegram.py"]
-    if commands is None or not _python_lifecycle_commands(commands):
+    # Either the Python client or the native responder carries the commands.
+    client = sources["channels/telegram.py"]
+    responder = sources["channels/telegram_control.metta"]
+    if not ((client is not None and _python_lifecycle_commands(client))
+            or (responder is not None
+                and _native_lifecycle_commands(responder))):
         return False
     loop = sources["src/loop.metta"]
     if loop is None:

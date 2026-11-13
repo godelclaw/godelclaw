@@ -16,6 +16,12 @@ def dispatch(cmd):
     if cmd in ("/start", "/stop"):
         pass
 """
+NATIVE_COMMANDS = """\
+(= (tc:answer $name $args)
+   (case $name
+     (("/start" (tc:lifecycle-start (lifecycle:start)))
+      ("/stop" (tc:lifecycle-stop (lifecycle:stop))))))
+"""
 NATIVE_LOOP = """\
 (= (turnCandidate $p)
    (case (lifecycle:enabled) (($x $x))))
@@ -61,6 +67,14 @@ def lifecycle_revision(native):
         "src/lifecycle.py": LEGACY_LIFECYCLE,
         "src/loop.metta": LEGACY_LOOP,
     }
+
+
+def responder_revision():
+    """The native responder carries the commands; the client has none."""
+    files = lifecycle_revision(True)
+    del files["channels/telegram.py"]
+    files["channels/telegram_control.metta"] = NATIVE_COMMANDS
+    return files
 
 
 class MemoryObservationTest(unittest.TestCase):
@@ -208,6 +222,8 @@ class RuntimeWatchTest(unittest.TestCase):
             with self.subTest(revision=revision):
                 self.assert_revision_authority(
                     lifecycle_revision(native), True, revision)
+        self.assert_revision_authority(
+            responder_revision(), True, "responder-fixture")
 
     def test_revision_fence_rejects_missing_or_inert_authority(self):
         missing_native_definition = lifecycle_revision(True)
@@ -243,7 +259,21 @@ class RuntimeWatchTest(unittest.TestCase):
         wrong_comparison = lifecycle_revision(True)
         wrong_comparison["channels/telegram.py"] = OPERATOR_COMMANDS.replace(
             'cmd in', 'cmd !=')
+        stop = '("/stop" (tc:lifecycle-stop (lifecycle:stop)))'
+        commented_responder = responder_revision()
+        commented_responder["channels/telegram_control.metta"] = (
+            NATIVE_COMMANDS.replace(stop, "; " + stop + "\n"))
+        missing_responder_stop = responder_revision()
+        missing_responder_stop["channels/telegram_control.metta"] = (
+            NATIVE_COMMANDS.replace(stop, ""))
+        adjacent_responder_stop = responder_revision()
+        adjacent_responder_stop["channels/telegram_control.metta"] = (
+            NATIVE_COMMANDS.replace(stop, "") +
+            "(= (tc:other $name) (case $name (%s)))\n" % stop)
         cases = {
+            "commented-responder-stop": commented_responder,
+            "missing-responder-stop": missing_responder_stop,
+            "adjacent-responder-stop": adjacent_responder_stop,
             "adjacent-gate": adjacent_gate,
             "wrong-command-comparison": wrong_comparison,
             "missing-native-definition": missing_native_definition,
