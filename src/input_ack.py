@@ -20,7 +20,6 @@ _last_notice = {}
 _cache_limit = 256
 _scan_after = ""
 _scan_seen = set()
-_last_pump = 0.0
 _input_view = None
 _task_cache = {}
 _active_tasks = set()
@@ -799,17 +798,6 @@ def task_view(which):
                 captures={entry[0]: entry[1] for entry in _entries(captures, "task-view")})
 
 
-def processed_update_ids(ids):
-    """Called only after successful cognition, saved history and durable input ack."""
-    values = [str(value) for value in ids if str(value)]
-    if not values:
-        return 1
-    if _managed():
-        # One $now for the whole batch and for every retry of it.
-        _ledger_flag("mark-processed", (time.time(), tuple(values)))
-    return 1
-
-
 def committed(ids):
     """Only durable ledger settlement can authorize managed acknowledgement."""
     if os.environ.get("METTACLAW_OBSERVED_STRATEGY", "0") != "1":
@@ -984,56 +972,6 @@ def _native_receipt(value, timeout):
     if type(answer) is not int or answer not in (0, 1):
         raise LedgerUnavailable("input ledger receipt: unexpected answer %r" % (answer,))
     return answer
-
-
-def _pump_native(channel):
-    """pump() on the native ledger: the same steps, one check per due notice."""
-    from execution_gateway.cetta_worker import S
-    if not _managed():
-        return 0
-    _ledger_call("ensure", (), 0)  # as _store() opens the ledger first: an unreachable one fails here
-    import durable_telegram as protocol
-    if channel is None:
-        path = os.environ.get("METTACLAW_TELEGRAM_SERVICE_SOCKET")
-        if not path:
-            return 0
-        channel = protocol.Channel(path, os.devnull, timeout=1)
-    def collect():
-        for task, observation in channel.pending(64):
-            if receipt(observation, timeout=0):
-                channel.acknowledge(task)
-    count = 0
-    try:
-        collect()
-        rows = _ledger_call("due", (32,), 0)
-        for row in rows:
-            if not (isinstance(row, tuple) and len(row) == 11 and isinstance(row[1], str)):
-                raise LedgerUnavailable("input ledger due: unexpected row %s" % _show(row))
-            # One step in one transaction: checked, expiry or the delete key. $now stays the same on repeats.
-            answer = _ledger_call("check", (row[1], time.time(), 172800), 0)
-            if answer in (S("wait"), S("expired")):
-                continue
-            if not (isinstance(answer, tuple) and len(answer) == 3 and answer[0] == S("delete")
-                    and isinstance(answer[1], str) and type(answer[2]) is int):
-                raise LedgerUnavailable("input ledger check: unexpected answer %s" % _show(answer))
-            code, _, _ = channel.rpc(protocol.SUBMIT, answer[1],
-                                      json.dumps([["delete", answer[2]]], separators=(",", ":")))
-            if code == protocol.STORED:
-                count += 1
-        collect()
-    except (OSError, ValueError, protocol.ChannelError):
-        pass  # durable intentions and unacknowledged receipt tasks remain
-    return count
-
-
-def pump(channel=None):
-    """Reconcile owned delivery tasks and keyed deletion intents independently."""
-    global _last_pump
-    now = time.monotonic()
-    if channel is None and now - _last_pump < 2:
-        return 0
-    _last_pump = now
-    return _pump_native(channel)
 
 
 def ledger_paths(state):

@@ -204,7 +204,7 @@ def main():
                 time.sleep(.2)
                 assert len(api.sent) == 1
                 os.environ.update({key: value for key, value in environment.items() if key.startswith("METTACLAW_")})
-                input_ack.processed_update_ids(["3"])
+                input_ack._ledger_flag("mark-processed", (time.time(), ("3",)))  # cognition's processed-input write
                 # Only the native responder performs cleanup. Calling the old
                 # Python pump here would conceal a broken native implementation.
                 wait(lambda: bool(api.deleted), "processed owned notice was not removed")
