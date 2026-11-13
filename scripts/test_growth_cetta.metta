@@ -35,17 +35,17 @@
     (GrowthCheck "commentary-observer-events" "tests/growth/commentary_observer_events.metta" 500 (growth:linear))
     ; The field stays within the observer's 16 KiB bound at 16n.
     (GrowthCheck "commentary-observer-prefix" "tests/growth/commentary_observer_prefix.metta" 1000 (growth:linear))
-    (SdkGrowthCheck "responses-encoder" "tests/growth/responses_encoder.metta" 100 (growth:linear))))
+    (SdkGrowthCheck "responses-encoder" "tests/growth/responses_encoder.metta" 100 (growth:linear))
+    (SdkGrowthCheck "anthropic-encoder" "tests/growth/anthropic_encoder.metta" 200 (growth:linear))))
 ; Mutants the gate must reject, run whenever no single check is selected.
 (= (growth:mutants)
    ((GrowthCheck "quadratic-control" "tests/growth/quadratic_control.metta" 1000 (growth:linear))))
 ; Engine needs: bounds the SDK engine does not meet yet, held as strict
 ; expected failures. Each must still break its bounds; when an engine roll
 ; meets one, the gate fails until the check moves to the registered list.
-; - anthropic-encoder: llm:v1:anthropic-conversation is quadratic in the
-;   message count on engine dc2b3bcb.
-(= (growth:engine-needs)
-   ((SdkGrowthCheck "anthropic-encoder" "tests/growth/anthropic_encoder.metta" 200 (growth:linear))))
+; None is open: anthropic-encoder moved to the registered list when the
+; engine's Anthropic conversation encoder became linear (engine 39e38c7f).
+(= (growth:engine-needs) ())
 ; The engine a check's children run on, and the check's own fields.
 (= (growth:on (GrowthCheck $name $script $n $bounds) $core $sdk) ($core $name $script $n $bounds))
 (= (growth:on (SdkGrowthCheck $name $script $n $bounds) $core $sdk) ($sdk $name $script $n $bounds))
