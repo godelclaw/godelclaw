@@ -316,6 +316,62 @@
           ($_ (nt:require structured-advertises-tool (nt:equal (preq:size (preq:items $body "tools")) 1)))
           ($_ (nt:require structured-ledger-purpose (nt:contains (repr (nq:rows $world "calls")) $purpose)))
           ($_ (nq:close $world))) 9))
+; A call the display shows streams for every protocol, and a stream carries
+; each delta's event framing: a long reasoning summary is thousands of events,
+; past a megabyte, though its answer is small. A coding session's call on
+; Kimi (Responses) or Anthropic streams more than 1 MiB here and must end in
+; its answer, not in a transport error at the response bound.
+(= (nq:sse-event $kind $data)
+   (str:concat "event: " (str:concat $kind (str:concat "\ndata: " (str:concat $data "\n\n")))))
+(= (nq:copies $text $n $out) (if (== $n 0) $out (nq:copies $text (- $n 1) (cons-atom $text $out))))
+(= (nq:long-thought) "weighing the fixture's long thought, one careful step after another ")
+(= (nq:long-sse "responses")
+   (let* (($delta (nq:sse-event "response.reasoning_summary_text.delta"
+             (format-args "{\"type\":\"response.reasoning_summary_text.delta\",\"item_id\":\"rs_fixture\",\"output_index\":0,\"summary_index\":0,\"delta\":\"{}\"}" ((nq:long-thought)))))
+          ($deltas (str:join "" (nq:copies $delta 6000 ())))
+          ($done (nq:sse-event "response.completed"
+             "{\"type\":\"response.completed\",\"response\":{\"id\":\"fixture\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"status\":\"completed\",\"content\":[{\"type\":\"output_text\",\"text\":\"(nop)\"}]}],\"usage\":{\"input_tokens\":10,\"output_tokens\":2}}}")))
+     (str:concat $deltas $done)))
+(= (nq:long-sse "anthropic")
+   (let* (($start (str:concat
+             (nq:sse-event "message_start" "{\"type\":\"message_start\",\"message\":{\"id\":\"fixture\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-fixture\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}")
+             (nq:sse-event "content_block_start" "{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"\"}}")))
+          ($delta (nq:sse-event "content_block_delta"
+             (format-args "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"{}\"}}" ((nq:long-thought)))))
+          ; Pings keep a long thought's connection busy; they carry no content,
+          ; so the stream passes 1 MiB while the stored answer stays small.
+          ($pings (str:join "" (nq:copies (nq:sse-event "ping" "{\"type\": \"ping\"}") 20000 ())))
+          ($deltas (str:concat $pings (str:join "" (nq:copies $delta 2000 ()))))
+          ($end (str:join "" (
+             (nq:sse-event "content_block_delta" "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"fixture-signature\"}}")
+             (nq:sse-event "content_block_stop" "{\"type\":\"content_block_stop\",\"index\":0}")
+             (nq:sse-event "content_block_start" "{\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}")
+             (nq:sse-event "content_block_delta" "{\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"(nop)\"}}")
+             (nq:sse-event "content_block_stop" "{\"type\":\"content_block_stop\",\"index\":1}")
+             (nq:sse-event "message_delta" "{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":2}}")
+             (nq:sse-event "message_stop" "{\"type\":\"message_stop\"}")))))
+     (str:concat $start (str:concat $deltas $end))))
+(: nq:long-stream (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
+(= (nq:long-stream $root $sdk $core $artifacts $fixture $model $protocol)
+   (let* (($world (nq:world $root $sdk $core $artifacts $fixture (str:concat "long-stream-" $protocol)))
+          ($sse (nq:long-sse $protocol))
+          ($_ (nt:require long-stream-exceeds-a-mebibyte (> (str:byte-length $sse) 1048576)))
+          ($_ (fs:write (nq:path $world "response.body") $sse))
+          ($reply (nq:path $world "structured-reply.json"))
+          ($forms (format-args "!(let* (($plan (llm:structured-plan (json-parse {}) {})) ($_ (nt:require structured-prepared-natively (case $plan (((PreparedProviderCallV1 $owner $transport) True) ($other False))))) ($answer (llm:run $plan)) ($_ (nt:require structured-native-reply (case $answer (((ProviderReplyV1 $value) True) ($other False))))) ($_ (llm:reply-file $answer {}))) (println! NATIVE_STRUCTURED_OK))"
+                     ((repr (nq:structured-request)) (repr "coding") (repr $reply))))
+          ($output (nq:output (nq:guest $world $model "petta" $forms
+                     (("METTACLAW_STREAM_DIR" (nq:path $world "display"))))))
+          ($_ (nt:require long-stream-answered (nt:contains $output "NATIVE_STRUCTURED_OK")))
+          ($_ (nt:require long-stream-one-request (nt:equal (nq:posts $world) 1)))
+          ($_ (nt:require long-stream-reply (nt:contains (preq:render (preq:field (preq:parse (fs:read-text $reply)) "message")) "(nop)")))
+          ($body (nq:request-body $world))
+          ($_ (nt:require long-stream-requested (nt:equal (preq:field $body "stream") (JsonBool True))))
+          ($_ (nt:require long-stream-display-settings
+                (if (nt:equal $protocol "responses")
+                  (nt:equal (preq:field (preq:field $body "reasoning") "summary") (JsonString "auto"))
+                  (nt:equal (preq:field (preq:field $body "thinking") "display") (JsonString "summarized")))))
+          ($_ (nq:close $world))) 7))
 ; A checkpoint check (METTACLAW_CODING_CHECK=1) never calls a provider for a
 ; coding session or a compaction: native_call_seed refuses before any plan,
 ; claim or request exists. A turn's call is still prepared.
