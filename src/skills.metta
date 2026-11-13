@@ -275,11 +275,12 @@
 (= (sibling-on) (sibling:on))
 (= (sibling-off $reason) (sibling:off (utils:decode-safe $reason)))
 
-;; LLM API introspection (synthetic.new): budget, model list, session model switch.
+;; LLM API introspection: budget, model list, model switch (src/model_menu_cetta.metta).
 (= (memory-health) (semantic:health))
-(= (llm-quota) (py-call (synthetic_llm.quota)))
-(= (llm-models) (py-call (synthetic_llm.models)))
-(= (llm-set-model $name) (py-call (synthetic_llm.set_model $name)))
+!(import! &self ./src/model_menu_cetta.metta)
+(= (llm-quota) (model:quota))
+(= (llm-models) (model:models))
+(= (llm-set-model $name) (model:set $name))
 
 ;; Generic MCP bridge. Servers are configured in .mcp.json; arguments are JSON.
 (= (mcp-servers) (py-call (mcp_bridge.servers)))

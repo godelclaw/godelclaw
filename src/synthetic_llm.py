@@ -908,23 +908,6 @@ def quota():
     return " | ".join(parts)
 
 
-def models():
-    """Last-known models as a MeTTa-friendly list; never provider-blocking."""
-    refresh_provider_observations_async(("models",))
-    items = []
-    for kind, provider in (("models", "synthetic"), ("kimi-models", "kimi")):
-        record = _cached_observation(kind)
-        data = record.get("value") if isinstance(record.get("value"), list) else []
-        for model in data:
-            if not isinstance(model, dict):
-                continue
-            context = model.get("context") or "?"
-            items.append(f"({model.get('id', '?')} ctx {context} provider {provider})")
-    if os.environ.get("ANTHROPIC_API_KEY", ""):
-        items.extend(f"({m} provider anthropic)" for m in _anthropic_models())
-    return "(" + " ".join(items) + ")" if items else "(catalog refreshing)"
-
-
 # Subscription choices observed with chatgpt-models on 2026-10-15.
 # These are pinned choices, not a claim of current account availability.
 _CHATGPT_MENU_MODELS = (
@@ -1009,23 +992,6 @@ def model_in_observed_catalog(name):
     ids = {str(row.get("id")) for row in rows
            if isinstance(row, dict) and row.get("id")}
     return None if not ids else str(name) in ids
-
-
-def session_model_error(name):
-    """Why a model id cannot serve a coding session, or "" when it can.
-    The checks set_model applies, without persisting or switching anything."""
-    name = str(name).strip()
-    if _is_anthropic_model(name):
-        if not os.environ.get("ANTHROPIC_API_KEY", ""):
-            return "anthropic provider not configured (ANTHROPIC_API_KEY missing)"
-        if name not in _anthropic_models():
-            return f"unknown anthropic model '{name}'; available: " + ", ".join(_anthropic_models())
-        return ""
-    import re as _re
-    if (not name or len(name) > 200
-            or not _re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/+@-]*", name)):
-        return f"invalid model id '{name}'"
-    return ""
 
 
 def set_model(name):

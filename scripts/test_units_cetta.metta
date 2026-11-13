@@ -6,6 +6,14 @@
 
 (= (units:all)
    (("tests/unit/model_selection.metta" "UNIT_MODEL_SELECTION_OK")
+    ("tests/unit/model_menu.metta" "UNIT_MODEL_MENU_KEYED_OK"
+     (("METTACLAW_PROVIDER_OBSERVATION_PATH" "{home}/state/provider-observations.json")
+      ("ANTHROPIC_API_KEY" "unit-anthropic") ("ANTHROPIC_MODELS" " claude-unit-a , ,claude-unit-b") ("KIMI_API_KEY" "unit-kimi")
+      ("METTACLAW_LLM_TRANSPORT" "native") ("METTACLAW_CHATGPT_POLICY_PATH" "{home}/chatgpt.json")
+      ("METTACLAW_ANTHROPIC_USAGE_PATH" "{home}/usage.json") ("SYNTHETIC_BASE_URL" "http://127.0.0.1:9/openai/v1")))
+    ("tests/unit/model_menu.metta" "UNIT_MODEL_MENU_UNKEYED_OK"
+     (("METTACLAW_PROVIDER_OBSERVATION_PATH" "{home}/state/provider-observations.json")
+      ("METTACLAW_MODEL_STATE_PATH" "{home}/missing/model-state")))
     ("tests/unit/loop_host.metta" "UNIT_LOOP_HOST_OK")
     ("tests/unit/commentary_contract.metta" "UNIT_COMMENTARY_ON_OK" (("METTACLAW_MODEL_COMMENTARY" "1")))
     ("tests/unit/commentary_contract.metta" "UNIT_COMMENTARY_OFF_OK" (("METTACLAW_MODEL_COMMENTARY" "0")))

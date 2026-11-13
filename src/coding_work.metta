@@ -15,6 +15,7 @@
 !(import! &self ./src/process_identity_cetta.metta)
 !(import! &self ./src/settings_registry.metta)
 !(import! &self ./src/session_engine_cetta.metta)
+!(import! &self ./src/model_menu_cetta.metta)
 
 (SettingSpec 1 "work" "context" "open" "mode" (Choice ("open" "summary" "off")) "persistent"
   "Coding-session context source mode: open lists due open sessions, summary shows counts and verbs, off omits the source."
@@ -59,13 +60,13 @@
 ;; A session keeps the model and effort it starts with: the agent's own model
 ;; and "high" unless the call names others. Switching the agent's model later
 ;; does not change a running or resumed session.
-(= (work:agent-model) (format-args "{}" ((py-call (synthetic_llm.current_model)))))
+(= (work:agent-model) (model:current syn:large:text))
 (= (work:efforts) ("default" "minimal" "low" "medium" "high" "xhigh" "max"))
 (= (work:known? $item $items)
    (if (== $items ()) False
      (if (== (car-atom $items) $item) True (work:known? $item (cdr-atom $items)))))
 (= (work:choice-problem $model $effort)
-   (let* (($problem (format-args "{}" ((py-call (synthetic_llm.session_model_error $model)))))
+   (let* (($problem (model:session-problem $model))
           ($efforts (work:efforts)))
      (if (== $problem "")
        (if (work:known? $effort $efforts) ""

@@ -398,6 +398,8 @@
   "src/boot_state_cetta.metta",
   "scripts/loop_bootstrap_cetta.metta",
   "src/model_selection_cetta.metta",
+  "src/model_menu_cetta.metta",
+  "src/provider_observation_main.metta",
   "src/loop_host_cetta.metta",
   "src/commentary_contract_cetta.metta",
   "src/native_call_cetta.metta",

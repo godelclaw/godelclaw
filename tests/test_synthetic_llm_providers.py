@@ -163,8 +163,6 @@ class ProviderRoutingTest(unittest.TestCase):
             self.assertIsNone(synthetic_llm.model_in_observed_catalog("openai:unknown"))
             self.assertIn("kimi:k3.1-pro", synthetic_llm.model_ids())
             self.assertIn("hf:moonshotai/Kimi-K3.1-Pro", synthetic_llm.model_ids())
-            self.assertIn("provider kimi", synthetic_llm.models())
-            self.assertIn("provider synthetic", synthetic_llm.models())
             self.assertIn("Kimi Code catalog", synthetic_llm.model_catalog_status())
 
     def test_kimi_selection_identifies_a_missing_credential(self):

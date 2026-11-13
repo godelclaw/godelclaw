@@ -529,3 +529,51 @@
           ($_ (nt:require rejection-finished (nt:contains $output "NATIVE_REJECTION_OK")))
           ($_ (nt:require rejection-sent-once (nt:equal (nq:posts $world) 1)))
           ($_ (nq:close $world))) 3))
+
+; The model controls' background refresh (src/model_menu_cetta.metta): one
+; call starts a child per stale catalog, each child reads its catalog with the
+; credential alias it was handed and records it, and a fresh catalog starts
+; no child. The key never leaves the environment.
+(: nq:observation-refresh (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
+(= (nq:observation-refresh $root $sdk $core $artifacts $fixture)
+   (let* (($world (nq:world $root $sdk $core $artifacts $fixture "observation-refresh"))
+          ($directory (nq:path $world ""))
+          ($_ (fs:write (nq:path $world "response.body")
+                "{\"data\": [{\"id\": \"fixture-a\", \"context_length\": 1000}, {\"id\": \"fixture-b\", \"context_window\": 2000}]}"))
+          ; The children are still waiting when the guest's next control runs.
+          ($_ (fs:write (nq:path $world "delay-ms") "300"))
+          ($observations (nt:join $directory "observations/provider-observations.json"))
+          ($menu (preq:repr (nt:join $root "src/model_menu_cetta.metta")))
+          ($forms (str:join "" ("!(import! &self " $menu ")\n"
+            "(= (obs:pause) (let (io:pending $id) (io:submit (timer:after 100)) (io:wait $id 30000)))\n"
+            "(= (obs:observed? $o $kind) (> (model:stamp (model:record $o $kind) \"observed_at\") 0))\n"
+            "(= (obs:wait $left) (let $o (model:observations) (if (and (obs:observed? $o \"models\") (obs:observed? $o \"kimi-models\")) $o (if (<= $left 0) $o (let $_ (obs:pause) (obs:wait (- $left 1)))))))\n"
+            "!(nt:require both-catalogs-started (nt:equal (model:refresh (\"models\")) (\"models\" \"kimi-models\")))\n"
+            "!(nt:require started-catalogs-start-none (nt:equal (model:refresh (\"models\")) ()))\n"
+            "!(let $o (obs:wait 300) (nt:require synthetic-catalog (nt:equal (json:stringify-python (json:get (model:record $o \"models\") \"value\")) \"[{\\\"context\\\": 1000, \\\"id\\\": \\\"fixture-a\\\"}, {\\\"context\\\": 2000, \\\"id\\\": \\\"fixture-b\\\"}]\")))\n"
+            "!(nt:require kimi-catalog (nt:equal (model:catalog-ids (model:observations) \"kimi-models\") (\"kimi:fixture-a\" \"kimi:fixture-b\")))\n"
+            "!(nt:require fresh-starts-none (nt:equal (model:refresh (\"models\" \"quota\")) (\"quota\")))\n"
+            "!(println! NATIVE_OBSERVATION_REFRESH_OK)")))
+          ($extra (("METTACLAW_PROVIDER_OBSERVATION_PATH" $observations) ("SYNTHETIC_API_KEY" "fixture-observation-key")
+                   ("KIMI_API_KEY" "fixture-observation-key")))
+          ($output (nq:output (nq:guest $world "fixture-model" "petta" $forms $extra)))
+          ($_ (nt:require observation-refresh-finished (nt:contains $output "NATIVE_OBSERVATION_REFRESH_OK")))
+          ($_ (nq:wait-count $world 3 300))
+          ($first (fs:read-text (nq:path $world "request-1.headers")))
+          ($second (fs:read-text (nq:path $world "request-2.headers")))
+          ($third (fs:read-text (nq:path $world "request-3.headers")))
+          ($_ (nt:require catalogs-requested
+                (nt:equal (map-atom ($first $second) $h (str:starts-with $h "GET /v1/models HTTP/1.1")) (True True))))
+          ($_ (nt:require quota-requested (str:starts-with $third "GET /v1/v2/quotas HTTP/1.1")))
+          ($_ (nt:require credential-sent
+                (nt:equal (map-atom ($first $second $third) $h (nt:contains $h "Authorization: Bearer fixture-observation-key"))
+                          (True True True))))
+          ($_ (nt:require kimi-headers (nt:contains (str:concat $first $second) "User-Agent: godelclaw/1.0")))
+          ($_ (nq:close $world))) 8))
+; Wait until the fixture has answered COUNT requests (requests from children
+; the guest started may arrive after it ends).
+(= (nq:wait-count $world $count $left)
+   (if (>= (nq:posts $world) $count) True
+     (if (<= $left 0) (nt:require (fixture-requests $count) False)
+       (let (io:pending $id) (io:submit (timer:after 100))
+         (let $_ (io:wait $id 30000) (nq:wait-count $world $count (- $left 1)))))))
