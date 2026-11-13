@@ -35,6 +35,9 @@
     (GrowthCheck "commentary-observer-events" "tests/growth/commentary_observer_events.metta" 500 (growth:linear))
     ; The field stays within the observer's 16 KiB bound at 16n.
     (GrowthCheck "commentary-observer-prefix" "tests/growth/commentary_observer_prefix.metta" 1000 (growth:linear))
+    ; The model menu reads every observed catalog row; the refresh child keeps each.
+    (GrowthCheck "model-menu-state" "tests/growth/model_menu.metta" 100 (growth:linear))
+    (GrowthCheck "model-catalog" "tests/growth/model_catalog.metta" 100 (growth:linear))
     (SdkGrowthCheck "responses-encoder" "tests/growth/responses_encoder.metta" 100 (growth:linear))
     (SdkGrowthCheck "anthropic-encoder" "tests/growth/anthropic_encoder.metta" 200 (growth:linear))))
 ; Mutants the gate must reject, run whenever no single check is selected:

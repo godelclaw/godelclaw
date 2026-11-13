@@ -23,16 +23,16 @@
 !(import! &self ./state_file_cetta.metta)
 
 ;; ------------------------------------------------------------ lists
+; Catalogs can be long: lists are built by the engine's own concatenation,
+; collapse and filter, never by consing one item at a time (each cons-atom
+; copies the list it extends).
 
-(= (model:append $front $back)
-   (if (== $front ()) $back (cons-atom (car-atom $front) (model:append (cdr-atom $front) $back))))
+(= (model:append $front $back) (union-atom $front $back))
 (= (model:member? $item $items)
    (if (== $items ()) False (if (== (car-atom $items) $item) True (model:member? $item (cdr-atom $items)))))
-; ITEMS, then each of EXTRA not already there, in order.
-(= (model:add-new $items $extra)
-   (if (== $extra ()) $items
-     (let $head (car-atom $extra)
-       (model:add-new (if (model:member? $head $items) $items (model:append $items ($head))) (cdr-atom $extra)))))
+; ITEMS, then each of EXTRA not already there, in order (unique-atom keeps
+; first occurrences, in linear time).
+(= (model:add-new $items $extra) (unique-atom (model:append $items $extra)))
 
 ;; ------------------------------------------------------------ values
 
@@ -123,14 +123,12 @@
 (= (model:rows $observations $kind)
    (case (json:get (model:record $observations $kind) "value") (((JsonArray $rows) $rows) ($other ()))))
 ; The ids a catalog lists, each once, in order.
-(= (model:catalog-ids $observations $kind) (model:add-new () (model:row-ids (model:rows $observations $kind))))
-(= (model:row-ids $rows)
-   (if (== $rows ()) ()
-     (let* (($row (car-atom $rows)) ($rest (model:row-ids (cdr-atom $rows))))
-       (case $row
-         (((JsonObject $pairs)
-           (let $id (json:get $row "id") (if (model:truthy? $id) (cons-atom (model:python-str $id) $rest) $rest)))
-          ($other $rest))))))
+(= (model:catalog-ids $observations $kind) (unique-atom (model:row-ids (model:rows $observations $kind))))
+(= (model:row-ids $rows) (collapse (let $row (superpose $rows) (model:row-id $row))))
+(= (model:row-id $row)
+   (case $row
+     (((JsonObject $pairs) (let $id (json:get $row "id") (if (model:truthy? $id) (model:python-str $id) (empty))))
+      ($other (empty)))))
 
 ;; ------------------------------------------------------------ the menu
 
@@ -142,18 +140,24 @@
           ($pinned (if (model:chatgpt-menu?) (model:add-new $catalogs (model:chatgpt-choices)) $catalogs))
           ($chosen (if (model:anthropic? $selected) $pinned (model:add-new $pinned ($selected)))))
      (if (model:env-set? "ANTHROPIC_API_KEY") (model:add-new $chosen (model:anthropic-models)) $chosen)))
+; Each catalog's ids as a set, read once for a menu: (ModelCatalogsV1
+; synthetic kimi anthropic), a catalog None when it lists nothing, anthropic
+; the configured models, or () without a credential.
+(= (model:catalogs $observations)
+   (ModelCatalogsV1 (model:id-set (model:catalog-ids $observations "models"))
+                    (model:id-set (model:catalog-ids $observations "kimi-models"))
+                    (if (model:env-set? "ANTHROPIC_API_KEY") (model:anthropic-models) ())))
+(= (model:id-set $ids) (if (== $ids ()) None (str:set $ids)))
 ; True, False, or None when no observation can establish it: a catalog
 ; observes only its own provider's models.
-(= (model:in-catalog $observations $name)
+(= (model:available (ModelCatalogsV1 $synthetic $kimi $anthropic) $name)
    (if (or (str:starts-with $name "chatgpt:") (str:starts-with $name "openai:")) None
-     (if (model:anthropic? $name)
-       (if (model:env-set? "ANTHROPIC_API_KEY") (model:member? $name (model:anthropic-models)) False)
-       (let $ids (model:catalog-ids $observations (if (str:starts-with $name "kimi:") "kimi-models" "models"))
-         (if (== $ids ()) None (model:member? $name $ids))))))
-(= (model:unavailable $observations $ids)
-   (if (== $ids ()) ()
-     (let* (($id (car-atom $ids)) ($rest (model:unavailable $observations (cdr-atom $ids))))
-       (if (== (model:in-catalog $observations $id) False) (cons-atom $id $rest) $rest))))
+     (if (model:anthropic? $name) (model:member? $name $anthropic)
+       (let $set (if (str:starts-with $name "kimi:") $kimi $synthetic)
+         (if (== $set None) None (str:is-set-member $set $name))))))
+(= (model:in-catalog $observations $name) (model:available (model:catalogs $observations) $name))
+(= (model:unavailable $observations $ids) (model:unavailable-in (model:catalogs $observations) $ids))
+(= (model:unavailable-in $catalogs $ids) (filter-atom $ids $id (== (model:available $catalogs $id) False)))
 (= (model:catalog-note $observations $kind $provider $now)
    (let $observed (model:stamp (model:record $observations $kind) "observed_at")
      (if (== $observed 0) (str:concat $provider " catalog refreshing")
@@ -181,18 +185,15 @@
                     (model:append (model:catalog-items (model:rows $observations "kimi-models") "kimi")
                       (if (model:env-set? "ANTHROPIC_API_KEY") (model:anthropic-items (model:anthropic-models)) ())))))
      (if (== $items ()) "(catalog refreshing)" (str:join "" ("(" (str:join " " $items) ")")))))
-(= (model:catalog-items $rows $provider)
-   (if (== $rows ()) ()
-     (let* (($row (car-atom $rows)) ($rest (model:catalog-items (cdr-atom $rows) $provider)))
-       (case $row
-         (((JsonObject $pairs)
-           (let $context (json:get $row "context")
-             (cons-atom (str:join "" ("(" (model:shown $row "id") " ctx " (if (model:truthy? $context) (model:python-str $context) "?")
-                                      " provider " $provider ")")) $rest)))
-          ($other $rest))))))
-(= (model:anthropic-items $models)
-   (if (== $models ()) ()
-     (cons-atom (str:join "" ("(" (car-atom $models) " provider anthropic)")) (model:anthropic-items (cdr-atom $models)))))
+(= (model:catalog-items $rows $provider) (collapse (let $row (superpose $rows) (model:catalog-item $row $provider))))
+(= (model:catalog-item $row $provider)
+   (case $row
+     (((JsonObject $pairs)
+       (let $context (json:get $row "context")
+         (str:join "" ("(" (model:shown $row "id") " ctx " (if (model:truthy? $context) (model:python-str $context) "?")
+                       " provider " $provider ")"))))
+      ($other (empty)))))
+(= (model:anthropic-items $models) (map-atom $models $model (str:join "" ("(" $model " provider anthropic)"))))
 
 ;; ------------------------------------------------------------ the switch
 
@@ -436,23 +437,39 @@
 ; ids carry the kimi: prefix the menu selects them by.
 (= (model:catalog $payload $prefix)
    (case (json:get $payload "data")
-     (((JsonArray $rows) (JsonArray (model:catalog-rows $rows () $prefix))) ($other (JsonArray ())))))
-(= (model:catalog-rows $rows $seen $prefix)
-   (if (== $rows ()) ()
-     (let $row (car-atom $rows)
-       (case $row
-         (((JsonObject $pairs)
-           (let* (($given (json:get $row "id"))
-                  ($id (str:strip-python (if (model:truthy? $given) (model:python-str $given) ""))))
-             (if (or (== $id "") (model:member? $id $seen)) (model:catalog-rows (cdr-atom $rows) $seen $prefix)
-               (let* (($length (json:get $row "context_length"))
-                      ($context (if (model:truthy? $length) $length (json:get $row "context_window")))
-                      ($named (if (== $prefix "") $id
-                                (str:concat $prefix (if (str:starts-with $id $prefix)
-                                                      (str:byte-slice $id (str:byte-length $prefix) (str:byte-length $id)) $id)))))
-                 (cons-atom (JsonObject ((JsonPair "id" $named) (JsonPair "context" $context)))
-                            (model:catalog-rows (cdr-atom $rows) (cons-atom $id $seen) $prefix))))))
-          ($other (model:catalog-rows (cdr-atom $rows) $seen $prefix)))))))
+     (((JsonArray $rows)
+       (let* (($named (model:named-rows $rows)) ($ids (model:named-ids $named)) ($order (unique-atom $ids)))
+         (JsonArray (if (== (size-atom $order) (size-atom $ids))
+                      (map-atom $named $pair (let ($id $row) $pair (model:catalog-row $id $row $prefix)))
+                      (model:first-rows $named $order $prefix)))))
+      ($other (JsonArray ())))))
+; (id row) for each row that is an object with an id, the id trimmed.
+(= (model:named-rows $rows) (collapse (let $row (superpose $rows) (model:named-row $row))))
+(= (model:named-row $row)
+   (case $row
+     (((JsonObject $pairs)
+       (let* (($given (json:get $row "id"))
+              ($id (str:strip-python (if (model:truthy? $given) (model:python-str $given) ""))))
+         (if (== $id "") (empty) ($id $row))))
+      ($other (empty)))))
+(= (model:named-ids $named) (map-atom $named $pair (car-atom $pair)))
+; Each id's first row, in order, when the provider repeated an id: walking the
+; rows, an id's first row is the one that meets it at the head of the ids
+; still to emit. Consing makes this quadratic in the rows, so it is kept for
+; that case; a catalog without repeats is mapped whole.
+(= (model:first-rows $named $order $prefix)
+   (if (or (== $named ()) (== $order ())) ()
+     (let (($id $row) $rest) ((car-atom $named) (cdr-atom $named))
+       (if (== $id (car-atom $order))
+         (cons-atom (model:catalog-row $id $row $prefix) (model:first-rows $rest (cdr-atom $order) $prefix))
+         (model:first-rows $rest $order $prefix)))))
+(= (model:catalog-row $id $row $prefix)
+   (let* (($length (json:get $row "context_length"))
+          ($context (if (model:truthy? $length) $length (json:get $row "context_window")))
+          ($named (if (== $prefix "") $id
+                    (str:concat $prefix (if (str:starts-with $id $prefix)
+                                          (str:byte-slice $id (str:byte-length $prefix) (str:byte-length $id)) $id)))))
+     (JsonObject ((JsonPair "id" $named) (JsonPair "context" $context)))))
 ; The quota keeps only the numbers the quota line shows.
 (= (model:quota-value $payload)
    (JsonObject (model:append (model:subset $payload "planWeeklyLimit" ("percentRemaining" "nextRegenAt" "nextRegenPercent"))
