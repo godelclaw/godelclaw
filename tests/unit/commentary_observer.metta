@@ -156,7 +156,7 @@
         ($_ (nt:require chat-error-member-stops (ot:stops? "m13" "chat-completions" "data: {\"id\":\"x\",\"choices\":[],\"error\":{}}\n\n")))
         ($_ (nt:require failed-response-stops (ot:stops? "m7" "responses" (ot:event (JsonObject ((JsonPair "type" "response.failed")))))))
         ($_ (nt:require conflicting-event-name-stops
-              (ot:stops? "m8" "responses" "event: response.completed\ndata: {\"type\":\"response.output_text.delta\"}\n\n")))
+              (ot:stops? "m8" "responses" "event: response.output_text.delta\ndata: {\"type\":\"response.created\"}\n\n")))
         ($_ (nt:require nonzero-index-stops
               (ot:stops? "m9" "chat-completions" "data: {\"id\":\"x\",\"choices\":[{\"index\":1,\"delta\":{}}]}\n\n")))
         ($_ (nt:require float-index-stops
@@ -171,6 +171,14 @@
         ($_ (nt:require other-output-stops
               (ot:mixed-output "x3" (JsonObject ((JsonPair "type" "response.output_text.delta") (JsonPair "item_id" "other")
                                                  (JsonPair "output_index" 1) (JsonPair "content_index" 0) (JsonPair "delta" "\"bad\","))))))
+        ; A first delta whose output part is no index is no source.
+        ($_ (nt:require negative-index-stops
+              (ot:mixed-output "x4" (JsonObject ((JsonPair "type" "response.output_text.delta") (JsonPair "item_id" "msg")
+                                                 (JsonPair "output_index" -1) (JsonPair "content_index" 0) (JsonPair "delta" "\"bad\","))))))
+        ; An escaped quote does not end the field: its comma is the field's text.
+        ($before-e (ot:count)) ($_ (ot:call "q3"))
+        ($_ (ot:feed "q3" (ot:content "{\"commentary\": \"a \\\"b, c\\\" d\", \"commands\": \"((nop))\"}") 100000))
+        ($_ (nt:require escaped-quote-kept (nt:equal (ot:since $before-e) ("a \"b, c\" d"))))
         ; Bounds: a line, an event, the field's text and the response bound.
         ($_ (nt:require long-line-stops (ot:bounded? "b1" 100000 (ot:copies "x" 65537))))
         ($_ (nt:require long-event-stops
@@ -245,7 +253,8 @@
         ($_ (nt:require field-number (nt:equal (observer:field "{\"commentary\": 5,") none)))
         ($_ (nt:require field-two-strings (nt:equal (observer:field "{\"commentary\": \"a\" \"b\",") none)))
         ($_ (nt:require field-control-character (nt:equal (observer:field "{\"commentary\": \"a\tb\",") none)))
-        ($_ (nt:require field-no-colon (nt:equal (observer:field "{\"commentary\" \"x\",") none))))
+        ($_ (nt:require field-no-colon (nt:equal (observer:field "{\"commentary\" \"x\",") none)))
+        ($_ (nt:require field-other-separator (nt:equal (observer:field "{\"commentary\";\"x\",") none))))
    (ot:ended))
 
 !(if (== (get-state &ot-ended) 2) (println! UNIT_COMMENTARY_OBSERVER_OK)
