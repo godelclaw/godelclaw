@@ -50,7 +50,6 @@ class ProviderNotices(unittest.TestCase):
         text = json.loads(original)["commands"][0][1]
         self.assertIn("HTTP 429", text); self.assertIn("/models", text)
         self.assertIn("retained", text); self.assertIn("chosen-model", text)
-        self.assertEqual(input_ack.key("t", "42.0", "message", "operator"), "")
         # Delivery consumed the outbox file; restart must not publish it again.
         self.intents()[0].unlink()
         self.assertEqual(health.notify_failure(), 0)

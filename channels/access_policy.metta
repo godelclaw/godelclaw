@@ -318,7 +318,20 @@
      (let (ApPair $id $rest) (ap:uncons $ids)
        (ap:telegram-peer-facts $rest $name (cons-atom (ap-member $name telegram $id 0) $kept)))))
 
-(= (ap:channel-facts) (ap:telegram-facts))
+; IRC and Mattermost as they have always behaved: the configured channel is
+; open, and every message in it reaches the agent; on IRC, so does a direct
+; message. An IRC channel's name is compared in lowercase.
+(= (ap:chat-facts $channel $group)
+   (let $layer (ApChannel $channel)
+     ((ap-access (ApGroup $channel $group) ApGroups ApOpen 0 0)
+      (ap-access $layer ApDirect (if (== $channel irc) ApOpen ApAllowlist) 0 0)
+      (ap-rule $layer ApGroups ApListed (ApRuleV1 ApRecord ApWakeAlways "" "") 0 0))))
+(= (ap:irc-channel) (str:lower (ap:env "METTACLAW_IRC_CHANNEL" "##metta")))
+(= (ap:mattermost-channel) (ap:env "METTACLAW_MATTERMOST_CHANNEL_ID" "8fjrmabjx7gupy7e5kjznpt5qh"))
+
+(= (ap:channel-facts)
+   (ap:append (ap:telegram-facts)
+     (ap:append (ap:chat-facts irc (ap:irc-channel)) (ap:chat-facts mattermost (ap:mattermost-channel)))))
 
 ;; ------------------------------------------------------- facts in force
 

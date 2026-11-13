@@ -13,7 +13,6 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import process_supervision as supervision
 import durable_telegram
-import input_ack
 
 
 class SupervisionTests(unittest.TestCase):
@@ -137,19 +136,6 @@ class ChangesTests(unittest.TestCase):
             self.assertEqual(changes.wait(.1), 1)
             changes.arm()
             self.assertEqual(changes.wait(.01), 0)
-
-    def test_task_is_decoded_once_and_evicted_after_consumption(self):
-        input_ack._task_cache.clear()
-        raw = '["input","42.0","message","operator",{"message":{"date":100}}]'
-        loads = input_ack.json.loads
-        with mock.patch.object(input_ack.json, "loads", wraps=loads) as decoder:
-            for _ in range(10):
-                input_ack.begin_scan([["task", raw]])
-            self.assertEqual(decoder.call_count, 1)
-            input_ack.begin_scan([])
-            self.assertFalse(input_ack.task_active("task"))
-            input_ack.begin_scan([["task", raw]])
-            self.assertEqual(decoder.call_count, 2)
 
 
 if __name__ == "__main__":

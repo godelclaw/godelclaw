@@ -19,11 +19,11 @@
 ;   in it leaves no view.
 ;
 ; Entries: notice:key, notice:submitted, notice:scan-after, notice:begin-scan,
-; notice:input-view, notice:wait.
+; notice:input-view. The responder's wait between scans is its own
+; (channels/telegram_control_io.metta).
 !(import! &self ./ledger_client.metta)
 !(import! &self ./notice_key.metta)
 !(import! &self ./turn_health_cetta.metta)
-!(import! &self ./utils_cetta.metta)
 !(import! &self (library system))
 !(import! &self (library str))
 !(import! &self (library json))
@@ -294,11 +294,3 @@
      ((JsonNull False) ((JsonBool false) False) ((JsonString "") False) ((JsonArray ()) False) ((JsonObject ()) False)
       ((JsonNumber $raw) (case (catch (str:string->number $raw)) (((Error $where $why) True) ($number (not (== $number 0))))))
       ($other True))))
-
-;; ------------------------------------------------------------ the wait
-
-; The pause between two scans: two seconds, on a timer of its own (sleep), so
-; other clients' completions stay theirs. It stands in for a wake on a change
-; of the service's directories, which needs a directory-change handle in the
-; engine; the bound is the one the Python change watch kept as its fallback.
-(= (notice:wait) (sleep 2))

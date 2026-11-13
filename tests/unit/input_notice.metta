@@ -1,7 +1,8 @@
 ; Unit tests of src/input_notice_cetta.metta; no Python. The expected answers
-; are those of the Python it replaces (input_ack.key, submitted, begin_scan,
+; are those of the Python it replaced (input_ack.key, submitted, begin_scan,
 ; scan_after and input_view) for the same sequences, clocks and configuration;
-; the keys are the values hashlib gives for the same names.
+; the keys are the values hashlib gives for the same names. The responder's
+; wait between scans is tested with its I/O (tests/unit/control_io.metta).
 !(import! &self ../native_test_support.metta)
 !(import! &self ../../src/input_notice_cetta.metta)
 
@@ -185,12 +186,6 @@
         ($_ (in:forget-all)))
    (in:passed UNIT_INPUT_NOTICE_VIEW_OK))
 
-; The wait between two scans returns after its two seconds, no sooner.
-!(let* (($start (system:monotonic-ns)) ($_ (notice:wait))
-        ($elapsed (/ (- (system:monotonic-ns) $start) 1000000.0))
-        ($_ (nt:require wait-lasts-two-seconds (and (>= $elapsed 2000) (< $elapsed 4000)))))
-   (in:passed UNIT_INPUT_NOTICE_WAIT_OK))
-
 ; With the native ledger: a processed update gets no notice, a due notice is
 ; registered under its key, and submission is recorded.
 !(let* (($home (nt:required-env "HOME")) ($root (system:cwd))
@@ -245,5 +240,5 @@
    (in:passed UNIT_INPUT_NOTICE_LEDGER_OK))
 
 !(nt:require every-block-ended
-   (nt:equal (size-atom (collapse (match &self (in:block-passed $block) $block))) 7))
+   (nt:equal (size-atom (collapse (match &self (in:block-passed $block) $block))) 6))
 !(println! UNIT_INPUT_NOTICE_OK)

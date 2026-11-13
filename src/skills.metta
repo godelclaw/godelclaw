@@ -270,10 +270,10 @@
 (= (energy) (energy:view))
 (= (energy-set $who $tier)
    (energy:set $who $tier))
-(= (sibling-status) (py-call (sibling.sibling_status)))
-(= (sibling-on) (py-call (sibling.sibling_on)))
-(= (sibling-off $reason)
-   (py-call (sibling.sibling_off (utils:decode-safe $reason))))
+!(import! &self ./src/sibling_cetta.metta)
+(= (sibling-status) (sibling:status))
+(= (sibling-on) (sibling:on))
+(= (sibling-off $reason) (sibling:off (utils:decode-safe $reason)))
 
 ;; LLM API introspection (synthetic.new): budget, model list, session model switch.
 (= (memory-health) (semantic:health))

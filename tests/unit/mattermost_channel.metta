@@ -1,0 +1,155 @@
+; The Mattermost channel end to end, natively: the channel's service process
+; (channels/chat_service_main.metta) against this unit's websocket listener
+; (the engine's ws:listen) and a scripted REST server
+; (tests/fixtures/native_http_peer.c), and the loop's side of the chat spool
+; in this process. No Python.
+!(import! &self ../native_test_support.metta)
+!(import! &self ../../channels/chat_spool.metta)
+!(import! &self ../../src/utils_cetta.metta)
+
+(= (mc:home) (nt:required-env "HOME"))
+(= (mc:rest $name) (path:join (path:join (mc:home) "rest") $name))
+(= (mc:script $name $text) (fs:write (mc:rest $name) $text))
+(= (mc:count) (case (catch (str:string->number (str:trim (fs:read-text (mc:rest "count"))))) (((Error $w $y) 0) ($n $n))))
+(= (mc:requests $left $count)
+   (if (>= (mc:count) $count) True (if (<= $left 0) False (let $_ (sleep 0.05) (mc:requests (- $left 1) $count)))))
+(= (mc:request $n $part) (fs:read-text (mc:rest (format-args "request-{}.{}" ($n $part)))))
+(= (mc:file-waits $path $left)
+   (if (fs:exists $path) True (if (<= $left 0) False (let $_ (sleep 0.05) (mc:file-waits $path (- $left 1))))))
+(= (mc:inbox-has $count $left)
+   (if (>= (size-atom (chat:names (chat:inbox mattermost))) $count) True
+     (if (<= $left 0) False (let $_ (sleep 0.05) (mc:inbox-has $count (- $left 1))))))
+(= (mc:await $request $ms)
+   (case $request (((io:pending $id) (io:wait $id $ms)) ($refused $refused))))
+(= (mc:receive $conn) (mc:await (io:submit (ws:receive $conn)) 10000))
+(= (mc:send $conn $text) (mc:await (io:submit (ws:send $conn $text)) 10000))
+(= (mc:posted $channel $user $id $message $mentions)
+   (json:stringify
+     (JsonObject ((JsonPair "event" (JsonString "posted"))
+                  (JsonPair "data" (JsonObject ((JsonPair "post" (JsonString
+                    (json:stringify (JsonObject ((JsonPair "id" (JsonString $id)) (JsonPair "channel_id" (JsonString $channel))
+                                                 (JsonPair "user_id" (JsonString $user)) (JsonPair "message" (JsonString $message)))))))
+                                                (JsonPair "mentions" (JsonString $mentions)))))))))
+(= (mc:connection) (car-atom (collapse (match &self (mc:conn $c) $c))))
+(= (mc:passed $block) (let $_ (add-atom &self (mc:block-passed $block)) (println! $block)))
+
+!(let* (($home (mc:home)) ($root (system:cwd)) ($env (nt:environment $home))
+        ($peer (path:join $home "native-http-peer"))
+        ($_ (nt:exit-ok (proc:run ("cc" "-std=c11" "-O2" "-Wall" "-Wextra" "-Werror" "tests/fixtures/native_http_peer.c" "-o" $peer)
+                                  $root $env 30000 65536)))
+        ($_ (fs:make-directories (mc:rest "") 448))
+        ($_ (mc:script "status" "200")) ($_ (mc:script "delay-ms" "0"))
+        ($_ (mc:script "response.body" "{\"id\":\"bot1\"}"))
+        ($_ (mc:script "response-2.body" "{\"username\":\"alice\",\"first_name\":\"Alice\",\"last_name\":\"Liddell\"}"))
+        ($_ (mc:script "response-3.body" "{\"username\":\"bob\",\"first_name\":\"\",\"last_name\":\"\"}"))
+        ($rest (proc:spawn ($peer (mc:rest "")) ((cwd $root) (env $env) (max-bytes 65536))))
+        ($_ (add-atom &self (mc:process $rest)))
+        ($_ (nt:require rest-listens (mc:file-waits (mc:rest "port") 200)))
+        ((io:event $listen (ws:listening $listener $ws-port)) (mc:await (io:submit (ws:listen "127.0.0.1" 0 1048576 4 0)) 10000))
+        ($_ (add-atom &self (mc:listener $listener)))
+        ($accept (io:submit (ws:accept $listener)))
+        ($service-env (cons-atom ("METTACLAW_CHANNEL" "mattermost")
+                       (cons-atom ("METTACLAW_MATTERMOST_URL" (str:concat "http://127.0.0.1:" (str:trim (fs:read-text (mc:rest "port")))))
+                       (cons-atom ("METTACLAW_MATTERMOST_WEBSOCKET_URL" (format-args "ws://127.0.0.1:{}/api/v4/websocket" ($ws-port)))
+                       (cons-atom ("METTACLAW_MATTERMOST_CHANNEL_ID" "chan1") (cons-atom ("METTACLAW_MATTERMOST_TOKEN" "test-token")
+                       (cons-atom ("METTACLAW_MATTERMOST_QUIET_SECONDS" "3600") (cons-atom ("METTACLAW_MATTERMOST_RECONNECT_SECONDS" "1")
+                       (cons-atom ("METTACLAW_CHAT_SPOOL_ROOT" (path:join $home "chat")) $env)))))))))
+        ($service (proc:spawn ((path:join (nt:required-env "NATIVE_TEST_CORE") "cetta") "--lang" "petta" "--import-mode" "ancestor-walk"
+                               "--quiet" "channels/chat_service_main.metta")
+                              ((cwd $root) (env $service-env) (stdout inherit) (stderr inherit))))
+        ($_ (add-atom &self (mc:process $service)))
+        ($accepted (mc:await $accept 20000))
+        ($_ (nt:require websocket-opened
+              (case $accepted (((io:event $a1 (ws:accepted $a2 $target $a3 $a4)) (== $target "/api/v4/websocket")) ($a5 False)))))
+        ($conn (case $accepted (((io:event $b1 (ws:accepted $b2 $b3 $b4 $b5)) $b2))))
+        ($_ (add-atom &self (mc:conn $conn)))
+        ($_ (nt:require asked-who-the-bot-is
+              (and (nt:contains (mc:request 1 "headers") "GET /api/v4/users/me ")
+                   (nt:contains (mc:request 1 "headers") "Authorization: Bearer test-token"))))
+        ($challenge (mc:receive $conn))
+        ($_ (nt:require authenticates-on-the-socket
+              (case $challenge
+                (((io:event $c1 (ws:message $c2 $text))
+                  (and (nt:contains $text "\"action\":\"authentication_challenge\"") (nt:contains $text "\"token\":\"test-token\"")))
+                 ($c3 False))))))
+   (mc:passed UNIT_MATTERMOST_SESSION_OK))
+
+; Posts of the channel reach the inbox by the access policy, named by the sender.
+!(let* (($conn (mc:connection))
+        ($_ (mc:send $conn (mc:posted "chan1" "u1" "p1" "hello there" "")))
+        ($_ (nt:require first-post-recorded (mc:inbox-has 1 200)))
+        ($_ (nt:require name-asked (nt:contains (mc:request 2 "headers") "GET /api/v4/users/u1 ")))
+        ($_ (mc:send $conn (mc:posted "chan1" "bot1" "p2" "my own words" "")))
+        ($_ (mc:send $conn (mc:posted "other" "u3" "p3" "elsewhere" "")))
+        ($_ (mc:send $conn (mc:posted "chan1" "u1" "p1" "hello there" "")))
+        ($_ (mc:send $conn "{\"event\":\"typing\",\"data\":{}}"))
+        ($_ (mc:send $conn "not json"))
+        ($_ (mc:send $conn (mc:posted "chan1" "u2" "p4" "@bot do you hear me?" "[\"bot1\"]")))
+        ($_ (nt:require mention-recorded (mc:inbox-has 2 200)))
+        ($_ (sleep 0.3))
+        ($pending (chat:pending mattermost))
+        ($_ (nt:require only-new-channel-posts-of-others
+              (nt:equal (map-atom $pending $m (let ($name $id $sender $text $note $provenance) $m ($id $sender $note)))
+                        (("mattermost:p1" "Alice Liddell" "quiet") ("mattermost:p4" "bob" "addressed")))))
+        ($_ (nt:require one-name-request-a-new-post (nt:equal (mc:count) 3)))
+        ($_ (nt:require the-turn-reads-them
+              (nt:equal (chat:receive mattermost)
+                        "Alice Liddell (untrusted stranger): hello there | bob (untrusted stranger): @bot do you hear me?")))
+        ($_ (nt:require settled (nt:equal ((chat:ack mattermost) (chat:names (chat:inbox mattermost))) (1 ())))))
+   (mc:passed UNIT_MATTERMOST_INBOX_OK))
+
+; Sends are posted to the channel; a refusal leaves a receipt, a server error keeps the send.
+!(let* (($_ (chat:send mattermost "first line\\nsecond line"))
+        ($_ (nt:require posted (mc:requests 200 4)))
+        ($_ (nt:require posted-to-the-channel
+              (and (nt:contains (mc:request 4 "headers") "POST /api/v4/posts ")
+                   (nt:equal (json:parse (mc:request 4 "body"))
+                             (JsonObject ((JsonPair "channel_id" "chan1") (JsonPair "message" "first line\nsecond line")))))))
+        ($_ (sleep 0.3))
+        ($_ (nt:require sent-send-gone (nt:equal (chat:names (chat:outbox mattermost)) ())))
+        ($_ (mc:script "status" "503"))
+        ($_ (chat:send mattermost "try again later"))
+        ($_ (nt:require tried (mc:requests 200 5)))
+        ($_ (sleep 0.3))
+        ($_ (nt:require server-error-keeps (nt:equal (size-atom (chat:names (chat:outbox mattermost))) 1)))
+        ($_ (mc:script "status" "403"))
+        ($_ (nt:require refused-after-retry (mc:requests 200 6)))
+        ($_ (sleep 0.3))
+        ($_ (nt:require refusal-is-final (nt:equal (chat:names (chat:outbox mattermost)) ())))
+        ($failed (filter-atom (fs:entries (chat:outbox mattermost)) $n (str:ends-with $n ".failed")))
+        ($_ (nt:require refusal-receipt
+              (and (== (size-atom $failed) 1) (nt:contains (fs:read-text (path:join (chat:outbox mattermost) (car-atom $failed))) "HTTP 403"))))
+        ($_ (mc:script "status" "200")))
+   (mc:passed UNIT_MATTERMOST_SEND_OK))
+
+; A closed websocket: the service opens it again and authenticates anew.
+!(let* (($conn (mc:connection)) ($listener (car-atom (collapse (match &self (mc:listener $l) $l))))
+        ($accept (io:submit (ws:accept $listener)))
+        ($_ (mc:await (io:submit (ws:close $conn 1001 "going away")) 10000))
+        ($accepted (mc:await $accept 20000))
+        ($again (case $accepted (((io:event $d1 (ws:accepted $d2 $d3 $d4 $d5)) $d2) ($d6 none))))
+        ($_ (nt:require opened-again (not (== $again none))))
+        ($_ (nt:require authenticates-again
+              (case (mc:receive $again)
+                (((io:event $e1 (ws:message $e2 $e3)) (nt:contains $e3 "authentication_challenge")) ($e4 False)))))
+        ($_ (mc:send $again (mc:posted "chan1" "u1" "p5" "back again" "")))
+        ($_ (nt:require posts-flow-again (mc:inbox-has 1 200))))
+   (mc:passed UNIT_MATTERMOST_RECONNECT_OK))
+
+; The post ids remembered against repeats are bounded: the oldest is forgotten first.
+!(import! &self ../../channels/mattermost_service.metta)
+(= (mc:sight-all $from $to) (if (> $from $to) () (let $_ (mm:first-sight? (str:concat "x" (repr $from))) (mc:sight-all (+ $from 1) $to))))
+!(let* (($_ (nt:require a-new-id-is-a-first-sight (nt:equal (mm:first-sight? "x0") True)))
+        ($_ (nt:require a-repeat-is-not (nt:equal (mm:first-sight? "x0") False)))
+        ($_ (nt:require an-empty-id-is-never-one (nt:equal (mm:first-sight? "") False)))
+        ($_ (mc:sight-all 1 4096))
+        ($_ (nt:require the-oldest-is-forgotten (nt:equal (mm:first-sight? "x0") True)))
+        ($_ (nt:require the-rest-is-remembered (nt:equal ((mm:first-sight? "x2") (mm:first-sight? "x4096")) (False False))))
+        ($_ (nt:require the-memory-stays-bounded (nt:equal (size-atom (collapse (match &mm-seen (MmSeen $i $n) $i))) 4096))))
+   (mc:passed UNIT_MATTERMOST_SEEN_OK))
+
+!(let $processes (collapse (match &self (mc:process $p) $p))
+   (map-atom $processes $p (let* (($_ (proc:cancel $p)) ($_ (proc:await $p))) (proc:close $p))))
+!(nt:require every-block-ended
+   (nt:equal (size-atom (collapse (match &self (mc:block-passed $block) $block))) 5))
+!(println! UNIT_MATTERMOST_CHANNEL_OK)

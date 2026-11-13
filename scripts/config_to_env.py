@@ -193,6 +193,17 @@ def main():
     emit("METTACLAW_TELEGRAM_TRANSPORT", telegram.get("transport"))
     emit("METTACLAW_TELEGRAM_SERVICE_SOCKET", expand(telegram.get("service_socket"), root))
     emit("METTACLAW_TELEGRAM_POLL_LIMIT", telegram.get("poll_limit"))
+    # The IRC or Mattermost channel's own service (run.sh chat-channel). The
+    # Mattermost bot's token belongs in config/secrets.env.
+    irc = config.get("irc", {})
+    emit("METTACLAW_IRC_SERVER", irc.get("server"))
+    emit("METTACLAW_IRC_PORT", irc.get("port"))
+    emit("METTACLAW_IRC_TLS", irc.get("tls"))
+    emit("METTACLAW_IRC_CHANNEL", irc.get("channel"))
+    emit("METTACLAW_IRC_NICK", irc.get("nick"))
+    mattermost = config.get("mattermost", {})
+    emit("METTACLAW_MATTERMOST_URL", mattermost.get("url"))
+    emit("METTACLAW_MATTERMOST_CHANNEL_ID", mattermost.get("channel_id"))
     # Telegram identities and authorization sets intentionally do not pass
     # through generated .env. Keep them in mode-600 config/secrets.env, which
     # run.sh sources after .env and which is excluded from Git.

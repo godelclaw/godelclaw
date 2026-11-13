@@ -255,31 +255,11 @@ class FakeHash:
 
 
 def send_key_for(task, lane):
-    """The send key input_ack derives for a task's receipt (key_identity: instance and task)."""
+    """The send key of a task's receipt notice (key_identity: instance and task), as hashlib
+    gives it; the responder derives it natively (src/notice_key.metta)."""
     identity = os.environ.get("METTACLAW_INSTANCE", "default") + ":input-receipt:" + task
     number = int.from_bytes(hashlib.sha256(identity.encode()).digest()[:8], "big")
     return lane + ".%020d" % number
-
-
-def register_through_input_ack(testcase, task, update_id, lane, instance):
-    """The send key input_ack.key returns for a task, registered on a native ledger: its first
-    call only starts the delay, the call after METTACLAW_INPUT_ACK_SECONDS registers."""
-    import native_ledger
-    directory = tempfile.mkdtemp(prefix="il-key-")
-    testcase.addCleanup(shutil.rmtree, directory, True)
-    clock, monotonic = [1.0], [1000.0]
-    environment = {"METTACLAW_OBSERVED_STRATEGY": "1", "METTACLAW_INPUT_ACK_SECONDS": "15",
-                   "METTACLAW_INSTANCE": instance}
-    with mock.patch.dict(os.environ, environment), \
-            mock.patch.object(input_ack.time, "time", side_effect=lambda: clock[0]), \
-            mock.patch.object(input_ack.time, "monotonic", side_effect=lambda: monotonic[0]), \
-            mock.patch.object(input_ack, "_pending", {}), mock.patch.object(input_ack, "_last_notice", {}), \
-            mock.patch("cognitive_health.failure_pending", return_value=False):
-        native_ledger.start(testcase, directory)
-        update = json.dumps({"update_id": update_id})
-        assert input_ack.key(task, lane, "message", "operator", update) == ""
-        monotonic[0] += 15
-        return input_ack.key(task, lane, "message", "operator", update)
 
 
 def native_operations(operations, *, collide=False):
@@ -560,7 +540,8 @@ class InputNoticeTest(unittest.TestCase):
 # ---- keys, outcome normalization, due and check (the store half of pump) ----
 
 def python_key(lane, identity):
-    """lane + "." + "%020d" of the first 8 bytes of sha256(identity), as input_ack builds it."""
+    """lane + "." + "%020d" of the first 8 bytes of sha256(identity): the reference the native
+    derivation (src/notice_key.metta) is checked against."""
     number = int.from_bytes(hashlib.sha256(identity.encode()).digest()[:8], "big")
     return lane + ".%020d" % number
 
@@ -643,12 +624,6 @@ class InputKeyTest(unittest.TestCase):
             self.assertGreaterEqual(int(digits(key)), 2 ** 63, key)
         self.assertGreater(int(digits(sends[4])), 2 ** 64 - 2 ** 56)
         self.assertTrue(all(len(digits(key)) == 20 for key in sends + deletes))
-
-    def test_a_send_key_is_the_one_input_ack_key_returns(self):
-        lane, task = "42.0 é", "tâsk 日本 🙂"
-        answers = [register_through_input_ack(self, task, "u1", lane, "inst é")]
-        self.assertTrue(answers[0].startswith(lane + "."))
-        self.assertEqual(self.derive([("inst é", lane, task)], [])[0], answers)
 
 
 NORMALIZED = [

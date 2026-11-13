@@ -87,38 +87,28 @@ class RuntimeContextTest(unittest.TestCase):
         (self.modes / "control-status.json").unlink()
         self.assertIsNone(view.read(self.now)["localChannelReady"])
 
+    # The responder's scan produces the view natively (tests/unit/input_notice.metta);
+    # these read what it publishes.
+    def inbox(self, view):
+        self.write("modes/control-status.json", dict(observed_at=self.now-1, channel_ready=True, operator_inbox=view))
+
     def test_input_age_is_pending_processing_not_completed_answer(self):
-        import input_ack
-        tasks = [[str(identity), json.dumps(["input", "route", "message", role,
-                  {"message": {"date": self.now-age, "text": "CANARY_PRIVATE"}}])]
-                 for identity, age, role in ((1, 80, "operator"), (2, 10, "operator"), (3, 5, "bot"))]
-        with mock.patch.object(input_ack.time, "time", return_value=self.now-1):
-            input_ack.begin_scan(tasks)
-        self.write("modes/control-status.json", dict(observed_at=self.now-1, channel_ready=True,
-                   operator_inbox=input_ack.input_view()))
+        # Two operator messages, 80 and 10 seconds old, as a complete scan reports them.
+        self.inbox({"pending": 2, "newestMessageAt": self.now-10, "oldestMessageAt": self.now-80,
+                    "observedAt": self.now-1})
         facts = view.read(self.now)
         self.assertEqual(facts["humanInbox"], {"pending": 2, "newestAgeSeconds": 10, "oldestAgeSeconds": 80, "sampleAgeSeconds": 1})
         self.assertIs(facts["turnPending"], True)
-        self.assertEqual(len(tasks), 3)
 
     def test_absent_inbox_is_not_known_empty(self):
         self.assertIsNone(view.read(self.now)["humanInbox"])
 
     def test_complete_empty_scan_is_distinct_from_failed_or_truncated_scan(self):
-        import input_ack
-        with mock.patch.object(input_ack.time, "time", return_value=self.now-1):
-            input_ack.begin_scan([])
-        self.assertEqual(input_ack.input_view()["pending"], 0)
-        for tasks in ([["runtime-scan-unavailable", "[]"]], [["task", "not-json"]],
-                      [[str(i), "[]"] for i in range(257)]):
-            input_ack.begin_scan(tasks)
-            self.assertIsNone(input_ack.input_view())
-
-    def test_unfamiliar_input_format_cannot_establish_an_empty_inbox(self):
-        import input_ack
-        for body in (["input", "new-format"], ["future-input", {}], {}):
-            input_ack.begin_scan([["task", json.dumps(body)]])
-            self.assertIsNone(input_ack.input_view())
+        self.inbox({"pending": 0, "newestMessageAt": None, "oldestMessageAt": None, "observedAt": self.now-1})
+        self.assertEqual(view.read(self.now)["humanInbox"]["pending"], 0)
+        # A failed, truncated or unfamiliar scan publishes no view.
+        self.inbox(None)
+        self.assertIsNone(view.read(self.now)["humanInbox"])
 
     def test_recent_receipt_window_and_closed_reason_labels(self):
         records = [{"command": "CANARY_PRIVATE", "result": "CANARY_PRIVATE", "disposition": "returned"}] * 20

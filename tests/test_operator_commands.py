@@ -1,4 +1,4 @@
-"""Each agent's command replies name that agent; /start undoes a pause."""
+"""Each agent's command replies name that agent; the menu lists the declared commands."""
 
 import os
 import pathlib
@@ -11,7 +11,6 @@ from unittest import mock
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-import sibling  # noqa: E402
 import start_telegram_service as launcher  # noqa: E402
 
 
@@ -227,43 +226,6 @@ class LauncherAccessTest(unittest.TestCase):
             facts.write_text('(owner (sender telegram 66))\n', encoding="utf-8")
             with self.assertRaises(ValueError):
                 self.argv({"METTACLAW_ACCESS_POLICY_PATH": str(facts)})
-
-
-class ResumeSelfTest(unittest.TestCase):
-    def test_start_clears_own_pause_and_starts_the_service(self):
-        with tempfile.TemporaryDirectory() as directory:
-            body = pathlib.Path(directory) / "pettaclaw-godel"
-            body.mkdir()
-            marker = body / "PAUSED-BY-OPERATOR.md"
-            marker.write_text("paused by sibling\n", encoding="utf-8")
-            states = iter(["inactive", "active"])
-            calls = []
-
-            def systemctl(*args):
-                calls.append(args)
-                if args[0] == "is-active":
-                    return 0, next(states)
-                return 0, ""
-
-            claws = {"godel": {"body": str(body), "unit": "pettaclaw-godel.service", "label": "Gödel"}}
-            with mock.patch.object(sibling, "_CLAWS", claws), \
-                    mock.patch.object(sibling, "_me", return_value="godel"), \
-                    mock.patch.object(sibling, "_systemctl", side_effect=systemctl):
-                report = sibling.resume_self()
-            self.assertFalse(marker.exists())
-            self.assertIn(("start", "pettaclaw-godel.service"), calls)
-            self.assertEqual(report, "pause marker cleared; service active")
-
-    def test_running_agent_is_left_alone(self):
-        with mock.patch.object(sibling, "_me", return_value="godel"), \
-                mock.patch.object(sibling, "_marker", return_value="/nonexistent/marker"), \
-                mock.patch.object(sibling, "_systemctl", return_value=(0, "active")) as systemctl:
-            self.assertEqual(sibling.resume_self(), "service already active")
-            self.assertEqual([c.args[0] for c in systemctl.call_args_list], ["is-active"])
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class CommandMenuTest(unittest.TestCase):

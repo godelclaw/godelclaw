@@ -1,0 +1,20 @@
+[Unit]
+Description=IRC or Mattermost channel service for %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/pettaclaw-%i
+Environment=HOME=%h
+Environment=METTACLAW_SKIP_INITIALIZE=1
+EnvironmentFile=-%h/.config/pettaclaw/%i-runtime.env
+EnvironmentFile=-%h/.config/pettaclaw/%i-channel.env
+ExecStart=%h/pettaclaw-%i/run.sh chat-channel
+Restart=always
+RestartSec=2
+KillMode=control-group
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target

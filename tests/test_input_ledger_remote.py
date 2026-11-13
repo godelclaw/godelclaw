@@ -237,21 +237,27 @@ def parse_state(output):
     return rows, ids
 
 
-CLOCK, MONOTONIC = [0.0], [1000.0]
+CLOCK = [0.0]
 
 
 @contextmanager
 def oracle_environment():
-    """The clocks and environment input_ack.py runs under in the sequential model; yields a directory."""
+    """The clock and environment of the sequential model; yields a directory."""
     with tempfile.TemporaryDirectory(prefix="il-model-") as directory, ExitStack() as stack:
-        for patch in (mock.patch.dict(os.environ, {"METTACLAW_OBSERVED_STRATEGY": "1", "METTACLAW_INPUT_ACK_SECONDS": "15",
-                                                   "METTACLAW_INSTANCE": "default"}),
-                      mock.patch.object(input_ack.time, "time", side_effect=lambda: CLOCK[0]),
-                      mock.patch.object(input_ack.time, "monotonic", side_effect=lambda: MONOTONIC[0]),
-                      mock.patch.object(input_ack, "_pending", {}), mock.patch.object(input_ack, "_last_notice", {}),
-                      mock.patch("cognitive_health.failure_pending", return_value=False)):
+        for patch in (mock.patch.dict(os.environ, {"METTACLAW_OBSERVED_STRATEGY": "1", "METTACLAW_INSTANCE": "default"}),
+                      mock.patch.object(time, "time", side_effect=lambda: CLOCK[0])):
             stack.enter_context(patch)
         yield Path(directory)
+
+
+def register(task, update_id, lane, now):
+    """What the control responder asks the ledger once a notice is due (src/input_notice_cetta.metta):
+    to register the task's notice under its send key at $now. The pacing before it is native
+    (tests/unit/input_notice.metta); a name the responder refuses is never registered."""
+    if not (1 <= len(task) <= 128 and 1 <= len(lane) <= 128):
+        return ""
+    return input_ack._ledger_call("register", (task, str(update_id) if update_id else "", lane,
+                                               base.send_key_of("default", lane, task), float(now)), 0)
 
 
 def dump_native(socket_path, directory):
@@ -387,16 +393,10 @@ class Oracle:
         kind = operation[0]
         if kind == "register":
             _, task, update_id, lane, now = operation
-            input_ack._pending.clear()
-            input_ack._last_notice.clear()
-            update = base.json.dumps({"update_id": update_id} if update_id else {})
             CLOCK[0] = now
-            MONOTONIC[0] += 100
-            assert input_ack.key(task, lane, "message", "operator", update) == ""
-            MONOTONIC[0] += 15
-            return input_ack.key(task, lane, "message", "operator", update)
+            return register(task, update_id, lane, now)
         if kind == "submitted":
-            return input_ack.submitted(operation[1]) == 1
+            return input_ack._ledger_flag("submitted", (str(operation[1]),), 0) is True
         if kind == "receipt":
             return input_ack.receipt(["delivery", key_of(operation[1]), 0, 1, operation[2]])
         if kind == "mark":
