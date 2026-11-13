@@ -59,9 +59,9 @@
 ;   own atoms;
 ; - a lookup of one record (the lane's last notice, the failure, the cursor)
 ;   does not pass over the remembered tasks;
-; - removing a remembered task does not slow the next lookup of a seen task,
-;   as it would in one space, where a removal makes the next lookup of a whole
-;   record rebuild the space's index.
+; - removing a remembered task does not slow the next lookup of a seen task:
+;   in one space, after a removal, a lookup of a whole record that finds
+;   nothing passes over the space again.
 !(bind! &notice-pending (new-space))
 !(bind! &notice-seen (new-space))
 !(bind! &notice-state (new-space))
