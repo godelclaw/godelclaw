@@ -1203,6 +1203,62 @@
         "Attachment downloads and uploads stay in Python until the engine carries binary HTTP bodies (save to file, multipart)",
         "No paid live canary or 24-hour soak claimed"
       ]
+    },
+    {
+      "id": "provider-batch-a8-native-notice-entries-and-display-records",
+      "status": "qualified-and-deployed",
+      "native_modules": [
+        "src/input_notice_cetta.metta (the responder-facing notice entries: notice:key, notice:submitted, notice:scan-after, notice:begin-scan, notice:input-view, notice:wait)",
+        "src/notice_key.metta (the notice key derivation, shared with the ledger server)",
+        "src/display_cetta.metta (coding sessions' and provider calls' display records, appended directly)"
+      ],
+      "python_removed": [
+        "input_ack's pump, _pump_native and processed_update_ids (no runtime caller)",
+        "stream_sink.tool_finished, begin, readable, offset, advance, projected, unavailable and final",
+        "native_llm_host.native_wire_started; claim_effect is entered only when commentary is on"
+      ],
+      "runtime_python_lines_removed": 197,
+      "census_ceilings_lowered": {
+        "coding lifecycle": [
+          52,
+          36
+        ],
+        "provider command": [
+          11,
+          7
+        ]
+      },
+      "behaviour_changes": [
+        "display records are appended directly instead of through a queue, so none is dropped and none carries display_gap",
+        "a ChatGPT-plan call's display records name the provider chatgpt instead of openai",
+        "a compaction refused before its claim writes no closing maintenance record"
+      ],
+      "runtime_commit": "3fb1d39abd",
+      "branch_tip": "7ccb182226",
+      "engine_commit": "4374a1df0d15c6a1bb839746ec2d1447798ad072",
+      "release": "4f330c7f",
+      "gateway_release": "4f330c7f",
+      "test_orchestration": "CeTTa core without Python",
+      "checks": {
+        "native_suites_passed": "24 of 24 on the merge with channels batches C2 and C3",
+        "chatgpt_route": "13 of 13",
+        "python_suite": "the same 26 tests fail on main and on the merge; four tests of deleted code are removed",
+        "growth": "per 4x step (bound 6): notice scan 4.90 and 2.71, display records 4.13 and 3.93; a quadratic version fails both",
+        "mutants": "55 killed",
+        "benchmark_paired_median_ms": {
+          "small": "+1.9 (-5.2 to +11.6)",
+          "large": "+12.8 (-2.1 to +16.0)",
+          "many-blocks": "+3.6 (-1.1 to +15.7)",
+          "note": "every interval includes zero; the same-tree A/A control drifted +7.9 ms on large; RSS +1%"
+        },
+        "live_observation": "Gödel's live turn on release 4f330c7f at 18:08: the model call returned through the native record path, and he saw no refused call, error line, missing tool or strange console or worklog entry; every unit came up with no runtime errors, and Lila's channel is ready",
+        "paired_installed_verification": true
+      },
+      "limits": [
+        "the command responder still calls input_ack through Python until the channels lane switches it to the native entries; about 185 more lines of input_ack.py go then",
+        "two engine index costs (an unbound-head match, a ground miss after a removal) are worked around with one space per kind of record; the engine fixes are queued",
+        "No paid live canary or 24-hour soak claimed"
+      ]
     }
   ],
   "tuning_debt": [
