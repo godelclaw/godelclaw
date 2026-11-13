@@ -10,4 +10,6 @@
 !(nt:require census-provider-answer (nt:equal (llm:command "fixture-model" 42 "low" "S_cache_boundary_U") "((nop))"))
 !(nt:require census-provider-single-post (nt:equal (json:parse (str:strip-python (fs:read-text "count"))) 1))
 !(nt:require census-commentary-shared (nt:contains (fs:read-text "worklog/notes.jsonl") "Census note."))
+!(nt:require census-observer-released
+   (nt:equal (collapse (match &observer-calls $call $call)) ()))
 !(println! CENSUS_PROVIDER_OK)

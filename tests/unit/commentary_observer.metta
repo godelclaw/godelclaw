@@ -152,6 +152,8 @@
         ($_ (nt:require event-after-the-end-stops
               (ot:stops? "m5" "chat-completions" (str:concat (ot:chat-as "reply" (JsonObject ()) "stop") (ot:content "x")))))
         ($_ (nt:require error-event-stops (ot:stops? "m6" "responses" "event: error\ndata: {\"type\":\"error\"}\n\n")))
+        ($_ (nt:require chat-error-event-stops (ot:stops? "m12" "chat-completions" "event: error\ndata: {\"id\":\"x\",\"choices\":[]}\n\n")))
+        ($_ (nt:require chat-error-member-stops (ot:stops? "m13" "chat-completions" "data: {\"id\":\"x\",\"choices\":[],\"error\":{}}\n\n")))
         ($_ (nt:require failed-response-stops (ot:stops? "m7" "responses" (ot:event (JsonObject ((JsonPair "type" "response.failed")))))))
         ($_ (nt:require conflicting-event-name-stops
               (ot:stops? "m8" "responses" "event: response.completed\ndata: {\"type\":\"response.output_text.delta\"}\n\n")))
@@ -174,6 +176,9 @@
         ($_ (nt:require long-event-stops
               (ot:bounded? "b2" 100000 (str:concat "data: " (str:concat (ot:copies "x" 65530) "\ndata: xxxxx\n")))))
         ($_ (nt:require long-field-stops (ot:bounded? "b3" 100000 (ot:content (ot:copies "x" 17000)))))
+        ; A field that ends past 16 KiB is no note, though its comma arrives.
+        ($_ (nt:require late-comma-no-note
+              (ot:bounded? "b5" 100000 (ot:content (str:concat "{\"commentary\": \"" (str:concat (ot:copies "x" 16380) "\", \"c"))))))
         ($_ (nt:require response-bound-stops (ot:bounded? "b4" 4 (ot:content "x"))))
         ; An event's data on two lines.
         ($before-l (ot:count)) ($_ (ot:call "l1"))

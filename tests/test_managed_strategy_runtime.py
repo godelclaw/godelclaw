@@ -50,6 +50,14 @@ class ManagedRuntimeTest(unittest.TestCase):
                 receipts = [json.loads(line) for line in (Path(temporary) / "effects.jsonl").read_text().splitlines()]
                 executed = [r for r in receipts if "command" in r]
                 deferred = [r for r in receipts if "commands" in r]
+                # Each receipt names its command's attempt, <ticket>:<position>,
+                # as the dispatcher recorded it: each batch's from 0, in order.
+                positions = {}
+                for receipt in executed:
+                    ticket, separator, position = receipt["occurrence"].rpartition(":")
+                    self.assertTrue(separator and ticket and position.isdigit(), receipt["occurrence"])
+                    positions.setdefault(ticket, []).append(int(position))
+                self.assertTrue(all(p == list(range(len(p))) for p in positions.values()), positions)
                 if expected_commands is None:
                     self.assertEqual(len(executed),expected_count)
                     continue
