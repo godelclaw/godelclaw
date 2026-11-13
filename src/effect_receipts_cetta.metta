@@ -1,5 +1,6 @@
 ; Native effect receipts. Explicit host boundaries: strategy bookkeeping,
-; stream receipt observation, and configuration-selected worklog plugins ONLY.
+; stream receipt observation, and configuration-selected worklog plugins
+; (src/worklog_sink_cetta.metta) ONLY.
 !(import! &self (library fs))
 !(import! &self (library str))
 !(import! &self (library json))
@@ -8,10 +9,10 @@
 !(import! &self ./src/effect_receipt_values_cetta.metta)
 !(import! &self ./src/effect_receipt_io_cetta.metta)
 !(import! &self ./src/public_worklog_cetta.metta)
+!(import! &self ./src/worklog_sink_cetta.metta)
 !(import! &self ./src/strategy_host.py)
 !(import! &self ./src/strategy_broker_cetta.metta)
 !(import! &self ./src/stream_sink.py)
-!(import! &self ./src/effect_receipts_plugin.py)
 
 ; Reviewer mail2b51e0f80b544595b546a6effb97187b: one serial evaluator per
 ; runtime process reaches these hooks. This is evaluator-local reentry state,
@@ -101,26 +102,8 @@
        (if (== $key $turn) $epoch (er:epoch $turn (cdr-atom $items))))))
 (= (er:bounded $items $limit)
    (if (> (size-atom $items) $limit) (erv:drop $items (- (size-atom $items) $limit)) $items))
-(= (er:sink-status)
-   (let* (($root (er:env "METTACLAW_PUBLIC_WORK_DIR")) ($library (er:env "METTACLAW_PUBLIC_WORK_LIB")))
-     (if (== $root "") (ErSinkStatus False JsonNull)
-       (if (not (== $library ""))
-         (let $value (py-call (effect_receipts_plugin.status $root $library))
-           (case $value ((($enabled $epoch) (ErSinkStatus (== $enabled 1) $epoch)) ($other $other))))
-         (let $state (pw:transact $root "status" "" JsonNull)
-           (if (erv:failed? $state) $state
-             (let $epoch (erv:int (erv:get $state "epoch" 0))
-               (if (erv:failed? $epoch) $epoch
-                 (ErSinkStatus (erv:truth (erv:get $state "enabled" False)) $epoch)))))))))
-(= (er:sink-add $text $epoch)
-   (let* (($root (er:env "METTACLAW_PUBLIC_WORK_DIR")) ($library (er:env "METTACLAW_PUBLIC_WORK_LIB")))
-     (if (== $root "") 0
-       (if (not (== $library "")) (py-call (effect_receipts_plugin.add $root $library $text $epoch))
-         (let $state (pw:transact $root "add" $text $epoch)
-           (if (erv:failed? $state) $state
-             (if (erv:truth (erv:get $state "accepted" True)) 1 0)))))))
 (= (er:capture-body $turn)
-   (let* (($status (er:answer (collapse (catch (er:sink-status)))))
+   (let* (($status (er:answer (collapse (catch (worklog:status)))))
           ($number (erv:int $turn)))
      (if (erv:failed? $number) $number
        (let* (($rest (er:without-turn $number (get-state &er-captured)))
@@ -135,7 +118,7 @@
 (= (er:publish-admitted $event $epoch)
    (let* (($id (erv:get $event "receipt_id" ""))
           ($_ (change-state! &er-in-flight (cons-atom $id (get-state &er-in-flight))))
-          ($outcomes (collapse (catch (er:sink-add (er:public-text $event) $epoch))))
+          ($outcomes (collapse (catch (worklog:add (er:public-text $event) $epoch))))
           ($accepted (er:best $outcomes))
           ($_ (change-state! &er-in-flight (list:remove-all $id (get-state &er-in-flight))))
           ($_ (if (== $accepted 1)

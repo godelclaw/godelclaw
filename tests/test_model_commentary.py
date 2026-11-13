@@ -80,10 +80,9 @@ class CommentaryTest(unittest.TestCase):
         self.assertEqual(self.entries(), [])
 
     def test_internal_compaction_creates_no_public_observer(self):
-        plan = SimpleNamespace(kind='command', purpose='compaction', protocol='responses', cap=4096)
+        plan = SimpleNamespace(kind='command', purpose='compaction')
         commentary.begin(plan)
         self.assertFalse(hasattr(plan, 'commentary'))
-        self.assertFalse(hasattr(plan, 'commentary_stream'))
         self.assertEqual(self.entries(), [])
 
     def test_legacy_commands_unchanged(self):
@@ -145,22 +144,6 @@ class CommentaryTest(unittest.TestCase):
             part = value[:cut]
             self.assertEqual(commentary.split(part)[1], '()')
         self.assertEqual(commentary.split(value)[1], '((nop))')
-
-    def test_early_complete_comment_only_once(self):
-        publication = commentary.Publication(self.sink)
-        source = json.dumps({'commentary': 'Check ž 🐈\nnext.', 'commands': '((shell "not run"))'})
-        for index in range(len(source) + 1):
-            publication.prefix(source[:index])
-        self.assertEqual([x['text'] for x in self.entries()], ['Check ž 🐈\nnext.'])
-
-    def test_reasoning_and_command_fields_are_not_public_sources(self):
-        for source in ('{"reasoning":"private", "commentary":"ignored",',
-                       '{"commands":"((send \\"private\\"))",',
-                       'private prose ((nop))',
-                       '{"commentary": "partial\\uD83D',
-                       '{"commentary": "not finished"'):
-            self.assertEqual(commentary.Publication(self.sink).prefix(source), 0)
-        self.assertEqual(self.entries(), [])
 
     def test_off_on_epoch_cannot_replay_old_output(self):
         publication = commentary.Publication(self.sink)

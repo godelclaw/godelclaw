@@ -68,12 +68,12 @@ def check(c):
     # Serial guard, in-flight, failed sink retry and oldest-first bounds. The
     # native fixture replaces only the sink crossing, not persistence/cleaning.
     source = HEADER + WIRE + '''
-!(match &self (= (er:sink-add $text $epoch) $body)
-  (remove-atom &self (= (er:sink-add $text $epoch) $body)))
+!(match &self (= (worklog:add $text $epoch) $body)
+  (remove-atom &self (= (worklog:add $text $epoch) $body)))
 !(bind! &rt-mode (new-state normal))
 !(bind! &rt-calls (new-state 0))
 !(bind! &rt-nested (new-state -1))
-(= (er:sink-add $text $epoch)
+(= (worklog:add $text $epoch)
  (let $_ (change-state! &rt-calls (+ (get-state &rt-calls) 1))
   (case (get-state &rt-mode)
    ((failure (ErFailure RuntimeError "fixture sink failed" ()))
@@ -146,7 +146,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='effect05-native-') as temporary:
         c=Qualification(args.evidence.resolve(),Path(temporary))
         with c.phase('native-receipts'):
-            c.snapshot_sources('src/effect_receipts_cetta.metta','src/effect_receipts_plugin.py',
+            c.snapshot_sources('src/effect_receipts_cetta.metta','src/effect_receipts_plugin.py','src/worklog_sink_cetta.metta',
                 'src/public_worklog_cetta.metta','src/effect_receipt_values_cetta.metta',
                 'src/effect_receipt_io_cetta.metta')
             check(c)

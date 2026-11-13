@@ -86,16 +86,6 @@ def call_lane():
     return os.environ.get("METTACLAW_ACTIVITY_CALL_LANE") or ("interactive" if call_scope() else "")
 
 
-def native_classified(plan, status, program, commentary, code, publish):
-    """Attach the pure native decision to this plan's existing settlement."""
-    if status not in ("accepted", "rejected"):
-        raise ValueError("invalid native command classification")
-    plan.native_command_classification = {
-        "status": status, "program": str(program), "commentary": str(commentary),
-        "code": str(code), "publish": str(publish) == "true"}
-    return 1
-
-
 def request_allowed():
     import provider_rejection
     return "false" if provider_rejection.blocked() else "true"
@@ -302,19 +292,6 @@ def native_preparation_failed(plan, reason):
     return plan
 
 
-def claim_effect(plan, stream):
-    """Open the commentary observer of a claimed call. The native owner asks
-    only when commentary is on; $stream is whether the prepared request
-    streams. The display is native (src/display_cetta.metta)."""
-    plan.stream = str(stream) == "true"
-    try:
-        model_commentary.begin(plan)
-        return "true"
-    except Exception as error:
-        plan.error = error
-        return "false"
-
-
 def policy_rejected(plan, reason, retry=-1):
     code = str(reason)
     if code in ("provider-cooldown", "native-call-capacity"):
@@ -423,38 +400,6 @@ def decoding_wait(plan, attempt):
     return 1
 
 
-def commentary_readable(plan):
-    observer = getattr(plan, "commentary_stream", None)
-    return "true" if observer and not observer.disabled and not observer.prefix.done else "false"
-
-
-def commentary_offset(plan):
-    return plan.commentary_stream.offset
-
-
-def commentary_chunk(plan, offset, text, phase):
-    observer = getattr(plan, "commentary_stream", None)
-    if observer is None or observer.disabled:
-        return 1
-    try:
-        offset, text = int(offset), str(text)
-        if (str(phase) not in ("waiting", "complete") or
-                offset != observer.offset + len(text.encode("utf-8"))):
-            raise ValueError("invalid observer cursor")
-        observer.offset = offset
-        observer.feed(text)
-    except (ValueError, TypeError, UnicodeError):
-        observer.disabled = True
-    return 1
-
-
-def commentary_unavailable(plan):
-    observer = getattr(plan, "commentary_stream", None)
-    if observer:
-        observer.disabled = True
-    return 1
-
-
 def progress_observed(plan, count, quiet, soft):
     """The watchdog observer of a progress record the native owner paced."""
     import process_supervision
@@ -462,49 +407,37 @@ def progress_observed(plan, count, quiet, soft):
     return 1
 
 
-def _native_finish(plan):
-    """Release only the decision computed by model_commentary_cetta.metta."""
-    decision = getattr(plan, "native_command_classification", None)
-    if not isinstance(decision, dict):
-        raise model_commentary.OutputError("invalid command envelope")
-    if decision["status"] == "rejected":
-        message = {"incomplete-output": "unfinished command output",
-                   "invalid-native-tool": "invalid native tool output",
-                   "refused-or-structured-output": "refused or structured command output",
-                   "invalid-envelope": "invalid command envelope"}.get(
-                       decision["code"], "invalid command envelope")
-        raise model_commentary.OutputError(message)
-    publication = getattr(plan, "commentary", None)
-    if publication and decision["publish"]:
-        publication.publish(decision["commentary"])
-    return decision["program"]
+# The command contract's rejection codes (src/model_commentary_cetta.metta)
+# and the failure each names.
+_REJECTED_OUTPUT = {"incomplete-output": "unfinished command output",
+                    "invalid-native-tool": "invalid native tool output",
+                    "refused-or-structured-output": "refused or structured command output",
+                    "invalid-envelope": "invalid command envelope"}
 
 
-def finish(plan, encoded):
+def finish(plan, encoded, decision="none", program="", code=""):
     """Host observers of a completion the native owner has published once.
 
     The ledger, its effects (completion observation, calibration, usage tally),
-    turn health and the answer of a structured call or a compaction are
-    native, and so is the display. This releases a command turn's program and
-    answers its decision: ("completed", program, bytes) or the failure facts
-    the native owner paces (synthetic_llm.failure_facts) for a command turn,
-    ("completed", bytes) for a structured call, 1 for a compaction.
+    turn health, the commentary and the answer of a structured call are
+    native, and so are the display and a compaction. This releases a command
+    turn's program, which the command contract's decision names when it
+    applies ("accepted" with the program, or "rejected" with its code), and
+    answers: ("completed", program, bytes) or the failure facts the native
+    owner paces (synthetic_llm.failure_facts) for a command turn,
+    ("completed", bytes) for a structured call.
     """
     result = json.loads(str(encoded))
     reason = result["choices"][0].get("finish_reason", "unknown")
-    # A compaction or a structured call answers with its reply, which the
-    # native owner builds; only the effects of its completion remain here.
-    if _compaction(plan):
-        return 1
     if plan.kind == "structured":
         _answered()
         return ("completed", len(str(encoded).encode()))
     content = result["choices"][0]["message"].get("content")
-    try:
-        if model_commentary.enabled():
-            content = _native_finish(plan)
-    except model_commentary.OutputError as error:
-        return synthetic_llm.failure_facts(error)
+    if str(decision) == "rejected":
+        return synthetic_llm.failure_facts(model_commentary.OutputError(
+            _REJECTED_OUTPUT.get(str(code), "invalid command envelope")))
+    if str(decision) == "accepted":
+        content = str(program)
     if reason == "length":
         import helper
         content = helper.complete_command_prefix(content or "")

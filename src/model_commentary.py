@@ -120,44 +120,13 @@ class Publication:
         except Exception:
             return 0
 
-    def prefix(self, text):
-        """Publish only a complete first JSON string, never a partial escape.
-
-        This grants no authority to the unreceived commands field. The comment
-        can remain visible if the call later fails, as with provisional UI text
-        in other streaming clients.
-        """
-        if self.published:
-            return 0
-        source = str(text).lstrip()
-        if not source.startswith('{'):
-            return 0
-        decoder = json.JSONDecoder()
-        try:
-            key, end = decoder.raw_decode(source, 1 + len(source[1:]) - len(source[1:].lstrip()))
-            rest = source[end:].lstrip()
-            if key != 'commentary' or not rest.startswith(':'):
-                return 0
-            value, end = decoder.raw_decode(rest[1:].lstrip())
-            # A JSON string followed by no delimiter may still be provisional;
-            # require the next field separator before displaying it.
-            tail = rest[1:].lstrip()[end:].lstrip()
-            if not tail.startswith(',') or not isinstance(value, str):
-                return 0
-            return self.publish(value)
-        except (ValueError, TypeError, RecursionError):
-            return 0
-
 
 def begin(plan):
+    """The Python transport's publication; the native transport observes
+    commentary natively (src/commentary_observer_cetta.metta)."""
     if (enabled() and getattr(plan, 'kind', '') == 'command'
             and getattr(plan, 'purpose', '') != 'compaction'):
         plan.commentary = Publication()
-        protocol = getattr(plan, 'protocol', '')
-        if plan.commentary.sink and (protocol == 'responses' or
-                (protocol == 'chat-completions' and getattr(plan, 'stream', False))):
-            from commentary_stream import Stream
-            plan.commentary_stream = Stream(plan.commentary, protocol, plan.cap)
     return 1
 
 

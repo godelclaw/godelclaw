@@ -112,7 +112,7 @@ def main():
         with c.phase('actual-receipt-callers'):
             c.snapshot_sources('src/command_dispatch_hooks.metta','src/context_sources_cetta.metta',
                 'src/effect_receipts_cetta.metta','src/effect_receipts.metta','src/effect_receipts_native.metta',
-                'src/effect_receipts_plugin.py','tests/effect_receipts_caller_probe.py')
+                'src/effect_receipts_plugin.py','src/worklog_sink_cetta.metta','tests/effect_receipts_caller_probe.py')
             check(c)
 
 

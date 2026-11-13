@@ -60,8 +60,8 @@ def check(c):
         source=HEADER+'!(import! &self ./tests/effect_receipts_caller_probe.py)\n!(py-call (effect_receipts_caller_probe.setup))\n'+WIRE
         source+='!(change-state! &er-captured ((3 7)))\n'
         if mode=='sink-failed':
-            source+='''!(match &self (= (er:sink-add $text $epoch) $body) (remove-atom &self (= (er:sink-add $text $epoch) $body)))
-(= (er:sink-add $text $epoch) (Error fixture sink-failed))
+            source+='''!(match &self (= (worklog:add $text $epoch) $body) (remove-atom &self (= (worklog:add $text $epoch) $body)))
+(= (worklog:add $text $epoch) (Error fixture sink-failed))
 '''
         source+=emit('(rt:wire (er:record 3 returned (quote (shell "fixture")) "result" "outcome-id"))')
         source+=emit('(JsonArray ((get-state &er-reporting) (size-atom (get-state &er-in-flight)) (size-atom (get-state &er-published))))')

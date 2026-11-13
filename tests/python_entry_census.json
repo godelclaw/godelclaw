@@ -26,11 +26,12 @@
     [
       "tests/provider_command_census_probe.metta",
       "CENSUS_PROVIDER_OK",
-      7,
+      4,
       "world",
       {
         "METTACLAW_MODEL_COMMENTARY": "1",
-        "METTACLAW_STREAM_DIR": "display"
+        "METTACLAW_STREAM_DIR": "display",
+        "METTACLAW_PUBLIC_WORK_DIR": "worklog"
       }
     ]
   ]

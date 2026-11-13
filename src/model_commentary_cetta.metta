@@ -184,23 +184,12 @@
 (= (commentary:classify $legacy)
    (commentary:classify-parsed (llm:v1:parse $legacy)))
 
-; The host owns settlement and its existing publication observer. This pure
-; decision is attached to that one owned plan before native_llm_host.finish.
-(= (commentary:store $owner (CommentaryAcceptedV1 $program $publication))
-   (case $publication
-     (((CommentaryPublishV1 $text)
-       (py-call (native_llm_host.native_classified (call:host $owner) accepted $program $text "" "true")))
-      (CommentaryNoPublicationV1
-       (py-call (native_llm_host.native_classified (call:host $owner) accepted $program "" "" false))))))
-(= (commentary:store $owner (CommentaryRejectedV1 $code))
-   (py-call (native_llm_host.native_classified (call:host $owner) rejected "" "" $code false)))
 ; The contract applies to a command turn: not to a compaction or a structured
 ; call, and not when commentary is off.
 (= (commentary:native-contract? $owner)
    (and (commentary:enabled?) (and (call:command? $owner) (not (call:compaction? $owner)))))
 ; Answers the decision, or CommentaryNotAppliedV1 when the contract does not
-; apply to this call.
+; apply to this call. The completion's publication releases it
+; (src/llm_accounting_cetta.metta).
 (= (commentary:prepare $plan $legacy)
-   (if (commentary:native-contract? $plan)
-     (let* (($decision (commentary:classify $legacy)) ($stored (commentary:store $plan $decision))) $decision)
-     CommentaryNotAppliedV1))
+   (if (commentary:native-contract? $plan) (commentary:classify $legacy) CommentaryNotAppliedV1))
