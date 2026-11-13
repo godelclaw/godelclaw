@@ -10,7 +10,7 @@
     [
       "tests/activity_delivery_full_turn_probe.metta",
       "ACTIVITY_DELIVERY_FULL_TURN_OK",
-      56
+      48
     ],
     [
       "tests/background_jobs_probe.metta",

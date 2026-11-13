@@ -571,18 +571,24 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
 
             # Processing the actual batch must pass exact IDs through the
             # MeTTa join into the host ledger, then retire the bot's notice.
+            # The native source acknowledgement renames each handover input
+            # done; a directory in the way makes that rename, and so the
+            # acknowledgement, fail until it is removed.
             ack_probe = temp / "ack_failure_probe.py"
-            ack_probe.write_text('import telegram\noriginal=telegram.handover_ack\n'
-                'def refuse():\n    telegram.handover_ack=lambda ids: 0\n    return 1\n'
-                'def restore():\n    telegram.handover_ack=original\n    return 1\n')
+            ack_probe.write_text('import os, pathlib, shutil\n'
+                'folder=pathlib.Path(os.environ["METTACLAW_ENGINE_STATE_PATH"]).parent/"modes"/"channel-handover"\n'
+                'def refuse(update):\n    folder.mkdir(parents=True,exist_ok=True)\n'
+                '    (folder/(update+".json")).write_text("{}")\n    (folder/(update+".done")).mkdir()\n'
+                '    (folder/(update+".done")/"keep").write_text("")\n    return 1\n'
+                'def restore(update):\n    shutil.rmtree(folder/(update+".done"))\n    return 1\n')
             lines, err = run('!(tg:start)\n!(tg:activity-batch)\n'
                 '!(py-call (helper.turn_commit_stage 1 1 1))\n'
                 '!(py-call (helper.working_set_save 9 1 "notice successor" 0))\n'
                 '!(import! &self "' + str(ack_probe) + '")\n'
-                '!(py-call (ack_failure_probe.refuse))\n'
+                '!(py-call (ack_failure_probe.refuse "201"))\n'
                 '!(tg:ack-activity-batch)\n'
                 '!(== (tg:prepared-items) ())\n'
-                '!(py-call (ack_failure_probe.restore))\n'
+                '!(py-call (ack_failure_probe.restore "201"))\n'
                 '!(tg:ack-activity-batch)\n', notice_env)
             assert [line.lower() for line in lines[-4:]] == ['0', 'false', '1', '1'], lines
             assert lines[-1] == "1", (lines[-5:], err[-1000:])
@@ -621,10 +627,10 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
                 '!(py-call (helper.turn_commit_stage 1 1 1))\n'
                 '!(py-call (helper.working_set_save 10 1 "group successor" 0))\n'
                 '!(import! &self "' + str(ack_probe) + '")\n'
-                '!(py-call (ack_failure_probe.refuse))\n'
+                '!(py-call (ack_failure_probe.refuse "202"))\n'
                 '!(tg:ack-activity-batch)\n'
                 '!(== (tg:prepared-count) 0)\n'
-                '!(py-call (ack_failure_probe.restore))\n'
+                '!(py-call (ack_failure_probe.restore "202"))\n'
                 '!(tg:ack-activity-batch)\n', notice_env)
             assert lines[-4:] == ['0', 'false', '1', '1'], (lines[-8:], err[-1000:])
             assert (temp / "notice-history.metta").read_text().strip() == "group processing history"

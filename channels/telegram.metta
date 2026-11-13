@@ -30,6 +30,7 @@
 !(import! &self ./channels/telegram_control_input.metta)
 !(import! &self ./channels/telegram_notice_cleanup.metta)
 !(import! &self ./src/job_io)
+!(import! &self ./src/activity_source_cetta.metta)
 !(import! &self ./src/state_file_cetta.metta)
 !(import! &self ./src/mail)
 ; The native idle provider initializes native memory.
@@ -628,13 +629,13 @@
      (let ($head $tail) (tg:uncons $items)
        (let ($seq $task $chat $text $bot $tier $uid) $head
          (let $rest (tg:uncommitted $tail)
-           (if (== (py-call (input_ack.already_committed $uid)) 1) $rest
+           (if (== (activity-source:already-committed $uid) 1) $rest
              (cons-atom $head $rest)))))))
 (= (tg:recover-committed $items)
    (if (== $items ()) 1
      (let ($head $tail) (tg:uncons $items)
        (let ($seq $task $chat $text $bot $tier $uid) $head
-         (let $_ (if (== (py-call (input_ack.already_committed $uid)) 1)
+         (let $_ (if (== (activity-source:already-committed $uid) 1)
                    (if (tg:ack-all ($head))
                      (if (== (tg:safe-source-ack $uid) 1)
                          (tg:forget-items ($head)) ()) ()) ())
@@ -659,13 +660,13 @@
              (let $c (tg:set last-tier (if $bot "full" $tier)) True))))))))
 
 (= (tg:safe-source-ack $ids)
-   (case (catch (py-call (telegram.activity_source_ack $ids)))
+   (case (catch (activity-source:ack $ids))
      ((1 1) ($other 0))))
 
 (= (tg:ack-activity-batch)
    (let $prepared (tg:sorted-items (tg:prepared-items))
      (if (== $prepared ()) 1
-       (if (if (== (py-call (input_ack.committed (str:join "," (tg:list (tg:update-ids $prepared))))) 1)
+       (if (if (== (activity-source:committed (str:join "," (tg:list (tg:update-ids $prepared)))) 1)
                 (tg:log-activity-ack (tg:list (tg:update-ids $prepared))) False)
          (if (tg:ack-all $prepared)
            (let $handover (tg:safe-source-ack (str:join "," (tg:list (tg:update-ids $prepared))))
@@ -795,7 +796,7 @@
    (case $value
      (((JsonArray ((JsonString "input") (JsonString $lane) (JsonString $kind) (JsonString $role) $update))
        (let $uid (tg:str (tg:at $update "update_id"))
-         (if (== (py-call (input_ack.already_committed $uid)) 1)
+         (if (== (activity-source:already-committed $uid) 1)
            (tg:acknowledge $task)
            (let $seen (tg:see $task) (tg:intake $task $lane $kind $role $update)))))
       ((JsonArray ((JsonString "delivery") (JsonString $key) (JsonNumber $pos) (JsonNumber $count) $result))
