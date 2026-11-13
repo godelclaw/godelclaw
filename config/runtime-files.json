@@ -395,5 +395,6 @@
   "src/stream_cursors_cetta.metta",
   "src/completion_effects_cetta.metta",
   "src/rejection_gate_cetta.metta",
-  "src/strategy_broker_cetta.metta"
+  "src/strategy_broker_cetta.metta",
+  "src/session_engine_cetta.metta"
 ]

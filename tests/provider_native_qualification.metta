@@ -3,6 +3,7 @@
 !(import! &self ./provider_request_contracts.metta)
 !(import! &self ../src/provider_call_cetta.metta)
 !(import! &self ../src/ledger_client.metta)
+!(import! &self ../src/session_engine_cetta.metta)
 
 (: nq:read-number (-> %Undefined% Number))
 (= (nq:read-number $path) (json:parse (str:strip-python (fs:read-text $path))))
@@ -84,6 +85,10 @@
      (nq:guest-at $world $model $language $forms $extra $root)))
 (: nq:guest-at (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (nq:guest-at $world $model $language $forms $extra $cwd)
+   (nq:guest-run $world $model $language $forms $extra $cwd ()))
+; A guest whose engine takes flags, as a coding session's engine does.
+(: nq:guest-run (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
+(= (nq:guest-run $world $model $language $forms $extra $cwd $flags)
    (let* (((NativeProviderTestWorldV1 $root $sdk $core $directory $socket $base $peer $server $env-base $io_fixture) $world)
           ($entry (nt:join $directory "guest.metta")) ($module (nt:join $root "src/native_llm.metta"))
           ($literal (preq:repr $module))
@@ -94,8 +99,9 @@
           ($memory (nt:join $directory "peak-rss-kib"))
           ($measurement (nt:join $directory "guest-measurement.json"))
           ($start (system:monotonic-ns))
-          ($result (proc:run ($io_fixture "--measure" $measurement "--" $engine "--lang" $language "--profile" "extended" "--import-mode" "ancestor-walk" "--quiet" $entry)
-                            $cwd $env 30000 16777216))
+          ($command (preq:append ($io_fixture "--measure" $measurement "--" $engine)
+                      (preq:append $flags ("--lang" $language "--profile" "extended" "--import-mode" "ancestor-walk" "--quiet" $entry))))
+          ($result (proc:run $command $cwd $env 30000 16777216))
           ($outer (- (system:monotonic-ns) $start))
           ($measured (preq:parse (fs:read-text $measurement)))
           ($elapsed (pcall:fact $measured "elapsed_ns")) ($rss (pcall:fact $measured "peak_rss_kib"))
@@ -372,6 +378,46 @@
                   (nt:equal (preq:field (preq:field $body "reasoning") "summary") (JsonString "auto"))
                   (nt:equal (preq:field (preq:field $body "thinking") "display") (JsonString "summarized")))))
           ($_ (nq:close $world))) 7))
+; A coding session's engine runs with the session engine flags, the value
+; allowance the agent and its ledger have. A long thought is a large answer:
+; 6,000 thinking deltas, about 420 KB of thinking, one stored value well
+; past the engine's 1 MiB default once rendered. With the session's flags
+; the coding call is answered and its completion stored; without them its
+; answer would wait in local storage for good.
+(= (nq:thinking-sse)
+   (let* (($start (str:concat
+             (nq:sse-event "message_start" "{\"type\":\"message_start\",\"message\":{\"id\":\"fixture\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-fixture\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}")
+             (nq:sse-event "content_block_start" "{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"\"}}")))
+          ($delta (nq:sse-event "content_block_delta"
+             (format-args "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"{}\"}}" ((nq:long-thought)))))
+          ($deltas (str:join "" (nq:copies $delta 6000 ())))
+          ($end (str:join "" (
+             (nq:sse-event "content_block_delta" "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"fixture-signature\"}}")
+             (nq:sse-event "content_block_stop" "{\"type\":\"content_block_stop\",\"index\":0}")
+             (nq:sse-event "content_block_start" "{\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}")
+             (nq:sse-event "content_block_delta" "{\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"(nop)\"}}")
+             (nq:sse-event "content_block_stop" "{\"type\":\"content_block_stop\",\"index\":1}")
+             (nq:sse-event "message_delta" "{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":2}}")
+             (nq:sse-event "message_stop" "{\"type\":\"message_stop\"}")))))
+     (str:concat $start (str:concat $deltas $end))))
+(: nq:large-thinking (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
+(= (nq:large-thinking $root $sdk $core $artifacts $fixture)
+   (let* (($world (nq:world $root $sdk $core $artifacts $fixture "large-thinking"))
+          ($_ (fs:write (nq:path $world "response.body") (nq:thinking-sse)))
+          ($reply (nq:path $world "structured-reply.json"))
+          ($forms (format-args "!(let* (($plan (llm:structured-plan (json-parse {}) {})) ($_ (nt:require structured-prepared-natively (case $plan (((PreparedProviderCallV1 $owner $transport) True) ($other False))))) ($answer (llm:run $plan)) ($_ (nt:require structured-native-reply (case $answer (((ProviderReplyV1 $value) True) ($other False))))) ($_ (llm:reply-file $answer {}))) (println! NATIVE_STRUCTURED_OK))"
+                     ((repr (nq:structured-request)) (repr "coding") (repr $reply))))
+          ($output (nq:output (nq:guest-run $world "claude-fixture" "petta" $forms
+                     (("METTACLAW_STREAM_DIR" (nq:path $world "display"))) $root (session:engine-flags))))
+          ($_ (nt:require large-thinking-answered (nt:contains $output "NATIVE_STRUCTURED_OK")))
+          ($_ (nt:require large-thinking-one-request (nt:equal (nq:posts $world) 1)))
+          ; The answer is published only once its completion is stored; the
+          ; driver's own allowance cannot read the stored row back.
+          ($health (preq:parse (fs:read-text (nq:path $world "health.json"))))
+          ($_ (nt:require large-thinking-stored
+                (and (nt:equal (preq:field $health "local_commit_pending") (JsonBool False))
+                     (nt:equal (preq:field $health "last_outcome") (JsonString "completed")))))
+          ($_ (nq:close $world))) 3))
 ; A checkpoint check (METTACLAW_CODING_CHECK=1) never calls a provider for a
 ; coding session or a compaction: native_call_seed refuses before any plan,
 ; claim or request exists. A turn's call is still prepared.

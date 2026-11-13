@@ -14,6 +14,7 @@
 !(import! &self ./src/coding_delivery.metta)
 !(import! &self ./src/process_identity_cetta.metta)
 !(import! &self ./src/settings_registry.metta)
+!(import! &self ./src/session_engine_cetta.metta)
 
 (SettingSpec 1 "work" "context" "open" "mode" (Choice ("open" "summary" "off")) "persistent"
   "Coding-session context source mode: open lists due open sessions, summary shows counts and verbs, off omits the source."
@@ -142,11 +143,17 @@
                                     (work:quote (str:concat "METTACLAW_CODING_RUN_TOKEN=" $token))
                                     "METTACLAW_CODING_SESSION=1"
                                     "METTACLAW_OBSERVED_STRATEGY=0")))
-          ($launch (str:join "" ("cd " (work:quote $runtime) " || exit 1; systemd-run --user --scope --quiet --collect --unit=" (work:quote (work:unit $id)) " -- " $own " "
-                                 (work:quote $binary) " --lang petta --import-mode ancestor-walk coding_main.metta -- " (work:quote $dir)
-                                 " >> " (work:quote (path:join $dir "run.log")) " 2>&1 &")))
+          ($launch (work:launch-command $id $runtime $binary $own $dir))
           ($_ (work:shell $launch)))
      (WorkLaunched $id)))
+
+;; The session's shell command: its own scope, its environment, and the engine
+;; with the session's flags (session_engine_cetta.metta).
+(= (work:launch-command $id $runtime $binary $own $dir)
+   (let $flags (str:join " " (map-atom (session:engine-flags) $flag (work:quote $flag)))
+     (str:join "" ("cd " (work:quote $runtime) " || exit 1; systemd-run --user --scope --quiet --collect --unit=" (work:quote (work:unit $id)) " -- " $own " "
+                   (work:quote $binary) " " $flags " --lang petta --import-mode ancestor-walk coding_main.metta -- " (work:quote $dir)
+                   " >> " (work:quote (path:join $dir "run.log")) " 2>&1 &"))))
 
 (= (work:scope-state $id)
    (case (proc:run ("systemctl" "--user" "is-active" "--quiet" (str:concat (work:unit $id) ".scope"))

@@ -39,6 +39,7 @@
           ($_ (nq:structured $root $sdk $core $artifacts $fixture "claude-fixture" "anthropic" "coding"))
           ($_ (nq:long-stream $root $sdk $core $artifacts $fixture "kimi:k3.1-pro" "responses"))
           ($_ (nq:long-stream $root $sdk $core $artifacts $fixture "claude-fixture" "anthropic"))
+          ($_ (nq:large-thinking $root $sdk $core $artifacts $fixture))
           ($_ (nq:coding-check $root $sdk $core $artifacts $fixture))
           ($_ (nq:rejection $root $sdk $core $artifacts $fixture False))
           ($_ (nq:rejection $root $sdk $core $artifacts $fixture True)))
