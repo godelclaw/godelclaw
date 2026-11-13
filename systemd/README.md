@@ -52,6 +52,7 @@ The channel environment must supply these values:
 | `METTACLAW_TELEGRAM_PRIMARY_CHAT_ID` | Default private destination for this instance. |
 | `METTACLAW_TELEGRAM_ALLOWED_CHAT_IDS` | Additional permitted chats, when needed. |
 | `METTACLAW_TELEGRAM_ALLOW_PRIVATE` | Optional. Admits every private chat; otherwise the instance's own `telegram.allow_private` holds. |
+| `METTACLAW_TELEGRAM_BARE_GROUP_COMMANDS` | Optional. `0` leaves an operator's bare `/command` in a group to no agent; otherwise the instance's own `telegram.bare_group_commands` holds (on by default). |
 | `METTACLAW_ACCESS_POLICY_PATH` | Optional. The access policy's facts file; the service also admits the chats it names. |
 
 Store the bot token as the sole content of the credential file. systemd supplies

@@ -198,6 +198,12 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
     listener.bind(str(path)); listener.listen(16); path.chmod(0o600)
     ledger = temp / "telegram.jsonl"
+    # The commands file as the launcher writes it for this service: with the
+    # declaration of bare commands in groups when the service knows it.
+    sys.path[:0] = [str(ROOT / "src")]
+    import start_telegram_service as launcher
+    BARE = launcher.service_takes_bare_commands(SERVICE)
+    commands = launcher.write_commands(ROOT, temp / "commands.metta", BARE)
     env = dict(os.environ,
                METTACLAW_TELEGRAM_CLIENT="metta",
                METTACLAW_ENGINE="cetta", METTACLAW_ACTIVE_ENGINE="cetta",
@@ -228,7 +234,7 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
                         "--worker", "lila", "--chat", str(CHAT), "--chat", str(GROUP),
                         "--operator", str(OPERATOR), "--program", "channel",
                         "--peer", str(bot_peer),
-                        "--commands", str(ROOT / "channels" / "telegram_commands.metta"),
+                        "--commands", str(commands),
                         "--command-deadline-ms", "3000",
                         "--credential-file", str(token), "--mock-origin", origin,
                         "--listener-fd", str(listener.fileno())]
@@ -422,6 +428,34 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
             await_(lambda: [d for n, d in api.calls if n == "sendMessage" and
                             d.get("reply_parameters", {}).get("message_id") == 89], "addressed command answered")
             print("a command addressed to her bot by name is answered")
+
+            # 8d. An operator's bare command in a group is meant for every
+            #     agent there. A service that knows the declaration takes it
+            #     as a command: the responder answers with the menu, in the
+            #     group, and nothing of it reaches her loop. A friend's same
+            #     text is ordinary input.
+            if BARE:
+                import durable_telegram
+                def inputs():
+                    return [json.loads(body)[4]["update_id"] for _, body in
+                            durable_telegram.Channel(str(path), os.devnull).pending(256)
+                            if json.loads(body)[0] == "input"]
+                api.add(90, GROUP, OPERATOR, "/modes")
+                menus = await_(lambda: [d for n, d in api.calls if n == "sendMessage" and "reply_markup" in d
+                                        and d["chat_id"] == GROUP], "a bare group command answered with its menu")
+                assert menus[-1]["reply_parameters"]["message_id"] == 90, menus[-1]
+                api.add(91, GROUP, FRIEND, "/modes")
+                await_(lambda: 91 in inputs(), "a friend's bare command is ordinary input")
+                assert 90 not in inputs(), inputs()
+                text, lines, err = batch("!(tg:ack-activity-batch)\n")
+                assert text.count("/modes") == 1 and "Friend" in text, (text, err[-800:])
+                with api.lock:
+                    assert len([1 for n, d in api.calls if n == "sendMessage" and "reply_markup" in d
+                                and d["chat_id"] == GROUP]) == 1
+                print("bare group commands: the operator's is answered by the responder with its menu; "
+                      "a friend's is ordinary input")
+            else:
+                print("bare group commands: this channel service does not know the declaration; not exercised")
 
             # 9. Runtime events from Python threads (a finished job) become
             #    activity; Python and Prolog callers read the client's state.

@@ -47,6 +47,7 @@
    (ConfigFieldV1 "METTACLAW_GATEWAY_BOOT_PROBE" "gateway" "boot_probe" JsonNull plain)
    (ConfigFieldV1 "METTACLAW_CHANNEL" "channel" "kind" JsonNull plain)
    (ConfigFieldV1 "METTACLAW_TELEGRAM_ALLOW_PRIVATE" "telegram" "allow_private" JsonNull plain)
+   (ConfigFieldV1 "METTACLAW_TELEGRAM_BARE_GROUP_COMMANDS" "telegram" "bare_group_commands" JsonNull plain)
    (ConfigFieldV1 "METTACLAW_TELEGRAM_TRANSPORT" "telegram" "transport" JsonNull plain)
    (ConfigFieldV1 "METTACLAW_TELEGRAM_SERVICE_SOCKET" "telegram" "service_socket" JsonNull expand)
    (ConfigFieldV1 "METTACLAW_TELEGRAM_POLL_LIMIT" "telegram" "poll_limit" JsonNull plain)

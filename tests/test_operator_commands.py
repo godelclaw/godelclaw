@@ -58,13 +58,100 @@ class CommandNameTest(unittest.TestCase):
             self.assertEqual(declared_names(path.read_text(encoding="utf-8")), ["Gödel"])
 
 
-def fake_service(directory, private):
-    """A service binary whose usage does, or does not, offer --allow-private."""
-    path = pathlib.Path(directory) / ("service-%s" % ("private" if private else "listed"))
-    usage = "Usage: cetta-telegram-service (--check | --run)%s" % (" [--allow-private]" if private else "")
+def fake_service(directory, private, bare=False):
+    """A service binary whose usage does, or does not, offer --allow-private
+    and the declaration of bare commands in groups."""
+    path = pathlib.Path(directory) / ("service-%s-%s" % ("private" if private else "listed", "bare" if bare else "addressed"))
+    usage = "Usage: cetta-telegram-service (--check | --run)%s%s" % (
+        " [--allow-private]" if private else "", " --commands FILE: (tg-cmd:bare-in-groups)" if bare else "")
     path.write_text("#!/bin/sh\necho '%s'\n" % usage)
     path.chmod(0o755)
     return str(path)
+
+
+class BareGroupCommandsTest(unittest.TestCase):
+    """An operator's bare /command in a group is declared a command to a
+    service that knows the declaration, unless the setting turns it off."""
+
+    def declared(self, extra, capable=True, repo=ROOT):
+        with tempfile.TemporaryDirectory() as directory:
+            env = {"CETTA_TELEGRAM_SERVICE_BIN": fake_service(directory, True, capable),
+                   "CETTA_TELEGRAM_SERVICE_ROOT": "/",
+                   "METTACLAW_TELEGRAM_PRIMARY_CHAT_ID": "42", "METTACLAW_TELEGRAM_OPERATOR_IDS": "7"}
+            env.update(extra)
+            with mock.patch.dict(os.environ, env):
+                for name in ("METTACLAW_TELEGRAM_BARE_GROUP_COMMANDS", "METTACLAW_ACCESS_POLICY_PATH"):
+                    if name not in extra:
+                        os.environ.pop(name, None)
+                argv = launcher.command(repo, pathlib.Path(directory) / "state", pathlib.Path(directory) / "token")
+            text = pathlib.Path(argv[argv.index("--commands") + 1]).read_text(encoding="utf-8")
+        lines = [line for line in text.splitlines() if line and not line.startswith(";")]
+        self.assertTrue(all(line.startswith("(tg-cmd:") for line in lines), lines)
+        return lines.count(launcher.BARE_IN_GROUPS)
+
+    def test_declared_by_default_to_a_service_that_knows_it(self):
+        self.assertEqual(self.declared({}), 1)
+        self.assertEqual(self.declared({"METTACLAW_AGENT_NAME": "Lila"}), 1)
+        self.assertEqual(self.declared({"METTACLAW_TELEGRAM_BARE_GROUP_COMMANDS": "1"}), 1)
+
+    def test_never_declared_to_a_service_that_would_refuse_the_file(self):
+        self.assertEqual(self.declared({}, capable=False), 0)
+        self.assertEqual(self.declared({"METTACLAW_TELEGRAM_BARE_GROUP_COMMANDS": "1"}, capable=False), 0)
+
+    def test_the_setting_turns_it_off(self):
+        for off in ("0", "false", "off", "no"):
+            self.assertEqual(self.declared({"METTACLAW_TELEGRAM_BARE_GROUP_COMMANDS": off}), 0, off)
+
+    def test_the_instance_setting_is_read_from_its_rendered_environment(self):
+        with tempfile.TemporaryDirectory() as repo:
+            (pathlib.Path(repo) / "channels").mkdir()
+            (pathlib.Path(repo) / "channels" / "telegram_commands.metta").write_text(
+                (ROOT / "channels" / "telegram_commands.metta").read_text(encoding="utf-8"), encoding="utf-8")
+            self.assertEqual(self.declared({}, repo=repo), 1)
+            (pathlib.Path(repo) / ".env").write_text("export METTACLAW_TELEGRAM_BARE_GROUP_COMMANDS='0'\n")
+            self.assertEqual(self.declared({}, repo=repo), 0)
+            self.assertEqual(self.declared({"METTACLAW_TELEGRAM_BARE_GROUP_COMMANDS": "1"}, repo=repo), 1)
+
+    def test_the_shared_file_does_not_declare_it(self):
+        shared = (ROOT / "channels" / "telegram_commands.metta").read_text(encoding="utf-8")
+        self.assertNotIn("\n" + launcher.BARE_IN_GROUPS, shared)
+
+    def test_the_default_configuration_renders_it_on(self):
+        import subprocess
+        result = subprocess.run(["python3", str(ROOT / "scripts" / "config_to_env.py"),
+                                 str(ROOT / "config" / "default.toml"), str(ROOT)],
+                                check=True, capture_output=True, text=True)
+        self.assertIn("export METTACLAW_TELEGRAM_BARE_GROUP_COMMANDS='1'", result.stdout)
+
+    @unittest.skipUnless(os.environ.get("CETTA_ROOT"), "set CETTA_ROOT to an engine bundle")
+    def test_the_installed_service_accepts_what_is_written_for_it(self):
+        # Whatever the bundle under test is, its own usage decides, and the
+        # file written for it passes the service's own check.
+        import subprocess
+        service = pathlib.Path(os.environ["CETTA_ROOT"]) / "cetta-telegram-service"
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            capable = launcher.service_takes_bare_commands(service)
+            usage = subprocess.run([str(service), "--help"], capture_output=True, text=True).stdout
+            self.assertEqual(capable, launcher.BARE_IN_GROUPS in usage)
+            commands = launcher.write_commands(ROOT, root / "commands.metta", capable)
+            token = root / "token"
+            token.write_text("123456789:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+            token.chmod(0o600)
+            state = root / "state"
+            state.mkdir(mode=0o700)
+            check = subprocess.run([str(service), "--check", "--root", os.environ["CETTA_ROOT"], "--state-dir", str(state),
+                                    "--worker", "agent", "--chat", "42", "--operator", "7", "--program", "channel",
+                                    "--credential-file", str(token), "--commands", str(commands)],
+                                   capture_output=True, text=True, timeout=60)
+            self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+            if not capable:
+                refused = launcher.write_commands(ROOT, root / "refused.metta", True)
+                check = subprocess.run([str(service), "--check", "--root", os.environ["CETTA_ROOT"],
+                                        "--state-dir", str(state), "--worker", "agent", "--chat", "42",
+                                        "--operator", "7", "--program", "channel", "--credential-file", str(token),
+                                        "--commands", str(refused)], capture_output=True, text=True, timeout=60)
+                self.assertEqual(check.returncode, 78, check.stdout + check.stderr)
 
 
 class LauncherAccessTest(unittest.TestCase):

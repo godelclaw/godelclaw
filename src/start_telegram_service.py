@@ -23,12 +23,18 @@ def agent_name():
     return name
 
 
-def write_commands(repo, path):
-    """Write this agent's command declarations: the shared file plus its name."""
+BARE_IN_GROUPS = "(tg-cmd:bare-in-groups)"
+
+
+def write_commands(repo, path, bare_in_groups=False):
+    """Write this agent's command declarations: the shared file plus its name,
+    and, when asked, that an operator's bare /command in a group is one."""
     text = (Path(repo) / "channels/telegram_commands.metta").read_text(encoding="utf-8")
     name = agent_name()
     if name is not None:
         text = text.rstrip("\n") + '\n\n(tg-cmd:agent "%s")\n' % name
+    if bare_in_groups:
+        text = text.rstrip("\n") + "\n" + BARE_IN_GROUPS + "\n"
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + ".tmp")
@@ -95,14 +101,35 @@ def allow_private(repo):
     return _truthy(value)
 
 
-def service_admits_private(binary):
-    """Whether this service binary takes --allow-private, as its own usage
-    says. One that does not would refuse the flag and never start."""
+def service_usage(binary):
+    """What this service binary says it takes; "" when it cannot be asked."""
     try:
         result = subprocess.run([str(binary), "--help"], capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
-        return False
-    return "--allow-private" in result.stdout + result.stderr
+        return ""
+    return result.stdout + result.stderr
+
+
+def service_admits_private(binary):
+    """Whether this service binary takes --allow-private, as its own usage
+    says. One that does not would refuse the flag and never start."""
+    return "--allow-private" in service_usage(binary)
+
+
+def bare_group_commands(repo):
+    """telegram.bare_group_commands: an operator's bare /command in a group
+    is a command for this agent, as for every other agent there. On unless
+    the channel environment or the instance's own setting turns it off."""
+    value = os.environ.get("METTACLAW_TELEGRAM_BARE_GROUP_COMMANDS")
+    if value is None:
+        value = _rendered_setting(repo, "METTACLAW_TELEGRAM_BARE_GROUP_COMMANDS")
+    return value is None or str(value).strip() == "" or _truthy(value)
+
+
+def service_takes_bare_commands(binary):
+    """Whether this service binary knows the declaration, as its own usage
+    says. One that does not would refuse the whole commands file."""
+    return BARE_IN_GROUPS in service_usage(binary)
 
 
 def policy_admission(repo, root, private):
@@ -150,10 +177,13 @@ def command(repo, state, credential):
         print("telegram.allow_private is on, but this channel service cannot admit every private chat; "
               "it keeps to the listed chats", file=sys.stderr, flush=True)
         private = False
+    # Declared only to a service that knows it. An older one keeps a bare
+    # command in a group as ordinary input, which the loop's client handles.
+    bare = bare_group_commands(repo) and service_takes_bare_commands(binary)
     argv = [binary, "--run", "--root", root, "--state-dir", str(state),
             "--worker", os.environ.get("METTACLAW_INSTANCE", "agent"), "--program", "channel",
             "--listener-fd", "3", "--operator-fd", "4", "--credential-file", str(credential),
-            "--commands", str(write_commands(repo, Path(state) / "commands.metta")),
+            "--commands", str(write_commands(repo, Path(state) / "commands.metta", bare)),
             "--command-deadline-ms", "3000"]
     for chat in sorted(chats):
         argv += ["--chat", str(chat)]

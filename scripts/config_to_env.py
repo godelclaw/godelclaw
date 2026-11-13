@@ -186,6 +186,7 @@ def main():
     emit("METTACLAW_CHANNEL", channel.get("kind"))
 
     emit("METTACLAW_TELEGRAM_ALLOW_PRIVATE", telegram.get("allow_private"))
+    emit("METTACLAW_TELEGRAM_BARE_GROUP_COMMANDS", telegram.get("bare_group_commands"))
     # "durable": a CeTTa channel service is the bot's only poller and sender,
     # and channels/telegram.metta its client; service_socket is its private
     # client socket. Absent: no Telegram client runs.

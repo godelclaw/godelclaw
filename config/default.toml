@@ -80,6 +80,9 @@ kind = "telegram"
 # Every private chat reaches the agent, not only those of listed senders.
 # A stranger's message is then recorded with an untrusted label.
 allow_private = false
+# An operator's bare /command in a group is a command for this agent, as for
+# every other agent there. Off: in a group only /command@bot is one.
+bare_group_commands = true
 # Identity-bearing Telegram settings belong in config/secrets.env; see its
 # example file. This keeps authorization data out of generated .env and Git.
 
