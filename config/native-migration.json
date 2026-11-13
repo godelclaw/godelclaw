@@ -94,8 +94,6 @@
       "target_day": "2026-11-14",
       "finish": "Native Telegram, terminal, IRC, Mattermost and websearch clients; preserve batching, sender tiers and control state.",
       "python_files": [
-        "channels/irc.py",
-        "channels/mattermost.py",
         "channels/telegram.py",
         "channels/websearch.py",
         "src/durable_telegram.py",
@@ -137,7 +135,6 @@
         "src/moltbook.py",
         "src/public_worklog.py",
         "src/replay_evaluation.py",
-        "src/sibling.py",
         "src/skills_help.py",
         "src/tmux_bridge.py",
         "src/tmux_qualification.py",
@@ -1257,6 +1254,52 @@
       "limits": [
         "the command responder still calls input_ack through Python until the channels lane switches it to the native entries; about 185 more lines of input_ack.py go then",
         "two engine index costs (an unbound-head match, a ground miss after a removal) are worked around with one space per kind of record; the engine fixes are queued",
+        "No paid live canary or 24-hour soak claimed"
+      ]
+    },
+    {
+      "id": "channels-batch-c4-responder-off-input-ack-native-sibling-irc-and-mattermost-services",
+      "status": "qualified-and-deployed",
+      "native_modules": [
+        "channels/telegram_control_io.metta (the command responder's own I/O: the mode-outbox pump, the readiness record with the operator inbox from notice:input-view, and a wait on the channel service's revision token)",
+        "channels/telegram_control.metta (on the native notice entries: notice:key, notice:submitted, notice:scan-after, notice:begin-scan)",
+        "src/sibling_cetta.metta (sibling status, start and stop; /start and the sibling-* skills)",
+        "channels/chat_spool.metta (one durable spool between the loop and every chat channel service)",
+        "channels/irc_service.metta and channels/mattermost_service.metta with channels/chat_service_main.metta (each channel in a native service process of its own: run.sh chat-channel)"
+      ],
+      "python_removed": [
+        "input_ack's notice state and 12 functions (191 lines)",
+        "mode_channel.pump and mode_channel.heartbeat (62 lines)",
+        "src/sibling.py (152 lines)",
+        "channels/irc.py (87 lines)",
+        "channels/mattermost.py (141 lines)",
+        "helper.claude_code_toggle"
+      ],
+      "runtime_python_lines_removed": 638,
+      "behaviour_changes": [
+        "the responder wakes on work published after the channel service revision token it takes before reading, or on an outbox change, within at most 2 s; /mode answered in about 150 ms in the end-to-end test instead of about 2 s",
+        "an outbox file that is not an intent is set aside as KEY.unreadable instead of blocking every intent behind it",
+        "a directory named like the Gödel body with a suffix no longer counts as the Gödel body",
+        "IRC and Mattermost: every message that arrived reaches the turn, messages and queued sends survive restarts, a sender the access facts do not trust is labelled as an untrusted stranger, an IRC send is one PRIVMSG per line of at most 400 bytes, and a malformed PRIVMSG no longer ends the connection"
+      ],
+      "runtime_commit": "003ff13f16",
+      "branch_tip": "3dac13a00c",
+      "engine_commit": "4374a1df0d15c6a1bb839746ec2d1447798ad072",
+      "release": "5dd9df76",
+      "gateway_release": "5dd9df76",
+      "test_orchestration": "CeTTa core without Python",
+      "checks": {
+        "native_suites_passed": "24 of 24; input-delivery passed when rerun alone after one timing check failed at load about 20",
+        "python_suite": "the same 26 tests fail on main and on the branch; two timing tests that failed only under load about 24 pass when rerun alone",
+        "telegram_end_to_end": "passes against the live service and against the next engine change",
+        "irc_and_mattermost_end_to_end": "the real services against a TCP line peer and against the engine websocket and REST peers",
+        "mutants": "41 caught",
+        "live_observation": "Gödel's live turn on release 5dd9df76 at 19:06: the model call returned, the native sibling-status answered that Lila is active, and the mail that woke him was settled (the next iteration found no activity); every unit, both command responders and both input ledgers came up with no runtime errors; both responders refresh their readiness records about every 6 s, and Lila's channel is ready",
+        "paired_installed_verification": true
+      },
+      "limits": [
+        "the responder's menus, /health, /activity, set_model, quota and notify_failure still call Python; the menus need the provider lane's model catalog entries",
+        "neither live agent uses IRC or Mattermost; the chat channel unit is not installed",
         "No paid live canary or 24-hour soak claimed"
       ]
     }
