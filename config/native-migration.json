@@ -963,6 +963,68 @@
         "Small-turn p95 rose about 10% in two runs on a loaded host; within budget, unexplained, recorded as tuning debt",
         "No paid live canary or 24-hour soak claimed"
       ]
+    },
+    {
+      "id": "provider-core-batch-6-and-engine-roll-4374a1df",
+      "status": "qualified-and-deployed",
+      "native_modules": [
+        "src/provider_request_cetta.metta",
+        "src/rejection_gate_cetta.metta",
+        "src/strategy_broker_cetta.metta",
+        "src/chatgpt_agent_cetta.metta"
+      ],
+      "removed_routes": [
+        "the text route for provider requests (preq:text-wire)",
+        "strategy_host.retry_seconds"
+      ],
+      "runtime_commit": "89f53a2339",
+      "engine_commit": "4374a1df0d15c6a1bb839746ec2d1447798ad072",
+      "previous_engine_commit": "dc2b3bcb75e48d9b23179e43be2bdd3430e46284",
+      "release": "163d7d6e",
+      "gateway_release": "163d7d6e",
+      "engine_changes": [
+        "PeTTa translator rules expand once, when an equation is installed",
+        "the outcome library and its failure vocabulary"
+      ],
+      "test_orchestration": "CeTTa core without Python (core driver at dc2b3bcb)",
+      "checks": {
+        "native_suites_passed": "24 of 24 on engine 4374a1df",
+        "python_entry_census": {
+          "coding-two-turn": [
+            42,
+            36
+          ],
+          "activity-delivery": [
+            40,
+            34
+          ]
+        },
+        "engine_paired_benchmark_vs_dc2b3bcb": {
+          "pairs_per_workload": 21,
+          "median_change_percent": {
+            "small": -2.3,
+            "large_1mib": 0.0,
+            "many_blocks_1mib": 0.1
+          },
+          "p95_change_percent": {
+            "small": 5.0,
+            "large_1mib": 0.0,
+            "many_blocks_1mib": 0.5
+          },
+          "peak_rss_change_percent": {
+            "small": 0.0,
+            "large_1mib": 0.2,
+            "many_blocks_1mib": 0.1
+          }
+        },
+        "chatgpt_route_on_siwc_test_engine": "10 of 13 pass before and after this batch; the same 3 fail on both because they read the retired SQLite call tables",
+        "paired_installed_verification": true
+      },
+      "limits": [
+        "Three ChatGPT-route tests still read the retired SQLite ledger and are normally skipped; they need porting to the native ledger",
+        "The Anthropic conversation encoder is still quadratic in the engine library (held as an open engine need by the growth gate)",
+        "No paid live canary or 24-hour soak claimed"
+      ]
     }
   ],
   "tuning_debt": [
@@ -1000,7 +1062,8 @@
       "area": "small-turn latency after native turn health",
       "measured": "small-turn p95 +10.2-10.3% and median +3-6% in two paired runs on a host at load 15-19",
       "likely_cause": "more synced writes of the health record per turn on the native path (each fsync is about 6 ms)",
-      "direction": "count fsyncs per turn native against Python, rerun interleaved on a quiet host, and batch the record writes"
+      "direction": "count fsyncs per turn native against Python, rerun interleaved on a quiet host, and batch the record writes",
+      "resolved": "refuted: identical fsync counts and per-write cost before and after; an A/A run of identical code shows +7.4% p95 from noise alone; a 61-pair run gives a paired median of +12.5 ms with a 95% interval spanning zero"
     }
   ]
 }
