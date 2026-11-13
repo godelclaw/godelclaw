@@ -404,5 +404,6 @@
   "src/turn_health_cetta.metta",
   "src/runtime_events_cetta.metta",
   "src/call_gate_cetta.metta",
-  "src/notice_key.metta"
+  "src/notice_key.metta",
+  "src/input_notice_cetta.metta"
 ]

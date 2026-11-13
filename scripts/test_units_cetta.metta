@@ -23,7 +23,8 @@
     ("tests/unit/coding_launch.metta" "UNIT_CODING_LAUNCH_OK")
     ("tests/unit/activity_source.metta" "UNIT_ACTIVITY_SOURCE_LEDGER_OK")
     ("tests/unit/native_transport.metta" "UNIT_NATIVE_TRANSPORT_OK")
-    ("tests/unit/runtime_events.metta" "UNIT_RUNTIME_EVENTS_OK")))
+    ("tests/unit/runtime_events.metta" "UNIT_RUNTIME_EVENTS_OK")
+    ("tests/unit/input_notice.metta" "UNIT_INPUT_NOTICE_OK" (("METTACLAW_INSTANCE" "unit")))))
 
 (= (units:env $directory)
    (let $base (nt:environment $directory)
