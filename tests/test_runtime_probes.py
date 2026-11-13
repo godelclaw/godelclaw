@@ -127,6 +127,12 @@ class RuntimeProbeTest(unittest.TestCase):
 
     # Settings a probe needs from process start, which the clients read once.
     PROBE_ENV = {
+        "tests/telegram_access_probe.metta": {
+            "METTACLAW_TELEGRAM_BOT_USERNAME": "GodelTestBot",
+            "METTACLAW_TELEGRAM_OPERATOR_IDS": "7",
+            "METTACLAW_TELEGRAM_ALLOWED_CHAT_IDS": "42,-100",
+            "METTACLAW_TELEGRAM_WAKE_IDS": "8",
+        },
         "tests/allowance_wake_loop_probe.metta": {
             "METTACLAW_TELEGRAM_GROUP_WAKE_EVERY": "-100:3",
             "METTACLAW_TELEGRAM_BOT_USERNAME": "GodelTestBot",
