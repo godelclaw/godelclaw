@@ -5,17 +5,17 @@
     [
       "tests/integrated_coding_turn_probe.metta",
       "INTEGRATED_CODING_TURN_OK",
-      52
+      48
     ],
     [
       "tests/activity_delivery_full_turn_probe.metta",
       "ACTIVITY_DELIVERY_FULL_TURN_OK",
-      48
+      46
     ],
     [
       "tests/background_jobs_probe.metta",
       "BACKGROUND_JOBS_OK",
-      2
+      1
     ],
     [
       "tests/coding_lifecycle_probe.metta",
