@@ -7,6 +7,7 @@
 !(import! &self ./completion_effects_cetta.metta)
 !(import! &self ./rejection_gate_cetta.metta)
 !(import! &self ./turn_health_cetta.metta)
+!(import! &self ./display_cetta.metta)
 
 (: account:ready (-> %Undefined% %Undefined%))
 (= (account:ready $plan) (call:ready? $plan))
@@ -34,14 +35,17 @@
          (((LedgerError $ignored2) (account:reject $plan "native-claim-error" -1))
           ($settled (account:reject $plan "native-call-capacity" -1)))))
       ($error (account:cleanup-unsent $plan $metadata)))))
-; A claimed call opens the display and the commentary observer on the host
-; when either is configured. A call nothing observes has no host effect here.
+; A claimed call opens its display (src/display_cetta.metta), and the
+; commentary observer on the host when commentary is on. A call nothing
+; observes has no host effect here.
 (: account:shown (-> %Undefined% %Undefined%))
 (= (account:shown $plan)
-   (if (or (== (call:fact $plan "display" false) true) (== (call:fact $plan "commentary" false) true))
-     (host:flag (py-call (native_llm_host.claim_effect (call:host $plan)
-                           (if (== (call:fact $plan "prepared_stream" false) true) "true" "false"))))
-     True))
+   (let $opened (display:call-begin (call:correlation $plan) (call:compaction? $plan)
+                  (call:fact $plan "provider" "") (call:fact $plan "purpose" "turn"))
+     (if (== (call:fact $plan "commentary" false) true)
+       (host:flag (py-call (native_llm_host.claim_effect (call:host $plan)
+                             (if (== (call:fact $plan "prepared_stream" false) true) "true" "false"))))
+       True)))
 (: account:admitted (-> %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (account:admitted $plan $metadata $answer)
    (case $answer
@@ -101,7 +105,8 @@
 ; A failed command turn comes back as its facts, which the native owner paces
 ; and records (src/turn_health_cetta.metta).
 (= (account:failed $plan $correlation $kind $status)
-   (let $latched (if (account:rejection? $plan $kind $status) (gate:latch) False)
+   (let* (($latched (if (account:rejection? $plan $kind $status) (gate:latch) False))
+          ($ended (display:call-final (call:correlation $plan) none (lp:text $kind))))
      (health:paced (account:failure $plan $correlation $kind $status))))
 (= (account:rejection? $plan $kind $status)
    (if (== $kind http-status)
@@ -156,8 +161,8 @@
           ($tallied (if (== (call:fact $plan "provider" "") "anthropic")
                       (catch (effects:tally (effects:object-or-empty $usage))) True)))
      True))
-; The committed completion is published once: its effects, the host's display
-; and program release, the turn's health, then the answer. A replayed
+; The committed completion is published once: its effects, the host's program
+; release, the display's end, the turn's health, then the answer. A replayed
 ; completion publishes nothing. The host's decision ends the turn's phase: a
 ; released program completes it; a rejected or empty output comes back as
 ; failure facts, paced and recorded natively.
@@ -165,10 +170,27 @@
 (= (account:publish $plan $epoch $correlation $legacy $canonical $usage $decision)
    (if (call:publication-ready $plan)
     (let* (($effects (account:effects $plan $legacy $usage))
-           ($answer (account:health (py-call (native_llm_host.finish (call:host $plan) $legacy))))
+           ($released (py-call (native_llm_host.finish (call:host $plan) $legacy)))
+           ($ended (account:displayed $plan $legacy $decision $released))
+           ($answer (account:health $released))
            ($ignored14 (account:note-rejection $plan $decision)))
       (if (call:replies? $plan) (call:reply $plan $legacy) $answer))
     (py-call (native_llm_host.completion_duplicate (call:host $plan)))))
+; The display's end of a published completion: a compaction's, a structured
+; call's, a released command's or a rejected command output's. A command
+; whose output was empty leaves its attempt as the host's finish did.
+(= (account:displayed $plan $legacy $decision $released)
+   (let $attempt (call:correlation $plan)
+     (if (call:compaction? $plan) (display:call-final $attempt none (display:result-reason $legacy))
+       (case $decision
+         (((CommentaryRejectedV1 $code) (display:call-final $attempt (display:result-message $legacy) "rejected"))
+          ($accepted
+           (case $released
+             ((("completed" $program $bytes)
+               (display:call-final $attempt (display:result-message $legacy) (display:result-reason $legacy)))
+              (("completed" $bytes)
+               (display:call-final $attempt (display:result-message $legacy) (display:result-reason $legacy)))
+              ($failure (display:call-drop $attempt))))))))))
 (= (account:health $decision)
    (case $decision
      ((("completed" $program $bytes)

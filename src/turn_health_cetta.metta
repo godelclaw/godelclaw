@@ -195,6 +195,14 @@
      ((JsonNull False) (False False) (0 False) (0.0 False) ("" False) ((JsonObject ()) False)
       ($other True))))
 
+; Whether a failure episode is open: one recorded and not yet resolved. The
+; receipt notice stays silent meanwhile; the episode has its own notice.
+(= (health:failure-pending)
+   (case (sf:get (health:read) "failure_episode" JsonNull)
+     (((JsonObject $pairs)
+       (and (not (== $pairs ())) (not (health:truthy? (sf:get-last $pairs "resolved_at" JsonNull)))))
+      ($other False))))
+
 ; turn_settled: history and input acknowledgement committed the turn.
 (= (health:settled $record $now)
    (let $updated (sf:put-all $record ((JsonPair "schema" 2) (JsonPair "obligation_since" 0)

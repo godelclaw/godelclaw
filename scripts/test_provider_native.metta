@@ -28,6 +28,7 @@
           ($_ (nq:soft-wait $root $sdk $core $artifacts $fixture))
           ($_ (nq:model-change $root $sdk $core $artifacts $fixture))
           ($_ (nq:stream-case $root $sdk $core $artifacts $fixture))
+          ($_ (nq:rejected-output $root $sdk $core $artifacts $fixture))
           ($_ (nq:failed-response $root $sdk $core $artifacts $fixture "unfinished" False))
           ($_ (nq:failed-response $root $sdk $core $artifacts $fixture "disconnect-after-acceptance" True))
           ($_ (nq:oversized-response $root $sdk $core $artifacts $fixture))

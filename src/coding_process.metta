@@ -5,7 +5,7 @@
 !(import! &self system)
 !(import! &self str)
 !(import! &self ./src/coding_values.metta)
-!(import! &self ./src/stream_sink.py)
+!(import! &self ./src/display_cetta.metta)
 !(import! &self ./src/coding_io_cetta.metta)
 
 (= (coding:execution $id)
@@ -17,7 +17,7 @@
        (((fs:chunk $bytes $offset)
          (case (str:utf8-feed $decoder $bytes False)
            (((Utf8DecodedV1 $text $next)
-             (progn (py-call (stream_sink.event "tool.output" $id $text))
+             (progn (display:event "tool.output" $id $text)
                (coding:output $id $reader $next (- $budget 1))))
             ($bad $decoder))))
         ($end $decoder)))))
@@ -32,7 +32,7 @@
                   ($_ (remove-atom &self $record))
                   ($seconds (/ (- (system:monotonic-ns) $start) 1000000000.0))
                   ($result (cio:execution-finish $dir $id (repr $state) $code $seconds))
-                  ($_ (py-call (stream_sink.tool_finished $id (repr $state) $code $log))))
+                  ($_ (display:tool-finished $id (repr $state) $code $log)))
              $result))
           ($running
             (let* (($_ (remove-atom &self $record))
@@ -76,7 +76,7 @@
           ($created (cio:execution-create $dir $id $cmd))
           ($log (case $created (((ExecutionLog $path) $path) ($refused ""))))
           ($start (system:monotonic-ns))
-          ($_ (py-call (stream_sink.event "tool.dispatching" $id $cmd "dispatching" "exec_command")))
+          ($_ (display:event "tool.dispatching" $id $cmd "dispatching" "exec_command"))
           ($submitted (if (== $log "") $created
             (catch (io:submit (proc:request
               ("bash" "-lc" (coding:workspace-shell $cmd)) $cwd inherit $timeout $log $log))))))
@@ -84,9 +84,9 @@
        (((io:pending $handle)
          (let* (($reader (fs:open-read $log)) ($decoder (str:utf8-new ignore))
                 ($_ (add-atom &self (CodingProcess $id $handle $reader $decoder $dir $log $start)))
-                ($_ (py-call (stream_sink.event "tool.started" $id $cmd "running" "exec_command"))))
+                ($_ (display:event "tool.started" $id $cmd "running" "exec_command")))
            (coding:poll-until $dir $id (+ $start (* $yield 1000000)))))
         ($failure
           (let $result (cio:execution-finish $dir $id "not_started" 0 0)
-            (progn (py-call (stream_sink.tool_finished $id "not_started" 0 $log))
+            (progn (display:tool-finished $id "not_started" 0 $log)
               (str:concat "The command could not run: " (repr $failure)))))))))

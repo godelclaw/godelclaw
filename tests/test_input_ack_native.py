@@ -39,8 +39,8 @@ from execution_gateway.cetta_worker import CettaValueWorker, E, S, WorkerReplyUn
 from native_ledger_client import NativeRunner
 import test_input_ledger as base
 from test_input_ledger_remote import (DropPublishProxy, ENGINE, LANE, ProgramCase, RemoteCase, SCENARIO, SERVER_MODULE,
-                                      WORKER, available, delete_key_of, mark_id, oracle_environment, program_without_server,
-                                      run_oracle)
+                                      WORKER, available, delete_key_of, mark_id, mark_processed, oracle_environment,
+                                      program_without_server, pump, run_oracle)
 
 UNIT = ROOT / "deploy/systemd/pettaclaw-input-ledger@.service"
 SKIP = "set CETTA_BIN to the cetta-ours engine (cetta-value-worker beside it)"
@@ -163,13 +163,13 @@ FORK_SCRIPT = """
 import os, sys
 sys.path.insert(0, sys.argv[1])
 import input_ack
-assert input_ack.processed_update_ids(["parent"]) == 1
+assert input_ack._ledger_flag("mark-processed", (1.0, ("parent",))) == 1
 parent = (input_ack._ledger[0], input_ack._ledger[2].process.pid)
 child = os.fork()
 if child == 0:
     code = 1
     try:
-        ok = input_ack.committed(["parent"]) == 1 and input_ack.processed_update_ids(["child"]) == 1
+        ok = input_ack.committed(["parent"]) == 1 and input_ack._ledger_flag("mark-processed", (2.0, ("child",))) == 1
         fresh = input_ack._ledger[0] == os.getpid() and input_ack._ledger[2].process.pid != parent[1]
         code = 0 if ok and fresh else 2
         input_ack._ledger[2].close()
@@ -199,7 +199,7 @@ class OracleTest(NativeCase):
     def test_a_processed_update_leaves_no_pending_entry_and_a_later_one_does(self):
         with oracle_environment():
             os.environ[input_ack.LEDGER_SOCKET] = str(self.server.socket)
-            input_ack.processed_update_ids(["u1"])
+            mark_processed(["u1"])
             done = input_ack.key("t1", LANE, "message", "operator", '{"update_id": "u1"}')
             kept = dict(input_ack._pending)
             other = input_ack.key("t2", LANE, "message", "operator", '{"update_id": "u2"}')
@@ -364,21 +364,17 @@ class FailureTest(NativeCase):
         self.server.stop()
         self.session()
         errors = []
-        for call in (lambda: input_ack.processed_update_ids(["u1"]),
+        for call in (lambda: mark_processed(["u1"]),
                      lambda: input_ack.committed(["u1"]),
                      lambda: input_ack.already_committed("u1"),
                      lambda: input_ack.key("t", LANE, "message", "operator", '{"update_id": 7}'),
                      lambda: input_ack.submitted("t"),
                      lambda: input_ack.receipt(["delivery", "k", 0, 1, ["delivered", 1]]),
-                     lambda: input_ack.pump(base.FakeChannel([], None))):
+                     lambda: pump(base.FakeChannel([], None))):
             with self.assertRaises(input_ack.LedgerUnavailable) as raised:
                 call()
             errors.append(raised.exception)
         self.assertTrue(all("db:connect" in str(error) for error in errors), [str(error) for error in errors])
-        # pump opens the ledger before it looks for a channel: no channel, still an error.
-        with mock.patch.object(input_ack, "_last_pump", -1e9):
-            with self.assertRaises(input_ack.LedgerUnavailable):
-                input_ack.pump()
         # An unreachable server is not a lost race: none of these is LedgerBusy.
         self.assertFalse(any(isinstance(error, input_ack.LedgerBusy) for error in errors))
 
@@ -392,7 +388,7 @@ class FailureTest(NativeCase):
 
     def restart_case(self, crash):
         self.session()
-        self.assertEqual(input_ack.processed_update_ids(["before"]), 1)
+        self.assertEqual(mark_processed(["before"]), 1)
         old_pids = list(self.worker_pids)
         self.assertEqual(self.server.stop(crash=crash), -9 if crash else 0)
         with self.assertRaises(input_ack.LedgerUnavailable):
@@ -400,7 +396,7 @@ class FailureTest(NativeCase):
         self.server.start()
         # A new connection per call: nothing to repair, the data is there, writes work.
         self.assertEqual(input_ack.committed(["before"]), 1)
-        self.assertEqual(input_ack.processed_update_ids(["after"]), 1)
+        self.assertEqual(mark_processed(["after"]), 1)
         self.assertEqual(input_ack.committed(["before", "after"]), 1)
         self.assertEqual(set(self.dump()[1]), {"before", "after"})
         self.assertEqual(self.worker_pids, old_pids, "the worker had no reason to restart")
@@ -413,7 +409,7 @@ class FailureTest(NativeCase):
 
     def test_a_killed_worker_is_replaced_by_the_next_call(self):
         self.session()
-        self.assertEqual(input_ack.processed_update_ids(["a"]), 1)
+        self.assertEqual(mark_processed(["a"]), 1)
         process = input_ack._ledger[2].process
         process.kill()
         process.wait()
@@ -430,7 +426,7 @@ class FailureTest(NativeCase):
         self.assertLess(time.monotonic() - started, 20)
         self.assertIn("worker", str(raised.exception))
         os.environ[input_ack.LEDGER_SOCKET] = str(self.server.socket)
-        self.assertEqual(input_ack.processed_update_ids(["ok"]), 1)
+        self.assertEqual(mark_processed(["ok"]), 1)
 
     def test_a_socket_path_longer_than_a_unix_socket_holds_is_refused_by_name(self):
         base_path = str(self.directory) + "/"
@@ -446,7 +442,7 @@ class FailureTest(NativeCase):
                 server = DbServerAt(path, self.directory / "long-store")
                 self.addCleanup(server.stop)
                 self.assertIsNone(server.start())
-                self.assertEqual(input_ack.processed_update_ids(["x"]), 1)
+                self.assertEqual(mark_processed(["x"]), 1)
                 server.stop()
             else:
                 server = DbServerAt(path, self.directory / "long-store-2")
@@ -481,11 +477,11 @@ class FailureTest(NativeCase):
         with mock.patch.object(mode_channel, "acknowledge_handover", return_value=True):
             with mock.patch.object(input_ack, "_ledger_worker", return_value=Stub(conflict)):
                 with self.assertRaises(input_ack.LedgerBusy) as raised:
-                    input_ack.processed_update_ids(["a"])
+                    mark_processed(["a"])
             for reply in (refused, uncertain):
                 with mock.patch.object(input_ack, "_ledger_worker", return_value=Stub(reply)):
                     with self.assertRaises(input_ack.LedgerUnavailable) as raised:
-                        input_ack.processed_update_ids(["a"])
+                        mark_processed(["a"])
                     self.assertNotIsInstance(raised.exception, input_ack.LedgerBusy)
 
     def test_a_reply_lost_between_python_and_the_worker_is_repeated_with_the_same_request(self):
@@ -506,7 +502,7 @@ class FailureTest(NativeCase):
         clock = itertools.count(1000.0, 7.0)
         with mock.patch.object(CettaValueWorker, "call", lossy), \
                 mock.patch.object(input_ack.time, "time", side_effect=lambda: next(clock)):
-            self.assertEqual(input_ack.processed_update_ids(["u1", "u2"]), 1)
+            self.assertEqual(mark_processed(["u1", "u2"]), 1)
             self.assertEqual(len(requests), 2)
             self.assertEqual(requests[0], requests[1], "the repeated request must be the same one")
             self.assertEqual(requests[0][3][0], 1000.0)
@@ -524,7 +520,7 @@ class FailureTest(NativeCase):
             clock = itertools.count(5000.0, 11.0)
             with mock.patch.object(CettaValueWorker, "call", lossy), \
                     mock.patch.object(input_ack.time, "time", side_effect=lambda: next(clock)):
-                input_ack.pump(channel)
+                pump(channel)
             self.assertEqual(len(requests), 2)
             self.assertEqual(requests[0], requests[1])
             self.assertEqual(next(clock), 5011.0)
@@ -538,7 +534,7 @@ class FailureTest(NativeCase):
         proxy = RecordingProxy(self.directory / "proxy.sock", self.server.socket)
         self.addCleanup(proxy.close)
         self.session(self.server.socket)
-        self.assertEqual(input_ack.processed_update_ids(["known"]), 1)
+        self.assertEqual(mark_processed(["known"]), 1)
         os.environ[input_ack.LEDGER_SOCKET] = str(proxy.path)
         proxy.cut_capture.set()
         self.assertEqual(input_ack.committed(["known"]), 1)
@@ -556,7 +552,7 @@ class FailureTest(NativeCase):
         self.addCleanup(proxy.close)
         self.session(proxy.path)
         for call, wanted in ((lambda: input_ack.committed(["nobody"]), 0),
-                             (lambda: input_ack.processed_update_ids(["via-proxy"]), 1),
+                             (lambda: mark_processed(["via-proxy"]), 1),
                              (lambda: input_ack.committed(["via-proxy"]), 1)):
             proxy.cut.clear()
             before = proxy.connections
@@ -574,7 +570,7 @@ class FailureTest(NativeCase):
         clock = itertools.count(300.0, 1.0)
         proxy.armed.set()
         with mock.patch.object(input_ack.time, "time", side_effect=lambda: next(clock)):
-            self.assertEqual(input_ack.processed_update_ids(["u2", "u1"]), 1)
+            self.assertEqual(mark_processed(["u2", "u1"]), 1)
             self.assertEqual(next(clock), 301.0)
         self.assertTrue(proxy.dropped.is_set(), "the proxy never lost a reply")
         # The one write committed and lost its reply. The module opened a new connection for the retry, which sent
@@ -588,7 +584,7 @@ class FailureTest(NativeCase):
         self.assertEqual(self.dump()[1], {"u1": 300.0, "u2": 300.0})
         # Applied once: a later call with the same ids and another time changes nothing.
         with mock.patch.object(input_ack.time, "time", side_effect=lambda: 999.0):
-            self.assertEqual(input_ack.processed_update_ids(["u1", "u2"]), 1)
+            self.assertEqual(mark_processed(["u1", "u2"]), 1)
         self.assertEqual(self.dump()[1], {"u1": 300.0, "u2": 300.0})
 
 
@@ -871,7 +867,7 @@ class UnitCommandTest(unittest.TestCase):
         os.environ.update({input_ack.LEDGER_SOCKET: str(sock), "CETTA_BIN": str(ENGINE),
                            "CETTA_VALUE_WORKER_BIN": str(WORKER), "METTACLAW_OBSERVED_STRATEGY": "1",
                            "METTACLAW_STRATEGY_PATH": str(self.directory / "gate.db")})
-        self.assertEqual(input_ack.processed_update_ids(["via-unit"]), 1)
+        self.assertEqual(mark_processed(["via-unit"]), 1)
         self.assertEqual(input_ack.committed(["via-unit"]), 1)
         self.assertTrue((store / "root.csl").is_file())
         self.assertEqual(sock.stat().st_mode & 0o077, 0, "the socket is private to its owner")

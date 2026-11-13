@@ -5,6 +5,7 @@
 !(import! &self (library math))
 !(import! &self (library system))
 !(import! &self ./llm_ledger)
+!(import! &self ./notice_key)
 
 ; Input ledger in the native library db: collection `inputs` holds two kinds
 ; of record, ported from the tables of input_ack.py.
@@ -926,42 +927,6 @@
          (|-> ($space) (input-ledger:receipt-in $space $key $outcome))
          (input-ledger:attempts) none)
        0)))
-
-; ---- keys: the sha256 derivations of input_ack.key() and pump() ----
-
-; int.from_bytes(sha256(<identity as UTF-8>).digest()[:8], "big"): the first 16
-; hex digits of str:sha256 (64 lowercase hex digits of the text's bytes), read
-; as an unsigned number up to 2^64-1. Engine integers are unbounded.
-(= (input-ledger:hex-digit $text $at)
-   (str:find "0123456789abcdef" (str:byte-slice $text $at (+ $at 1))))
-
-(= (input-ledger:hex-value $text $at $count $sum)
-   (if (== $count 0)
-       $sum
-       (input-ledger:hex-value $text (+ $at 1) (- $count 1)
-                               (+ (* $sum 16) (input-ledger:hex-digit $text $at)))))
-
-(= (input-ledger:key-number $identity)
-   (input-ledger:hex-value (str:sha256 $identity) 0 16 0))
-
-; "%020d": the decimal text, preceded by zeros up to 20 digits.
-(= (input-ledger:pad20 $number)
-   (let $digits (repr $number)
-     (str:byte-slice (str:concat "00000000000000000000" $digits)
-                     (str:byte-length $digits)
-                     (+ (str:byte-length $digits) 20))))
-
-(= (input-ledger:derived-key $lane $identity)
-   (str:concat $lane (str:concat "." (input-ledger:pad20 (input-ledger:key-number $identity)))))
-
-; lane + "." + "%020d" of the number of instance + ":input-receipt:" + task.
-(= (input-ledger:send-key $instance $lane $task)
-   (input-ledger:derived-key $lane
-     (str:concat $instance (str:concat ":input-receipt:" $task))))
-
-; lane + "." + "%020d" of the number of "notice-delete:" + send_key.
-(= (input-ledger:delete-key $lane $send-key)
-   (input-ledger:derived-key $lane (str:concat "notice-delete:" $send-key)))
 
 ; ---- the receipt-driven cleanup of channels/telegram_notice_cleanup.metta ----
 ; The live cleanup's own rules, one verb per statement of its SQL, apart from receipt, due

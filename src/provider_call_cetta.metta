@@ -2,6 +2,7 @@
 !(import! &self ./provider_request_cetta.metta)
 !(import! &self ./native_call_cetta.metta)
 !(import! &self ./call_gate_cetta.metta)
+!(import! &self ./display_cetta.metta)
 
 ; Call boundaries consume computed values in both extended dialects.
 (: pcall:begin (-> %Undefined% %Undefined% %Undefined%))
@@ -180,10 +181,14 @@
        (if (not (account:claim $plan))
          (if (llm:plan-ready $plan) (llm:v1:failed duplicate duplicate duplicate-plan not-started)
            (llm:v1:failed unsubmitted unsubmitted admission-error not-started))
-         ; Distinct names: HE unifies a repeated $_ binding.
+         ; Distinct names: HE unifies a repeated $_ binding. A visible call
+         ; that streams shows its model on the wire.
          (let* (($gated (call-gate:pass))
-                ($shown (if (== (call:fact $plan "visible" false) true)
-                          (py-call (native_llm_host.native_wire_started (call:host $plan))) False)))
+                ($shown (if (and (== (call:fact $plan "visible" false) true)
+                                 (== (call:fact $plan "prepared_stream" false) true))
+                          (display:call-wire (call:correlation $plan) (call:fact $plan "provider" "")
+                                             (call:fact $plan "wire_model" ""))
+                          0)))
            (pcall:submit $plan $transport)))))))
 (= (pcall:submit $plan (PreparedProviderTransportV1 $epoch $correlation $protocol $url $headers-json $wire
                                               $timeout $cap $connect $first $idle))

@@ -26,7 +26,7 @@ class InputAcknowledgementTest(unittest.TestCase):
         import native_ledger
         with tempfile.TemporaryDirectory() as directory:
             native_ledger.start(self, directory)
-            input_ack.processed_update_ids(["one"])
+            input_ack._ledger_flag("mark-processed", (1.0, ("one",)))  # cognition's processed-input write
             self.assertEqual(input_ack.already_committed("one"), 1)
             self.assertEqual(input_ack.already_committed("two"), 0)
 

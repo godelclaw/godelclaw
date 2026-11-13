@@ -25,6 +25,7 @@ How that order is known:
 import hermetic_env  # noqa: F401,E402  (first, before any src module: see hermetic_env.py)
 import hashlib
 import itertools
+import json
 import os
 from pathlib import Path
 import re
@@ -262,6 +263,40 @@ def dump_native(socket_path, directory):
     return parse_state(run.stdout)
 
 
+def mark_processed(ids):
+    """Cognition's processed-input write, as the native activity source makes it: one $now
+    for the whole batch and for every retry of it."""
+    values = tuple(str(value) for value in ids if str(value))
+    if values and input_ack._managed():
+        input_ack._ledger_flag("mark-processed", (time.time(), values))
+    return 1
+
+
+def pump(channel):
+    """The control side's cleanup pass through the Python ledger client, in the order of
+    channels/telegram_notice_cleanup.metta: collect receipts, one check per due notice,
+    submit each delete, collect again. The runtime's pass is native; this drives the
+    client's verbs for the oracle comparisons."""
+    import durable_telegram as protocol
+    from execution_gateway.cetta_worker import S
+    input_ack._ledger_call("ensure", (), 0)
+
+    def collect():
+        for task, observation in channel.pending(64):
+            if input_ack.receipt(observation, timeout=0):
+                channel.acknowledge(task)
+    count = 0
+    collect()
+    for row in input_ack._ledger_call("due", (32,), 0):
+        answer = input_ack._ledger_call("check", (row[1], time.time(), 172800), 0)
+        if answer in (S("wait"), S("expired")):
+            continue
+        code, _, _ = channel.rpc(protocol.SUBMIT, answer[1], json.dumps([["delete", answer[2]]], separators=(",", ":")))
+        count += code == protocol.STORED
+    collect()
+    return count
+
+
 class Oracle:
     """The sequential model: input_ack.py on a native ledger server of its own, an operation at a time.
     fork() replays the operations so far on a fresh server, so a search can branch."""
@@ -366,12 +401,12 @@ class Oracle:
             return input_ack.receipt(["delivery", key_of(operation[1]), 0, 1, operation[2]])
         if kind == "mark":
             CLOCK[0] = operation[2]
-            return bool(input_ack.processed_update_ids(list(operation[1])))
+            return bool(mark_processed(list(operation[1])))
         if kind == "committed":
             return bool(input_ack.committed(list(operation[1])))
         if kind == "pump":
             CLOCK[0] = operation[1]
-            input_ack.pump(base.FakeChannel([], None))
+            pump(base.FakeChannel([], None))
             return None
         raise ValueError(operation)
 

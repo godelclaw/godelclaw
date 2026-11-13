@@ -166,9 +166,9 @@ def _call_facts(plan):
         "cap", "connect", "first", "idle", "soft", "kind", "activity", "lane", "guard",
         "selected_model")}
     purpose = getattr(plan, "purpose", "turn")
-    # display and commentary say whether the claim has a host effect at all.
+    # commentary says whether the claim has a host effect at all.
     facts.update(ready=True, visible=plan.native_visible, maximum=plan.max_output,
-                 purpose=purpose, origin=plan.call_origin, display=stream_sink.configured(),
+                 purpose=purpose, origin=plan.call_origin,
                  commentary=(plan.kind, purpose) == ("command", "turn") and model_commentary.enabled())
     return facts
 
@@ -302,23 +302,12 @@ def native_preparation_failed(plan, reason):
     return plan
 
 
-def native_wire_started(plan):
-    """Publish attempt metadata after the same claim boundary as legacy wire."""
-    if plan.stream and plan.native_visible:
-        plan.display_model = plan.wire_model
-        stream_sink.emit(dict(kind="attempt.open", attempt=plan.correlation,
-            item=plan.correlation, model=plan.display_model, provider=plan.provider,
-            status="awaiting", epoch=getattr(plan, "display_epoch", "initial")))
-    return True
-
-
 def claim_effect(plan, stream):
-    """Open the display and the commentary observer of a claimed call. The
-    native owner asks only when one of them is configured; $stream is whether
-    the prepared request streams."""
+    """Open the commentary observer of a claimed call. The native owner asks
+    only when commentary is on; $stream is whether the prepared request
+    streams. The display is native (src/display_cetta.metta)."""
     plan.stream = str(stream) == "true"
     try:
-        stream_sink.begin(plan)
         model_commentary.begin(plan)
         return "true"
     except Exception as error:
@@ -496,7 +485,7 @@ def finish(plan, encoded):
 
     The ledger, its effects (completion observation, calibration, usage tally),
     turn health and the answer of a structured call or a compaction are
-    native. This releases a command turn's program and feeds the display, and
+    native, and so is the display. This releases a command turn's program and
     answers its decision: ("completed", program, bytes) or the failure facts
     the native owner paces (synthetic_llm.failure_facts) for a command turn,
     ("completed", bytes) for a structured call, 1 for a compaction.
@@ -506,10 +495,8 @@ def finish(plan, encoded):
     # A compaction or a structured call answers with its reply, which the
     # native owner builds; only the effects of its completion remain here.
     if _compaction(plan):
-        stream_sink.final(plan, reason=reason)
         return 1
     if plan.kind == "structured":
-        stream_sink.final(plan, result["choices"][0]["message"], reason)
         _answered()
         return ("completed", len(str(encoded).encode()))
     content = result["choices"][0]["message"].get("content")
@@ -517,7 +504,6 @@ def finish(plan, encoded):
         if model_commentary.enabled():
             content = _native_finish(plan)
     except model_commentary.OutputError as error:
-        stream_sink.final(plan, result["choices"][0]["message"], "rejected")
         return synthetic_llm.failure_facts(error)
     if reason == "length":
         import helper
@@ -525,7 +511,6 @@ def finish(plan, encoded):
     if not isinstance(content, str) or not content.strip():
         return synthetic_llm.failure_facts(synthetic_llm.EmptyResponse())
     synthetic_llm._note_answered()
-    stream_sink.final(plan, result["choices"][0]["message"], reason)
     _answered()
     return ("completed", content, len(content.encode()))
 
@@ -639,7 +624,6 @@ def failed(plan, correlation, kind, status=0, retry_after=-1):
     """Report a failed call; retry_after is the owner's (-1 for none)."""
     if float(retry_after) >= 0:
         plan.retry_after = float(retry_after)
-    stream_sink.final(plan, reason=str(kind))
     _record_failure(plan, kind, status)
     error = getattr(plan, "error", OSError(str(kind)) if str(kind) == "transport-error" else RuntimeError(str(kind)))
     error.status = int(status) or None
