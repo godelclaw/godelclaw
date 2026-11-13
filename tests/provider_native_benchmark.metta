@@ -71,11 +71,18 @@
 (= (nb:slower $differences $count)
    (if (nt:equal $differences ()) $count
      (nb:slower (preq:tail $differences) (if (> (preq:head $differences) 0) (+ $count 1) $count))))
+; The interval is the sign test's: the 6th and 16th of the 21 sorted
+; differences bracket the true median difference with 97.3% confidence
+; (1 - 2 P[Binomial(21, 1/2) <= 5]), whatever the differences' distribution.
+; A result is judged by this interval, not by either side's p95.
 (: nb:paired (-> %Undefined% %Undefined% %Undefined%))
 (= (nb:paired $old $new)
    (let* (($differences (nb:differences $old $new ()))
-          ($median (preq:nth (nb:sorted $differences ()) 10)))
+          ($sorted (nb:sorted $differences ()))
+          ($median (preq:nth $sorted 10)) ($low (preq:nth $sorted 5)) ($high (preq:nth $sorted 15)))
      (preq:object ((preq:pair "median_difference_ns" (preq:number (preq:repr $median)))
+                   (preq:pair "interval_ns" (preq:array ((preq:number (preq:repr $low)) (preq:number (preq:repr $high)))))
+                   (preq:pair "interval_confidence" (preq:number "0.973"))
                    (preq:pair "candidate_slower_pairs" (preq:number (preq:repr (nb:slower $differences 0))))))))
 (: nb:report-stats (-> %Undefined% %Undefined%))
 (= (nb:report-stats (NativeBenchStatisticsV1 $median $p95 $rss))
@@ -96,11 +103,19 @@
           ((NativeBenchStatisticsV1 $old-med $old-p95 $old-rss) $old-stats)
           ((NativeBenchStatisticsV1 $new-med $new-p95 $new-rss) $new-stats)
           ($within (and (<= (* $new-p95 100) (* $old-p95 115)) (<= (* $new-rss 100) (* $old-rss 115))))
+          ; The control: the candidate against itself, in two more worlds of
+          ; the same tree. Its paired statistics are this run's noise.
+          ($control-a (nq:world $root $sdk $core $artifacts $fixture (str:concat "control-a-" $name)))
+          ($control-b (nq:world $root $sdk $core $artifacts $fixture (str:concat "control-b-" $name)))
+          ($_ (nq:reply $control-a "anthropic")) ($_ (nq:reply $control-b "anthropic"))
+          ((NativeBenchSamplesV1 $same-a $same-b) (nb:pairs $control-a $control-b $prompt 21 () ()))
+          ($_ (nq:close $control-a)) ($_ (nq:close $control-b))
           ($row (preq:object ((preq:pair "workload" (preq:string $name))
             (preq:pair "prompt_bytes" (preq:number (preq:repr (str:byte-length $prompt))))
             (preq:pair "pairs" (JsonNumber "21")) (preq:pair "within_initial_budget" (preq:bool $within))
             (preq:pair "baseline" (nb:report-stats $old-stats)) (preq:pair "candidate" (nb:report-stats $new-stats))
-            (preq:pair "paired" (nb:paired $old $new)))))
+            (preq:pair "paired" (nb:paired $old $new))
+            (preq:pair "control" (nb:paired $same-a $same-b)))))
           ($path (nt:join $artifacts (str:concat "benchmark-" (str:concat $name ".json"))))
           ($_ (fs:write $path (preq:render $row)))
           ($_ (println! (NATIVE_BENCHMARK $row)))
