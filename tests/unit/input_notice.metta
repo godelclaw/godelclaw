@@ -232,15 +232,15 @@
         ($nine (JsonObject ((JsonPair "update_id" (JsonNumber "9")))))
         ($_ (nt:require dead-ledger-gives-no-key
               (case (notice:key-at $config 400.0 "input-2" "42.0" "message" "operator" $nine)
-                (((Error $where $why) True) ($other False)))))
+                (((Error $where1 $why1) True) ($other1 False)))))
         ($_ (nt:require dead-ledger-starts-no-delay (nt:equal (notice:pending "input-2") none)))
         ($_ (notice:key-at $config 400.0 "input-3" "42.0" "message" "operator" (JsonObject ())))
         ($_ (nt:require dead-ledger-refuses-registration
               (case (notice:key-at $config 415.0 "input-3" "42.0" "message" "operator" (JsonObject ()))
-                (((Error $where $why) True) ($other False)))))
+                (((Error $where2 $why2) True) ($other2 False)))))
         ($_ (nt:require dead-ledger-submission-is-an-error
               (case (notice:submitted-at $config 416.0 "input-3")
-                (((Error $where $why) True) ($other False)))))
+                (((Error $where3 $why3) True) ($other3 False)))))
         ($_ (nt:require submission-remembered-first (nt:equal (notice:pending "input-3") (400.0 True "42.0")))))
    (in:passed UNIT_INPUT_NOTICE_LEDGER_OK))
 
