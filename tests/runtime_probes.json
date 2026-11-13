@@ -26,6 +26,7 @@
   ["tests/telegram_send_and_intake_probe.metta", "TELEGRAM_SEND_AND_INTAKE_OK"],
   ["tests/telegram_access_probe.metta", "TELEGRAM_ACCESS_OK"],
   ["tests/telegram_window_probe.metta", "TELEGRAM_WINDOW_OK"],
+  ["tests/telegram_responder_probe.metta", "TELEGRAM_RESPONDER_OK"],
   ["tests/prompt_cache_layout_probe.metta", "PROMPT_CACHE_LAYOUT_OK"],
   ["tests/change_marker_turn_probe.metta", "CHANGE_MARKER_TURN_OK"],
   ["tests/py_str_native_probe.metta", "PY_STR_NATIVE_OK"],

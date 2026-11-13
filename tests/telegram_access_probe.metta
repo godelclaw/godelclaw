@@ -79,5 +79,34 @@
      (println! ACCESS_FILE_RULES_OK)))
 
 ; Every section must answer before the witness.
-!(let* (($a (access:today)) ($b (access:file-rules)))
+; A declared command's text that the service left as input is never a
+; question for her: it is logged under its note and nothing is queued. A
+; bare one from an owner (a service that does not take bare commands in
+; groups), one addressed to another bot, one addressed to her by someone who
+; may not command her. Anyone else's bare command is something they said.
+(= (control-record $id $chat $type $from $text $expected)
+   (let* (($_ (take $id $chat $type $from $text))
+          ($record (last-record))
+          ($_ (assertEqual (pending (format-args "{}" ($id))) ()))
+          ($_ (assertEqual (json:get $record "note") (JsonString $expected)))
+          ($_ (assertEqual (json:get $record "allowed") (JsonBool True)))
+          ($_ (assertEqual (json:get $record "queued") (JsonBool False))))
+     True))
+(= (access:control-text)
+   (let* (($_ (ap:install (ap:telegram-facts-from ("7") ("42" "-100") ("8") False)))
+          ($_ (control-record 21 -100 "supergroup" 7 "/mode iter" "slash_command:/mode"))
+          ($_ (control-record 22 -100 "supergroup" 7 "/Stop" "slash_command:/stop"))
+          ($_ (control-record 23 -100 "supergroup" 42 "/mode@OtherBot iter" "slash_command_other_bot:otherbot"))
+          ($_ (control-record 24 -100 "supergroup" 7 "/stop@OtherBot" "slash_command_other_bot:otherbot"))
+          ($_ (control-record 25 -100 "supergroup" 42 "/mode@GodelTestBot iter" "slash_command_unknown"))
+          ($_ (control-record 26 -100 "supergroup" 7 "/mode@godeltestbot iter" "slash_command:/mode"))
+          ($_ (take 27 -100 "supergroup" 42 "/mode iter"))
+          ((($text $tier)) (pending "27"))
+          ($_ (assertEqual (contains? $text "/mode iter") True))
+          ($_ (take 28 42 "private" 7 "/not_a_command now"))
+          ($_ (assertEqual (size-atom (pending "28")) 1))
+          ($_ (tg:forget-items (tg:pending-items))))
+     (println! ACCESS_CONTROL_TEXT_OK)))
+
+!(let* (($a (access:today)) ($c (access:control-text)) ($b (access:file-rules)))
    (println! TELEGRAM_ACCESS_OK))

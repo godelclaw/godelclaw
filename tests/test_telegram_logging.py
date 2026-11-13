@@ -128,22 +128,6 @@ class RouteTest(TelegramModuleTest):
 
 
 class OutboundTest(TelegramModuleTest):
-    def test_explicit_sends_reach_only_allowed_chats(self):
-        posts = []
-
-        def fake_post(url, json=None, timeout=None):
-            posts.append(json["chat_id"])
-            return FakeResponse({"ok": True, "result": {"message_id": 12}})
-
-        with mock.patch.multiple(telegram, _primary_chat_id="operator-private",
-                                 _allowed_chat_ids={"operator-private", "protobots"}), \
-                mock.patch.object(telegram.requests, "post", fake_post):
-            self.assertTrue(telegram.send_message_to_chat("unknown-chat", "no").startswith(
-                "send failed: target chat is not allowed"))
-            self.assertEqual(posts, [])
-            self.assertTrue(telegram.send_message_to_chat("protobots", "yes").startswith("sent message 12"))
-            self.assertEqual(posts, ["protobots"])
-
     def test_uploads_reach_only_allowed_chats(self):
         artifact = self.directory / "artifact.txt"
         artifact.write_text("test", encoding="utf-8")

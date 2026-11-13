@@ -41,16 +41,16 @@ def set_model(name):
     raise RuntimeError("provider exploded")
 '''
 
-FAKE_TELEGRAM = '''
+FAKE_INPUT_ACK = '''
 import importlib.util, os
-_spec = importlib.util.spec_from_file_location("_telegram_real", os.environ["REAL_TELEGRAM_PY"])
+_spec = importlib.util.spec_from_file_location("_input_ack_real", os.environ["REAL_INPUT_ACK_PY"])
 _real = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_real)
 for _name, _value in vars(_real).items():
     if not _name.startswith("__"):
         globals()[_name] = _value
 
-def metta_foreign_receipt(observation):
+def receipt(observation, timeout=10):
     raise RuntimeError("injected failure")
 '''
 
@@ -205,9 +205,9 @@ class Containment(unittest.TestCase):
         self.assertIn("still-running", lines)
 
     def test_client_retries_then_records_a_raising_task(self):
-        fake = self.fakes / "telegram.py"
-        fake.write_text(FAKE_TELEGRAM)
-        env = dict(self.env, REAL_TELEGRAM_PY=str(ROOT / "channels" / "telegram.py"))
+        fake = self.fakes / "input_ack.py"
+        fake.write_text(FAKE_INPUT_ACK)
+        env = dict(self.env, REAL_INPUT_ACK_PY=str(ROOT / "src" / "input_ack.py"))
         poison = self.service.add(["rejected", "99.0.00000000000000000001", "stopped"])
         behind = self.service.add(["input-too-large", "42.0", "message", "operator"])
         source = ("!(import! &self ./src/helper.py)\n!(import! &self %s)\n"

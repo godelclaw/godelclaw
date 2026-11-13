@@ -11,11 +11,10 @@
 ; turn that read it is in history (tg:ack-activity-batch). A restart reads
 ; it again from the service; there is no offset or receipt file here.
 ;
-; Python still provides, through channels/telegram.py: commands addressed as
-; /command@bot, attachment downloads (both call the Bot API directly), file
-; and image uploads, and the ledger readers used by her Python context and
-; health code, which read state this client publishes there. Arming energy is
-; channels/energy.metta's.
+; Python still provides, through channels/telegram.py: attachment downloads
+; (which call the Bot API directly), file and image uploads, and the readers
+; used by her Python context and health code, which read state this client
+; publishes there. Arming energy is channels/energy.metta's.
 
 !(import! &self str)
 !(import! &self json)
@@ -791,9 +790,11 @@
                       (JsonPair "note" (JsonString (tg:compact $reason 300)))
                       (JsonPair "observation" (JsonString (tg:compact $body 4000)))))))))
 
+; A receipt for a send that is not this client's: a notice's cleanup, or the
+; receipt notice itself, which the responder sent.
 (= (tg:foreign-receipt $value)
    (if (nc:receipt $value) True
-     (py-call (telegram.metta_foreign_receipt (json-stringify $value)))))
+     (py-call (input_ack.receipt (json-stringify $value)))))
 
 (= (tg:handle $task $value)
    (case $value
@@ -853,13 +854,25 @@
                (let $ec (tg:at $update "edited_channel_post")
                  (if (tg:truthy $ec) ("edited_channel_post" $ec) ("unsupported" JsonNull))))))))))
 
-; The service answers an operator's commands and taps on their buttons, so
-; neither reaches this client. A command addressed as /command@bot does:
-; Python's, as before.
+; The service takes an operator's commands and the taps on their buttons, so
+; neither reaches this client. What it leaves as input is never a question
+; for her: a command addressed to another bot, an edit of a command, a bare
+; one in a group whose service does not take them. It is logged under the
+; note the ledger has always given it.
 (= (tg:local-control? $text $sender-id)
    (if (not (ti:control-text? $text)) False
      (let $head (car-atom (str:split-whitespace $text))
        (or (tg:operator? $sender-id) (> (size-atom (str:split "@" $head)) 1)))))
+(= (tg:control-note $text $sender-id)
+   (let $parts (str:split "@" (str:lower (car-atom (str:split-whitespace $text))))
+     (let $name (car-atom $parts)
+       (if (== (size-atom $parts) 1) (tg:own-control-note $name $sender-id)
+         (let $bot (car-atom (cdr-atom $parts))
+           (if (== $bot (str:lower (tg:env "METTACLAW_TELEGRAM_BOT_USERNAME" "")))
+             (tg:own-control-note $name $sender-id)
+             (str:concat "slash_command_other_bot:" $bot)))))))
+(= (tg:own-control-note $name $sender-id)
+   (if (tg:operator? $sender-id) (str:concat "slash_command:" $name) "slash_command_unknown"))
 
 (= (tg:intake $task $lane $kind $role $update)
    (let ($mkind $message) (tg:message-of $update)
@@ -885,8 +898,8 @@
 ; PROVENANCE.
 (= (tg:intake-recorded $task $update $mkind $message $chat-id $text $sender-id $note $reason $tier $provenance)
    (if (and (not (== $text "")) (tg:local-control? $text $sender-id))
-     (let $handled (py-call (telegram.metta_slash_command (json-stringify $update) $mkind))
-       (let $l (tg:log-update $update $mkind $message True False $handled) (tg:acknowledge $task)))
+     (let $l (tg:log-update $update $mkind $message True False (tg:control-note $text $sender-id))
+       (tg:acknowledge $task))
      (let $arming (if (== $tier "") (tg:tier-for $sender-id) $tier)
        (if (tg:attachment? $message)
          (let $w (tg:wake-for-note $note $reason $chat-id $sender-id)

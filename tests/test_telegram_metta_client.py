@@ -354,7 +354,7 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
 
             # 8. Operator commands: /wake is declared, so the service asks and
             #    the responder answers, ending the rest. /energy is a button
-            #    menu, still Python's, which sends its keyboard directly.
+            #    menu, which the service sends with its keyboard.
             rest = start('!(tg:start)\n!(tg:sleep-until-message 30)\n', env)
             time.sleep(1.5); began = time.monotonic(); api.add(82, CHAT, OPERATOR, "/wake")
             lines, err = finish(rest)
@@ -480,11 +480,11 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
 
             # 10. The command responder, a process of its own with no model
             #     call, answers settings commands while no loop client runs at
-            #     all, exactly as the Python handler words them.
+            #     all: the mode's own view and the hint.
             import loop_modes
             if True:
                 wake_file = temp / "wake.requested"
-                expected_view = py._command_answer("/mode", "", str(CHAT))
+                expected_view = loop_modes.mode_view() + " — /mode <name> to switch, /modes to list"
                 sent_at = api.command_time = time.monotonic()
                 api.add(110, CHAT, OPERATOR, "/mode")
                 deadline = time.monotonic() + 10
@@ -749,7 +749,7 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
             print("allow_private: the service admits a stranger's private chat; she records it labelled and "
                   "answers, or drops it, keeping nothing, when her setting is off")
 
-            print("responder: /mode answered in %.0f ms with no loop running, as the Python handler words it; "
+            print("responder: /mode answered in %.0f ms with no loop running; "
                   "/wake ends a rest; /delete stays with the loop client (responder RSS %d kB)" % (latency * 1000, rss))
         finally:
             if notice_ledger is not None:

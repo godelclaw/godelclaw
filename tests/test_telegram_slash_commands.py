@@ -1,4 +1,4 @@
-"""Deterministic controls are answered without entering the agent loop."""
+"""The Telegram module's menu registration, health file and attachment recovery."""
 import shutil
 import os
 import json
@@ -20,11 +20,6 @@ import loop_modes  # noqa: E402
 _REAL_SET_MODEL = synthetic_llm.set_model
 _REAL_CURRENT_MODEL = synthetic_llm.current_model
 
-
-
-def woken():
-    """The reasons of the wakes queued for the MeTTa client."""
-    return [event["wake_only"] for event in runtime_spool.events(telegram.runtime_spool()) if "wake_only" in event]
 
 class SlashCommandTest(unittest.TestCase):
     def setUp(self):
@@ -54,11 +49,6 @@ class SlashCommandTest(unittest.TestCase):
         telegram._primary_chat_id = ""
         telegram._log_path = os.path.join(
             self.tmp.name, "telegram-updates.jsonl")
-        self.sent = []
-        self.p1 = mock.patch.object(
-            telegram, "send_message_to_chat",
-            lambda chat_id, text: self.sent.append((chat_id, text)))
-        self.p1.start()
         self.p2 = mock.patch.object(
             synthetic_llm, "model_ids", lambda: ["modelA", "modelB"])
         self.p3 = mock.patch.object(
@@ -83,7 +73,7 @@ class SlashCommandTest(unittest.TestCase):
         os.environ["METTACLAW_TELEGRAM_OPERATOR_IDS"] = "111000111"
 
     def tearDown(self):
-        for p in (self.p1, self.p2, self.p3, self.p4, self.p5,
+        for p in (self.p2, self.p3, self.p4, self.p5,
                   self.p7, self.p8, self.p9):
             p.stop()
         if self.previous_mode_path is None:
@@ -106,161 +96,6 @@ class SlashCommandTest(unittest.TestCase):
             os.environ["METTACLAW_FUEL_MODE_PATH"] = self.previous_fuel_path
         self.tmp.cleanup()
 
-    def test_fuel_shows_and_switches_the_discipline(self):
-        import fuel_modes
-        self.assertEqual(self.handle("/fuel"), "slash_command:/fuel")
-        self.assertIn("active fuel: " + fuel_modes.DEFAULT, self.sent[-1][1])
-        self.assertEqual(self.handle("/fuel accumulate"), "slash_command:/fuel")
-        self.assertIn("fuel set to 'accumulate'", self.sent[-1][1])
-        self.assertEqual(fuel_modes.current_fuel(), "accumulate")
-        self.assertEqual(self.handle("/fuel turbo"), "slash_command:/fuel")
-        self.assertIn("fuel-set failed", self.sent[-1][1])
-
-    def test_fuels_sends_keyboard(self):
-        posts = []
-        with mock.patch.object(telegram.requests, "post",
-                               lambda url, json=None, timeout=None:
-                               posts.append((url, json)) or mock.Mock()):
-            self.assertEqual(self.handle("/fuels"), "slash_command:/fuels")
-        url, payload = posts[-1]
-        self.assertIn("sendMessage", url)
-        kb = payload["reply_markup"]["inline_keyboard"]
-        self.assertEqual([r[0]["callback_data"] for r in kb],
-                         ["fuel:saturate", "fuel:accumulate",
-                          "fuel:carry", "fuel:decay", "fuel:unlimited"])
-
-    def handle(self, text, sender=None):
-        return telegram._handle_slash_command(
-            self.chat, self.operator if sender is None else sender, text)
-
-    def test_non_operator_passthrough(self):
-        self.assertIsNone(self.handle("/model claude-fable-5",
-                                      sender={"id": 42}))
-        self.assertEqual(self.sent, [])
-
-    def test_models_sends_keyboard(self):
-        posts = []
-        with mock.patch.object(telegram.requests, "post",
-                               lambda url, json=None, timeout=None:
-                               posts.append((url, json)) or mock.Mock()):
-            self.assertEqual(self.handle("/models"), "slash_command:/models")
-        url, payload = posts[-1]
-        self.assertIn("sendMessage", url)
-        kb = payload["reply_markup"]["inline_keyboard"]
-        self.assertEqual([r[0]["callback_data"] for r in kb],
-                         ["menu:model:synthetic:0"])
-
-    def test_quota(self):
-        self.assertEqual(self.handle("/quota"), "slash_command:/quota")
-        self.assertIn("weekly=ok", self.sent[-1][1])
-
-    def test_health_is_deterministic_and_does_not_call_model(self):
-        with mock.patch("runtime_health.report", return_value="runtime ok"), \
-             mock.patch.object(synthetic_llm, "current_model") as model:
-            self.assertEqual(self.handle("/health"),
-                             "slash_command:/health")
-        model.assert_not_called()
-        self.assertEqual(self.sent[-1][1], "runtime ok")
-
-    def test_activity_is_deterministic_and_does_not_wake_loop(self):
-        shutil.rmtree(telegram.runtime_spool(), ignore_errors=True)
-        with mock.patch("runtime_health.activity_report",
-                        return_value="activity: idle"), \
-             mock.patch.object(synthetic_llm, "current_model") as model:
-            self.assertEqual(self.handle("/activity"),
-                             "slash_command:/activity")
-        model.assert_not_called()
-        self.assertFalse(woken())
-        self.assertEqual(self.sent[-1][1], "activity: idle")
-
-    def test_every_control_uses_an_independent_lane(self):
-        observed = []
-        events = {command: threading.Event()
-                  for command in telegram._CONTROL_COMMANDS}
-
-        def fake_handle(_chat, _sender, text):
-            command = text.split(None, 1)[0]
-            observed.append(command)
-            events[command].set()
-
-        with mock.patch.object(telegram, "_handle_slash_command",
-                               side_effect=fake_handle):
-            for command in telegram._CONTROL_COMMANDS:
-                self.assertEqual(telegram._dispatch_slash_command(
-                    self.chat, self.operator, command), "independent")
-            for command in telegram._CONTROL_COMMANDS:
-                self.assertTrue(events[command].wait(1), command)
-        self.assertCountEqual(observed, telegram._CONTROL_COMMANDS)
-
-    def test_every_control_bypasses_a_blocked_control(self):
-        slow_entered = threading.Event()
-        release_slow = threading.Event()
-        seen = {command: threading.Event()
-                for command in telegram._CONTROL_COMMANDS
-                if command != "/delete"}
-
-        def fake_handle(_chat, _sender, text):
-            if text == "/delete":
-                slow_entered.set()
-                release_slow.wait(2)
-            else:
-                seen[text].set()
-
-        with mock.patch.object(telegram, "_handle_slash_command",
-                               side_effect=fake_handle):
-            self.assertEqual(telegram._dispatch_slash_command(
-                self.chat, self.operator, "/delete"), "independent")
-            self.assertTrue(slow_entered.wait(1))
-            for command in seen:
-                self.assertEqual(telegram._dispatch_slash_command(
-                    self.chat, self.operator, command), "independent")
-            for command, event in seen.items():
-                self.assertTrue(event.wait(1), command)
-            release_slow.set()
-
-    def test_model_bare_shows_current(self):
-        self.assertEqual(self.handle("/model"), "slash_command:/model")
-        self.assertIn("syn:large:text", self.sent[-1][1])
-
-    def test_model_switch(self):
-        self.assertEqual(self.handle("/model claude-fable-5"),
-                         "slash_command:/model")
-        self.assertIn("claude-fable-5", self.sent[-1][1])
-
-    def test_mode_bare_shows_current(self):
-        self.assertEqual(self.handle("/mode"), "slash_command:/mode")
-        self.assertIn("selected mode: godelclaw", self.sent[-1][1])
-
-    def test_mode_view_distinguishes_running_loop_from_pending_selection(self):
-        loop_modes.record_active("godelclaw", os.getpid())
-        self.handle("/mode iter")
-        self.handle("/mode")
-        self.assertIn("active mode: godelclaw; requested iter", self.sent[-1][1])
-        self.assertEqual(loop_modes.current_mode(), "iter")
-        self.assertTrue(os.path.exists(os.environ["METTACLAW_RECYCLE_REQUEST_PATH"]))
-
-    def test_mode_switch_persists_and_wakes_loop(self):
-        shutil.rmtree(telegram.runtime_spool(), ignore_errors=True)
-        try:
-            self.assertEqual(self.handle("/mode coding"),
-                             "slash_command:/mode")
-            self.assertEqual(loop_modes.current_mode(), "coding")
-            self.assertTrue(woken())
-            self.assertIn("persists", self.sent[-1][1])
-        finally:
-            shutil.rmtree(telegram.runtime_spool(), ignore_errors=True)
-
-    def test_modes_sends_keyboard(self):
-        posts = []
-        with mock.patch.object(telegram.requests, "post",
-                               lambda url, json=None, timeout=None:
-                               posts.append((url, json)) or mock.Mock()):
-            self.assertEqual(self.handle("/modes"), "slash_command:/modes")
-        payload = posts[-1][1]
-        callbacks = [row[0]["callback_data"]
-                     for row in payload["reply_markup"]["inline_keyboard"]]
-        self.assertEqual(callbacks, ["mode:godelclaw", "mode:coding", "mode:iter", "mode:omega"])
-
     def test_health_file_has_liveness_but_no_credentials(self):
         telegram._health_update(poll_status="ok",
                                 last_poll_ok_at=123.0)
@@ -271,67 +106,6 @@ class SlashCommandTest(unittest.TestCase):
         self.assertNotIn("token", health.lower())
         self.assertNotIn("chat_id", health.lower())
 
-    def test_wake_is_poll_fast_path(self):
-        self.assertEqual(
-            telegram._peek_slash_command("/wake", self.operator),
-            "slash_command:/wake")
-
-    def test_operator_exact_delete_is_fast_and_explicitly_addressed(self):
-        with open(telegram._log_path, "w", encoding="utf-8") as stream:
-            stream.write(json.dumps({
-                "chat_id": "-7", "chat_title": "Research Group",
-                "message_id": 42, "kind": "message",
-            }) + "\n")
-        telegram._allowed_chat_ids = {"-7"}
-        with mock.patch.object(
-                telegram, "delete_message",
-                return_value="deleted message 42 from chat -7") as delete:
-            self.assertEqual(
-                self.handle("/delete Research Group 42"),
-                "slash_command:/delete",
-            )
-        delete.assert_called_once_with("-7", "42")
-        self.assertIn("deleted message 42", self.sent[-1][1])
-
-    def test_operator_delete_refuses_unknown_chat(self):
-        self.assertEqual(
-            self.handle("/delete Unknown 42"), "slash_command:/delete"
-        )
-        self.assertIn("delete refused", self.sent[-1][1])
-
-    def test_wake_does_not_depend_on_model_backend(self):
-        real_import = __import__
-
-        def guarded_import(name, *args, **kwargs):
-            if name == "synthetic_llm":
-                raise ImportError("model backend unavailable")
-            return real_import(name, *args, **kwargs)
-
-        shutil.rmtree(telegram.runtime_spool(), ignore_errors=True)
-        try:
-            with mock.patch.object(telegram, "rest_status",
-                                   return_value=(True, 125)), \
-                 mock.patch("builtins.__import__",
-                            side_effect=guarded_import):
-                self.assertEqual(self.handle("/wake"),
-                                 "slash_command:/wake")
-            self.assertTrue(woken())
-            self.assertEqual(self.sent, [])
-        finally:
-            shutil.rmtree(telegram.runtime_spool(), ignore_errors=True)
-
-    def test_wake_for_other_bot_is_consumed_without_waking(self):
-        telegram._bot_username = "SomeBot"
-        shutil.rmtree(telegram.runtime_spool(), ignore_errors=True)
-        try:
-            self.assertEqual(
-                self.handle("/wake@OtherBot"),
-                "slash_command_other_bot:otherbot")
-            self.assertFalse(woken())
-            self.assertEqual(self.sent, [])
-        finally:
-            telegram._bot_username = None
-            shutil.rmtree(telegram.runtime_spool(), ignore_errors=True)
 
     def test_pending_attachment_is_recovered_from_durable_ledger(self):
         update = {
@@ -402,98 +176,6 @@ class SlashCommandTest(unittest.TestCase):
             release.set()
             self.assertTrue(both_finished.wait(1))
         self.assertCountEqual(entered, [101, 102])
-
-    def test_botname_suffix_for_self_is_handled(self):
-        telegram._bot_username = "SomeBot"
-        try:
-            self.assertEqual(self.handle("/models@SomeBot"),
-                             "slash_command:/models")
-        finally:
-            telegram._bot_username = None
-
-    def test_poll_fast_path_uses_configured_identity_without_network(self):
-        telegram._bot_username = None
-        previous = os.environ.get("METTACLAW_TELEGRAM_BOT_USERNAME")
-        os.environ["METTACLAW_TELEGRAM_BOT_USERNAME"] = "SomeBot"
-        try:
-            with mock.patch.object(telegram.requests, "get") as get:
-                self.assertEqual(
-                    telegram._peek_slash_command(
-                        "/mode@SomeBot", self.operator),
-                    "slash_command:/mode")
-            get.assert_not_called()
-        finally:
-            telegram._bot_username = None
-            if previous is None:
-                os.environ.pop("METTACLAW_TELEGRAM_BOT_USERNAME", None)
-            else:
-                os.environ["METTACLAW_TELEGRAM_BOT_USERNAME"] = previous
-
-    def test_botname_suffix_for_other_bot_is_consumed(self):
-        telegram._bot_username = "SomeBot"
-        try:
-            self.assertEqual(self.handle("/models@OtherBot"),
-                             "slash_command_other_bot:otherbot")
-        finally:
-            telegram._bot_username = None
-
-    def test_unrelated_commands_and_text_pass_through(self):
-        self.assertIsNone(self.handle("hello there"))
-        self.assertIsNone(self.handle(""))
-        self.assertEqual(len(self.sent), 0)
-
-    def test_start_sets_operator_latch_before_waking_cognition(self):
-        with mock.patch("lifecycle.start",
-                        return_value="started: cognition enabled by operator latch"), \
-             mock.patch("lifecycle.cognition_enabled", return_value=1), \
-             mock.patch.object(telegram, "_request_wake") as wake:
-            self.assertEqual(self.handle("/start"), "slash_command:/start")
-        wake.assert_called_once_with("operator start")
-        self.assertIn("operator latch", self.sent[-1][1])
-
-    def test_failed_start_does_not_wake_cognition(self):
-        with mock.patch("lifecycle.start",
-                        return_value="start refused: remains stopped"), \
-             mock.patch("lifecycle.cognition_enabled", return_value=0), \
-             mock.patch.object(telegram, "_request_wake") as wake:
-            self.assertEqual(self.handle("/start"), "slash_command:/start")
-        wake.assert_not_called()
-
-    def test_stop_revokes_and_wakes_control_loop(self):
-        with mock.patch("lifecycle.stop",
-                        return_value="stopped: cognition revoked"), \
-             mock.patch.object(telegram, "_request_wake") as wake:
-            self.assertEqual(self.handle("/stop"), "slash_command:/stop")
-        wake.assert_called_once_with("operator stop")
-        self.assertIn("cognition revoked", self.sent[-1][1])
-
-    def test_handler_error_never_raises(self):
-        with mock.patch.object(synthetic_llm, "model_ids",
-                               side_effect=RuntimeError("boom")):
-            note = self.handle("/models")
-        self.assertEqual(note, "slash_command_error:/models")
-
-
-
-class CrossBotAddressingTests(unittest.TestCase):
-    def setUp(self):
-        telegram._bot_username = "PrimaryTestBot"
-
-    def tearDown(self):
-        telegram._bot_username = None
-
-    def test_command_for_another_bot_is_consumed_not_answered(self):
-        note = telegram._handle_slash_command(
-            {"id": 1}, {"id": 555000555}, "/model@OtherTestBot")
-        self.assertEqual(note, "slash_command_other_bot:othertestbot")
-
-    def test_unknown_identity_with_suffix_is_consumed(self):
-        telegram._bot_username = None
-        with mock.patch.object(telegram, "requests") as req:
-            req.get.side_effect = Exception("net down")
-            note = telegram._handle_slash_command(
-                {"id": 1}, {"id": 555000555}, "/model@AnyBot")
-        self.assertEqual(note, "slash_command_other_bot:anybot")
 
 
 if __name__ == "__main__":

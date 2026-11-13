@@ -58,7 +58,6 @@ class RestControlTest(unittest.TestCase):
                  "METTACLAW_TELEGRAM_WAKE_IDS": "333000333"}):
             self.assertTrue(telegram._wake_for_operator_message(peer))
             self.assertFalse(telegram._is_operator(peer))
-            self.assertIsNone(telegram._peek_slash_command("/stop", peer))
         self.assertEqual(woken(), ["peer message"])
 
     def test_unlisted_bot_message_does_not_request_wake(self):

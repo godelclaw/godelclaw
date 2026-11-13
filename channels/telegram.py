@@ -29,11 +29,6 @@ _offset_path = ""
 # "durable" makes a CeTTa channel service the bot's only poller and sender,
 # for the MeTTa client; "bot-api" leaves the client disabled.
 _transport = "bot-api"
-_durable = None
-_durable_receipts = None
-_durable_outbox = None
-_durable_pending = {}
-_durable_lock = threading.Lock()
 _log_path = ""
 _msg_lock = threading.RLock()
 _log_lock = threading.Lock()
@@ -44,19 +39,6 @@ _health_lock = threading.RLock()
 _effect_lock = threading.RLock()
 _effect_turn = None
 _effect_activity_epoch = None
-_effect_sends = set()
-
-_CONTROL_COMMANDS = (
-    "/start", "/stop",
-    "/model", "/models", "/mode", "/modes",
-    "/fuel", "/fuels",
-    "/quota", "/wake", "/energy", "/health", "/activity", "/delete",
-    "/claude_code_authorization",
-)
-
-# Every authenticated operator control has its own execution lane.  State
-# modules serialize their own short local mutations; external delivery of one
-# response must never hold up receipt or execution of another control.
 
 
 def _health_path():
@@ -505,26 +487,6 @@ def _append_update_log(update, kind, message, allowed, queued, note="", provenan
 ENERGY_TIERS = ("full", "mid", "light")
 
 
-def _tier_loops(tier):
-    defaults = {"full": 50, "mid": 30, "light": 10}
-    envnames = {"full": "METTACLAW_LOOPS_FULL", "mid": "METTACLAW_LOOPS_MID",
-                "light": "METTACLAW_LOOPS_LIGHT"}
-    # Live override: energy.json tier_loops takes priority over env and defaults
-    try:
-        import json as _json
-        with open(_energy_path()) as _f:
-            _edata = _json.load(_f)
-        _tl = _edata.get('tier_loops', {})
-        if tier in _tl:
-            return max(1, int(_tl[tier]))
-    except Exception:
-        pass  # silently fall through to env/defaults
-    try:
-        return max(1, int(os.environ.get(envnames[tier], defaults[tier])))
-    except (KeyError, ValueError, TypeError):
-        return 50
-
-
 def _energy_path():
     return os.environ.get("METTACLAW_ENERGY_PATH", "memory/energy.json")
 
@@ -574,21 +536,6 @@ def _tier_for_sender(sender):
     data = _energy_load()
     return data["senders"].get(str((sender or {}).get("id", "")),
                                data.get("default", "full"))
-
-
-def _energy_label(data, sid):
-    return data.get("names", {}).get(sid) or _sender_names_env().get(sid) or sid
-
-
-def energy_view():
-    """Human-readable summary the agent can print."""
-    data = _energy_load()
-    d = data.get("default", "full")
-    parts = ["default: %s(%d)" % (d, _tier_loops(d))]
-    for sid, tier in sorted(data.get("senders", {}).items()):
-        parts.append("%s: %s(%d)" % (_energy_label(data, sid), tier,
-                                     _tier_loops(tier)))
-    return " | ".join(parts)
 
 
 def _set_last(chat_id, text, from_bot=False, arm_tier="full", update_id=None):
@@ -668,362 +615,12 @@ def _wake_for_operator_message(sender):
     return False
 
 
-def _settings_keyboard(kind, prefix):
-    import helper
-    page = json.loads(helper.menu_page(kind, prefix))
-    return {"inline_keyboard": [[{"text": label, "callback_data": data}
-             for label, data in row] for row in page["rows"]]}
-
-
-def _models_keyboard():
-    return _settings_keyboard("models", "model")
-
-
-def _modes_keyboard():
-    return _settings_keyboard("modes", "mode")
-
-
-def _fuels_keyboard():
-    return _settings_keyboard("fuels", "fuel")
-
-
-def _energy_keyboard():
-    """Inline keyboard for arming tiers: one row for the default, one per
-    known sender. Tapping writes the persisted energy map — zero LLM cost."""
-    data = _energy_load()
-    cur_default = data.get("default", "full")
-    rows = []
-    row = []
-    for tier in ENERGY_TIERS:
-        mark = "● " if tier == cur_default else ""
-        row.append({"text": "%severyone: %s(%d)" % (mark, tier, _tier_loops(tier)),
-                    "callback_data": "energy:default:" + tier})
-    rows.append(row)
-    known = dict(_sender_names_env())
-    known.update({sid: _energy_label(data, sid)
-                  for sid in data.get("senders", {})})
-    for sid, name in sorted(known.items(), key=lambda kv: kv[1].lower()):
-        cur = data.get("senders", {}).get(sid, cur_default)
-        row = []
-        for tier in ENERGY_TIERS:
-            mark = "● " if tier == cur else ""
-            cbd = "energy:%s:%s" % (sid, tier)
-            if len(cbd.encode("utf-8")) > 64:
-                continue
-            row.append({"text": "%s%s: %s" % (mark, name, tier),
-                        "callback_data": cbd})
-        if row:
-            rows.append(row)
-    return {"inline_keyboard": rows}
-
-
-_bot_username = None
-
-
-def _known_username():
-    """Configured/cached bot identity, without any network operation."""
-    return str(
-        _bot_username
-        or os.environ.get("METTACLAW_TELEGRAM_BOT_USERNAME", "")
-    ).lstrip("@")
-
-
-def _peek_slash_command(text, sender):
-    """Would _handle_slash_command take this? Decided without network calls, so
-    the poll thread can hand it off and keep polling."""
-    stripped = (text or "").strip()
-    if not stripped.startswith("/"):
-        return None
-    head = stripped.split(None, 1)[0]
-    cmd = head.split("@", 1)[0].lower()
-    if cmd not in _CONTROL_COMMANDS:
-        return None
-    if "@" in head:
-        # The polling path must not block on getMe. Identity is provisioned
-        # alongside the token; an unknown addressed command is safely consumed.
-        mine = _known_username().lower()
-        if not mine or head.split("@", 1)[1].lower() != mine:
-            return "slash_command_other_bot:" + head.split("@", 1)[1].lower()
-    if not _is_operator(sender):
-        return None
-    return "slash_command:" + cmd
-
-
-def _handle_slash_command(chat, sender, text):
-    """Deterministic operator commands with zero LLM involvement.
-
-    Zero LLM involvement: the reply is sent directly and the message is NOT
-    queued for the agent, so a command costs no tokens and works even while
-    the agent rests. A model switch takes effect on the agent's next turn
-    (chat() reads SYNTHETIC_MODEL per call). Returns a log note when handled,
-    None otherwise."""
-    stripped = (text or "").strip()
-    if not stripped.startswith("/"):
-        return None
-    parts = stripped.split(None, 1)
-    head = parts[0]
-    cmd = head.split("@", 1)[0].lower()  # '/model@SomeBot' -> '/model'
-    if "@" in head and cmd in _CONTROL_COMMANDS:
-        # An @suffix names the addressee. Answering a command aimed at a
-        # DIFFERENT bot switched the wrong agent's model live (2026-07-19).
-        target = head.split("@", 1)[1].lower()
-        mine = _known_username().lower()
-        if not mine or target != mine:
-            return "slash_command_other_bot:" + target
-    arg = parts[1].strip() if len(parts) > 1 else ""
-    if cmd not in _CONTROL_COMMANDS:
-        return None
-    if not _is_operator(sender):
-        # Operator controls are not available to other senders. Their message
-        # flows to the agent as ordinary conversation instead.
-        return None
-    try:
-        if cmd == "/energy":
-            requests.post(_api("sendMessage"), json={
-                "chat_id": chat.get("id"),
-                "text": "arming energy — " + energy_view(),
-                "reply_markup": _energy_keyboard(),
-            }, timeout=15)
-            return "slash_command:/energy"
-        if cmd == "/fuels":
-            import fuel_modes
-            requests.post(_api("sendMessage"), json={
-                "chat_id": chat.get("id"),
-                "text": fuel_modes.fuels_view(),
-                "reply_markup": _fuels_keyboard(),
-            }, timeout=15)
-            return "slash_command:/fuels"
-        if cmd == "/modes":
-            import loop_modes
-            requests.post(_api("sendMessage"), json={
-                "chat_id": chat.get("id"),
-                "text": loop_modes.mode_view(),
-                "reply_markup": _modes_keyboard(),
-            }, timeout=15)
-            return "slash_command:/modes"
-        if cmd == "/models":
-            import synthetic_llm
-            requests.post(_api("sendMessage"), json={
-                "chat_id": chat.get("id"),
-                "text": "tap to switch — "
-                        + synthetic_llm.model_catalog_status(),
-                "reply_markup": _models_keyboard(),
-            }, timeout=15)
-            return "slash_command:/models"
-        reply = _command_answer(cmd, arg, str(chat.get("id", "")))
-        if reply is not None:
-            send_message_to_chat(str(chat.get("id", "")), reply)
-        return "slash_command:" + cmd
-    except Exception as exc:
-        print("[telegram] slash command error:", exc)
-        return "slash_command_error:" + cmd
-
-
-def _command_answer(cmd, arg, chat_id):
-    """Carry out one operator control and return its reply text, or None when
-    it has nothing to say. No Telegram call: the Bot API path sends the text
-    itself; on the durable path the channel service sends it, and answers the
-    operator itself if this takes too long."""
-    if cmd in ("/start", "/stop"):
-        import lifecycle
-        if cmd == "/start":
-            reply = lifecycle.start()
-            if lifecycle.cognition_enabled():
-                _request_wake("operator start")
-        else:
-            reply = lifecycle.stop()
-            _request_wake("operator stop")
-        return reply
-    if cmd == "/wake":
-        # Wake silently. The agent's next real reply is the confirmation;
-        # a separate "awake" acknowledgement is just noise in the chat.
-        _request_wake("/wake")
-        return None
-    if cmd == "/delete":
-        fields = arg.rsplit(None, 1)
-        if len(fields) != 2:
-            return "usage: /delete <known-chat-id-or-title> <message-id>"
-        target = _resolve_known_chat_id(fields[0])
-        if not target:
-            return "delete refused: chat is not in the local ledger"
-        if (_allowed_chat_ids
-                and target not in _allowed_chat_ids
-                and target != chat_id):
-            return "delete refused: chat is not allowed"
-        return delete_message(target, fields[1])
-    if cmd == "/claude_code_authorization":
-        import claude_bridge
-        return claude_bridge.set_authorized(not claude_bridge.authorized())
-    if cmd == "/health":
-        import runtime_health
-        return runtime_health.report()
-    if cmd == "/activity":
-        import runtime_health
-        return runtime_health.activity_report()
-    if cmd == "/fuel":
-        import fuel_modes
-        if arg:
-            return str(fuel_modes.set_fuel(arg))[:3800]
-        return (fuel_modes.fuel_view()
-                + " — /fuel <name> to switch, /fuels to list")[:3800]
-    if cmd == "/mode":
-        import loop_modes
-        if arg:
-            reply = loop_modes.set_mode(arg)
-            _request_wake("mode switch")
-            return str(reply)[:3800]
-        return (loop_modes.mode_view()
-                + " — /mode <name> to switch, /modes to list")[:3800]
-    import synthetic_llm
-    if cmd == "/quota":
-        return str(synthetic_llm.quota())[:3800]
-    if cmd == "/model":
-        if arg:
-            return str(synthetic_llm.set_model(arg))[:3800]
-        return (f"active model: {synthetic_llm.current_model()} — "
-                "/model <name> to switch, /models to list, /quota for budget")[:3800]
-    return "unknown command " + cmd
-
-
-def _dispatch_slash_command(chat, sender, text):
-    """Give every operator control an independent, zero-LLM execution lane."""
-    stripped = str(text or "").strip()
-    command = stripped.split(None, 1)[0].split("@", 1)[0].lower() \
-        if stripped.startswith("/") else ""
-    if command not in _CONTROL_COMMANDS:
-        return "ignored"
-    threading.Thread(
-        target=_handle_slash_command,
-        args=(chat, sender, text),
-        name="telegram-control-" + command.lstrip("/").replace("_", "-"),
-        daemon=True,
-    ).start()
-    return "independent"
-
-
-def _durable_timeout():
-    try:
-        return max(1.0, float(os.environ.get(
-            "METTACLAW_TELEGRAM_SERVICE_TIMEOUT", "30")))
-    except ValueError:
-        return 30.0
-
-
-def _durable_record(key, position, result):
-    """Log what a receipt proves, once, whether or not a sender still waits."""
-    finished = False
-    with _durable_lock:
-        entry = _durable_pending.get(key)
-        if entry is not None:
-            entry["seen"].add(position)
-            if len(entry["seen"]) >= entry["count"]:
-                _durable_pending.pop(key, None)
-                finished = True
-    if finished:
-        _durable_outbox.done(key)
-    if isinstance(result, list) and result and result[0] == "uncertain":
-        import durable_telegram
-        _durable_outbox.hold(durable_telegram.lane_of(key))
-    if entry is not None and isinstance(result, list) and result:
-        if entry["kind"] == "send" and result[0] == "delivered":
-            _log_outbound(entry["chat"], entry["pieces"][position], result[1])
-        elif entry["kind"] == "delete" and result[0] == "delivered":
-            _log_own_delete(entry["chat"], entry["message_id"])
-        elif entry["kind"] == "delete" and result[0] == "failed" and result[1] == 400:
-            _log_own_delete(entry["chat"], entry["message_id"],
-                            "own_delete_terminal")
-    _durable_receipts.record(key, position, result)
-
-
-def _durable_submit(chat_id, commands, entry):
-    """Record one keyed batch in the durable outbox and wait for its receipts.
-
-    Returns (key, results). results is "queued" while the service has not yet
-    stored the batch (it will be, in order, when the service answers), a
-    ("refused", code) pair, a rejection reason string, or a list with one
-    receipt per action, None where none arrived in time. A receipt arriving
-    later, even after this process restarts, is logged like any other.
-    """
-    key = _durable.key(chat_id)
-    entry = dict(entry, count=len(commands))
-    with _durable_lock:
-        _durable_pending[key] = dict(entry, seen=set())
-    _durable_outbox.enqueue(key, commands, entry)
-    deadline = time.monotonic() + _durable_timeout()
-    stored = _durable_outbox.wait_stored(key, _durable_timeout())
-    if stored is False:
-        return key, "queued"
-    if stored is not True:
-        with _durable_lock:
-            _durable_pending.pop(key, None)
-        return key, ("refused", stored)
-    return key, _durable_receipts.wait(
-        key, len(commands), max(0.0, deadline - time.monotonic()))
-
-
-def _durable_send_message(chat_id, body):
-    import durable_telegram
-    pieces = durable_telegram.chunks(body)
-    if not pieces:
-        return "send failed: empty message"
-    key, results = _durable_submit(
-        chat_id, [["send", piece, "plain"] for piece in pieces],
-        {"kind": "send", "chat": str(chat_id), "pieces": pieces})
-    if results == "queued":
-        return ("send queued: the Telegram service is not answering; it goes "
-                "out in order when the service returns (%s)" % key)
-    if isinstance(results, tuple):
-        return "send failed: the Telegram service refused it (%s)" % results[1]
-    if isinstance(results, str):
-        return "send failed: the Telegram service rejected it (%s)" % results
-    ids = []
-    for result in results:
-        if result is None:
-            return ("send accepted by the Telegram service; delivery is still "
-                    "pending (%s)" % key)
-        if result[0] == "delivered":
-            ids.append(result[1])
-        elif result[0] == "failed":
-            return "send failed: Telegram rejected %s" % result[1]
-        elif result[0] == "not-sent":
-            return "send failed: the message was not sent"
-        else:
-            print("[telegram] chat lane %s: delivery of %s is uncertain (%s)"
-                  % (durable_telegram.lane_of(key), key, result[1]))
-            return ("send uncertain (%s): Telegram may or may not have it; "
-                    "this occurrence will not be retried; later messages may proceed (%s)" % (result[1], key))
-    reply = "sent message %s to chat %s" % (ids[0], chat_id)
-    if len(ids) > 1:
-        reply += " (in %d parts: %s)" % (len(ids), ", ".join(map(str, ids)))
-    return reply
-
-
-def _durable_delete_message(target, message_id):
-    _, results = _durable_submit(
-        target, [["delete", int(message_id)]],
-        {"kind": "delete", "chat": str(target), "message_id": int(message_id)})
-    if results == "queued":
-        return "delete queued: the Telegram service is not answering"
-    if isinstance(results, tuple):
-        return "delete failed: the Telegram service refused it (%s)" % results[1]
-    if isinstance(results, str):
-        return "delete failed: the Telegram service rejected it (%s)" % results
-    result = results[0]
-    if result is None:
-        return "delete accepted by the Telegram service; still pending"
-    if result[0] == "delivered":
-        return "deleted message %s from chat %s" % (message_id, target)
-    if result[0] == "failed" and result[1] == 400:
-        return ("cannot delete message %s: it is older than 48h, or a "
-                "forward (whoever forwarded it must delete it), or not the "
-                "bot's own message" % message_id)
-    return "delete failed: %s" % result[1:]
 
 
 # ---- MeTTa client ----------------------------------------------------------
 # With METTACLAW_TELEGRAM_CLIENT=metta, channels/telegram.metta is Lila's
 # Telegram client and this module starts no thread of its own. It keeps what
-# calls the Bot API directly (button menus, attachment downloads, uploads),
+# calls the Bot API directly (attachment downloads, uploads),
 # answers the Python and Prolog code that asks about Telegram from state the
 # MeTTa client publishes here, and checks the channel service itself where
 # an answer must be current (the unread-input guard on sends).
@@ -1207,43 +804,10 @@ def metta_attachment(update_json, kind, text, provenance="", tier=""):
     return 1
 
 
-def metta_slash_command(update_json, kind):
-    """A command addressed with @bot, which the service does not answer
-    itself. Handled on its own thread, as before."""
-    message = json.loads(update_json).get(kind) or {}
-    text = message.get("text") or message.get("caption") or ""
-    note = _peek_slash_command(text, message.get("from")) or "slash_command_unknown"
-    _dispatch_slash_command(message.get("chat") or {}, message.get("from"), text)
-    return note
-
-
-def metta_foreign_receipt(observation):
-    """A receipt for a send this module made (a menu's text reply)."""
-    import input_ack
-    if input_ack.receipt(observation):
-        return 1
-    value = json.loads(observation)
-    if value[0] == "delivery":
-        _durable_record(value[1], value[2], value[4])
-    elif value[0] == "rejected":
-        with _durable_lock:
-            known = _durable_pending.pop(value[1], None) is not None
-        if known:
-            _durable_outbox.done(value[1])
-        _durable_receipts.record(value[1], -1, value[2])
-    elif value[0] == "released":
-        with _durable_lock:
-            entry = _durable_pending.pop(value[2], None)
-        if entry is not None:
-            _durable_outbox.done(value[2])
-        _durable_outbox.release(value[1])
-    return 1
-
-
 def start_telegram(token="", chat_id=""):
     global _token, _allowed_chat_ids
-    global _offset_path, _log_path, _bot_username, _primary_chat_id
-    global _transport, _durable, _durable_receipts, _durable_outbox
+    global _offset_path, _log_path, _primary_chat_id
+    global _transport
     _token = str(
         token
         or os.environ.get("METTACLAW_TELEGRAM_BOT_TOKEN")
@@ -1266,10 +830,6 @@ def start_telegram(token="", chat_id=""):
     )
     _offset_path = os.environ.get("METTACLAW_TELEGRAM_OFFSET_PATH", "")
     _log_path = os.environ.get("METTACLAW_TELEGRAM_LOG_PATH", "")
-    configured_username = os.environ.get(
-        "METTACLAW_TELEGRAM_BOT_USERNAME", "").lstrip("@")
-    if configured_username:
-        _bot_username = configured_username
     if not _token:
         print("[telegram] disabled: set METTACLAW_TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN")
         return None
@@ -1277,24 +837,10 @@ def start_telegram(token="", chat_id=""):
     if _transport != "durable":
         print("[telegram] disabled: the MeTTa client needs the durable transport")
         return None
-    import durable_telegram
-    socket_path = os.environ.get("METTACLAW_TELEGRAM_SERVICE_SOCKET", "")
-    sequence_path = os.environ.get(
-        "METTACLAW_TELEGRAM_SEQUENCE_PATH",
-        (_offset_path or "telegram") + ".durable-sequence")
-    if not socket_path:
+    if not os.environ.get("METTACLAW_TELEGRAM_SERVICE_SOCKET", ""):
         print("[telegram] disabled: durable transport needs "
               "METTACLAW_TELEGRAM_SERVICE_SOCKET")
         return None
-    _durable = durable_telegram.Channel(socket_path, sequence_path)
-    _durable_receipts = durable_telegram.Receipts()
-    _durable_outbox = durable_telegram.Outbox(_durable, os.environ.get(
-        "METTACLAW_TELEGRAM_OUTBOX_PATH",
-        (_offset_path or "telegram") + ".durable-outbox"))
-    with _durable_lock:
-        for key, entry in _durable_outbox.entries.items():
-            if entry:
-                _durable_pending[key] = dict(entry, seen=set())
     _health_update(running=True, started_at=time.time(),
                    client="metta", poll_status="starting")
     _recover_pending_attachments()
@@ -1349,72 +895,6 @@ def _log_outbound(chat_id, text, message_id=None):
         print("[telegram] outbound log error:", exc)
 
 
-def _log_own_delete(chat_id, message_id, note="own_delete"):
-    """Tombstone one terminal deletion so cleanup never targets it again."""
-    if not _log_path:
-        return
-    try:
-        record = {
-            "received_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-            "kind": "outbound_delete",
-            "allowed": True,
-            "queued": False,
-            "note": note,
-            "chat_id": str(chat_id),
-            "from": "me",
-            "from_is_bot": True,
-            "message_id": int(message_id),
-            "text": None,
-        }
-        line = json.dumps(record, ensure_ascii=False,
-                          separators=(",", ":")) + "\n"
-        with _log_lock:
-            with open(_log_path, "a", encoding="utf-8") as f:
-                f.write(line)
-    except (OSError, TypeError, ValueError) as exc:
-        print("[telegram] delete tombstone log error:", exc)
-
-
-def send_message(text, chat_id=""):
-    chat_id = _reply_target(chat_id)
-    if not _token or not chat_id:
-        print("[telegram] cannot send: missing token or chat id")
-        return "send failed: missing token or chat id"
-    if (_allowed_chat_ids and str(chat_id) not in _allowed_chat_ids
-            and str(chat_id) != _primary_chat_id):
-        return "send failed: target chat is not allowed"
-    if _transport == "durable":
-        return _durable_send_message(chat_id, str(text).replace("\\n", "\n"))
-    try:
-        body = str(text).replace("\\n", "\n")
-        resp = requests.post(
-            _api("sendMessage"),
-            json={"chat_id": chat_id, "text": body},
-            timeout=30,
-        )
-        delivered = False
-        message_id = None
-        try:
-            payload = resp.json()
-            delivered = bool(resp.ok and payload.get("ok"))
-            message_id = (payload.get("result") or {}).get("message_id")
-        except ValueError:
-            pass
-        if delivered:
-            # STM records only what Telegram actually accepted — with the id,
-            # so the agent can delete its own message later.
-            _log_outbound(chat_id, body, message_id)
-            return "sent message %s to chat %s" % (message_id, chat_id)
-        else:
-            print(f"[telegram] send rejected (HTTP {resp.status_code})")
-            return "send failed: Telegram rejected HTTP %s" % resp.status_code
-    except requests.exceptions.RequestException as exc:
-        # A transient network failure on send must never cross Janus and kill the
-        # loop (the same failure class as a provider exception crossing Janus).
-        print(f"[telegram] send failed ({type(exc).__name__})")
-        return "send failed: %s" % type(exc).__name__
-
-
 def begin_effect_turn(turn):
     """Open the model-effect scope for one cognitive turn.
 
@@ -1437,7 +917,6 @@ def begin_effect_turn(turn):
         if turn != _effect_turn:
             _effect_turn = turn
             _effect_activity_epoch = context_epoch
-            _effect_sends.clear()
         stimulus_frontier.publish(
             turn, _effect_activity_epoch, _value("_activity_epoch")
         )
@@ -1449,73 +928,6 @@ def rest_status():
     until = float(metta_value("sleep_until", 0) or 0)
     left = until - time.time()
     return (left > 0, math.ceil(left) if left > 0 else 0)
-
-
-def send_message_to_chat(chat_id, text):
-    return send_message(text, chat_id=chat_id)
-
-
-def delete_message(chat_id, message_id):
-    """Execute one exact deletion after the caller has authorized its target.
-
-    This provider primitive is intentionally not the model skill: a Telegram
-    group administrator may be able to delete messages written by others.
-    Model calls go through ``delete_recorded_message``; the authenticated
-    operator slash path may authorize a legacy id absent from the ledger.
-    The result says which provider case occurred rather than failing silently.
-    """
-    token = _token or os.environ.get("METTACLAW_TELEGRAM_BOT_TOKEN", "")
-    if not token:
-        return "delete failed: no bot token configured"
-    target = str(chat_id)
-    if (_allowed_chat_ids and target not in _allowed_chat_ids
-            and target != _primary_chat_id):
-        return "delete refused: target chat is not allowed"
-    if _transport == "durable":
-        return _durable_delete_message(target, message_id)
-    try:
-        resp = requests.post(_api("deleteMessage", token),
-                             json={"chat_id": target,
-                                   "message_id": int(message_id)},
-                             timeout=15)
-        payload = resp.json()
-        if payload.get("ok"):
-            _log_own_delete(target, message_id)
-            return "deleted message %s from chat %s" % (message_id, target)
-        desc = str(payload.get("description", "")).lower()
-        if "can't be deleted" in desc or "message to delete not found" in desc:
-            _log_own_delete(target, message_id, "own_delete_terminal")
-            return ("cannot delete message %s: it is older than 48h, or a "
-                    "forward (whoever forwarded it must delete it), or not the "
-                    "bot's own message" % message_id)
-        return "delete failed: %s" % payload.get("description", resp.status_code)
-    except (requests.exceptions.RequestException, ValueError, TypeError) as exc:
-        return "delete failed (%s): %s" % (type(exc).__name__, exc)
-
-
-def _resolve_known_chat_id(chat):
-    """Resolve one exact id or title already present in the local ledger."""
-    wanted = str(chat).strip()
-    if not wanted:
-        return ""
-    matches = set()
-    if _log_path and os.path.isfile(_log_path):
-        try:
-            with _log_lock:
-                with open(_log_path, "r", encoding="utf-8") as stream:
-                    for line in stream:
-                        try:
-                            record = json.loads(line)
-                        except ValueError:
-                            continue
-                        chat_id = str(record.get("chat_id", ""))
-                        title = str(record.get("chat_title", ""))
-                        if wanted == chat_id or wanted.casefold() == title.casefold():
-                            if chat_id:
-                                matches.add(chat_id)
-        except OSError:
-            return ""
-    return next(iter(matches)) if len(matches) == 1 else ""
 
 
 def _send_upload(method, field, path, caption, chat_id):

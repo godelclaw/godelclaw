@@ -70,24 +70,6 @@ class CommandDispatchEngineTest(unittest.TestCase):
             env["PYTHONNOUSERSITE"] = "1"
         return env
 
-    def test_cetta_keeps_mode_read_fast_while_control_lane_is_blocked(self):
-        cetta = self._cetta_binary()
-        if not cetta.is_file():
-            self.skipTest("CeTTa executable is unavailable")
-        env = self._cetta_env()
-        env["PYTHONPATH"] = os.pathsep.join((
-            os.fspath(ROOT / "tests"), env["PYTHONPATH"],
-        ))
-        result = subprocess.run(
-            [os.fspath(cetta), "--lang", "petta", "--import-mode",
-             "ancestor-walk",
-             os.fspath(ROOT / "tests" / "cetta_fast_path_probe.metta")],
-            cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
-            capture_output=True, text=True, timeout=30,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr[-2000:])
-        self.assertRegex(result.stdout, r"CETTA_FAST_PATH_OK:[0-9]+ms")
-        self.assertNotIn("CETTA_FAST_PATH_FAIL", result.stdout)
 
     def test_cetta_live_launch_prepares_structured_request(self):
         """The live launch's program prepares a request, each equation once.
