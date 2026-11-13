@@ -12,6 +12,7 @@ from unittest import mock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "channels"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 import telegram  # noqa: E402
+import runtime_spool  # noqa: E402
 import synthetic_llm  # noqa: E402
 import loop_modes  # noqa: E402
 
@@ -23,7 +24,7 @@ _REAL_CURRENT_MODEL = synthetic_llm.current_model
 
 def woken():
     """The reasons of the wakes queued for the MeTTa client."""
-    return [event["wake_only"] for event in telegram.spooled_events() if "wake_only" in event]
+    return [event["wake_only"] for event in runtime_spool.events(telegram.runtime_spool()) if "wake_only" in event]
 
 class SlashCommandTest(unittest.TestCase):
     def setUp(self):

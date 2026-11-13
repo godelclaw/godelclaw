@@ -12,12 +12,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, os.fspath(ROOT / "channels"))
 
 import telegram  # noqa: E402
+import runtime_spool  # noqa: E402
 
 
 
 def woken():
     """The reasons of the wakes queued for the MeTTa client."""
-    return [event["wake_only"] for event in telegram.spooled_events() if "wake_only" in event]
+    return [event["wake_only"] for event in runtime_spool.events(telegram.runtime_spool()) if "wake_only" in event]
 
 
 class RestControlTest(unittest.TestCase):

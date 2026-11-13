@@ -1252,25 +1252,22 @@
          (let $rest (tg:delete-each $chat $tail) (cons-atom $one $rest))))))
 
 ;; ------------------------------------------------------ operator commands
-;; The service asks about delegated commands; the answer is its reply.
+;; The service asks this client about one delegated command, /delete, which
+;; acts through this client's sends and receipts; the answer is its reply.
+;; Every other command is the responder's (channels/telegram_control.metta).
 
-(= (tg:command $task $name $args $lane)
-   (let $chat (car-atom (str:split "." $lane))
-     (let $text (tg:command-text $name $args $chat)
-       (let $answered (tg:answer-task $task $text)
-         (if $answered (tg:unsee $task) ())))))
+(= (tg:command $task "/delete" $args $lane)
+   (let $text (tg:delete-command $args)
+     (let $answered (tg:answer-task $task $text)
+       (if $answered (tg:unsee $task) ()))))
 
-(= (tg:command-text $name $args $chat)
-   (case $name
-     (("/wake" (let $w (tg:wake-request "/wake") "Waking."))
-      ("/delete"
-       (let $fields (str:split-whitespace $args)
-         (if (not (== (size-atom $fields) 2)) "usage: /delete <known-chat-id-or-title> <message-id>"
-           (let ($who $mid) $fields
-             (let $target (tg:resolve-chat $who)
-               (if (== $target "") "delete refused: chat is not in the local ledger"
-                 (tg:delete $target (parse $mid))))))))
-      ($other (py-call (telegram.metta_command_answer $name $args $chat))))))
+(= (tg:delete-command $args)
+   (let $fields (str:split-whitespace $args)
+     (if (not (== (size-atom $fields) 2)) "usage: /delete <known-chat-id-or-title> <message-id>"
+       (let ($who $mid) $fields
+         (let $target (tg:resolve-chat $who)
+           (if (== $target "") "delete refused: chat is not in the local ledger"
+             (tg:delete $target (parse $mid))))))))
 
 ;; One chat named by its exact id or exact title in the ledger, or "".
 (= (tg:resolve-chat $who)

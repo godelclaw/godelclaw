@@ -644,22 +644,6 @@ def preparedActivityCount():
     return int(metta_value("prepared_count", 0) or 0)
 
 
-def current_batch_identity():
-    """Bounded stable identity for the input presented to this model turn.
-
-    Native MeTTa publishes the same epoch and update IDs into this projection;
-    the legacy Python client owns them directly. Re-presenting retained input
-    therefore has the same identity, while any newly included occurrence
-    changes it.
-    """
-    _sync()
-    with _msg_lock:
-        epoch = int(_value("_context_activity_epoch"))
-        identities = sorted(str(value) for value in _value("_current_batch_update_ids"))
-    payload = (str(epoch) + "\0" + "\0".join(identities)).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
-
-
 _CONTROL_REPLY_PREFIXES = (
     "activity:", "runtime-health:", "active model:",
     "active mode:", "arming energy", "model set to ", "mode set to ",
@@ -1288,90 +1272,10 @@ def _spooled(identity):
         return False
 
 
-def spooled_events():
-    """The events the native client has not yet taken, oldest first."""
-    folder = runtime_spool()
-    try:
-        names = sorted(n for n in os.listdir(folder) if n.endswith(".json") and not n.startswith("."))
-    except OSError:
-        return []
-    events = []
-    for name in names:
-        try:
-            with open(os.path.join(folder, name), encoding="utf-8") as stream:
-                events.append(json.load(stream))
-        except (OSError, ValueError):
-            continue
-    return events
-
-
-def handover_ids(ids):
-    """Validate a complete ID batch; error atoms grant no processing authority."""
-    if isinstance(ids, str):
-        values = [] if ids == "" else ids.split(",")
-    elif isinstance(ids, (list, tuple)):
-        values = ids
-    elif type(ids) is int:
-        values = [ids]
-    else:
-        raise ValueError("handover requires update IDs or comma-separated update IDs")
-    result, seen = [], set()
-    for value in values:
-        if type(value) not in (int, str):
-            raise ValueError("invalid handover update ID")
-        text = str(value)
-        if (not text or len(text) > 19 or not text.isascii() or not text.isdigit()
-                or str(int(text)) != text or not 0 <= int(text) < 2**63):
-            raise ValueError("invalid handover update ID")
-        if text not in seen:
-            result.append(text)
-            seen.add(text)
-    return result
-
-
 def _runtime_id(value):
     if not isinstance(value,str) or not re.fullmatch(r"runtime:[A-Za-z0-9_.:-]{1,160}",value):
         raise ValueError("invalid runtime occurrence ID")
     return value
-
-
-def activity_source_ack(ids):
-    """Settle checkpointed input at its source."""
-    if isinstance(ids, str):
-        values = [] if ids == "" else ids.split(",")
-    elif isinstance(ids, (list, tuple)):
-        values = list(ids)
-    elif type(ids) is int:
-        values = [ids]
-    else:
-        raise ValueError("invalid activity source batch")
-    import input_ack
-    updates, runtime = [], []
-    # Validate the complete batch before granting any processing authority.
-    for value in values:
-        if isinstance(value,str) and value.startswith("runtime:"):
-            runtime.append(_runtime_id(value))
-        else:
-            updates.append(value)
-    updates = handover_ids(updates)
-    if runtime and not input_ack.committed(runtime): return 0
-    return handover_ack(updates) if updates else 1
-
-
-def handover_ack(ids):
-    values = handover_ids(ids)
-    import mode_channel
-    # A failed durable acknowledgement must leave the notice unprocessed.
-    if not mode_channel.acknowledge_handover(values):
-        return 0
-    import input_ack
-    try:
-        input_ack.processed_update_ids(values)
-    except input_ack.LedgerUnavailable:
-        # The durable handover remains settled; retry this idempotent metadata
-        # transition at the next boundary, never replay the cognitive actions.
-        return 0
-    return 1
 
 
 # What this process's MeTTa client last published (_sync takes it up from its
@@ -1503,18 +1407,6 @@ def metta_slash_command(update_json, kind):
     note = _peek_slash_command(text, message.get("from")) or "slash_command_unknown"
     _dispatch_slash_command(message.get("chat") or {}, message.get("from"), text)
     return note
-
-
-def metta_command_answer(name, args, chat):
-    """The text of a delegated operator command the service asked about."""
-    try:
-        text = _command_answer(str(name), str(args), str(chat))
-    except Exception as exc:
-        print("[telegram] operator command failed:", name, type(exc).__name__)
-        return "%s failed: %s" % (name, type(exc).__name__)
-    if text is None:
-        return "Waking." if name == "/wake" else "Done."
-    return str(text)
 
 
 def metta_foreign_receipt(observation):

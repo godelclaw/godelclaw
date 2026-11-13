@@ -105,7 +105,6 @@ class ControlBoundaryTests(unittest.TestCase):
         self.assertTrue((self.base / "modes/channel-handover/19.done").exists())
 
     def test_normal_metta_client_preserves_the_same_handover_receipt(self):
-        import telegram
         update = {"update_id": 21, "message": {"chat": {"id": -84, "type": "group"},
                   "from": {"id": 9, "is_bot": True}, "text": "pending sibling input"}}
         mode_channel.store(self.base / "modes/channel-handover/21.json", update)
@@ -113,7 +112,7 @@ class ControlBoundaryTests(unittest.TestCase):
         # tests/unit/runtime_events.metta); its turn's acknowledgement is the
         # same receipt.
         self.assertEqual(len(mode_channel.handover_inputs()), 1)
-        telegram.handover_ack("21")
+        self.assertTrue(mode_channel.acknowledge_handover(["21"]))
         self.assertFalse(mode_channel.handover_inputs())
 
     def test_control_heartbeat_records_unavailable_channel_without_cognition(self):

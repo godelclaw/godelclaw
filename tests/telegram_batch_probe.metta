@@ -18,8 +18,24 @@
    (case $value (((JsonString $s) $s) ((JsonNumber $n) (str:string->number $n)) ($other $other))))
 !(configure commchannel telegram)
 
+; The identity of presented input: SHA-256 of the context epoch and the sorted
+; update ids, NUL-separated (the pinned answer is for epoch 7 and ids 101,
+; 102). Order does not change it; another occurrence does.
+(= (batch:identity)
+   (let* (($epoch (tg:get context-epoch 0)) ($ids (tg:get batch-ids ""))
+          ($_ (tg:set context-epoch 7))
+          ($_ (tg:set batch-ids "102,101"))
+          ($first (tg:current-batch-identity))
+          ($_ (assertEqual $first "20f109c03f10dbc3d9de08c63e9ffd66b9d0f7670ff3414a55c2622d9a5f187e"))
+          ($_ (tg:set batch-ids "101,102"))
+          ($_ (assertEqual (tg:current-batch-identity) $first))
+          ($_ (tg:set batch-ids "101,102,103"))
+          ($_ (assertEqual (== (tg:current-batch-identity) $first) False))
+          ($_ (tg:set context-epoch $epoch)))
+     (tg:set batch-ids $ids)))
+
 ; Chronological, stable until acknowledged, routed by the newest human; the
-; Python code sees the batch's identity, the counts and the reply chat.
+; Python code sees the counts and the reply chat.
 (= (batch:stable)
    (let* (($_ (tg:activity-add "" "1" "first" False "full" "1" False))
           ($_ (tg:activity-add "" "1" "second" True "full" "2" False))
@@ -27,7 +43,7 @@
           ($one (tg:activity-batch))
           ($two (tg:activity-batch))
           ($_ (assertEqual $one $two))
-          ($_ (assertEqual (tg:current-batch-identity) (py-call (telegram.current_batch_identity))))
+          ($_ (batch:identity))
           ($_ (assertEqual (py-call (telegram.pendingActivityCount)) 3))
           ($_ (assertEqual (py-call (telegram.preparedActivityCount)) 3))
           ($_ (assertEqual (py-call (telegram._reply_target "")) "1"))

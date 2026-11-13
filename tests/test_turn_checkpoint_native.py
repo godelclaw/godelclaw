@@ -536,7 +536,7 @@ os.kill(os.getpid(), signal.SIGKILL)   # the checkpoint committed; the transport
 """
 
 CHILD_RESTART = r"""
-import json, sys
+import json, os, sys
 sys.path[:0] = [sys.argv[1], sys.argv[2]]
 import helper, input_ack, telegram
 telegram.enqueue_runtime_event("again", identity="runtime:101")            # a runtime event the turn settled
@@ -545,8 +545,9 @@ print(json.dumps({
     "working": helper._working_read(),
     "committed": [input_ack.already_committed(i) for i in ("runtime:101", "102", "103")],
     "gate": [input_ack.committed(["runtime:101", "102"]), input_ack.committed(["runtime:101", "103"])],
-    "queued": [event.get("update_id") for event in telegram.spooled_events()],
-    "ack_runtime": telegram.activity_source_ack(["runtime:101"]),
+    "queued": [json.load(open(os.path.join(telegram.runtime_spool(), name))).get("update_id")
+               for name in sorted(os.listdir(telegram.runtime_spool())) if name.endswith(".json")],
+    "ack_runtime": int(bool(input_ack.committed(["runtime:101"]))),
 }), flush=True)
 """
 
