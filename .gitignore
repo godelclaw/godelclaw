@@ -2,6 +2,7 @@
 .env.*
 config/local.toml
 config/secrets.env
+config/access.metta
 config/channel.metta
 config/.edit.lock
 .mcp.json

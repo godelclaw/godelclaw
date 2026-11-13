@@ -26,6 +26,7 @@
 !(import! &self ./src/helper.py)
 !(import! &self ./src/process_supervision.py)
 !(import! &self ./channels/energy.metta)
+!(import! &self ./channels/access_policy.metta)
 !(import! &self ./channels/telegram_control_input.metta)
 !(import! &self ./channels/telegram_notice_cleanup.metta)
 !(import! &self ./src/job_io)
@@ -111,10 +112,9 @@
    (let $s (tg:env "METTACLAW_TELEGRAM_SERVICE_TIMEOUT" "30")
      (let $n (parse $s) (if (< $n 1) 1000 (* 1000 $n)))))
 
+; An owner: an operator, or an owner the access policy names.
 (= (tg:operator? $id)
-   (and (not (== $id "")) (tg:csv-member? $id (tg:env "METTACLAW_TELEGRAM_OPERATOR_IDS" ""))))
-(= (tg:wake-peer? $id)
-   (and (not (== $id "")) (tg:csv-member? $id (tg:env "METTACLAW_TELEGRAM_WAKE_IDS" ""))))
+   (if (== $id "") False (ap:owner-of? telegram $id)))
 
 ;; ------------------------------------------------------------ json data
 ;; Compatibility JSON values: (JsonObject ((JsonPair key value) ...)),
@@ -308,6 +308,10 @@
                (tg:concat-lists ($own $ext $q)))))))))
 
 (= (tg:format-message $update $kind $message $text)
+   (tg:format-message $update $kind $message $text ""))
+; PROVENANCE, the access policy's label for a sender who is not trusted, is
+; shown with the sender.
+(= (tg:format-message $update $kind $message $text $provenance)
    (let $chat (tg:at $message "chat")
      (let $sender (tg:at $message "from")
        (let $sender-chat (tg:at $message "sender_chat")
@@ -327,6 +331,7 @@
                                   (tg:field "from" (tg:display-user $sender))
                                   (tg:field "from_id" (tg:str (tg:at $sender "id")))
                                   (tg:flag "from_is_bot" (tg:truthy (tg:at $sender "is_bot")))
+                                  (tg:field "provenance" $provenance)
                                   (tg:field "sender_chat" (tg:display-chat $sender-chat))
                                   (tg:field "sender_chat_id" (tg:str (tg:at $sender-chat "id")))
                                   (tg:field "via_bot" (tg:display-user $via))
@@ -347,10 +352,13 @@
          (let $done (fs:append-text $path (str:concat $line "\n")) True)))))
 
 (= (tg:log-update $update $kind $message $allowed $queued $note)
+   (tg:log-update $update $kind $message $allowed $queued $note ""))
+(= (tg:log-update $update $kind $message $allowed $queued $note $provenance)
    (let $chat (tg:at $message "chat")
      (let $sender (tg:at $message "from")
        (let $stamp (tg:now-iso)
          (tg:ledger-append
+           (tg:labelled $provenance
            (JsonObject ((JsonPair "received_at" (JsonString $stamp))
                         (JsonPair "update_id" (tg:at $update "update_id"))
                         (JsonPair "kind" (JsonString $kind))
@@ -366,7 +374,14 @@
                         (JsonPair "from_is_bot" (tg:jbool (tg:truthy (tg:at $sender "is_bot"))))
                         (JsonPair "text" (if $allowed (tg:at $message "text") JsonNull))
                         (JsonPair "caption" (if $allowed (tg:at $message "caption") JsonNull))
-                        (JsonPair "raw" (if $allowed $update JsonNull)))))))))
+                        (JsonPair "raw" (if $allowed $update JsonNull))))))))))
+; A ledger record with the provenance label, when there is one, last.
+(= (tg:labelled $provenance $record)
+   (if (== $provenance "") $record
+     (case $record
+       (((JsonObject $pairs)
+         (JsonObject (collapse (superpose ((tg:items $pairs) (JsonPair "provenance" (JsonString $provenance)))))))
+        ($other $other)))))
 
 (= (tg:log-outbound $chat $text $message-id)
    (let $stamp (tg:now-iso)
@@ -439,6 +454,12 @@
      (let $meta (add-atom &self (tg:item-meta $update-id $kind $note))
        (tg:activity-add $task $chat $text $from-bot $tier $update-id $wake))))
 
+; NOTE is the access policy's: sender-wake, addressed, quiet, or silent for a
+; message that never wakes the agent by itself.
+(= (tg:activity-add-noted $note $kind $task $chat $text $from-bot $tier $update-id $reason)
+   (let $meta (add-atom &self (tg:item-meta $update-id $kind $note))
+     (tg:activity-add $task $chat $text $from-bot $tier $update-id (if (== $note sender-wake) $reason False))))
+
 (= (tg:count-kind $kind $message $text)
    (if (tg:addressed-to-me? $message $text) addressed $kind))
 (= (tg:addressed-to-me? $message $text)
@@ -467,8 +488,9 @@
    (if (or (== $text "") (not (str:is-all-in digit $text))) 1
      (max 1 (str:string->number $text))))
 
-; True when every pending item is a quiet message in a counted group and no
-; such group has reached its count.
+; True when every pending item is a quiet message in a counted group, and no
+; such group has reached its count, or a silent one, which never wakes the
+; agent by itself.
 (= (tg:quiet-batch?)
    (let $items (tg:uncommitted (tg:pending-items))
      (if (== $items ()) False (tg:quiet-items $items ()))))
@@ -479,9 +501,10 @@
          (let $meta (collapse (match &self (tg:item-meta $uid $kind $wake) ($kind $wake)))
            (if (== $meta ()) False
              (let ($kind $wake) (car-atom $meta)
-               (if (or (not (== $wake quiet)) (<= (tg:wake-every $chat) 1)) False
-                 (tg:quiet-items $tail
-                   (if (== $kind "message") (cons-atom $chat $counted) $counted))))))))))
+               (if (== $wake silent) (tg:quiet-items $tail $counted)
+                 (if (or (not (== $wake quiet)) (<= (tg:wake-every $chat) 1)) False
+                   (tg:quiet-items $tail
+                     (if (== $kind "message") (cons-atom $chat $counted) $counted)))))))))))
 ; True when the pending batch may hand back the whole banked budget: it is
 ; empty (mail or a job woke the agent), or holds a message from the operator
 ; or a wake peer, or activity with no intake note (a runtime event).
@@ -842,43 +865,44 @@
            (let $chat-id (tg:str (tg:at $chat "id"))
              (let $t (tg:remember-title $chat-id (tg:display-chat $chat))
                (let $text (tg:message-text $message)
-                 (let $sender (tg:at $message "from")
-                   (let $sender-id (tg:str (tg:at $sender "id"))
-                     (if (and (not (== $text "")) (tg:local-control? $text $sender-id))
-                       (let $note (py-call (telegram.metta_slash_command (json-stringify $update) $mkind))
-                         (let $l (tg:log-update $update $mkind $message True False $note) (tg:acknowledge $task)))
-                       (if (py-call (telegram.metta_has_attachment (json-stringify $message)))
-                         (let $w (tg:wake-for $sender-id $chat-id $role)
-                           (let $l (tg:log-update $update $mkind $message True False "attachment_dispatched")
-                             (let $d (py-call (telegram.metta_attachment (json-stringify $update) $mkind $text))
-                               (tg:acknowledge $task))))
-                         (if (== $text "")
-                           (let $l (tg:log-update $update $mkind $message True False "no_text_or_caption") (tg:acknowledge $task))
-                           (let $l (tg:log-update $update $mkind $message True True "")
-                             (let $formatted (tg:format-message $update $mkind $message $text)
-                               (let $bot (tg:truthy (tg:at $sender "is_bot"))
-                                 (let $tier (tg:tier-for $sender-id)
-                                   (let $wake (tg:wake-reason-for $sender-id $role)
-                                     (let $added (tg:activity-add-kind (tg:count-kind $mkind $message $text) $task $chat-id $formatted $bot $tier (tg:str (tg:at $update "update_id")) $wake)
-                                       (let $notice (if (== $wake False) (tg:maybe-rest-notice $chat-id $sender-id) ())
-                                         (tg:publish-counts))))))))))))))))))))
+                 (let $sender-id (tg:str (tg:at (tg:at $message "from") "id"))
+                   (let $group (if (== (tg:str (tg:at $chat "type")) "private") "" $chat-id)
+                     (case (ap:decide telegram $sender-id $group (tg:addressed-to-me? $message $text) $role)
+                       (((AccessDecisionV1 record $note $reason $tier $provenance)
+                         (tg:intake-recorded $task $update $mkind $message $chat-id $text $sender-id
+                                             $note $reason $tier $provenance))
+                        ; Dropped: nothing of it enters her history or wakes her.
+                        ($dropped
+                         (let $l (tg:log-update $update $mkind $message False False "access_dropped")
+                           (tg:acknowledge $task))))))))))))))
 
-(= (tg:wake-reason-for $sender-id)
-   (if (tg:operator? $sender-id) "operator message"
-     (if (and (not (== $sender-id "")) (tg:wake-peer? $sender-id)) "peer message" False)))
+; A message the access policy records, with how it may wake her (NOTE and
+; REASON), her arming TIER for it ("" for its sender's own) and its sender's
+; PROVENANCE.
+(= (tg:intake-recorded $task $update $mkind $message $chat-id $text $sender-id $note $reason $tier $provenance)
+   (if (and (not (== $text "")) (tg:local-control? $text $sender-id))
+     (let $handled (py-call (telegram.metta_slash_command (json-stringify $update) $mkind))
+       (let $l (tg:log-update $update $mkind $message True False $handled) (tg:acknowledge $task)))
+     (let $arming (if (== $tier "") (tg:tier-for $sender-id) $tier)
+       (if (py-call (telegram.metta_has_attachment (json-stringify $message)))
+         (let $w (tg:wake-for-note $note $reason $chat-id $sender-id)
+           (let $l (tg:log-update $update $mkind $message True False "attachment_dispatched" $provenance)
+             (let $d (py-call (telegram.metta_attachment (json-stringify $update) $mkind $text $provenance $arming))
+               (tg:acknowledge $task))))
+         (if (== $text "")
+           (let $l (tg:log-update $update $mkind $message True False "no_text_or_caption") (tg:acknowledge $task))
+           (let $l (tg:log-update $update $mkind $message True True "" $provenance)
+             (let $formatted (tg:format-message $update $mkind $message $text $provenance)
+               (let $bot (tg:truthy (tg:at (tg:at $message "from") "is_bot"))
+                 (let $added (tg:activity-add-noted $note (tg:count-kind $mkind $message $text) $task $chat-id
+                                                    $formatted $bot $arming (tg:str (tg:at $update "update_id")) $reason)
+                   (let $notice (if (== $note sender-wake) () (tg:maybe-rest-notice $chat-id $sender-id))
+                     (tg:publish-counts)))))))))))
 
-; The service's peer declaration is authoritative. Legacy clients can still
-; configure wake senders through the environment.
-(= (tg:wake-reason-for $sender-id $role)
-   (if (== $role "wake-peer") "peer message" (tg:wake-reason-for $sender-id)))
-
-(= (tg:wake-for $sender-id $chat-id $role)
-   (let $wake (tg:wake-reason-for $sender-id $role)
-     (if (== $wake False) (tg:maybe-rest-notice $chat-id $sender-id) (tg:wake-request $wake))))
-
-(= (tg:wake-for $sender-id $chat-id)
-   (let $wake (tg:wake-reason-for $sender-id)
-     (if (== $wake False) (tg:maybe-rest-notice $chat-id $sender-id) (tg:wake-request $wake))))
+; A sender wake asks her to wake now; anything else may tell a resting
+; operator when she will.
+(= (tg:wake-for-note $note $reason $chat-id $sender-id)
+   (if (== $note sender-wake) (tg:wake-request $reason) (tg:maybe-rest-notice $chat-id $sender-id)))
 
 ;; Runtime events and finished attachments, queued by Python threads.
 (= (tg:drain-runtime-events)
@@ -1375,10 +1399,13 @@
                              (let $id (tg:str (tg:at $record "chat_id"))
                                (let $chat (if (not (== $title "")) $title (if (not (== $id "")) $id "?"))
                                  (let $message (tg:str (tg:at $record "message_id"))
-                                   (let $head (if (== $message "")
+                                   (let $base (if (== $message "")
                                                 (format-args "[{} {} {} chat={}" ($stamp $direction $who $chat))
                                                 (format-args "[{} {} {} chat={} message_id={}" ($stamp $direction $who $chat $message)))
-                                     ((format-args "{}]\n{}" ($head $cut)))))))))))))))))))))
+                                     (let $head (case (tg:field "provenance" (tg:str (tg:at $record "provenance")))
+                                                  ((() $base)
+                                                   (($label) (format-args "{} {}" ($base $label)))))
+                                       ((format-args "{}]\n{}" ($head $cut))))))))))))))))))))))
 
 ; From the newest back, as many as fit; the newest alone is cut to fit.
 (= (tg:choose-events $newest-first $limit $max $used $count $chosen)

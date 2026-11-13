@@ -45,4 +45,17 @@
 !(tg:activity-add-kind (tg:count-kind "message" (json-parse "{}") "@GodelTestBot what do you think?") "" "-100" "asked" False "light" "y2" False)
 !(assert (== (tg:quiet-batch?) False))
 !(tg:forget-items (tg:pending-items))
+; A silent message, which the access policy records without a wake, keeps
+; her waiting in any chat; a waking one beside it does not.
+!(tg:activity-add-noted silent "message" "" "42" "silent" False "full" "s1" "")
+!(assert (== (tg:quiet-batch?) True))
+!(assert (== (tg:full-wake-batch?) False))
+!(tg:activity-add-noted quiet "message" "" "42" "paced" False "full" "s2" "")
+!(assert (== (tg:quiet-batch?) False))
+!(tg:forget-items (tg:pending-items))
+!(tg:activity-add-noted silent "message" "" "-100" "silent" False "full" "s3" "")
+!(tg:activity-add-noted sender-wake "message" "" "-100" "operator" False "full" "s4" "operator message")
+!(assert (== (tg:quiet-batch?) False))
+!(assert (== (tg:full-wake-batch?) True))
+!(tg:forget-items (tg:pending-items))
 !(println! GROUP_WAKE_OK)

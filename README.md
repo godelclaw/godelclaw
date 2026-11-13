@@ -557,7 +557,11 @@ model list can be supplied through `ANTHROPIC_MODELS`.
 
 Telegram requires your own bot token and explicit operator/chat authorization.
 For its default private destination, configure
-`METTACLAW_TELEGRAM_PRIMARY_CHAT_ID`. The framework also has IRC and Mattermost
+`METTACLAW_TELEGRAM_PRIMARY_CHAT_ID`. Who else may reach the agent, and how
+each message may wake it, is the access policy's: the operators, allowed
+chats, wake peers and `telegram.allow_private` give its defaults, and an
+optional facts file, `METTACLAW_ACCESS_POLICY_PATH`, states the rest
+(see `config/access.metta.example`). The framework also has IRC and Mattermost
 adapters; the supplied Iter/Omega integration currently requires the independent
 durable Telegram services described below.
 

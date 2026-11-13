@@ -263,7 +263,7 @@ def _clock(epoch):
         return ""
 
 
-def _format_message(update, kind, message, text):
+def _format_message(update, kind, message, text, provenance=""):
     chat = message.get("chat") or {}
     sender = message.get("from") or {}
     sender_chat = message.get("sender_chat") or {}
@@ -283,6 +283,7 @@ def _format_message(update, kind, message, text):
         _field("from", _display_user(sender)),
         _field("from_id", sender.get("id")),
         _bool_field("from_is_bot", bool(sender.get("is_bot"))),
+        _field("provenance", provenance),
         _field("sender_chat", _display_chat(sender_chat)),
         _field("sender_chat_id", sender_chat.get("id")),
         _field("via_bot", _display_user(via_bot)),
@@ -387,7 +388,7 @@ def _download_attachment(message):
         return f"[attachment {label} — download failed: {type(exc).__name__}]"
 
 
-def _attachment_job(update, kind, message, base_text):
+def _attachment_job(update, kind, message, base_text, provenance="", tier=""):
     try:
         attachment_note = _download_attachment(message)
         text = (str(base_text) + "\n" if base_text else "") + str(
@@ -401,13 +402,13 @@ def _attachment_job(update, kind, message, base_text):
         with _msg_lock:
             _append_update_log(
                 update, kind, ready_message, True, True,
-                "attachment_ready"
+                "attachment_ready", provenance
             )
             _set_last(
                 chat.get("id", ""),
-                _format_message(update, kind, ready_message, text),
+                _format_message(update, kind, ready_message, text, provenance),
                 bool(sender.get("is_bot")),
-                _tier_for_sender(sender),
+                tier or _tier_for_sender(sender),
                 update_id=int(update["update_id"]),
             )
         _wake_for_operator_message(sender)
@@ -415,12 +416,12 @@ def _attachment_job(update, kind, message, base_text):
         print("[telegram] attachment worker error:", type(exc).__name__)
 
 
-def _enqueue_attachment(update, kind, message, base_text):
+def _enqueue_attachment(update, kind, message, base_text, provenance="", tier=""):
     # Each received file begins transport immediately. One slow Telegram file
     # must not consume another file's download opportunity.
     threading.Thread(
         target=_attachment_job,
-        args=(update, kind, message, base_text),
+        args=(update, kind, message, base_text, provenance, tier),
         name="telegram-attachment-download",
         daemon=True,
     ).start()
@@ -461,12 +462,13 @@ def _recover_pending_attachments(limit=100):
         _enqueue_attachment(
             update, kind, message,
             message.get("text") or message.get("caption") or "",
+            str(record.get("provenance") or ""),
         )
         recovered += 1
     return recovered
 
 
-def _append_update_log(update, kind, message, allowed, queued, note=""):
+def _append_update_log(update, kind, message, allowed, queued, note="", provenance=""):
     if not _log_path:
         return True
     chat = (message or {}).get("chat") or {}
@@ -491,6 +493,8 @@ def _append_update_log(update, kind, message, allowed, queued, note=""):
         "caption": caption if allowed else None,
         "raw": update if allowed else None,
     }
+    if provenance:
+        record["provenance"] = provenance
     try:
         parent = os.path.dirname(_log_path)
         if parent:
@@ -771,6 +775,9 @@ def conversation_window(max_chars=30000, max_events=48,
             header = "[%s %s %s chat=%s" % (stamp, direction, who, chat)
             if message_id is not None:
                 header += " message_id=%s" % message_id
+            label = _field("provenance", rec.get("provenance"))
+            if label:
+                header += " " + label
             rendered.append(header + "]\n" + text_value)
 
         chosen = []
@@ -1438,10 +1445,10 @@ def metta_has_attachment(message_json):
         return False
 
 
-def metta_attachment(update_json, kind, text):
+def metta_attachment(update_json, kind, text, provenance="", tier=""):
     update = json.loads(update_json)
     message = update.get(kind) or {}
-    _enqueue_attachment(update, kind, message, text or "")
+    _enqueue_attachment(update, kind, message, text or "", str(provenance or ""), str(tier or ""))
     return 1
 
 

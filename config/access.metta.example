@@ -1,0 +1,57 @@
+; The access policy's facts: who may reach the agent through its chat
+; channels, and how. Copy this file outside the checkout, beside the channel
+; environment, fill it in, and name it in METTACLAW_ACCESS_POLICY_PATH both
+; there and in config/secrets.env. It names people, so keep it private.
+;
+; The file holds facts only. Nothing in it is run: a line that is not one of
+; the facts below is refused with the reason, and the facts in force stay as
+; they were. Comments start with ; outside a string.
+;
+; Without this file the policy is the channel's own settings: for Telegram,
+; its operators are owners, its allowed private chats are listed senders, its
+; allowed groups are open, other groups are not heard, telegram.allow_private
+; opens direct messages, and operators and wake peers wake the agent at once.
+; Where this file states the same setting at the same layer, it wins; where it
+; states one twice, its last statement wins.
+
+; Owners may run privileged commands, and their messages are trusted.
+(owner (sender telegram "123456789"))
+
+; Allowlists: everywhere holds on every channel, (on CHANNEL) on that one.
+; A listed sender is trusted. Senders are (sender CHANNEL "ID") with CHANNEL
+; telegram, slack, signal, irc, mattermost or console.
+(allow-sender (on telegram) (sender telegram "234567890"))
+(allow-named-group everywhere (named-group "friends"))
+(group-member (named-group "friends") (sender telegram "345678901"))
+(group-member (named-group "friends") (sender slack "T0123:U0456"))
+
+; Layers, outermost first: generic, (channel C), (account C "NAME") and, for
+; a group message, (group C "ID"). Each states only what it changes, for
+; direct messages or groups.
+;
+; Access: allowlist (the default) applies the rules, open treats a stranger
+; as listed, disabled drops every message.
+(access (group telegram "-1001234567890") groups open)
+
+; Rules per class (owner, listed, stranger): visibility, record or drop, and
+; wake, wake-never, wake-on-mention or wake-always (a direct message counts as
+; a mention). A rule may also name a wake reason, which wakes the agent at
+; once with its whole banked budget, and an arming tier, full, mid or light:
+;   (rule record wake-always (reason "TEXT") (tier "mid"))
+; The defaults: owners and listed senders are recorded and wake the agent, in
+; a group a listed sender by a mention; strangers are dropped.
+;
+; A group whose every message is recorded, where only some wake the agent:
+(access (group telegram "-1009876543210") groups allowlist)
+(rule-for (group telegram "-1009876543210") groups stranger (rule record wake-never))
+(rule-for (group telegram "-1009876543210") groups listed (rule record wake-on-mention))
+
+; A named group may carry its own rule, which its members follow before the
+; class rules (an owner's rule still comes first). Named groups' rules hold
+; in order: an inner layer's first, and within a layer in the order written.
+(named-rule (group telegram "-1009876543210") groups (named-group "friends")
+  (rule record wake-always (reason "friend message") tier-default))
+
+; Messages a recorded sender who is not trusted sends carry a provenance
+; label, such as "untrusted stranger": something the agent reads with the
+; message, never a block.

@@ -251,7 +251,11 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
             import telegram as py
             with api.lock:
                 updates = [u for u in api.updates]
-            expected = "\n".join(py._format_message(u, "message", u["message"], u["message"]["text"]) for u in updates)
+            # The friend is not listed: the open group records the message
+            # with that sender's provenance, which the agent reads with it.
+            labels = {OPERATOR: "", FRIEND: "untrusted stranger"}
+            expected = "\n".join(py._format_message(u, "message", u["message"], u["message"]["text"],
+                                                     labels[u["message"]["from"]["id"]]) for u in updates)
             assert text == expected, ("format", text, expected)
             assert lines[-3:] == ["1", "10", "2"], lines[-6:]
             logged = [json.loads(line) for line in ledger.read_text().splitlines()]
@@ -267,6 +271,7 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
                             "from_id": str(update["message"]["from"]["id"]), "from_is_bot": False,
                             "text": update["message"]["text"], "caption": None, "raw": update, "note": ""}[field]
                     assert record[field] == want, (field, record[field], want)
+                assert record.get("provenance") == (labels[update["message"]["from"]["id"]] or None), record
             print("batch and ledger match the Python client")
 
             # 2. The turn was never acknowledged (the process ended): the next
