@@ -58,7 +58,7 @@
 (= (coding:plan $dir $args)
    (let* (($text (json-stringify $args))
           ($_ (fs:update-text (coding:file $dir "plan.json") "replace" $text "" ""))
-          ($_ (py-call (stream_sink.event "plan" "plan" $text)))) "Plan updated"))
+          ($_ (display:event "plan" "plan" $text))) "Plan updated"))
 (= (coding:tool $dir $workdir $name $args)
    (if (== $name "exec_command") (coding:exec-owned $dir $workdir $args)
     (if (== $name "exec_poll") (coding:poll $dir $args)
@@ -81,7 +81,7 @@
      (progn
        (if (== $name "apply_patch")
          (let $status (if (str:starts-with $output "Success.") "applied" "rejected")
-           (py-call (stream_sink.event "patch" $id $output $status "apply_patch"))) 1)
+           (display:event "patch" $id $output $status "apply_patch")) 1)
        (coding:record $dir (coding:tool-message $id $output)))))
 ; What a reply without text did, for the progress line, as Codex shows the
 ; commands it runs: the command, the patched files or the plan update.
@@ -216,7 +216,7 @@
           ($new (coding:drop $lines $position)))
      (if (== $new ()) (Folded $messages $position)
        (let* (($added (coding:record-all $dir (coding:steering $new $position ()) ()))
-              ($_ (py-call (stream_sink.event "steering" (repr $position) "Requester guidance applied" "applied"))))
+              ($_ (display:event "steering" (repr $position) "Requester guidance applied" "applied")))
          (Folded (coding:append-list $messages $added) (+ $position (length $new)))))))
 
 ; The compacted history keeps the instructions, the task and the requester's
@@ -249,13 +249,13 @@
                   (JsonPair "_coding_handoff" (JsonString (py-call (secrets.token_hex 8)))) $fields))))
            (coding:rewrite $dir (coding:append-list $head ($handoff))))))))
 (= (coding:compact $dir $messages $effort)
-   (let* (($_ (py-call (stream_sink.event "maintenance" "compaction" "Compacting task history" "running")))
+   (let* (($_ (display:event "maintenance" "compaction" "Compacting task history" "running"))
           ($ask (coding:append-list $messages ((coding:message "user" (fs:read-text "identity/coding-compact.md")))))
           ($reply (coding:ask $dir (coding:request $ask $effort ()) 0)))
      (let $result (case $reply
        (((CallFailed $why) (CompactionFailed $why))
         ($ok (coding:accept-summary $dir $messages $ok))))
-       (progn (py-call (stream_sink.event "maintenance" "compaction" "Task history compaction finished; transcript retains the outcome" "finished")) $result))))
+       (progn (display:event "maintenance" "compaction" "Task history compaction finished; transcript retains the outcome" "finished") $result))))
 
 (= (coding:proc-text $result)
    (case $result
@@ -298,7 +298,7 @@
                     $status $steps $text $inbox $delivery-id $text)))
      (if (== $wrote 0)
        (CodingAborted "superseded")
-       (let $_ (py-call (stream_sink.event "session.finished" "session" $text $status))
+       (let $_ (display:event "session.finished" "session" $text $status)
          (CodingFinished $status)))))
 (= (coding:fail $dir $workdir $reason $steps $inbox)
    (coding:finish $dir "failed" (coding:failure-handover $dir $workdir $reason) $steps $inbox))
@@ -339,7 +339,7 @@
 (= (coding:start $dir)
    (let* (($task-json (coding:json-file (coding:file $dir "task.json") (JsonObject ())))
           ($task (coding:text (coding:field $task-json "task")))
-          ($_ (py-call (stream_sink.event "session.open" "session" $task "running")))
+          ($_ (display:event "session.open" "session" $task "running"))
           ($given (coding:text (coding:field $task-json "workdir")))
           ($workdir (if (== $given "") $dir $given))
           ($chosen (coding:text (coding:field $task-json "effort")))

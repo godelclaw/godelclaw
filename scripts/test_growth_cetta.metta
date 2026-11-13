@@ -31,6 +31,7 @@
     (GrowthCheck "access-policy-decide" "tests/growth/access_policy_decide.metta" 200 (growth:linear))
     (GrowthCheck "turn-health" "tests/growth/turn_health.metta" 8000 (growth:linear))
     (GrowthCheck "input-notice-scan" "tests/growth/input_notice.metta" 250 (growth:linear))
+    (GrowthCheck "display-records" "tests/growth/display.metta" 500 (growth:linear))
     (SdkGrowthCheck "responses-encoder" "tests/growth/responses_encoder.metta" 100 (growth:linear))))
 ; Mutants the gate must reject, run whenever no single check is selected.
 (= (growth:mutants)

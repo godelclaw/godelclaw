@@ -201,20 +201,6 @@ def event(kind, item="", text="", status="", name="", attempt=""):
     return emit(value)
 
 
-def tool_finished(identity, state, code, artifact):
-    try:
-        with open(str(artifact), "rb") as source:
-            source.seek(0, 2)
-            size = source.tell()
-            source.seek(max(0, size - 12000))
-            tail = source.read(12000).decode("utf-8", "replace")
-    except OSError:
-        tail = "Output artifact unavailable."
-    epoch = _item_epochs.pop(str(identity), control(os.environ.get("METTACLAW_STREAM_DIR", ""))[1])
-    return emit(dict(kind="tool.finished", item=str(identity), source="executor", epoch=epoch,
-        status=str(state), exit_code=int(code), artifact=str(artifact), text=tail))
-
-
 def begin(plan):
     if not configured():
         plan.display_enabled = False

@@ -24,7 +24,11 @@
     ("tests/unit/activity_source.metta" "UNIT_ACTIVITY_SOURCE_LEDGER_OK")
     ("tests/unit/native_transport.metta" "UNIT_NATIVE_TRANSPORT_OK")
     ("tests/unit/runtime_events.metta" "UNIT_RUNTIME_EVENTS_OK")
-    ("tests/unit/input_notice.metta" "UNIT_INPUT_NOTICE_OK" (("METTACLAW_INSTANCE" "unit")))))
+    ("tests/unit/input_notice.metta" "UNIT_INPUT_NOTICE_OK" (("METTACLAW_INSTANCE" "unit")))
+    ("tests/unit/display.metta" "UNIT_DISPLAY_OK"
+     (("METTACLAW_STREAM_DIR" "{home}/display") ("METTACLAW_INSTANCE" "unit")
+      ("METTACLAW_ACTIVITY_CALL_SCOPE" "coding a/b") ("METTACLAW_STREAM_PARENT" "parent-1")))
+    ("tests/unit/display.metta" "UNIT_DISPLAY_OFF_OK")))
 
 (= (units:env $directory)
    (let $base (nt:environment $directory)
@@ -35,6 +39,12 @@
         ("METTACLAW_HISTORY_PATH" (nt:join $directory "journal/history.metta"))
         ("NATIVE_TEST_CORE" (nt:required-env "NATIVE_TEST_CORE")))
        $base)))
+; A setting may name a path in the unit's own scratch directory as "{home}/...".
+(= (units:homed $settings $directory)
+   (map-atom $settings $setting
+     (let ($name $value) $setting
+       ($name (if (str:starts-with $value "{home}/")
+                (nt:join $directory (str:byte-slice $value 7 (str:byte-length $value))) $value)))))
 (= (preq-free:append $front $back)
    (if (== $front ()) $back (cons-atom (car-atom $front) (preq-free:append (cdr-atom $front) $back))))
 
@@ -44,7 +54,7 @@
    (let* (($directory (nt:join $artifacts (str:concat "unit-" (system:uuid4-hex))))
           ($_ (fs:make-directories $directory 448))
           ($output (nt:exit-ok (proc:run ($engine "--lang" "petta" "--profile" "extended" "--import-mode" "ancestor-walk" "--quiet" $file)
-                                         $root (preq-free:append $extra (units:env $directory)) 120000 1048576)))
+                                         $root (preq-free:append (units:homed $extra $directory) (units:env $directory)) 120000 1048576)))
           ($_ (nt:require unit-marker (nt:contains $output $marker)))
           ($_ (println! (UNIT_PASSED $file)))) 1))
 
