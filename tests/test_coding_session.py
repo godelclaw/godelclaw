@@ -997,8 +997,8 @@ class CodingSessionTests(unittest.TestCase):
         self.assertNotIn("METTACLAW_LLM_LEDGER_PATH", own)
         self.assertEqual((own["METTACLAW_ACTIVITY_CALL_SCOPE"], own["METTACLAW_ACTIVITY_CALL_LANE"]),
                          (identity, "background"))
-        self.assertNotIn("METTACLAW_ACTIVITY_CALL_CAPACITY", own)
-        self.assertNotIn("METTACLAW_ACTIVITY_INTERACTIVE_RESERVE", own)
+        # The launch sets no admission of its own: the scope inherits the parent's.
+        self.assertEqual((own["METTACLAW_ACTIVITY_CALL_CAPACITY"], own["METTACLAW_ACTIVITY_INTERACTIVE_RESERVE"]), ("2", "1"))
         self.env.update(own)
         observed = {}
         with mock.patch.object(sys, "path", [str(ROOT / "src")] + sys.path), mock.patch.dict(os.environ, self.env, clear=True):

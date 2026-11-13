@@ -706,8 +706,8 @@ def scope(name, lane):
         fixture = self.directory / "diagnostic_fixture.py"
         fixture.write_text('from types import SimpleNamespace\nimport native_llm_host\n'
             'def probe():\n'
-            '    native_llm_host._record_failure(SimpleNamespace(provider="fixture-secret", '
-            'sent=False), "fixture-secret https://private.invalid", 0)\n'
+            '    native_llm_host._record_failure(SimpleNamespace(provider="fixture-secret"), '
+            '"fixture-secret https://private.invalid", 0, False, 0, 0)\n'
             '    return True\n')
         self.run_guest(f'!(import! &self "{fixture}")\n!(py-call (diagnostic_fixture.probe))\n')
         self.assertIn("failed request: provider-error; provider=unknown", self.last_stderr)
@@ -717,8 +717,8 @@ def scope(name, lane):
         fixture = self.directory / "kimi_diagnostic_fixture.py"
         fixture.write_text('from types import SimpleNamespace\nimport native_llm_host\n'
             'def probe():\n'
-            '    native_llm_host._record_failure(SimpleNamespace(provider="kimi", '
-            'sent=True), "transport-error", 0)\n'
+            '    native_llm_host._record_failure(SimpleNamespace(provider="kimi"), '
+            '"transport-error", 0, True, 0, 0)\n'
             '    return True\n')
         self.run_guest(f'!(import! &self "{fixture}")\n!(py-call (kimi_diagnostic_fixture.probe))\n')
         self.assertIn("failed request: transport-error; provider=kimi", self.last_stderr)
