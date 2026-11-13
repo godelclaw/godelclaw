@@ -827,6 +827,54 @@
         "The value route and byte fragments need the next engine roll; on 2eefbdff requests take the text route",
         "No paid live canary or 24-hour soak claimed"
       ]
+    },
+    {
+      "id": "engine-roll-dc2b3bcb",
+      "status": "qualified-and-deployed",
+      "runtime_commit": "18c520ed8",
+      "engine_commit": "dc2b3bcb75e48d9b23179e43be2bdd3430e46284",
+      "previous_engine_commit": "2eefbdff7af5020c9a6283bcb3908be3e78c9273",
+      "release": "74cc09e69c0b2bf109dbbbbbeac0c11b26faf5710d03776d8fb39e47e8f2728e",
+      "gateway_release": "74cc09e69c0b2bf109dbbbbbeac0c11b26faf5710d03776d8fb39e47e8f2728e",
+      "engine_changes": [
+        "Python is finalized at exit, so atexit handlers and buffered output are no longer dropped",
+        "conversation encoders run in linear time and a failed list rest is the list failure",
+        "value-route codec entries and HTTP bodies streamed from shared fragments",
+        "malformed UTF-8 decodes with replacement",
+        "the Telegram service takes an opt-in --allow-private",
+        "upstream prime-weights line, with its registry-revision and prepared-pure refusal regressions fixed"
+      ],
+      "census_definition": "counts program work only and stops at the first entry into threading._shutdown; other entries are now 0 / 0 / 0 / 2 / 0",
+      "checks": {
+        "cetta_make_test": "651 pass / 0 fail / 82 skip",
+        "prime_normal_gate": "8 / 0",
+        "http_worker_sanitizers": "ASan and UBSan clean, leak detection on",
+        "native_suites_passed": "23 of 24 (the snapshot suite needs the deployment plan)",
+        "python_entry_census": "52 / 48 / 2 / 76 / 14 on both engines",
+        "paired_benchmark_vs_live_engine": {
+          "pairs_per_workload": 21,
+          "median_change_percent": {
+            "small": 2.4,
+            "large_1mib": 0.6,
+            "many_blocks_1mib": -0.6
+          },
+          "p95_change_percent": {
+            "small": 1.9,
+            "large_1mib": 1.4,
+            "many_blocks_1mib": -0.5
+          },
+          "peak_rss_change_percent": {
+            "small": 0.8,
+            "large_1mib": -2.3,
+            "many_blocks_1mib": -1.5
+          }
+        },
+        "paired_installed_verification": true
+      },
+      "limits": [
+        "Exit now waits for non-daemon Python threads; a stuck thread would delay it",
+        "No paid live canary or 24-hour soak claimed"
+      ]
     }
   ],
   "tuning_debt": [
