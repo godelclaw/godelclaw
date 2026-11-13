@@ -222,10 +222,14 @@
           ($_ (nt:require owner-contract-finished (nt:contains $output "NATIVE_OWNER_CONTRACTS_OK")))
           ($_ (nt:require binding-is-not-dispatch (nt:equal (nq:posts $world) 0)))
           ($_ (nq:close $world))) 13))
+; The reply comes 2 s after the request, so the 150 ms soft wait must return
+; the call still pending. A wait that wakes after the reply has arrived returns
+; the reply, so the delay bounds how long a loaded host may stall the guest
+; between its submission and its wait without failing the check.
 (: nq:soft-wait (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (nq:soft-wait $root $sdk $core $artifacts $fixture)
    (let* (($world (nq:world $root $sdk $core $artifacts $fixture "soft-wait"))
-          ($_ (fs:write (nq:path $world "delay-ms") "400"))
+          ($_ (fs:write (nq:path $world "delay-ms") "2000"))
           ($forms "!(let* (($plan (pcall:command-plan \"fixture-model\" 42 \"low\" \"input\")) ($first (llm:begin $plan)) ($soft (llm:wait-once $plan $first 150)) ($_ (nt:require soft-wait-preserves-owned-call (nt:equal $first $soft))) ($answer (llm:after-submit $plan $soft)) ($_ (nt:require final-after-soft-wait (nt:equal $answer \"(nop)\")))) (println! NATIVE_SOFT_WAIT_OK))")
           ($output (nq:output (nq:guest $world "fixture-model" "petta" $forms ())))
           ($_ (nt:require soft-wait-finished (nt:contains $output "NATIVE_SOFT_WAIT_OK")))
