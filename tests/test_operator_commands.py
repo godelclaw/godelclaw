@@ -58,12 +58,21 @@ class CommandNameTest(unittest.TestCase):
             self.assertEqual(declared_names(path.read_text(encoding="utf-8")), ["Gödel"])
 
 
+def fake_service(directory, private):
+    """A service binary whose usage does, or does not, offer --allow-private."""
+    path = pathlib.Path(directory) / ("service-%s" % ("private" if private else "listed"))
+    usage = "Usage: cetta-telegram-service (--check | --run)%s" % (" [--allow-private]" if private else "")
+    path.write_text("#!/bin/sh\necho '%s'\n" % usage)
+    path.chmod(0o755)
+    return str(path)
+
+
 class LauncherAccessTest(unittest.TestCase):
     """telegram.allow_private and the access policy's facts file reach the service."""
 
-    def argv(self, extra, repo=ROOT):
+    def argv(self, extra, repo=ROOT, private_capable=True):
         with tempfile.TemporaryDirectory() as directory:
-            env = {"CETTA_TELEGRAM_SERVICE_BIN": "/bin/true",
+            env = {"CETTA_TELEGRAM_SERVICE_BIN": fake_service(directory, private_capable),
                    "CETTA_TELEGRAM_SERVICE_ROOT": os.environ.get("CETTA_ROOT", "/"),
                    "METTACLAW_TELEGRAM_PRIMARY_CHAT_ID": "42", "METTACLAW_TELEGRAM_OPERATOR_IDS": "7"}
             env.update(extra)
@@ -78,6 +87,27 @@ class LauncherAccessTest(unittest.TestCase):
         self.assertNotIn("--allow-private", self.argv({"METTACLAW_TELEGRAM_ALLOW_PRIVATE": "0"}))
         self.assertIn("--allow-private", self.argv({"METTACLAW_TELEGRAM_ALLOW_PRIVATE": "1"}))
         self.assertIn("--allow-private", self.argv({"METTACLAW_TELEGRAM_ALLOW_PRIVATE": "true"}))
+
+    def test_a_service_without_the_flag_keeps_the_listed_chats(self):
+        with mock.patch("sys.stderr") as stderr:
+            argv = self.argv({"METTACLAW_TELEGRAM_ALLOW_PRIVATE": "1"}, private_capable=False)
+        self.assertNotIn("--allow-private", argv)
+        self.assertIn("cannot admit every private chat", "".join(c.args[0] for c in stderr.write.call_args_list))
+        self.assertEqual({argv[i + 1] for i, a in enumerate(argv) if a == "--chat"}, {"42"})
+
+    def test_capability_is_read_from_the_service_itself(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertTrue(launcher.service_admits_private(fake_service(directory, True)))
+            self.assertFalse(launcher.service_admits_private(fake_service(directory, False)))
+            self.assertFalse(launcher.service_admits_private(pathlib.Path(directory) / "absent"))
+
+    @unittest.skipUnless(os.environ.get("CETTA_ROOT"), "set CETTA_ROOT to an engine bundle")
+    def test_the_installed_service_is_asked(self):
+        # The bundle under test may predate --allow-private (2eefbdff does);
+        # whatever it is, its own usage decides, and a fresh build offers it.
+        service = pathlib.Path(os.environ["CETTA_ROOT"]) / "cetta-telegram-service"
+        usage = __import__("subprocess").run([str(service), "--help"], capture_output=True, text=True).stdout
+        self.assertEqual(launcher.service_admits_private(service), "--allow-private" in usage)
 
     def test_the_instance_setting_is_read_from_its_rendered_environment(self):
         with tempfile.TemporaryDirectory() as directory:

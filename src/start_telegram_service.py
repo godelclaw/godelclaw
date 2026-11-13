@@ -95,6 +95,16 @@ def allow_private(repo):
     return _truthy(value)
 
 
+def service_admits_private(binary):
+    """Whether this service binary takes --allow-private, as its own usage
+    says. One that does not would refuse the flag and never start."""
+    try:
+        result = subprocess.run([str(binary), "--help"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return "--allow-private" in result.stdout + result.stderr
+
+
 def policy_admission(repo, root, private):
     """What the access policy's facts file adds to the chats this service
     admits, as the policy itself computes it; None without a facts file."""
@@ -134,6 +144,12 @@ def command(repo, state, credential):
                   "the groups it names", file=sys.stderr, flush=True)
     if not chats or 0 in chats or not operators or min(operators) <= 0 or len(chats) > 128 or len(operators) > 16:
         raise ValueError("invalid channel allowlist")
+    if private and not service_admits_private(binary):
+        # Turned on before the service can do it: keep the channel up on its
+        # listed chats rather than start a service that refuses the flag.
+        print("telegram.allow_private is on, but this channel service cannot admit every private chat; "
+              "it keeps to the listed chats", file=sys.stderr, flush=True)
+        private = False
     argv = [binary, "--run", "--root", root, "--state-dir", str(state),
             "--worker", os.environ.get("METTACLAW_INSTANCE", "agent"), "--program", "channel",
             "--listener-fd", "3", "--operator-fd", "4", "--credential-file", str(credential),
