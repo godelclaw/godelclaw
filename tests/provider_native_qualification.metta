@@ -249,11 +249,29 @@
           ($_ (fs:write (nq:path $world "response.body")
              "data: {\"id\":\"fixture\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"(nop)\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":2}}\n\ndata: [DONE]\n\n"))
           ($forms "!(nt:require streamed-provider-answer (nt:equal (llm:command \"fixture-model\" 42 \"low\" \"input\") \"(nop)\"))\n!(println! NATIVE_STREAM_OK)")
-          ($output (nq:output (nq:guest $world "fixture-model" "petta" $forms (("METTACLAW_LLM_STREAM" "1")))))
+          ($output (nq:output (nq:guest $world "fixture-model" "petta" $forms
+                     (("METTACLAW_LLM_STREAM" "1") ("METTACLAW_STREAM_DIR" (nq:path $world "display"))))))
           ($_ (nt:require stream-finished (nt:contains $output "NATIVE_STREAM_OK")))
           ($_ (nt:require stream-one-request (nt:equal (nq:posts $world) 1)))
           ($_ (nt:require streaming-request-flag (nt:equal (preq:field (nq:request-body $world) "stream") (JsonBool True))))
-          ($_ (nq:close $world))) 4))
+          ; A streamed call on the wire shows its model; its end is completed.
+          ($_ (nt:require stream-shows-its-model (nt:contains (nq:display $world) "\"model\":\"fixture-model\"")))
+          ($_ (nt:require stream-shown-completed (nt:contains (nq:display $world) "\"status\":\"completed\"")))
+          ($_ (nq:close $world))) 6))
+; A command output the commentary contract rejects (here unfinished: cut at
+; its length, without the tool call) ends its shown attempt as rejected.
+(: nq:rejected-output (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
+(= (nq:rejected-output $root $sdk $core $artifacts $fixture)
+   (let* (($world (nq:world $root $sdk $core $artifacts $fixture "rejected-output"))
+          ($_ (fs:write (nq:path $world "response.body")
+             "{\"id\":\"fixture\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"(nop)\"},\"finish_reason\":\"length\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":2}}"))
+          ($forms "!(let $answer (llm:command \"fixture-model\" 42 \"low\" \"input\") (println! NATIVE_REJECTED_OUTPUT_OK))")
+          ($output (nq:output (nq:guest $world "fixture-model" "petta" $forms
+                     (("METTACLAW_MODEL_COMMENTARY" "1") ("METTACLAW_STREAM_DIR" (nq:path $world "display"))))))
+          ($_ (nt:require rejected-output-finished (nt:contains $output "NATIVE_REJECTED_OUTPUT_OK")))
+          ($_ (nt:require rejected-output-one-request (nt:equal (nq:posts $world) 1)))
+          ($_ (nt:require rejected-output-shown-rejected (nt:contains (nq:display $world) "\"reason\":\"rejected\"")))
+          ($_ (nq:close $world))) 3))
 (: nq:failed-response (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (nq:failed-response $root $sdk $core $artifacts $fixture $name $disconnect)
    (let* (($world (nq:world $root $sdk $core $artifacts $fixture $name))
