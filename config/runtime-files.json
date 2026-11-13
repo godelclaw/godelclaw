@@ -308,6 +308,8 @@
   "src/small_views_unicode.metta",
   "src/start_telegram_service.py",
   "scripts/telegram_admission.metta",
+  "scripts/telegram_journal_retention.metta",
+  "scripts/telegram_journal_retention_main.metta",
   "src/state_cetta.metta",
   "src/state_io.metta",
   "src/state_ledger.metta",
