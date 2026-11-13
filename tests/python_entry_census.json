@@ -26,7 +26,7 @@
     [
       "tests/provider_command_census_probe.metta",
       "CENSUS_PROVIDER_OK",
-      11,
+      7,
       "world",
       {
         "METTACLAW_MODEL_COMMENTARY": "1",

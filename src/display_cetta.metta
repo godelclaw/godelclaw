@@ -14,7 +14,9 @@
 ; - Records are appended as they come, without the Python writer's queue and
 ;   thread: nothing is dropped for want of room, so no record carries a gap.
 ;
-; Entries: display:emit, display:event, display:tool-finished.
+; Entries: display:emit, display:event and display:tool-finished for the
+; executor; display:call-begin, -wire, -readable?, -offset, -advance,
+; -projected, -unavailable and -final for a provider call.
 !(import! &self (library json))
 !(import! &self (library str))
 !(import! &self (library re))
@@ -139,8 +141,8 @@
 ; Python's str() of a value that is not text.
 (= (display:text $value) (if (== (get-type $value) String) $value (repr $value)))
 
-; stream_sink.event: an executor's record of a tool, a plan, a patch, the
-; steering, maintenance or the session. A dispatch or a start names the
+; An executor's record of a tool, a plan, a patch, the steering, maintenance
+; or the session. A dispatch or a start names the
 ; command, which the record carries instead of text.
 (= (display:event $kind $item $text) (display:event $kind $item $text "" ""))
 (= (display:event $kind $item $text $status) (display:event $kind $item $text $status ""))
@@ -158,8 +160,7 @@
           (if $command (JsonPair "command" (JsonString (display:text $text))) ())
           (if (== $epoch none) () (JsonPair "epoch" (JsonString $epoch))))))))
 
-; stream_sink.tool_finished: the tool's end, with the last 12000 bytes of its
-; output artifact.
+; A tool's end, with the last 12000 bytes of its output artifact.
 (= (display:tool-finished $item $state $code $artifact)
    (if (not (display:configured?)) 0
      (let* (($epoch (display:release-epoch $item))
@@ -170,3 +171,205 @@
           (JsonPair "source" (JsonString "executor")) (JsonPair "epoch" (JsonString $epoch))
           (JsonPair "status" (JsonString $state)) (JsonPair "exit_code" (JsonNumber (repr $code)))
           (JsonPair "artifact" (JsonString $artifact)) (JsonPair "text" (JsonString $tail)))))))
+
+;; ------------------------------------------------------------ provider calls
+
+; A provider call's display, kept from its claim to its end under its attempt
+; (the owner's correlation): the epoch it began in, the bytes of its body
+; observed, whether observation stopped, and whether it is a compaction,
+; which is maintenance: nothing of it is readable.
+!(bind! &display-calls (new-space))
+(= (display:call $attempt)
+   (case (collapse (match &display-calls (DisplayCallV1 $attempt $epoch $offset $stopped $compaction)
+                     ($epoch $offset $stopped $compaction)))
+     ((() none) ($calls (car-atom $calls)))))
+(= (display:call-keep $attempt $epoch $offset $stopped $compaction)
+   (let $_ (display:call-drop $attempt)
+     (add-atom &display-calls (DisplayCallV1 $attempt $epoch $offset $stopped $compaction))))
+(= (display:call-drop $attempt)
+   (case (display:call $attempt)
+     ((none ())
+      (($epoch $offset $stopped $compaction)
+       (remove-atom &display-calls (DisplayCallV1 $attempt $epoch $offset $stopped $compaction))))))
+
+; A claimed call opens its attempt, a compaction its maintenance record.
+(= (display:call-begin $attempt $compaction $provider $purpose)
+   (if (not (display:configured?)) 0
+     (let* (($epoch (display:current-epoch))
+            ($kept (display:call-keep $attempt $epoch 0 False $compaction)))
+       (display:emit
+         (if $compaction
+           ((JsonPair "kind" (JsonString "maintenance")) (JsonPair "attempt" (JsonString $attempt))
+            (JsonPair "item" (JsonString $attempt)) (JsonPair "text" (JsonString "Compacting task history"))
+            (JsonPair "status" (JsonString "running")))
+           ((JsonPair "kind" (JsonString "attempt.open")) (JsonPair "attempt" (JsonString $attempt))
+            (JsonPair "item" (JsonString $attempt)) (JsonPair "purpose" (JsonString $purpose))
+            (JsonPair "provider" (JsonString $provider)) (JsonPair "model" (JsonString ""))
+            (JsonPair "epoch" (JsonString $epoch)) (JsonPair "status" (JsonString "awaiting"))))))))
+
+; A streamed call on the wire shows its model.
+(= (display:call-wire $attempt $provider $model)
+   (case (display:call $attempt)
+     ((none 0)
+      (($epoch $offset $stopped $compaction)
+       (display:emit ((JsonPair "kind" (JsonString "attempt.open")) (JsonPair "attempt" (JsonString $attempt))
+                      (JsonPair "item" (JsonString $attempt)) (JsonPair "model" (JsonString $model))
+                      (JsonPair "provider" (JsonString $provider)) (JsonPair "status" (JsonString "awaiting"))
+                      (JsonPair "epoch" (JsonString $epoch))))))))
+
+; Whether the call's streamed text is shown: it began, is no compaction, its
+; observation has not stopped, and the console still shows its epoch.
+(= (display:call-readable? $attempt)
+   (case (display:call $attempt)
+     ((none False)
+      (($epoch $offset $stopped $compaction)
+       (and (not $stopped) (and (not $compaction) (== (display:control (display:root)) (True $epoch))))))))
+(= (display:call-offset $attempt)
+   (case (display:call $attempt) ((none 0) (($epoch $offset $stopped $compaction) $offset))))
+; The body was read on to $next: it must continue where the last read ended.
+(= (display:call-advance $attempt $next $text)
+   (case (display:call $attempt)
+     ((none 0)
+      (($epoch $offset $stopped $compaction)
+       (let $expected (+ $offset (str:byte-length $text))
+         (if (== $next $expected)
+           (let $kept (display:call-keep $attempt $epoch $expected $stopped $compaction) 1)
+           (let $gap (display:call-unavailable $attempt "incremental observation unavailable") 0)))))))
+; One projected value of the provider's stream: readable text of the
+; commentary or the reasoning summary, under a named item.
+(= (display:call-projected $attempt $value)
+   (if (not (display:call-readable? $attempt)) 0
+     (case $value
+       (((JsonObject $pairs)
+         (case ((display:last $pairs "channel" JsonNull) (display:last $pairs "item" JsonNull))
+           (((JsonNull (JsonString $item)) (display:call-shown $attempt $pairs $item))
+            (((JsonString "commentary") (JsonString $item)) (display:call-shown $attempt $pairs $item))
+            (((JsonString "reasoning-summary") (JsonString $item)) (display:call-shown $attempt $pairs $item))
+            ((JsonNull $item) (display:call-unavailable $attempt "incremental observation unavailable"))
+            (((JsonString "commentary") $item) (display:call-unavailable $attempt "incremental observation unavailable"))
+            (((JsonString "reasoning-summary") $item) (display:call-unavailable $attempt "incremental observation unavailable"))
+            ($other 0))))
+        ($other (display:call-unavailable $attempt "incremental observation unavailable"))))))
+(= (display:call-shown $attempt $pairs $item)
+   (if (== $item "") (display:call-unavailable $attempt "incremental observation unavailable")
+     (case (display:call $attempt)
+       ((none 0)
+        (($epoch $offset $stopped $compaction)
+         (display:emit (display:append $pairs ((JsonPair "attempt" (JsonString $attempt))
+                                               (JsonPair "source" (JsonString "provider"))
+                                               (JsonPair "epoch" (JsonString $epoch))))))))))
+; Observation stops at its first gap, which the display shows once.
+(= (display:call-unavailable $attempt $why)
+   (case (display:call $attempt)
+     ((none 0)
+      (($epoch $offset $stopped $compaction)
+       (if $stopped 0
+         (let $kept (display:call-keep $attempt $epoch $offset True $compaction)
+           (display:emit ((JsonPair "kind" (JsonString "gap")) (JsonPair "attempt" (JsonString $attempt))
+                          (JsonPair "text" (JsonString $why)) (JsonPair "source" (JsonString "observer"))
+                          (JsonPair "epoch" (JsonString $epoch))))))))))
+
+; The call's end, once. A compaction closes its maintenance
+; record; another call, while the console shows its epoch, reconciles the
+; answer and the reasoning summaries of $message (none for a failure) and
+; ends the attempt, completed for "stop" or "tool_calls", else interrupted.
+(= (display:call-final $attempt $message $reason)
+   (case (display:call $attempt)
+     ((none 0)
+      (($epoch $offset $stopped $compaction)
+       (let $dropped (display:call-drop $attempt)
+         (if $compaction
+           (display:emit ((JsonPair "kind" (JsonString "maintenance")) (JsonPair "attempt" (JsonString $attempt))
+                          (JsonPair "item" (JsonString $attempt)) (JsonPair "text" (JsonString "Task history compaction"))
+                          (JsonPair "status" (JsonString $reason))))
+           (if (not (== (display:control (display:root)) (True $epoch))) 0
+             (display:call-texts $attempt $epoch $message $reason))))))))
+; Each case is a function of its own: a case's catch-all variable belongs to
+; the whole body it is written in, so a second case in the same body would
+; find it bound by the first.
+(= (display:call-texts $attempt $epoch $message $reason)
+   (let* (($pairs (display:pairs-of $message))
+          ($answer (display:answer $attempt $epoch (display:last $pairs "content" JsonNull)))
+          ($blocks (display:items-of (display:last $pairs "reasoning_details" JsonNull)))
+          ($texts (display:join $answer (display:blocks $attempt $epoch $blocks 0)))
+          ($completed (or (== $reason "stop") (== $reason "tool_calls"))))
+     (display:emit ((JsonPair "kind" (JsonString "attempt.finished")) (JsonPair "attempt" (JsonString $attempt))
+                    (JsonPair "status" (JsonString (if $completed "completed" "interrupted")))
+                    (JsonPair "reason" (JsonString $reason)) (JsonPair "source" (JsonString "terminal"))
+                    (JsonPair "epoch" (JsonString $epoch))
+                    (JsonPair "texts" (if $completed (JsonArray $texts) JsonNull))))))
+(= (display:pairs-of $value) (case $value (((JsonObject $pairs) $pairs) ($other ()))))
+(= (display:items-of $value) (case $value (((JsonArray $items) $items) ($other ()))))
+; The answer's text: its reconciled record, and its entry of the final texts.
+(= (display:answer $attempt $epoch $content)
+   (case $content
+     (((JsonString $text)
+       (let $reconciled
+            (display:emit ((JsonPair "kind" (JsonString "text.reconcile")) (JsonPair "attempt" (JsonString $attempt))
+                           (JsonPair "item" (JsonString "answer")) (JsonPair "channel" (JsonString "commentary"))
+                           (JsonPair "text" (JsonString $text)) (JsonPair "source" (JsonString "terminal"))
+                           (JsonPair "epoch" (JsonString $epoch))))
+         ((JsonObject ((JsonPair "item" (JsonString "answer")) (JsonPair "channel" (JsonString "commentary"))
+                       (JsonPair "text" (JsonString $text)))))))
+      ($other ()))))
+(= (display:join $front $back)
+   (if (== $front ()) $back (cons-atom (car-atom $front) (display:join (cdr-atom $front) $back))))
+; The readable reasoning of the message's blocks: a reasoning block's summary
+; texts, a thinking block's text. Signatures and encrypted content stay out.
+(= (display:blocks $attempt $epoch $blocks $index)
+   (if (== $blocks ()) ()
+     (display:join (display:block $attempt $epoch (car-atom $blocks) $index)
+                   (display:blocks $attempt $epoch (cdr-atom $blocks) (+ $index 1)))))
+(= (display:block $attempt $epoch $block $index)
+   (case $block
+     (((JsonObject $pairs)
+       (case (display:last $pairs "type" JsonNull)
+         (((JsonString "reasoning")
+           (display:summaries $attempt $epoch (display:block-item $pairs $index)
+             (display:items-of (display:last $pairs "summary" JsonNull)) 0))
+          ((JsonString "thinking")
+           (case (display:last $pairs "thinking" JsonNull)
+             (((JsonString $text) (display:snapshot $attempt $epoch (repr $index) $index $text))
+              ($other ()))))
+          ($other ()))))
+      ($other ()))))
+; A reasoning block's item: its id, or "reasoning-<index>" without one.
+(= (display:block-item $pairs $index)
+   (case (display:last $pairs "id" JsonNull)
+     (((JsonString "") (str:concat "reasoning-" (repr $index))) ((JsonString $id) $id)
+      ($other (str:concat "reasoning-" (repr $index))))))
+(= (display:summaries $attempt $epoch $item $summaries $part)
+   (if (== $summaries ()) ()
+     (display:join
+       (case (car-atom $summaries)
+         (((JsonObject $pairs)
+           (if (== (display:last $pairs "type" JsonNull) (JsonString "summary_text"))
+             (display:snapshot $attempt $epoch $item $part
+               (case (display:last $pairs "text" (JsonString "")) (((JsonString $text) $text) ($other ""))))
+             ()))
+          ($other ())))
+       (display:summaries $attempt $epoch $item (cdr-atom $summaries) (+ $part 1)))))
+; One reasoning text: its snapshot record, and its entry of the final texts.
+(= (display:snapshot $attempt $epoch $item $part $text)
+   (let $shown (display:emit ((JsonPair "kind" (JsonString "text.snapshot")) (JsonPair "attempt" (JsonString $attempt))
+                              (JsonPair "item" (JsonString $item)) (JsonPair "part" (JsonNumber (repr $part)))
+                              (JsonPair "channel" (JsonString "reasoning-summary")) (JsonPair "text" (JsonString $text))
+                              (JsonPair "source" (JsonString "terminal")) (JsonPair "epoch" (JsonString $epoch))))
+     ((JsonObject ((JsonPair "item" (JsonString $item)) (JsonPair "part" (JsonNumber (repr $part)))
+                   (JsonPair "channel" (JsonString "reasoning-summary")) (JsonPair "text" (JsonString $text)))))))
+
+; The message and finish reason of an encoded chat-completions result.
+(= (display:result-choice $encoded)
+   (case (catch (json-parse $encoded))
+     (((JsonObject $pairs)
+       (case (display:last $pairs "choices" JsonNull)
+         (((JsonArray $choices) (if (== $choices ()) none (car-atom $choices))) ($other none))))
+      ($other none))))
+(= (display:result-message $encoded)
+   (case (display:result-choice $encoded)
+     (((JsonObject $pairs) (display:last $pairs "message" none)) ($other none))))
+(= (display:result-reason $encoded)
+   (case (display:result-choice $encoded)
+     (((JsonObject $pairs)
+       (case (display:last $pairs "finish_reason" JsonNull) (((JsonString $reason) $reason) ($other "unknown"))))
+      ($other "unknown"))))

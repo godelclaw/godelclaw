@@ -27,6 +27,7 @@
 (= (dt:digits? $value)
    (case $value (((JsonString $text) (and (> (str:byte-length $text) 0) (str:is-all-in digit $text))) ($other False))))
 (= (dt:string $value) (JsonString $value))
+(= (dt:after $count $list) (if (<= $count 0) $list (dt:after (- $count 1) (cdr-atom $list))))
 (= (dt:range $from $to) (if (>= $from $to) () (cons-atom $from (dt:range (+ $from 1) $to))))
 
 !(if (not (display:configured?))
@@ -51,7 +52,7 @@
                (let ($producer $start) (display:producer)
                  (and (nt:equal (dt:get $first "producer") (JsonString $producer))
                       (and (== (str:byte-length $producer) 32) (dt:digits? (dt:get $first "process_start")))))))
-         ($_ (nt:require time-is-a-number (case (dt:get $first "time") (((JsonNumber $t) (> (str:string->number $t) 1000000000)) ($o False)))))
+         ($_ (nt:require time-is-a-number (case (dt:get $first "time") (((JsonNumber $t) (> (str:string->number $t) 1000000000)) ($no-time False)))))
          ; A dispatch names its command instead of text and holds the epoch.
          ($_ (nt:require dispatch-written (nt:equal (display:event "tool.dispatching" "x1" "ls -l" "dispatching" "exec_command") 1)))
          ($_ (nt:require dispatch-fields
@@ -97,7 +98,7 @@
          ($_ (nt:require artifact-tail-bound
                (case (dt:get (dt:last-record) "text")
                  (((JsonString $tail) (and (== (str:byte-length $tail) 12000) (not (str:starts-with $tail "HEAD"))))
-                  ($o False)))))
+                  ($no-tail False)))))
          ; Control files that cannot be read switch the display off.
          ($_ (dt:control "not json"))
          ($_ (nt:require unreadable-control (nt:equal (display:event "plan" "plan" "x") 0)))
@@ -115,5 +116,79 @@
          ; A display that cannot be written drops the record.
          ($_ (nt:require unwritable-root
                (case (catch (display:write (path:join $artifact "below") ((JsonPair "kind" (JsonString "plan")))))
-                 ((1 False) ($other True))))))
+                 ((1 False) ($unwritten True)))))
+         ; A provider call: its attempt opens at the claim and shows its model on the wire.
+         ($_ (dt:control "{\"enabled\": true, \"epoch\": \"e5\"}"))
+         ($_ (nt:require call-begin (nt:equal (display:call-begin "a1" False "openai" "coding") 1)))
+         ($_ (nt:require call-open-fields
+               (nt:equal (dt:fields (dt:last-record) ("kind" "attempt" "item" "purpose" "provider" "model" "epoch" "status"))
+                         ((JsonString "attempt.open") (JsonString "a1") (JsonString "a1") (JsonString "coding")
+                          (JsonString "openai") (JsonString "") (JsonString "e5") (JsonString "awaiting")))))
+         ($_ (nt:require call-wire
+               (and (nt:equal (display:call-wire "a1" "openai" "gpt-fixture") 1)
+                    (nt:equal (dt:get (dt:last-record) "model") (JsonString "gpt-fixture")))))
+         ; Its streamed text: read on where the last read ended, projected under an item.
+         ($_ (nt:require call-readable (display:call-readable? "a1")))
+         ($_ (nt:require call-advance (nt:equal ((display:call-advance "a1" 5 "ž123") (display:call-offset "a1")) (1 5))))
+         ($_ (nt:require call-projected
+               (and (nt:equal (display:call-projected "a1" (JsonObject ((JsonPair "kind" (JsonString "text.delta")) (JsonPair "item" (JsonString "r1"))
+                                                                         (JsonPair "channel" (JsonString "reasoning-summary")) (JsonPair "text" (JsonString "Checking ž")))))
+                              1)
+                    (nt:equal (dt:fields (dt:last-record) ("kind" "item" "text" "attempt" "source" "epoch"))
+                              ((JsonString "text.delta") (JsonString "r1") (JsonString "Checking ž") (JsonString "a1")
+                               (JsonString "provider") (JsonString "e5"))))))
+         ($_ (nt:require call-other-channel-not-shown
+               (nt:equal (display:call-projected "a1" (JsonObject ((JsonPair "kind" (JsonString "text.delta")) (JsonPair "item" (JsonString "r1"))
+                                                                   (JsonPair "channel" (JsonString "arguments")) (JsonPair "text" (JsonString "PRIVATE")))))
+                         0)))
+         ; A read that does not continue the last one stops observation, with one gap.
+         ($_ (nt:require call-gap (nt:equal (display:call-advance "a1" 99 "x") 0)))
+         ($_ (nt:require call-gap-record
+               (nt:equal (dt:fields (dt:last-record) ("kind" "attempt" "source" "epoch"))
+                         ((JsonString "gap") (JsonString "a1") (JsonString "observer") (JsonString "e5")))))
+         ($_ (nt:require call-stopped (and (not (display:call-readable? "a1")) (nt:equal (display:call-unavailable "a1" "again") 0))))
+         ; Its end reconciles the answer and the reasoning summaries, once.
+         ($message (json-parse "{\"content\":\"done\",\"reasoning_details\":[{\"type\":\"reasoning\",\"id\":\"rs1\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"S0\"},{\"type\":\"other\"},{\"type\":\"summary_text\",\"text\":\"S2\"}],\"encrypted_content\":\"opaque\"},{\"type\":\"thinking\",\"thinking\":\"T1\",\"signature\":\"sig\"}]}"))
+         ($before-final (dt:count))
+         ($_ (nt:require call-final (nt:equal (display:call-final "a1" $message "stop") 1)))
+         ($finals (dt:after $before-final (dt:records)))
+         ($_ (nt:require call-final-records
+               (nt:equal (map-atom $finals $record (dt:fields $record ("kind" "item" "part" "text")))
+                         (((JsonString "text.reconcile") (JsonString "answer") none (JsonString "done"))
+                          ((JsonString "text.snapshot") (JsonString "rs1") (JsonNumber "0") (JsonString "S0"))
+                          ((JsonString "text.snapshot") (JsonString "rs1") (JsonNumber "2") (JsonString "S2"))
+                          ((JsonString "text.snapshot") (JsonString "1") (JsonNumber "1") (JsonString "T1"))
+                          ((JsonString "attempt.finished") none none none)))))
+         ($_ (nt:require call-final-status
+               (nt:equal (dt:fields (dt:last-record) ("status" "reason" "source"))
+                         ((JsonString "completed") (JsonString "stop") (JsonString "terminal")))))
+         ($_ (nt:require call-final-texts
+               (case (dt:get (dt:last-record) "texts") (((JsonArray $texts) (== (size-atom $texts) 4)) ($no-texts False)))))
+         ($_ (nt:require nothing-private (not (nt:contains (fs:read-text (dt:file)) "opaque"))))
+         ($_ (nt:require call-final-once (and (nt:equal (display:call-final "a1" $message "stop") 0) (nt:equal (display:call "a1") none))))
+         ; A failed call ends interrupted, without texts; a compaction closes its maintenance.
+         ($_ (display:call-begin "a2" False "anthropic" "turn"))
+         ($_ (nt:require call-failed
+               (and (nt:equal (display:call-final "a2" none "transport-error") 1)
+                    (nt:equal (dt:fields (dt:last-record) ("status" "reason" "texts"))
+                              ((JsonString "interrupted") (JsonString "transport-error") JsonNull)))))
+         ($_ (nt:require compaction-begin
+               (and (nt:equal (display:call-begin "c1" True "anthropic" "compaction") 1)
+                    (nt:equal (dt:fields (dt:last-record) ("kind" "text" "status"))
+                              ((JsonString "maintenance") (JsonString "Compacting task history") (JsonString "running"))))))
+         ($_ (nt:require compaction-unreadable (not (display:call-readable? "c1"))))
+         ($_ (nt:require compaction-final
+               (and (nt:equal (display:call-final "c1" none "stop") 1)
+                    (nt:equal (dt:fields (dt:last-record) ("kind" "text" "status"))
+                              ((JsonString "maintenance") (JsonString "Task history compaction") (JsonString "stop"))))))
+         ; A call the console no longer shows keeps no record of its end.
+         ($_ (display:call-begin "a3" False "openai" "turn"))
+         ($_ (dt:control "{\"enabled\": true, \"epoch\": \"e6\"}"))
+         ($_ (nt:require call-of-another-epoch (and (not (display:call-readable? "a3")) (nt:equal (display:call-final "a3" $message "stop") 0))))
+         ($_ (nt:require calls-forgotten (nt:equal (collapse (match &display-calls $call $call)) ())))
+         ; The result's message and finish reason.
+         ($_ (nt:require result-reason
+               (nt:equal ((display:result-reason "{\"choices\":[{\"message\":{},\"finish_reason\":\"length\"}]}")
+                          (display:result-reason "{\"choices\":[{\"message\":{}}]}") (display:result-reason "not json"))
+                         ("length" "unknown" "unknown")))))
     (println! UNIT_DISPLAY_OK)))

@@ -39,8 +39,10 @@
           ($_ (nt:require structured-facts-owned
                 (nt:equal ((call:fact $structured "kind" "") (call:fact $structured "purpose" "") (call:fact $structured "prompt_bytes" -1))
                           ("structured" "coding" 0))))
+          ; The display is native; commentary is the claim's only host effect.
+          ($_ (nt:require unobserved-call-has-no-display (not (display:configured?))))
           ($_ (nt:require unobserved-call-has-no-claim-effect
-                (nt:equal ((call:fact $structured "display" true) (call:fact $structured "commentary" true)) (false false))))
+                (nt:equal (call:fact $structured "commentary" true) false)))
           ($_ (call:release $structured))
           ($_ (nt:require unknown-purpose-refused
                 (case (catch (py-call (native_llm_host.native_call_seed "fixture-model" 42 "structured" "other")))
