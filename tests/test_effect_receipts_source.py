@@ -6,7 +6,8 @@ import unittest
 
 ROOT=Path(__file__).resolve().parents[1]
 NATIVE=('effect_receipt_values_cetta.metta','effect_receipt_io_cetta.metta',
-        'public_worklog_cetta.metta','effect_receipts_cetta.metta','effect_receipts_native.metta')
+        'public_worklog_cetta.metta','worklog_sink_cetta.metta','effect_receipts_cetta.metta',
+        'effect_receipts_native.metta')
 
 
 def forms(source):
@@ -37,15 +38,22 @@ class SourceTest(unittest.TestCase):
         selected=set(json.loads((ROOT/'config/runtime-files.json').read_text()))
         for name in (*NATIVE,'effect_receipts.metta'):
             self.assertIn('src/'+name,selected)
-            for imported in re.findall(r'import! &self \./(src/[^\s)]+)',(ROOT/'src'/name).read_text()):
+            source=(ROOT/'src'/name).read_text()
+            for imported in re.findall(r'import! &self \./(src/[^\s)]+)',source):
                 self.assertIn(imported,selected)
+            for imported in re.findall(r'import! &self \./([^\s/)]+\.(?:metta|py))',source):
+                self.assertIn('src/'+imported,selected)
 
     def test_native_does_not_call_ported_python(self):
         source=(ROOT/'src/effect_receipts_cetta.metta').read_text()
-        self.assertNotRegex(source,r'py-call\s+\((effect_receipts|public_worklog)\.')
-        self.assertIn('effect_receipts_plugin.status',source)
-        self.assertIn('effect_receipts_plugin.add',source)
-        self.assertIn('stream_sink.receipt',source)
+        sink=(ROOT/'src/worklog_sink_cetta.metta').read_text()
+        for text in (source,sink):
+            self.assertNotRegex(text,r'py-call\s+\((effect_receipts|public_worklog)\.')
+        self.assertIn('effect_receipts_plugin.status',sink)
+        self.assertIn('effect_receipts_plugin.add',sink)
+        self.assertIn('display:receipt',source)
+        self.assertNotIn('stream_sink',source)
+        self.assertNotIn('command_identity',source)
 
 
 if __name__=='__main__':unittest.main()

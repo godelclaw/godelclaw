@@ -4,6 +4,7 @@
 !(import! &self ./src/model_commentary.py)
 !(import! &self ./src/strategy_host.py)
 !(import! &self ./src/strategy_broker_cetta.metta)
+!(import! &self ./src/strategy_attempts_cetta.metta)
 !(import! &self ./src/instance_hooks.metta)
 !(import! &self ./src/interop_flags_cetta.metta)
 ;; The native pins context view needs its own libraries, not whichever module
@@ -105,15 +106,19 @@
 (= (addition-command-sequence $parsed)
    (model-response-commands $parsed))
 
+; An admitted batch is open, under the broker's ticket, while its commands
+; run (src/strategy_attempts_cetta.metta).
 (= (addition-effect-broker $turn $limit $commands)
    (let* (($broker-turn (strategy:broker-turn $turn))
           ($_ (addition-effect-turn-begin $broker-turn))
           ($effective (strategy:batch-limit $limit (quote $commands)))
-          ($admitted (py-call (strategy_host.broker_begin $broker-turn (quote $commands) $effective))))
+          (($admitted $ticket) (py-call (strategy_host.broker_begin $broker-turn (quote $commands) $effective))))
      (if (== $admitted 1)
-       (let $records (run-command-batch-once $broker-turn $effective (quote $commands))
-         (let $reported (py-call (strategy_host.broker_end $broker-turn (quote $records)))
-           $records))
+       (let* (($opened (strategy:open-batch $broker-turn $ticket))
+              ($records (run-command-batch-once $broker-turn $effective (quote $commands)))
+              ($reported (py-call (strategy_host.broker_end $broker-turn (quote $records))))
+              ($closed (strategy:close-batch)))
+         $records)
        ((COMMAND_BATCH_WITHHELD: (py-call (strategy_host.broker_feedback)))))))
 
 (= (addition-command-errors $turn)

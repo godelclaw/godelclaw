@@ -5,12 +5,12 @@
     [
       "tests/integrated_coding_turn_probe.metta",
       "INTEGRATED_CODING_TURN_OK",
-      42
+      40
     ],
     [
       "tests/activity_delivery_full_turn_probe.metta",
       "ACTIVITY_DELIVERY_FULL_TURN_OK",
-      41
+      40
     ],
     [
       "tests/background_jobs_probe.metta",
@@ -26,11 +26,12 @@
     [
       "tests/provider_command_census_probe.metta",
       "CENSUS_PROVIDER_OK",
-      7,
+      4,
       "world",
       {
         "METTACLAW_MODEL_COMMENTARY": "1",
-        "METTACLAW_STREAM_DIR": "display"
+        "METTACLAW_STREAM_DIR": "display",
+        "METTACLAW_PUBLIC_WORK_DIR": "worklog"
       }
     ]
   ]

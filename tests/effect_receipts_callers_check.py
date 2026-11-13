@@ -51,9 +51,10 @@ def check(c):
         source += '!(println! (ContextRaw (collapse (catch (ctx:build (py-call (context_source_loaders.prepare ())))))))\n'
         source += '!(println! (ProbeSummary (json:stringify-python (json:parse-python (format-args "{}" ((py-call (effect_receipts_caller_probe.summary))))))))\n'
         before=time.time()
+        display = c.directory / ('display-%s'%strategy)
         raw = c.run('actual-dispatcher-strategy-'+strategy, source,
             {'METTACLAW_OBSERVED_STRATEGY':strategy,'METTACLAW_PUBLIC_TOOL_RECEIPTS':'1',
-             'METTACLAW_EFFECT_RECEIPT_PATH':str(receipt)})
+             'METTACLAW_EFFECT_RECEIPT_PATH':str(receipt),'METTACLAW_STREAM_DIR':str(display)})
         after=time.time()
         files = {name: (root/name).read_bytes().hex() if (root/name).exists() else None
                  for name in ('state.json','notes.jsonl','lock')}
@@ -68,18 +69,22 @@ def check(c):
         c.save('caller-results.json', records)
         assert summary['counts'].get('forbidden',0)==0, summary
         assert '(ImportOwner 2 ((123 7)))' in raw,'duplicate/changed native publication owner after context import'
-        assert summary['counts']['stream']==2 and len(entries)==2, summary
+        assert len(entries)==2, summary
         assert all(before <= e['recorded_at'] <= after for e in entries)
+        # The native display ends each command after its durable receipt.
+        shown = [json.loads(line) for path in sorted(display.glob('*.jsonl'))
+                 for line in path.read_text().splitlines() if line]
+        finished = [r for r in shown if r['kind']=='tool.finished']
+        assert [r['item'] for r in finished]==[e['occurrence'] for e in entries], shown
+        assert finished[0]['command']==str(['read-file',str(input_path)]) and finished[0]['text']==contents
+        assert all(r['time'] >= e['recorded_at'] for r,e in zip(finished,entries))
         if strategy=='0':
             assert len({e['occurrence'] for e in entries})==2
             assert all(uuid.UUID(hex=e['occurrence']).version==4 for e in entries)
-        assert summary['events'][0]['command']==['read-file',str(input_path)]
-        assert summary['events'][0]['result']==contents
-        assert [e['receipt_lines'] for e in summary['events']]==[1,2]
-        assert all(e['notes'] for e in summary['events']), 'public projection must precede stream'
-        assert all(str(input_path) not in e['notes'] and contents not in e['notes'] for e in summary['events'])
+        notes = (root/'notes.jsonl').read_text()
+        assert str(input_path) not in notes and contents not in notes
         if strategy=='1':
-            assert summary['counts']['strategy_result']==summary['counts']['strategy_identity']==2
+            assert summary['counts']['strategy_result']==2
             assert 'Task receipts are in TASK_CONTEXT.' in bundle[0]
         else:
             assert summary['counts'].get('strategy_result',0)==0
@@ -90,11 +95,10 @@ def check(c):
         env={**c.environment(),'METTACLAW_OBSERVED_STRATEGY':'0',
              'METTACLAW_PUBLIC_TOOL_RECEIPTS':'0','METTACLAW_EFFECT_RECEIPT_PATH':str(expected_path)}
         with mock.patch.dict(os.environ,env,clear=True), mock.patch.object(oracle,'_publish_public_event',return_value=0):
-            import stream_sink
-            with mock.patch.object(stream_sink,'receipt',return_value=1):
-                for entry,event in zip(entries,summary['events']):
-                    with mock.patch.object(oracle.time,'time',return_value=entry['recorded_at']):
-                        assert oracle.record_command(123,'returned',event['command'],event['result'],entry['occurrence'])==1
+            # The dispatched commands as they cross; a result's text is its own str().
+            for entry,command in zip(entries,(['read-file',str(input_path)],['read-lines',str(input_path),1,2])):
+                with mock.patch.object(oracle.time,'time',return_value=entry['recorded_at']):
+                    assert oracle.record_command(123,'returned',command,entry['result'],entry['occurrence'])==1
         assert expected_path.read_bytes()==data
     c.save('result.json',{'real_dispatcher_batches':2,'commands':4,'cached_batches':2,
                          'context_bundle_callers':2,'ported_python_calls':0})
@@ -112,7 +116,7 @@ def main():
         with c.phase('actual-receipt-callers'):
             c.snapshot_sources('src/command_dispatch_hooks.metta','src/context_sources_cetta.metta',
                 'src/effect_receipts_cetta.metta','src/effect_receipts.metta','src/effect_receipts_native.metta',
-                'src/effect_receipts_plugin.py','tests/effect_receipts_caller_probe.py')
+                'src/effect_receipts_plugin.py','src/worklog_sink_cetta.metta','tests/effect_receipts_caller_probe.py')
             check(c)
 
 

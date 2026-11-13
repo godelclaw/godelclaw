@@ -1,5 +1,6 @@
-; Native effect receipts. Explicit host boundaries: strategy bookkeeping,
-; stream receipt observation, and configuration-selected worklog plugins ONLY.
+; Native effect receipts. Explicit host boundaries: strategy bookkeeping and
+; configuration-selected worklog plugins (src/worklog_sink_cetta.metta) ONLY.
+; The receipt's display record is native (src/display_cetta.metta).
 !(import! &self (library fs))
 !(import! &self (library str))
 !(import! &self (library json))
@@ -8,10 +9,11 @@
 !(import! &self ./src/effect_receipt_values_cetta.metta)
 !(import! &self ./src/effect_receipt_io_cetta.metta)
 !(import! &self ./src/public_worklog_cetta.metta)
+!(import! &self ./src/worklog_sink_cetta.metta)
 !(import! &self ./src/strategy_host.py)
 !(import! &self ./src/strategy_broker_cetta.metta)
-!(import! &self ./src/stream_sink.py)
-!(import! &self ./src/effect_receipts_plugin.py)
+!(import! &self ./src/strategy_attempts_cetta.metta)
+!(import! &self ./src/display_cetta.metta)
 
 ; Reviewer mail2b51e0f80b544595b546a6effb97187b: one serial evaluator per
 ; runtime process reaches these hooks. This is evaluator-local reentry state,
@@ -101,26 +103,8 @@
        (if (== $key $turn) $epoch (er:epoch $turn (cdr-atom $items))))))
 (= (er:bounded $items $limit)
    (if (> (size-atom $items) $limit) (erv:drop $items (- (size-atom $items) $limit)) $items))
-(= (er:sink-status)
-   (let* (($root (er:env "METTACLAW_PUBLIC_WORK_DIR")) ($library (er:env "METTACLAW_PUBLIC_WORK_LIB")))
-     (if (== $root "") (ErSinkStatus False JsonNull)
-       (if (not (== $library ""))
-         (let $value (py-call (effect_receipts_plugin.status $root $library))
-           (case $value ((($enabled $epoch) (ErSinkStatus (== $enabled 1) $epoch)) ($other $other))))
-         (let $state (pw:transact $root "status" "" JsonNull)
-           (if (erv:failed? $state) $state
-             (let $epoch (erv:int (erv:get $state "epoch" 0))
-               (if (erv:failed? $epoch) $epoch
-                 (ErSinkStatus (erv:truth (erv:get $state "enabled" False)) $epoch)))))))))
-(= (er:sink-add $text $epoch)
-   (let* (($root (er:env "METTACLAW_PUBLIC_WORK_DIR")) ($library (er:env "METTACLAW_PUBLIC_WORK_LIB")))
-     (if (== $root "") 0
-       (if (not (== $library "")) (py-call (effect_receipts_plugin.add $root $library $text $epoch))
-         (let $state (pw:transact $root "add" $text $epoch)
-           (if (erv:failed? $state) $state
-             (if (erv:truth (erv:get $state "accepted" True)) 1 0)))))))
 (= (er:capture-body $turn)
-   (let* (($status (er:answer (collapse (catch (er:sink-status)))))
+   (let* (($status (er:answer (collapse (catch (worklog:status)))))
           ($number (erv:int $turn)))
      (if (erv:failed? $number) $number
        (let* (($rest (er:without-turn $number (get-state &er-captured)))
@@ -135,7 +119,7 @@
 (= (er:publish-admitted $event $epoch)
    (let* (($id (erv:get $event "receipt_id" ""))
           ($_ (change-state! &er-in-flight (cons-atom $id (get-state &er-in-flight))))
-          ($outcomes (collapse (catch (er:sink-add (er:public-text $event) $epoch))))
+          ($outcomes (collapse (catch (worklog:add (er:public-text $event) $epoch))))
           ($accepted (er:best $outcomes))
           ($_ (change-state! &er-in-flight (list:remove-all $id (get-state &er-in-flight))))
           ($_ (if (== $accepted 1)
@@ -176,12 +160,20 @@
               ($committed (er:append $entry)))
          (if (== $committed 1)
            (let $_ (er:publish $turn $disposition $command $result $now $occurrence) 1) $committed)))))
+; The broker records the result at the batch's attempt this receipt belongs to
+; (src/strategy_attempts_cetta.metta), whose identity is the occurrence when
+; the caller named none.
 (= (er:strategy $turn $disposition $command $result $occurrence)
    (if (== (system:getenv-or-default "METTACLAW_OBSERVED_STRATEGY" "0") "1")
-     (let $outcome (er:answer (collapse (catch (py-call (strategy_host.command_result $turn $disposition $command $result)))))
+     (let* (($attempt (strategy:attempt $turn))
+            ($outcome (er:answer (collapse (catch (py-call (strategy_host.command_result $turn $disposition $command $result
+                                                             (er:attempt-position $attempt))))))))
        (if (er:failed? $outcome) $outcome
-         (if (erv:truth $occurrence) $occurrence
-           (erv:cross (py-call (strategy_host.command_identity $turn)))))) $occurrence))
+         (if (erv:truth $occurrence) $occurrence (er:attempt-identity $attempt)))) $occurrence))
+(= (er:attempt-position $attempt)
+   (case $attempt (((StrategyAttemptV1 $identity $position) $position) ($none -1))))
+(= (er:attempt-identity $attempt)
+   (case $attempt (((StrategyAttemptV1 $identity $position) $identity) ($none JsonNull))))
 (= (er:record $turn $disposition $command $result $occurrence)
    (er:record-occurrence $turn $disposition $command $result (erv:cross $occurrence)))
 ; Only the omitted-argument facade supplies Python None. An explicitly supplied
@@ -195,8 +187,14 @@
            (let $committed (er:commit (erv:cross $turn) (erv:cross $disposition) (erv:cross $command)
                              (erv:cross $result) $identity $now)
              (if (== $committed 1)
-               (let $_ (collapse (catch (py-call (stream_sink.receipt (erv:host-array $identity) $command $result $disposition)))) 1)
+               (let $_ (collapse (catch (display:receipt (er:text $identity) (er:shown $command) (er:shown $result)
+                                                         (er:shown $disposition)))) 1)
                $committed)))))))
+; Python's str() of a value as it crosses, for the display; never a failure.
+; The identity has crossed already.
+(= (er:shown $value) (er:text (erv:cross $value)))
+(= (er:text $value)
+   (let $text (erv:str $value) (if (erv:failed? $text) (repr $value) $text)))
 (= (er:suffix $turn $disposition $commands $reason)
    (let* (($now (system:wall-time)) ($number (erv:int (erv:cross $turn)))
           ($d (erv:text (erv:cross $disposition) 80)) ($c (erv:text (erv:cross $commands) 6000))

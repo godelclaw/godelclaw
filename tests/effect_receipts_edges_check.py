@@ -16,10 +16,10 @@ from effect_receipts_support import IMPORTS, Qualification, ROOT, emit, limit, q
 
 def bounds(c):
     source=HEADER+'''
-!(match &self (= (er:sink-status) $body) (remove-atom &self (= (er:sink-status) $body)))
-(= (er:sink-status) (ErSinkStatus True 7))
-!(match &self (= (er:sink-add $text $epoch) $body) (remove-atom &self (= (er:sink-add $text $epoch) $body)))
-(= (er:sink-add $text $epoch) 1)
+!(match &self (= (worklog:status) $body) (remove-atom &self (= (worklog:status) $body)))
+(= (worklog:status) (ErSinkStatus True 7))
+!(match &self (= (worklog:add $text $epoch) $body) (remove-atom &self (= (worklog:add $text $epoch) $body)))
+(= (worklog:add $text $epoch) 1)
 '''
     source+=emit('(foldl-atom (list:range 70) 0 $total $i (+ $total (er:capture $i)))')
     source+=emit('(JsonArray ((size-atom (get-state &er-captured)) (JsonArray (car-atom (get-state &er-captured)))))')
@@ -70,8 +70,7 @@ def encoding(c):
         actual=rows(c.run('strict-encoding-%d'%i,source,{'METTACLAW_EFFECT_RECEIPT_PATH':str(path)}))
         expected_path=c.directory/('oracle-encoding-%d'%i)/'receipt.jsonl'
         env={**c.environment(),'METTACLAW_EFFECT_RECEIPT_PATH':str(expected_path)}
-        import stream_sink
-        with mock.patch.dict(os.environ,env,clear=True),mock.patch.object(oracle.time,'time',return_value=1704067200.125),mock.patch.object(stream_sink,'receipt',return_value=1):
+        with mock.patch.dict(os.environ,env,clear=True),mock.patch.object(oracle.time,'time',return_value=1704067200.125):
             expected=outcome(oracle.record_command,3,'returned',['shell','fixture'],result,'encoding-id')
         effects=[p.read_bytes().hex() if p.exists() else None for p in (path,expected_path)]
         records.append({'points':[ord(ch) for ch in result],'actual':actual,'expected':expected,
@@ -116,11 +115,11 @@ def transact(root,action,text="",expected_epoch=None):
     trace=c.directory/'plugin-trace'
     source=HEADER+'!(import! &self ./tests/effect_receipts_caller_probe.py)\n!(py-call (effect_receipts_caller_probe.setup))\n'
     source+='''
-!(match &self (= (er:sink-add $text $epoch) $body)
+!(match &self (= (worklog:add $text $epoch) $body)
  (progn (add-atom &self (= (pt:original $text $epoch) $body))
-        (remove-atom &self (= (er:sink-add $text $epoch) $body))))
+        (remove-atom &self (= (worklog:add $text $epoch) $body))))
 !(bind! &pt-nested (new-state -1))
-(= (er:sink-add $text $epoch)
+(= (worklog:add $text $epoch)
  (let $_ (change-state! &pt-nested (er:publish 3 "returned" (JsonArray ("shell")) "r" 0 "nested"))
   (pt:original $text $epoch)))
 '''
@@ -193,7 +192,7 @@ def main():
         c=Qualification(a.evidence.resolve(),Path(temporary))
         with c.phase('receipt-state-edges'):
             c.snapshot_sources('src/effect_receipts_cetta.metta','src/effect_receipt_values_cetta.metta',
-                'src/effect_receipts_plugin.py','tests/effect_receipts_caller_probe.py')
+                'src/effect_receipts_plugin.py','src/worklog_sink_cetta.metta','tests/effect_receipts_caller_probe.py')
             bounds(c);encoding(c);plugin(c);paths(c)
             ids=rows(c.run('native-uuid-samples',HEADER+emit('(JsonArray (map-atom (list:range 500) $i (system:uuid4-hex)))')))[0]
             assert len(ids)==len(set(ids))==500

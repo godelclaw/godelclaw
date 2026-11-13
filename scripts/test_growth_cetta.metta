@@ -32,6 +32,9 @@
     (GrowthCheck "turn-health" "tests/growth/turn_health.metta" 8000 (growth:linear))
     (GrowthCheck "input-notice-scan" "tests/growth/input_notice.metta" 250 (growth:linear))
     (GrowthCheck "display-records" "tests/growth/display.metta" 500 (growth:linear))
+    (GrowthCheck "commentary-observer-events" "tests/growth/commentary_observer_events.metta" 500 (growth:linear))
+    ; The field stays within the observer's 16 KiB bound at 16n.
+    (GrowthCheck "commentary-observer-prefix" "tests/growth/commentary_observer_prefix.metta" 1000 (growth:linear))
     (SdkGrowthCheck "responses-encoder" "tests/growth/responses_encoder.metta" 100 (growth:linear))))
 ; Mutants the gate must reject, run whenever no single check is selected.
 (= (growth:mutants)

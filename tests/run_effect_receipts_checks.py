@@ -10,7 +10,6 @@ import selectors
 import subprocess
 import sys
 import tempfile
-import types
 import unicodedata
 from unittest import mock
 
@@ -134,12 +133,11 @@ def boundary_semantics(c):
     # strings: no surrogate-bearing native text is needed to demonstrate it.
     commands = ('["shell", "\\ud800"]', '["shell", NaN]')
     expected = []
-    fixture_calls = []
     env = c.environment()
     env["METTACLAW_STREAM_DIR"] = ""
-    with mock.patch.dict(os.environ, env, clear=True), mock.patch.dict(
-            sys.modules, {"stream_sink": types.SimpleNamespace(
-                receipt=lambda *args: fixture_calls.append(args))}), mock.patch.object(
+    # The receipt's display record is native (src/display_cetta.metta): the
+    # oracle writes the receipt and its public event only.
+    with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(
             effect_receipts.time, "time", return_value=1700000000.125):
         for index, command in enumerate(commands):
             occurrence = "fixture:json-command:%d" % index
@@ -149,10 +147,9 @@ def boundary_semantics(c):
             assert result == 1
             expected.append({"command": command, "tool_name": effect_receipts._tool_name(command),
                              "event": event, "record_result": result})
-    assert len(fixture_calls) == 2
     receipt = Path(env["METTACLAW_EFFECT_RECEIPT_PATH"])
     c.save("oracle-actual-command-inputs.json", {"cases": expected,
-        "receipt_hex": receipt.read_bytes().hex(), "stream_fixture_calls": len(fixture_calls)})
+        "receipt_hex": receipt.read_bytes().hex()})
     program = IMPORTS
     for index, command in enumerate(commands):
         program += '!(println! (CommandParse %d (json:parse %s)))\n' % (index, q(command))

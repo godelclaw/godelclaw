@@ -3,8 +3,9 @@
 !(import! &self ./src/effect_receipts.metta)
 !(import! &self ./src/skills_help.metta)
 !(import! &self ./src/lifecycle_cetta.metta)
-(= (dispatch:reserve $turn $command)
-   (py-call (strategy_host.reserve_command $turn $command)))
+; Each command of the broker's batch is recorded as attempted before it runs
+; (src/strategy_attempts_cetta.metta).
+(= (dispatch:reserve $turn $command) (strategy:reserve $turn $command))
 ; Commands are withheld while the operator latch does not grant cognition.
 ; A latch that cannot be read as running withholds them too.
 (= (dispatch:stopped)

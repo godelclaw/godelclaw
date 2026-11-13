@@ -21,7 +21,6 @@ _booted = False
 _turn = None
 _sample = None
 _ticket = None
-_position = 0
 _focus = None
 _input_turn = False
 _message_focus = None
@@ -77,7 +76,7 @@ def guard(include_topic=True):
 
 
 def begin(turn, source, message, delivery_ids=None):
-    global _turn, _sample, _ticket, _position, _focus, _input_turn, _message_focus, _runtime_projection, _context_trigger, _task_projection, _context_preparation, _context_presented
+    global _turn, _sample, _ticket, _focus, _input_turn, _message_focus, _runtime_projection, _context_trigger, _task_projection, _context_preparation, _context_presented
     global _turn_input_ids
     if delivery_ids is None:
         import telegram
@@ -91,7 +90,7 @@ def begin(turn, source, message, delivery_ids=None):
     if not enabled():
         return 1
     with _lock:
-        _turn, _sample, _ticket, _position = str(turn), None, None, 0
+        _turn, _sample, _ticket = str(turn), None, None
         _runtime_projection = None
         _context_preparation = None
         _context_presented = None
@@ -350,27 +349,30 @@ def broker_turn(turn):
 
 
 def broker_begin(turn, commands, limit=1):
-    global _ticket, _position, _turn, _broker_feedback
+    """Admit the model's command batch: (1, ticket) when admitted, the ticket
+    "" when no command needs one, or (0, "") when withheld. The native
+    dispatcher records each command's attempt under the ticket
+    (src/strategy_attempts_cetta.metta)."""
+    global _ticket, _turn, _broker_feedback
     if not enabled():
-        return 1
+        return 1, ""
     with _lock:
         if _sample is None or int(turn) != int(_sample["serial"]) + 1:
             _broker_feedback = {"reason": "no-current-capture"}
-            return 0
+            return 0, ""
         store = ledger()
         if not store.decision_pending(_sample["serial"]):
             _ticket = None
             _broker_feedback = {"reason": "capture-already-settled"}
-            return 0
+            return 0, ""
         _turn = str(turn)
         import task_context
         task_context.proposal(store, _sample["serial"], _focus, commands, "not run: batch interrupted")
-        _position = 0
         if not commands:
             store.decide(_sample["serial"], {"kind": "text"}, time.time())
             _ticket = None
             _observe_answered(store)
-            return 1
+            return 1, ""
         _ticket = store.decide(_sample["serial"], {
             "kind": "command", "tool": "batch", "request": _focus,
             "owner": _sample["owner"], "command": {"commands": commands, "limit": len(commands)},
@@ -378,10 +380,10 @@ def broker_begin(turn, commands, limit=1):
         if _ticket == "ignored":
             _ticket = None
             _broker_feedback = {"reason": "capture-already-settled"}
-            return 0
+            return 0, ""
         _broker_feedback = {"reason": "recorded"}
         _observe_answered(store)
-        return 1
+        return 1, str(_ticket)
 
 
 def _observe_answered(store):
@@ -397,17 +399,18 @@ def _observe_answered(store):
 
 
 def begin_continuation(turn, commands):
-    """Record an agent-scheduled command without a provider round trip."""
+    """Record an agent-scheduled command without a provider round trip: its
+    broker turn and the batch's ticket, as broker_begin answers it."""
     global _sample
     if not enabled():
-        return int(turn)
+        return int(turn), ""
     begin(turn, "scheduled-command", "")
     _sample = ledger().capture(_focus, "agent scheduled continuation", {}, time.time())
     if _sample is None:
-        return int(turn)
+        return int(turn), ""
     actual = int(_sample["serial"]) + 1
-    broker_begin(actual, commands)
-    return actual
+    admitted, ticket = broker_begin(actual, commands)
+    return actual, ticket
 
 
 def broker_feedback():
@@ -416,41 +419,25 @@ def broker_feedback():
         return strategy.encoded(_broker_feedback)
 
 
-def reserve_command(turn, command):
-    """Record the batch's next command as attempted before it runs (the dispatch hook)."""
-    global _position
-    if not enabled():
-        return 1
-    with _lock:
-        if str(turn) != _turn or not _ticket:
-            return 0
-        import input_ack
-        if not input_ack.attempt_begin(_ticket, _position, strategy.encoded(command)):
-            import llm_policy
-            raise llm_policy.IntegrityError("command attempt %s/%d is already recorded" % (_ticket, _position))
-        _position += 1
-        try:
-            import stream_sink
-            stream_sink.event("tool.dispatching", command_identity(turn), str(command), "dispatching")
-        except Exception:
-            pass
-        return 1
+def attempt_not_recorded(ticket, position, why):
+    """The native dispatcher could not record a command as attempted before it
+    runs (src/strategy_attempts_cetta.metta): fail the batch, as a host failure
+    does, so that the command does not run."""
+    if str(why) == "exists":
+        import llm_policy
+        raise llm_policy.IntegrityError("command attempt %s/%d is already recorded" % (ticket, int(position)))
+    import input_ack
+    raise input_ack.LedgerUnavailable("input ledger attempt-begin: %s" % why)
 
 
-def command_identity(turn):
-    """The broker's occurrence, independent of equal command text."""
-    with _lock:
-        if enabled() and str(turn) == _turn and _ticket:
-            return str(_ticket) + ":" + str(_position - 1)
-    return None
-
-
-def command_result(turn, disposition, command, result):
+def command_result(turn, disposition, command, result, position):
+    """The result of the batch's command attempted at $position, as the native
+    dispatcher recorded it (-1: none was)."""
     if enabled() and str(turn) == _turn and _ticket:
         store = ledger()
         import input_ack
         outcome = strategy.encoded({"disposition": str(disposition), "result": str(result)})
-        input_ack.attempt_result(_ticket, _position - 1, strategy.encoded(command), outcome)
+        input_ack.attempt_result(_ticket, int(position), strategy.encoded(command), outcome)
         _close_answered_message(command, str(result))
         import process_supervision
         process_supervision.progress("command-receipt")
@@ -463,7 +450,9 @@ def _close_answered_message(command, result):
     This is a delivery/workflow status, never a theorem of task achievement.
     The task transcript remains available when an ongoing burst continues.
     """
-    if not command or not _focus:
+    # A command that is no call (a bare number the model emitted) answers
+    # nothing; its result is still recorded.
+    if not isinstance(command, (list, tuple)) or not command or not _focus:
         return
     if _sample and _sample.get("context_incomplete"):
         return  # A delivered status/uncertainty message is not work closure.

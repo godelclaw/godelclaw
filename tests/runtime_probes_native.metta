@@ -46,7 +46,11 @@
           ; therefore boots in its mode, as an agent does after that recycle.
           ($_ (if (nt:equal $name "tests/integrated_coding_turn_probe.metta")
                 (fs:write (nq:path $world "loop-mode.json") "{\"mode\": \"coding\"}") True)))
-     (nq:overlay-env (nq:overlay-env $env $changes) $special)))
+     (nq:overlay-env (nq:overlay-env (nq:overlay-env $env $changes) $special) (nr:probe-world-settings $name $world))))
+; Settings a probe needs inside its world.
+(= (nr:probe-world-settings $name $world)
+   (if (nt:equal $name "tests/strategy_continuation_attempt_probe.metta")
+     (("METTACLAW_STREAM_DIR" (nq:path $world "display"))) ()))
 ; Settings a probe needs from process start, which the clients read once.
 (= (nr:probe-settings "tests/telegram_access_probe.metta")
    (("METTACLAW_TELEGRAM_BOT_USERNAME" "GodelTestBot") ("METTACLAW_TELEGRAM_OPERATOR_IDS" "7")
@@ -60,6 +64,9 @@
 ; Coding mode asks for a reasoning effort the Anthropic protocol carries.
 (= (nr:probe-settings "tests/integrated_coding_turn_probe.metta")
    (("METTACLAW_LLM_TRANSPORT" "native") ("ANTHROPIC_API_KEY" "fixture-secret") ("SYNTHETIC_MODEL" "claude-fixture")))
+; A timed continuation as the agents run it, with the observed strategy on.
+(= (nr:probe-settings "tests/strategy_continuation_attempt_probe.metta")
+   (("METTACLAW_OBSERVED_STRATEGY" "1")))
 (= (nr:probe-settings "tests/allowance_wake_loop_probe.metta")
    (("METTACLAW_TELEGRAM_GROUP_WAKE_EVERY" "-100:3")
     ("METTACLAW_TELEGRAM_BOT_USERNAME" "GodelTestBot") ("METTACLAW_TELEGRAM_OPERATOR_IDS" "777")))

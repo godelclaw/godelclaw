@@ -36,7 +36,7 @@ def instrument(name,arguments,label):
 
 def check(c,count):
     sys.path.insert(0,str(ROOT/'src'))
-    import effect_receipts as oracle,stream_sink,strategy_host
+    import effect_receipts as oracle,strategy_host
     fixture=c.directory/'fixture.txt';contents='generated harmless profile fixture🙂\n';fixture.write_text(contents)
     warm=b''.join((json.dumps({'schema':1,'recorded_at':1700000000.0+i,'turn':i,
         'occurrence':'warm-%d'%i,'disposition':'returned','command':"['read-file', 'generated fixture']",
@@ -67,12 +67,12 @@ def check(c,count):
         source+=emit('(json:parse-python (format-args "{}" ((py-call (effect_receipts_caller_probe.summary)))))')
         raw=c.run('hook-profile-'+stem,source,{'METTACLAW_PUBLIC_TOOL_RECEIPTS':sharing,
             'METTACLAW_OBSERVED_STRATEGY':strategy,'METTACLAW_EFFECT_RECEIPT_PATH':str(receipt),
-            'METTACLAW_PUBLIC_WORK_DIR':str(root),'EFFECT_TEST_STREAM_COUNTER_ONLY':'1'})
+            'METTACLAW_PUBLIC_WORK_DIR':str(root)})
         profile,host=rows(raw)
         assert len(profile['hook'])==len(profile['append'])==len(profile['projection'])==count
         expected_sync=count if sharing=='0' else 3*count+1
         assert len(profile['fsync'])==expected_sync,(stem,len(profile['fsync']),expected_sync)
-        assert host['counts']['stream']==count and host['counts'].get('forbidden',0)==0
+        assert host['counts'].get('forbidden',0)==0
         assert len(receipt.read_bytes().splitlines())==5000+count
         c.save(stem+'-native.json',{'samples':profile,'summaries':{k:describe(v) for k,v in profile.items() if v},
             'host':host,'warm_receipt_bytes':len(warm),'warm_receipt_lines':5000,
@@ -85,18 +85,16 @@ def check(c,count):
         (pyroot/'notes.jsonl').write_bytes(initial_notes)
         env={**c.environment(),'METTACLAW_PUBLIC_TOOL_RECEIPTS':sharing,'METTACLAW_OBSERVED_STRATEGY':strategy,
              'METTACLAW_EFFECT_RECEIPT_PATH':str(reference),'METTACLAW_PUBLIC_WORK_DIR':str(pyroot)}
-        py_samples=[];sync_count=[0];position=[0];original_sync=os.fsync
+        py_samples=[];sync_count=[0];original_sync=os.fsync
         def sync(fd):sync_count[0]+=1;return original_sync(fd)
         oracle._published.clear();oracle._published.update((v,True) for v in seeds)
         oracle._captured.clear();oracle._captured.update((i,7) for i in range(64));oracle._in_flight.clear()
         with mock.patch.dict(os.environ,env,clear=True),mock.patch.object(os,'fsync',side_effect=sync),\
-            mock.patch.object(stream_sink,'receipt',return_value=1),\
-            mock.patch.object(strategy_host,'command_result',return_value=1),\
-            mock.patch.object(strategy_host,'command_identity',side_effect=lambda turn:'host:999:%d'%position[0]):
+            mock.patch.object(strategy_host,'command_result',return_value=1):
             time.tzset()
             before=time.perf_counter_ns();oracle.capture_public_epoch(999);capture_ns=time.perf_counter_ns()-before
             for i in range(count):
-                position[0]=i+1;start=time.perf_counter_ns()
+                start=time.perf_counter_ns()
                 assert oracle.record_command(999,'returned',['read-file',str(fixture)],contents)==1
                 py_samples.append(time.perf_counter_ns()-start)
         time.tzset()

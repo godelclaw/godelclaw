@@ -1,7 +1,8 @@
 ; Provider transport, command preparation and policy transactions run in CeTTa.
 ; Every call is a native call owner (src/native_call_cetta.metta): its facts,
-; prepared transport and phase are native. The host plan is only the handle of
-; the remaining host observers (display, health, completion effects).
+; prepared transport and phase are native, and so are its display and its
+; commentary observer. The host plan is only the handle of the remaining host
+; observers (the watchdog, the program's release and the failure report).
 !(import! &self ./src/native_llm_host.py)
 !(import! &self ./src/interop_flags_cetta.metta)
 !(import! &self ./src/model_selection_cetta.metta)
@@ -251,6 +252,7 @@
 (= (llm:deliver $plan $state)
    (let* (($closed (stream:close (call:correlation $plan)))
           ($answer (llm:deliver-final $plan $state))
+          ($observed (observer:end (call:correlation $plan)))
           ($released (call:release $plan)))
      $answer))
 
@@ -294,21 +296,17 @@
 (: llm:wait-http (-> Atom Number %Undefined%))
 (= (llm:wait-http $id $milliseconds) (llm-transport:wait $id $milliseconds))
 
-; Only a command turn with commentary on has an observer to feed.
-(= (llm:commentary-observed? $owner)
-   (and (commentary:enabled?) (and (call:command? $owner) (not (call:compaction? $owner)))))
-; Optional owned text observation. Only inert chunk values cross the portable
-; function/return error boundary. Host publication runs outside that boundary.
+; The commentary observer reads the body while the call waits, from its own
+; offset (src/commentary_observer_cetta.metta). Only inert chunk values cross
+; the portable function/return error boundary.
 (= (llm:commentary-progress $owner $id)
-   (if (not (llm:commentary-observed? $owner)) 1
-   (let* (($plan (call:host $owner)) ($readable (py-call (native_llm_host.commentary_readable $plan))))
-     (if (llm:host-flag $readable)
-       (let* (($offset (py-call (native_llm_host.commentary_offset $plan)))
-              ($chunk (llm:commentary-read $id $offset)))
-         (case $chunk
-           (((http:chunk $next $text $phase)
-             (py-call (native_llm_host.commentary_chunk $plan $next $text $phase)))
-            ($other (py-call (native_llm_host.commentary_unavailable $plan)))))) 1))))
+   (let $attempt (call:correlation $owner)
+     (case (observer:offset $attempt)
+       ((none 1)
+        ($offset
+         (case (llm:commentary-read $id $offset)
+           (((http:chunk $next $text $phase) (observer:feed $attempt $next $text $phase))
+            ($unread (observer:stop $attempt)))))))))
 (= (llm:commentary-read $id $offset)
    (function (case (io:http-read $id $offset 65536)
      (((http:chunk $next $text $phase) (return (http:chunk $next $text $phase)))
