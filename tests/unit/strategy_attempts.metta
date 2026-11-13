@@ -118,5 +118,17 @@
         ($_ (nt:require unheld-receipt-epoch (nt:equal (sa:fields (sa:last (sa:records)) ("epoch")) ((JsonString "e2"))))))
    (sa:ended))
 
+;; A command of the turn's open batch writes a progress receipt; another
+;; turn's, or one after the batch closed, writes none.
+!(let* (($path (progress:path))
+        ($_ (strategy:open-batch 41 "ticket-p"))
+        ($_ (nt:require receipt-for-open-batch (nt:equal (strategy:command-progress 41) 1)))
+        ($first (json:parse-python (fs:read-text $path)))
+        ($_ (nt:require command-receipt-phase (nt:equal (json:get $first "phase") "command-receipt")))
+        ($_ (nt:require no-receipt-for-other-turn (nt:equal (strategy:command-progress 42) 0)))
+        ($_ (strategy:close-batch))
+        ($_ (nt:require no-receipt-after-close (nt:equal (strategy:command-progress 41) 0))))
+   (nt:require receipts-only-for-the-batch
+     (nt:equal (json:get (json:parse-python (fs:read-text $path)) "sequence") (json:get $first "sequence"))))
 !(if (== (get-state &sa-ended) 2) (println! UNIT_STRATEGY_ATTEMPTS_OK)
    (println! (FAIL blocks-ended (get-state &sa-ended))))

@@ -46,7 +46,8 @@
           ($_ (nq:coding-check $root $sdk $core $artifacts $fixture))
           ($_ (nq:rejection $root $sdk $core $artifacts $fixture False))
           ($_ (nq:rejection $root $sdk $core $artifacts $fixture True))
-          ($_ (nq:observation-refresh $root $sdk $core $artifacts $fixture)))
+          ($_ (nq:observation-refresh $root $sdk $core $artifacts $fixture))
+          ($_ (nq:progress-receipts $root $sdk $core $artifacts $fixture)))
      NativeProviderSuitePassedV1))
 !(nt:require provider-driver-completed
    (nt:equal (collapse (native-provider-test:run)) (NativeProviderSuitePassedV1)))

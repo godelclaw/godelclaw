@@ -9,6 +9,7 @@
 !(import! &self ./src/mode_io_cetta.metta)
 !(import! &self ./src/checkpoint_ledger_cetta.metta)
 !(import! &self ./src/working_state_host.py)
+!(import! &self ./src/progress_receipt_cetta.metta)
 
 !(bind! &working-state-boot (new-state (JsonObject ())))
 !(bind! &working-state-turn-commit (new-state WorkingNoCommit))
@@ -242,7 +243,7 @@
                     (((WorkingCommit $ids $request) (working-state:write $next $ids $request))
                      ($other (working-state:write $next () ""))))))
              (case $written
-               ((WorkingWritten (let $_ (py-call (process_supervision.progress "turn-checkpoint")) 1))
+               ((WorkingWritten (let $_ (progress:phase "turn-checkpoint") 1))
                 ($other 0)))))))))
 
 ; Boot is a pure persisted/cache transition followed by at most one persistence

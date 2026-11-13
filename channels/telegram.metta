@@ -587,8 +587,7 @@
    (let $path (tg:ledger)
      (if (== $path "") 0 (tg:file-size $path))))
 ; A file's size in bytes; 0 when there is none.
-(= (tg:file-size $path)
-   (case (fs:metadata $path follow) (((fs:info regular $size $identity) $size) ($other 0))))
+(= (tg:file-size $path) (let $size (fs:size $path) (if (== (get-type $size) Number) $size 0)))
 
 (= (tg:activity-batch)
    (let $recovered (tg:recover-committed (tg:pending-items))

@@ -86,10 +86,11 @@
               ($id (delivery:text (delivery:field $item "id")))
               ($mailer (system:getenv-or-default "METTACLAW_WORK_MAIL" "claw-mail")))
          (if (== $id "") (delivery:pending-error $path "report envelope has no message identity")
-           (let $result (proc:run ("env" (str:concat "CLAW_MAIL_AGENT=" (delivery:text (delivery:field $item "from")))
-                           $mailer "send" (delivery:text (delivery:field $item "to"))
-                           (delivery:text (delivery:field $item "text")) "--id" $id "--json" "--space"
-                           (delivery:text (delivery:field $item "space"))) $dir inherit 60000 0 "separate")
+           (let* (($sender (delivery:text (delivery:field $item "from")))
+                  ($result (proc:run ($mailer "send" (delivery:text (delivery:field $item "to"))
+                                      (delivery:text (delivery:field $item "text")) "--id" $id "--json" "--space"
+                                      (delivery:text (delivery:field $item "space")))
+                                     $dir (inherit (("CLAW_MAIL_AGENT" $sender))) 60000 0 "separate")))
              (case $result
                (((proc:exited 0 $out $err)
                  (if (delivery:accepted? $out $id)

@@ -84,6 +84,12 @@
    (let* (((CallPhaseV1 $status $t $s $r $soft $retry $publication) (call:phase $owner))
           ($now (system:monotonic-ns)))
      (call:set-phase $owner (CallPhaseV1 submitted $transport $now $r $soft $retry $publication))))
+; Whether the call was submitted, and the milliseconds since then (0 before).
+(= (call:sent? $owner)
+   (let (CallPhaseV1 $status $t $s $r $soft $retry $publication) (call:phase $owner) (not (== $s ()))))
+(= (call:elapsed-ms $owner)
+   (let (CallPhaseV1 $status $t $s $r $soft $retry $publication) (call:phase $owner)
+     (if (== $s ()) 0 (max 0 (math:floor (/ (- (system:monotonic-ns) $s) 1000000))))))
 ; Only a submitted call owns a transport.
 (= (call:owns? $owner $epoch $correlation $transport)
    (let (CallPhaseV1 $status $t $s $r $soft $retry $publication) (call:phase $owner)

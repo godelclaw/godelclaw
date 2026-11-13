@@ -162,12 +162,14 @@
            (let $_ (er:publish $turn $disposition $command $result $now $occurrence) 1) $committed)))))
 ; The broker records the result at the batch's attempt this receipt belongs to
 ; (src/strategy_attempts_cetta.metta), whose identity is the occurrence when
-; the caller named none.
+; the caller named none. A command of the batch the broker admitted for this
+; turn is progress: its receipt renews the watchdog.
 (= (er:strategy $turn $disposition $command $result $occurrence)
    (if (== (system:getenv-or-default "METTACLAW_OBSERVED_STRATEGY" "0") "1")
      (let* (($attempt (strategy:attempt $turn))
             ($outcome (er:answer (collapse (catch (py-call (strategy_host.command_result $turn $disposition $command $result
-                                                             (er:attempt-position $attempt))))))))
+                                                             (er:attempt-position $attempt)))))))
+            ($receipt (if (er:failed? $outcome) 0 (strategy:command-progress $turn))))
        (if (er:failed? $outcome) $outcome
          (if (erv:truth $occurrence) $occurrence (er:attempt-identity $attempt)))) $occurrence))
 (= (er:attempt-position $attempt)

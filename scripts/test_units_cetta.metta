@@ -24,6 +24,8 @@
     ("tests/unit/dispatch_stopped.metta" "UNIT_DISPATCH_STOPPED_OK")
     ("tests/unit/benchmark_statistics.metta" "UNIT_BENCHMARK_STATISTICS_OK")
     ("tests/unit/growth_statistics.metta" "UNIT_GROWTH_STATISTICS_OK")
+    ("tests/unit/progress_receipt.metta" "UNIT_PROGRESS_RECEIPT_OK"
+     (("METTACLAW_PROGRESS_PATH" "{home}/state/progress.json") ("WATCHDOG_USEC" "1000000")))
     ("tests/unit/call_gate.metta" "UNIT_CALL_GATE_OK")
     ("tests/unit/call_gate.metta" "UNIT_CALL_GATE_RECYCLING_OK" (("METTACLAW_ACTIVE_LOOP_MODE" "coding")))
     ("tests/unit/strategy_broker.metta" "UNIT_STRATEGY_BROKER_OK")
@@ -49,7 +51,7 @@
      (("METTACLAW_MODEL_COMMENTARY" "1") ("METTACLAW_PUBLIC_WORK_DIR" "{home}/worklog")))
     ("tests/unit/strategy_attempts.metta" "UNIT_STRATEGY_ATTEMPTS_OK"
      (("METTACLAW_STREAM_DIR" "{home}/display") ("METTACLAW_INSTANCE" "unit")
-      ("METTACLAW_INPUT_LEDGER_SOCKET" "{home}/l.sock")))))
+      ("METTACLAW_INPUT_LEDGER_SOCKET" "{home}/l.sock") ("METTACLAW_PROGRESS_PATH" "{home}/state/progress.json")))))
 
 (= (units:env $directory)
    (let $base (nt:environment $directory)

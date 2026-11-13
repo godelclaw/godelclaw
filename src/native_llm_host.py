@@ -336,9 +336,9 @@ def completion_wait(plan, attempt):
     return 1
 
 
-def completion_conflict(plan):
+def completion_conflict(plan, sent=False, elapsed_ms=0, deadline_ms=0):
     plan.error = CompletionConflict("local completion receipt conflict; provider request not replayed")
-    return failed(plan, plan.correlation, "local-completion-conflict")
+    return failed(plan, plan.correlation, "local-completion-conflict", 0, -1, sent, elapsed_ms, deadline_ms)
 
 
 def _compaction(plan):
@@ -354,17 +354,6 @@ def compaction_failure_result(plan, path):
         json.dump({"compaction_failure": failure}, stream)
     os.replace(temporary, str(path))
     return 1
-
-
-def submitted(plan, transport_id):
-    plan.sent = True
-    plan.transport = int(transport_id)
-    plan.submitted_at = time.monotonic()
-    import process_supervision
-    # The native owner records the turn's start in the health record; the
-    # provider wait is the last progress receipt before the answer.
-    process_supervision.provider_wait(plan.timeout / 1000)
-    return True
 
 
 def wait_settings():
@@ -400,13 +389,6 @@ def decoding_wait(plan, attempt):
     return 1
 
 
-def progress_observed(plan, count, quiet, soft):
-    """The watchdog observer of a progress record the native owner paced."""
-    import process_supervision
-    process_supervision.provider_data(count)
-    return 1
-
-
 # The command contract's rejection codes (src/model_commentary_cetta.metta)
 # and the failure each names.
 _REJECTED_OUTPUT = {"incomplete-output": "unfinished command output",
@@ -430,7 +412,6 @@ def finish(plan, encoded, decision="none", program="", code=""):
     result = json.loads(str(encoded))
     reason = result["choices"][0].get("finish_reason", "unknown")
     if plan.kind == "structured":
-        _answered()
         return ("completed", len(str(encoded).encode()))
     content = result["choices"][0]["message"].get("content")
     if str(decision) == "rejected":
@@ -444,14 +425,7 @@ def finish(plan, encoded, decision="none", program="", code=""):
     if not isinstance(content, str) or not content.strip():
         return synthetic_llm.failure_facts(synthetic_llm.EmptyResponse())
     synthetic_llm._note_answered()
-    _answered()
     return ("completed", content, len(content.encode()))
-
-
-def _answered():
-    """The provider's answer ends the provider wait for the watchdog."""
-    import process_supervision
-    process_supervision.progress("provider-result")
 
 
 def duplicate_plan(plan):
@@ -511,9 +485,10 @@ def response_refused(plan, reason, bound):
     return 1
 
 
-def _record_failure(plan, kind, status=0):
+def _record_failure(plan, kind, status, sent, elapsed, deadline):
     """Keep diagnostic categories and the provider's stated reason, without
-    logging request or response bytes."""
+    logging request or response bytes. The native owner supplies whether the
+    call was sent, the milliseconds it waited and its deadline."""
     known = {"admission-error", "submit-error", "transport-error", "decode-error",
              "http-status", "correlation-error", "duplicate-completion",
              "invalid-phase", "retired-handle", "unfinished-provider-response",
@@ -525,10 +500,8 @@ def _record_failure(plan, kind, status=0):
         provider = "unknown"
     status = int(status)
     status = status if 100 <= status <= 599 else 0
-    started = getattr(plan, "submitted_at", None)
-    elapsed = max(0, int((time.monotonic() - started) * 1000)) if started is not None else 0
-    deadline = int(getattr(plan, "timeout", 0))
-    sent = "true" if getattr(plan, "sent", False) else "false"
+    elapsed, deadline = max(0, int(elapsed)), int(deadline)
+    sent = "true" if sent is True or str(sent).lower() == "true" else "false"
     import admission_frontier
     error = getattr(plan, "error", None)
     reason = error.reason if isinstance(error, llm_policy.AdmissionDenied) else admission_frontier.failure_code(error)
@@ -553,11 +526,12 @@ def _record_failure(plan, kind, status=0):
           file=sys.stderr)
 
 
-def failed(plan, correlation, kind, status=0, retry_after=-1):
-    """Report a failed call; retry_after is the owner's (-1 for none)."""
+def failed(plan, correlation, kind, status=0, retry_after=-1, sent=False, elapsed_ms=0, deadline_ms=0):
+    """Report a failed call; retry_after is the owner's (-1 for none). An
+    unsubmitted call was not sent, waited 0 ms and has no deadline."""
     if float(retry_after) >= 0:
         plan.retry_after = float(retry_after)
-    _record_failure(plan, kind, status)
+    _record_failure(plan, kind, status, sent, elapsed_ms, deadline_ms)
     error = getattr(plan, "error", OSError(str(kind)) if str(kind) == "transport-error" else RuntimeError(str(kind)))
     error.status = int(status) or None
     if getattr(plan, "retry_after", None) is not None:

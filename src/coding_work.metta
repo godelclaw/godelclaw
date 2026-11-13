@@ -52,7 +52,8 @@
 (= (work:text $value)
    (case $value (((JsonString $text) $text) ((JsonNumber $text) $text) ($other ""))))
 (= (work:json $path) (if (fs:is-file $path) (json-parse (fs:read-text $path)) (JsonObject ())))
-(= (work:shell $command) (proc:run ("bash" "-c" $command) (system:cwd) inherit 30000 0 "merged"))
+(= (work:shell $command) (work:shell-with $command inherit))
+(= (work:shell-with $command $environment) (proc:run ("bash" "-c" $command) (system:cwd) $environment 30000 0 "merged"))
 (= (work:quote $text) (cio:shell-quote $text))
 (= (work:clip $text $limit)
    (if (<= (str:char-length $text) $limit) $text (str:concat (str:char-slice $text 0 $limit) " …")))
@@ -128,31 +129,28 @@
           ;; The session shares the account's ledger and usage tally, as
           ;; Codex sub-agents share rate limits, but keeps its own health,
           ;; last-completion and restart files: its calls are not the agent's turns.
-          ($own (str:join " " ("env" (work:quote (str:concat "PYTHONPATH=" $pythonpath))
-                                    (work:quote (str:concat "METTACLAW_ACTIVITY_CALL_SCOPE=" $id))
-                                    (work:quote (str:concat "METTACLAW_STREAM_PARENT="
-                                      (system:getenv-or-default "METTACLAW_INSTANCE" "agent")))
-                                    "METTACLAW_ACTIVITY_CALL_LANE=background"
-                                    (work:quote (str:concat "METTACLAW_COGNITIVE_HEALTH_PATH=" (path:join $dir "health.json")))
-                                    (work:quote (str:concat "METTACLAW_LLM_COMPLETION_PATH=" (path:join $dir "completion.json")))
-                                    (work:quote (str:concat "METTACLAW_PROVIDER_OBSERVATION_PATH=" (path:join $dir "providers.json")))
-                                    (work:quote (str:concat "METTACLAW_RECYCLE_REQUEST_PATH=" (path:join $dir "recycle.requested")))
-                                    (work:quote (str:concat "METTACLAW_WAKE_REQUEST_PATH=" (path:join $dir "wake.requested")))
-                                    (work:quote (str:concat "TMPDIR=" $tmp))
-                                    (work:quote (str:concat "SYNTHETIC_MODEL=" $model))
-                                    (work:quote (str:concat "METTACLAW_MODEL_STATE_PATH=" (path:join $dir "model.metta")))
-                                    (work:quote (str:concat "METTACLAW_CODING_RUN_TOKEN=" $token))
-                                    "METTACLAW_CODING_SESSION=1"
-                                    "METTACLAW_OBSERVED_STRATEGY=0")))
-          ($launch (work:launch-command $id $runtime $binary $own $dir))
-          ($_ (work:shell $launch)))
+          ($parent (system:getenv-or-default "METTACLAW_INSTANCE" "agent"))
+          ($own (("PYTHONPATH" $pythonpath) ("METTACLAW_ACTIVITY_CALL_SCOPE" $id) ("METTACLAW_STREAM_PARENT" $parent)
+                 ("METTACLAW_ACTIVITY_CALL_LANE" "background")
+                 ("METTACLAW_COGNITIVE_HEALTH_PATH" (path:join $dir "health.json"))
+                 ("METTACLAW_LLM_COMPLETION_PATH" (path:join $dir "completion.json"))
+                 ("METTACLAW_PROVIDER_OBSERVATION_PATH" (path:join $dir "providers.json"))
+                 ("METTACLAW_RECYCLE_REQUEST_PATH" (path:join $dir "recycle.requested"))
+                 ("METTACLAW_WAKE_REQUEST_PATH" (path:join $dir "wake.requested"))
+                 ("TMPDIR" $tmp) ("SYNTHETIC_MODEL" $model)
+                 ("METTACLAW_MODEL_STATE_PATH" (path:join $dir "model.metta"))
+                 ("METTACLAW_CODING_RUN_TOKEN" $token) ("METTACLAW_CODING_SESSION" "1")
+                 ("METTACLAW_OBSERVED_STRATEGY" "0")))
+          ($launch (work:launch-command $id $runtime $binary $dir))
+          ($_ (work:shell-with $launch (inherit $own))))
      (WorkLaunched $id)))
 
-;; The session's shell command: its own scope, its environment, and the engine
-;; with the session's flags (session_engine_cetta.metta).
-(= (work:launch-command $id $runtime $binary $own $dir)
+;; The session's shell command: its own scope and the engine with the
+;; session's flags (session_engine_cetta.metta). The scope's command inherits
+;; the environment the launch gives the shell.
+(= (work:launch-command $id $runtime $binary $dir)
    (let $flags (str:join " " (map-atom (session:engine-flags) $flag (work:quote $flag)))
-     (str:join "" ("cd " (work:quote $runtime) " || exit 1; systemd-run --user --scope --quiet --collect --unit=" (work:quote (work:unit $id)) " -- " $own " "
+     (str:join "" ("cd " (work:quote $runtime) " || exit 1; systemd-run --user --scope --quiet --collect --unit=" (work:quote (work:unit $id)) " -- "
                    (work:quote $binary) " " $flags " --lang petta --import-mode ancestor-walk coding_main.metta -- " (work:quote $dir)
                    " >> " (work:quote (path:join $dir "run.log")) " 2>&1 &"))))
 

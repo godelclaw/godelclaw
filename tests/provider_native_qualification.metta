@@ -577,3 +577,26 @@
      (if (<= $left 0) (nt:require (fixture-requests $count) False)
        (let (io:pending $id) (io:submit (timer:after 100))
          (let $_ (io:wait $id 30000) (nq:wait-count $world $count (- $left 1)))))))
+
+; A submitted call's progress receipts are native (src/progress_receipt_cetta.metta):
+; while it waits, the receipt owns the wait to the call's deadline; its answer
+; ends the wait.
+(: nq:progress-receipts (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
+(= (nq:progress-receipts $root $sdk $core $artifacts $fixture)
+   (let* (($world (nq:world $root $sdk $core $artifacts $fixture "progress-receipts"))
+          ($_ (fs:write (nq:path $world "delay-ms") "300"))
+          ($progress (preq:repr (nq:path $world "progress.json")))
+          ($forms (str:join "" (
+            "!(let* (($prepared (pcall:command-plan \"fixture-model\" 42 \"low\" \"input\"))\n"
+            "        ($state (llm:begin $prepared))\n"
+            "        ($waiting (json:parse-python (fs:read-text " $progress ")))\n"
+            "        ($_ (nt:require submitted-call-owns-its-wait (nt:equal (json:get $waiting \"phase\") \"provider-wait\")))\n"
+            "        ($_ (nt:require wait-to-the-deadline (> (json:get $waiting \"wait_until\") (+ (json:get $waiting \"progress_clock\") 9.5))))\n"
+            "        ($answer (llm:after-submit $prepared $state))\n"
+            "        ($_ (nt:require progress-call-answered (nt:equal $answer \"(nop)\")))\n"
+            "        ($done (json:parse-python (fs:read-text " $progress ")))\n"
+            "        ($_ (nt:require answer-ends-the-wait (nt:equal ((json:get $done \"phase\") (json:get $done \"wait_until\")) (\"provider-result\" 0)))))\n"
+            "   (println! NATIVE_PROGRESS_RECEIPTS_OK))")))
+          ($output (nq:output (nq:guest $world "fixture-model" "petta" $forms ())))
+          ($_ (nt:require progress-receipts-finished (nt:contains $output "NATIVE_PROGRESS_RECEIPTS_OK")))
+          ($_ (nq:close $world))) 9))

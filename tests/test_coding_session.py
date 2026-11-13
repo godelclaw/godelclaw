@@ -155,7 +155,7 @@ class CodingSessionTests(unittest.TestCase):
                            'with open(os.environ["FIXTURE_SCOPE_LAUNCHES"] + ".socket", "w") as stream:\n'
                            '    stream.write(os.environ.get("METTACLAW_INPUT_LEDGER_SOCKET", ""))\n'
                            'with open(os.environ["FIXTURE_SCOPE_LAUNCHES"], "a") as stream:\n'
-                           '    stream.write(json.dumps(sys.argv[1:]) + "\\n")\n'
+                           '    stream.write(json.dumps(sorted(k + "=" + v for k, v in os.environ.items()) + sys.argv[1:]) + "\\n")\n'
         }
         for name, source in scripts.items():
             executable = binary / name

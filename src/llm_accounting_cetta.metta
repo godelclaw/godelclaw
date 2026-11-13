@@ -9,6 +9,7 @@
 !(import! &self ./turn_health_cetta.metta)
 !(import! &self ./display_cetta.metta)
 !(import! &self ./commentary_observer_cetta.metta)
+!(import! &self ./progress_receipt_cetta.metta)
 
 (: account:ready (-> %Undefined% %Undefined%))
 (= (account:ready $plan) (call:ready? $plan))
@@ -74,11 +75,12 @@
         ($error (let $ignored5 (py-call (native_llm_host.accounting_observation_error (call:host $plan) "metadata")) False))))))
 (: account:submitted (-> %Undefined% %Undefined% %Undefined%))
 ; A submitted turn or structured call starts its health record; a compaction
-; is maintenance and leaves it alone.
+; is maintenance and leaves it alone. The provider's wait is the last progress
+; receipt before the answer: it owns the watchdog to the call's deadline.
 (= (account:submitted $plan $id)
    (let* (($started (if (call:compaction? $plan) 1
                       (health:start (call:fact $plan "provider" "unknown") (call:fact $plan "wire_model" ""))))
-          ($ignored6 (py-call (native_llm_host.submitted (call:host $plan) $id)))
+          ($waiting (progress:provider-wait (call:fact $plan "timeout" 0)))
           ($native (call:submitted $plan $id))
           ($metadata (account:metadata $plan)))
      (case (nl:submitted $metadata $id (system:wall-time))
@@ -92,7 +94,7 @@
      (((True $soft)
        (let* (($health (if (call:compaction? $plan) 1
                          (health:progress $bytes $quiet $soft (call:fact $plan "timeout" 0))))
-              ($_ (py-call (native_llm_host.progress_observed (call:host $plan) $bytes $quiet $soft)))
+              ($received (progress:provider-data $bytes))
               ($metadata (account:metadata $plan)))
          (case (nl:progress $metadata $bytes $quiet (lp:field $metadata "progress_soft" 0) (system:wall-time))
            (((LedgerChanged $changed) 1)
@@ -103,7 +105,8 @@
 ; A deterministic rejection of a command turn latches the rejection gate first:
 ; the host may hold its block in memory only.
 ; A failed command turn comes back as its facts, which the native owner paces
-; and records (src/turn_health_cetta.metta).
+; and records (src/turn_health_cetta.metta). The report names whether the call
+; was sent, how long it waited and its deadline, from the call's own phase.
 (= (account:failed $plan $correlation $kind $status)
    (let* (($latched (if (account:rejection? $plan $kind $status) (gate:latch) False))
           ($ended (display:call-final (call:correlation $plan) none (lp:text $kind))))
@@ -121,9 +124,15 @@
                       $retry (lp:field $metadata "soft_elapsed" 0) (system:wall-time))
          (((LedgerError $ignored10)
            (let $ignored11 (py-call (native_llm_host.accounting_observation_error (call:host $plan) "failure"))
-             (py-call (native_llm_host.failed (call:host $plan) $correlation $kind $status $seconds))))
-          ($settled (py-call (native_llm_host.failed (call:host $plan) $correlation $kind $status $seconds))))))
-     (py-call (native_llm_host.failed (call:host $plan) $correlation $kind $status -1))))
+             (account:report $plan $correlation $kind $status $seconds)))
+          ($settled (account:report $plan $correlation $kind $status $seconds)))))
+     (account:report $plan $correlation $kind $status -1)))
+(= (account:conflict $plan)
+   (let* (($sent (call:sent? $plan)) ($elapsed (call:elapsed-ms $plan)) ($deadline (call:fact $plan "timeout" 0)))
+     (health:paced (py-call (native_llm_host.completion_conflict (call:host $plan) $sent $elapsed $deadline)))))
+(= (account:report $plan $correlation $kind $status $retry)
+   (let* (($sent (call:sent? $plan)) ($elapsed (call:elapsed-ms $plan)) ($deadline (call:fact $plan "timeout" 0)))
+     (py-call (native_llm_host.failed (call:host $plan) $correlation $kind $status $retry $sent $elapsed $deadline))))
 ; A command whose output the contract rejected: the ledger records the code
 ; the native classification gave, after the completion it belongs to.
 (: account:note-rejection (-> %Undefined% %Undefined% %Undefined%))
@@ -172,6 +181,7 @@
     (let* (($effects (account:effects $plan $legacy $usage))
            ($shared (observer:decision (call:correlation $plan) $decision))
            ($released (account:release $plan $legacy $decision))
+           ($answered (account:answered $released))
            ($ended (account:displayed $plan $legacy $decision $released))
            ($answer (account:health $released))
            ($ignored14 (account:note-rejection $plan $decision)))
@@ -188,6 +198,12 @@
         ((CommentaryRejectedV1 $code)
          (py-call (native_llm_host.finish (call:host $plan) $legacy "rejected" "" $code)))
         ($not-applied (py-call (native_llm_host.finish (call:host $plan) $legacy)))))))
+; A released answer ends the provider wait for the watchdog.
+(= (account:answered $released)
+   (case $released
+     ((("completed" $program $bytes) (progress:phase "provider-result"))
+      (("completed" $bytes) (progress:phase "provider-result"))
+      ($other 1))))
 ; The display's end of a published completion: a compaction's, a structured
 ; call's, a released command's or a rejected command output's. A command
 ; whose output was empty leaves its attempt as the host's finish did.
@@ -220,7 +236,7 @@
       ((LedgerChanged False) (account:reconcile $plan $metadata $epoch $correlation $legacy $canonical $usage $decision $attempt))
       ((LedgerInvalid $invalid) (account:failed $plan $correlation invalid-native-evidence 0))
       ((LedgerError $storage) (account:reconcile $plan $metadata $epoch $correlation $legacy $canonical $usage $decision $attempt))
-      ($invalid (health:paced (py-call (native_llm_host.completion_conflict (call:host $plan))))))))
+      ($invalid (account:conflict $plan)))))
 
 ; Keep the received answer in this owned continuation. Local write/read errors
 ; never escape into a caller's provider-retry loop, and never release the lease.
@@ -237,7 +253,7 @@
       ((LedgerError $unreadable)
        (let $wait (account:recording-wait $plan $attempt)
          (account:reconcile $plan $metadata $epoch $correlation $legacy $canonical $usage $decision (+ $attempt 1))))
-      ($conflict (health:paced (py-call (native_llm_host.completion_conflict (call:host $plan))))))))
+      ($conflict (account:conflict $plan)))))
 ; A received answer waits for local storage: the health record says so, and
 ; the host paces the retry.
 (= (account:recording-wait $plan $attempt)

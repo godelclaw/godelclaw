@@ -164,7 +164,7 @@ class CodingAuthorityAndRepinTests(unittest.TestCase):
             "systemd-run": (
                 "import json, os, sys\n"
                 'with open(os.environ["FIXTURE_SCOPE_LAUNCHES"], "a", encoding="utf-8") as stream:\n'
-                '    stream.write(json.dumps(sys.argv[1:]) + "\\n")\n'
+                '    stream.write(json.dumps(sorted(k + "=" + v for k, v in os.environ.items()) + sys.argv[1:]) + "\\n")\n'
             ),
         }
         for name, source in scripts.items():

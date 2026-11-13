@@ -14,7 +14,6 @@ import time
 
 _sequence = 0
 _wait_deadline = 0.0
-_provider_bytes = 0
 
 
 def path():
@@ -88,19 +87,7 @@ def progress(phase, wait_seconds=0, *, deadline=None):
     return 1
 
 
-def provider_data(count):
-    global _provider_bytes
-    count = int(count)
-    if count <= _provider_bytes:
-        return 1
-    _provider_bytes = count
-    progress("provider-data", deadline=_wait_deadline)
-    return 1
-
-
 def provider_wait(seconds):
-    global _provider_bytes
-    _provider_bytes = 0
     return progress("provider-wait", seconds)
 
 

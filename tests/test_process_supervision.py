@@ -40,38 +40,14 @@ class SupervisionTests(unittest.TestCase):
     def message(self):
         return dict(line.split("=", 1) for line in self.socket.recv(2048).decode().splitlines())
 
-    def test_submitted_call_keeps_its_provider_deadline(self):
-        """The provider wait is the last receipt of a submission: nothing after
-        it resets the watchdog's extension for the call."""
-        import native_llm_host
-        plan = mock.Mock(timeout=20000, provider="anthropic", wire_model="m", kind="command",
-                         purpose="turn", compaction=False)
-        with mock.patch.object(native_llm_host, "_compaction", return_value=False):
-            self.assertTrue(native_llm_host.submitted(plan, 7))
-        messages = []
-        while True:
-            try:
-                messages.append(self.message()["WATCHDOG_USEC"])
-            except socket.timeout:
-                break
-        self.assertEqual(messages, ["21000000"])
-        receipt = json.loads((self.root / "progress").read_text())
-        self.assertEqual((receipt["phase"], receipt["wait_until"]), ("provider-wait", 120.0))
-
-    def test_idle_polling_cannot_extend_provider_deadline(self):
+    # A submitted call's receipts (its provider wait and its data) are native:
+    # tests/unit/progress_receipt.metta.
+    def test_owned_wait_extends_the_watchdog_until_it_ends(self):
         supervision.provider_wait(20)
         self.assertEqual(self.message()["WATCHDOG_USEC"], "21000000")
-        self.clock += 5
-        supervision.provider_data(10)
-        self.assertEqual(self.message()["WATCHDOG_USEC"], "16000000")
-        deadline = json.loads((self.root / "progress").read_text())["wait_until"]
-        self.clock += 5
-        supervision.provider_data(10)
-        with self.assertRaises(socket.timeout):
-            self.message()
-        self.assertEqual(json.loads((self.root / "progress").read_text())["wait_until"], deadline)
-        self.clock += 15
-        supervision.provider_data(20)
+        self.assertEqual(supervision.observation()["state"], "waiting")
+        self.clock += 25
+        supervision.progress("provider-result")
         self.assertEqual(self.message()["WATCHDOG_USEC"], "1000000")
         self.assertEqual(supervision.observation()["state"], "fresh")
         self.clock += 181

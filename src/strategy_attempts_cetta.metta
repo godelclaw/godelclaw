@@ -25,6 +25,7 @@
 !(import! &self ./ledger_client.metta)
 !(import! &self ./display_cetta.metta)
 !(import! &self ./public_worklog_cetta.metta)
+!(import! &self ./progress_receipt_cetta.metta)
 
 !(bind! &strategy-batch (new-space))
 
@@ -71,6 +72,10 @@
 
 ; The attempt a receipt of $turn belongs to: (StrategyAttemptV1 identity
 ; position) of the batch's last reserved command, or none.
+; A command of the batch the broker admitted for $turn is progress: its
+; result's receipt renews the watchdog (src/progress_receipt_cetta.metta).
+(= (strategy:command-progress $turn)
+   (case (strategy:batch) ((none 0) (($open $ticket $next) (if (== $open $turn) (progress:phase "command-receipt") 0)))))
 (= (strategy:attempt $turn)
    (case (strategy:batch)
      ((none none)

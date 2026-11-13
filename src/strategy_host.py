@@ -439,8 +439,6 @@ def command_result(turn, disposition, command, result, position):
         outcome = strategy.encoded({"disposition": str(disposition), "result": str(result)})
         input_ack.attempt_result(_ticket, int(position), strategy.encoded(command), outcome)
         _close_answered_message(command, str(result))
-        import process_supervision
-        process_supervision.progress("command-receipt")
     return 1
 
 

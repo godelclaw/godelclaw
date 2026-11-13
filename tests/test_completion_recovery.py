@@ -40,8 +40,9 @@ class CompletionRecoveryTests(unittest.TestCase):
                 self.assertEqual(self.peer.requests, [])
 
     def fault(self, mode):
-        """Once the request is submitted (a Python observer; the native owner decodes the
-        body itself), completion writes fail the way `mode` names:
+        """Once the call is claimed, at its wire observer just before the request is sent
+        (the capture control file turns the observer on; it captures nothing), completion
+        writes fail the way `mode` names:
         rollback  the completion write is refused for .35 s, then the ledger is back;
         many      the completion write is refused until the 255th local retry;
         ambiguous the completion write lands but its reply is lost (once);
@@ -52,6 +53,9 @@ class CompletionRecoveryTests(unittest.TestCase):
                 self, self.directory, self.socket, b'llm-complete', armed,
                 lose='reply' if mode == 'ambiguous' else 'request', once=mode == 'ambiguous')
             self.env.update(METTACLAW_INPUT_LEDGER_SOCKET=proxy, LLM_TEST_COMMIT_FAULT=str(armed))
+        control = Path(self.env.get('METTACLAW_COGNITIVE_HEALTH_PATH', str(self.directory / 'health.json'))).parent
+        (control / 'request-capture').mkdir(parents=True, exist_ok=True)
+        (control / 'request-capture' / 'control.json').write_text('{"remaining": 0}')
         module = self.directory / "fixture_modules/recovery_fault.py"
         module.write_text('''
 import json, os, threading, time
@@ -70,10 +74,10 @@ def complete_elsewhere(plan):
         time.time(), llm_policy._request()))
 
 def arm(kind):
-    original = native_llm_host.submitted
+    original = native_llm_host.observe_wire
     pending = [True]
-    def received(plan, transport):
-        result = original(plan, transport)
+    def received(plan, body):
+        result = original(plan, body)
         if pending[0]:
             pending[0] = False
             if kind == "conflict":
@@ -92,7 +96,7 @@ def arm(kind):
                     flag.unlink(missing_ok=True)
                 threading.Thread(target=later, daemon=True).start()
         return result
-    native_llm_host.submitted = received
+    native_llm_host.observe_wire = received
     return 1
 ''')
         return f'!(import! &self "{module}")\n!(py-call (recovery_fault.arm "{mode}"))\n'
