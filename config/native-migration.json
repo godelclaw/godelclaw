@@ -1025,6 +1025,36 @@
         "The Anthropic conversation encoder is still quadratic in the engine library (held as an open engine need by the growth gate)",
         "No paid live canary or 24-hour soak claimed"
       ]
+    },
+    {
+      "id": "channels-batch-c1-session-leftovers-and-gateway-stop",
+      "status": "qualified-and-deployed",
+      "native_modules": [
+        "src/coding_io_cetta.metta",
+        "src/coding_work.metta",
+        "channels/telegram.metta"
+      ],
+      "runtime_commit": "e6e6c8fed3",
+      "engine_commit": "4374a1df0d15c6a1bb839746ec2d1447798ad072",
+      "release": "ec14614b",
+      "gateway_release": "ec14614b",
+      "test_orchestration": "CeTTa core without Python",
+      "checks": {
+        "native_suites_passed": "24 of 24",
+        "python_suite": "the same 26 tests fail on main and on the branch",
+        "telegram_end_to_end": "all 17 sections pass against the 4374a1df channel service",
+        "python_entry_census": "unchanged: 36 / 34 / 1 / 76 / 14",
+        "runtime_python_lines_removed": 102,
+        "telegram_py_functions_deleted": 6,
+        "mutants_killed": 6,
+        "live_observation": "a session scope left running since a finished run was ended within a minute of activation",
+        "paired_installed_verification": true
+      },
+      "limits": [
+        "channels/telegram.py still holds 87 functions the runtime enters outside the census scenarios (commands as input, attachments, uploads, published state)",
+        "A leftover that ignores SIGTERM keeps its scope deactivating until systemd kills it",
+        "No paid live canary or 24-hour soak claimed"
+      ]
     }
   ],
   "tuning_debt": [
