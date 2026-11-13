@@ -49,6 +49,8 @@
     ("tests/unit/failure_notice.metta" "UNIT_FAILURE_NOTICE_NO_LEDGER_OK"
      (("METTACLAW_COGNITIVE_HEALTH_PATH" "{home}/health.json") ("METTACLAW_MODE_STATE_ROOT" "{home}/modes")
       ("METTACLAW_TELEGRAM_PRIMARY_CHAT_ID" "42")))
+    ("tests/unit/telegram_files.metta" "UNIT_TELEGRAM_FILES_OK"
+     (("PATH" "{home}/bin:/usr/bin:/bin") ("PYTHONHOME" "{home}/python") ("TMPDIR" "{home}/tmp")))
     ("tests/unit/runtime_health.metta" "UNIT_RUNTIME_HEALTH_OK"
      (("PATH" "{home}/bin:/usr/bin:/bin")
       ("METTACLAW_TELEGRAM_HEALTH_PATH" "{home}/telegram-health.json") ("METTACLAW_WORKING_SET_PATH" "{home}/working.json")

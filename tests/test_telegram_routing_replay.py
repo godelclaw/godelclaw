@@ -2,9 +2,11 @@
 """Replay the 2026-08-27 cross-chat routing and cleanup failure."""
 
 import importlib
+import os
 import pathlib
 import sys
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -19,19 +21,17 @@ class TelegramRoutingReplayTests(unittest.TestCase):
         self.tg = importlib.reload(telegram)
 
     def test_ambient_route_has_constructive_wrong_chat_witness(self):
-        self.tg._primary_chat_id = ""
-        self.tg._reply_chat_id = "protobots"
-        self.tg._last_chat_id = "operator-private"
-        self.assertEqual(self.tg._reply_target(), "protobots")
+        with mock.patch.dict(os.environ, {"METTACLAW_TELEGRAM_PRIMARY_CHAT_ID": ""}):
+            self.tg._reply_chat_id = "protobots"
+            self.assertEqual(self.tg._reply_target(), "protobots")
 
     def test_primary_binding_survives_same_cross_chat_state(self):
-        self.tg._primary_chat_id = "operator-private"
-        self.tg._reply_chat_id = "protobots"
-        self.tg._last_chat_id = "protobots"
-        self.assertEqual(self.tg._reply_target(), "operator-private")
-        self.assertEqual(
-            self.tg._reply_target("protobots"), "protobots"
-        )
+        with mock.patch.dict(os.environ, {"METTACLAW_TELEGRAM_PRIMARY_CHAT_ID": "operator-private"}):
+            self.tg._reply_chat_id = "protobots"
+            self.assertEqual(self.tg._reply_target(), "operator-private")
+            self.assertEqual(
+                self.tg._reply_target("protobots"), "protobots"
+            )
 
     def test_failed_cleanup_invalidates_unobserved_done_suffix(self):
         command = ["delete-my-recent", "research-group", 3]

@@ -11,10 +11,10 @@
 ; turn that read it is in history (tg:ack-activity-batch). A restart reads
 ; it again from the service; there is no offset or receipt file here.
 ;
-; Python still provides, through channels/telegram.py: attachment downloads
-; (which call the Bot API directly), file and image uploads, and the readers
-; used by her Python context and health code, which read state this client
-; publishes there. Arming energy is channels/energy.metta's.
+; Attachments and uploads go through channels/telegram_files.metta, which
+; calls the Bot API directly. Python still provides, through
+; channels/telegram.py, the readers her Python context code uses, which read
+; state this client publishes there. Arming energy is channels/energy.metta's.
 
 !(import! &self str)
 !(import! &self json)
@@ -28,6 +28,7 @@
 !(import! &self ./channels/access_policy.metta)
 !(import! &self ./channels/telegram_control_input.metta)
 !(import! &self ./channels/telegram_notice_cleanup.metta)
+!(import! &self ./channels/telegram_files.metta)
 !(import! &self ./src/job_io)
 !(import! &self ./src/activity_source_cetta.metta)
 !(import! &self ./src/runtime_events_cetta.metta)
@@ -397,7 +398,7 @@
                       (JsonPair "chat_title" (JsonString $title))
                       (JsonPair "from" (JsonString "me"))
                       (JsonPair "from_is_bot" (tg:jbool True))
-                      (JsonPair "message_id" (tg:jnum $message-id))
+                      (JsonPair "message_id" (if (== $message-id None) JsonNull (tg:jnum $message-id)))
                       (JsonPair "text" (JsonString $text))))))))
 
 (= (tg:log-own-delete $chat $message-id $note)
@@ -746,6 +747,7 @@
           ($done (tg:handle-tasks $tasks))
           ($cursor (if (== (size-atom (tg:list $tasks)) 256) (tg:last-pending $tasks) ""))
           ($_ (tg:set poll-after $cursor))
+          ($files (tg:collect-attachments))
           ($events (tg:drain-runtime-events))
           ($now (tg:now)))
      (tg:health-merge ((JsonPair "poll_status" "ok") (JsonPair "last_poll_ok_at" $now)) False)))
@@ -903,7 +905,7 @@
        (if (tg:attachment? $message)
          (let $w (tg:wake-for-note $note $reason $chat-id $sender-id)
            (let $l (tg:log-update $update $mkind $message True False "attachment_dispatched" $provenance)
-             (let $d (py-call (telegram.metta_attachment (json-stringify $update) $mkind $text $provenance $arming))
+             (let $d (tg:attachment-dispatch $update $mkind $message $text $provenance $arming $note $reason)
                (tg:acknowledge $task))))
          (if (== $text "")
            (let $l (tg:log-update $update $mkind $message True False "no_text_or_caption") (tg:acknowledge $task))
@@ -1532,9 +1534,80 @@
 
 ;; -------------------------------------------------------------- startup
 
+;; ----------------------------------------------------------------- files
+;; channels/telegram_files.metta fetches and sends; here a finished download
+;; becomes her activity, as the message it came with.
+
+; Begin the download of a message's attachment, which intake has logged as
+; dispatched; one with nothing to fetch is ready at once.
+(= (tg:attachment-dispatch $update $kind $message $text $provenance $tier $note $reason)
+   (case (tgf:dispatch (tgf:config) (TgAttachmentV1 $update $kind $message $text $provenance $tier $note $reason) $message)
+     (((TgfReadyV1 $job $announcement) (tg:attachment-ready $job $announcement))
+      ($pending True))))
+; A finished download: the message, its text followed by the announcement, is
+; logged as attachment_ready and becomes her activity; a sender who wakes her
+; wakes her again.
+(= (tg:attachment-ready (TgAttachmentV1 $update $kind $message $text $provenance $tier $note $reason) $announcement)
+   (let* (($said (if (== $text "") $announcement (str:concat $text (str:concat "\n" $announcement))))
+          ($ready (sf:put (sf:drop $message "caption") "text" (JsonString $said)))
+          ($logged (tg:log-update $update $kind $ready True True "attachment_ready" $provenance))
+          ($chat (tg:str (tg:at (tg:at $message "chat") "id")))
+          ($bot (tg:truthy (tg:at (tg:at $message "from") "is_bot"))))
+     (tg:activity-add "" $chat (tg:format-message $update $kind $ready $said $provenance) $bot $tier
+                      (tg:str (tg:at $update "update_id")) (if (== $note sender-wake) $reason False))))
+(= (tg:collect-attachments) (tg:attachments-ready (tgf:collect (tgf:config))))
+(= (tg:attachments-ready $items)
+   (if (== $items ()) True
+     (let* (((TgfReadyV1 $job $announcement) (car-atom $items))
+            ($_ (tg:attachment-ready $job $announcement)))
+       (tg:attachments-ready (cdr-atom $items)))))
+; At start, the downloads her ledger dispatched and never finished begin
+; again. How each may wake her is decided again, by the access policy.
+(= (tg:recover-attachments) (tg:recover-each (tgf:pending (tg:ledger) 100)))
+(= (tg:recover-each $pending)
+   (if (== $pending ()) True
+     (let* ((($update $provenance) (car-atom $pending))
+            ($_ (tg:recover-one $update $provenance)))
+       (tg:recover-each (cdr-atom $pending)))))
+(= (tg:recover-one $update $provenance)
+   (let ($kind $message) (tg:message-of $update)
+     (if (or (== $kind "unsupported") (not (tg:attachment? $message))) False
+       (let* (($chat (tg:at $message "chat"))
+              ($sender-id (tg:str (tg:at (tg:at $message "from") "id")))
+              ($text (tg:message-text $message))
+              ($group (if (== (tg:str (tg:at $chat "type")) "private") "" (tg:str (tg:at $chat "id"))))
+              ($decision (ap:decide telegram $sender-id $group (tg:addressed-to-me? $message $text))))
+         (case $decision
+           (((AccessDecisionV1 record $note $reason $tier $p)
+             (tg:attachment-dispatch $update $kind $message $text $provenance
+                                     (if (== $tier "") (tg:tier-for $sender-id) $tier) $note $reason))
+            ($other (tg:attachment-dispatch $update $kind $message $text $provenance (tg:tier-for $sender-id) quiet ""))))))))
+
+; send-file and send-image: to the reply target, the operator's chat unless
+; another is named, among the configured chats. A sent file is recorded in her
+; ledger as her own send.
+(= (tg:allowed-chats)
+   (tg:split-ids (str:join "," ((tg:env "METTACLAW_TELEGRAM_CHAT_ID" "") (tg:env "TELEGRAM_CHAT_ID" "")
+                                (tg:env "METTACLAW_TELEGRAM_ALLOWED_CHAT_IDS" "")))))
+(= (tg:send-file $path $caption $chat)
+   (tg:sent-file (tgf:send (tgf:config) "sendDocument" "document" $path (tgf:basename $path) $caption
+                           (tg:reply-target $chat) (tg:allowed-chats) (tg:primary))))
+(= (tg:send-image $path $caption $chat)
+   (tg:sent-file (tgf:send-image (tgf:config) $path $caption (tg:reply-target $chat) (tg:allowed-chats) (tg:primary))))
+(= (tg:sent-file $outcome)
+   (case $outcome
+     (((TgfSentV1 $chat $record $message-id $reply) (let $_ (tg:log-outbound $chat $record $message-id) $reply))
+      ($reply $reply))))
+
+; Her client starts: the liveness facts a monitor reads, the downloads a
+; restart interrupted, and a first poll.
 (= (tg:start)
    (if (== (tg:socket) "") "telegram disabled: the durable service socket is not configured"
-     (let $b (tg:poll) "telegram client started")))
+     (let* (($_ (tg:health-merge ((JsonPair "running" True) (JsonPair "started_at" (tg:now)) (JsonPair "client" "metta")
+                                  (JsonPair "poll_status" "starting")) True))
+            ($_ (tg:recover-attachments))
+            ($b (tg:poll)))
+       "telegram client started")))
 
 ;; ------------------------------------------- what other code reads of her
 ; The Python Telegram code (the effect scope, runtime events, sends and

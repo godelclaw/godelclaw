@@ -1,4 +1,5 @@
-"""Rest remains agent-directed while Telegram can report and interrupt it."""
+"""Rest remains agent-directed while Telegram can report and interrupt it. Who
+wakes her is the access policy's (channels/access_policy.metta)."""
 
 import shutil
 import os
@@ -12,13 +13,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, os.fspath(ROOT / "channels"))
 
 import telegram  # noqa: E402
-import runtime_spool  # noqa: E402
-
-
-
-def woken():
-    """The reasons of the wakes queued for the MeTTa client."""
-    return [event["wake_only"] for event in runtime_spool.events(telegram.runtime_spool()) if "wake_only" in event]
 
 
 class RestControlTest(unittest.TestCase):
@@ -32,41 +26,6 @@ class RestControlTest(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(telegram.runtime_spool(), ignore_errors=True)
-
-    def test_operator_message_requests_wake(self):
-        with mock.patch.dict(
-                os.environ,
-                {"METTACLAW_TELEGRAM_OPERATOR_IDS": "111000111"}):
-            self.assertTrue(telegram._wake_for_operator_message(
-                {"id": 111000111, "is_bot": False}))
-        self.assertEqual(woken(), ["operator message"])
-
-    def test_non_operator_message_does_not_request_wake(self):
-        with mock.patch.dict(
-                os.environ,
-                {"METTACLAW_TELEGRAM_OPERATOR_IDS": "111000111"}):
-            self.assertFalse(telegram._wake_for_operator_message(
-                {"id": 222000222, "is_bot": False}))
-        self.assertEqual(woken(), [])
-
-    def test_wake_peer_message_requests_wake_without_operator_control(self):
-        peer = {"id": 333000333, "is_bot": True}
-        with mock.patch.dict(
-                os.environ,
-                {"METTACLAW_TELEGRAM_OPERATOR_IDS": "111000111",
-                 "METTACLAW_TELEGRAM_WAKE_IDS": "333000333"}):
-            self.assertTrue(telegram._wake_for_operator_message(peer))
-            self.assertFalse(telegram._is_operator(peer))
-        self.assertEqual(woken(), ["peer message"])
-
-    def test_unlisted_bot_message_does_not_request_wake(self):
-        with mock.patch.dict(
-                os.environ,
-                {"METTACLAW_TELEGRAM_OPERATOR_IDS": "111000111",
-                 "METTACLAW_TELEGRAM_WAKE_IDS": "333000333"}):
-            self.assertFalse(telegram._wake_for_operator_message(
-                {"id": 444000444, "is_bot": True}))
-        self.assertEqual(woken(), [])
 
     def test_agent_requested_rest_has_no_hidden_upper_clamp(self):
         source = (ROOT / "src" / "skills.metta").read_text(encoding="utf-8")

@@ -9,6 +9,9 @@ Environment: CETTA_CHANNEL_ROOT (CeTTa checkout with telegram-channel/1 and
 lib/cwp), CETTA_SERVICE_BIN (its Telegram service, one that takes
 --allow-private), CETTA_BIN (a cetta with Python for Lila's modules).
 """
+import email.parser
+import email.policy
+import http.server
 import json
 import os
 import pathlib
@@ -18,8 +21,10 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
+import urllib.parse
 
 # An end-to-end script, run directly. Imported by test discovery it would run
 # at import time and leave its environment in the process for every test.
@@ -93,6 +98,52 @@ class BotAPI(Peer):
     def texts(self):
         with self.lock:
             return [(d.get("chat_id"), d.get("text")) for n, d in self.calls if n == "sendMessage"]
+
+
+class FileAPI(http.server.ThreadingHTTPServer):
+    """The Bot API's file side, which the client calls directly: getFile, the
+    file's own bytes, and multipart sendDocument and sendPhoto."""
+    daemon_threads = True
+
+    def __init__(self, files):
+        self.files, self.received, self.lock = files, [], threading.Lock()
+        super().__init__(("127.0.0.1", 0), FileHandler)
+        threading.Thread(target=self.serve_forever, daemon=True).start()
+        self.origin = "http://127.0.0.1:%d" % self.server_address[1]
+
+
+class FileHandler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass  # The URL carries the token.
+
+    def reply(self, status, body, kind="application/json"):
+        self.send_response(status)
+        self.send_header("Content-Type", kind)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        path, _, query = self.path.partition("?")
+        if path == "/bot%s/getFile" % TOKEN:
+            file_id = urllib.parse.parse_qs(query)["file_id"][0]
+            self.reply(200, json.dumps({"ok": True, "result": {"file_id": file_id,
+                                        "file_path": "documents/%s.bin" % file_id}}).encode())
+        elif path.startswith("/file/bot%s/documents/" % TOKEN):
+            name = path.rsplit("/", 1)[1][:-len(".bin")]
+            self.reply(200, self.server.files[name], "application/octet-stream")
+        else:
+            self.reply(404, b'{"ok":false}')
+
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers["Content-Length"]))
+        message = email.parser.BytesParser(policy=email.policy.default).parsebytes(
+            b"Content-Type: " + self.headers["Content-Type"].encode() + b"\r\n\r\n" + body)
+        parts = {part.get_param("name", header="content-disposition"):
+                 (part.get_filename(), part.get_payload(decode=True)) for part in message.iter_parts()}
+        with self.server.lock:
+            self.server.received.append((self.path.rsplit("/", 1)[1], parts))
+        self.reply(200, b'{"ok":true,"result":{"message_id":901}}')
 
 
 def start_input_ledger(folder):
@@ -477,6 +528,74 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
                              '!(sf:get (sf:native-object (tg:client-state-path)) "pending_count" -1)\n' % out, env)
             assert lines[-2:] == ["1", "0"], lines
             print("runtime events, published counts and queued new input work from the MeTTa client")
+
+            # 9b. Files. A document the operator sends is downloaded natively
+            #     (getFile, then the file itself, saved whole) and becomes her
+            #     input with its caption and saved path; the ledger keeps the
+            #     dispatch and its completion. send-file and send-image upload
+            #     multipart, and a sent file joins her ledger as her own send.
+            document = bytes((i * 131 + (i >> 8) * 7) % 256 for i in range(200_000)) + b"\x00tail"
+            files = FileAPI({"FILE106": document})
+            files_env = dict(env, METTACLAW_TELEGRAM_BASE_URL=files.origin)
+            api.add(106, CHAT, OPERATOR, "", caption="the report",
+                    document={"file_id": "FILE106", "file_name": "report.bin",
+                              "mime_type": "application/octet-stream", "file_size": len(document)})
+            drain = ('(= (drain $n) (if (or (== $n 0) (== (tgf:in-flight) ())) done '
+                     '(let $_ (sleep 0.1) (let $p (tg:poll) (drain (- $n 1))))))\n')
+            time.sleep(1.5)
+            lines, err = run(drain + '!(tg:start)\n!(drain 300)\n!(fs:write "%s" (tg:activity-batch))\n'
+                             '!(tg:ack-activity-batch)\n' % out, files_env)
+            saved = temp / "memory" / "attachments" / "106-report.bin"
+            assert saved.exists() and saved.read_bytes() == document, (lines[-6:], err[-1500:])
+            batch_text = out.read_text()
+            assert ("the report\n[attachment saved: %s (document report.bin, application/octet-stream, %db)]"
+                    % (saved, len(document))) in batch_text, batch_text[-800:]
+            notes = [record.get("note") for record in map(json.loads, ledger.read_text().splitlines())
+                     if record.get("message_id") == 106]
+            assert notes == ["attachment_dispatched", "attachment_ready"], notes
+            upload = temp / "upload.bin"
+            upload.write_bytes(document[:5000])
+            image = temp / "picture.png"
+            image.write_bytes(b"\x89PNG\r\n\x1a\nfixture")
+            lines, err = run('!(tg:send-file "%s" "a caption" "")\n!(tg:send-image "%s" "" "%d")\n'
+                             % (upload, image, GROUP), files_env)
+            expect(lines, err, ["sent upload.bin (5000 bytes) to chat %d (msg 901)" % CHAT,
+                                "sent picture.png (%d bytes) to chat %d (msg 901)" % (image.stat().st_size, GROUP)],
+                   "uploads")
+            with files.lock:
+                received = list(files.received)
+            assert [name for name, _ in received] == ["sendDocument", "sendPhoto"], received
+            assert received[0][1]["chat_id"] == (None, str(CHAT).encode())
+            assert received[0][1]["caption"] == (None, b"a caption")
+            assert received[0][1]["document"] == ("upload.bin", document[:5000])
+            assert received[1][1]["photo"] == ("picture.png", image.read_bytes())
+            own = [record for record in map(json.loads, ledger.read_text().splitlines())
+                   if record.get("note") == "own_send" and record.get("message_id") == 901]
+            assert [record["text"] for record in own] == ["[document upload.bin] a caption", "[photo picture.png] "], own
+            # A download a restart interrupted: dispatched in her ledger and
+            # never finished. Her client's next start fetches it again.
+            files.files["FILE107"] = b"again"
+            interrupted = {"update_id": 107, "message": {
+                "message_id": 107, "date": 1790000000, "caption": "retry me",
+                "chat": {"id": CHAT, "type": "private", "first_name": "Zed"},
+                "from": {"id": OPERATOR, "first_name": "Zed", "is_bot": False},
+                "document": {"file_id": "FILE107", "file_name": "again.bin", "file_size": 5}}}
+            with ledger.open("a") as stream:
+                stream.write(json.dumps({"received_at": "2026-11-13T00:00:00+0000", "update_id": 107,
+                                         "kind": "message", "allowed": True, "queued": False,
+                                         "note": "attachment_dispatched", "chat_id": str(CHAT),
+                                         "message_id": 107, "raw": interrupted}) + "\n")
+            lines, err = run(drain + '!(tg:start)\n!(drain 300)\n!(fs:write "%s" (tg:activity-batch))\n'
+                             '!(tg:ack-activity-batch)\n' % out, files_env)
+            again = temp / "memory" / "attachments" / "107-again.bin"
+            assert again.exists() and again.read_bytes() == b"again", (lines[-6:], err[-1500:])
+            assert "retry me\n[attachment saved: %s (document again.bin, 5b)]" % again in out.read_text(), out.read_text()[-600:]
+            notes = [record.get("note") for record in map(json.loads, ledger.read_text().splitlines())
+                     if record.get("message_id") == 107]
+            assert notes == ["attachment_dispatched", "attachment_ready"], notes
+            files.shutdown()
+            print("files: a document downloaded natively becomes input with its path, and an interrupted one "
+                  "is fetched again at start; uploads go multipart and join the ledger")
 
             # 10. The command responder, a process of its own with no model
             #     call, answers settings commands while no loop client runs at
