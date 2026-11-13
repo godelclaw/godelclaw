@@ -6,6 +6,11 @@
 ; A process whose mode differs from the selected one is asked to recycle.
 (= (call-gate-test:recycling?)
    (not (== (system:getenv-or-default "METTACLAW_ACTIVE_LOOP_MODE" "") "")))
+; The latch's path, as pathlib builds it: empty and "." components are
+; dropped, ".." is kept, and exactly two leading slashes survive.
+!(nt:require mode-paths-as-pathlib
+   (nt:equal (map-atom ("a//b/./c" "/a/" "//a" "///a" "." "" "/" "a/../b" "./a") $path (mode-path:pathlib $path))
+             ("a/b/c" "/a" "//a" "/a" "." "." "/" "a/../b" "a")))
 (= (call-gate-test:run)
    (let* (; No latch file: cognition is stopped, as lifecycle._read() reads it.
           ($_ (nt:require missing-latch-is-the-hosts (nt:equal (call-gate:decide "" "" "") host)))

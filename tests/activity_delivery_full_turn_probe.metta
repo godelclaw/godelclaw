@@ -16,6 +16,8 @@
      (if (fs:exists $path)
        (case (str:find (fs:read-text $path) $text) (((TextNotFound $missing) 0) ($found 1)))
        0)))
+;; Without the test world there is no provider to script: stop before any write.
+!(assert (not (== (system:getenv-or-default "NATIVE_TEST_WORLD" "") "")))
 !(fs:write (probe:world "response-1.body") (probe:reply ""))
 !(fs:write (probe:world "response-2.body") (probe:reply "((nop))"))
 !(py-eval "(__import__('helper').__dict__.__setitem__('_working_boot_cache', {}), __import__('helper').__dict__.__setitem__('working_boot', lambda: 1))")

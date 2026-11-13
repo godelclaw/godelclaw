@@ -117,9 +117,17 @@ def _require_cetta(paths):
     return dict(paths, python_env=prefix)
 
 
+# These run on the native transport against the native test world's loopback
+# provider, which only the native runner builds
+# (scripts/test_runtime_probes_cetta.metta); it and the census run them.
+NATIVE_WORLD_PROBES = ("tests/activity_delivery_full_turn_probe.metta",
+                       "tests/integrated_coding_turn_probe.metta")
+
+
 class RuntimeProbeTest(unittest.TestCase):
     # Retained reference harness reads the registry used by the native driver.
-    PROBES = tuple(map(tuple, json.loads((ROOT / "tests/runtime_probes.json").read_text())))
+    PROBES = tuple(probe for probe in map(tuple, json.loads((ROOT / "tests/runtime_probes.json").read_text()))
+                   if probe[0] not in NATIVE_WORLD_PROBES)
 
     # Probes of the MeTTa Telegram client, which needs CeTTa's native system
     # and environment operations.
