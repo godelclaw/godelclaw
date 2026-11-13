@@ -9,6 +9,10 @@ and function only, never arguments. Calls that CPython serves without a Python
 frame are not observed, so the count is a lower bound. A coding session runs
 from a frozen copy of the runtime (memory/coding-runtimes/<digest>/); its
 files count as project files under their path inside that copy.
+
+The census counts program work only. Py_FinalizeEx enters threading._shutdown
+before any atexit handler runs; from that entry on, a process records nothing,
+so Python's own shutdown and the runtime's exit handlers are not counted.
 """
 import os
 import sys
@@ -24,11 +28,19 @@ def _install():
     path = os.path.join(directory, "%d.entries" % os.getpid())
     # O_APPEND keeps each short line whole across threads.
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    # Without a code object to recognise, counting never stops: an exit-time
+    # entry is then counted, never a program entry missed.
+    shutdown = getattr(getattr(threading, "_shutdown", None), "__code__", None)
+    finished = False
 
     def trace(frame, event, arg):
-        if event != "call" or frame.f_back is not None:
+        nonlocal finished
+        if finished or event != "call" or frame.f_back is not None:
             return
         code = frame.f_code
+        if code is shutdown:
+            finished = True
+            return
         filename = code.co_filename
         if filename.startswith("<"):
             return  # py-eval text and frozen import machinery

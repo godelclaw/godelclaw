@@ -3,7 +3,8 @@
 ; Each scenario runs as the runtime probes run (tests/runtime_probes_native.metta),
 ; but its Python environment carries tests/support/python_entry_census.py as
 ; sitecustomize. Every process of the scenario, spawned workers included, then
-; records each call that entered Python from native code. The project count
+; records each call that entered Python from native code, until Python's
+; shutdown begins: exit-time work is not program work. The project count
 ; must stay at or below the scenario's ceiling in tests/python_entry_census.json;
 ; a port lowers the ceiling. Run from the checkout root with the core engine:
 ;   NATIVE_TEST_SDK=... NATIVE_TEST_CORE=... NATIVE_TEST_ARTIFACTS=... \
