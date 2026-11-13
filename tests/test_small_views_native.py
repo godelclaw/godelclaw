@@ -138,19 +138,11 @@ class SmallViewsTest(unittest.TestCase):
             self.assertEqual(actual[-1]["calls"], {key: len(steps) for key in retained})
             self.assertEqual(actual[-1]["engine_calls"], len(steps))
             # The caller asks the strategy host whether the MeTTa client
-            # renders the chat window or the route view.
+            # renders the chat window or the route view. Whether the observed
+            # strategy is on is read natively and never crosses.
             boundaries = {"prepare": len(steps), "retained-load": len(retained) * len(steps),
-                          "engine-command": len(steps), "conversation-mode": len(steps),
-                          "action-strategy": 2 * len(steps)}
-            if boot:
-                # Boot may retain a pre-instrumentation enabled_flag callable.
-                # These witnesses are NOT an engine-level full-turn census.
-                observed = actual[-1]["boundaries"].copy()
-                self.assertIn(observed.pop("action-strategy", 0), (0, len(steps), 2 * len(steps)))
-                boundaries.pop("action-strategy")
-            else:
-                observed = actual[-1]["boundaries"]
-            self.assertEqual(observed, boundaries)
+                          "engine-command": len(steps), "conversation-mode": len(steps)}
+            self.assertEqual(actual[-1]["boundaries"], boundaries)
         return actual
 
     def file_steps(self, variable, values):

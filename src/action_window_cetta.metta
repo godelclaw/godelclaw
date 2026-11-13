@@ -5,7 +5,7 @@
 !(import! &self (library re))
 !(import! &self (library math))
 !(import! &self (library system))
-!(import! &self ./src/strategy_host.py)
+!(import! &self ./src/strategy_broker_cetta.metta)
 !(import! &self ./src/undelivered_prose_unicode)
 !(import! &self ./src/action_window_unicode)
 
@@ -275,7 +275,7 @@
    (let* (($history (system:getenv-or-default "METTACLAW_HISTORY_PATH" "./memory/history.metta"))
           ($turns (aw:int-env "METTACLAW_RECENT_ACTION_TURNS" 12))
           ($blocks (aw:checked-blocks $history)))
-     (aw:context-views $blocks $turns (py-call (strategy_host.enabled_flag)))))
+     (aw:context-views $blocks $turns (strategy:enabled-flag))))
 ; Both budgets select from one captured journal, so a concurrent append cannot
 ; give the two views different histories. The strategy path selects only once.
 (= (aw:context-views $blocks $turns $strategy)

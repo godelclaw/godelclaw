@@ -56,16 +56,11 @@ def setup():
         count('reserve')
         return 1
 
-    def enabled():
-        count('strategy_enabled')
-        return int(os.environ.get('METTACLAW_OBSERVED_STRATEGY') == '1')
-
     stream_sink.receipt = stream
     strategy_host.command_result = result
     strategy_host.command_identity = identity
     strategy_host.reserve_command = reserve
     strategy_host.stopped = lambda: 0
-    strategy_host.enabled_flag = enabled
     # Keep the full registry: Qualification provides generated paths for every
     # native source. Receipt view remains forbidden on Python, so the complete
     # context caller cannot hide a receipt fallback behind a scoped registry.

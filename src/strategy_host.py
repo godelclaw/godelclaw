@@ -40,10 +40,6 @@ def enabled():
     return os.environ.get("METTACLAW_OBSERVED_STRATEGY", "0") == "1"
 
 
-def enabled_flag():
-    return int(enabled())
-
-
 def fair_enabled():
     # Goal choice belongs to the agent, not a rotating host scheduler.
     return False
@@ -185,9 +181,10 @@ def lifetime_context():
 
 
 def context_input(key, output_tokens=32768):
-    """Read host metadata for MeTTa's native context policy."""
-    if key == "enabled":
-        return enabled_flag()
+    """Read host metadata for MeTTa's native context policy.
+
+    Whether the observed strategy is on is read natively
+    (src/strategy_broker_cetta.metta)."""
     if key == "focus":
         return _focus or "autonomous"
     if key == "trigger":

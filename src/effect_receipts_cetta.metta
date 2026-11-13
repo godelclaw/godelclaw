@@ -9,6 +9,7 @@
 !(import! &self ./src/effect_receipt_io_cetta.metta)
 !(import! &self ./src/public_worklog_cetta.metta)
 !(import! &self ./src/strategy_host.py)
+!(import! &self ./src/strategy_broker_cetta.metta)
 !(import! &self ./src/stream_sink.py)
 !(import! &self ./src/effect_receipts_plugin.py)
 
@@ -248,7 +249,7 @@
    (erv:from-points (map-atom (erv:points $text) $cp (if (erv:surrogate? $cp) 63 $cp))))
 (= (er:context-load)
    (let $answers (collapse (catch
-       (if (== (py-call (strategy_host.enabled_flag)) 1) "Task receipts are in TASK_CONTEXT." (er:view 18))))
+       (if (strategy:enabled?) "Task receipts are in TASK_CONTEXT." (er:view 18))))
      (case $answers
        ((($text) (if (== (get-type $text) String) ("value" (er:context-text $text)) ("unavailable")))
         ($other ("unavailable"))))))

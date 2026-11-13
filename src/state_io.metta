@@ -1,5 +1,6 @@
 !(import! &self ./src/context_compaction)
 !(import! &self ./src/runtime_cetta)
+!(import! &self ./src/strategy_broker_cetta.metta)
 
 ; SWI-PeTTa eagerly visits imports in both branches above.  Keep the backend
 ; names distinct and expose one runtime-selected public interface.
@@ -17,7 +18,7 @@
        (((Error $_ $_) (ContextPreparationFailed "context-preparation-failed"))
         ($first $first)))))
 (= (state:prepare-context $prompt $tokens)
-   (if (== (py-call (strategy_host.context_input "enabled")) 1)
+   (if (strategy:enabled?)
        (let* (($evidence (format-args "{}" ((py-call (strategy_host.lifetime_context)))))
               ($base (request:append (request:append $prompt $evidence) (runtime:projection)))
               ($focus (py-call (strategy_host.context_input "focus")))
