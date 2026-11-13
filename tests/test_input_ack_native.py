@@ -196,17 +196,6 @@ class OracleTest(NativeCase):
         self.assertIn(UNI_UPDATE, ids)
         self.assertIn("back\\slash", ids)
 
-    def test_a_processed_update_leaves_no_pending_entry_and_a_later_one_does(self):
-        with oracle_environment():
-            os.environ[input_ack.LEDGER_SOCKET] = str(self.server.socket)
-            mark_processed(["u1"])
-            done = input_ack.key("t1", LANE, "message", "operator", '{"update_id": "u1"}')
-            kept = dict(input_ack._pending)
-            other = input_ack.key("t2", LANE, "message", "operator", '{"update_id": "u2"}')
-            pending = sorted(input_ack._pending)
-        self.assertEqual((done, kept, other), ("", {}, ""))
-        self.assertEqual(pending, ["t2"])
-
     def test_receipts_with_keys_and_ids_that_are_not_what_the_service_sends(self):
         with oracle_environment() as directory:
             runner = NativeRunner.create(directory, self.server.socket)
@@ -367,8 +356,6 @@ class FailureTest(NativeCase):
         for call in (lambda: mark_processed(["u1"]),
                      lambda: input_ack.committed(["u1"]),
                      lambda: input_ack.already_committed("u1"),
-                     lambda: input_ack.key("t", LANE, "message", "operator", '{"update_id": 7}'),
-                     lambda: input_ack.submitted("t"),
                      lambda: input_ack.receipt(["delivery", "k", 0, 1, ["delivered", 1]]),
                      lambda: pump(base.FakeChannel([], None))):
             with self.assertRaises(input_ack.LedgerUnavailable) as raised:
@@ -377,14 +364,6 @@ class FailureTest(NativeCase):
         self.assertTrue(all("db:connect" in str(error) for error in errors), [str(error) for error in errors])
         # An unreachable server is not a lost race: none of these is LedgerBusy.
         self.assertFalse(any(isinstance(error, input_ack.LedgerBusy) for error in errors))
-
-    def test_the_memory_of_submitted_is_updated_before_the_store_fails(self):
-        self.server.stop()
-        self.session()
-        input_ack._pending["t"] = [1.0, False, LANE]
-        with self.assertRaises(input_ack.LedgerUnavailable):
-            input_ack.submitted("t")
-        self.assertTrue(input_ack._pending["t"][1])
 
     def restart_case(self, crash):
         self.session()
@@ -501,7 +480,7 @@ class FailureTest(NativeCase):
 
         clock = itertools.count(1000.0, 7.0)
         with mock.patch.object(CettaValueWorker, "call", lossy), \
-                mock.patch.object(input_ack.time, "time", side_effect=lambda: next(clock)):
+                mock.patch.object(time, "time", side_effect=lambda: next(clock)):
             self.assertEqual(mark_processed(["u1", "u2"]), 1)
             self.assertEqual(len(requests), 2)
             self.assertEqual(requests[0], requests[1], "the repeated request must be the same one")
@@ -519,7 +498,7 @@ class FailureTest(NativeCase):
             channel = base.FakeChannel([], None)
             clock = itertools.count(5000.0, 11.0)
             with mock.patch.object(CettaValueWorker, "call", lossy), \
-                    mock.patch.object(input_ack.time, "time", side_effect=lambda: next(clock)):
+                    mock.patch.object(time, "time", side_effect=lambda: next(clock)):
                 pump(channel)
             self.assertEqual(len(requests), 2)
             self.assertEqual(requests[0], requests[1])
@@ -569,7 +548,7 @@ class FailureTest(NativeCase):
         self.session(proxy.path)
         clock = itertools.count(300.0, 1.0)
         proxy.armed.set()
-        with mock.patch.object(input_ack.time, "time", side_effect=lambda: next(clock)):
+        with mock.patch.object(time, "time", side_effect=lambda: next(clock)):
             self.assertEqual(mark_processed(["u2", "u1"]), 1)
             self.assertEqual(next(clock), 301.0)
         self.assertTrue(proxy.dropped.is_set(), "the proxy never lost a reply")
@@ -583,7 +562,7 @@ class FailureTest(NativeCase):
         self.assertGreaterEqual(proxy.connections, 2)
         self.assertEqual(self.dump()[1], {"u1": 300.0, "u2": 300.0})
         # Applied once: a later call with the same ids and another time changes nothing.
-        with mock.patch.object(input_ack.time, "time", side_effect=lambda: 999.0):
+        with mock.patch.object(time, "time", side_effect=lambda: 999.0):
             self.assertEqual(mark_processed(["u1", "u2"]), 1)
         self.assertEqual(self.dump()[1], {"u1": 300.0, "u2": 300.0})
 
@@ -720,17 +699,6 @@ class LocationTest(unittest.TestCase):
             del os.environ[name]
         os.environ["HOME"] = str(self.directory)
 
-    def test_the_telegram_service_state_directory_keeps_its_derivation(self):
-        home = self.directory
-        self.assertEqual(input_ack.telegram_service_state_dir(), home / ".local/state/cetta-telegram-agent")
-        os.environ["METTACLAW_INSTANCE"] = "inst"
-        self.assertEqual(input_ack.telegram_service_state_dir(), home / ".local/state/cetta-telegram-inst")
-        os.environ["XDG_STATE_HOME"] = str(home / "xdg")
-        self.assertEqual(input_ack.telegram_service_state_dir(), home / "xdg/cetta-telegram-inst")
-        os.environ["METTACLAW_TELEGRAM_SERVICE_STATE_DIR"] = str(home / "explicit")
-        self.assertEqual(input_ack.telegram_service_state_dir(), home / "explicit")
-        self.assertFalse(hasattr(input_ack, "state_dir"), "the old name must be gone: it named the wrong directory")
-
     def test_the_ledger_lives_in_the_agents_own_state_directory_the_caller_passes(self):
         home = self.directory
         self.assertEqual(input_ack.ledger_paths(home / "other"),
@@ -752,17 +720,6 @@ class LocationTest(unittest.TestCase):
         os.environ["METTACLAW_STRATEGY_PATH"] = str(home / "elsewhere.db")  # the checkpoint file may be named; the directory is not
         self.assertEqual(agent_checkpoint.path(), home / "elsewhere.db")
         self.assertEqual(agent_checkpoint.state_dir(), home / ".local/state/godel")
-
-    def test_the_change_watch_uses_the_same_state_directory(self):
-        import durable_telegram
-        import mode_channel
-        os.environ["METTACLAW_INSTANCE"] = "watch"
-        with mock.patch.object(input_ack, "_changes", None), \
-                mock.patch.object(mode_channel, "state", return_value=self.directory / "mode"), \
-                mock.patch.object(durable_telegram, "Changes") as changes:
-            changes.return_value.arm.return_value = 1
-            input_ack.arm_changes()
-        self.assertEqual(changes.call_args[0][0], [str(input_ack.telegram_service_state_dir()), self.directory / "mode/channel-outbox"])
 
     def test_the_unit_serves_the_paths_the_python_side_derives(self):
         values = unit_values()

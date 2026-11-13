@@ -20,12 +20,12 @@
 !(import! &self ./src/helper.py)
 !(import! &self ./src/mode_state.metta)
 !(import! &self ./src/fuel_io)
-!(import! &self ./src/mode_channel.py)
-!(import! &self ./src/input_ack.py)
+!(import! &self ./src/input_notice_cetta.metta)
 !(import! &self ./src/cognitive_health.py)
 !(import! &self ./channels/energy.metta)
 !(import! &self ./channels/telegram_control_input.metta)
 !(import! &self ./channels/telegram_notice_cleanup.metta)
+!(import! &self ./channels/telegram_control_io.metta)
 
 (= (tc:env $name $default) (system:getenv-or-default $name $default))
 (= (tc:socket) (tc:env "METTACLAW_TELEGRAM_SERVICE_SOCKET" ""))
@@ -221,21 +221,36 @@
          (tc:text (py-call (synthetic_llm.set_model $args)))))
       ($other (format-args "unknown command {}" ($name))))))
 
-; Answer every command task but /delete, and every tap, once each.
+; A task's body parsed once: the cache keeps each task's body and value
+; while the task is ordinary input on the page, and forgets the rest after
+; every scan. Its own spaces keep a lookup by task constant-time.
+!(bind! &tc-parsed (new-space))
+!(bind! &tc-page (new-space))
+
 (= (tc:parse $task $body)
-   (case (collapse (match &self (tc:cached $task $body $value) $value))
+   (case (collapse (match &tc-parsed (tc:cached $task $body $value) $value))
      ((($value) $value)
       (() (let $value (json-parse $body)
-            (let $_ (remove-atom &self (tc:cached $task $old $prior))
-              (let $_ (add-atom &self (tc:cached $task $body $value)) $value)))))))
+            (let $_ (remove-atom &tc-parsed (tc:cached $task $old $prior))
+              (let $_ (add-atom &tc-parsed (tc:cached $task $body $value)) $value)))))))
 
-(= (tc:prune $tasks)
+; Keep a cached parse only for a task of $ordinary, the page's ordinary input.
+(= (tc:prune $ordinary)
+   (let* (($_ (collapse (match &tc-page (tc:on-page $old) (remove-atom &tc-page (tc:on-page $old)))))
+          ($_ (tc:mark-page $ordinary)))
+     (tc:drop-off-page (collapse (match &tc-parsed (tc:cached $task $body $value) $task)))))
+(= (tc:mark-page $tasks)
+   (if (== $tasks ()) 0
+     (let ($task $body) (car-atom $tasks)
+       (let $_ (add-atom &tc-page (tc:on-page $task)) (tc:mark-page (cdr-atom $tasks))))))
+(= (tc:drop-off-page $tasks)
    (if (== $tasks ()) 0
      (let $task (car-atom $tasks)
-       (let $_ (if (== (py-call (input_ack.task_active $task)) 1) 0
-                 (remove-atom &self (tc:cached $task $body $value)))
-         (tc:prune (cdr-atom $tasks))))))
+       (let $_ (if (== (collapse (match &tc-page (tc:on-page $task) True)) ())
+                 (remove-atom &tc-parsed (tc:cached $task $body $value)) 0)
+         (tc:drop-off-page (cdr-atom $tasks))))))
 
+; Answer every command task but /delete, and every tap, once each.
 (= (tc:handle $tasks)
    (if (== $tasks ()) 0
      (let $head (car-atom $tasks)
@@ -265,15 +280,18 @@
        (tc:notices (cdr-atom $tasks)))))
 
 ; A delayed receipt notice leaves ordinary input pending for cognition.
-; Submission and delivery have independent durable service identities.
+; Submission and delivery have independent durable service identities. A
+; repeated key carries the same bytes: the text never changes.
+(= (tc:notice-text) "Received. Your message is queued; /activity shows whether I'm waiting, retrying, or resting.")
 (= (tc:input-notice $task $lane $kind $role $update)
    (if (ti:operator-control? $kind $role $update) (nc:withdraw $task)
-    (let $key (tc:text (py-call (input_ack.key $task $lane $kind $role (json-stringify $update))))
-     (if (== $key "") 0
-       (let $text (tc:text (py-call (input_ack.text)))
-         (let $body (json-stringify (JsonArray ((JsonArray ((JsonString "send") (JsonString $text) (JsonString "plain"))))))
+     (case (notice:key $task $lane $kind $role $update)
+       (("" 0)
+        ((Error $where $why) (Error $where $why))
+        ($key
+         (let $body (json-stringify (JsonArray ((JsonArray ((JsonString "send") (JsonString (tc:notice-text)) (JsonString "plain"))))))
            (case (tc:call 4 $key $body)
-             (((cwp:reply 66 $name $answer) (py-call (input_ack.submitted $task)))
+             (((cwp:reply 66 $name $answer) (notice:submitted $task))
               ($other 0)))))))))
 
 ; Observe the same ordinary-input set that the cognition client queues.
@@ -291,10 +309,10 @@
 (= (tc:serve-once)
    (let $controls (tc:tasks-after-code 6 "" 256)
     (let $handled (tc:handle $controls)
-     (let $tasks (tc:tasks-after (tc:text (py-call (input_ack.scan_after))) 256)
+     (let $tasks (tc:tasks-after (notice:scan-after) 256)
       (let $ordinary (tc:notice-tasks $tasks)
-       (let $retained (py-call (input_ack.begin_scan (quote $ordinary) (quote $tasks)))
-        (let $_ (tc:prune (collapse (match &self (tc:cached $task $body $value) $task)))
+       (let $scanned (notice:begin-scan $ordinary $tasks)
+        (let $_ (tc:prune $ordinary)
          (let $failure (tc:guarded (catch (py-call (cognitive_health.notify_failure))) "failure notice")
           (let $noticed (tc:notices $tasks)
            (let $cleaned (tc:guarded (catch (nc:pump)) "receipt cleanup") $handled))))))))))
@@ -303,11 +321,11 @@
 ; must not survive into a later cycle and replay already submitted effects.
 ; Arm before scanning, so an arrival during the scan remains a wake-up.
 (= (tc:cycle)
-   (let $_ (py-call (input_ack.arm_changes))
+   (let $armed (tio:arm)
    (let $answered (catch (tc:serve-once))
-     (let $pumped (catch (py-call (mode_channel.pump)))
-       (let $health (catch (py-call (mode_channel.heartbeat)))
-         (let $slept (py-call (input_ack.wait_changes))
+     (let $pumped (catch (tio:pump))
+       (let $health (catch (tio:heartbeat (notice:input-view)))
+         (let $waited (tio:wait $armed)
            $answered))))))
 
 (= (tc:serve)

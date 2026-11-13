@@ -25,6 +25,8 @@
     ("tests/unit/native_transport.metta" "UNIT_NATIVE_TRANSPORT_OK")
     ("tests/unit/runtime_events.metta" "UNIT_RUNTIME_EVENTS_OK")
     ("tests/unit/input_notice.metta" "UNIT_INPUT_NOTICE_OK" (("METTACLAW_INSTANCE" "unit")))
+    ("tests/unit/control_io.metta" "UNIT_CONTROL_IO_OK"
+     (("METTACLAW_TELEGRAM_SERVICE_SOCKET" "{home}/cwp.sock") ("METTACLAW_MODE_STATE_ROOT" "{home}/modes")))
     ("tests/unit/display.metta" "UNIT_DISPLAY_OK"
      (("METTACLAW_STREAM_DIR" "{home}/display") ("METTACLAW_INSTANCE" "unit")
       ("METTACLAW_ACTIVITY_CALL_SCOPE" "coding a/b") ("METTACLAW_STREAM_PARENT" "parent-1")))

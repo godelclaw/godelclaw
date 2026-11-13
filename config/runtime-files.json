@@ -16,6 +16,7 @@
   "channels/telegram_commands.metta",
   "channels/telegram_control.metta",
   "channels/telegram_control_input.metta",
+  "channels/telegram_control_io.metta",
   "channels/telegram_control_main.metta",
   "channels/telegram_notice_cleanup.metta",
   "channels/websearch.py",

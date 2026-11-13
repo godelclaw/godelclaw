@@ -1,19 +1,16 @@
 """Addressed mode I/O; the independently supervised channel owns delivery.
 
 Tool workers only record intentions. The control responder submits their
-stable keys, so a slow network, stopped cognition or disconnected tool worker
-cannot stop operator controls or lose a queued send.
+stable keys (channels/telegram_control_io.metta), so a slow network, stopped
+cognition or disconnected tool worker cannot stop operator controls or lose a
+queued send.
 """
-import fcntl
 import json
 import os
 from pathlib import Path
 import tempfile
-import time
 
 import durable_telegram
-
-_last_health_at = 0
 
 
 def state():
@@ -134,62 +131,3 @@ def acknowledge_handover(ids):
         if path.exists():
             path.replace(path.with_suffix(".done"))
     return True
-
-
-def pump():
-    """One bounded submission per control tick, independent of cognition.
-
-    A lost submission reply leaves the exact same key and bytes for retry;
-    Telegram delivery and uncertain-delivery holds belong to the service.
-    """
-    path = os.environ.get("METTACLAW_TELEGRAM_SERVICE_SOCKET")
-    if not path:
-        return 0
-    folder = state() / "channel-outbox"
-    folder.mkdir(parents=True, exist_ok=True)
-    with (folder / "pump.lock").open("a") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            return 0
-        for intent in sorted(folder.glob("*.json")):
-            item = read(intent, None)
-            if not item:
-                return 0
-            client = durable_telegram.Channel(path, str(folder / "sequence"), timeout=.2)
-            body = json.dumps(item["commands"], ensure_ascii=False, separators=(",", ":"))
-            try:
-                code, _, _ = client.rpc(durable_telegram.SUBMIT, item["key"], body)
-            except (OSError, durable_telegram.ChannelError):
-                return 0
-            if code == durable_telegram.STORED:
-                intent.unlink()
-                return 1
-            if code not in (durable_telegram.UNAVAILABLE, durable_telegram.LIMIT):
-                # A refusal is a terminal receipt, not an excuse to try a
-                # different recipient or send the same text with a new key.
-                store(folder / (intent.stem + ".refused"), {**item, "code": code})
-                intent.unlink()
-            return 0
-    return 0
-
-
-def heartbeat():
-    """Report local control/channel readiness, separately from Telegram polling."""
-    path = os.environ.get("METTACLAW_TELEGRAM_SERVICE_SOCKET")
-    if not path:
-        return 0
-    global _last_health_at
-    if time.monotonic() - _last_health_at >= 5:
-        client = durable_telegram.Channel(path, "", timeout=.2)
-        try:
-            code, _, _ = client.rpc(durable_telegram.NEXT)
-            ready = code in (durable_telegram.IDLE, durable_telegram.TASK)
-        except (OSError, durable_telegram.ChannelError):
-            ready = False
-        import input_ack
-        store(state() / "control-status.json", {"pid": os.getpid(),
-              "observed_at": time.time(), "channel_ready": ready,
-              "operator_inbox": input_ack.input_view() if ready else None})
-        _last_health_at = time.monotonic()
-    return 1

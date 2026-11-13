@@ -115,50 +115,13 @@ class ControlBoundaryTests(unittest.TestCase):
         self.assertTrue(mode_channel.acknowledge_handover(["21"]))
         self.assertFalse(mode_channel.handover_inputs())
 
-    def test_control_heartbeat_records_unavailable_channel_without_cognition(self):
-        with mock.patch.object(mode_channel, "_last_health_at", 0), mock.patch.object(time, "monotonic", return_value=100):
-            with mock.patch.object(durable_telegram.Channel, "rpc", return_value=(durable_telegram.IDLE, "", "")) as rpc:
-                mode_channel.heartbeat()
-                mode_channel.heartbeat()
-                rpc.assert_called_once()
-                receipt = json.loads((self.base / "modes/control-status.json").read_text())
-                self.assertTrue(receipt["channel_ready"])
-            with mock.patch.object(time, "monotonic", return_value=106), mock.patch.object(durable_telegram.Channel, "rpc", side_effect=TimeoutError):
-                mode_channel.heartbeat()
-                receipt = json.loads((self.base / "modes/control-status.json").read_text())
-                self.assertFalse(receipt["channel_ready"])
-
+    # The control responder submits the outbox and publishes readiness natively
+    # (channels/telegram_control_io.metta, tests/unit/control_io.metta).
     def test_slow_or_missing_transport_never_blocks_tool_completion(self):
         with mock.patch.object(durable_telegram.Channel, "rpc", side_effect=AssertionError("tool must not do network I/O")):
             result = mode_channel.enqueue("slow delivery")
         self.assertTrue(result.startswith("durably queued:"))
-        with mock.patch.object(durable_telegram.Channel, "rpc", side_effect=TimeoutError):
-            self.assertEqual(mode_channel.pump(), 0)
         self.assertEqual(len(list((self.base / "modes/channel-outbox").glob("*.json"))), 1)
-
-    def test_lost_acceptance_retries_same_key_and_bytes_after_restart(self):
-        mode_channel.enqueue("exact message")
-        calls = []
-        def rpc(client, code, key, body):
-            calls.append((code, key, body))
-            if len(calls) == 1:
-                raise TimeoutError("accepted but reply lost")
-            return durable_telegram.STORED, "", ""
-        with mock.patch.object(durable_telegram.Channel, "rpc", rpc):
-            self.assertEqual(mode_channel.pump(), 0)
-            self.assertEqual(mode_channel.pump(), 1)
-            self.assertEqual(mode_channel.pump(), 0)
-        self.assertEqual(calls[0], calls[1])
-
-    def test_terminal_refusal_is_retained_without_rerouting(self):
-        mode_channel.enqueue("refused message")
-        with mock.patch.object(durable_telegram.Channel, "rpc", return_value=(durable_telegram.INVALID, "", "")) as rpc:
-            self.assertEqual(mode_channel.pump(), 0)
-            self.assertEqual(mode_channel.pump(), 0)
-        rpc.assert_called_once()
-        folder = self.base / "modes/channel-outbox"
-        self.assertEqual(len(list(folder.glob("*.refused"))), 1)
-        self.assertFalse(list(folder.glob("*.json")))
 
     def test_independent_senders_do_not_reuse_stale_sequence(self):
         sequence = str(self.base / "sequence")

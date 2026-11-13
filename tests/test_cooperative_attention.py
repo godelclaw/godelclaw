@@ -9,7 +9,6 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT / "channels")]
 import attention
-import input_ack
 import native_ledger
 import telegram
 
@@ -30,11 +29,6 @@ class CooperativeAttentionTest(unittest.TestCase):
         state.start(); self.addCleanup(state.stop)
         running = mock.patch("lifecycle.cognition_enabled", return_value=1)
         running.start(); self.addCleanup(running.stop)
-        notices = mock.patch.multiple(input_ack, _pending={}, _last_notice={})
-        notices.start(); self.addCleanup(notices.stop)
-        self.clock = 100.
-        clock = mock.patch.object(input_ack.time, "monotonic", side_effect=lambda: self.clock)
-        clock.start(); self.addCleanup(clock.stop)
 
     def update(self, text, identity=1):
         return {"update_id": identity, "message": {"text": text}}

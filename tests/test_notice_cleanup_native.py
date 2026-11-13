@@ -21,6 +21,8 @@ SERVICE = os.environ.get("CETTA_SERVICE_BIN", "")
 CETTA = os.environ.get("CETTA_BIN", "")
 sys.path[:0] = [str(ROOT / "src")]
 TOKEN = "123456789:TEST_ONLY_abcdefghijklmnopqrstuvwxyz0123456789"
+# The responder's notice, byte for byte: a repeated key must carry the same bytes.
+NOTICE_TEXT = "Received. Your message is queued; /activity shows whether I'm waiting, retrying, or resting."
 import durable_telegram
 import input_ack
 import runtime_context
@@ -190,7 +192,7 @@ def main():
                     "chat": {"id": 42, "type": "private", "first_name": "fixture"},
                     "from": {"id": 7, "is_bot": False, "first_name": "fixture"}, "text": "ordinary question"}})
                 wait(lambda: len(api.sent) == 1, "owned receipt notice was not delivered")
-                assert api.sent[0]["text"] == input_ack.TEXT
+                assert api.sent[0]["text"] == NOTICE_TEXT
                 assert api.deleted == [], "notice deleted before successful processing"
                 def inbox_count(count):
                     try:
