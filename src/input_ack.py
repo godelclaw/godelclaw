@@ -1047,22 +1047,3 @@ def ledger_paths(state):
     from pathlib import Path
     root = Path(state) / "input-ledger"
     return root / "store", root / "ledger.sock"
-
-
-def request_finish(key, request_id=None):
-    """active -> achieved: True when it moved."""
-    return _request_move("request-finish", key, request_id)
-
-
-def turn_dump():
-    """(meta keys, turns, arrivals): every turn as a dict and every request's arrival position."""
-    from execution_gateway.cetta_worker import S
-    answer = _ledger_call("turn-dump", (), WHOLE_READ_SECONDS)
-    if not (isinstance(answer, tuple) and len(answer) == 4 and answer[0] == S("dump")):
-        raise LedgerUnavailable("input ledger turn-dump: unexpected answer %s" % _show(answer))
-    state = {entry[0]: None if _is_none(entry[1]) else entry[1] for entry in _entries(answer[1], "turn-dump")}
-    turns = [dict(serial=t[1], status=t[2], revision=t[3], mode=t[4], owner=t[5], focus=t[6],
-                  boundary_digest=t[7], router=t[8], guard=t[9], position=t[10])
-             for t in _entries(answer[2], "turn-dump")]
-    arrivals = {entry[0]: entry[1] for entry in _entries(answer[3], "turn-dump")}
-    return state, sorted(turns, key=lambda turn: turn["serial"]), arrivals

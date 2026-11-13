@@ -18,6 +18,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path[:0] = [str(HERE), str(ROOT / "src"), str(ROOT / "channels")]
 import input_ack
+import native_ledger
 from observed_strategy import Ledger
 from execution_gateway.cetta_worker import E, S
 from native_ledger_client import NativeRunner
@@ -79,11 +80,11 @@ class PagesTest(NativeCase):
             runner = NativeRunner.create(directory, self.server.socket)
             store = Ledger(runner.path)
             legacy = cognition.scenario(store)
-            whole = (input_ack.task_view("all"), input_ack.turn_dump(), input_ack.request_rows("all"),
+            whole = (input_ack.task_view("all"), native_ledger.turn_dump(), input_ack.request_rows("all"),
                      input_ack.actions("all"))
             for rows in (1, 2, 3, 7):
                 with mock.patch.object(input_ack, "PAGE_ROWS", rows):
-                    self.assertEqual((input_ack.task_view("all"), input_ack.turn_dump(), input_ack.request_rows("all"),
+                    self.assertEqual((input_ack.task_view("all"), native_ledger.turn_dump(), input_ack.request_rows("all"),
                                       input_ack.actions("all")), whole, rows)
             input_ack.close_ledger()
         socket = literal(str(self.server.socket))
