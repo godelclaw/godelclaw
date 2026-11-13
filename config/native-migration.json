@@ -785,6 +785,48 @@
         "Telegram admission (requests and invites) is designed and proved but not built",
         "No paid live canary or 24-hour soak claimed"
       ]
+    },
+    {
+      "id": "provider-core-batch-4-value-bytes-and-activity-source",
+      "status": "qualified-and-deployed",
+      "native_modules": [
+        "src/session_engine_cetta.metta",
+        "src/activity_source_cetta.metta",
+        "src/provider_request_cetta.metta",
+        "src/provider_call_cetta.metta",
+        "src/coding_work.metta",
+        "channels/telegram.metta"
+      ],
+      "runtime_commit": "d6618555e",
+      "engine_commit": "2eefbdff7af5020c9a6283bcb3908be3e78c9273",
+      "release": "b4248419c74bddca5d6f6db6929b4d92302aac54f57eddc4d7e84d21fbcfd6f5",
+      "gateway_release": "b4248419c74bddca5d6f6db6929b4d92302aac54f57eddc4d7e84d21fbcfd6f5",
+      "test_orchestration": "CeTTa core without Python",
+      "checks": {
+        "native_suites_passed": "23 of 24 (the snapshot suite needs the deployment plan)",
+        "python_entry_census": {
+          "activity-delivery": [
+            56,
+            48
+          ]
+        },
+        "large_thinking_answer_stored": "an Anthropic coding call with about 420 KB of thinking is answered and stored",
+        "request_routes_equivalent": "value and text routes give identical wire bytes in PeTTa and HE",
+        "paired_installed_verification": true,
+        "paired_benchmark": {
+          "pairs_per_workload": 21,
+          "baseline_runtime_commit": "040d3b7db",
+          "p95_change_percent": {
+            "small": -3.4,
+            "large_1mib": -0.7,
+            "many_blocks_1mib": 0.0
+          }
+        }
+      },
+      "limits": [
+        "The value route and byte fragments need the next engine roll; on 2eefbdff requests take the text route",
+        "No paid live canary or 24-hour soak claimed"
+      ]
     }
   ],
   "tuning_debt": [
