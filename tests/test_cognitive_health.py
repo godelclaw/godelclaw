@@ -22,7 +22,6 @@ class CognitiveHealthTest(unittest.TestCase):
         })
         self.environment.start()
         self.addCleanup(self.environment.stop)
-        cognitive_health._turn_outcome = "none"
 
     def state(self):
         return json.loads(self.path.read_text(encoding="utf-8"))
@@ -60,7 +59,7 @@ class CognitiveHealthTest(unittest.TestCase):
         self.assertEqual(value["obligation_since"], 100)
         self.assertEqual(value["last_completed_at"], 102)
         self.assertEqual(value["last_response_bytes"], 37)
-        self.assertEqual(cognitive_health.turn_succeeded(), 1)
+        self.assertEqual(value["completed_count"], 1)
         cognitive_health.turn_settled(now=103)
         value = self.state()
         self.assertEqual(value["obligation_since"], 0)
@@ -80,7 +79,7 @@ class CognitiveHealthTest(unittest.TestCase):
         self.assertEqual(value["last_outcome"], "failed")
         self.assertEqual(value["failed_count"], 1)
         self.assertEqual(value["failure_streak"], 1)
-        self.assertEqual(cognitive_health.turn_succeeded(), 0)
+        self.assertEqual(value.get("completed_count", 0), 0)
 
     def test_local_retries_do_not_count_as_admitted_provider_failures(self):
         cognitive_health.expect_turn("generic", now=100)

@@ -3,6 +3,11 @@
 An outstanding obligation and an in-flight provider request are different
 facts.  A failed request ends the latter while preserving the former for
 retry; otherwise operator status can report a long-dead request as pending.
+
+The loop and the native provider transport keep this record natively
+(src/turn_health_cetta.metta), with the same bytes for the same events, and
+own the turn's outcome as a phase. These functions keep it for the Python
+transport and the mode hosts.
 """
 
 import json
@@ -15,7 +20,6 @@ import uuid
 
 
 _lock = threading.RLock()
-_turn_outcome = "none"
 
 
 def _path():
@@ -112,12 +116,9 @@ def turn_started(provider="unknown", now=None, *, model=""):
     Once a real provider call begins, its own start is the relevant age for a
     hung-call check.
     """
-    global _turn_outcome
     now = _stamp(now)
     import process_supervision
     process_supervision.progress("provider-start")
-    with _lock:
-        _turn_outcome = "pending"
     try:
         with _lock:
             value = _read()
@@ -173,12 +174,9 @@ def turn_completed(response_bytes=0, now=None):
     The input obligation is discharged later, after history and input
     acknowledgement have both committed.
     """
-    global _turn_outcome
     now = _stamp(now)
     import process_supervision
     process_supervision.progress("provider-result")
-    with _lock:
-        _turn_outcome = "completed"
     try:
         size = max(0, int(response_bytes))
     except (TypeError, ValueError):
@@ -212,10 +210,7 @@ def turn_completed(response_bytes=0, now=None):
 
 def turn_failed(kind="provider-error", now=None, retry_after=0):
     """End the request while leaving its input obligation outstanding."""
-    global _turn_outcome
     now = _stamp(now)
-    with _lock:
-        _turn_outcome = "failed"
     try:
         with _lock:
             value = _read()
@@ -308,17 +303,6 @@ def wait_for_retry(seconds=None):
             process_supervision.progress("provider-rejected" if blocked else "provider-backoff", window)
             next_progress = now + max(1.0, window)
         time.sleep(1.0 if blocked else min(1.0, remaining))
-
-
-def turn_succeeded():
-    """Numeric refinement witness for the serial PeTTa bridge.
-
-    The loop asks only after its one model call.  A failed provider returns a
-    paced empty action, so response syntax alone cannot distinguish failure
-    from a legitimate empty command list.
-    """
-    with _lock:
-        return 1 if _turn_outcome == "completed" else 0
 
 
 def turn_settled(now=None):

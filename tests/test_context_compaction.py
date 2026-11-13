@@ -398,7 +398,7 @@ class ContextCompactionTests(unittest.TestCase):
             '!(py-call (strategy_host.focus_request "guide"))\n'
             '!(let $prepared (addition-protected-request "Output a ((skillName args) ...) S-expression." 256) '
             '(println! (RESULT (addition-model-call "fixture-model" 256 "default" $prepared 1))))\n'
-            '!(println! (SUCCESS (py-call (cognitive_health.turn_succeeded))))\n')
+            '!(println! (SUCCESS (health:turn-succeeded)))\n')
         self.assertIn("(RESULT ((nop)))", output)
         self.assertIn("(SUCCESS 1)", output)
         self.assertEqual(len(self.peer.requests), 1)

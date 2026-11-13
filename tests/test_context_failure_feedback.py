@@ -25,18 +25,19 @@ class ContextFailureFeedbackTests(unittest.TestCase):
                  "SYNTHETIC_EMPTY_BACKOFF": "0"}), \
              mock.patch("provider_rejection.blocked", return_value=False), \
              mock.patch.object(process_supervision, "progress"), \
-             mock.patch.object(cognitive_health, "_turn_outcome", "none"), \
              mock.patch.object(helper, "_turn_commit", ((), None)), \
              contextlib.redirect_stderr(io.StringIO()):
             cognitive_health.expect_turn("godelclaw", now=100)
             self.assertEqual(strategy_host.preparation_failed("context-compaction-required"), "()")
-            self.assertEqual(cognitive_health.turn_succeeded(), 0)
-            helper.turn_commit_stage(cognitive_health.turn_succeeded(), 1, 1)
-            self.assertEqual(helper.turn_commit_ready(), 0)
             import json
             health = json.loads((Path(temporary) / "health.json").read_text())
             self.assertEqual(health["obligation_since"], 100)
             self.assertEqual(health["last_failure_type"], "context-compaction-required")
+            self.assertEqual(health.get("completed_count", 0), 0)
+            # The turn's phase stays pending (src/turn_health_cetta.metta), so
+            # the loop stages 0 for the provider.
+            helper.turn_commit_stage(0, 1, 1)
+            self.assertEqual(helper.turn_commit_ready(), 0)
 
     def test_typed_code_survives_the_actual_health_reporting_path(self):
         stderr = io.StringIO()

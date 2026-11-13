@@ -6,6 +6,7 @@
 !(import! &self ./native_call_cetta.metta)
 !(import! &self ./completion_effects_cetta.metta)
 !(import! &self ./rejection_gate_cetta.metta)
+!(import! &self ./turn_health_cetta.metta)
 
 (: account:ready (-> %Undefined% %Undefined%))
 (= (account:ready $plan) (call:ready? $plan))
@@ -63,8 +64,12 @@
        (((LedgerChanged $ignored4) True)
         ($error (let $ignored5 (py-call (native_llm_host.accounting_observation_error (call:host $plan) "metadata")) False))))))
 (: account:submitted (-> %Undefined% %Undefined% %Undefined%))
+; A submitted turn or structured call starts its health record; a compaction
+; is maintenance and leaves it alone.
 (= (account:submitted $plan $id)
-   (let* (($ignored6 (py-call (native_llm_host.submitted (call:host $plan) $id)))
+   (let* (($started (if (call:compaction? $plan) 1
+                      (health:start (call:fact $plan "provider" "unknown") (call:fact $plan "wire_model" ""))))
+          ($ignored6 (py-call (native_llm_host.submitted (call:host $plan) $id)))
           ($native (call:submitted $plan $id))
           ($metadata (account:metadata $plan)))
      (case (nl:submitted $metadata $id (system:wall-time))
@@ -76,7 +81,9 @@
 (= (account:progress $plan $bytes $quiet)
    (case (call:progress-due $plan)
      (((True $soft)
-       (let* (($_ (py-call (native_llm_host.progress_observed (call:host $plan) $bytes $quiet $soft)))
+       (let* (($health (if (call:compaction? $plan) 1
+                         (health:progress $bytes $quiet $soft (call:fact $plan "timeout" 0))))
+              ($_ (py-call (native_llm_host.progress_observed (call:host $plan) $bytes $quiet $soft)))
               ($metadata (account:metadata $plan)))
          (case (nl:progress $metadata $bytes $quiet (lp:field $metadata "progress_soft" 0) (system:wall-time))
            (((LedgerChanged $changed) 1)
@@ -87,8 +94,11 @@
 ; A deterministic rejection of a command turn latches the rejection gate first:
 ; the host may hold its block in memory only.
 (= (account:failed $plan $correlation $kind $status)
-   (let $latched (if (account:rejection? $plan $kind $status) (gate:latch) False)
+   (let* (($latched (if (account:rejection? $plan $kind $status) (gate:latch) False))
+          ($phase (if (account:turn? $plan) (health:turn-failed) none)))
      (account:failure $plan $correlation $kind $status)))
+; The loop's own model call: a command that is not a compaction.
+(= (account:turn? $plan) (if (call:command? $plan) (not (call:compaction? $plan)) False))
 (= (account:rejection? $plan $kind $status)
    (if (== $kind http-status)
      (if (call:command? $plan) (if (call:compaction? $plan) False (gate:invalid-request? $status)) False)
@@ -131,15 +141,25 @@
                       (catch (effects:tally (effects:object-or-empty $usage))) True)))
      True))
 ; The committed completion is published once: its effects, the host's display
-; and turn observers, then the answer. A replayed completion publishes nothing.
+; and program release, the turn's health, then the answer. A replayed
+; completion publishes nothing. The host's decision ends the turn's phase: a
+; released program completes it; a rejected or empty output fails it, and the
+; host has paced and recorded that failure.
 (: account:publish (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (account:publish $plan $epoch $correlation $legacy $canonical $usage $decision)
    (if (call:publication-ready $plan)
     (let* (($effects (account:effects $plan $legacy $usage))
-           ($answer (py-call (native_llm_host.finish (call:host $plan) $legacy)))
+           ($answer (account:health (py-call (native_llm_host.finish (call:host $plan) $legacy))))
            ($ignored14 (account:note-rejection $plan $decision)))
       (if (call:replies? $plan) (call:reply $plan $legacy) $answer))
     (py-call (native_llm_host.completion_duplicate (call:host $plan)))))
+(= (account:health $decision)
+   (case $decision
+     ((("completed" $program $bytes)
+       (let* (($recorded (health:complete $bytes)) ($phase (health:turn-completed))) $program))
+      (("completed" $bytes) (let $recorded (health:complete $bytes) 1))
+      (("failed" $program) (let $phase (health:turn-failed) $program))
+      ($maintenance $maintenance))))
 (: account:finished (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (account:finished $plan $metadata $epoch $correlation $legacy $canonical $usage $decision $answer)
    (account:finished-step $plan $metadata $epoch $correlation $legacy $canonical $usage $decision 0 $answer))
@@ -159,15 +179,20 @@
    (case (nl:completion-state $metadata (lp:text $canonical))
      (((LedgerCompletion committed) (account:publish $plan $epoch $correlation $legacy $canonical $usage $decision))
       ((LedgerCompletion pending)
-       (let* (($wait (py-call (native_llm_host.completion_wait (call:host $plan) $attempt)))
+       (let* (($wait (account:recording-wait $plan $attempt))
               ($reason (lp:field (account:first-choice (json:parse $legacy)) "finish_reason" "unknown")))
          (account:finished-step $plan $metadata $epoch $correlation $legacy $canonical $usage $decision (+ $attempt 1)
            (nl:complete $metadata $usage $reason (lp:text $canonical)
                         (lp:field $metadata "soft_elapsed" 0) (system:wall-time)))))
       ((LedgerError $unreadable)
-       (let $wait (py-call (native_llm_host.completion_wait (call:host $plan) $attempt))
+       (let $wait (account:recording-wait $plan $attempt)
          (account:reconcile $plan $metadata $epoch $correlation $legacy $canonical $usage $decision (+ $attempt 1))))
       ($conflict (py-call (native_llm_host.completion_conflict (call:host $plan)))))))
+; A received answer waits for local storage: the health record says so, and
+; the host paces the retry.
+(= (account:recording-wait $plan $attempt)
+   (let $recorded (if (call:compaction? $plan) 1 (health:record-wait $attempt))
+     (py-call (native_llm_host.completion_wait (call:host $plan) $attempt))))
 ; $decision is the command contract's classification of this output, or
 ; CommentaryNotAppliedV1 when the contract does not apply to the call.
 (: account:complete (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))

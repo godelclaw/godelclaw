@@ -52,7 +52,9 @@ class ActivityBatchTests(unittest.TestCase):
         self.assertIn("(policy-wait-seconds", policy)
         self.assertIn("(policy-next-autonomous-ready", policy)
         self.assertIn("AUTONOMOUS_POLICY_BURST", loop)
-        self.assertIn("cognitive_health.expect_turn", loop)
+        self.assertIn("(health:expect (loop-active-policy $ready)", loop)
+        for retired in ("expect_turn", "turn_succeeded", "turn_settled"):
+            self.assertNotIn("cognitive_health." + retired, loop)
         self.assertNotIn("telegram.getMode", loop)
 
     def test_lifecycle_gate_is_outside_the_enabled_turn(self):
@@ -115,8 +117,7 @@ class ActivityBatchTests(unittest.TestCase):
         effects = loop.index("(addition-effect-broker", model)
         history = loop.index("(addToHistory", effects)
         acknowledgement = loop.index("(tg:ack-activity-batch)", history)
-        settlement = loop.index("(cognitive_health.turn_settled",
-                                acknowledgement)
+        settlement = loop.index("(health:settle)", acknowledgement)
         self.assertLess(model, effects)
         self.assertLess(effects, history)
         self.assertLess(history, acknowledgement)

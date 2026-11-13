@@ -83,12 +83,13 @@
      $selected $legacy $system $activity $advertised))
 
 (= (addition-model-call $model $tokens $reasoning $request $wake)
-   (case $request
-     (((ContextPreparationFailed $reason) (py-call (strategy_host.preparation_failed $reason)))
-      ($ready
-        (if (== (py-call (strategy_host.capture $ready $wake)) 1)
-            (llm:command $model $tokens $reasoning $ready)
-            (progn (py-call (cognitive_health.turn_failed "strategy-not-ready")) "()"))))))
+   (let $begun (health:begin-turn)
+     (case $request
+       (((ContextPreparationFailed $reason) (py-call (strategy_host.preparation_failed $reason)))
+        ($ready
+          (if (== (py-call (strategy_host.capture $ready $wake)) 1)
+              (llm:command $model $tokens $reasoning $ready)
+              (let* (($recorded (health:fail "strategy-not-ready" 0)) ($failed (health:turn-failed))) "()")))))))
 
 (= (addition-request-observation $request)
    (case $request

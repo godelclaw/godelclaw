@@ -396,8 +396,6 @@ def completion_wait(plan, attempt):
     if attempt == 0:
         print("[native_accounting] received answer retained; waiting for local storage; call=" +
               plan.correlation, file=sys.stderr)
-    if not _compaction(plan):
-        cognitive_health.result_recording(attempt)
     try:
         import process_supervision
         process_supervision.progress("local-commit-wait", 60)
@@ -432,9 +430,9 @@ def submitted(plan, transport_id):
     plan.transport = int(transport_id)
     plan.submitted_at = time.monotonic()
     import process_supervision
+    # The native owner records the turn's start in the health record; the
+    # provider wait is the last progress receipt before the answer.
     process_supervision.provider_wait(plan.timeout / 1000)
-    if not _compaction(plan):
-        cognitive_health.turn_started(plan.provider, model=plan.wire_model)
     return True
 
 
@@ -462,8 +460,6 @@ def decoding_wait(plan, attempt):
     if attempt == 0:
         print("[native_transport] received body retained; waiting for local decoding; call=" +
               plan.correlation, file=sys.stderr)
-    if not _compaction(plan):
-        cognitive_health.result_recording(attempt)
     try:
         import process_supervision
         process_supervision.progress("local-decode-wait", 60)
@@ -506,9 +502,7 @@ def commentary_unavailable(plan):
 
 
 def progress_observed(plan, count, quiet, soft):
-    """Health and watchdog observers of a progress record the native owner paced."""
-    if not _compaction(plan):
-        cognitive_health.provider_progress(count, quiet, int(soft), plan.timeout)
+    """The watchdog observer of a progress record the native owner paced."""
     import process_supervision
     process_supervision.provider_data(count)
     return 1
@@ -535,9 +529,12 @@ def _native_finish(plan):
 def finish(plan, encoded):
     """Host observers of a completion the native owner has published once.
 
-    The ledger, its effects (completion observation, calibration, usage tally)
-    and the answer of a structured call or a compaction are native. This
-    releases a command turn's program and feeds the display and turn health.
+    The ledger, its effects (completion observation, calibration, usage tally),
+    turn health and the answer of a structured call or a compaction are
+    native. This releases a command turn's program and feeds the display, and
+    answers its decision: ("completed", program, bytes) or ("failed", program)
+    for a command turn, ("completed", bytes) for a structured call, 1 for a
+    compaction.
     """
     result = json.loads(str(encoded))
     reason = result["choices"][0].get("finish_reason", "unknown")
@@ -548,8 +545,8 @@ def finish(plan, encoded):
         return 1
     if plan.kind == "structured":
         stream_sink.final(plan, result["choices"][0]["message"], reason)
-        cognitive_health.turn_completed(len(str(encoded).encode()))
-        return 1
+        _answered()
+        return ("completed", len(str(encoded).encode()))
     content = result["choices"][0]["message"].get("content")
     try:
         if model_commentary.enabled():
@@ -562,16 +559,22 @@ def finish(plan, encoded):
         print("[command_contract] rejected; code=" + code +
               "; feedback_visible=" + str(getattr(plan, "prompt_feedback", False)).lower() +
               "; footer_visible=" + str(getattr(plan, "prompt_footer", False)).lower(), file=sys.stderr)
-        return synthetic_llm._empty_action(error)
+        return ("failed", synthetic_llm._empty_action(error))
     if reason == "length":
         import helper
         content = helper.complete_command_prefix(content or "")
     if not isinstance(content, str) or not content.strip():
-        return synthetic_llm._empty_action(synthetic_llm.EmptyResponse())
+        return ("failed", synthetic_llm._empty_action(synthetic_llm.EmptyResponse()))
     synthetic_llm._note_answered()
     stream_sink.final(plan, result["choices"][0]["message"], reason)
-    cognitive_health.turn_completed(len(content.encode()))
-    return content
+    _answered()
+    return ("completed", content, len(content.encode()))
+
+
+def _answered():
+    """The provider's answer ends the provider wait for the watchdog."""
+    import process_supervision
+    process_supervision.progress("provider-result")
 
 
 def duplicate_plan(plan):

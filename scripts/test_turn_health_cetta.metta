@@ -1,0 +1,81 @@
+; Native turn health (src/turn_health_cetta.metta) on the core engine: the
+; owned outcome phase, the record transitions and their labels. The bytes a
+; transition writes are compared with Python's in tests/test_turn_health_native.py.
+;   NATIVE_TEST_ARTIFACTS=... $NATIVE_TEST_CORE/cetta --lang petta --import-mode ancestor-walk \
+;     --quiet scripts/test_turn_health_cetta.metta
+!(import! &self ../tests/native_test_support.metta)
+!(import! &self ../src/turn_health_cetta.metta)
+
+(= (tht:get $record $key) (sf:get $record $key Missing))
+
+; A turn begins pending; only its own completion answers 1. An outcome an
+; earlier turn left never answers for the next one.
+(= (tht:phase)
+   (let* (($_ (nt:require phase-starts-none (nt:equal (health:phase) none)))
+          ($_ (nt:require no-turn-no-success (nt:equal (health:turn-succeeded) 0)))
+          ($_ (health:begin-turn))
+          ($_ (nt:require pending-is-not-success (nt:equal (health:turn-succeeded) 0)))
+          ($_ (health:turn-completed))
+          ($_ (nt:require completed-is-success (nt:equal (health:turn-succeeded) 1)))
+          ($_ (health:begin-turn))
+          ($_ (nt:require earlier-completion-does-not-answer (nt:equal (health:turn-succeeded) 0)))
+          ($_ (health:turn-failed))
+          ($_ (nt:require failed-is-not-success (nt:equal (health:turn-succeeded) 0)))
+          ($_ (nt:require one-phase-held (nt:equal (collapse (match &self (TurnOutcomeV1 $p) $p)) (failed)))))
+     True))
+
+(= (tht:labels)
+   (let* (($_ (nt:require label-lowers-and-filters (nt:equal (health:label "  Read Timeout! " "x") "readtimeout")))
+          ($_ (nt:require label-keeps-dash-underscore (nt:equal (health:label "provider-rejected_429" "x") "provider-rejected_429")))
+          ($_ (nt:require label-empty-default (nt:equal (health:label "" "provider-error") "provider-error")))
+          ($_ (nt:require label-nothing-kept-default (nt:equal (health:label "!!" "unknown") "unknown")))
+          ($_ (nt:require label-symbol (nt:equal (health:label GodelClaw "unknown") "godelclaw")))
+          ($_ (nt:require label-cut-64 (nt:equal (str:char-length (health:label (str:join "" (tht:copies 80 "x" ())) "u")) 64))))
+     True))
+(= (tht:copies $n $piece $acc) (if (== $n 0) $acc (tht:copies (- $n 1) $piece (cons-atom $piece $acc))))
+
+(= (tht:transitions)
+   (let* (($empty (JsonObject ()))
+          ($e1 (health:expected $empty godel 7 100))
+          ($_ (nt:require expect-opens-obligation (nt:equal (tht:get $e1 "obligation_since") 100.0)))
+          ($e2 (health:expected $e1 lila 3 200))
+          ($_ (nt:require expect-keeps-obligation (nt:equal (tht:get $e2 "obligation_since") 100.0)))
+          ($_ (nt:require expect-counts-once (nt:equal (tht:get $e2 "expected_count") 1)))
+          ($_ (nt:require expect-latest-mode (nt:equal (tht:get $e2 "mode") "lila")))
+          ($_ (nt:require budget-nonnegative (nt:equal (tht:get (health:expected $empty godel -4 1) "budget_at_start") 0)))
+          ($_ (nt:require legacy-pending-is-obligation
+                (nt:equal (tht:get (health:expected (JsonObject ((JsonPair "pending_since" 50))) godel 1 100) "obligation_since") 50.0)))
+          ($s (health:started $e2 "Anthropic" "m" 101))
+          ($_ (nt:require started-in-flight (nt:equal (tht:get $s "in_flight_since") 101.0)))
+          ($_ (nt:require progress-ignored-unadmitted (nt:equal (health:progressed $empty 1 2 True 3 4) $empty)))
+          ($p (health:progressed $s 10 5 True 900 102))
+          ($_ (nt:require progress-soft (nt:equal (tht:get $p "soft_wait_elapsed") True)))
+          ($f (health:failed $p "ReadTimeout" 103 15 "e1"))
+          ($_ (nt:require failure-keeps-obligation (nt:equal (tht:get $f "obligation_since") 100.0)))
+          ($_ (nt:require failure-paced (nt:equal (tht:get $f "retry_at") 118.0)))
+          ($_ (nt:require admitted-failure-counted (nt:equal (tht:get $f "failed_count") 1)))
+          ($f2 (health:failed $f "ReadTimeout" 104 -1 "e2"))
+          ($_ (nt:require repeated-kind-streak (nt:equal (tht:get $f2 "failure_streak") 2)))
+          ($_ (nt:require negative-retry-is-now (nt:equal (tht:get $f2 "retry_at") 104.0)))
+          ($_ (nt:require local-failure-counted (nt:equal (tht:get $f2 "local_failure_count") 1)))
+          ($_ (nt:require local-failure-new-episode (nt:equal (sf:get (tht:get $f2 "failure_episode") "id" none) "e2")))
+          ($f3 (health:failed $f2 "Other" 105 0 "e3"))
+          ($_ (nt:require other-kind-resets-streak (nt:equal (tht:get $f3 "failure_streak") 1)))
+          ($_ (nt:require same-episode-continues (nt:equal (sf:get (tht:get $f3 "failure_episode") "count" 0) 2)))
+          ($c (health:completed (health:started $f3 "anthropic" "m" 106) 64 107))
+          ($_ (nt:require completion-resolves-episode (nt:equal (sf:get (tht:get $c "failure_episode") "resolved_at" none) 107.0)))
+          ($_ (nt:require completion-clears-streak (nt:equal (tht:get $c "failure_streak") 0)))
+          ($_ (nt:require completion-counted (nt:equal (tht:get $c "completed_count") 1)))
+          ($_ (nt:require unadmitted-completion-counted
+                (nt:equal (tht:get (health:completed $empty 1 2) "completion_without_admission_count") 1)))
+          ($_ (nt:require repair-cleared
+                (nt:equal (tht:get (health:completed (JsonObject ((JsonPair "provider_context_repair" 1))) 1 2) "provider_context_repair") Missing)))
+          ($d (health:settled (health:settled $c 108) 109))
+          ($_ (nt:require settled-once (nt:equal (tht:get $d "settled_count") 1)))
+          ($_ (nt:require settled-discharges (nt:equal (tht:get $d "obligation_since") 0))))
+     True))
+
+!(nt:require turn-health-phase (tht:phase))
+!(nt:require turn-health-labels (tht:labels))
+!(nt:require turn-health-transitions (tht:transitions))
+!(println! NATIVE_TURN_HEALTH_PASSED)

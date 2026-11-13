@@ -2,6 +2,7 @@
 !(import! &self ./src/fuel_io)
 !(import! &self ./src/goal_bookkeeping.metta)
 !(import! &self ./src/interop_flags_cetta.metta)
+!(import! &self ./src/turn_health_cetta.metta)
 !(import! &self ./src/loop_host_cetta.metta)
 !(import! &self ./src/model_selection_cetta.metta)
 !(import! &self ./src/strategy_broker_cetta.metta)
@@ -319,8 +320,7 @@
           ;; Provider failure is deliberately represented as (), which is
           ;; also a legitimate command list.  The provider receipt is the
           ;; authoritative distinction for history and input settlement.
-          ($providerSucceeded
-            (py-call (cognitive_health.turn_succeeded)))
+          ($providerSucceeded (health:turn-succeeded))
           ($_ (if (== $providerSucceeded 1) _
                   (py-call (strategy_host.provider_failed))))
           ;; The external observation is committed before parse recovery.
@@ -452,9 +452,7 @@
               (loop-resting $heartbeatApplied)))
           ($ready (applyAutonomousBurst $heartbeatApplied $autonomous))
           ($_ (if (> (loop-budget $ready) 0)
-                  (py-call (cognitive_health.expect_turn
-                             (loop-active-policy $ready)
-                             (loop-budget $ready)))
+                  (health:expect (loop-active-policy $ready) (loop-budget $ready))
                   _))
           ($afterTurn
             (if (> (loop-budget $ready) 0)
@@ -614,7 +612,7 @@
           ($checkpoint (persistProcessState $next))
           ($_ (if (and (== $checkpoint 1) (== (working:turn-commit-ready) 1))
                 (let $acked (settleActivityBatch)
-                  (if (== $acked 1) (py-call (cognitive_health.turn_settled)) 0)) 0))
+                  (if (== $acked 1) (health:settle) 0)) 0))
           ($_ (working:turn-commit-reset)))
      (if (== (py-call (helper.recycle_requested)) 1)
          (progn

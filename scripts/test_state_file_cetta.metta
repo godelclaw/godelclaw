@@ -68,10 +68,26 @@
                   (((SfLockFailed $why) True) ($other False))))))
      True))
 
+; Native leaves, last-wins lookup, removal and Python's json.dump bytes.
+(= (sft:native $root)
+   (let* (($file (path:join $root "native.json"))
+          ($_ (nt:require native-missing-empty (nt:equal (sf:native-object $file) (JsonObject ()))))
+          ($_ (fs:write $file "{\"b\": 1.5, \"a\": 2, \"a\": 3, \"t\": true}"))
+          ($read (sf:native-object $file))
+          ($_ (nt:require native-number (nt:equal (sf:get $read "b" none) 1.5)))
+          ($_ (nt:require native-last-wins (nt:equal (sf:get $read "a" none) 3)))
+          ($_ (nt:require native-default (nt:equal (sf:get $read "z" none) none)))
+          ($_ (nt:require drop-every-occurrence (nt:equal (sf:get (sf:drop $read "a") "a" gone) gone)))
+          ($_ (nt:require python-json-sorted
+                (nt:equal (sf:python-json (sf:drop $read "a")) "{\"b\": 1.5, \"t\": true}\n")))
+          ($_ (fs:write $file "[1]"))
+          ($_ (nt:require native-array-empty (nt:equal (sf:native-object $file) (JsonObject ())))))
+     True))
+
 (= (sft:run)
    (let* (($root (nt:join (nt:required-env "NATIVE_TEST_ARTIFACTS") (str:concat "state-file-" (system:uuid4-hex))))
           ($_ (fs:make-directories $root 504))
-          ($_ (sft:objects $root)) ($_ (sft:replace $root)) ($_ (sft:locked $root)))
+          ($_ (sft:objects $root)) ($_ (sft:native $root)) ($_ (sft:replace $root)) ($_ (sft:locked $root)))
      StateFilePassed))
 !(nt:require state-file-completed (nt:equal (collapse (sft:run)) (StateFilePassed)))
 !(println! NATIVE_STATE_FILE_PASSED)

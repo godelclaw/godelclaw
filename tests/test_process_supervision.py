@@ -41,6 +41,24 @@ class SupervisionTests(unittest.TestCase):
     def message(self):
         return dict(line.split("=", 1) for line in self.socket.recv(2048).decode().splitlines())
 
+    def test_submitted_call_keeps_its_provider_deadline(self):
+        """The provider wait is the last receipt of a submission: nothing after
+        it resets the watchdog's extension for the call."""
+        import native_llm_host
+        plan = mock.Mock(timeout=20000, provider="anthropic", wire_model="m", kind="command",
+                         purpose="turn", compaction=False)
+        with mock.patch.object(native_llm_host, "_compaction", return_value=False):
+            self.assertTrue(native_llm_host.submitted(plan, 7))
+        messages = []
+        while True:
+            try:
+                messages.append(self.message()["WATCHDOG_USEC"])
+            except socket.timeout:
+                break
+        self.assertEqual(messages, ["21000000"])
+        receipt = json.loads((self.root / "progress").read_text())
+        self.assertEqual((receipt["phase"], receipt["wait_until"]), ("provider-wait", 120.0))
+
     def test_idle_polling_cannot_extend_provider_deadline(self):
         supervision.provider_wait(20)
         self.assertEqual(self.message()["WATCHDOG_USEC"], "21000000")

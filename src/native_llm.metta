@@ -7,6 +7,7 @@
 !(import! &self ./src/model_selection_cetta.metta)
 !(import! &self ./src/native_call_cetta.metta)
 !(import! &self ./src/rejection_gate_cetta.metta)
+!(import! &self ./src/turn_health_cetta.metta)
 ; A flag consumes a computed value. Atom would treat an inline host call as
 ; quoted syntax and silently classify it as false.
 (: llm:host-flag (-> %Undefined% Bool))
@@ -53,7 +54,16 @@
      (let $selected (model:current $model)
        (if (str:starts-with $selected "chatgpt:")
          (py-call (synthetic_llm.unavailable_action chatgpt-requires-native-cetta))
-         (py-call (synthetic_llm.chat $model $tokens $effort $prompt)))))))
+         (llm:host-command $model $tokens $effort $prompt))))))
+
+; The Python transport keeps the health record itself. Its turn completed
+; exactly when the record counted one more completion: the durable receipt,
+; not the host's word, ends the phase.
+(= (llm:host-command $model $tokens $effort $prompt)
+   (let* (($before (health:completions))
+          ($answer (py-call (synthetic_llm.chat $model $tokens $effort $prompt)))
+          ($phase (if (> (health:completions) $before) (health:turn-completed) (health:turn-failed))))
+     $answer))
 
 ; A structured (coding or iter) request is a tagged JSON value; its purpose is
 ; the ledger's: "turn" (iter), "coding" or "compaction". Preparation captures
@@ -90,7 +100,8 @@
        (let $state (pcall:begin $owner $transport) (llm:after-submit $owner $state)))
       ((RefusedProviderCallV1 $host) (llm:refused $host)))))
 (= (llm:refused $host)
-   (py-call (native_llm_host.failed $host "unsubmitted" admission-error 0)))
+   (let $phase (health:turn-failed)
+     (py-call (native_llm_host.failed $host "unsubmitted" admission-error 0))))
 
 ; Programs may retain this owned pending value, poll it later, or wait for a
 ; bounded interval. A soft wait returns the same call; it never cancels it.
@@ -217,7 +228,8 @@
      (((llm:v1:ok $text)
        (llm:v1:io-outcome $epoch $correlation $protocol (http:response 200 $text)))
       ((llm:v1:error stream-capacity)
-       (let $_ (py-call (native_llm_host.decoding_wait (call:host $plan) $attempt))
+       (let* (($recorded (if (call:compaction? $plan) 1 (health:record-wait $attempt)))
+              ($_ (py-call (native_llm_host.decoding_wait (call:host $plan) $attempt))))
          (llm:decode-received-body $plan $epoch $correlation $protocol $body $stream $limit (+ $attempt 1))))
       ((llm:v1:error $why)
        (llm:v1:failed $epoch $correlation incomplete-stream response-received))

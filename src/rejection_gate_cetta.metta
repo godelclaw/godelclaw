@@ -11,16 +11,7 @@
 !(import! &self (library system))
 !(import! &self (library path))
 !(import! &self (library fs))
-
-; cognitive_health._path(): the configured record, or the instance's default.
-(= (gate:health-path)
-   (let $configured (system:getenv-or-default "METTACLAW_COGNITIVE_HEALTH_PATH" "")
-     (if (not (== $configured "")) $configured
-       (let* (($home (system:getenv-or-default "HOME" "."))
-              ($default-state (path:join $home ".local/state"))
-              ($state (system:getenv-or-default "XDG_STATE_HOME" $default-state))
-              ($instance (system:getenv-or-default "METTACLAW_INSTANCE" "default")))
-         (path:join (path:join (path:join $state "pettaclaw") $instance) "cognitive-health.json")))))
+!(import! &self ./turn_health_cetta.metta)
 
 ; The record holds a block: its provider_rejection member is an object. An
 ; unreadable record holds none, as cognitive_health._read() reads it.
@@ -53,4 +44,4 @@
    (let $removed (collapse (match &self (ProviderRejectionLatchV1) (remove-atom &self (ProviderRejectionLatchV1)))) True))
 
 (= (gate:possible?)
-   (if (gate:latched?) True (gate:recorded? (gate:health-path))))
+   (if (gate:latched?) True (gate:recorded? (health:path))))
