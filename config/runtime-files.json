@@ -20,6 +20,7 @@
   "channels/telegram_control_input.metta",
   "channels/telegram_control_io.metta",
   "channels/telegram_control_main.metta",
+  "channels/telegram_failure_notice.metta",
   "channels/telegram_notice_cleanup.metta",
   "channels/websearch.py",
   "config/default.toml",

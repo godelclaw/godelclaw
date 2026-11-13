@@ -43,6 +43,12 @@
     ("tests/unit/journal_retention.metta" "UNIT_JOURNAL_RETENTION_OK" (("PATH" "{home}/bin:/usr/bin:/bin")))
     ("tests/unit/control_io.metta" "UNIT_CONTROL_IO_OK"
      (("METTACLAW_TELEGRAM_SERVICE_SOCKET" "{home}/cwp.sock") ("METTACLAW_MODE_STATE_ROOT" "{home}/modes")))
+    ("tests/unit/failure_notice.metta" "UNIT_FAILURE_NOTICE_OK"
+     (("METTACLAW_INPUT_LEDGER_SOCKET" "{home}/l.sock") ("METTACLAW_COGNITIVE_HEALTH_PATH" "{home}/health.json")
+      ("METTACLAW_MODE_STATE_ROOT" "{home}/modes") ("METTACLAW_TELEGRAM_PRIMARY_CHAT_ID" "42")))
+    ("tests/unit/failure_notice.metta" "UNIT_FAILURE_NOTICE_NO_LEDGER_OK"
+     (("METTACLAW_COGNITIVE_HEALTH_PATH" "{home}/health.json") ("METTACLAW_MODE_STATE_ROOT" "{home}/modes")
+      ("METTACLAW_TELEGRAM_PRIMARY_CHAT_ID" "42")))
     ("tests/unit/runtime_health.metta" "UNIT_RUNTIME_HEALTH_OK"
      (("PATH" "{home}/bin:/usr/bin:/bin")
       ("METTACLAW_TELEGRAM_HEALTH_PATH" "{home}/telegram-health.json") ("METTACLAW_WORKING_SET_PATH" "{home}/working.json")

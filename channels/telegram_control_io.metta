@@ -1,6 +1,12 @@
 ; The command responder's own I/O between its answers: the mode outbox it
-; submits, the readiness it publishes, and its wait for the next cycle.
+; submits and writes to, the readiness it publishes, and its wait for the next
+; cycle.
 ;
+; - Queueing a send: a fresh key from the outbox's sequence file, kept under
+;   its lock file, strictly above every key handed out before and never below
+;   the wall clock's nanoseconds (as Python's durable_telegram.Channel.key
+;   gives them, so both may write the same outbox), and the intent written
+;   whole as KEY.json.
 ; - The mode outbox (<mode state>/channel-outbox) holds sends that other
 ;   processes queued for the channel service: each a whole JSON file
 ;   {"key": KEY, "commands": [...]}, named KEY.json. A cycle submits at most
@@ -124,6 +130,69 @@
                 ($_ (if (== $held fs:locked) (fs:unlock $lock) ()))
                 ($_ (fs:close $lock)))
            $done)))))
+
+;; ------------------------------------------------------------ queueing a send
+
+; The operator's chat: the first of METTACLAW_TELEGRAM_PRIMARY_CHAT_ID,
+; METTACLAW_TELEGRAM_CHAT_ID or TELEGRAM_CHAT_ID that is set, its first entry.
+(= (tio:primary-chat)
+   (let* (($primary (system:getenv-or-default "METTACLAW_TELEGRAM_PRIMARY_CHAT_ID" ""))
+          ($chat (system:getenv-or-default "METTACLAW_TELEGRAM_CHAT_ID" ""))
+          ($legacy (system:getenv-or-default "TELEGRAM_CHAT_ID" ""))
+          ($configured (if (not (== $primary "")) $primary (if (not (== $chat "")) $chat $legacy))))
+     (str:trim (car-atom (str:split "," $configured)))))
+; A chat id as a whole number, or None: an optional sign and digits.
+(= (tio:chat-number $text)
+   (let $digits (if (or (str:starts-with $text "-") (str:starts-with $text "+")) (str:byte-slice $text 1 (str:byte-length $text)) $text)
+     (if (and (not (== $digits "")) (str:is-all-in digit $digits)) (str:string->number $text) None)))
+
+; "%020d": the sequence zero-padded to 20 digits.
+(= (tio:pad20 $n) (tio:zeros (repr $n) 20))
+(= (tio:zeros $digits $width)
+   (if (< (str:byte-length $digits) $width) (tio:zeros (str:concat "0" $digits) $width) $digits))
+
+; The outbox's sequence, as its file holds it: 0 when it is missing or holds
+; anything but a whole number.
+(= (tio:stored-sequence $path)
+   (case (fs:read-text-result $path 0 "raw")
+     ((("ok" $text)
+       (let $trimmed (str:trim $text)
+         (if (and (not (== $trimmed "")) (str:is-all-in digit $trimmed)) (str:string->number $trimmed) 0)))
+      ($missing 0))))
+; The next sequence: above the stored one and never below the wall clock's
+; nanoseconds, kept under the sequence's lock file, so every process that
+; queues sends here (Python's durable_telegram.Channel.key among them) gets a
+; strictly larger one, across restarts too. The number, or the failure.
+(= (tio:next-sequence $folder)
+   (let $path (path:join $folder "sequence")
+     (sf:locked (str:concat $path ".lock") 384
+       (let* (($stored (tio:stored-sequence $path))
+              ($now (system:wall-time-ns))
+              ($next (if (> $now $stored) $now (+ $stored 1)))
+              ($saved (sf:replace $path (str:concat (repr $next) "\n") 384 True)))
+         (if (== $saved True) $next $saved)))))
+
+; A fresh key CHAT.THREAD.SEQUENCE for a send to a chat's thread 0, or
+; (Error tio:key WHY) when there is no outbox or the chat is no chat id.
+(= (tio:operator-key) (tio:key (tio:primary-chat)))
+(= (tio:key $chat-text)
+   (let* (($folder (tio:outbox)) ($chat (tio:chat-number $chat-text)))
+     (if (== $folder "") (Error tio:key "no mode state root")
+       (if (or (== $chat None) (== $chat 0)) (Error tio:key "no chat id")
+         (let* (($_ (fs:make-directories $folder 511))
+                ($sequence (tio:next-sequence $folder)))
+           (if (== (get-type $sequence) Number)
+             (str:join "" ((repr $chat) ".0." (tio:pad20 $sequence)))
+             (Error tio:key $sequence)))))))
+
+; Write an intent, {"key": KEY, "commands": [...]}, whole into the outbox as
+; KEY.json, synced, where the pump submits it. True, or the failure.
+(= (tio:store-intent $key $intent)
+   (let $folder (tio:outbox)
+     (if (== $folder "") (Error tio:store-intent "no mode state root")
+       (let $_ (fs:make-directories $folder 511)
+         (sf:replace (path:join $folder (str:concat $key ".json"))
+                     (json:stringify-python-with $intent ((ensure-ascii False))) 384 True)))))
 
 ;; ------------------------------------------------------------ the readiness record
 

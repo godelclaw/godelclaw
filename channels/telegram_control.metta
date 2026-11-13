@@ -22,8 +22,8 @@
 !(import! &self ./src/mode_state.metta)
 !(import! &self ./src/fuel_io)
 !(import! &self ./src/input_notice_cetta.metta)
-!(import! &self ./src/cognitive_health.py)
 !(import! &self ./src/runtime_health_cetta.metta)
+!(import! &self ./channels/telegram_failure_notice.metta)
 !(import! &self ./channels/energy.metta)
 !(import! &self ./channels/telegram_control_input.metta)
 !(import! &self ./channels/telegram_notice_cleanup.metta)
@@ -331,7 +331,7 @@
       (let $ordinary (tc:notice-tasks $tasks)
        (let $scanned (notice:begin-scan $ordinary $tasks)
         (let $_ (tc:prune $ordinary)
-         (let $failure (tc:guarded (catch (py-call (cognitive_health.notify_failure))) "failure notice")
+         (let $failure (tc:guarded (catch (fnote:notify)) "failure notice")
           (let $noticed (tc:notices $tasks)
            (let $cleaned (tc:guarded (catch (nc:pump)) "receipt cleanup") $handled))))))))))
 
