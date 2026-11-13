@@ -13,6 +13,7 @@
     ("tests/unit/structured_request.metta" "UNIT_STRUCTURED_REFUSALS_OK")
     ("tests/unit/completion_effects.metta" "UNIT_COMPLETION_EFFECTS_OK")
     ("tests/unit/rejection_gate.metta" "UNIT_REJECTION_GATE_OK")
+    ("tests/unit/dispatch_stopped.metta" "UNIT_DISPATCH_STOPPED_OK")
     ("tests/unit/call_gate.metta" "UNIT_CALL_GATE_OK")
     ("tests/unit/call_gate.metta" "UNIT_CALL_GATE_RECYCLING_OK" (("METTACLAW_ACTIVE_LOOP_MODE" "coding")))
     ("tests/unit/strategy_broker.metta" "UNIT_STRATEGY_BROKER_OK")
