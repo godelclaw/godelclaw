@@ -875,6 +875,46 @@
         "Exit now waits for non-daemon Python threads; a stuck thread would delay it",
         "No paid live canary or 24-hour soak claimed"
       ]
+    },
+    {
+      "id": "native-help-and-command-arity",
+      "status": "qualified-and-deployed",
+      "author": "Gödel (the agent), in his own coding sessions; integrated by Claude",
+      "native_modules": [
+        "src/skills_help.metta",
+        "src/skills_help_pages.metta",
+        "src/command_arity.metta"
+      ],
+      "runtime_commit": "1884e82b2",
+      "engine_commit": "dc2b3bcb75e48d9b23179e43be2bdd3430e46284",
+      "release": "2776c14c",
+      "gateway_release": "2776c14c",
+      "test_orchestration": "CeTTa core without Python",
+      "checks": {
+        "native_suites_passed": "23 of 24 (the snapshot suite needs the deployment plan)",
+        "help_pages_byte_identical": 82,
+        "command_arities_matching": 102,
+        "python_entry_census": {
+          "coding-two-turn": [
+            52,
+            48
+          ],
+          "activity-delivery": [
+            48,
+            46
+          ],
+          "background-jobs": [
+            2,
+            1
+          ]
+        },
+        "python_modules": "test_skills_help_native, test_command_arity, test_command_dispatch_engine and test_native_migration pass; the two generated-table checks fail as before",
+        "paired_installed_verification": true
+      },
+      "limits": [
+        "src/command_arity.py and src/skills_help.py stay selected for helper.py and oracle tests",
+        "No paid live canary or 24-hour soak claimed"
+      ]
     }
   ],
   "tuning_debt": [
