@@ -1054,7 +1054,7 @@
        (if (not (== $primary "")) $primary (tg:get reply-chat "")))))
 
 (= (tg:next-key $chat)
-   (let $now (py-call (time.time_ns))
+   (let $now (system:wall-time-ns)
      (let $last (tg:get last-sequence 0)
        (let $sequence (if (> $now $last) $now (+ $last 1))
          (let $set (tg:set last-sequence $sequence)
