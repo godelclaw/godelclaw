@@ -86,6 +86,21 @@ bare_group_commands = true
 # Identity-bearing Telegram settings belong in config/secrets.env; see its
 # example file. This keeps authorization data out of generated .env and Git.
 
+[irc]
+# The IRC channel's own service (run.sh chat-channel), when [channel] kind is
+# "irc": its server, port, TLS, channel and nick (four digits are added).
+server = "irc.quakenet.org"
+port = 6667
+tls = false
+channel = "##metta"
+nick = "maxbotnick"
+
+[mattermost]
+# The Mattermost channel's own service (run.sh chat-channel), when [channel]
+# kind is "mattermost". The bot's token belongs in config/secrets.env.
+url = "https://chat.singularitynet.io"
+channel_id = "8fjrmabjx7gupy7e5kjznpt5qh"
+
 [search]
 # "auto" tries Tavily first when TAVILY_API_KEY is set, then DuckDuckGo HTML.
 # Use "tavily" or "ddg" to force one provider for the default (search "...").

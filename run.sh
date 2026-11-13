@@ -26,13 +26,14 @@ CALLER_METTACLAW_TELEGRAM_BOT_TOKEN="${METTACLAW_TELEGRAM_BOT_TOKEN:-}"
 CALLER_TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
 case "$REQUESTED_TARGET" in
     run.metta|"$ROOT/run.metta") NONLIVE_TARGET=0 ;;
-    telegram-control|terminal-control) NONLIVE_TARGET=0 ;;
+    telegram-control|terminal-control|chat-channel) NONLIVE_TARGET=0 ;;
     *) NONLIVE_TARGET=1 ;;
 esac
 
 # A paired release holds only cognitive launchers while both instances are
 # staged and checked. Operator controls and isolated probes remain available.
-if [ "$NONLIVE_TARGET" = 0 ] && [ "$REQUESTED_TARGET" != telegram-control ] && [ "$REQUESTED_TARGET" != terminal-control ]; then
+if [ "$NONLIVE_TARGET" = 0 ] && [ "$REQUESTED_TARGET" != telegram-control ] && [ "$REQUESTED_TARGET" != terminal-control ] \
+        && [ "$REQUESTED_TARGET" != chat-channel ]; then
     while [ -f "$ROOT/.runtime-update-hold" ]; do sleep 1; done
 fi
 STATE_PATH_NAMES=(
@@ -221,6 +222,13 @@ if [ "$REQUESTED_TARGET" = telegram-control ]; then
     CETTA_BIN="${CETTA_BIN:-$CETTA_ROOT/cetta}"
     exec "$CETTA_BIN" --value-bytes 268435456 --lang petta --import-mode ancestor-walk \
         "$ROOT/channels/telegram_control_main.metta" default
+fi
+# An IRC or Mattermost channel's own service (channels/chat_service_main.metta)
+# keeps the connection beside cognition and shares the chat spool with it.
+if [ "$REQUESTED_TARGET" = chat-channel ]; then
+    CETTA_BIN="${CETTA_BIN:-$CETTA_ROOT/cetta}"
+    exec "$CETTA_BIN" --lang petta --import-mode ancestor-walk \
+        "$ROOT/channels/chat_service_main.metta" default
 fi
 if [ "$REQUESTED_TARGET" = terminal-control ]; then
     CETTA_BIN="${CETTA_BIN:-$CETTA_ROOT/cetta}"

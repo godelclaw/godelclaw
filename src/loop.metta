@@ -595,7 +595,8 @@
 (= (settleActivityBatch)
    (let $channel (catch (tg:ack-activity-batch))
      (if (== $channel 1)
-       (if (== (mail:ack) 1) (jobs:ack) 0) 0)))
+       (if (== (channel:ack-chat) 1)
+         (if (== (mail:ack) 1) (jobs:ack) 0) 0) 0)))
 
 ;; A completed effectful turn and idle wait choose one successor. Commit
 ;; before tail recursion, so dormant alternatives cannot retain earlier turns.

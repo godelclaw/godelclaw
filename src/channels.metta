@@ -1,12 +1,5 @@
 ;configured at runtime:
-(= (IRC_channel) (empty))
-(= (IRC_server) (empty))
-(= (IRC_port) (empty))
-(= (IRC_user) (empty))
 (= (commchannel) (empty))
-(= (MM_URL) (empty))
-(= (MM_CHANNEL_ID) (empty))
-(= (MM_BOT_TOKEN) (empty))
 (= (TG_BOT_TOKEN) (empty))
 (= (TG_CHAT_ID) (empty))
 
@@ -22,25 +15,14 @@
                      (configure TG_CHAT_ID "")
                      (let $started (py-call (telegram.start_telegram (TG_BOT_TOKEN) (TG_CHAT_ID)))
                        (println! (tg:start))))
-              (if (== (commchannel) irc)
-                  (progn (configure IRC_channel ##metta)
-                         (configure IRC_server "irc.quakenet.org")
-                         (configure IRC_port 6667)
-                         (configure IRC_user maxbotnick)
-                         (py-call (irc.start_irc (IRC_channel) (IRC_server) (IRC_port) (IRC_user))))
-                  (progn (configure MM_URL "https://chat.singularitynet.io")
-                         (configure MM_CHANNEL_ID "8fjrmabjx7gupy7e5kjznpt5qh")
-                         (configure MM_BOT_TOKEN "")
-                         (py-call (mattermost.start_mattermost (MM_URL) (MM_CHANNEL_ID) (MM_BOT_TOKEN))))))))
+              ;; IRC and Mattermost connect in a service of their own
+              ;; (run.sh chat-channel), which the loop meets in the chat spool.
+              (println! (chat:started (commchannel))))))
 
 ;Receive the latest user message considering all communication channels:
 !(import! &self ./src/input_scope_cetta.metta)
 (= (receive-channel)
-   (if (== (commchannel) telegram)
-       (tg:activity-batch)
-       (if (== (commchannel) irc)
-           (py-call (irc.getLastMessage))
-           (py-call (mattermost.getLastMessage)))))
+   (if (== (commchannel) telegram) (tg:activity-batch) (chat:receive (commchannel))))
 
 ; Conversation arrivals retain their own acknowledgement path. Native mail
 ; is its own input, so settling a conversation cannot settle unrelated mail.
@@ -54,9 +36,7 @@
    (let $_
      (if (== (commchannel) telegram)
        (let $ids (tg:update-ids (tg:prepared-items)) (input-scope:prepare $ids))
-       (if (== (commchannel) irc)
-         (let $encoded (py-call (irc.prepared_input_ids_json)) (input-scope:prepare-json $encoded))
-         (let $encoded (py-call (mattermost.prepared_input_ids_json)) (input-scope:prepare-json $encoded))))
+       (input-scope:prepare (chat:presented-ids)))
      (if (input-scope:all-settled (input-scope:ids))
        (let $_ (input-scope:reset) (channel:receive-mail-or-job)) $conversation)))
 ; Transport diagnostics are observations, not fabricated deliveries. The
@@ -70,9 +50,13 @@
            (let $_ (if (mail:empty? $job) True (println! (JOB_RECEIVE_UNAVAILABLE $job))) ""))))))
 
 ;; Whether pending conversation may keep a parked agent waiting: see
-;; tg:quiet-batch?. Other channels and clients always wake it.
+;; tg:quiet-batch? and chat:quiet-batch?.
 (= (channel:quiet-activity?)
-   (if (== (commchannel) telegram) (tg:quiet-batch?) False))
+   (if (== (commchannel) telegram) (tg:quiet-batch?) (chat:quiet-batch?)))
+;; The turn that read a chat channel's messages is committed: they leave its
+;; inbox. Telegram's batch is settled by tg:ack-activity-batch.
+(= (channel:ack-chat)
+   (if (== (commchannel) telegram) 1 (chat:ack (commchannel))))
 ;; Whether this wake may hand back the whole banked budget: see
 ;; tg:full-wake-batch?. Other channels and clients always may.
 (= (channel:full-wake?)
@@ -94,11 +78,9 @@
 (= (send $msg)
    (let $safemsg (string-replace $msg  "\n" "\\n")
         (let $outmsg (utils:decode-safe $safemsg)
-             (if (== (commchannel) irc)
-                 (let $temp (cut) (py-call (irc.send_message $outmsg)))
-	                 (if (== (commchannel) telegram)
-	                     (let $temp (cut) (tg:send-effect $outmsg ""))
-	                     (let $temp (cut) (py-call (mattermost.send_message $outmsg))))))))
+             (if (== (commchannel) telegram)
+                 (let $temp (cut) (tg:send-effect $outmsg ""))
+                 (let $temp (cut) (chat:send (commchannel) $outmsg))))))
 
 (= (send-telegram-chat $chat_id $msg)
    (let $safemsg (string-replace $msg  "\n" "\\n")

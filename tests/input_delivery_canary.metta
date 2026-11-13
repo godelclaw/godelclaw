@@ -26,7 +26,8 @@
              ("METTACLAW_STRATEGY_PATH" (nt:join $directory "strategy"))
              ("METTACLAW_WORKING_SET_PATH" (nt:join $directory "working.json"))
              ("METTACLAW_LOOP_MODE_PATH" (nt:join $directory "loop-mode.json"))
-             ("METTACLAW_JOBS_DIR" (nt:join $directory "jobs")))))
+             ("METTACLAW_JOBS_DIR" (nt:join $directory "jobs"))
+             ("METTACLAW_CHAT_SPOOL_ROOT" (nt:join $directory "chat")))))
      (nq:guest-at $world "fixture-model" "petta" $forms (nq:overlay-env $extra $overrides) $directory)))
 (= (ic:expect-crash (NativeTestGuestResultV1 $elapsed $result))
    (nt:require kernel-was-killed-after-operation

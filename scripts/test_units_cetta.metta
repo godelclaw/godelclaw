@@ -27,6 +27,8 @@
     ("tests/unit/input_notice.metta" "UNIT_INPUT_NOTICE_OK" (("METTACLAW_INSTANCE" "unit")))
     ("tests/unit/sibling.metta" "UNIT_SIBLING_OK"
      (("PATH" "{home}/bin:/usr/bin:/bin") ("METTACLAW_SIBLING_START_SETTLE_SECONDS" "0")))
+    ("tests/unit/irc_channel.metta" "UNIT_IRC_CHANNEL_OK" (("METTACLAW_CHAT_SPOOL_ROOT" "{home}/chat")))
+    ("tests/unit/mattermost_channel.metta" "UNIT_MATTERMOST_CHANNEL_OK" (("METTACLAW_CHAT_SPOOL_ROOT" "{home}/chat")))
     ("tests/unit/control_io.metta" "UNIT_CONTROL_IO_OK"
      (("METTACLAW_TELEGRAM_SERVICE_SOCKET" "{home}/cwp.sock") ("METTACLAW_MODE_STATE_ROOT" "{home}/modes")))
     ("tests/unit/display.metta" "UNIT_DISPLAY_OK"
