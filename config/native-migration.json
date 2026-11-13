@@ -915,6 +915,54 @@
         "src/command_arity.py and src/skills_help.py stay selected for helper.py and oracle tests",
         "No paid live canary or 24-hour soak claimed"
       ]
+    },
+    {
+      "id": "provider-core-batch-5-turn-health-and-event-spool",
+      "status": "qualified-and-deployed",
+      "native_modules": [
+        "src/turn_health_cetta.metta",
+        "src/runtime_events_cetta.metta"
+      ],
+      "runtime_commit": "af4e05ca0",
+      "engine_commit": "dc2b3bcb75e48d9b23179e43be2bdd3430e46284",
+      "release": "e0cdf92f",
+      "gateway_release": "e0cdf92f",
+      "test_orchestration": "CeTTa core without Python",
+      "checks": {
+        "python_entry_census": {
+          "coding-two-turn": [
+            48,
+            42
+          ],
+          "activity-delivery": [
+            46,
+            40
+          ]
+        },
+        "failure_pacing_equivalence_cases": 864,
+        "health_record_bytes_equal_sequences": 11,
+        "watchdog_extension_test": "fails on the previous main, passes now",
+        "python_suite": "no failure only on the branch",
+        "paired_benchmark": {
+          "baseline_runtime_commit": "5b229ae7e",
+          "host_load_average": "15-19",
+          "p95_change_percent": {
+            "small": 10.3,
+            "large_1mib": 6.3,
+            "many_blocks_1mib": 0.8
+          },
+          "median_change_percent": {
+            "small": 6.3,
+            "large_1mib": 2.2,
+            "many_blocks_1mib": 3.7
+          }
+        },
+        "paired_installed_verification": true
+      },
+      "limits": [
+        "Small-turn p95 rose about 10% in two runs on a loaded host; within budget, unexplained, recorded as tuning debt",
+        "No paid live canary or 24-hour soak claimed"
+      ]
     }
   ],
   "tuning_debt": [
@@ -947,6 +995,12 @@
       "measured": "census ceilings: activity delivery 76, two-turn coding 60, coding lifecycle 76, provider command 14",
       "likely_cause": "telegram.py publishing for the MeTTa client, and the strategy_host broker (24-28 entries per turn)",
       "direction": "port the publishing path and further broker slices"
+    },
+    {
+      "area": "small-turn latency after native turn health",
+      "measured": "small-turn p95 +10.2-10.3% and median +3-6% in two paired runs on a host at load 15-19",
+      "likely_cause": "more synced writes of the health record per turn on the native path (each fsync is about 6 ms)",
+      "direction": "count fsyncs per turn native against Python, rerun interleaved on a quiet host, and batch the record writes"
     }
   ]
 }
