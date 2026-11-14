@@ -1,7 +1,7 @@
 ; Native orchestration of the existing semantic probes and reference fixtures.
 !(import! &self ./provider_native_qualification.metta)
 (: nr:probe-env (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
-(= (nr:probe-env $world $name $bin $probe)
+(= (nr:probe-env $world $name $bin $mode)
    (let* (((NativeProviderTestWorldV1 $root $sdk $core $directory $socket $base $peer $server $env-base $io_fixture) $world)
           ($env (nq:guest-env $world "fixture-model" ()))
           ($temporary (nq:path $world "tmp")) ($_ (fs:make-directories $temporary 448))
@@ -19,14 +19,14 @@
           ($iteration (if (nt:equal $name "tests/native_iter_multiturn_probe.metta")
              (nq:path $world "native-iter-multiturn") (nt:join $root "tests/fixtures/native_iter_transformations")))
           ($changes (("METTACLAW_SKIP_INITIALIZE" "1") ("METTACLAW_SKIP_CONFIG" "1")
-            ; Most reference probes still install scripted replies at the host's
-            ; chat seam. A probe that nr:probe-settings puts on the native
-            ; transport is answered by the world's loopback provider instead:
-            ; its replies and requests are files in NATIVE_TEST_WORLD.
-            ("METTACLAW_LLM_TRANSPORT" "python") ("NATIVE_TEST_WORLD" (nq:path $world ""))
+            ; A probe's provider has no credential, so its calls are refused
+            ; before submission. A probe that scripts its model gets one from
+            ; nr:probe-settings: the world's loopback provider then answers,
+            ; and its replies and requests are files in NATIVE_TEST_WORLD.
+            ("NATIVE_TEST_WORLD" (nq:path $world ""))
+            ("SYNTHETIC_API_KEY" "") ("ANTHROPIC_API_KEY" "") ("OPENAI_API_KEY" "") ("KIMI_API_KEY" "")
             ; Every probe's Telegram client runs with no channel service.
             ("METTACLAW_TELEGRAM_SERVICE_SOCKET" "")
-            ("SYNTHETIC_API_KEY" "") ("ANTHROPIC_API_KEY" "") ("OPENAI_API_KEY" "") ("KIMI_API_KEY" "")
             ("CETTA_BIN" (nt:join $sdk "cetta")) ("PETTA_PY_ENV" (pcall:fact (preq:parse (fs:read-text (nt:join $sdk "build-manifest.json"))) "python_prefix"))
             ("METTACLAW_LLM_LEDGER_PATH" (nq:path $world "llm-budget.sqlite3"))
             ("METTACLAW_LLM_COMPLETION_PATH" (nq:path $world "completion.json"))
@@ -41,16 +41,90 @@
             ("METTACLAW_WORKING_SET_PATH" (nq:path $world "working-set.json"))
             ("METTACLAW_DEPLOYMENT_STATE_PATH" $deployment) ("TMPDIR" $temporary) ("PATH" $path)))
           ($special (case (collapse (nr:probe-settings $name)) ((() ()) (($settings) $settings))))
-          ; On the native transport a mode selected after boot ends the
-          ; process at the next call's gate, as it must. The coding probe
-          ; therefore boots in its mode, as an agent does after that recycle.
-          ($_ (if (nt:equal $name "tests/integrated_coding_turn_probe.metta")
-                (fs:write (nq:path $world "loop-mode.json") "{\"mode\": \"coding\"}") True)))
+          ; A mode selected after boot requests a recycle, which ends the
+          ; process at the next call's gate, as it must. A probe of a mode
+          ; therefore boots in it, as an agent does after that recycle.
+          ($_ (if (nt:equal $mode none) True
+                (fs:write (nq:path $world "loop-mode.json") (format-args "{\"mode\": \"{}\"}" ($mode)))))
+          ($_ (if (nr:managed? $name) (nr:managed-world $world) True)))
      (nq:overlay-env (nq:overlay-env (nq:overlay-env $env $changes) $special) (nr:probe-world-settings $name $world))))
 ; Settings a probe needs inside its world.
 (= (nr:probe-world-settings $name $world)
    (if (nt:equal $name "tests/strategy_continuation_attempt_probe.metta")
-     (("METTACLAW_STREAM_DIR" (nq:path $world "display"))) ()))
+     (("METTACLAW_STREAM_DIR" (nq:path $world "display")))
+     (if (nr:managed? $name)
+       (("METTACLAW_STRATEGY_PATH" (nq:path $world "strategy.sqlite3"))
+        ("METTACLAW_EFFECT_RECEIPT_PATH" (nq:path $world "effects.jsonl")))
+       ())))
+; The probes of the observed strategy as the agents run it, one command per
+; batch: each turn's commands are recorded in its ledger and receipts. The
+; model's window is known.
+(= (nr:managed? $name)
+   (preq:member? $name ("tests/task_context_probe.metta" "tests/sequential_tools_probe.metta"
+     "tests/command_feedback_probe.metta" "tests/observed_strategy_probe.metta"
+     "tests/strategy_fault_probe.metta" "tests/runtime_context_probe.metta")))
+(= (nr:managed)
+   (("SYNTHETIC_API_KEY" "fixture-secret") ("SYNTHETIC_MODEL" "syn:large:text")
+    ("METTACLAW_OBSERVED_STRATEGY" "1") ("METTACLAW_COMMAND_BATCH_LIMIT" "1")))
+;; After a managed probe, its receipts (METTACLAW_EFFECT_RECEIPT_PATH): each
+;; executed command's receipt names its attempt, <ticket>:<position>, each
+;; batch's positions from 0 in order; nothing was deferred; and the commands
+;; are the ones the probe's model emitted, or as many as it emitted.
+(= (nr:expected-commands "tests/task_context_probe.metta") 18)
+(= (nr:expected-commands "tests/sequential_tools_probe.metta") 10)
+(= (nr:expected-commands "tests/command_feedback_probe.metta")
+   ("['pin', 'verified note']" "['help', 'shell']" "['not-a-tool']" "['help', 'pin']"))
+(= (nr:expected-commands "tests/observed_strategy_probe.metta")
+   ("['shell', 'printf EMITTED_COMMAND']" "['help', 'shell']"))
+(= (nr:expected-commands "tests/strategy_fault_probe.metta")
+   ("['shell', 'printf FIRST_FAULT_WITNESS']" "['shell', 'printf SECOND_FAULT_WITNESS']"))
+(= (nr:expected-commands "tests/runtime_context_probe.metta")
+   ("['help', 'vitals']" "['help', 'vitals']" "['help', 'vitals']"))
+(= (nr:field $pairs $key)
+   (if (nt:equal $pairs ()) none
+     (let (JsonPair $name $value) (preq:head $pairs)
+       (if (nt:equal $name $key) $value (nr:field (preq:tail $pairs) $key)))))
+(= (nr:receipts $lines)
+   (if (nt:equal $lines ()) ()
+     (let $line (preq:head $lines)
+       (if (nt:equal $line "") (nr:receipts (preq:tail $lines))
+         (let (JsonObject $pairs) (json:parse $line) (preq:cons $pairs (nr:receipts (preq:tail $lines))))))))
+(= (nr:executed $receipts)
+   (if (nt:equal $receipts ()) ()
+     (let $command (nr:field (preq:head $receipts) "command")
+       (if (nt:equal $command none) (nr:executed (preq:tail $receipts))
+         (preq:cons (preq:head $receipts) (nr:executed (preq:tail $receipts)))))))
+(= (nr:deferred $receipts)
+   (if (nt:equal $receipts ()) 0
+     (+ (if (nt:equal (nr:field (preq:head $receipts) "commands") none) 0 1) (nr:deferred (preq:tail $receipts)))))
+;; Positions in order: $next pairs each ticket seen with its next position.
+(= (nr:next-position $ticket $next)
+   (if (nt:equal $next ()) 0
+     (let ($seen $position) (preq:head $next)
+       (if (nt:equal $seen $ticket) $position (nr:next-position $ticket (preq:tail $next))))))
+(= (nr:positions-ordered $executed $next)
+   (if (nt:equal $executed ()) True
+     (let* (($occurrence (nr:field (preq:head $executed) "occurrence"))
+            ($parts (str:split ":" $occurrence)) ($position (nr:last $parts))
+            ($ticket (str:byte-slice $occurrence 0 (- (str:byte-length $occurrence) (+ 1 (str:byte-length $position))))))
+       (and (> (str:byte-length $ticket) 0)
+         (and (nt:equal (parse $position) (nr:next-position $ticket $next))
+           (nr:positions-ordered (preq:tail $executed) (preq:cons ($ticket (+ (parse $position) 1)) $next)))))))
+(= (nr:last $items) (if (nt:equal (preq:tail $items) ()) (preq:head $items) (nr:last (preq:tail $items))))
+(= (nr:commands $executed)
+   (if (nt:equal $executed ()) ()
+     (preq:cons (nr:field (preq:head $executed) "command") (nr:commands (preq:tail $executed)))))
+(= (nr:check-receipts $name $world)
+   (let* (($receipts (nr:receipts (str:split "\n" (fs:read-text (nq:path $world "effects.jsonl")))))
+          ($executed (nr:executed $receipts)) ($expected (nr:expected-commands $name))
+          ($_ (nt:require receipts-name-their-attempts (nr:positions-ordered $executed ())))
+          ($_ (nt:require nothing-deferred (nt:equal (nr:deferred $receipts) 0))))
+     (if (== (get-type $expected) Number)
+       (nt:require executed-command-count (nt:equal (size-atom $executed) $expected))
+       (nt:require executed-commands (nt:equal (nr:commands $executed) $expected)))))
+(= (nr:managed-world $world)
+   (fs:write (nq:path $world "providers.json")
+     "{\"schema\": 1, \"models\": {\"value\": [{\"id\": \"syn:large:text\", \"context\": 524288}]}}"))
 ; Settings a probe needs from process start, which the clients read once.
 (= (nr:probe-settings "tests/telegram_access_probe.metta")
    (("METTACLAW_TELEGRAM_BOT_USERNAME" "GodelTestBot") ("METTACLAW_TELEGRAM_OPERATOR_IDS" "7")
@@ -58,32 +132,59 @@
 (= (nr:probe-settings "tests/telegram_window_probe.metta")
    (("METTACLAW_TELEGRAM_OPERATOR_IDS" "7") ("METTACLAW_TELEGRAM_PRIMARY_CHAT_ID" "42")
     ("METTACLAW_TELEGRAM_ALLOWED_CHAT_IDS" "42,-100")))
-; The census scenarios run the path the agents run: the native transport.
-(= (nr:native-transport) (("METTACLAW_LLM_TRANSPORT" "native") ("SYNTHETIC_API_KEY" "fixture-secret")))
-(= (nr:probe-settings "tests/activity_delivery_full_turn_probe.metta") (nr:native-transport))
+; A probe that scripts its model (tests/scripted_provider.metta) has a
+; credential, so its calls reach the world's loopback provider.
+(= (nr:scripted) (("SYNTHETIC_API_KEY" "fixture-secret")))
+(= (nr:probe-settings "tests/activity_delivery_full_turn_probe.metta") (nr:scripted))
+(= (nr:probe-settings "tests/weak_process_episode_probe.metta") (nr:scripted))
+(= (nr:probe-settings "tests/shared_policy_turn_probe.metta") (nr:scripted))
+(= (nr:probe-settings "tests/interrupted_cognitive_turn_probe.metta") (nr:scripted))
+(= (nr:probe-settings "tests/interactive_batch_policy_probe.metta") (nr:scripted))
+(= (nr:probe-settings "tests/burst_end_and_prose_probe.metta") (nr:scripted))
+(= (nr:probe-settings "tests/native_iter_multiturn_probe.metta") (nr:scripted))
+(= (nr:probe-settings "tests/task_context_probe.metta") (nr:managed))
+(= (nr:probe-settings "tests/sequential_tools_probe.metta") (nr:managed))
+(= (nr:probe-settings "tests/command_feedback_probe.metta") (nr:managed))
+(= (nr:probe-settings "tests/observed_strategy_probe.metta") (nr:managed))
+(= (nr:probe-settings "tests/strategy_fault_probe.metta") (nr:managed))
+(= (nr:probe-settings "tests/runtime_context_probe.metta") (nr:managed))
 ; Coding mode asks for a reasoning effort the Anthropic protocol carries.
 (= (nr:probe-settings "tests/integrated_coding_turn_probe.metta")
-   (("METTACLAW_LLM_TRANSPORT" "native") ("ANTHROPIC_API_KEY" "fixture-secret") ("SYNTHETIC_MODEL" "claude-fixture")))
+   (("ANTHROPIC_API_KEY" "fixture-secret") ("SYNTHETIC_MODEL" "claude-fixture")))
 ; A timed continuation as the agents run it, with the observed strategy on.
 (= (nr:probe-settings "tests/strategy_continuation_attempt_probe.metta")
    (("METTACLAW_OBSERVED_STRATEGY" "1")))
 (= (nr:probe-settings "tests/allowance_wake_loop_probe.metta")
-   (("METTACLAW_TELEGRAM_GROUP_WAKE_EVERY" "-100:3")
+   (("SYNTHETIC_API_KEY" "fixture-secret") ("METTACLAW_TELEGRAM_GROUP_WAKE_EVERY" "-100:3")
     ("METTACLAW_TELEGRAM_BOT_USERNAME" "GodelTestBot") ("METTACLAW_TELEGRAM_OPERATOR_IDS" "777")))
+; A registry entry names a probe and its witness, and optionally the loop
+; mode it boots in.
+(= (nr:boot-mode ((JsonString $name) (JsonString $marker))) none)
+(= (nr:boot-mode ((JsonString $name) (JsonString $marker) (JsonString $mode))) $mode)
+; The boot mode of a probe's first registry entry, for runners of one probe.
+(= (nr:registered-mode $name)
+   (let (JsonArray $cases) (preq:parse (fs:read-text "tests/runtime_probes.json"))
+     (nr:first-mode $name $cases)))
+(= (nr:first-mode $name $cases)
+   (if (nt:equal $cases ()) none
+     (let (JsonArray $fields) (preq:head $cases)
+       (if (nt:equal (car-atom $fields) (JsonString $name)) (nr:boot-mode $fields)
+         (nr:first-mode $name (preq:tail $cases))))))
 (: nr:run-cases (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (nr:run-cases $root $sdk $core $artifacts $fixture $bin $cases $passed)
    (if (nt:equal $cases ()) $passed
-     (let* (((JsonArray ((JsonString $name) (JsonString $marker))) (preq:head $cases))
+     (let* (((JsonArray $fields) (preq:head $cases))
+            ((JsonString $name) (car-atom $fields)) ((JsonString $marker) (car-atom (cdr-atom $fields)))
             ($world (nq:world $root $sdk $core $artifacts $fixture (format-args "probe-{}" ($passed))))
-            ($env (nr:probe-env $world $name $bin $name))
+            ($env (nr:probe-env $world $name $bin (nr:boot-mode $fields)))
             ($result (proc:run ("./run.sh" $name) $root $env 30000 1048576))
             ($_ (fs:write (nq:path $world "probe-result.metta") (preq:repr $result)))
             ($output (nt:exit-ok $result))
             ($_ (nt:require semantic-probe-witness (preq:member? $marker (str:split "\n" $output))))
             ($_ (println! (NATIVE_RUNTIME_PROBE_PASSED $name)))
+            ($_ (if (nr:managed? $name) (nr:check-receipts $name $world) True))
             ($_ (if (nt:equal $name "tests/interactive_batch_policy_probe.metta")
-              (let* (($_ (nt:require coding-mode-persisted (nt:contains (fs:read-text (nq:path $world "loop-mode.json")) "coding")))
-                     ($_ (nt:require stimulus-persisted (nt:contains (fs:read-text (nq:path $world "history.metta")) "probe-stimulus")))) True) True))
+              (nt:require stimulus-persisted (nt:contains (fs:read-text (nq:path $world "history.metta")) "probe-stimulus")) True))
             ($_ (if (nt:equal $name "tests/interrupted_cognitive_turn_probe.metta")
               (let $pins (fs:read-text (nq:path $world "pins.txt"))
                 (let* (($_ (nt:require queued-input-retained (nt:contains $pins "pin-after-new-input-lands")))

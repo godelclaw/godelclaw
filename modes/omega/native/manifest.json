@@ -16,6 +16,11 @@
       "source": "(string-safe (repr (receive)))",
       "native": "(omega-host:receive-text (receive))",
       "reason": "Preserve empty input and text across the native String carrier"
+    },
+    {
+      "source": "(llmProviderChat $request)",
+      "native": "(omega-host:chat $request)",
+      "reason": "A supervised call is the agent's native structured provider call"
     }
   ]
 }

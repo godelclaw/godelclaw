@@ -35,3 +35,17 @@
 (= (omega-host:true $value) (case $value ((True True) (true True) ("true" True) ($other False))))
 (= (exists-file $path) (omega-host:true (py-call (runtime_host.path_exists $path "file"))))
 (= (exists-directory $path) (omega-host:true (py-call (runtime_host.path_exists $path "directory"))))
+; Supervised, Omega's call is the agent's native structured provider call:
+; its request and reply cross the host as JSON files, as Iter's do. A failed
+; call answers with no tool calls, as Omega's provider registry answers a
+; failed provider. Standalone, the launch keeps Omega's own provider plugins.
+(= (omega-host:chat $request)
+   (if (llm:native?)
+     (let* (($path (py-call (runtime_host.omega_request $request)))
+            ($answer (catch (llm:run (llm:structured-plan (json-parse (fs:read-text $path)) "turn")))))
+       (case $answer
+         (((ProviderReplyV1 $value)
+           (let* (($reply (str:concat $path ".reply")) ($_ (llm:reply-file $answer $reply)))
+             (py-call (runtime_host.omega_response $request $reply))))
+          ($failed (py-call (runtime_host.omega_response $request ""))))))
+     (llmProviderChat $request)))

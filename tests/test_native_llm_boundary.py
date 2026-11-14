@@ -65,7 +65,7 @@ class NativeBoundaryTests(unittest.TestCase):
         self.env = {**isolated_environ(), "PYTHONHOME": sys.prefix,
             "LD_LIBRARY_PATH": str(Path(sys.prefix) / "lib"),
             "PYTHONPATH": os.pathsep.join([str(modules), str(ROOT / "src"), str(ROOT / "modes"), str(ROOT / "modes/iter")]),
-            "METTACLAW_ACTIVE_ENGINE": "cetta", "METTACLAW_ENGINE": "cetta", "METTACLAW_LLM_TRANSPORT": "native",
+            "METTACLAW_ACTIVE_ENGINE": "cetta", "METTACLAW_ENGINE": "cetta",
             "METTACLAW_ENGINE_STATE_PATH": str(self.directory / "engine"),
             "METTACLAW_LOOP_MODE_PATH": str(self.directory / "loop-mode.json"),
             "METTACLAW_ACTIVE_LOOP_MODE": "godelclaw", "METTACLAW_LLM_POLICY": "managed",

@@ -205,8 +205,7 @@ class NativeRuntimeProjectionTests(unittest.TestCase):
         env = {**harness._cetta_env(), **self.environment(SCENARIOS["waiting"])}
         env.update(METTACLAW_STRATEGY_PATH=str(fixture.path), METTACLAW_INPUT_LEDGER_SOCKET=fixture.socket,
                    METTACLAW_ENGINE_STATE_PATH=str(fixture.path.parent / "engine"),
-                   METTACLAW_ACTIVE_ENGINE="cetta", METTACLAW_ENGINE="cetta", METTACLAW_OBSERVED_STRATEGY="1",
-                   METTACLAW_LLM_TRANSPORT="native")
+                   METTACLAW_ACTIVE_ENGINE="cetta", METTACLAW_ENGINE="cetta", METTACLAW_OBSERVED_STRATEGY="1")
         env.pop("METTACLAW_LLM_LEDGER_PATH", None)
         output = self.dir / "prepared.txt"
         program = ROOT / (".prepare_probe_%d.metta" % os.getpid())

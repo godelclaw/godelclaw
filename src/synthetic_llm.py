@@ -10,8 +10,6 @@ import urllib.parse
 import urllib.request
 
 import cognitive_health
-import llm_policy
-import provider_protocol
 
 
 def _open_connection(parts, timeout):
@@ -195,9 +193,6 @@ def _model_state_path():
     return os.environ.get("METTACLAW_MODEL_STATE_PATH", default)
 
 
-_ACTIVE_MODEL_RE = None
-
-
 import threading
 
 _persist_lock = threading.Lock()
@@ -276,117 +271,14 @@ def _provider_for(model):
             "key": os.environ.get("SYNTHETIC_API_KEY", "")}
 
 
-# The agent's prompt layout (loop.metta and context_sources.py) places
-# exactly this many boundaries, all ahead of per-turn state.  Later
-# occurrences are content, such as a shell read of this file, and stay text.
-_CACHE_BOUNDARY = "_cache_boundary_"
-_LAYOUT_BOUNDARIES = 3
-
-
-def _without_cache_boundaries(text):
-    """The layout's boundaries are not content: no provider sees them."""
-    text = str(text).replace(_CACHE_BOUNDARY, "", _LAYOUT_BOUNDARIES)
-    return text.replace("\n_cache_chunk_\n", "\n\n")
-
-
-def _anthropic_request(provider, effective_model, max_tokens, prompt, effort="medium"):
-    endpoint, body = provider_protocol.command_body("anthropic", effective_model, max_tokens, effort, prompt)
-    return _authenticated_request(provider, endpoint, body)
-
-
 def _usage_path():
     return os.environ.get("METTACLAW_ANTHROPIC_USAGE_PATH",
                           "memory/anthropic_usage.json")
 
 
-def _tally_anthropic(usage):
-    """Accumulate real token counts from Anthropic responses (the only
-    numbers a non-admin key can see). Read back by quota()."""
-    try:
-        today = time.strftime("%Y-%m-%d")
-        try:
-            with open(_usage_path(), encoding="utf-8") as fh:
-                d = json.load(fh)
-        except (OSError, ValueError):
-            d = {}
-        if d.get("today") != today:
-            d = {"today": today, "in": 0, "out": 0,
-                 "since": d.get("since", today),
-                 "total_in": d.get("total_in", 0),
-                 "total_out": d.get("total_out", 0)}
-        inn = int(usage.get("input_tokens", 0))             + int(usage.get("cache_creation_input_tokens", 0) or 0)             + int(usage.get("cache_read_input_tokens", 0) or 0)
-        out = int(usage.get("output_tokens", 0))
-        d["in"] += inn; d["out"] += out
-        d["total_in"] = d.get("total_in", 0) + inn
-        d["total_out"] = d.get("total_out", 0) + out
-        tmp = _usage_path() + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(d, fh)
-        os.replace(tmp, _usage_path())
-    except (OSError, ValueError, TypeError, OverflowError):
-        pass
-
-
 def _fmt_tokens(n):
     n = int(n)
     return "%.1fM" % (n / 1e6) if n >= 1e6 else "%dk" % (n // 1000) if n >= 1000 else str(n)
-
-
-def _diagnose_empty(payload):
-    """Explain an empty answer using the provider's actual stop reason."""
-    try:
-        if isinstance(payload.get("content"), list):
-            stop = payload.get("stop_reason")
-            used = (payload.get("usage") or {}).get("output_tokens")
-            if stop == "max_tokens":
-                return (
-                    "output budget exhausted before any answer was emitted "
-                    f"(stop_reason=max_tokens, output_tokens={used}). Raise "
-                    "maxOutputToken, or think in smaller steps."
-                )
-            return f"empty response (stop_reason={stop})"
-        choice = (payload.get("choices") or [{}])[0]
-        finish = choice.get("finish_reason")
-        msg = choice.get("message") or {}
-        reasoning = msg.get("reasoning_content") or ""
-        used = (payload.get("usage") or {}).get("completion_tokens")
-        if finish == "length":
-            return (
-                "output budget exhausted before any answer was emitted "
-                f"(finish_reason=length, completion_tokens={used}, "
-                f"reasoning_chars={len(reasoning)}). The whole budget went to "
-                "reasoning. Raise maxOutputToken, or think in smaller steps."
-            )
-        if reasoning:
-            return (f"empty answer with {len(reasoning)} chars of reasoning "
-                    f"(finish_reason={finish})")
-        return f"empty response (finish_reason={finish})"
-    except (AttributeError, IndexError, TypeError):
-        return "empty response"
-
-
-def _extract_content(payload, provider_name="synthetic"):
-    """Assistant text from either response dialect (native or openai-compat)."""
-    if isinstance(payload.get("content"), list):  # native Messages API
-        parts = [b.get("text", "") for b in payload["content"]
-                 if isinstance(b, dict) and b.get("type") == "text"]
-        usage = payload.get("usage") or {}
-        if usage and provider_name == "anthropic":
-            _tally_anthropic(usage)
-            print(
-                "[synthetic_llm] anthropic usage: "
-                f"in={usage.get('input_tokens')} "
-                f"cache_read={usage.get('cache_read_input_tokens')} "
-                f"cache_write={usage.get('cache_creation_input_tokens')} "
-                f"out={usage.get('output_tokens')}",
-                file=sys.stderr,
-            )
-        return "".join(parts)
-    return payload["choices"][0]["message"]["content"]
-
-
-class OutputTruncated(RuntimeError):
-    pass
 
 
 class EmptyResponse(RuntimeError):
@@ -417,146 +309,6 @@ class ProviderUnavailable(RuntimeError):
 def unavailable_action(reason):
     """The failure facts of an unavailable provider, for the native pacer."""
     return failure_facts(ProviderUnavailable(reason))
-
-
-def _authenticated_request(provider, endpoint, body):
-    if provider["name"] == "synthetic":
-        body = provider_protocol.synthetic_body(body)
-    headers = {"Content-Type": "application/json"}
-    if provider["name"] == "anthropic":
-        headers.update({"x-api-key": provider["key"], "anthropic-version": "2023-06-01"})
-    else:
-        headers["Authorization"] = "Bearer " + provider["key"]
-    return urllib.request.Request(provider["base"] + endpoint,
-                                  json.dumps(body).encode("utf-8"), headers)
-
-
-def _completion_metadata(result, prompt_layout=None, *, call_context=None, usage_evidence=None):
-    """No messages, tool arguments, signatures, credentials or raw errors."""
-    path = os.environ.get("METTACLAW_LLM_COMPLETION_PATH")
-    if not path:
-        health = os.environ.get("METTACLAW_COGNITIVE_HEALTH_PATH")
-        path = os.path.join(os.path.dirname(health), "llm-completion.json") if health else None
-    if path:
-        value = {"finish_reason": result["choices"][0].get("finish_reason"),
-                 "provider_stop": result.get("provider_stop"), "usage": result.get("usage", {}),
-                 "transport": result.get("transport", "python"), "observed_at": time.time()}
-        value["cache"] = provider_protocol.cache_observation(value["usage"])
-        if prompt_layout is not None:
-            value["prompt_layout"] = prompt_layout
-        # This is an observation, not admission authority.
-        try:
-            parent = os.path.dirname(path) or "."
-            os.makedirs(parent, exist_ok=True)
-            fd, temporary = tempfile.mkstemp(dir=parent, prefix=".llm-completion-")
-            with os.fdopen(fd, "w") as stream:
-                json.dump(value, stream)
-            os.replace(temporary, path)
-        except OSError:
-            pass
-        # One line per call, so prefix reuse can be followed across turns.
-        try:
-            usage = value["usage"] if isinstance(value["usage"], dict) else {}
-            line = dict(observed_at=value["observed_at"], transport=value["transport"],
-                        provider_stop=value["provider_stop"],
-                        output_tokens=usage.get("output_tokens", usage.get("completion_tokens")),
-                        **value["cache"])
-            # This JSONL is a compatibility view; the call history in the
-            # provider ledger owns idempotence and durable usage evidence.
-            evidence = usage_evidence if isinstance(usage_evidence, dict) else llm_policy.usage_evidence(usage)
-            for key, count in evidence["counts"].items():
-                if count is not None:
-                    line[key] = count
-            if isinstance(call_context, dict):
-                line.update({key: call_context[key] for key in
-                             ("call_id", "provider", "model", "purpose") if key in call_context})
-            fd = os.open(os.path.join(os.path.dirname(path) or ".", "llm-usage.jsonl"),
-                         os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-            with os.fdopen(fd, "a") as stream:
-                stream.write(json.dumps(line) + "\n")
-        except (OSError, TypeError, ValueError):
-            pass
-
-
-def _exchange(provider, endpoint, body, max_tokens, *, purpose="unspecified"):
-    import provider_rejection
-    correction = provider_rejection.context() if purpose == "turn" else None
-    ticket = llm_policy.admit(provider["name"], max_tokens, request_fingerprint=llm_policy.fingerprint(body))
-    context = dict(call_id=ticket, provider=provider["name"],
-                   model=str(body.get("model", "")), purpose=purpose)
-    llm_policy.describe(ticket, model=context["model"], protocol=provider["protocol"],
-                        purpose=purpose, transport="python")
-    cognitive_health.turn_started(provider["name"], model=context["model"])
-    sent = False
-    try:
-        import process_supervision
-        process_supervision.provider_wait(_float_env("SYNTHETIC_TIMEOUT", 120.0, 1.0))
-        request = _authenticated_request(provider, endpoint, body)
-        llm_policy.submitted(ticket)
-        sent = True
-        payload = _request_json(request,
-                                _float_env("SYNTHETIC_TIMEOUT", 120.0, 1.0))
-        result = provider_protocol.normalize_response(provider["protocol"], payload)
-        llm_policy.complete(ticket, result)
-        _completion_metadata(result, call_context=context)
-        if provider["name"] == "anthropic":
-            _tally_anthropic(payload.get("usage", {}))
-        return result
-    except BaseException as error:
-        status = getattr(error, "code", None)
-        retry = retry_after_seconds(getattr(error, "headers", None))
-        llm_policy.fail(ticket, status=status, retry_after=retry, sent=sent)
-        if purpose == "turn" and status in provider_rejection.INVALID_REQUEST:
-            raw = error.read(16384) if hasattr(error, "read") else b""
-            code, message = provider_rejection.error_fields(raw.decode("utf-8", "replace"))
-            provider_rejection.record(status, code, message, correction)
-        raise
-
-
-def structured_chat(request):
-    selected = current_model()
-    provider = _provider_for(selected)
-    if not provider["key"]:
-        raise RuntimeError("provider credential is not configured")
-    endpoint, payload = provider_protocol.structured_body(
-        provider["protocol"], provider.get("model", selected), request)
-    return _exchange(provider, endpoint, payload, request["max_tokens"],
-                     purpose="coding" if os.environ.get("METTACLAW_CODING_SESSION") == "1" else "structured")
-
-
-def chat(model, max_tokens, effort, prompt):
-    import provider_rejection
-    if provider_rejection.blocked():
-        return "()"
-    effective_model = current_model(str(model))
-    provider = _provider_for(effective_model)
-    try:
-        if not provider["key"]:
-            raise RuntimeError("provider credential is not configured")
-        endpoint, body = provider_protocol.command_body(
-            provider["protocol"], provider.get("model", effective_model), max_tokens, effort, prompt)
-        import model_commentary
-        from types import SimpleNamespace
-        commentary_plan = SimpleNamespace(kind="command")
-        model_commentary.begin(commentary_plan)
-        result = _exchange(provider, endpoint, body, max_tokens, purpose="turn")
-        content = result["choices"][0]["message"].get("content")
-        finish = result["choices"][0].get("finish_reason")
-        content = model_commentary.finish(commentary_plan, content, finish, result["choices"][0]["message"])
-        if finish == "length":
-            import helper
-            content = helper.complete_command_prefix(content or "")
-        import context_budget
-        context_budget.observe(prompt, result.get("usage", {}))
-        if isinstance(content, str) and content.strip():
-            _note_answered()
-            cognitive_health.turn_completed(len(content.encode("utf-8")))
-            return content
-        return _empty_action(EmptyResponse())
-    except (urllib.error.HTTPError, TimeoutError, socket.timeout, urllib.error.URLError,
-            ConnectionError, OSError, http.client.HTTPException, ValueError, KeyError,
-            IndexError, TypeError, RuntimeError) as exc:
-        return _empty_action(exc)
 
 
 # --- API introspection: quota, models, model switching ------------------------
@@ -917,8 +669,6 @@ _CHATGPT_MENU_MODELS = (
 
 
 def _chatgpt_menu_enabled():
-    if os.environ.get("METTACLAW_LLM_TRANSPORT") != "native":
-        return False
     path = os.environ.get("METTACLAW_CHATGPT_POLICY_PATH")
     if not path:
         engine = os.environ.get("METTACLAW_ENGINE_STATE_PATH",

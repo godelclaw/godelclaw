@@ -137,7 +137,7 @@ def gate():
             import process_supervision
             process_supervision.progress("operator-wait", 60)
             waiting = True
-        synthetic_llm.time.sleep(.25)
+        time.sleep(.25)
         if not coding_session() and engine_modes.recycle_requested():
             raise SystemExit(0)
         # This bounded wait has returned and the operator latch was read

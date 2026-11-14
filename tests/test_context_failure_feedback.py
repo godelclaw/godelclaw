@@ -10,6 +10,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import admission_frontier
+import native_ledger
 import strategy_host
 import synthetic_llm
 
@@ -309,7 +310,8 @@ class ContextFailureFeedbackTests(unittest.TestCase):
                 HOME=str(tmp_dir / "home"),
                 TMPDIR=str(tmp_dir),
                 METTACLAW_OBSERVED_STRATEGY="1",
-                METTACLAW_INPUT_LEDGER_SOCKET=str(tmp_dir / "stub.sock"),
+                # The native calls' lifetime evidence reads the input ledger.
+                METTACLAW_INPUT_LEDGER_SOCKET=native_ledger.start(self, tmp_dir),
                 METTACLAW_STRATEGY_PATH=str(tmp_dir / "strategy"),
                 METTACLAW_ENGINE_STATE_PATH=str(tmp_dir / "engine"),
                 METTACLAW_COGNITIVE_HEALTH_PATH=str(tmp_dir / "health.json"),

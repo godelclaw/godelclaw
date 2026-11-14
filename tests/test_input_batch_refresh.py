@@ -16,7 +16,6 @@ class InputBatchRefreshTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             env = dict(os.environ, XDG_STATE_HOME=temporary,
                        METTACLAW_ENGINE="cetta",
-                       METTACLAW_LLM_TRANSPORT="python",
                        METTACLAW_SKIP_INITIALIZE="1",
                        METTACLAW_TELEGRAM_SERVICE_SOCKET="")
             result = subprocess.run(

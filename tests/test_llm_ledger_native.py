@@ -117,7 +117,7 @@ class LlmLedgerNative(NativeCase):
         if events:
             self.assertEqual(states["event-tail"], max(row["sequence"] for row in events))
 
-    # ---- the Python transport (synthetic_llm._exchange) ----
+    # ---- the Python ledger client (llm_policy) ----
 
     def test_python_transport_success_failure_cooldown_and_denial(self):
         self.start()

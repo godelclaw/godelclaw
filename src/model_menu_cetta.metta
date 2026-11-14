@@ -74,14 +74,11 @@
        (path:join (path:dirname (system:getenv-or-default "METTACLAW_ENGINE_STATE_PATH"
                                   (system:expanduser "~/.local/state/godelclaw/engine"))) "chatgpt.json")
        $configured)))
-; The menu offers the pinned subscription choices on the native transport
-; once an account is selected.
+; The menu offers the pinned subscription choices once an account is selected.
 (= (model:chatgpt-menu?)
-   (if (== (system:getenv-or-default "METTACLAW_LLM_TRANSPORT" "") "native")
-     (case (fs:read-text-result (model:chatgpt-policy-path) 0 "raw")
-       ((("ok" $text) (model:truthy? (json:get (model:object (json:parse-python $text)) "account")))
-        ($unreadable False)))
-     False))
+   (case (fs:read-text-result (model:chatgpt-policy-path) 0 "raw")
+     ((("ok" $text) (model:truthy? (json:get (model:object (json:parse-python $text)) "account")))
+      ($unreadable False))))
 !(bind! &model-id (new-state (re:compile "[A-Za-z0-9][A-Za-z0-9._:/+@-]*")))
 (= (model:valid-id? $name)
    (if (> (str:byte-length $name) 200) False

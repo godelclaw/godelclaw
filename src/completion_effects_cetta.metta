@@ -178,7 +178,7 @@
        (if (== $name $key) (cons-atom (JsonPair $key $value) $tail)
          (let $rest (effects:put-pairs $tail $key $value) (cons-atom $head $rest))))))
 
-; synthetic_llm._tally_anthropic: today's and total input and output tokens.
+; The Anthropic usage tally: today's and total input and output tokens.
 ; Each count is read as Python's int() reads it: an absent count is 0, a
 ; cache count's false value is 0, and a value int() refuses (null, a list, a
 ; non-numeric text) leaves the tally unchanged.

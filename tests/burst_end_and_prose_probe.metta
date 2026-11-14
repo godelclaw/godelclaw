@@ -1,5 +1,6 @@
 !(import! &self (library lib_import))
 !(import! &self ./lib_mettaclaw)
+!(import! &self ./tests/scripted_provider.metta)
 
 (= (assertEqual $A $B) (assert (== $A $B)))
 
@@ -11,9 +12,13 @@
 ;; nop. Prose outside
 ;; the command envelope is shown to the next turn and kept in history, marked
 ;; undelivered. The model answers from a script.
-!(py-eval "(__import__('helper').__dict__.__setitem__('_burst_prompts', []), __import__('helper').__dict__.__setitem__('_burst_replies', ['Hello there, I finished.', '((nop))', '((nop))']), __import__('synthetic_llm').__dict__.__setitem__('chat', lambda *args: (__import__('helper')._burst_prompts.append(str(args[-1])), __import__('cognitive_health').turn_started('probe'), __import__('cognitive_health').turn_completed(3), __import__('helper')._burst_replies.pop(0))[-1]))")
-!(py-eval "__import__('helper').__dict__.__setitem__('burst_prompt_has', lambda i, text: int(len(__import__('helper')._burst_prompts) > int(i) and str(text) in __import__('helper')._burst_prompts[int(i)]))")
-!(py-eval "__import__('helper').__dict__.__setitem__('burst_history_has', lambda text: int(__import__('os').path.isfile(__import__('os').environ['METTACLAW_HISTORY_PATH']) and str(text) in open(__import__('os').environ['METTACLAW_HISTORY_PATH'], encoding='utf-8').read()))")
+!(scripted:answer 1 "Hello there, I finished.")
+!(scripted:default "((nop))")
+(= (burst:history-has $text)
+   (let $path (system:getenv-or-default "METTACLAW_HISTORY_PATH" "")
+     (if (fs:exists $path)
+       (case (str:find (fs:read-text $path) $text) (((TextNotFound $missing) 0) ($found 1)))
+       0)))
 !(py-eval "(__import__('helper').__dict__.__setitem__('_working_boot_cache', {}), __import__('helper').__dict__.__setitem__('working_boot', lambda: 1))")
 !(initMemory)
 !(configure commchannel telegram)
@@ -29,22 +34,23 @@
          ;; A renewal after running out continues the task. The model
          ;; answers in prose, which reaches no one.
          ($first (cognitiveTurn $ran-out "" False False True False))
-         ($_ (assertEqual (py-call (helper.burst_prompt_has 0 "NO_ADDITIONAL_USER_INPUT_CONTINUE_THE_CURRENT_TASK")) 1))
-         ($_ (assertEqual (py-call (helper.burst_prompt_has 0 "TASK_COMPLETE_PICK_A_GOAL")) 0))
-         ($_ (assertEqual (py-call (helper.burst_history_has "UNDELIVERED")) 1))
-         ($_ (assertEqual (py-call (helper.burst_history_has "Hello there, I finished.")) 1))
+         ($_ (assertEqual (scripted:prompt-has 1 "NO_ADDITIONAL_USER_INPUT_CONTINUE_THE_CURRENT_TASK") 1))
+         ($_ (assertEqual (scripted:prompt-has 1 "TASK_COMPLETE_PICK_A_GOAL") 0))
+         ($_ (assertEqual (burst:history-has "UNDELIVERED") 1))
+         ($_ (assertEqual (burst:history-has "Hello there, I finished.") 1))
          ;; The next turn sees that prose, marked undelivered; it ends the
          ;; burst with nop.
          ($second (cognitiveTurn (next-turn $first) "" False False False False))
-         ($_ (assertEqual (py-call (helper.burst_prompt_has 1 "UNDELIVERED")) 1))
-         ($_ (assertEqual (py-call (helper.burst_prompt_has 1 "Hello there, I finished.")) 1))
-         ($_ (assertEqual (py-call (helper.burst_prompt_has 1 "NOT_DELIVERED_TO_ANY_CHANNEL_USE_send")) 1))
+         ($_ (assertEqual (scripted:prompt-has 2 "UNDELIVERED") 1))
+         ($_ (assertEqual (scripted:prompt-has 2 "Hello there, I finished.") 1))
+         ($_ (assertEqual (scripted:prompt-has 2 "NOT_DELIVERED_TO_ANY_CHANNEL_USE_send") 1))
          ($_ (assertEqual (coordinate-get-or burst-end none $second) nop))
          ;; The renewal after nop reconsiders work without claiming completion.
          ($third (cognitiveTurn (applyAutonomousBurst (next-turn $second) True) "" False False True False))
-         ($_ (assertEqual (py-call (helper.burst_prompt_has 2 "TASK_COMPLETE_PICK_A_GOAL")) 0))
-         ($_ (assertEqual (py-call (helper.burst_prompt_has 2 "RECONSIDER_UNFINISHED_WORK")) 1))
-         ($_ (assertEqual (py-call (helper.burst_prompt_has 2 "CONTINUE_THE_CURRENT_TASK")) 0))
+         ($_ (assertEqual (scripted:prompt-has 3 "TASK_COMPLETE_PICK_A_GOAL") 0))
+         ($_ (assertEqual (scripted:prompt-has 3 "RECONSIDER_UNFINISHED_WORK") 1))
+         ($_ (assertEqual (scripted:prompt-has 3 "CONTINUE_THE_CURRENT_TASK") 0))
+         ($_ (assertEqual (scripted:calls) 3))
          ;; Every assertion has succeeded and the scripted effects are not
          ;; repeatable. End the fixture's residual choice points here, after
          ;; those assertions; an earlier failure must still fail the probe.

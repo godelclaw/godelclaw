@@ -1,13 +1,14 @@
 !(import! &self (library lib_import))
 !(import! &self ./lib_mettaclaw)
+!(import! &self ./tests/scripted_provider.metta)
 
 (= (assertEqual $A $B) (assert (== $A $B)))
 
 ;; One real policy episode through the production MeTTa loop.  Isolate the
-;; boot snapshot and replace the model observation with a deterministic
-;; no-command reply so the probe is independent of a running agent's rest.
+;; boot snapshot; the scripted model gives a deterministic no-command reply,
+;; so the probe is independent of a running agent's rest.
 !(py-eval "(__import__('helper').__dict__.__setitem__('_working_boot_cache', {}), __import__('helper').__dict__.__setitem__('working_boot', lambda: 1))")
-!(py-eval "__import__('synthetic_llm').__dict__.__setitem__('chat', lambda *args: (__import__('cognitive_health').turn_started('probe'), __import__('cognitive_health').turn_completed(2), '()')[-1])")
+!(scripted:default "()")
 !(initMemory)
 !(configure commchannel telegram)
 !(let* (($before (initLoop))
@@ -17,5 +18,6 @@
          ($_ (assertEqual (loop-iteration (process-periphery $after)) 2))
          ($_ (assertEqual (loop-budget (process-periphery $after)) 50))
          ($_ (assertEqual
-               (loop-active-policy (process-periphery $after)) godelclaw)))
+               (loop-active-policy (process-periphery $after)) godelclaw))
+         ($_ (assertEqual (scripted:calls) 1)))
      (println! WEAK_PROCESS_EPISODE_OK))

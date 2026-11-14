@@ -75,7 +75,7 @@ def qualify(root, bundle, artifacts, client="metta"):
 ''')
             env = dict(os.environ, XDG_STATE_HOME=str(work / 'state'), OPENAI_API_KEY='test-only-unused',
                        METTACLAW_ENGINE='cetta', METTACLAW_ACTIVE_ENGINE='cetta', CETTA_BIN=str(bundle / 'cetta'),
-                       METTACLAW_SKIP_INITIALIZE='1', METTACLAW_LLM_TRANSPORT='python',
+                       METTACLAW_SKIP_INITIALIZE='1',
                        METTACLAW_TELEGRAM_CLIENT=client, METTACLAW_OBSERVED_STRATEGY='0',
                        METTACLAW_MAIL_SOCKET=str(socket), METTACLAW_MAIL_NAME='receiver',
                        METTACLAW_MAIL_SPACE='agent-mail', TMPDIR=str(work), PYTHONDONTWRITEBYTECODE='1')

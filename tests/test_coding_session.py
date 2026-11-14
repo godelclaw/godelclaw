@@ -74,7 +74,7 @@ class CodingSessionTests(unittest.TestCase):
         self.env = {**isolated_environ(), "PYTHONHOME": sys.prefix, "LD_LIBRARY_PATH": str(Path(sys.prefix) / "lib"),
             # The agent's own path (run.sh): sessions inherit it, and iter mode's modules are not on it.
             "PYTHONPATH": os.pathsep.join([str(modules), str(ROOT / "src"), str(ROOT / "channels")]),
-            "METTACLAW_ACTIVE_ENGINE": "cetta", "METTACLAW_ENGINE": "cetta", "METTACLAW_LLM_TRANSPORT": "native",
+            "METTACLAW_ACTIVE_ENGINE": "cetta", "METTACLAW_ENGINE": "cetta",
             "METTACLAW_ENGINE_STATE_PATH": str(self.directory / "engine"),
             "METTACLAW_LLM_POLICY": "managed", "METTACLAW_LLM_POLICY_PATH": "",
             "METTACLAW_INPUT_LEDGER_SOCKET": self.socket,

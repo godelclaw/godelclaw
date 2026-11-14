@@ -68,7 +68,7 @@
              ("CETTA_BIN" (nt:join $sdk "cetta"))
              ("CETTA_VALUE_WORKER_BIN" (nt:join $sdk "cetta-value-worker"))
              ("METTACLAW_ACTIVE_ENGINE" "cetta") ("METTACLAW_ENGINE" "cetta")
-             ("METTACLAW_LLM_TRANSPORT" "native") ("METTACLAW_ENGINE_STATE_PATH" $engine)
+             ("METTACLAW_ENGINE_STATE_PATH" $engine)
              ("METTACLAW_INPUT_LEDGER_SOCKET" $socket) ("METTACLAW_COGNITIVE_HEALTH_PATH" $health)
              ("METTACLAW_MODEL_STATE_PATH" $model-state) ("METTACLAW_LIFECYCLE_PATH" $lifecycle)
              ("METTACLAW_RECYCLE_REQUEST_PATH" $recycle) ("METTACLAW_ANTHROPIC_USAGE_PATH" $anthropic)

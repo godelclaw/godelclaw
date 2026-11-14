@@ -240,12 +240,6 @@
 (= (health:settle)
    (health:write (health:settled (health:read) (system:wall-time))))
 
-; Completions the record has counted, admitted or not. A host transport that
-; keeps the record itself proves a completed turn by moving this count.
-(= (health:completions)
-   (let $record (health:read)
-     (+ (health:counted $record "completed_count") (health:counted $record "completion_without_admission_count"))))
-
 ; ------------------------------------------------------------- the pacing
 
 ; HE has no min and max of numbers.

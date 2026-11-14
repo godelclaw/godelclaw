@@ -159,7 +159,6 @@ class NativeTurnHealthRecord(unittest.TestCase):
             '!(py-call (cognitive_health.turn_started "anthropic"))',
             '!(health:progress 4096 10 False 600000)',
             '!(health:complete 512)',
-            '!(println! (COMPLETIONS (health:completions)))',
             '!(health:settle)',
             '!(py-call (cognitive_health.turn_failed "transport-error"))',
             '!(health:fail "strategy-not-ready" 15)']) + "\n", encoding="utf-8")
@@ -168,7 +167,6 @@ class NativeTurnHealthRecord(unittest.TestCase):
         result = subprocess.run([str(self.binary), "--lang", "petta", "--import-mode", "ancestor-walk",
                                  str(program)], cwd=ROOT, env=env, capture_output=True, text=True, timeout=300)
         self.assertEqual(result.returncode, 0, result.stdout[-3000:] + result.stderr[-3000:])
-        self.assertIn("(COMPLETIONS 1)", result.stdout)
         record = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(record["expected_count"], 1)
         self.assertEqual(record["budget_at_start"], 9)

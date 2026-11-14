@@ -74,7 +74,7 @@
 ; in it names a file inside the world, the working directory of world mode.
 (= (census:command $root $sdk $world $bin $venv $directory $name probe $extra)
    (CensusCommand ("./run.sh" $name) $root
-     (nq:overlay-env (nq:overlay-env (nr:probe-env $world $name $bin $name)
+     (nq:overlay-env (nq:overlay-env (nr:probe-env $world $name $bin (nr:registered-mode $name))
        (("PETTA_PY_ENV" $venv) ("PYTHON_ENTRY_CENSUS_DIR" $directory)
         ("PYTHON_ENTRY_CENSUS_ROOT" $root))) $extra)))
 (= (census:command $root $sdk $world $bin $venv $directory $name world $extra)

@@ -126,15 +126,11 @@ class ModeRuntimeTests(unittest.TestCase):
     def test_cetta_modes_checkpoint_restart_and_switch(self):
         self.check_modes('cetta')
 
-    @unittest.skipUnless(os.environ.get('MODE_TEST_CETTA_BIN'), 'set MODE_TEST_CETTA_BIN for real CeTTa checks')
-    def test_cetta_native_modes_checkpoint_restart_and_switch(self):
-        self.check_modes('cetta', 'native')
-
     @unittest.skipUnless(os.environ.get('MODE_TEST_PETTA_ROOT'), 'set MODE_TEST_PETTA_ROOT for real PeTTa checks')
     def test_petta_modes_checkpoint_restart_and_switch(self):
         self.check_modes('petta')
 
-    def check_modes(self, engine, transport='python'):
+    def check_modes(self, engine):
         Provider.requests = []
         with tempfile.TemporaryDirectory() as temporary:
             state = Path(temporary)
@@ -148,8 +144,8 @@ class ModeRuntimeTests(unittest.TestCase):
             (agent/'channels').symlink_to(ROOT/'channels', target_is_directory=True)
             (state/'identity.txt').write_text('You are Fixture, a separate test identity.')
             (state/'lifecycle.json').write_text('{"schema":1,"state":"running"}')
-            # Upstream imports the SDK before install_iter replaces its client
-            # with our fixture provider. Neither transport may call that SDK.
+            # Upstream imports the SDK before install_iter replaces its client.
+            # The supervised modes call their provider natively, never the SDK.
             (agent/'src/openai.py').write_text('class OpenAI:\n'
                 '    def __init__(self, *args, **kwargs):\n'
                 '        raise AssertionError("process fixture invoked provider SDK")\n')
@@ -183,7 +179,6 @@ class ModeRuntimeTests(unittest.TestCase):
                         'SYNTHETIC_MODEL': 'fixture-model',
                         'SYNTHETIC_BASE_URL': f'http://127.0.0.1:{provider.server_port}/v1',
                         'SYNTHETIC_API_KEY': 'fixture-only',
-                        'METTACLAW_LLM_TRANSPORT': transport,
                         'METTACLAW_INPUT_LEDGER_SOCKET': ledger,
                         'METTACLAW_STRATEGY_PATH': str(state/'strategy'),
                         'METTACLAW_LLM_POLICY': 'upstream',

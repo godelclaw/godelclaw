@@ -126,7 +126,6 @@ class K4AgentMailTests(unittest.TestCase):
             CETTA_BIN=str(BINARY),
             METTACLAW_SKIP_INITIALIZE="1",
             METTACLAW_SKIP_CONFIG="1",
-            METTACLAW_LLM_TRANSPORT="python",
             METTACLAW_TELEGRAM_CLIENT="metta",
             METTACLAW_OBSERVED_STRATEGY="0",
             METTACLAW_MAIL_SOCKET=str(self.socket),

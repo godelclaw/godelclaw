@@ -14,8 +14,12 @@
 (: llm:host-flag (-> %Undefined% Bool))
 (= (llm:host-flag $value)
    (host:flag $value))
+; Every provider call is native, except where an upstream mode keeps its own
+; provider: a standalone terminal launch (modes/launch.py), and the offline
+; conformance fixture that stands in for Iter's provider (modes/conformance).
 (= (llm:native?)
-   (== (system:getenv-or-default "METTACLAW_LLM_TRANSPORT" "python") "native"))
+   (and (not (== (system:getenv-or-default "METTACLAW_MODE_PROFILE" "") "standalone"))
+        (== (system:getenv-or-default "ITER_FIXTURE_ROOT" "") "")))
 !(if (llm:native?)
      (let* (($command-module (import! &self llm:command))
             ($compat-module (import! &self llm:compat))
@@ -47,24 +51,10 @@
      True))
 (= (llm:command $model $tokens $effort $prompt)
    (if (not (llm:request-allowed?)) "()"
-    (if (llm:native?)
      (let $selected (model:current $model)
        (if (str:starts-with $selected "chatgpt:")
          (chatgpt:command $selected $tokens $effort $prompt)
-         (let $plan (pcall:command-plan $selected $tokens $effort $prompt) (llm:run $plan))))
-     (let $selected (model:current $model)
-       (if (str:starts-with $selected "chatgpt:")
-         (health:paced (py-call (synthetic_llm.unavailable_action chatgpt-requires-native-cetta)))
-         (llm:host-command $model $tokens $effort $prompt))))))
-
-; The Python transport keeps the health record itself. Its turn completed
-; exactly when the record counted one more completion: the durable receipt,
-; not the host's word, ends the phase.
-(= (llm:host-command $model $tokens $effort $prompt)
-   (let* (($before (health:completions))
-          ($answer (py-call (synthetic_llm.chat $model $tokens $effort $prompt)))
-          ($phase (if (> (health:completions) $before) (health:turn-completed) (health:turn-failed))))
-     $answer))
+         (let $plan (pcall:command-plan $selected $tokens $effort $prompt) (llm:run $plan))))))
 
 ; A structured (coding or iter) request is a tagged JSON value; its purpose is
 ; the ledger's: "turn" (iter), "coding" or "compaction". Preparation captures

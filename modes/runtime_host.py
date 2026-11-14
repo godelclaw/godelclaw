@@ -17,9 +17,7 @@ import engine_modes
 import lifecycle
 import loop_modes
 import mode_channel
-import synthetic_llm
 import llm_policy
-import provider_protocol
 
 
 def root():
@@ -233,12 +231,7 @@ def boot():
         import omega_helper
         if hasattr(omega_helper, "TWO_ARG_COMMANDS"):
             omega_helper.TWO_ARG_COMMANDS.add("send-channel")
-    # Provider failure backoff is operational pacing. Keep mode/stop controls
-    # responsive while retaining the existing adapter's backoff durations.
     if not standalone():
-        synthetic_llm.time = SimpleNamespace(**{
-            name: (sleep if name == "sleep" else getattr(time, name))
-            for name in dir(time) if not name.startswith("_")})
         loop_modes.record_active(mode(), os.getpid(), str(root()))
         recover_outbox()
     record("boot", pid=os.getpid())
@@ -253,87 +246,52 @@ def iter_boundary(*args):
     return True
 
 
-class Message:
-    def __init__(self, value):
-        self.value = value
-
-    def model_dump(self, exclude_none=True):
-        return {k: v for k, v in self.value.items() if not exclude_none or v is not None}
-
-
-class IterClient:
-    def __init__(self, **kwargs):
-        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
-
-    def create(self, **request):
-        gate()
-        record("provider-request", protocol="tool-calls")
-        payload = provider_request(request)
-        choice = payload["choices"][0]
-        return SimpleNamespace(choices=[SimpleNamespace(
-            message=Message(choice["message"]), finish_reason=choice.get("finish_reason"))])
-
-
-def provider_request(request):
-    """Provider fidelity and operator admission are shared across modes."""
-    provider_retry_boundary()
-    selected = synthetic_llm.current_model()
-    record("model-applied", model=selected)
-    cognitive_health.expect_turn(mode())
-    try:
-        response = synthetic_llm.structured_chat(request)
-        cognitive_health.turn_completed(len(json.dumps(response)))
-        record("provider-response", protocol="tool-calls")
-        return response
-    except Exception as error:
-        delay = getattr(error, "retry_after", 15)
-        cognitive_health.turn_failed(type(error).__name__, retry_after=delay)
-        record("provider-error", error=type(error).__name__)
-        if llm_policy.configuration(mode())["profile"] == "managed":
-            sleep(min(delay, 15))
-        raise RuntimeError("provider failed: " + type(error).__name__) from None
-
-
-def anthropic_payload(request, model):
-    return provider_protocol.anthropic_body(request, model)
-
-
-def anthropic_response(response):
-    return provider_protocol.normalize_response("anthropic", response)
-
-
 def install_iter():
     import iter_host
-    iter_host.namespace["openai"] = SimpleNamespace(OpenAI=IterClient)
+    # Supervised Iter calls its provider natively (iter:structured); the
+    # upstream SDK client it builds at start is never used.
+    iter_host.namespace["openai"] = SimpleNamespace(OpenAI=lambda **settings: None)
     iter_host.namespace["time"] = SimpleNamespace(sleep=sleep)
     iter_host.namespace["receive"] = receive
     boot()
     return True
 
 
-class OmegaProvider:
-    """Current Omega provider interface over the shared canonical call codec."""
+def omega_request(request):
+    """An Omega request as the canonical request of the native structured
+    call (modes/omega/native/host.metta), written as JSON; returns its path.
+    Supervised, the system message leads with the reply route."""
+    import tool_protocol
+    value = tool_protocol.request_from_omega(request)
+    # The native request names its reasoning effort as a reasoning option.
+    value["reasoning"] = {"effort": value.pop("reasoning_effort")}
+    if value["messages"]:
+        route = route_context().strip()
+        if route:
+            first = value["messages"][0]
+            if first.get("role") == "system":
+                first["content"] = route + "\n\n" + first.get("content", "")
+    path = root() / ".omega-provider-request.json"
+    atomic(path, value)
+    record("provider-request", protocol="tool-calls")
+    return str(path)
 
-    def __init__(self, omega):
-        self.omega = omega
 
-    def start(self):
-        return None
-
-    def stop(self):
-        return None
-
-    def chat(self, request):
-        import tool_protocol
-        value = tool_protocol.request_from_omega(request)
-        if not standalone() and value["messages"]:
-            route = route_context().strip()
-            if route:
-                first = value["messages"][0]
-                if first.get("role") == "system":
-                    first["content"] = route + "\n\n" + first.get("content", "")
-        payload = provider_request(value)
-        return tool_protocol.response_to_omega(payload, self.omega)
+def omega_response(request, path):
+    """The native call's reply as Omega's response, checked against the
+    request's tools as Omega checks a provider's. A failed call (no reply
+    path) answers with no calls, which Omega reports."""
+    import providers as omega_providers
+    import tool_protocol
+    response = omega_providers.LLMResponse()
+    if str(path):
+        reply = json.loads(Path(str(path)).read_text(encoding="utf-8"))
+        response = tool_protocol.response_to_omega({"choices": [{"message": reply.get("message")}]},
+                                                   omega_providers)
+        record("provider-response", protocol="tool-calls")
+    else:
+        record("provider-error", error="native-call-failed")
+    return omega_providers._validate_response(request, response)
 
 
 def install_omega():
@@ -341,7 +299,9 @@ def install_omega():
     if standalone():
         load_omega_provider_plugins()
     else:
-        omega_providers.registerLLMProvider("Configured", OmegaProvider(omega_providers))
+        # Supervised calls are native (omega-host:chat); Omega only starts
+        # its configured provider.
+        omega_providers.registerLLMProvider("Configured", omega_providers.LLMProvider())
     boot()
     return True
 
@@ -399,28 +359,6 @@ def load_omega_provider_plugins():
         spec.loader.exec_module(plugin)
         plugin.loadOmegaPlugin()
     return True
-
-
-def provider(prompt, max_tokens, reasoning):
-    if standalone():
-        import providers as omega_providers
-        return omega_providers.llmProviderChat(str(prompt), int(max_tokens), str(reasoning))
-    return synthetic_llm.chat(provider_model(), max_tokens, reasoning, provider_prompt(prompt))
-
-
-def provider_model():
-    gate()
-    provider_retry_boundary()
-    cognitive_health.expect_turn(mode())
-    selected = synthetic_llm.current_model()
-    record("provider-request", protocol="command-text", model=selected)
-    return selected
-
-
-def provider_prompt(prompt):
-    if standalone():
-        return str(prompt)
-    return route_context() + "\n\n" + str(prompt)
 
 
 def provider_retry_boundary():
