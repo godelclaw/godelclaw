@@ -36,7 +36,6 @@
    (ConfigFieldV1 "METTACLAW_NATIVE_LEDGER" "agent" "native_ledger" False plain)
    (ConfigFieldV1 "METTACLAW_SHELL_TIMEOUT_SECONDS" "agent" "shell_timeout_seconds" 120 plain)
    (ConfigFieldV1 "METTACLAW_REASONING_EFFORT" "agent" "reasoning_effort" "default" plain)
-   (ConfigFieldV1 "METTACLAW_LLM_TRANSPORT" "agent" "llm_transport" JsonNull plain)
    (ConfigFieldV1 "METTACLAW_LLM_POLICY" "agent" "llm_policy" JsonNull plain)
    (ConfigFieldV1 "METTACLAW_RECYCLE_BYTES" "agent" "recycle_bytes" JsonNull plain)
    (ConfigFieldV1 "METTACLAW_MAIL_NAME" "mail" "name" JsonNull plain)

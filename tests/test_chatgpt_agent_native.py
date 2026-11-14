@@ -167,18 +167,9 @@ class ChatGPTAgentTests(unittest.TestCase):
         self.guest('!(println! (llm:command "chatgpt:fixture-model" 42 "high" "hello"))\n')
         self.assertNotEqual(first, requests[3][1]['session_id'])
 
-    def test_subscription_selection_with_native_transport_disabled_never_falls_back(self):
-        self.env['METTACLAW_LLM_TRANSPORT'] = 'python'
-        out = self.guest('!(println! (RESULT (llm:command "chatgpt:fixture-model" 42 "high" "hello")))\n', select=False)
-        self.assertIn('(RESULT ())', out)
-        self.assertEqual(self.identity_provider.api_requests, []); self.assertEqual(self.peer.requests, [])
-
     def test_structured_profile_is_explicitly_unsupported_without_a_provider_request(self):
-        for transport in ('native', 'python'):
-            with self.subTest(transport=transport):
-                self.env['METTACLAW_LLM_TRANSPORT'] = transport
-                out = self.run_guest(self.forms('!(println! (catch (llm:structured-plan (json-parse "{}") "turn")))\n', select=False))
-                self.assertIn('chatgpt-command-mode-only', out)
+        out = self.run_guest(self.forms('!(println! (catch (llm:structured-plan (json-parse "{}") "turn")))\n', select=False))
+        self.assertIn('chatgpt-command-mode-only', out)
         self.assertEqual(self.identity_provider.api_requests, []); self.assertEqual(self.peer.requests, [])
 
     def test_api_key_cooldown_does_not_block_separate_subscription_quota(self):

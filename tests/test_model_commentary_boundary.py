@@ -313,49 +313,5 @@ model_commentary._native_commands = forbidden
         self.assertEqual(self.notes(), [])
 
 
-class PythonCommentaryTest(unittest.TestCase):
-    def test_python_transport_separates_completed_envelope(self):
-        reply = {'choices':[{'message':{'content':json.dumps(
-            {'commentary':'Public finding.', 'commands':'((nop))'})}, 'finish_reason':'stop'}]}
-        provider = {'key':'fixture', 'protocol':'chat-completions', 'name':'synthetic'}
-        with patch.dict(os.environ, METTACLAW_MODEL_COMMENTARY='1'), \
-             patch.object(synthetic_llm, 'current_model', return_value='fixture-model'), \
-             patch.object(synthetic_llm, '_provider_for', return_value=provider), \
-             patch.object(synthetic_llm, '_exchange', return_value=reply), \
-             patch('model_commentary.Publication') as publication, \
-             patch('context_budget.observe'), patch.object(synthetic_llm, '_note_answered'), \
-             patch('cognitive_health.turn_completed'):
-            self.assertEqual(synthetic_llm.chat('fixture-model', 42, 'low', 'input'), '((nop))')
-            publication.return_value.publish.assert_called_once_with('Public finding.')
-
-    def test_python_rejects_invalid_terminal_and_envelope_states(self):
-        envelope = json.dumps({'commentary': 'not accepted', 'commands': '((nop))'})
-        cases = [(reason, source, {})
-                 for reason in ('length', 'refusal', 'content_filter', 'tool_calls', 'unknown', None)
-                 for source in ('((nop))', envelope)]
-        cases += [('stop', envelope, {'refusal': 'fixture refusal'}),
-                  ('stop', envelope, {'tool_calls': [{'id': 'fixture'}]}),
-                  ('stop', envelope + ' trailing', {})]
-        provider = {'key': 'fixture', 'protocol': 'chat-completions', 'name': 'synthetic'}
-        for reason, source, fields in cases:
-            reply = {'choices': [{'message': {'content': source, **fields}, 'finish_reason': reason}]}
-            with self.subTest(reason=reason, source=source, fields=fields), \
-                 patch.dict(os.environ, METTACLAW_MODEL_COMMENTARY='1'), \
-                 patch.object(synthetic_llm, 'current_model', return_value='fixture-model'), \
-                 patch.object(synthetic_llm, '_provider_for', return_value=provider), \
-                 patch.object(synthetic_llm, '_exchange', return_value=reply) as exchange, \
-                 patch('model_commentary.Publication') as publication, \
-                 patch('context_budget.observe'), \
-                 patch.object(synthetic_llm, '_note_answered') as answered, \
-                 patch('cognitive_health.turn_completed') as completed, \
-                 patch('cognitive_health.turn_failed') as failed:
-                self.assertEqual(synthetic_llm.chat('fixture-model', 42, 'low', 'input'), '()')
-                exchange.assert_called_once()
-                answered.assert_not_called()
-                completed.assert_not_called()
-                failed.assert_called_once()
-                publication.return_value.publish.assert_not_called()
-
-
 if __name__ == '__main__':
     unittest.main()

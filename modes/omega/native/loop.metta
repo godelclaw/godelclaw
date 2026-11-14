@@ -104,7 +104,7 @@
                                        ($_ (messagesAppend (llmRequestMessage role "user" content $lastmessage)))
                                        ($request (llmRequest $system (messagesGet) (maxOutputToken) (reasoningMode) (collectTools)))
                                        ($_ (log INFO "loop" (REQUEST: (py-str ($request)))))
-                                       ($response (llmProviderChat $request))
+                                       ($response (omega-host:chat $request))
                                        ($_ (log INFO "loop" (RESPONSE: (py-str ($response)))))
                                        ($respstr (py-call (providers.llmResponseToSExpr $response)))
                                        ($resp (catch (sread $respstr)))

@@ -1,6 +1,4 @@
 """Local preparation errors retain their stage, code and pending input."""
-import contextlib
-import io
 import os
 from pathlib import Path
 import sys
@@ -10,8 +8,8 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import admission_frontier
+import native_ledger
 import strategy_host
-import synthetic_llm
 
 
 class ContextFailureFeedbackTests(unittest.TestCase):
@@ -25,20 +23,6 @@ class ContextFailureFeedbackTests(unittest.TestCase):
         with mock.patch.object(helper, "_turn_commit", ((), None)):
             helper.turn_commit_stage(0, 1, 1)
             self.assertEqual(helper.turn_commit_ready(), 0)
-
-    def test_typed_code_survives_the_actual_health_reporting_path(self):
-        """The Python transport paces the same facts itself."""
-        stderr = io.StringIO()
-        with mock.patch.dict(os.environ, {"SYNTHETIC_EMPTY_BACKOFF": "0"}), \
-             mock.patch("provider_rejection.blocked", return_value=False), \
-             mock.patch.object(synthetic_llm.cognitive_health, "turn_failed") as failed, \
-             contextlib.redirect_stderr(stderr):
-            result = synthetic_llm._empty_action(
-                admission_frontier.ContextPreparationFailure("context-compaction-required"))
-        self.assertEqual(result, "()")
-        failed.assert_called_once_with("context-compaction-required", retry_after=0.0)
-        self.assertIn("[context] preparation withheld:", stderr.getvalue())
-        self.assertNotIn("failed provider turn", stderr.getvalue())
 
     def test_arbitrary_exception_text_is_not_trusted_as_a_reason_code(self):
         error = RuntimeError("context-budget fixture-secret")
@@ -309,7 +293,8 @@ class ContextFailureFeedbackTests(unittest.TestCase):
                 HOME=str(tmp_dir / "home"),
                 TMPDIR=str(tmp_dir),
                 METTACLAW_OBSERVED_STRATEGY="1",
-                METTACLAW_INPUT_LEDGER_SOCKET=str(tmp_dir / "stub.sock"),
+                # The native calls' lifetime evidence reads the input ledger.
+                METTACLAW_INPUT_LEDGER_SOCKET=native_ledger.start(self, tmp_dir),
                 METTACLAW_STRATEGY_PATH=str(tmp_dir / "strategy"),
                 METTACLAW_ENGINE_STATE_PATH=str(tmp_dir / "engine"),
                 METTACLAW_COGNITIVE_HEALTH_PATH=str(tmp_dir / "health.json"),

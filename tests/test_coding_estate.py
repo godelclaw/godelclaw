@@ -145,7 +145,6 @@ class CodingEstateVerbTests(CodingEstateFixture):
             "PYTHONPATH": os.pathsep.join([str(ROOT / "tests"), str(ROOT / "src"), str(ROOT / "channels")]),
             "METTACLAW_ACTIVE_ENGINE": "cetta",
             "METTACLAW_ENGINE": "cetta",
-            "METTACLAW_LLM_TRANSPORT": "native",
             "METTACLAW_ENGINE_STATE_PATH": str(self.directory / "engine"),
             "METTACLAW_LLM_LEDGER_PATH": str(self.directory / "ledger.db"),
             "METTACLAW_COGNITIVE_HEALTH_PATH": str(self.directory / "health.json"),

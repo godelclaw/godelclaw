@@ -69,7 +69,7 @@ class StandaloneModesTests(unittest.TestCase):
                 value = launcher.standalone_environment("iter", state, state / "iter", {
                     "METTACLAW_TELEGRAM_SERVICE_SOCKET": "/absent/socket",
                     "METTACLAW_LIFECYCLE_PATH": "/absent/paused.json",
-                    "METTACLAW_LLM_TRANSPORT": "native",
+                    "METTACLAW_LLM_POLICY": "managed",
                     "CETTA_IO_AUTH_PRIVATE_ENV": "PRIVATE_KEY",
                     "PYTHONHOME": "/absent/venv", "PATH": "/usr/bin",
                     "LLM_MODEL": "upstream-model", "AI_API_KEY": "fixture"})
@@ -77,7 +77,9 @@ class StandaloneModesTests(unittest.TestCase):
             self.assertNotIn("CETTA_IO_AUTH_PRIVATE_ENV", value)
             self.assertNotIn("PYTHONHOME", value)
             self.assertEqual(value["METTACLAW_LIFECYCLE_PATH"], str(state / "lifecycle.json"))
-            self.assertEqual(value["METTACLAW_LLM_TRANSPORT"], "python")
+            # The standalone profile keeps the mode's own provider (llm:native?).
+            self.assertEqual(value["METTACLAW_MODE_PROFILE"], "standalone")
+            self.assertEqual(value["METTACLAW_LLM_POLICY"], "upstream")
             self.assertEqual(value["LLM_MODEL"], "upstream-model")
             self.assertTrue(value["PATH"].startswith(str(state / "venv/bin")))
 

@@ -20,7 +20,6 @@ import input_ack  # noqa: E402
 import llm_policy  # noqa: E402
 import native_ledger  # noqa: E402
 import native_llm_host  # noqa: E402
-import synthetic_llm  # noqa: E402
 import usage_history  # noqa: E402
 
 
@@ -187,34 +186,6 @@ class UsageHistoryTests(unittest.TestCase):
         self.assertEqual(self.report()['totals']['known_output_tokens'], huge)
         row = self.request(ticket)
         self.assertEqual((row['status'], row['output']), ('completed', None))
-
-    def test_python_transport_keeps_the_sent_model_when_selection_changes(self):
-        provider = dict(name="synthetic", protocol="chat-completions",
-                        base="https://example.invalid/v1", key="fixture-secret")
-        def answer(*args):
-            os.environ["SYNTHETIC_MODEL"] = "different-later-model"
-            return result()
-        with patch.object(synthetic_llm, "_request_json", side_effect=answer), \
-             patch("cognitive_health.turn_started"), patch("process_supervision.provider_wait"):
-            synthetic_llm._exchange(provider, "/chat/completions", dict(model="sent-model"), 100, purpose="coding")
-        group = self.report()["groups"][0]
-        self.assertEqual((group["model"], group["purpose"]), ("sent-model", "coding"))
-        row = json.loads((self.root / "llm-usage.jsonl").read_text())
-        self.assertEqual((row["model"], row["provider"], row["purpose"]),
-                         ("sent-model", "synthetic", "coding"))
-        self.assertTrue(row["call_id"])
-
-    def test_python_auxiliary_usage_tally_cannot_fail_a_completed_answer(self):
-        provider = dict(name='anthropic', protocol='anthropic', base='https://example.invalid/v1', key='fixture-secret')
-        payload = dict(stop_reason='end_turn', content=[dict(type='text', text='(nop)')],
-                       usage=dict(input_tokens=10, output_tokens='abc'))
-        with patch.object(synthetic_llm, '_request_json', return_value=payload), \
-             patch('cognitive_health.turn_started'), patch('process_supervision.provider_wait'):
-            answer = synthetic_llm._exchange(provider, '/messages', dict(model='fixture'), 100)
-        self.assertEqual(answer['choices'][0]['message']['content'], '(nop)')
-        self.assertEqual([(row['status'], row['output']) for row in native_ledger.llm_records('requests')],
-                         [('completed', None)])
-        self.assertEqual(self.report()['totals']['output_tokens_unknown_calls'], 1)
 
     def test_report_writes_nothing_and_needs_a_ledger(self):
         llm_policy.complete(self.call(), result())

@@ -1,16 +1,11 @@
 !(import! &self (library lib_import))
 !(import! &self ./lib_mettaclaw)
+!(import! &self ./tests/scripted_provider.metta)
 
 (= (assertEqual $A $B) (assert (== $A $B)))
 
-;; The provider is the test world's loopback peer, on the native transport.
-;; It answers the first request with an empty message, a failed turn, and the
-;; second with a program. Its request count is the number of prompts sent.
-(= (probe:world $name) (str:concat (system:getenv-or-default "NATIVE_TEST_WORLD" "") $name))
-(= (probe:reply $content)
-   (str:join "" ("{\"id\":\"fixture\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"" $content
-                 "\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":2}}")))
-(= (probe:prompts) (json:parse (str:strip-python (fs:read-text (probe:world "count")))))
+;; The scripted model answers the first request with an empty message, a
+;; failed turn, and the second with a program.
 (= (probe:history-has $text)
    (let $path (system:getenv-or-default "METTACLAW_HISTORY_PATH" "")
      (if (fs:exists $path)
@@ -18,8 +13,8 @@
        0)))
 ;; Without the test world there is no provider to script: stop before any write.
 !(assert (not (== (system:getenv-or-default "NATIVE_TEST_WORLD" "") "")))
-!(fs:write (probe:world "response-1.body") (probe:reply ""))
-!(fs:write (probe:world "response-2.body") (probe:reply "((nop))"))
+!(scripted:answer 1 "")
+!(scripted:answer 2 "((nop))")
 !(py-eval "(__import__('helper').__dict__.__setitem__('_working_boot_cache', {}), __import__('helper').__dict__.__setitem__('working_boot', lambda: 1))")
 !(initMemory)
 !(configure commchannel telegram)
@@ -36,7 +31,7 @@
          ($_ (assertEqual (tg:pending-count) 1))
          ($_ (assertEqual
                (probe:history-has "stable turn input") 0))
-         ($_ (assertEqual (probe:prompts) 0))
+         ($_ (assertEqual (scripted:calls) 0))
          ($_ (lifecycle:start))
          ($afterFailure
           (process-step $initial
@@ -57,5 +52,5 @@
          ($_ (assertEqual
                (probe:history-has "stable turn input") 1))
          ($_ (assertEqual
-               (probe:prompts) 2)))
+               (scripted:calls) 2)))
      (println! ACTIVITY_DELIVERY_FULL_TURN_OK))

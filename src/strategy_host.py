@@ -146,10 +146,9 @@ def prepare(prompt, output_tokens=32768):
     import topic_jobs
     prompt = str(prompt) + "\n" + topic_jobs.context()
     topic_jobs.notify()
-    if os.environ.get("METTACLAW_LLM_TRANSPORT") == "native":
-        import native_lifetime
-        native_lifetime.notify()
-        prompt += "\n" + native_lifetime.evidence_context()
+    import native_lifetime
+    native_lifetime.notify()
+    prompt += "\n" + native_lifetime.evidence_context()
     import runtime_context
     _runtime_projection = runtime_context.render()
     prompt += "\n" + _runtime_projection
@@ -171,8 +170,8 @@ def prepare(prompt, output_tokens=32768):
 
 def lifetime_context():
     """Native call-lifetime evidence for MeTTa's own context assembly, which
-    appends the runtime facts itself; empty unless the transport is native."""
-    if not enabled() or os.environ.get("METTACLAW_LLM_TRANSPORT") != "native":
+    appends the runtime facts itself; empty when the strategy is off."""
+    if not enabled():
         return ""
     import native_lifetime
     native_lifetime.notify()

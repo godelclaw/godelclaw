@@ -169,7 +169,6 @@ def main():
     emit("METTACLAW_NATIVE_LEDGER", agent.get("native_ledger", False))
     emit("METTACLAW_SHELL_TIMEOUT_SECONDS", agent.get("shell_timeout_seconds", 120))
     emit("METTACLAW_REASONING_EFFORT", agent.get("reasoning_effort", "default"))
-    emit("METTACLAW_LLM_TRANSPORT", agent.get("llm_transport"))
     emit("METTACLAW_LLM_POLICY", agent.get("llm_policy"))
     # Unset, the agent restarts at two thirds of its memory limit; 0 never.
     emit("METTACLAW_RECYCLE_BYTES", agent.get("recycle_bytes"))

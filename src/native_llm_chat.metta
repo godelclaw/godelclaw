@@ -74,7 +74,7 @@
       ((Error $source $reason) (native-chat:failed $correlation submit-error))
       ($other (native-chat:failed $correlation submit-error)))))
 
-; Decode just the first assistant message, as synthetic_llm.chat does. All
+; Decode just the first assistant message. All
 ; parser errors are collapsed so malformed response text never enters an
 ; error term, log, or control-plane result.
 (= (native-chat:decode $body)

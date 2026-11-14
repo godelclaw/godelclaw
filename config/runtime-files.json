@@ -339,7 +339,6 @@
   "src/utils.metta",
   "src/utils_cetta.metta",
   "src/weak_process_core.metta",
-  "src/wire.py",
   "src/workspaces_api.metta",
   "src/workspaces_cetta.metta",
   "src/fuel_cetta.metta",
@@ -419,5 +418,6 @@
   "src/notice_key.metta",
   "src/input_notice_cetta.metta",
   "src/runtime_health_cetta.metta",
-  "src/display_cetta.metta"
+  "src/display_cetta.metta",
+  "src/call_failure_cetta.metta"
 ]

@@ -1,48 +1,47 @@
 !(import! &self (library lib_import))
 !(import! &self ./lib_mettaclaw)
+!(import! &self ./tests/scripted_provider.metta)
 
 (= (assertEqual $A $B) (assert (== $A $B)))
 
-;; The same weak process runner executes both turns. Both modes permit the
-;; model's batch. The first command in turn one injects a new inbound message
-;; into chat probe: the help query that follows still runs, and only the
-;; reply into that chat is withheld. With no new input in turn two, the full
-;; batch runs.
+;; The same weak process runner executes both turns, and the mode permits the
+;; model's batch; the runner boots this probe once in each mode. The first
+;; command in turn one injects a new inbound message into chat probe: the
+;; help query that follows still runs, and only the reply into that chat is
+;; withheld. With no new input in turn two, the full batch runs.
 (= (probe-stimulus)
    (tg:activity-add "" "probe" "new stimulus" False "full" "123" False))
-!(py-eval "__import__('helper').__dict__.__setitem__('_batch_probe_prompts', [])")
-!(py-eval "__import__('synthetic_llm').__dict__.__setitem__('chat', lambda *args: (__import__('helper')._batch_probe_prompts.append(str(args[-1])), __import__('cognitive_health').turn_started('probe'), __import__('cognitive_health').turn_completed(32), ('((probe-stimulus) (help _quote_query_quote_) (send-telegram-chat _quote_probe_quote_ _quote_stale-reply_quote_))' if len(__import__('helper')._batch_probe_prompts) == 1 else '((help _quote_send_quote_) (help _quote_query_quote_))'))[-1])")
-!(py-eval "__import__('helper').__dict__.__setitem__('stimulus_batch_probe_ok', lambda feedback: int(str(feedback).count('COMMAND_RETURN:') == 3 and 'COMMAND_BATCH_INTERRUPTED:' not in str(feedback) and 'stale-reply' in str(feedback)))")
-!(py-eval "__import__('helper').__dict__.__setitem__('stable_batch_probe_ok', lambda feedback: int(str(feedback).count('COMMAND_RETURN:') == 2 and 'COMMAND_BATCH_INTERRUPTED:' not in str(feedback)))")
-!(py-eval "__import__('helper').__dict__.__setitem__('batch_probe_prompt_limits_ok', lambda: int(len(__import__('helper')._batch_probe_prompts) == 2 and 'at most 5 command(s)' not in __import__('helper')._batch_probe_prompts[0] and 'at most 5 command(s)' not in __import__('helper')._batch_probe_prompts[1]))")
+!(scripted:answer 1 "((probe-stimulus) (help _quote_query_quote_) (send-telegram-chat _quote_probe_quote_ _quote_stale-reply_quote_))")
+!(scripted:answer 2 "((help _quote_send_quote_) (help _quote_query_quote_))")
 !(py-eval "(__import__('helper').__dict__.__setitem__('_working_boot_cache', {}), __import__('helper').__dict__.__setitem__('working_boot', lambda: 3))")
 !(initMemory)
 !(configure commchannel telegram)
 
-!(let* (($_ (py-call (loop_modes.set_mode "godelclaw")))
+;; How many commands a turn's feedback returned, and whether it holds $text.
+(= (probe:returns $feedback) (- (size-atom (str:split "COMMAND_RETURN:" $feedback)) 1))
+(= (probe:has $feedback $text) (case (str:find $feedback $text) (((TextNotFound $missing) False) ($found True))))
+
+!(let* (($_ (assertEqual (loop-mode:current) (loop-mode:canonical (system:getenv-or-default "NATIVE_PROBE_MODE" ""))))
          ($initial (initLoop))
-         ($after-agent
+         ($after-first
           (process-step $initial
             (turnProcess (process-periphery $initial))))
          ($_ (cut))
-         ($agent-feedback
-          (loop-last-results (process-periphery $after-agent)))
-         ($_ (assertEqual
-               (py-call (helper.stimulus_batch_probe_ok $agent-feedback))
-               1))
-         ($_ (py-call (loop_modes.set_mode "coding")))
-         ($after-coding
-          (process-step $after-agent
-            (turnProcess (process-periphery $after-agent))))
+         ($first (loop-last-results (process-periphery $after-first)))
+         ($_ (assertEqual (probe:returns $first) 3))
+         ($_ (assertEqual (probe:has $first "COMMAND_BATCH_INTERRUPTED:") False))
+         ($_ (assertEqual (probe:has $first "stale-reply") True))
+         ($after-second
+          (process-step $after-first
+            (turnProcess (process-periphery $after-first))))
          ($_ (cut))
-         ($coding-feedback
-          (loop-last-results (process-periphery $after-coding)))
-         ($_ (assertEqual
-               (py-call (helper.stable_batch_probe_ok $coding-feedback))
-               1))
-         ($_ (assertEqual
-               (py-call (helper.batch_probe_prompt_limits_ok))
-               1))
-         ($_ (assertEqual (process-root $after-coding)
+         ($second (loop-last-results (process-periphery $after-second)))
+         ($_ (assertEqual (probe:returns $second) 2))
+         ($_ (assertEqual (probe:has $second "COMMAND_BATCH_INTERRUPTED:") False))
+         ;; Neither prompt limits the batch.
+         ($_ (assertEqual (scripted:calls) 2))
+         ($_ (assertEqual (scripted:prompt-has 1 "at most 5 command(s)") 0))
+         ($_ (assertEqual (scripted:prompt-has 2 "at most 5 command(s)") 0))
+         ($_ (assertEqual (process-root $after-second)
                           weak-process-core-v1)))
      (println! INTERACTIVE_BATCH_POLICY_OK))

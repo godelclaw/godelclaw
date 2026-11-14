@@ -261,7 +261,7 @@
    (let* ((($plan $text) (py-call (native_llm_host.subscription_seed $selected $tokens $kind $purpose
                                     (chatgpt-policy "response-bytes"))))
           ($seed (preq:parse $text)))
-     (if (not (preq:truthy (preq:field $seed "ready"))) (RefusedProviderCallV1 $plan)
+     (if (not (preq:truthy (preq:field $seed "ready"))) (pcall:seed-refused $plan $seed)
        ; The llm:v1 codec takes syntax: bind each value before it crosses.
        (let* (($account (llm:v1:get $session "value"))
               ($alias-json (llm:v1:get $account "credential_alias")) ($alias (llm:v1:text $alias-json))
@@ -286,9 +286,9 @@
              (let $profiled (chatgpt:wire $wire)
                (if (== (get-type $profiled) String)
                  (pcall:bound $plan $facts $path $spec (PreparedProviderWireV1 $profiled $active $model $layout))
-                 (pcall:refused $plan chatgpt-profile-refused))))
-            ($refused (pcall:refused $plan chatgpt-wire-refused))))))
-      ($invalid (pcall:refused $plan $invalid)))))
+                 (pcall:refused $plan $facts chatgpt-profile-refused))))
+            ($refused (pcall:refused $plan $facts chatgpt-wire-refused))))))
+      ($invalid (pcall:refused $plan $facts $invalid)))))
 (= (chatgpt:command $selected $tokens $effort $prompt)
    (let $session-value (chatgpt:session)
     (case $session-value

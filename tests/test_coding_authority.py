@@ -122,7 +122,6 @@ class CodingAuthorityAndRepinTests(unittest.TestCase):
             "PYTHONPATH": os.pathsep.join([str(modules), str(ROOT / "tests"), str(ROOT / "src"), str(ROOT / "channels")]),
             "METTACLAW_ACTIVE_ENGINE": "cetta",
             "METTACLAW_ENGINE": "cetta",
-            "METTACLAW_LLM_TRANSPORT": "native",
             "METTACLAW_ENGINE_STATE_PATH": str(self.directory / "engine"),
             "METTACLAW_LLM_POLICY": "managed",
             "METTACLAW_LLM_POLICY_PATH": "",

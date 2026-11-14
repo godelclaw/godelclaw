@@ -28,7 +28,10 @@
 ; Rebuild each atom from its matched field: an atom taken whole from a
 ; collapsed match is not found again by remove-atom in this engine.
 (= (call:forget $id)
-   (collapse (match &self (NativeCallPhaseV1 $id $phase) (remove-atom &self (NativeCallPhaseV1 $id $phase)))))
+   (let* (($causes (collapse (match &self (NativeCallCauseV1 $id $cause) (remove-atom &self (NativeCallCauseV1 $id $cause)))))
+          ($stated (collapse (match &self (NativeCallStatedV1 $id $code $message)
+                                (remove-atom &self (NativeCallStatedV1 $id $code $message))))))
+     (collapse (match &self (NativeCallPhaseV1 $id $phase) (remove-atom &self (NativeCallPhaseV1 $id $phase))))))
 (= (call:release $owner) (call:forget (call:correlation $owner)))
 ; A live call: its phase exists from its binding until its release.
 (= (call:live? $id)
@@ -100,6 +103,33 @@
    (let* (((CallPhaseV1 $status $t $s $r $soft $retry $publication) (call:phase $owner))
           ($value (if (>= $seconds 0) $seconds JsonNull)))
      (call:set-phase $owner (CallPhaseV1 $status $t $s $r $soft $value $publication))))
+
+; Why a call failed, as its observers saw it, kept with the call until its
+; release: (CallDenied reason retry) an admission denial,
+; (CallTransport kind code) a transport failure the engine classified,
+; (CallRefusedResponse reason bound) an answer the engine refused to keep,
+; CallConflict a completion without its local receipt, and (CallError type)
+; any other failure, by the error class it stands for. A later observation
+; replaces an earlier one; a fallback is noted only when there is none.
+(= (call:note-cause $owner $cause)
+   (let* (($id (call:correlation $owner))
+          ($removed (collapse (match &self (NativeCallCauseV1 $id $old) (remove-atom &self (NativeCallCauseV1 $id $old))))))
+     (add-atom &self (NativeCallCauseV1 $id $cause))))
+(= (call:note-fallback-cause $owner $cause)
+   (if (== (call:cause $owner) none) (call:note-cause $owner $cause) True))
+(= (call:cause $owner)
+   (let $id (call:correlation $owner)
+     (case (collapse (match &self (NativeCallCauseV1 $id $cause) $cause)) ((() none) ($causes (car-atom $causes))))))
+; The provider's own code and message for a request it rejected, sanitized
+; where they were read (native_llm_host.stated_error).
+(= (call:note-stated $owner ($code $message))
+   (let* (($id (call:correlation $owner))
+          ($removed (collapse (match &self (NativeCallStatedV1 $id $c $m) (remove-atom &self (NativeCallStatedV1 $id $c $m))))))
+     (add-atom &self (NativeCallStatedV1 $id $code $message))))
+(= (call:stated $owner)
+   (let $id (call:correlation $owner)
+     (case (collapse (match &self (NativeCallStatedV1 $id $code $message) (CallStated $code $message)))
+       ((() (CallStated "" "")) ($stated (car-atom $stated))))))
 
 ; The call context of a completion's usage line: id, provider, model, purpose.
 (= (call:context $owner)

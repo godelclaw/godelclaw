@@ -9,7 +9,7 @@
     ("tests/unit/model_menu.metta" "UNIT_MODEL_MENU_KEYED_OK"
      (("METTACLAW_PROVIDER_OBSERVATION_PATH" "{home}/state/provider-observations.json")
       ("ANTHROPIC_API_KEY" "unit-anthropic") ("ANTHROPIC_MODELS" " claude-unit-a , ,claude-unit-b") ("KIMI_API_KEY" "unit-kimi")
-      ("METTACLAW_LLM_TRANSPORT" "native") ("METTACLAW_CHATGPT_POLICY_PATH" "{home}/chatgpt.json")
+      ("METTACLAW_CHATGPT_POLICY_PATH" "{home}/chatgpt.json")
       ("METTACLAW_ANTHROPIC_USAGE_PATH" "{home}/usage.json") ("SYNTHETIC_BASE_URL" "http://127.0.0.1:9/openai/v1")))
     ("tests/unit/model_menu.metta" "UNIT_MODEL_MENU_UNKEYED_OK"
      (("METTACLAW_PROVIDER_OBSERVATION_PATH" "{home}/state/provider-observations.json")
@@ -18,6 +18,10 @@
     ("tests/unit/commentary_contract.metta" "UNIT_COMMENTARY_ON_OK" (("METTACLAW_MODEL_COMMENTARY" "1")))
     ("tests/unit/commentary_contract.metta" "UNIT_COMMENTARY_OFF_OK" (("METTACLAW_MODEL_COMMENTARY" "0")))
     ("tests/unit/native_call.metta" "UNIT_NATIVE_CALL_KINDS_OK")
+    ("tests/unit/native_call.metta" "UNIT_NATIVE_CALL_CAUSE_OK")
+    ("tests/unit/call_failure.metta" "UNIT_CALL_FAILURE_FACTS_OK")
+    ("tests/unit/call_failure.metta" "UNIT_CALL_FAILURE_LINE_OK")
+    ("tests/unit/call_failure.metta" "UNIT_CALL_FAILURE_CAUSES_OK")
     ("tests/unit/structured_request.metta" "UNIT_STRUCTURED_REFUSALS_OK")
     ("tests/unit/completion_effects.metta" "UNIT_COMPLETION_EFFECTS_OK")
     ("tests/unit/rejection_gate.metta" "UNIT_REJECTION_GATE_OK")

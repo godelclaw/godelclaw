@@ -1,7 +1,6 @@
-"""Provider routing in synthetic_llm.chat/set_model: synthetic stays the
-default path byte-for-byte; claude-* models route to the Anthropic
-OpenAI-compatible endpoint with ANTHROPIC_API_KEY; a missing anthropic key
-degrades to the empty action instead of raising."""
+"""Provider routing and model controls in synthetic_llm: credentials and
+endpoints per provider, model switching and persistence, the durable provider
+observations, and failure pacing."""
 import http.server
 import json
 import os
@@ -16,10 +15,6 @@ from unittest import mock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 import synthetic_llm  # noqa: E402
 import native_ledger  # noqa: E402
-
-
-def ok_chat(content="((rest))"):
-    return {"choices": [{"message": {"content": content}}]}
 
 
 class ProviderRoutingTest(unittest.TestCase):
@@ -54,20 +49,6 @@ class ProviderRoutingTest(unittest.TestCase):
 
     def enable_flag(self):
         open(self.flag, "w").close()
-
-    def capture_chat(self, model):
-        seen = {}
-
-        def fake_request_json(req, timeout=None):
-            seen["url"] = req.full_url
-            seen["auth"] = req.headers.get("Authorization")
-            seen["body"] = json.loads(req.data)
-            return ok_chat()
-
-        with mock.patch.object(synthetic_llm, "_request_json",
-                               fake_request_json):
-            out = synthetic_llm.chat(model, 6000, "medium", "hello")
-        return out, seen
 
     def test_selected_model_window_discovery_stores_only_metadata(self):
         self.enable_flag()
@@ -108,18 +89,6 @@ class ProviderRoutingTest(unittest.TestCase):
         self.assertEqual(synthetic_llm.observe_model_window("", 0, "chatgpt-models"), 0)
         self.assertEqual(synthetic_llm.observe_model_window("claude-fixture", 900000, "chatgpt-models"), 0)
         self.assertEqual(synthetic_llm._cached_observation("model-window"), before)
-
-    def test_synthetic_default_path_unchanged(self):
-        out, seen = self.capture_chat("syn:large:text")
-        self.assertEqual(out, "((rest))")
-        self.assertEqual(
-            seen["url"],
-            "https://api.synthetic.new/openai/v1/chat/completions")
-        self.assertEqual(seen["auth"], "Bearer syn-key")
-        self.assertEqual(seen["body"]["model"], "syn:large:text")
-        health = synthetic_llm.cognitive_health.snapshot()
-        self.assertEqual(health["completed_count"], 1)
-        self.assertEqual(health["pending_since"], 0)
 
     def test_kimi_has_distinct_credentials_and_does_not_change_openai(self):
         with mock.patch.dict(os.environ, {
@@ -172,13 +141,12 @@ class ProviderRoutingTest(unittest.TestCase):
             self.assertIn("Kimi Code credential is not configured", reply)
             self.assertNotIn("absent from", reply)
 
-    def test_subscription_menu_choices_require_the_native_transport_and_preserve_selection(self):
+    def test_subscription_menu_choices_preserve_selection(self):
         from pathlib import Path
         policy = Path(self.flag_dir)/'chatgpt.json'
         policy.write_text(json.dumps(dict(account='fixture-registration')))
         synthetic_llm._persist_model('fixture-current-model')
         with mock.patch.dict(os.environ, {
-                'METTACLAW_LLM_TRANSPORT': 'native',
                 'METTACLAW_CHATGPT_POLICY_PATH': str(policy)}), \
              mock.patch.object(synthetic_llm, 'refresh_provider_observations_async'):
             ids = synthetic_llm.model_ids()
@@ -187,124 +155,6 @@ class ProviderRoutingTest(unittest.TestCase):
             self.assertEqual(synthetic_llm.current_model(), 'fixture-current-model')
             self.assertIsNone(synthetic_llm.model_in_observed_catalog('chatgpt:gpt-6.1-sol'))
             self.assertIn('availability unverified', synthetic_llm.model_catalog_status())
-            with mock.patch.dict(os.environ, {'METTACLAW_LLM_TRANSPORT': 'python'}):
-                self.assertNotIn('chatgpt:gpt-6.1-sol', synthetic_llm.model_ids())
-
-    def test_claude_model_routes_to_native_messages_api(self):
-        self.enable_flag()
-        os.environ["ANTHROPIC_API_KEY"] = "anth-key"
-        os.environ["SYNTHETIC_MODEL"] = "claude-fable-5"
-        seen = {}
-
-        def fake_request_json(req, timeout=None):
-            seen["url"] = req.full_url
-            seen["key"] = req.headers.get("X-api-key")
-            seen["body"] = json.loads(req.data)
-            return {"content": [{"type": "text", "text": "((rest))"}],
-                    "usage": {"input_tokens": 5}}
-
-        with mock.patch.object(synthetic_llm, "_request_json",
-                               fake_request_json):
-            out = synthetic_llm.chat(
-                "syn:large:text", 6000, "medium",
-                "PROMPT: p SKILLS: s LOOPS_LEFT: 5 HISTORY: h")
-        self.assertEqual(out, "((rest))")
-        self.assertEqual(seen["url"], "https://api.anthropic.com/v1/messages")
-        self.assertEqual(seen["key"], "anth-key")
-        self.assertEqual(seen["body"]["model"], "claude-fable-5")
-        s_block = seen["body"]["system"][0]
-        self.assertEqual(s_block["text"], "PROMPT: p SKILLS: s")
-        self.assertEqual(s_block["cache_control"], {"type": "ephemeral"})
-        self.assertEqual(seen["body"]["messages"][0]["content"],
-                         [{"type": "text", "text": " LOOPS_LEFT: 5 HISTORY: h"}])
-
-    def test_anthropic_caches_the_layout_prefix_before_the_turn(self):
-        self.enable_flag()
-        os.environ["ANTHROPIC_API_KEY"] = "anth-key"
-        os.environ["SYNTHETIC_MODEL"] = "claude-opus-5-5"
-        requests = []
-
-        def fake_request_json(req, timeout=None):
-            requests.append(json.loads(req.data))
-            return {"content": [{"type": "text", "text": "((rest))"}],
-                    "usage": {"input_tokens": 5}}
-
-        with mock.patch.object(synthetic_llm, "_request_json",
-                               fake_request_json):
-            synthetic_llm.chat(
-                "syn:large:text", 6000, "medium",
-                "HEAD_cache_boundary_STABLE_cache_boundary_CONV"
-                "_cache_boundary_TURN read _cache_boundary_ in a file")
-            synthetic_llm.chat(
-                "syn:large:text", 6000, "medium",
-                "HEAD_cache_boundary_STABLE_cache_boundary_CONV changed"
-                "_cache_boundary_NEXT TURN")
-        system = requests[0]["system"]
-        self.assertEqual([block["text"] for block in system],
-                         ["HEAD", "STABLE", "CONV"])
-        # Earlier regions need written checkpoints of their own: lookback
-        # alone does not create an entry for an unchanged prefix.
-        self.assertEqual([block.get("cache_control") for block in system],
-                         [{"type": "ephemeral"}] * 3)
-        self.assertEqual(requests[0]["messages"],
-                         [{"role": "user",
-                           "content": [{"type": "text", "text": "TURN read _cache_boundary_ in a file"}]}])
-        changed = requests[1]["system"]
-        self.assertEqual(changed[:2], system[:2])
-        self.assertEqual(changed[2], {"type": "text", "text": "CONV changed",
-                                      "cache_control": {"type": "ephemeral"}})
-        self.assertEqual(requests[1]["messages"],
-                         [{"role": "user", "content": [{"type": "text", "text": "NEXT TURN"}]}])
-
-    def test_anthropic_transcript_chunks_keep_stable_checkpoints_within_four_slots(self):
-        self.enable_flag()
-        os.environ["ANTHROPIC_API_KEY"] = "anth-key"
-        os.environ["SYNTHETIC_MODEL"] = "claude-opus-5-5"
-        requests = []
-
-        def fake_request_json(req, timeout=None):
-            requests.append(json.loads(req.data))
-            return {"content": [{"type": "text", "text": "((rest))"}],
-                    "usage": {"input_tokens": 5}}
-
-        chunks = ["STEPS 0-7", "STEPS 8-15", "STEPS 16-23", "STEPS 24-31", "STEPS 32-39"]
-        with mock.patch.object(synthetic_llm, "_request_json", fake_request_json):
-            for count in (2, len(chunks)):
-                synthetic_llm.chat(
-                    "syn:large:text", 6000, "medium",
-                    "HEAD_cache_boundary_STABLE_cache_boundary_\n\n" +
-                    "\n_cache_chunk_\n".join(chunks[:count]) +
-                    "\n\n_cache_boundary_CONVERSATION TURN")
-        system = requests[0]["system"]
-        self.assertEqual([block["text"] for block in system],
-                         ["HEAD", "STABLE", "STEPS 0-7", "STEPS 8-15"])
-        self.assertEqual([block.get("cache_control") for block in system],
-                         [{"type": "ephemeral"}] * 4)
-        grown = requests[1]["system"]
-        self.assertEqual([block["text"] for block in grown], ["HEAD", "STABLE"] + chunks)
-        self.assertEqual(grown[:2], system[:2])
-        self.assertEqual([i for i, block in enumerate(grown) if "cache_control" in block],
-                         [0, 1, len(grown) - 2, len(grown) - 1])
-        for body in requests:
-            self.assertNotIn("_cache_chunk_", json.dumps(body))
-            self.assertEqual(body["messages"], [{"role": "user", "content": [
-                {"type": "text", "text": "CONVERSATION TURN"}]}])
-
-    def test_synthetic_request_carries_no_layout_boundary(self):
-        seen = {}
-
-        def fake_request_json(req, timeout=None):
-            seen["body"] = json.loads(req.data)
-            return ok_chat()
-
-        with mock.patch.object(synthetic_llm, "_request_json",
-                               fake_request_json):
-            synthetic_llm.chat(
-                "syn:large:text", 6000, "medium",
-                "A_cache_boundary_B_cache_boundary_C_cache_boundary_D")
-        self.assertEqual(seen["body"]["messages"], [
-            {"role": "system", "content": "ABC"},
-            {"role": "user", "content": "D"}])
 
     def test_unavailable_route_keeps_its_reason_in_the_failure_code(self):
         import admission_frontier
@@ -318,80 +168,6 @@ class ProviderRoutingTest(unittest.TestCase):
             synthetic_llm.ProviderUnavailable('{"body": "x y"}')),
             'provider-unavailable:--body-:--x-y--')
         self.assertEqual(admission_frontier.failure_code(TimeoutError()), "TimeoutError")
-
-    def test_claude_without_key_returns_empty_action_not_raise(self):
-        self.enable_flag()
-        os.environ["SYNTHETIC_MODEL"] = "claude-fable-5"
-        with mock.patch.object(
-                synthetic_llm, "_request_json",
-                side_effect=AssertionError("no network call expected")):
-            out = synthetic_llm.chat("syn:large:text", 6000, "medium", "hi")
-        self.assertEqual(out, "()")
-
-    def test_native_empty_max_tokens_is_diagnosed(self):
-        reason = synthetic_llm._diagnose_empty({
-            "content": [],
-            "stop_reason": "max_tokens",
-            "usage": {"output_tokens": 6000},
-        })
-        self.assertIn("stop_reason=max_tokens", reason)
-        self.assertIn("output_tokens=6000", reason)
-
-    def test_one_cognitive_turn_never_hides_replacement_requests(self):
-        os.environ["SYNTHETIC_RETRIES"] = "99"
-        calls = []
-
-        def unavailable(_request, timeout=None):
-            calls.append(timeout)
-            raise urllib.error.URLError("temporarily unavailable")
-
-        with mock.patch.object(
-                synthetic_llm, "_request_json", unavailable):
-            out = synthetic_llm.chat(
-                "syn:large:text", 6000, "medium", "hello")
-
-        self.assertEqual(out, "()")
-        self.assertEqual(len(calls), 1)
-
-    def test_nonretriable_http_error_remains_inside_provider_boundary(self):
-        failure = urllib.error.HTTPError(
-            "https://provider.invalid/chat", 404, "model retired", {}, None)
-        with mock.patch.object(
-                synthetic_llm, "_request_json", side_effect=failure):
-            out = synthetic_llm.chat(
-                "retired-model", 6000, "medium", "hello")
-        self.assertEqual(out, "()")
-        health = synthetic_llm.cognitive_health.snapshot()
-        self.assertEqual(health["last_failure_type"], "provider-rejected-404")
-
-    def test_local_provider_failure_has_a_nonzero_default_pace(self):
-        synthetic_llm._consecutive_empty = 0
-        with mock.patch.dict(os.environ, {
-                "SYNTHETIC_EMPTY_BACKOFF": "7",
-                "SYNTHETIC_EMPTY_BACKOFF_CAP": "30"}), \
-             mock.patch.object(synthetic_llm.cognitive_health,
-                               "turn_failed") as failed:
-            self.assertEqual(synthetic_llm._empty_action(
-                RuntimeError("local adapter fault")), "()")
-        self.assertEqual(failed.call_args.kwargs["retry_after"], 7)
-
-    def test_a_rejected_request_pauses_for_the_longest_backoff_and_is_named(self):
-        # The provider would answer the same request the same way: no 15 s loop.
-        def failure(status):
-            error = RuntimeError("provider status")
-            error.status = status
-            return error
-        for status, wait, label in ((401, 30, "provider-rejected-401"), (403, 30, "provider-rejected-403"),
-                                    (413, 30, "provider-rejected-413"), (400, 30, "provider-rejected-400"),
-                                    (429, 7, "RuntimeError"), (503, 7, "RuntimeError"), (408, 7, "RuntimeError")):
-            with self.subTest(status=status):
-                synthetic_llm._consecutive_empty = 0
-                with mock.patch.dict(os.environ, {"SYNTHETIC_EMPTY_BACKOFF": "7",
-                                                  "SYNTHETIC_EMPTY_BACKOFF_CAP": "30"}), \
-                     mock.patch.object(synthetic_llm.cognitive_health, "turn_failed") as failed:
-                    self.assertEqual(synthetic_llm._empty_action(failure(status)), "()")
-                self.assertEqual(failed.call_args.kwargs["retry_after"], wait)
-                self.assertEqual(failed.call_args.args[0], label)
 
     def test_set_model_claude_requires_key(self):
         self.enable_flag()
@@ -488,19 +264,6 @@ class ProviderRoutingTest(unittest.TestCase):
             reply = synthetic_llm.quota()
         self.assertLess(time.monotonic() - started, 0.1)
         self.assertIn("synthetic_weekly=7 of 10 (70.0%)", reply)
-
-    def test_synthetic_content_blocks_are_not_tallied_as_anthropic(self):
-        payload = {
-            "content": [{"type": "text", "text": "answer"}],
-            "usage": {"input_tokens": 5, "output_tokens": 2},
-        }
-        with mock.patch.object(synthetic_llm, "_tally_anthropic") as tally:
-            self.assertEqual(
-                synthetic_llm._extract_content(payload, "synthetic"),
-                "answer",
-            )
-        tally.assert_not_called()
-
 
     def test_model_choice_persists_across_restart(self):
         import importlib, tempfile, os as _os
@@ -674,46 +437,6 @@ class CompletionUsageLogTest(unittest.TestCase):
         self.assertIn("ChatGPT subscription", shown)
         self.assertIn("synthetic_weekly=54.2% remaining", shown)
         self.assertNotIn("private quota sentinel", shown)
-
-    def test_missing_cache_usage_still_logs_the_known_input_count(self):
-        import tempfile
-        from pathlib import Path
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "completion.json"
-            result = dict(choices=[dict(finish_reason="stop")],
-                          usage=dict(prompt_tokens=12000, completion_tokens=40))
-            with mock.patch.dict(os.environ, METTACLAW_LLM_COMPLETION_PATH=str(path)):
-                synthetic_llm._completion_metadata(result)
-            row = json.loads(path.with_name("llm-usage.jsonl").read_text())
-            self.assertEqual(row["input_tokens"], 12000)
-            self.assertNotIn("cached_tokens", row)
-
-    def test_usage_history_appends_counts_and_preserves_unknown_without_messages(self):
-        import tempfile
-        from pathlib import Path
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory)/'completion.json'
-            result = dict(choices=[dict(finish_reason='stop',
-                                      message=dict(content='private reply sentinel'))],
-                          transport='native', provider_stop='completed',
-                          usage=dict(input_tokens=12000,
-                                     input_tokens_details=dict(cached_tokens=10240),
-                                     output_tokens=40))
-            with mock.patch.dict(os.environ, {'METTACLAW_LLM_COMPLETION_PATH': str(path)}):
-                synthetic_llm._completion_metadata(result)
-                result['usage'] = {}
-                synthetic_llm._completion_metadata(result)
-            log = path.with_name('llm-usage.jsonl')
-            rows = [json.loads(line) for line in log.read_text().splitlines()]
-            self.assertEqual(len(rows), 2)
-            self.assertEqual((rows[0]['input_tokens'], rows[0]['cached_tokens'], rows[0]['output_tokens']),
-                             (12000, 10240, 40))
-            self.assertAlmostEqual(rows[0]['fraction'], 10240/12000)
-            self.assertEqual(rows[1]['status'], 'unknown')
-            self.assertNotIn('cached_tokens', rows[1])
-            self.assertNotIn('private reply sentinel', log.read_text())
-            self.assertEqual(log.stat().st_mode & 0o777, 0o600)
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
