@@ -194,9 +194,27 @@ class NativeTurnHealthRecord(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout[-3000:] + result.stderr[-3000:])
         return result
 
+    @staticmethod
+    def pacing(transient, streak, retry, status, blocked, base, cap):
+        """The pacing oracle: the retired Python pacer, a pure function.
+
+        A transient failure backs off from the base, doubling up to the cap; any
+        other failure still waits the base. The provider's retry-after replaces
+        that; a deterministic rejection waits at least the cap; a retained block
+        waits 0. Answers the wait and the next transient streak.
+        """
+        streak = streak + 1 if transient else 0
+        wait = min(cap, base * (2 ** min(streak - 1, 20))) if transient and base else base
+        if retry >= 0:
+            wait = max(0, float(retry))
+        if 400 <= status < 500 and status not in (408, 409, 425, 429):
+            wait = max(wait, cap)
+        if blocked:
+            wait = 0
+        return wait, streak
+
     def test_pacing_is_the_same_function(self):
-        """health:failure-wait against synthetic_llm.pacing over a grid of facts."""
-        import synthetic_llm
+        """health:failure-wait against the pacing oracle over a grid of facts."""
         grid = [(transient, streak, retry, status, blocked, base, cap)
                 for transient in (False, True) for streak in (0, 1, 5, 25)
                 for retry in (-1.0, 0.0, 2.5) for status in (0, 400, 404, 408, 429, 503)
@@ -212,9 +230,7 @@ class NativeTurnHealthRecord(unittest.TestCase):
                 native[int(index)] = (float(wait), int(streak))
         self.assertEqual(len(native), len(grid))
         for index, (transient, streak, retry, status, blocked, base, cap) in enumerate(grid):
-            with mock.patch.dict(os.environ, {"SYNTHETIC_EMPTY_BACKOFF": repr(base),
-                                              "SYNTHETIC_EMPTY_BACKOFF_CAP": repr(cap)}):
-                wait, following = synthetic_llm.pacing(transient, streak, retry, status, blocked)
+            wait, following = self.pacing(transient, streak, retry, status, blocked, base, cap)
             self.assertEqual(native[index], (float(wait), following), grid[index])
 
     def test_retry_wait_is_the_same_function(self):

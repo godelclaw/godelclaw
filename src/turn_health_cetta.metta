@@ -248,7 +248,7 @@
 
 ; The configured backoff in seconds, never below 0: SYNTHETIC_EMPTY_BACKOFF
 ; (15) and SYNTHETIC_EMPTY_BACKOFF_CAP (300). Text that is not a number keeps
-; the default, as synthetic_llm._float_env does.
+; the default.
 (= (health:env-seconds $name $default)
    (let $text (system:getenv-or-default $name "")
      (if (== $text "") $default
@@ -292,9 +292,11 @@
 ; A real answer ends the streak.
 (= (health:answered) (health:set-streak 0))
 
-; A failed turn the host classified, as synthetic_llm.failure_facts gives
-; it: the native owner paces it, records it, fails the phase and reports it,
-; then answers the empty command list. Any other answer passes through.
+; A failed turn's facts, ("failed" code status transient retry blocked
+; preparation), as a provider call's failure (src/llm_accounting_cetta.metta)
+; or the host (synthetic_llm.failure_facts) gives them: the native owner paces
+; it, records it, fails the phase and reports it, then answers the empty
+; command list. Any other answer passes through.
 (= (health:paced $answer)
    (case $answer
      ((("failed" $code $status $transient $retry $blocked $preparation)

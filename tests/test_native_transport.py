@@ -86,44 +86,5 @@ class NativeTransportTests(unittest.TestCase):
             self.assertIn('FOREIGN_ERROR_IGNORED', out)
         self.assertEqual(self.peer.requests, [])
 
-    def test_unclassified_failure_does_not_invent_a_timeout(self):
-        fixture = self.directory / 'unknown_failure.py'
-        fixture.write_text('''from types import SimpleNamespace
-import native_llm_host
-def check():
-    plan = SimpleNamespace(kind="structured", ready="false", provider="synthetic")
-    try:
-        native_llm_host.failed(plan, "c", "transport-error", 0)
-    except RuntimeError as error:
-        return str(error)
-    raise AssertionError("expected the failure boundary")
-''')
-        out = self.run_guest('!(import! &self %s)\n!(println! (DIAG (py-call (unknown_failure.check))))\n'
-                             % json.dumps(str(fixture)))
-        self.assertIn('native provider failed: OSError', out)
-        self.assertNotIn('TimeoutError', out + self.last_stderr)
-        self.assertEqual(self.peer.requests, [])
-
-    def test_inconsistent_or_malformed_diagnostics_do_not_break_failure_settlement(self):
-        fixture = self.directory / 'diagnostic_control.py'
-        fixture.write_text('''from types import SimpleNamespace
-import native_llm_host as host
-def check():
-    for kind, code in [("timeout",7), ("transport",28), ("transport",True),
-                       ("transport",-1), ("transport",7.5), ("secret",7)]:
-        plan=SimpleNamespace()
-        assert host.transport_failure(plan, kind, code) == 0
-        assert not hasattr(plan,"error")
-    for kind, code, error in [("timeout",28,TimeoutError),("transport",7,OSError)]:
-        plan=SimpleNamespace()
-        assert host.transport_failure(plan,kind,code) == 1
-        assert type(plan.error) is error
-    return "DIAGNOSTIC_CONTROLS_OK"
-''')
-        out = self.run_guest('!(import! &self %s)\n!(println! (DIAG (py-call (diagnostic_control.check))))\n'
-                             % json.dumps(str(fixture)))
-        self.assertIn('DIAGNOSTIC_CONTROLS_OK', out)
-
-
 if __name__ == '__main__':
     unittest.main()

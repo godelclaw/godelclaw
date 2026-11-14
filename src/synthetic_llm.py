@@ -9,7 +9,6 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-import cognitive_health
 
 
 def _open_connection(parts, timeout):
@@ -63,104 +62,22 @@ def _request_json(request, timeout):
         connection.close()
 
 
-def _float_env(name, default, minimum):
-    try:
-        value = float(os.environ.get(name, default))
-    except (TypeError, ValueError):
-        return default
-    return max(value, minimum)
-
-
-_consecutive_empty = 0
-
-
-def _note_answered():
-    """A real answer clears the failure streak."""
-    global _consecutive_empty
-    _consecutive_empty = 0
-
-
-def retry_after_seconds(headers):
-    if not headers:
-        return None
-    value = headers.get("retry-after")
-    try:
-        return max(0.0, float(value))
-    except (TypeError, ValueError):
-        try:
-            from email.utils import parsedate_to_datetime
-            return max(0.0, parsedate_to_datetime(value).timestamp() - time.time())
-        except (TypeError, ValueError, AttributeError, OverflowError):
-            return None
-
-
-def _rejected_status(status):
-    """A client error the provider would return again for the same request.
-    Timeouts, conflicts, too-early and rate limits can pass on a later try."""
-    return isinstance(status, int) and 400 <= status < 500 and status not in (408, 409, 425, 429)
-
-
 def failure_facts(reason):
-    """Classify a failed turn for its pacer, without exception text.
-
-    ("failed", code, status, transient, retry, blocked, preparation): the
-    failure code, the HTTP status (0 for none), whether a later try can pass,
-    the provider's retry-after in seconds (-1 for none), whether a retained
-    rejection blocks retries, and whether context preparation withheld the
-    turn. The native owner paces these (src/turn_health_cetta.metta).
+    """Classify a turn that failed outside its provider call, for the native
+    pacer (src/turn_health_cetta.metta), without exception text:
+    ("failed", code, 0, False, -1.0, blocked, preparation). Such a failure (an
+    output the command contract refused, an empty answer, a duplicate plan, an
+    unavailable route, a withheld preparation) has no HTTP status, is not
+    transient and carries no retry-after; whether a retained rejection blocks
+    retries, and whether context preparation withheld the turn, are named.
+    A provider call's own failure is classified natively
+    (src/llm_accounting_cetta.metta).
     """
-    status = getattr(reason, "code", getattr(reason, "status", None))
-    transient = (isinstance(reason, (TimeoutError, ConnectionError, urllib.error.URLError))
-                 and not isinstance(reason, urllib.error.HTTPError)) or status == 429 or (isinstance(status, int) and status >= 500)
-    retry = getattr(reason, "retry_after", None)
-    retry = retry if retry is not None else retry_after_seconds(getattr(reason, "headers", None))
     import admission_frontier
-    code = admission_frontier.failure_code(reason)
-    if _rejected_status(status):
-        code = "provider-rejected-%d" % status
     import provider_rejection
-    return ("failed", code, status if isinstance(status, int) and not isinstance(status, bool) else 0,
-            bool(transient), -1.0 if retry is None else max(0.0, float(retry)),
+    return ("failed", admission_frontier.failure_code(reason), 0, False, -1.0,
             bool(provider_rejection.blocked()),
             isinstance(reason, admission_frontier.ContextPreparationFailure))
-
-
-def pacing(transient, streak, retry, status, blocked):
-    """The wait of a failed turn and the next transient streak: a pure function.
-
-    A transient failure backs off from the base, doubling up to the cap; any
-    other failure still waits the base, since zero delay turns one
-    deterministic fault into an unbounded model/ledger loop. The provider's
-    retry-after replaces that; a deterministic rejection waits at least the
-    cap; a retained block waits 0. The native pacer is the same function.
-    """
-    streak = streak + 1 if transient else 0
-    base = _float_env("SYNTHETIC_EMPTY_BACKOFF", 15.0, 0.0)
-    cap = _float_env("SYNTHETIC_EMPTY_BACKOFF_CAP", 300.0, 0.0)
-    wait = (min(cap, base * (2 ** min(streak - 1, 20)))
-            if transient and base else base)
-    if retry >= 0:
-        wait = max(0, float(retry))
-    if _rejected_status(status):
-        wait = max(wait, cap)
-    if blocked:
-        wait = 0
-    return wait, streak
-
-
-def _empty_action(reason):
-    """Pace and record a failed turn of the Python transport."""
-    global _consecutive_empty
-    _, code, status, transient, retry, blocked, preparation = failure_facts(reason)
-    wait, _consecutive_empty = pacing(transient, _consecutive_empty, retry, status, blocked)
-    cognitive_health.turn_failed(code, retry_after=wait)
-    # Exception messages may contain URLs, headers or response bodies.
-    label = ("[context] preparation withheld: " if preparation
-             else "[synthetic_llm] failed provider turn: ")
-    print(label + code +
-          ("; awaiting corrective input or configuration" if blocked else f"; retry in {wait:.0f}s"),
-          file=sys.stderr)
-    return "()"
 
 
 # --- provider routing --------------------------------------------------------

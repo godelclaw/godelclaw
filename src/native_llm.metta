@@ -76,11 +76,11 @@
 (: llm:owner (-> %Undefined% %Undefined%))
 (= (llm:owner $plan)
    (case $plan (((PreparedProviderCallV1 $owner $transport) $owner)
-                ((RefusedProviderCallV1 $host) $host))))
+                ((RefusedProviderCallV1 $host $refusal) $host))))
 (= (llm:plan-ready $plan)
    (case $plan
      (((PreparedProviderCallV1 $owner $transport) (call:ready? $owner))
-      ((RefusedProviderCallV1 $host) False)
+      ((RefusedProviderCallV1 $host $refusal) False)
       ($owner (call:ready? $owner)))))
 
 ; A refused preparation never claims, admits or submits; it settles as the
@@ -89,16 +89,18 @@
    (case $plan
      (((PreparedProviderCallV1 $owner $transport)
        (let $state (pcall:begin $owner $transport) (llm:after-submit $owner $state)))
-      ((RefusedProviderCallV1 $host) (llm:refused $host)))))
-(= (llm:refused $host)
-   (health:paced (py-call (native_llm_host.failed $host "unsubmitted" admission-error 0))))
+      ((RefusedProviderCallV1 $host $refusal) (llm:refused $refusal)))))
+; A refused preparation settles as an unsent call's failure, from its seed's
+; facts (src/llm_accounting_cetta.metta).
+(= (llm:refused (CallRefusalV1 $facts $cause))
+   (account:refused (pcall:fact $facts "kind") (pcall:fact $facts "purpose") (pcall:fact $facts "provider") $cause))
 
 ; Programs may retain this owned pending value, poll it later, or wait for a
 ; bounded interval. A soft wait returns the same call; it never cancels it.
 (= (llm:begin $plan)
    (case $plan
      (((PreparedProviderCallV1 $owner $transport) (pcall:begin $owner $transport))
-      ((RefusedProviderCallV1 $host) (llm:v1:failed unsubmitted unsubmitted admission-error not-started)))))
+      ((RefusedProviderCallV1 $host $refusal) (llm:v1:failed unsubmitted unsubmitted admission-error not-started)))))
 
 (: llm:network-ready (-> Atom Atom Atom Atom Atom Atom Atom Atom Atom Atom %Undefined%))
 (= (llm:network-ready $plan $epoch $correlation $protocol $url $headers $wire $timeout $cap
@@ -127,7 +129,7 @@
 (= (llm:after-submit $plan $state)
    (case $plan
      (((PreparedProviderCallV1 $owner $transport) (llm:after-owned $owner $state))
-      ((RefusedProviderCallV1 $host) (llm:refused $host))
+      ((RefusedProviderCallV1 $host $refusal) (llm:refused $refusal))
       ($owner (llm:after-owned $owner $state)))))
 (: llm:after-owned (-> Atom Atom %Undefined%))
 (= (llm:after-owned $plan $state)
@@ -151,7 +153,7 @@
 (= (llm:wait-once $plan $state $milliseconds)
    (case $plan
      (((PreparedProviderCallV1 $owner $transport) (llm:wait-owned $owner $state $milliseconds))
-      ((RefusedProviderCallV1 $host) $state)
+      ((RefusedProviderCallV1 $host $refusal) $state)
       ($owner (llm:wait-owned $owner $state $milliseconds)))))
 (: llm:wait-owned (-> Atom Atom Number %Undefined%))
 (= (llm:wait-owned $plan $state $milliseconds)
@@ -189,22 +191,30 @@
          (if (and (>= $status 200) (< $status 300))
            (llm:decode-body $plan $epoch $correlation $protocol $body)
            ; Keep the provider's explanation, as Codex shows it.
-           (let $_ (py-call (native_llm_host.provider_error (call:host $plan) $body))
+           (let $_ (call:note-stated $plan (py-call (native_llm_host.stated_error $body)))
              (llm:v1:failed $epoch $correlation (http-status $status) response-received)))
          $state))
       ; The answer reached the engine, which refused to keep it: it is named,
       ; never a transport error with no status.
       ((io:event $received (NativeHttpRefusedV1 $reason $bound))
        (if (== $id $received)
-         (let $_ (py-call (native_llm_host.response_refused (call:host $plan) $reason $bound))
+         (let $_ (llm:note-refused $plan $reason $bound)
            (llm:v1:failed $epoch $correlation $reason response-received))
          $state))
       ((io:event $received (NativeHttpFailureV1 $kind $code))
        (if (== $id $received)
-         (let $_ (py-call (native_llm_host.transport_failure (call:host $plan) $kind $code))
+         (let $_ (llm:note-transport $plan $kind $code)
            (llm:v1:failed $epoch $correlation transport-error remote-outcome-unknown))
          $state))
       ($other (llm:v1:failed $epoch $correlation transport-error remote-outcome-unknown)))))
+
+; What the engine said of a failed exchange is kept with the call, inert
+; (src/call_failure_cetta.metta): anything it does not name leaves the
+; failure's kind to name it.
+(= (llm:note-refused $plan $reason $bound)
+   (let $cause (failure:refused-cause $reason $bound) (if (== $cause none) True (call:note-cause $plan $cause))))
+(= (llm:note-transport $plan $kind $code)
+   (let $cause (failure:transport-cause $kind $code) (if (== $cause none) True (call:note-cause $plan $cause))))
 
 (: llm:decode-body (-> Atom Atom Atom Atom Atom %Undefined%))
 (= (llm:decode-body $plan $epoch $correlation $protocol $body)

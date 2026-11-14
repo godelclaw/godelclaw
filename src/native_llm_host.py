@@ -16,7 +16,6 @@ import uuid
 # Standalone pinned-core runners need not configure the framework's PYTHONPATH.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cognitive_health
-import llm_policy
 import synthetic_llm
 import model_commentary
 import stream_sink
@@ -104,11 +103,6 @@ def rejection_hold():
     return "repair" if provider_rejection.repair_pending() else "blocked"
 
 
-def correction_context():
-    import provider_rejection
-    return provider_rejection.context()
-
-
 def coding_session():
     """Coding scopes outlive the agent process and have their own stop/resume.
 
@@ -160,6 +154,11 @@ def _call_facts(plan):
     facts.update(ready=True, visible=plan.native_visible, maximum=plan.max_output,
                  purpose=purpose, origin=plan.call_origin,
                  commentary=(plan.kind, purpose) == ("command", "turn") and model_commentary.enabled())
+    if (plan.kind, purpose) == ("command", "turn"):
+        import provider_rejection
+        # A turn's corrective state when it was prepared, which a rejection
+        # retains (native_llm_host.rejected); opaque to the native owner.
+        facts["correction"] = json.dumps(provider_rejection.context())
     return facts
 
 
@@ -184,12 +183,11 @@ def _host_plan(kind, purpose, selected, tokens, **fields):
     """One call's host handle: waits, scope, guard and origin. No request bytes."""
     import strategy_host
     settings = wait_settings()
-    plan = SimpleNamespace(kind=kind, encoding="default", ready="preparing", native_ledger=True,
+    plan = SimpleNamespace(kind=kind, encoding="default", native_ledger=True,
         max_output=int(tokens), selected_model=str(selected), sent=False,
         activity=call_scope(), lane=call_lane(),
         guard=strategy_host.guard() if strategy_host.enabled() else None,
         call_origin=strategy_host.accounting_origin(),
-        correction_context=correction_context() if (kind, purpose) == ("command", "turn") else None,
         timeout=settings["hard"], connect=settings["connect"], first=settings["first"],
         idle=settings["idle"], soft=settings["soft"], **fields)
     if purpose != "turn":
@@ -204,11 +202,14 @@ def _host_plan(kind, purpose, selected, tokens, **fields):
 
 
 def _refused_seed(kind, purpose, error, provider):
-    plan = SimpleNamespace(kind=kind, encoding="default", ready="false", error=error,
+    """A seed that cannot make a call: its facts name the error class that
+    refused it, and the call it was for (src/provider_call_cetta.metta)."""
+    plan = SimpleNamespace(kind=kind, encoding="default",
                            native_ledger=True, provider=provider, correlation="unsubmitted", sent=False)
     if purpose != "turn":
         plan.purpose = purpose
-    return plan, '{"ready":false}'
+    return plan, json.dumps(dict(ready=False, kind=kind, purpose=purpose, provider=provider,
+                                 error=type(error).__name__))
 
 
 # Each native call is one kind (command or structured) for one ledger purpose.
@@ -285,23 +286,6 @@ def subscription_seed(selected, tokens, kind, purpose, cap):
     return plan, json.dumps(facts, ensure_ascii=False)
 
 
-def native_preparation_failed(plan, reason):
-    if plan.ready == "preparing":
-        plan.error, plan.ready = ValueError(str(reason)), "false"
-        plan.preparation_refusal = str(reason)
-    return plan
-
-
-def policy_rejected(plan, reason, retry=-1):
-    code = str(reason)
-    if code in ("provider-cooldown", "native-call-capacity"):
-        plan.error = llm_policy.AdmissionDenied(code, float(retry))
-    elif not getattr(plan, "error", None):
-        plan.error = RuntimeError("native provider accounting failed")
-    plan.ready = "false"
-    return "false"
-
-
 def accounting_observation_error(plan, stage):
     # A progress write is not submission authority. Keep the owned HTTP call
     # attached; terminal usage must still commit before any commands return.
@@ -336,24 +320,8 @@ def completion_wait(plan, attempt):
     return 1
 
 
-def completion_conflict(plan, sent=False, elapsed_ms=0, deadline_ms=0):
-    plan.error = CompletionConflict("local completion receipt conflict; provider request not replayed")
-    return failed(plan, plan.correlation, "local-completion-conflict", 0, -1, sent, elapsed_ms, deadline_ms)
-
-
 def _compaction(plan):
     return getattr(plan, "purpose", None) == "compaction"
-
-
-def compaction_failure_result(plan, path):
-    """Preserve maintenance error metadata without passing Error as a value."""
-    failure = getattr(plan, "compaction_failure", dict(
-        retryable=False, retry_after=-1, reason="local-provider-failure"))
-    temporary = str(path) + ".tmp"
-    with open(temporary, "w", encoding="utf-8") as stream:
-        json.dump({"compaction_failure": failure}, stream)
-    os.replace(temporary, str(path))
-    return 1
 
 
 def wait_settings():
@@ -424,7 +392,6 @@ def finish(plan, encoded, decision="none", program="", code=""):
         content = helper.complete_command_prefix(content or "")
     if not isinstance(content, str) or not content.strip():
         return synthetic_llm.failure_facts(synthetic_llm.EmptyResponse())
-    synthetic_llm._note_answered()
     return ("completed", content, len(content.encode()))
 
 
@@ -435,127 +402,33 @@ def duplicate_plan(plan):
     raise RuntimeError("duplicate native plan")
 
 
-def provider_error(plan, body):
+def stated_error(body):
     """The provider's own code and message for a rejected request, as Codex
-    shows them. Request bytes are never logged; long bodies are cut."""
+    shows them, sanitized; the native owner keeps them with its call. Request
+    bytes are never read; long bodies are cut."""
     import provider_rejection
-    plan.provider_error = provider_rejection.error_fields(body)
+    return provider_rejection.error_fields(body)
+
+
+def rejected(status, code, message, correction):
+    """Retain a command turn's deterministic rejection with the corrective
+    state its plan captured (a seed fact, as JSON)."""
+    import provider_rejection
+    provider_rejection.record(int(status), str(code), str(message),
+                              json.loads(str(correction)) if str(correction) else None)
     return 1
 
 
-def transport_failure(plan, kind, code):
-    """Retain an inert native observation, never its URL or error text.
-
-    Diagnosis is best effort: malformed metadata cannot prevent the existing
-    failure settlement. The native classifier supplies the category; this
-    boundary rejects a category inconsistent with the native timeout code.
-    """
-    kind = str(kind)
-    if (type(code) is not int or not 0 < code <= 65535
-            or kind not in ("timeout", "transport")
-            or (kind == "timeout") != (code == 28)):
-        return 0
-    plan.native_transport_code = code
-    plan.native_transport_kind = kind
-    error_type = TimeoutError if kind == "timeout" else OSError
-    plan.error = error_type("native HTTP transport failure")
-    return 1
-
-
-class ResponseRefused(RuntimeError):
-    """The provider answered; the engine refused to keep the answer."""
-
-    def __init__(self, reason):
-        super().__init__(reason)
-        self.reason_code = reason
-
-
-REFUSED_RESPONSES = ("response-too-large", "response-budget-exceeded",
-                     "non-text-response", "credential-in-response")
-
-
-def response_refused(plan, reason, bound):
-    """Name a received body the engine refused, with the bound it passed."""
-    reason = str(reason)
-    if reason not in REFUSED_RESPONSES:
-        return 0
-    plan.error = ResponseRefused(reason)
-    if type(bound) is int and bound > 0:
-        plan.native_response_bound = bound
-    return 1
-
-
-def _record_failure(plan, kind, status, sent, elapsed, deadline):
-    """Keep diagnostic categories and the provider's stated reason, without
-    logging request or response bytes. The native owner supplies whether the
-    call was sent, the milliseconds it waited and its deadline."""
-    known = {"admission-error", "submit-error", "transport-error", "decode-error",
-             "http-status", "correlation-error", "duplicate-completion",
-             "invalid-phase", "retired-handle", "unfinished-provider-response",
-             "refused-tool-call", "incomplete-stream", "ownership-error", *REFUSED_RESPONSES}
-    code = str(kind)
-    code = code if code in known else "provider-error"
-    provider = getattr(plan, "provider", "unknown")
-    if provider not in ("synthetic", "anthropic", "openai", "kimi"):
-        provider = "unknown"
-    status = int(status)
-    status = status if 100 <= status <= 599 else 0
-    elapsed, deadline = max(0, int(elapsed)), int(deadline)
-    sent = "true" if sent is True or str(sent).lower() == "true" else "false"
-    import admission_frontier
-    error = getattr(plan, "error", None)
-    reason = error.reason if isinstance(error, llm_policy.AdmissionDenied) else admission_frontier.failure_code(error)
-    detail = "; reason=" + reason if (reason in admission_frontier.DENIAL_CODES or
-                                     reason == "provider-outcome-unknown") else ""
-    stated_code, stated = getattr(plan, "provider_error", ("", ""))
-    detail += ("; code=" + stated_code if stated_code else "") + ("; message=" + stated if stated else "")
-    native_code = getattr(plan, "native_transport_code", None)
-    native_kind = getattr(plan, "native_transport_kind", None)
-    if type(native_code) is int and 0 < native_code <= 65535 and native_kind in ("timeout", "transport"):
-        detail += f"; transport_code={native_code}; transport_kind={native_kind}"
-    bound = getattr(plan, "native_response_bound", None)
-    if type(bound) is int and bound > 0:
-        detail += f"; response_bound={bound}"
-    # A refused preparation is named by its code; any other reason may quote
-    # the request and stays out of the log.
-    refusal = getattr(plan, "preparation_refusal", "")
-    if 0 < len(refusal) <= 64 and all(c.isascii() and (c.isalnum() or c == "-") for c in refusal):
-        detail += "; preparation=" + refusal
-    print(f"[native_llm] failed request: {code}; provider={provider}; "
-          f"status={status}; sent={sent}; elapsed_ms={elapsed}; deadline_ms={deadline}{detail}",
-          file=sys.stderr)
-
-
-def failed(plan, correlation, kind, status=0, retry_after=-1, sent=False, elapsed_ms=0, deadline_ms=0):
-    """Report a failed call; retry_after is the owner's (-1 for none). An
-    unsubmitted call was not sent, waited 0 ms and has no deadline."""
-    if float(retry_after) >= 0:
-        plan.retry_after = float(retry_after)
-    _record_failure(plan, kind, status, sent, elapsed_ms, deadline_ms)
-    error = getattr(plan, "error", OSError(str(kind)) if str(kind) == "transport-error" else RuntimeError(str(kind)))
-    error.status = int(status) or None
-    if getattr(plan, "retry_after", None) is not None:
-        error.retry_after = plan.retry_after
-    if _compaction(plan):
-        # A received transient HTTP error is retryable. An uncertain remote
-        # outcome stays accounted and is not automatically submitted again.
-        status_code = int(status)
-        plan.compaction_failure = dict(
-            retryable=(status_code == 429 or status_code >= 500 or
-                       isinstance(error, llm_policy.AdmissionDenied) and error.retry_after > 0),
-            retry_after=getattr(error, "retry_after", -1), reason="provider-failure")
-        raise RuntimeError("context compaction provider failed: " + type(error).__name__) from None
-    if plan.kind == "command":
-        import provider_rejection
-        code, message = getattr(plan, "provider_error", ("", ""))
-        provider_rejection.record(int(status), code, message, getattr(plan, "correction_context", None))
-        return synthetic_llm.failure_facts(error)
-    synthetic_llm._empty_action(error)
+def structured_failed(status, error_type):
+    """End a structured call's caller with the error its failure names. The
+    native owner has reported and paced it, but has no raise its caller's
+    catch could catch. A mode runtime first waits out the pacing at its gate."""
     if os.environ.get("METTACLAW_MODE_RUNTIME"):
         import runtime_host
         wait = cognitive_health.retry_wait_seconds()
         if wait:
             runtime_host.sleep(wait)
-    if synthetic_llm._rejected_status(error.status):
-        raise RuntimeError("native provider rejected the request: HTTP %d" % error.status) from None
-    raise RuntimeError("native provider failed: " + type(error).__name__) from None
+    status = int(status)
+    if 400 <= status < 500 and status not in (408, 409, 425, 429):
+        raise RuntimeError("native provider rejected the request: HTTP %d" % status) from None
+    raise RuntimeError("native provider failed: " + str(error_type)) from None

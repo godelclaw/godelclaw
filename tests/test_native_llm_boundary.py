@@ -217,9 +217,6 @@ def scope(name, lane):
     os.environ["METTACLAW_ACTIVITY_CALL_SCOPE"] = str(name)
     os.environ["METTACLAW_ACTIVITY_CALL_LANE"] = str(lane)
     return 1
-def error(plan):
-    error = getattr(plan, "error", None)
-    return type(error).__name__ + ": " + str(error)
 ''')
         self.env.update(METTACLAW_ACTIVITY_CALL_CAPACITY='2', METTACLAW_ACTIVITY_INTERACTIVE_RESERVE='1')
         for kind in ('native',):
@@ -233,10 +230,10 @@ def error(plan):
                     '        ($_ (py-call (capacity_fixture.scope "contender" "background")))\n'
                     '        ($other (pcall:command-plan "fixture-model" 42 "low" "input"))\n'
                     '        ($refused (llm:run $other)))\n'
-                    '   (progn (println! (CAPACITY (py-call (capacity_fixture.error (call:host (llm:owner $other))))))\n'
-                    '          (println! (REPLAY (llm:begin $owner)))))\n')
-                self.assertIn('AdmissionDenied: native-call-capacity', out)
+                    '   (println! (REPLAY (llm:begin $owner))))\n')
+                # The refusal is an admission denial, reported and paced natively.
                 self.assertIn('; reason=native-call-capacity', self.last_stderr)
+                self.assertIn('failed provider turn: AdmissionDenied;', self.last_stderr)
                 self.assertIn('(REPLAY (llm:v1:failed duplicate duplicate duplicate-plan not-started))', out)
                 self.assertEqual(self.column('calls', 'activity', 'state'), [('holder', 'claimed')])
                 self.assertEqual(sorted(row['status'] for row in self.records('requests')), ['failed', 'pending'])
@@ -702,27 +699,6 @@ def scope(name, lane):
         health = json.loads((self.directory / "health.json").read_text())
         self.assertEqual(health["last_outcome"], "completed")
 
-    def test_failure_diagnostics_do_not_print_unknown_payloads(self):
-        fixture = self.directory / "diagnostic_fixture.py"
-        fixture.write_text('from types import SimpleNamespace\nimport native_llm_host\n'
-            'def probe():\n'
-            '    native_llm_host._record_failure(SimpleNamespace(provider="fixture-secret"), '
-            '"fixture-secret https://private.invalid", 0, False, 0, 0)\n'
-            '    return True\n')
-        self.run_guest(f'!(import! &self "{fixture}")\n!(py-call (diagnostic_fixture.probe))\n')
-        self.assertIn("failed request: provider-error; provider=unknown", self.last_stderr)
-        self.assertNotIn("private.invalid", self.last_stderr)
-
-    def test_kimi_failure_diagnostics_keep_provider_identity(self):
-        fixture = self.directory / "kimi_diagnostic_fixture.py"
-        fixture.write_text('from types import SimpleNamespace\nimport native_llm_host\n'
-            'def probe():\n'
-            '    native_llm_host._record_failure(SimpleNamespace(provider="kimi"), '
-            '"transport-error", 0, True, 0, 0)\n'
-            '    return True\n')
-        self.run_guest(f'!(import! &self "{fixture}")\n!(py-call (kimi_diagnostic_fixture.probe))\n')
-        self.assertIn("failed request: transport-error; provider=kimi", self.last_stderr)
-
     def test_credential_scope_rejects_different_origin_and_redirects(self):
         self.env.update(CETTA_IO_AUTH_FIXTURE_URL_PREFIX=self.env["SYNTHETIC_BASE_URL"]+"/",
             CETTA_IO_AUTH_FIXTURE_HEADER="Authorization", CETTA_IO_AUTH_FIXTURE_ENV="SYNTHETIC_API_KEY",
@@ -746,11 +722,8 @@ class ProviderErrorTests(unittest.TestCase):
     """Retain bounded structured reasons without logging arbitrary bodies."""
 
     def reason(self, body):
-        import types
         import native_llm_host
-        plan = types.SimpleNamespace()
-        self.assertEqual(native_llm_host.provider_error(plan, body), 1)
-        return plan.provider_error
+        return native_llm_host.stated_error(body)
 
     def test_openai_anthropic_and_chatgpt_shapes(self):
         self.assertEqual(self.reason(json.dumps({"error": {"message": "too long", "type": "invalid_request_error",
@@ -767,6 +740,46 @@ class ProviderErrorTests(unittest.TestCase):
         code, message = self.reason("x" * 5000)
         self.assertEqual(message, "Non-JSON provider rejection")
         self.assertEqual(self.reason(""), ("", "Non-JSON provider rejection"))
+
+
+class FailureSettlementHostTests(unittest.TestCase):
+    """The host's part of a failure the native owner reported and paced."""
+
+    def test_structured_failure_ends_its_caller_with_its_class(self):
+        import re
+        from unittest import mock
+        import native_llm_host
+        cases = ((400, "RuntimeError", "native provider rejected the request: HTTP 400"),
+                 (422, "OSError", "native provider rejected the request: HTTP 422"),
+                 (408, "TimeoutError", "native provider failed: TimeoutError"),
+                 (429, "RuntimeError", "native provider failed: RuntimeError"),
+                 (503, "RuntimeError", "native provider failed: RuntimeError"),
+                 (0, "OSError", "native provider failed: OSError"))
+        for status, error_type, message in cases:
+            with self.subTest(status=status), mock.patch.dict(os.environ, {"METTACLAW_MODE_RUNTIME": ""}), \
+                 self.assertRaisesRegex(RuntimeError, "^%s$" % re.escape(message)):
+                native_llm_host.structured_failed(status, error_type)
+
+    def test_a_mode_runtime_waits_out_the_pacing_at_its_gate(self):
+        from unittest import mock
+        import types
+        import native_llm_host
+        sleeps = []
+        runtime = types.SimpleNamespace(sleep=sleeps.append)
+        with mock.patch.dict(os.environ, {"METTACLAW_MODE_RUNTIME": "fixture-runtime"}), \
+             mock.patch.dict(sys.modules, {"runtime_host": runtime}), \
+             mock.patch.object(native_llm_host.cognitive_health, "retry_wait_seconds", return_value=15), \
+             self.assertRaises(RuntimeError):
+            native_llm_host.structured_failed(0, "OSError")
+        self.assertEqual(sleeps, [15])
+
+    def test_a_rejection_is_retained_with_the_state_its_plan_captured(self):
+        from unittest import mock
+        import native_llm_host
+        captured = {"model": "fixture-model", "operator_input": [1, 1794600000.25, None]}
+        with mock.patch("provider_rejection.record") as record:
+            self.assertEqual(native_llm_host.rejected(400, "invalid_request", "bad field", json.dumps(captured)), 1)
+        record.assert_called_once_with(400, "invalid_request", "bad field", captured)
 
 
 if __name__ == "__main__":

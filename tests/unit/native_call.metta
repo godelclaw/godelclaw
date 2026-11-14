@@ -73,3 +73,29 @@
         ($_ (nt:require no-temporary-left (not (fs:exists (str:concat $path ".tmp")))))
         ($_ (map-atom ($command $compaction $structured) $o (call:release $o))))
    (println! UNIT_NATIVE_CALL_KINDS_OK))
+
+; What its observers saw of a failure stays with the call until its release: a
+; later cause replaces an earlier one, a fallback never does, and the
+; provider's statement is kept beside it.
+!(let* (($owner (call:owner inert-host (kind-facts "f1" "command" "turn") "s"))
+        ($other (call:owner inert-host (kind-facts "f2" "command" "turn") "s"))
+        ($_ (nt:require no-cause-at-first (nt:equal (call:cause $owner) none)))
+        ($_ (nt:require no-statement-at-first (nt:equal (call:stated $owner) (CallStated "" ""))))
+        ($_ (call:note-fallback-cause $owner (CallError "RuntimeError")))
+        ($_ (nt:require fallback-noted-when-none (nt:equal (call:cause $owner) (CallError "RuntimeError"))))
+        ($_ (call:note-cause $owner (CallDenied "provider-cooldown" 30)))
+        ($_ (call:note-fallback-cause $owner (CallError "RuntimeError")))
+        ($_ (nt:require later-cause-replaces-and-fallback-does-not
+              (nt:equal (collapse (call:cause $owner)) ((CallDenied "provider-cooldown" 30)))))
+        ($_ (call:note-stated $owner ("rate_limited" "slow down")))
+        ($_ (call:note-stated $owner ("overloaded_error" "Overloaded")))
+        ($_ (nt:require one-statement-the-last
+              (nt:equal (collapse (call:stated $owner)) ((CallStated "overloaded_error" "Overloaded")))))
+        ($_ (nt:require another-call-unaffected (nt:equal ((call:cause $other) (call:stated $other)) (none (CallStated "" "")))))
+        ($_ (call:release $owner))
+        ($_ (nt:require release-forgets-cause
+              (nt:equal (collapse (match &self (NativeCallCauseV1 "f1" $c) $c)) ())))
+        ($_ (nt:require release-forgets-statement
+              (nt:equal (collapse (match &self (NativeCallStatedV1 "f1" $c $m) $c)) ())))
+        ($_ (call:release $other)))
+   (println! UNIT_NATIVE_CALL_CAUSE_OK))

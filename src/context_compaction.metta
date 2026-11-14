@@ -115,28 +115,18 @@
           ($ready (chatgpt:command-plan-purpose $model $tokens $effort $prompt $ready "compaction")))))
      (let $selected (model:current $model)
        (pcall:command-plan-purpose $selected $tokens $effort $prompt "compaction"))))
+; Every compaction call was prepared for compaction: a provider failure comes
+; back as whether a later try can pass, with its retry-after
+; (src/llm_accounting_cetta.metta).
 (= (context:ask $model $tokens $effort $prompt)
    (let $planned (context:plan $model $tokens $effort $prompt)
      (case $planned
        (((ContextPreparationFailed $_) $planned)
         ($ready
-          ; Every compaction call was prepared for compaction; a failure leaves
-          ; its retry metadata on the host handle.
-          (let* (($owner (call:host (llm:owner $ready)))
-                 ($path (path:join (path:dirname (system:getenv-or-default "METTACLAW_ENGINE_STATE_PATH" "memory/engine")) "compaction-reply.json")))
-            (case (catch (llm:run $ready))
-              (((Error $kind $detail) (context:failed-reply $owner $path))
-               ((Error $detail) (context:failed-reply $owner $path))
-               ((ProviderReplyV1 $reply) (context:validate-summary $reply))
-               ($other (ContextPreparationFailed "context-compaction-provider-failed"))))))))))
-(= (context:failed-reply $plan $path)
-   (let* (($_ (py-call (native_llm_host.compaction_failure_result $plan $path)))
-          ($reply (json-parse (fs:read-text $path)))
-          ($failure (state:json-field $reply "compaction_failure")))
-     (if (== (state:json-field $failure "retryable") (JsonBool True))
-       (ContextTransientFailure (task:string $failure "reason")
-         (str:string->number (task:string $failure "retry_after")))
-       (ContextPreparationFailed "context-compaction-provider-failed"))))
+          (case (catch (llm:run $ready))
+            (((CompactionFailedV1 True $retry) (ContextTransientFailure "provider-failure" $retry))
+             ((ProviderReplyV1 $reply) (context:validate-summary $reply))
+             ($other (ContextPreparationFailed "context-compaction-provider-failed")))))))))
 (= (context:validate-summary $reply)
    (let* (($message (state:json-field $reply "message"))
           ($text (state:json-field $message "content"))

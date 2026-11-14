@@ -25,9 +25,12 @@
           ($_ (nt:require description-not-retained (not (host:flag (py-call (builtins.hasattr $plan "prepared_seal"))))))
           ($_ (call:release $owner))
           (($other $other-text) (owner-test:seed "command" "turn"))
-          ($_ (nt:require wrong-model-never-bound (not (owner-test:bound? (owner-test:bind $other $other-text "other")))))
-          ($_ (nt:require wrong-model-remains-unready
-                (nt:equal (py-call (builtins.getattr $other "ready")) "false")))
+          ($refused (owner-test:bind $other $other-text "other"))
+          ($_ (nt:require wrong-model-never-bound (not (owner-test:bound? $refused))))
+          ; The refusal is the call's own, natively: the host handle is not marked.
+          ($_ (nt:require wrong-model-refused-preparation
+                (case $refused (((RefusedProviderCallV1 $host (CallRefusalV1 $facts (CallPreparation "native-binding-refused"))) True)
+                                ($unexpected False)))))
           ($_ (nt:require wrong-model-has-no-phase
                 (not (call:live? (pcall:fact (preq:parse $other-text) "correlation")))))
           (($coding $coding-text) (owner-test:seed "structured" "coding"))

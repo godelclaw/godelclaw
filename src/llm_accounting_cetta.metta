@@ -10,6 +10,7 @@
 !(import! &self ./display_cetta.metta)
 !(import! &self ./commentary_observer_cetta.metta)
 !(import! &self ./progress_receipt_cetta.metta)
+!(import! &self ./call_failure_cetta.metta)
 
 (: account:ready (-> %Undefined% %Undefined%))
 (= (account:ready $plan) (call:ready? $plan))
@@ -17,9 +18,16 @@
 (: account:metadata (-> %Undefined% %Undefined%))
 (= (account:metadata $plan) (call:policy-metadata $plan))
 (: account:reject (-> %Undefined% %Undefined% %Undefined% %Undefined%))
+; A refused admission or claim: a provider cooldown or a full call capacity is
+; an admission denial with its retry-after; any other refusal is the ledger's
+; accounting failure.
 (= (account:reject $plan $reason $retry)
    (let* (($native (call:refused $plan))
-          ($ignored0 (py-call (native_llm_host.policy_rejected (call:host $plan) $reason $retry)))) False))
+          ($text (lp:text $reason))
+          ($noted (if (or (== $text "provider-cooldown") (== $text "native-call-capacity"))
+                    (call:note-cause $plan (CallDenied $text $retry))
+                    (call:note-fallback-cause $plan (CallError "RuntimeError")))))
+     False))
 (: account:cleanup-unsent (-> %Undefined% %Undefined% %Undefined%))
 (= (account:cleanup-unsent $plan $metadata)
    (let $ignored1 (nl:fail $metadata "submit-error" JsonNull JsonNull
@@ -101,16 +109,14 @@
             ($error (py-call (native_llm_host.accounting_observation_error (call:host $plan) "progress")))))))
       ((False $soft) 1))))
 (: account:failed (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
-; The host reports the failure with the owner's retry-after (-1 for none).
-; A deterministic rejection of a command turn latches the rejection gate first:
-; the host may hold its block in memory only.
-; A failed command turn comes back as its facts, which the native owner paces
-; and records (src/turn_health_cetta.metta). The report names whether the call
-; was sent, how long it waited and its deadline, from the call's own phase.
+; A failed call is reported and settled natively, from its own facts and what
+; its observers saw (account:report). A deterministic rejection of a command
+; turn latches the rejection gate first: the host may hold its block in
+; memory only.
 (= (account:failed $plan $correlation $kind $status)
    (let* (($latched (if (account:rejection? $plan $kind $status) (gate:latch) False))
           ($ended (display:call-final (call:correlation $plan) none (lp:text $kind))))
-     (health:paced (account:failure $plan $correlation $kind $status))))
+     (account:failure $plan $correlation $kind $status)))
 (= (account:rejection? $plan $kind $status)
    (if (== $kind http-status)
      (if (call:command? $plan) (if (call:compaction? $plan) False (gate:invalid-request? $status)) False)
@@ -124,15 +130,52 @@
                       $retry (lp:field $metadata "soft_elapsed" 0) (system:wall-time))
          (((LedgerError $ignored10)
            (let $ignored11 (py-call (native_llm_host.accounting_observation_error (call:host $plan) "failure"))
-             (account:report $plan $correlation $kind $status $seconds)))
-          ($settled (account:report $plan $correlation $kind $status $seconds)))))
-     (account:report $plan $correlation $kind $status -1)))
+             (account:report $plan $kind $status $seconds)))
+          ($settled (account:report $plan $kind $status $seconds)))))
+     (account:report $plan $kind $status -1)))
+; A completion with no matching local receipt: the provider is not asked again.
 (= (account:conflict $plan)
-   (let* (($sent (call:sent? $plan)) ($elapsed (call:elapsed-ms $plan)) ($deadline (call:fact $plan "timeout" 0)))
-     (health:paced (py-call (native_llm_host.completion_conflict (call:host $plan) $sent $elapsed $deadline)))))
-(= (account:report $plan $correlation $kind $status $retry)
-   (let* (($sent (call:sent? $plan)) ($elapsed (call:elapsed-ms $plan)) ($deadline (call:fact $plan "timeout" 0)))
-     (py-call (native_llm_host.failed (call:host $plan) $correlation $kind $status $retry $sent $elapsed $deadline))))
+   (let $noted (call:note-cause $plan CallConflict)
+     (account:report $plan local-completion-conflict 0 -1)))
+; The report names the failure, the provider, whether the call was sent, how
+; long it waited and its deadline, from the call's own phase.
+(= (account:report $plan $kind $status $retry)
+   (let* (($cause (call:cause $plan)) ($stated (call:stated $plan))
+          ($failure (failure:of $cause $kind $status $retry))
+          ($line (failure:line $cause (call:fact $plan "provider" "unknown") $kind $status (call:sent? $plan)
+                               (call:elapsed-ms $plan) (call:fact $plan "timeout" 0) $stated))
+          ($logged (system:write stderr $line)))
+     (account:settle (call:fact $plan "kind" "command") (call:fact $plan "purpose" "turn") $failure $stated
+                     (call:fact $plan "correction" ""))))
+; A preparation the seed or the codec refused never had an owner: its facts
+; are the seed's, and it was not sent.
+(= (account:refused $kind $purpose $provider $cause)
+   (let* (($failure (failure:of $cause admission-error 0 -1))
+          ($line (failure:line $cause $provider admission-error 0 False 0 0 (CallStated "" "")))
+          ($logged (system:write stderr $line)))
+     (account:settle $kind $purpose $failure (CallStated "" "") "")))
+; Settling a failure:
+; - a compaction is maintenance: its caller gets whether a later try can pass
+;   and the retry-after (CompactionFailedV1 retryable retry);
+; - a command turn's deterministic rejection is retained (provider_rejection)
+;   with the corrective state its plan captured; its facts are paced and
+;   recorded natively, and the turn answers the empty command list;
+; - a structured call is paced the same way, and its caller's evaluation ends
+;   with the error its class names (native_llm_host.structured_failed): there
+;   is no native raise that its catch could catch.
+(= (account:settle $kind $purpose (CallFailureV1 $code $type $status $transient $retry) $stated $correction)
+   (if (== $purpose "compaction") (failure:compaction (CallFailureV1 $code $type $status $transient $retry))
+     (let* (($retained (if (and (== $kind "command") (gate:invalid-request? $status))
+                         (let (CallStated $stated-code $stated-message) $stated
+                           (py-call (native_llm_host.rejected $status $stated-code $stated-message $correction)))
+                         False))
+            ($paced (health:paced ("failed" $code $status $transient $retry (failure:blocked) False))))
+       (if (== $kind "command") $paced (py-call (native_llm_host.structured_failed $status $type))))))
+
+; A retained rejection blocks retries; only a possible block asks the host.
+(= (failure:blocked)
+   (if (gate:possible?) (not (host:flag (py-call (native_llm_host.request_allowed)))) False))
+
 ; A command whose output the contract rejected: the ledger records the code
 ; the native classification gave, after the completion it belongs to.
 (: account:note-rejection (-> %Undefined% %Undefined% %Undefined%))
