@@ -47,7 +47,8 @@
    (if (== $n 0) True
      (and (== (scripted:prompt-has $n $text) 1) (iter-stage:each-prompt-has (- $n 1) $text))))
 
-!(let* (($_ (iter-stage:select "first"))
+!(let* (($_ (assertEqual (loop-mode:current) (loop-mode:canonical (system:getenv-or-default "NATIVE_PROBE_MODE" ""))))
+         ($_ (iter-stage:select "first"))
          ($initial (initLoop))
          ($after-first
           (process-step $initial

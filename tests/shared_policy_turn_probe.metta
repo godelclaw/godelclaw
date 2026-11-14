@@ -19,6 +19,8 @@
 (= (probe:policy "coding") coding)
 
 !(let* (($mode (loop-mode:current))
+         ;; The process runs in the mode the runner booted it in.
+         ($_ (assertEqual $mode (loop-mode:canonical (system:getenv-or-default "NATIVE_PROBE_MODE" ""))))
          ($before (initLoop))
          ($after (process-step $before
                    (turnProcess (process-periphery $before))))

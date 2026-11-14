@@ -21,7 +21,8 @@
 (= (probe:returns $feedback) (- (size-atom (str:split "COMMAND_RETURN:" $feedback)) 1))
 (= (probe:has $feedback $text) (case (str:find $feedback $text) (((TextNotFound $missing) False) ($found True))))
 
-!(let* (($initial (initLoop))
+!(let* (($_ (assertEqual (loop-mode:current) (loop-mode:canonical (system:getenv-or-default "NATIVE_PROBE_MODE" ""))))
+         ($initial (initLoop))
          ($after-first
           (process-step $initial
             (turnProcess (process-periphery $initial))))

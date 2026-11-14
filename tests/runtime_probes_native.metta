@@ -47,7 +47,9 @@
           ($_ (if (nt:equal $mode none) True
                 (fs:write (nq:path $world "loop-mode.json") (format-args "{\"mode\": \"{}\"}" ($mode)))))
           ($_ (if (nr:managed? $name) (nr:managed-world $world) True)))
-     (nq:overlay-env (nq:overlay-env (nq:overlay-env $env $changes) $special) (nr:probe-world-settings $name $world))))
+     (nq:overlay-env (nq:overlay-env (nq:overlay-env (nq:overlay-env $env $changes) $special) (nr:probe-world-settings $name $world))
+       ; The probe can check that it runs in the mode it was booted for.
+       (if (nt:equal $mode none) () (("NATIVE_PROBE_MODE" $mode))))))
 ; Settings a probe needs inside its world.
 (= (nr:probe-world-settings $name $world)
    (if (nt:equal $name "tests/strategy_continuation_attempt_probe.metta")
