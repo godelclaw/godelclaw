@@ -1618,6 +1618,36 @@
         "the answered-message check (item 3) waits for the native per-turn strategy state and the Telegram reply target",
         "No paid live canary or 24-hour soak claimed"
       ]
+    },
+    {
+      "id": "engine-roll-26e42e23-outcome-kernel-inactive-he-compiled-admission",
+      "status": "qualified-and-deployed",
+      "engine": {
+        "from": "3a25fe1ac57cb1f2e2d260512e07063aaa99f012",
+        "to": "26e42e23198b84e6505de63ecbe0813ad07c5ff5",
+        "contains": [
+          "an outcome kernel (value, raised and incomplete channels) and its handler library, inactive unless declared; events are sealed values on the compiled paths",
+          "an import no longer fences HE off compiled execution; HE pauses a refused compilation and memoizes return analysis, nested answers included",
+          "library natives skip the dense-tensor name scan; seal holds account for a capsule's payload storage"
+        ]
+      },
+      "runtime_commit": "e4f3d8cd38",
+      "release": "7ff71f08",
+      "gateway_release": "7ff71f08",
+      "checks": {
+        "engine_gate": "bundle flags: the R1 gate (build, prime scope, outcome, Telegram family, system, proc and fs hosts, library spellings), every AI target, all E3 checks including store write faults 9/0 and Telegram idle CPU 0.25%, the outcome kernel suite 560/120/24 with its native test, seal conformance 8/8: 83 steps, 0 failures",
+        "core_profile": "make -k test 647 pass, 0 fail, plus 15 store, service, Telegram and outcome-kernel checks",
+        "native_suites": "24/24 with a native-agent core driver built from the same commit",
+        "python_suite": "1996 tests on both sides; 26 fail on both by exact name; one more failed once on the new bundle, a race in the coding tests fake launcher (the log was read before its line was written): it passes 5/5 on each bundle alone, and the fakes now publish each record whole",
+        "telegram_end_to_end": "passes on the new service, including native document download and multipart upload",
+        "benchmark": "paired provider benchmark: medians -2.0%, -1.2%, +0.9% (small, large, many-blocks), RSS -0.1% to +0.2%, latency budget passed",
+        "bundle_identity": "the bundle cetta, value worker, space service and Telegram service are byte-identical to the binaries the gate built and ran",
+        "live_observation": "All units run the new bundle. A mailed turn to Godel completed normally (request 20:55:39, response 20:56:44). The Telegram services used 10.8% and 9.3% CPU over 180 s at idle, against 9.6% and 8.0% lifetime averages on the previous engine over the five hours before the roll."
+      },
+      "limits": [
+        "No paid live canary or 24-hour soak claimed",
+        "The outcome kernel is not used by the agents"
+      ]
     }
   ],
   "tuning_debt": [
