@@ -1648,6 +1648,37 @@
         "No paid live canary or 24-hour soak claimed",
         "The outcome kernel is not used by the agents"
       ]
+    },
+    {
+      "id": "engine-roll-f6339988-telegram-idle-reads-on-change",
+      "status": "qualified-and-deployed",
+      "engine": {
+        "from": "26e42e23198b84e6505de63ecbe0813ad07c5ff5",
+        "to": "f6339988596456d46b1b56e5a65ea0d81c27b32a",
+        "contains": [
+          "a waiting worker reads the journal again only after it moves; at its deadline it answers with the current position",
+          "a timer tick that found nothing due reads nothing until the journal or its next deadline moves; a finished timer costs one key read",
+          "the record-size check in usage runs once per revision"
+        ]
+      },
+      "runtime_commit": "26fdb55ac0",
+      "release": "a342f0c2",
+      "gateway_release": "a342f0c2",
+      "checks": {
+        "engine_gate": "bundle flags: roll 5's gate on f6339988 (the R1 gate, every AI target, all E3 checks including store write faults 9/0, the outcome kernel suite 560/120/24, seal conformance 8/8, every durable and Telegram target): 83 steps, 0 failures; main suite 653/0, Prime 8/0",
+        "core_profile": "make -k test 647 pass, 0 fail, plus 15 store, service, Telegram and outcome-kernel checks",
+        "idle_test": "Telegram idle CPU V2 (60,000 history rows, 128 finished timers, a poll answered every 3 s, a 10 s agent WAIT): 0.75% in both profiles against a 3% limit; the previous service 10.8%, with only the timer fix 5.1%, with only the wait fix 6.1%",
+        "native_suites": "24/24 with a native-agent core driver built from the same commit",
+        "python_suite": "1996 tests on both sides; 26 fail on both by exact name",
+        "telegram_end_to_end": "passes on the new service, including native document download and multipart upload",
+        "benchmark": "paired provider benchmark: medians -2.8%, -0.9%, +1.2% (small, large, many-blocks), RSS within 0.1%, latency budget passed",
+        "bundle_identity": "the bundle cetta, value worker, space service and Telegram service are byte-identical to the binaries the gate built and ran; only those four and runtime.env differ from the live bundle",
+        "live_observation": "All units run the new bundle. A mailed turn to Godel completed normally (request 00:43:05, response 00:44:03). The Telegram services idle at 0.61% and 0.62% CPU over 120 s, five minutes after start, against about 16% and 12-15% on the previous engine before the roll. Lila's first iteration after the apply exited on a Python call failure during the second gateway restart and systemd restarted her 5 s later, as at rolls 4 and 5."
+      },
+      "limits": [
+        "No paid live canary or 24-hour soak claimed",
+        "Each publication still costs time proportional to the journal; finished work is not yet retired"
+      ]
     }
   ],
   "tuning_debt": [
