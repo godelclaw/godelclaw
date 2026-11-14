@@ -1557,6 +1557,34 @@
         "the first live Telegram file transfer was still pending at the record",
         "No paid live canary or 24-hour soak claimed"
       ]
+    },
+    {
+      "id": "engine-roll-3a25fe1a-stores-fail-closed-linear-journal-open-idle-reads-by-index",
+      "status": "qualified-and-deployed",
+      "engine": {
+        "from": "a3add12db256d6ac8cf1df7530b611cbc64a1486",
+        "to": "3a25fe1ac57cb1f2e2d260512e07063aaa99f012",
+        "contains": [
+          "the opt-in failure-values experiment for HE (inactive unless declared)",
+          "engine-e3: a refused rename is an ordinary failure; services stop with EX_TEMPFAIL on an uncertain store write; linear journal open; idle key reads and watches by index; stop honoured during start-up; shared DAG patterns matched once per pair; builds without Prolog answer the reference functions; durable attach and scoped reads",
+          "the durable-library check exercises rho authority isolation in PeTTa again; the artifact fault check no longer depends on the checkout path length"
+        ]
+      },
+      "runtime_commit": "681466506a",
+      "release": "0ac4ad72",
+      "gateway_release": "0ac4ad72",
+      "checks": {
+        "engine_gate": "bundle flags: make test 653/0, Prime 8/0, prime scope, outcome, Telegram family, E1 checks, LLM suites, every AI target, all E3 checks including store write faults 9/0 and Telegram idle CPU 0.37%; durable-library and db-artifacts pass after their test fixes",
+        "core_profile": "make -k test 647 pass, 0 fail, plus 14 store, service and Telegram checks",
+        "native_suites": "24/24 with a native-agent core driver built from the same commit",
+        "python_suite": "2051 tests on both sides; the same 26 fail on roll4-pin with the new bundle as on main with the live bundle, by exact name",
+        "telegram_end_to_end": "passes on the new service, including native document download and multipart upload",
+        "benchmark": "paired provider benchmark: medians +1.6%, +0.6%, -0.4% (small, large, many-blocks), RSS +0.0-0.2%, latency budget passed",
+        "live_observation": "All units run the new bundle. A mailed turn to Godel completed normally (request 15:16:10, response 15:17:40, commands returned). The Telegram services used 4.3% and 4.8% CPU over 90 s at steady state; before the roll their lifetime averages were 20-24%."
+      },
+      "limits": [
+        "No paid live canary or 24-hour soak claimed"
+      ]
     }
   ],
   "tuning_debt": [
