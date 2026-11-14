@@ -1,7 +1,5 @@
 ;configured at runtime:
 (= (commchannel) (empty))
-(= (TG_BOT_TOKEN) (empty))
-(= (TG_CHAT_ID) (empty))
 
 ;Connect all the channels. (configureChannel) is compiled into
 ;config/channel.metta by initialize.sh from config/local.toml [channel] kind
@@ -11,10 +9,7 @@
    (progn (println! "Initializing channels")
           (configureChannel)
           (if (== (commchannel) telegram)
-              (progn (configure TG_BOT_TOKEN "")
-                     (configure TG_CHAT_ID "")
-                     (let $started (py-call (telegram.start_telegram (TG_BOT_TOKEN) (TG_CHAT_ID)))
-                       (println! (tg:start))))
+              (println! (tg:start))
               ;; IRC and Mattermost connect in a service of their own
               ;; (run.sh chat-channel), which the loop meets in the chat spool.
               (println! (chat:started (commchannel))))))

@@ -97,29 +97,3 @@ def recycle_due():
     configured = os.environ.get("METTACLAW_RECYCLE_BYTES")
     threshold = int(configured) if configured else (bound * 2 // 3 if bound else 0)
     return bool(threshold and account["bytes"] is not None and account["bytes"] >= threshold)
-
-
-def observation(now=None):
-    clock = time.monotonic()
-    supplied_now = now is not None
-    now = time.time() if now is None else float(now)
-    target = path()
-    try:
-        value = json.loads(target.read_text()) if target else {}
-        import llm_policy
-        if not llm_policy._owner_live(value.get("owner", "")):
-            return {"state": "unknown", "age": None, "memory": None}
-        age = max(0, now - float(value["progress_at"]) if supplied_now else clock - float(value["progress_clock"]))
-        account = memory(int(value["pid"]))
-        ceiling = account["high"] or account["max"]
-        if ceiling and account["bytes"] is not None and account["bytes"] > ceiling:
-            state = "memory-pressure"
-        elif float(value.get("wait_until", 0)) >= clock:
-            state = "waiting"
-        elif age > float(os.environ.get("METTACLAW_PROGRESS_STALE_SECONDS", "180")):
-            state = "stalled"
-        else:
-            state = "fresh"
-        return {"state": state, "age": int(age), "memory": account["bytes"], "phase": value["phase"]}
-    except (OSError, ValueError, TypeError, KeyError):
-        return {"state": "unknown", "age": None, "memory": None}

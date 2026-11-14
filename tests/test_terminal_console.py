@@ -65,14 +65,8 @@ def model_ids():
 def model_catalog_status(): return 'fixture'
 def model_in_observed_catalog(name): return None
 ''')
-            counter=base/'activity-count'
-            (fakes/'runtime_health.py').write_text('''
-def activity_report():
-    from pathlib import Path
-    p=Path('''+repr(str(counter))+'''); n=int(p.read_text())+1 if p.exists() else 1
-    p.write_text(str(n));return 'ACTIVITY_'+str(n)
-def report(): return 'fixture health'
-''')
+            fuel=instance/'memory'/'fuel_mode.json';fuel.parent.mkdir()
+            fuel.write_text('{"fuel": "carry"}')
             runner=instance/'run.sh'
             runner.write_text('#!/bin/sh\nexec '+json.dumps(os.environ['CETTA_BIN'])+
                 ' --lang petta --import-mode ancestor-walk '+json.dumps(str(ROOT/'channels/terminal_control_main.metta'))+'\n')
@@ -140,7 +134,7 @@ else:
                 self.fail('missing '+text+'; tail: '+transcript[-1800:].decode(errors='replace')+
                           '; controls: '+detail)
             try:
-                expect('ACTIVITY_1')
+                expect('activity: ');expect('fuel=carry')
                 os.write(master,b'/models\r');expect('tap to switch')
                 expect('Synthetic (2)')
                 os.write(master,b'1\r');expect('Providers')
@@ -157,8 +151,9 @@ else:
                 deadline=time.monotonic()+5
                 while not (base/'publishing').exists() and time.monotonic()<deadline:time.sleep(.01)
                 self.assertTrue((base/'publishing').exists())
+                fuel.write_text('{"fuel": "saturate"}')
                 os.write(master,b'/activity\r')
-                expect('ACTIVITY_2')
+                expect('fuel=saturate')
                 self.assertFalse((base/'submitted.json').exists())
                 (base/'release').touch();expect('accepted ·')
                 submitted=json.loads((base/'submitted.json').read_text())

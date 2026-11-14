@@ -87,8 +87,12 @@
        (cons-atom $id (idle:ids (cdr-atom $subscriptions))))))
 (= (idle:job-ids)
    (collapse (match &self (job:live $_ $handle) $handle)))
+; Other requests in flight whose completion ends the wait, each declared by
+; its owner as (idle:extra-io HANDLE), such as a Telegram file's download.
+(= (idle:extra-ids)
+   (collapse (match &self (idle:extra-io $handle) $handle)))
 (= (idle:wait $subscriptions $milliseconds $enabled)
-   (let $ids (idle:join (idle:ids $subscriptions)
+   (let $ids (idle:join (idle:join (idle:ids $subscriptions) (idle:extra-ids))
                 (if $enabled (idle:join (idle:job-ids) (semantic:io-ids)) ()))
      (io:wait-ready (cons-atom io:ids $ids) $milliseconds)))
 (= (idle:finish $subscriptions)

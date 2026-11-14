@@ -20,6 +20,8 @@
   "channels/telegram_control_input.metta",
   "channels/telegram_control_io.metta",
   "channels/telegram_control_main.metta",
+  "channels/telegram_failure_notice.metta",
+  "channels/telegram_files.metta",
   "channels/telegram_notice_cleanup.metta",
   "channels/websearch.py",
   "config/default.toml",
@@ -416,5 +418,6 @@
   "src/call_gate_cetta.metta",
   "src/notice_key.metta",
   "src/input_notice_cetta.metta",
+  "src/runtime_health_cetta.metta",
   "src/display_cetta.metta"
 ]

@@ -30,8 +30,6 @@ class RuntimeIdentityTest(unittest.TestCase):
         spool = tempfile.TemporaryDirectory(); self.addCleanup(spool.cleanup)
         events = mock.patch.object(telegram, "runtime_spool", return_value=spool.name)
         events.start(); self.addCleanup(events.stop)
-        wake = mock.patch.object(telegram, "_request_wake")
-        self.wake = wake.start(); self.addCleanup(wake.stop)
 
     def spooled(self):
         return runtime_spool.events(telegram.runtime_spool())
@@ -54,8 +52,8 @@ class RuntimeIdentityTest(unittest.TestCase):
         # A new process's queue is empty, but its checkpoint retains the ID.
         shutil.rmtree(telegram.runtime_spool(), ignore_errors=True)
         telegram.enqueue_runtime_event("retained receipt", identity=identity)
+        # Nothing is spooled again, a wake request included.
         self.assertEqual(self.spooled(), [])
-        self.assertFalse(self.wake.called)
 
 
 if __name__ == "__main__": unittest.main()

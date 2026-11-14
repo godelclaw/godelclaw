@@ -1,4 +1,5 @@
-"""Only real progress renews the external watchdog; owned waits stay bounded."""
+"""Only real progress renews the external watchdog; owned waits stay bounded.
+The progress state a supervisor reads is native: tests/unit/runtime_health.metta."""
 import json
 import os
 from pathlib import Path
@@ -45,21 +46,15 @@ class SupervisionTests(unittest.TestCase):
     def test_owned_wait_extends_the_watchdog_until_it_ends(self):
         supervision.provider_wait(20)
         self.assertEqual(self.message()["WATCHDOG_USEC"], "21000000")
-        self.assertEqual(supervision.observation()["state"], "waiting")
         self.clock += 25
         supervision.progress("provider-result")
         self.assertEqual(self.message()["WATCHDOG_USEC"], "1000000")
-        self.assertEqual(supervision.observation()["state"], "fresh")
-        self.clock += 181
-        self.assertEqual(supervision.observation()["state"], "stalled")
 
     def test_return_to_computation_restores_base_watchdog(self):
         supervision.provider_wait(20)
         self.message()
         supervision.progress("command-receipt")
         self.assertEqual(self.message()["WATCHDOG_USEC"], "1000000")
-        self.account["bytes"] = 101
-        self.assertEqual(supervision.observation()["state"], "memory-pressure")
 
     def test_missing_projection_cannot_revoke_a_completed_transition(self):
         with mock.patch.object(supervision.os, "replace", side_effect=OSError("disk fault")):
