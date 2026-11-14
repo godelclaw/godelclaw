@@ -180,8 +180,11 @@ class CodingEstateVerbTests(CodingEstateFixture):
                 "except FileExistsError:\n"
                 "    sys.exit(1)\n"
                 "os.close(fd)\n"
-                'with open(os.environ["FIXTURE_SCOPE_LAUNCHES"], "a") as stream:\n'
-                '    stream.write(json.dumps(sys.argv[1:]) + "\\n")\n'
+                'path = os.environ["FIXTURE_SCOPE_LAUNCHES"]\n'
+                'prior = open(path).read() if os.path.exists(path) else ""\n'
+                'with open(path + ".partial", "w") as stream:\n'
+                '    stream.write(prior + json.dumps(sys.argv[1:]) + "\\n")\n'
+                'os.replace(path + ".partial", path)\n'
             ),
         }
         for name, source in scripts.items():

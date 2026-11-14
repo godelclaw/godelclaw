@@ -154,8 +154,11 @@ class CodingSessionTests(unittest.TestCase):
                            'os.close(fd)\n'
                            'with open(os.environ["FIXTURE_SCOPE_LAUNCHES"] + ".socket", "w") as stream:\n'
                            '    stream.write(os.environ.get("METTACLAW_INPUT_LEDGER_SOCKET", ""))\n'
-                           'with open(os.environ["FIXTURE_SCOPE_LAUNCHES"], "a") as stream:\n'
-                           '    stream.write(json.dumps(sorted(k + "=" + v for k, v in os.environ.items()) + sys.argv[1:]) + "\\n")\n'
+                           'path = os.environ["FIXTURE_SCOPE_LAUNCHES"]\n'
+                           'prior = open(path).read() if os.path.exists(path) else ""\n'
+                           'with open(path + ".partial", "w") as stream:\n'
+                           '    stream.write(prior + json.dumps(sorted(k + "=" + v for k, v in os.environ.items()) + sys.argv[1:]) + "\\n")\n'
+                           'os.replace(path + ".partial", path)\n'
         }
         for name, source in scripts.items():
             executable = binary / name

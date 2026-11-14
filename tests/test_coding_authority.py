@@ -162,8 +162,11 @@ class CodingAuthorityAndRepinTests(unittest.TestCase):
             ),
             "systemd-run": (
                 "import json, os, sys\n"
-                'with open(os.environ["FIXTURE_SCOPE_LAUNCHES"], "a", encoding="utf-8") as stream:\n'
-                '    stream.write(json.dumps(sorted(k + "=" + v for k, v in os.environ.items()) + sys.argv[1:]) + "\\n")\n'
+                'path = os.environ["FIXTURE_SCOPE_LAUNCHES"]\n'
+                'prior = open(path, encoding="utf-8").read() if os.path.exists(path) else ""\n'
+                'with open(path + ".partial", "w", encoding="utf-8") as stream:\n'
+                '    stream.write(prior + json.dumps(sorted(k + "=" + v for k, v in os.environ.items()) + sys.argv[1:]) + "\\n")\n'
+                'os.replace(path + ".partial", path)\n'
             ),
         }
         for name, source in scripts.items():
