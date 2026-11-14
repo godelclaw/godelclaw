@@ -1494,6 +1494,35 @@
         "the failure report still reads the error object, the provider's stated error and the correction context from the host plan",
         "No paid live canary or 24-hour soak claimed"
       ]
+    },
+    {
+      "id": "engine-roll-a3add12d-http-bodies-through-files-and-head-index-lookups",
+      "status": "qualified-and-deployed",
+      "engine": {
+        "from": "39e38c7f81b3cb8ab1abf97629a2f48ad5accf34",
+        "to": "a3add12db256d6ac8cf1df7530b611cbc64a1486",
+        "contains": [
+          "the opt-in failure-values experiment for canonical PeTTa (inactive unless declared)",
+          "engine-e2: http:save and http:multipart, head-index lookups, negative answers kept current on removal, core-profile arithmetic and symbol-space fixes"
+        ]
+      },
+      "runtime_commit": "fc053d0d24",
+      "release": "ff045b61",
+      "gateway_release": "ff045b61",
+      "checks": {
+        "engine_gate": "make test 653/0, Prime 8/0, prime scope, outcome, Telegram family, E1 checks, LLM suites, test-petta-profile-ai, test-ai, http files 69 cases, swi arithmetic 232 rows, symbol-space match, space growth",
+        "core_profile": "make -k test 647 pass, 0 fail (39e38c7f fails test-outcome-library)",
+        "native_suites": "pass on the new bundle; census unchanged; growth equal to the live engine in a paired run",
+        "python_suite": "the same 26 tests fail on the branch with the new bundle as on main with the live bundle",
+        "telegram_end_to_end": "passes on the new and live services after the disk-full window; failures inside 23:58-00:10 were I/O errors from the full filesystem",
+        "chatgpt_route": "passes on a SIWC_TEST build",
+        "benchmark": "two paired runs: every interval contains zero; RSS unchanged",
+        "live_observation": "Release ff045b61 at 08:54 on 11-14, applied after recovering both agents from the overnight ledger outage: every loop, responder, ledger and channel service runs the a3add12d bundle with no runtime errors; Gödel's live turn at 08:56 returned (help \"send\") normally"
+      },
+      "limits": [
+        "the new HTTP forms have no godelclaw user until the channels batch that moves attachments and uploads",
+        "No paid live canary or 24-hour soak claimed"
+      ]
     }
   ],
   "tuning_debt": [
