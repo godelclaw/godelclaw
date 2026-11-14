@@ -339,7 +339,6 @@
   "src/utils.metta",
   "src/utils_cetta.metta",
   "src/weak_process_core.metta",
-  "src/wire.py",
   "src/workspaces_api.metta",
   "src/workspaces_cetta.metta",
   "src/fuel_cetta.metta",
