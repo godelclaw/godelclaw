@@ -1523,6 +1523,40 @@
         "the new HTTP forms have no godelclaw user until the channels batch that moves attachments and uploads",
         "No paid live canary or 24-hour soak claimed"
       ]
+    },
+    {
+      "id": "channels-batch-c6-health-failure-notice-and-native-attachments-and-uploads",
+      "status": "qualified-and-deployed",
+      "native_modules": [
+        "src/runtime_health_cetta.metta (/health and /activity)",
+        "channels/telegram_failure_notice.metta (the turn-failure notice, with the outbox writer in channels/telegram_control_io.metta)",
+        "channels/telegram_files.metta (attachment downloads through http:save and uploads through http:multipart, submitted with io:submit; the attachment_dispatched/attachment_ready recovery ledger kept)",
+        "the Telegram client's send keys read the clock with system:wall-time-ns"
+      ],
+      "python_removed": [
+        "channels/telegram.py's attachment and upload code (601 lines)",
+        "runtime_health.report and activity_report (176 lines)",
+        "cognitive_health.notify_failure (74 lines)",
+        "others (61 lines)"
+      ],
+      "runtime_python_lines_removed": 912,
+      "new_setting": "METTACLAW_TELEGRAM_ATTACHMENT_MAX_BYTES (optional; default 20 MiB as before)",
+      "runtime_commit": "b783f20c53",
+      "engine_commit": "a3add12db256d6ac8cf1df7530b611cbc64a1486",
+      "release": "038e746c",
+      "gateway_release": "038e746c",
+      "checks": {
+        "native_suites_passed": "24 of 24 on the merge, with an a3add12d core build as the test driver (the old default driver lacks system:wall-time-ns)",
+        "python_suite": "the same 26 tests fail on main and on the merge",
+        "telegram_end_to_end": "passes with a real native download, a download interrupted and fetched again at start, and multipart uploads joining the ledger",
+        "mutants": "59 caught",
+        "live_observation": "Release 038e746c at 09:31 on 11-14: every loop, responder, ledger and channel service came up with no runtime errors, both command menus registered and Lila's channel is ready; the native Telegram send and file paths await their first live use"
+      },
+      "limits": [
+        "the menus still call Python until the next channels batch",
+        "the first live Telegram file transfer was still pending at the record",
+        "No paid live canary or 24-hour soak claimed"
+      ]
     }
   ],
   "tuning_debt": [
