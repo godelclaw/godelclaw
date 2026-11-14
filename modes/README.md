@@ -4,8 +4,8 @@ Iter and Omega are selectable, differentially qualified cognitive loops in
 MeTTaClaw. Each configured instance keeps its own identity, credentials,
 process and mode state. A single instance can switch qualified loops without
 sharing its state with another instance.
-Provider access supports CeTTa's buffered `llm:v1:` library or the
-Python transport, preserving each core's structured-call protocol.
+Supervised, both make the agent's native provider call (CeTTa's `llm:v1:`
+library), preserving each core's structured-call protocol.
 
 Start with the [project README](../README.md) for installation and the
 [service guide](../systemd/README.md) for supervised deployment. This guide
@@ -225,12 +225,7 @@ long-duration operation.
 
 Signed thinking blocks are retained in Iter's existing `reasoning_details`
 checkpoint field and passed back unchanged until its upstream context cleanup
-prunes them. The Anthropic boundary tests exercise batch IDs, grouped results,
-reasoning signatures, token stops and sanitized failure pacing:
-
-```sh
-python -m unittest discover -s tests -p test_iter_anthropic_provider.py
-```
+prunes them.
 
 Instance-specific deployment receipts and original-file backups are kept in
 operator-controlled storage outside the published source tree.

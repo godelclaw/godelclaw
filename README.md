@@ -658,19 +658,18 @@ retain their own adapters; the gateway is not a universal execution path.
 Its prototype transport is JSON over Unix sockets, with no native rho bridge
 qualified yet. Each instance uses its own gateway configuration and queue.
 
-The provider client has two transports behind the same conversation boundary.
-Set `METTACLAW_LLM_TRANSPORT=native` on an HTTP-enabled CeTTa Python build to
-use [`native_llm.metta`](src/native_llm.metta): CeTTa submits one asynchronous
-request, and CeTTa's shared `llm`, `llm:command`, `llm:compat` and `llm:io`
-libraries construct requests and decode Chat Completions, Anthropic Messages or
-OpenAI Responses. This requires the versioned `llm:v1:` API and owner-selected
+Every provider call is native, in [`native_llm.metta`](src/native_llm.metta),
+on an HTTP-enabled CeTTa build: CeTTa submits one asynchronous request, and
+CeTTa's shared `llm`, `llm:command`, `llm:compat` and `llm:io` libraries
+construct requests and decode Chat Completions, Anthropic Messages or OpenAI
+Responses. This requires the versioned `llm:v1:` API and owner-selected
 `io:wait`, progress observations and independent HTTP timeout settings in the
-chosen CeTTa build. SWI-PeTTa retains the Python HTTP adapter.
-Python owns provider/model selection, upstream prompt splitting, cache identity
-and credential scope. The native call path owns policy admission, call leases,
-cooldowns and usage writes in MeTTa over transactional SQLite. Python remains
-the reference implementation and the non-native transport's ledger owner;
-this is not yet a Python-free deployment.
+chosen CeTTa build. The supervised Iter and Omega modes use the same call; a
+standalone terminal launch of a mode keeps that mode's own provider SDK.
+Python still supplies provider configuration and credential scope. The native
+call path owns policy admission, call leases, cooldowns and usage writes in
+MeTTa, as transactions of the agent's native ledger store; this is not yet a
+Python-free deployment.
 
 The native library preserves ordered items and parts, call IDs, optional usage,
 raw completion reasons and native reasoning attachments. Imported modes still
