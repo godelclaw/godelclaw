@@ -159,7 +159,6 @@
         "src/loop_modes.py",
         "src/process_supervision.py",
         "src/runtime_health.py",
-        "src/wire.py",
         "scripts/usage_report.py",
         "modes/iter/upstream/channels/_example.py",
         "modes/iter/upstream/channels/terminal.py",
@@ -1583,6 +1582,40 @@
         "live_observation": "All units run the new bundle. A mailed turn to Godel completed normally (request 15:16:10, response 15:17:40, commands returned). The Telegram services used 4.3% and 4.8% CPU over 90 s at steady state; before the roll their lifetime averages were 20-24%."
       },
       "limits": [
+        "No paid live canary or 24-hour soak claimed"
+      ]
+    },
+    {
+      "id": "provider-batch-a11-every-provider-call-native-and-call-failures-classified-natively",
+      "status": "qualified-and-deployed",
+      "native_modules": [
+        "src/call_failure_cetta.metta (a failed call's facts: deterministic rejections named by status, transient classes, the paced retry-after, the log line)",
+        "src/native_call_cetta.metta and src/llm_accounting_cetta.metta keep the failure cause with the call until its release (an observation replaces, the accounting fallback only fills an empty cause)",
+        "supervised Omega makes the native structured call, as Iter already did"
+      ],
+      "python_removed": [
+        "src/wire.py (362 lines, used only by its own test)",
+        "the Python transport in synthetic_llm.py (333 lines)",
+        "native_llm_host.py failure facts (127 lines)",
+        "runtime_host.py provider path (62 lines)"
+      ],
+      "runtime_python_lines_removed": 885,
+      "removed_setting": "METTACLAW_LLM_TRANSPORT (the plan no longer requires it; local.toml llm_transport is dead)",
+      "runtime_commit": "3fde6d7237",
+      "engine_commit": "3a25fe1ac57cb1f2e2d260512e07063aaa99f012",
+      "release": "6247dc24",
+      "gateway_release": "6247dc24",
+      "checks": {
+        "native_suites_passed": "24 of 24 on the merge with the 3a25fe1a bundle and a native-agent core driver built from the same commit",
+        "python_suite": "main 2051 tests, the merge 1996 (55 went with the deleted Python transport and its tests; their failure-diagnostics cases are covered by tests/unit/call_failure.metta); the same 26 fail on both, by exact name",
+        "telegram_end_to_end": "passes on the merge, including native download and multipart upload",
+        "chatgpt_route": "12 of 12 on a SIWC_TEST build of 3a25fe1a",
+        "mutants": "35 killed by their intended checks (23 unit, 7 wiring, 5 probe), on a3add12d",
+        "live_observation": "A mailed turn to Godel completed on the native call path (request 15:59:54, response 16:01:01), and he replied that the turn looked normal, with no refused call or error. All units active with no runtime errors after the gateway restart."
+      },
+      "limits": [
+        "a failed structured call still ends its caller through one Python raise, until a native raise can be caught",
+        "the answered-message check (item 3) waits for the native per-turn strategy state and the Telegram reply target",
         "No paid live canary or 24-hour soak claimed"
       ]
     }
