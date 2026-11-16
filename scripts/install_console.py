@@ -172,7 +172,9 @@ def prepare(release, prefix, python, mail_script=None, replace_existing=False, e
             raise ValueError("native console installation requires --engine")
         engine, engine_manifest = native_engine(engine, manifest["engine"])
         entry = release / manifest["entrypoint"]
-        launch = [str(engine), "--no-results", "--lang", "petta", "--profile", "extended", "--import-mode", "ancestor-walk"]
+        launch = ["/usr/bin/env", "CETTA_ROOT=" + str(engine.resolve().parent),
+                  "CETTA_STDLIB=" + str(engine.resolve().parent / "lib"), str(engine),
+                  "--no-results", "--lang", "petta", "--profile", "extended", "--import-mode", "ancestor-walk"]
     else:
         entry = release / "files/scripts/console_entry.py"
         launch = [str(python), "-I", "-S", "-B"]

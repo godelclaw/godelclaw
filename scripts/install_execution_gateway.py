@@ -74,9 +74,11 @@ def prepare(instance, runtime, config_dir, unit_dir, worker=None):
     if not entry.is_file() or not (runtime / "scripts/gateway_read_cetta.metta").is_file():
         raise ValueError("native gateway entrypoint or read adapters are missing")
     lines = env_path.read_text().splitlines()
-    lines = [line for line in lines if not line.startswith(("PYTHONPATH=", "PYTHONHOME=", "GATEWAY_CETTA_BIN=", "GATEWAY_CETTA_ENTRY="))]
+    lines = [line for line in lines if not line.startswith(("PYTHONPATH=", "PYTHONHOME=", "CETTA_ROOT=", "CETTA_STDLIB=", "GATEWAY_CETTA_BIN=", "GATEWAY_CETTA_ENTRY="))]
     lines.extend(("GATEWAY_CETTA_BIN=" + json.dumps(str(engine), ensure_ascii=False),
-                  "GATEWAY_CETTA_ENTRY=" + json.dumps(str(entry), ensure_ascii=False)))
+                  "GATEWAY_CETTA_ENTRY=" + json.dumps(str(entry), ensure_ascii=False),
+                  "CETTA_ROOT=" + json.dumps(str(engine.parent), ensure_ascii=False),
+                  "CETTA_STDLIB=" + json.dumps(str(engine.parent / "lib"), ensure_ascii=False)))
     template = (ROOT / "systemd/pettaclaw-gateway@.service").read_bytes()
     native_exec = (b"ExecStart=/usr/bin/env ${GATEWAY_CETTA_BIN} --no-results --lang petta --profile extended "
                    b"--import-mode ancestor-walk ${GATEWAY_CETTA_ENTRY} --config %h/.config/pettaclaw/gateway-%i.json")
