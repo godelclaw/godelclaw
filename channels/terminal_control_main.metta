@@ -1,7 +1,7 @@
 ; A local owner's terminal uses exactly the operator handlers used by Telegram.
 ; JSON framing carries data, never MeTTa source to evaluate. Cognition is separate.
 !(import! &self ./channels/telegram_control.metta)
-!(import! &self ./src/runtime_context.py)
+!(import! &self ./src/runtime_cetta.metta)
 
 (= (terminal:body $reply)
    (case $reply
@@ -20,7 +20,7 @@
                      (catch (tc:tap (tc:string (tc:at $request "value"))))
                      "Unknown terminal request kind")))
           ($body (if (== $kind "status")
-                   (json-parse (tc:text (py-call (runtime_context.json_status))))
+                   (json-parse (json:stringify-python (runtime:read (system:wall-time))))
                    (terminal:body (tc:guarded $reply "control")))))
      (JsonObject ((JsonPair "id" (tc:at $request "id")) (JsonPair "body" $body)))))
 (= (terminal:serve)

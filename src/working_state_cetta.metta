@@ -8,7 +8,7 @@
 !(import! &self ./src/effect_receipt_values_cetta.metta)
 !(import! &self ./src/mode_io_cetta.metta)
 !(import! &self ./src/checkpoint_ledger_cetta.metta)
-!(import! &self ./src/working_state_host.py)
+!(import! &self ./src/turn_frame_cetta.metta)
 !(import! &self ./src/progress_receipt_cetta.metta)
 
 !(bind! &working-state-boot (new-state (JsonObject ())))
@@ -222,7 +222,7 @@
 (= (working-state:turn-commit-reset) (let $_ (change-state! &working-state-turn-commit WorkingNoCommit) 1))
 (= (working-state:turn-commit-stage $provider $history $activity)
    (if (and (== $provider 1) (== $history 1))
-     (let* (($scope (working-state:answer (collapse (catch (py-call (working_state_host.commit_scope $activity))))))
+     (let* (($scope (working-state:answer (collapse (catch (turn:commit-scope $activity)))))
             ($valid (case $scope ((($ids $request) True) ($other False)))))
        (if $valid
          (let* (($ids (car-atom $scope)) ($request (car-atom (cdr-atom $scope)))

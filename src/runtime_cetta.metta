@@ -15,6 +15,7 @@
 !(import! &self (library system))
 !(import! &self ./src/memory_health_cetta.metta)
 !(import! &self ./src/model_selection_cetta.metta)
+!(import! &self ./src/runtime_support_cetta.metta)
 
 (= (rt:max-chars) 2400)
 (= (rt:receipt-window) 16)
@@ -379,7 +380,7 @@
    (let* (($fields (str:split-whitespace (rt:last (str:split ")" (fs:read-text "/proc/self/stat")))))
           ($ticks (str:string->number (rt:nth $fields 19)))
           ($boot (rt:btime (str:split "\n" (fs:read-text "/proc/stat"))))
-          ($hertz (py-call (os.sysconf "SC_CLK_TCK"))))
+          ($hertz (runtime-support:clock-ticks)))
      (case $boot
        (((Val $seconds)
          (let $started (+ $seconds (/ $ticks $hertz))

@@ -14,14 +14,13 @@ verification scope on `main`.
 
 ## Standalone terminal launches
 
-From a clean checkout, install `iter/requirements.txt` for ITER, or
-`omega/requirements.txt` for the Omega core, in the Python environment used
-by a Python-enabled CeTTa bundle. ITER needs the OpenAI-compatible SDK;
-Omega additionally needs PyYAML. Neither profile loads Torch, Chroma,
-sentence-transformers, MCP, or a Telegram service.
+From a clean checkout, build CeTTa with `--profile native-agent --prolog 0`.
+The selected mode's provider, state and tool coordination use native libraries.
+Neither mode needs Python SDKs, Torch, Chroma or a Telegram service. Python is
+used only when the agent explicitly selects the external Python coding tool.
 
 ```sh
-export CETTA_BIN=/path/to/python-enabled-cetta/cetta
+export CETTA_BIN=/path/to/native-cetta/cetta
 ./run.sh --mode iter
 ./run.sh --mode omega
 ```
@@ -36,7 +35,7 @@ Configure the model endpoint before starting:
 The two commands select the standalone profile explicitly. They do not read
 an instance's identity, model-selection file, pause latch, or Telegram inbox,
 even when invoked from a configured service's environment. ITER keeps the
-upstream SDK request and tool-return protocol. Its terminal channel forwards
+upstream request and tool-return protocol. Its terminal channel forwards
 worker output at the foreground checkpoint because upstream workers suppress
 stdout. Omega keeps its pinned core loop and provider modules; its transport
 is terminal-only and memory uses the existing history/text adapter. Its actual
@@ -48,8 +47,8 @@ State is outside the checkout and survives restart. Use `--state-dir PATH`
 for a separate instance, and `--prompt FILE` to append your own instructions
 when seeding new state. Existing prompts, tools, channels and memory files
 are retained. Add-on experimentation should use a separate state directory.
-An optional SWI-PeTTa engine remains available with `--engine petta` and
-`PETTA_ROOT`, using that engine's own Python bridge dependencies.
+The old Python/SWI launchers remain in the source tree as independent reference
+implementations; they are outside the selected native runtime.
 
 Direct launcher calls accept `--profile standalone` or `--profile supervised`.
 Without an explicit profile, a configured Telegram socket selects supervised

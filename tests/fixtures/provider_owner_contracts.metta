@@ -1,8 +1,8 @@
-; Run by the native driver against the actual SDK owner implementation. The
+; Run by the native driver against the actual native owner implementation. The
 ; binding is the native owner's: a call is bound once, to a wire for the model
 ; its seed named, and the host handle takes no part in it.
 (= (owner-test:seed $kind $purpose)
-   (py-call (native_llm_host.native_call_seed "fixture-model" 42 $kind $purpose)))
+   (host-native:native-call-seed "fixture-model" 42 $kind $purpose))
 (= (owner-test:bind $plan $text $model)
    (pcall:bound $plan (preq:parse $text) "/v1/fixture" (StructuredMetadataV1 (preq:object ()))
                 (PreparedProviderWireV1 "{}" False (preq:string $model) JsonNull)))
@@ -20,9 +20,9 @@
           ; and so permit a second claim and a second request.
           ($_ (nt:require rebind-refused (not (owner-test:bound? (owner-test:bind $plan $text "fixture-model")))))
           ($_ (nt:require live-owner-not-revoked (not (call:begin-claim $owner))))
-          ($_ (nt:require request-not-retained (not (host:flag (py-call (builtins.hasattr $plan "request"))))))
-          ($_ (nt:require prompt-not-retained (not (host:flag (py-call (builtins.hasattr $plan "prompt_text"))))))
-          ($_ (nt:require description-not-retained (not (host:flag (py-call (builtins.hasattr $plan "prepared_seal"))))))
+          ($_ (nt:require request-not-retained (== (host-native:field $plan "request" none) none)))
+          ($_ (nt:require prompt-not-retained (== (host-native:field $plan "prompt_text" none) none)))
+          ($_ (nt:require description-not-retained (== (host-native:field $plan "prepared_seal" none) none)))
           ($_ (call:release $owner))
           (($other $other-text) (owner-test:seed "command" "turn"))
           ($refused (owner-test:bind $other $other-text "other"))
@@ -35,9 +35,9 @@
                 (not (call:live? (pcall:fact (preq:parse $other-text) "correlation")))))
           (($coding $coding-text) (owner-test:seed "structured" "coding"))
           ($_ (nt:require structured-purpose-captured
-                (nt:equal (py-call (builtins.getattr $coding "purpose")) "coding")))
+                (nt:equal (host-native:field $coding "purpose" "") "coding")))
           ($_ (nt:require structured-kind-captured
-                (nt:equal (py-call (builtins.getattr $coding "kind")) "structured")))
+                (nt:equal (host-native:field $coding "kind" "") "structured")))
           ((PreparedProviderCallV1 $structured $structured-transport) (owner-test:bind $coding $coding-text "fixture-model"))
           ($_ (nt:require structured-facts-owned
                 (nt:equal ((call:fact $structured "kind" "") (call:fact $structured "purpose" "") (call:fact $structured "prompt_bytes" -1))
@@ -48,6 +48,6 @@
                 (nt:equal (call:fact $structured "commentary" true) false)))
           ($_ (call:release $structured))
           ($_ (nt:require unknown-purpose-refused
-                (case (catch (py-call (native_llm_host.native_call_seed "fixture-model" 42 "structured" "other")))
-                  (((Error $a $b) True) ($other False))))))
+                (let ($unknown-plan $unknown-text) (host-native:native-call-seed "fixture-model" 42 "structured" "other")
+                  (== (pcall:fact (preq:parse $unknown-text) "ready") False)))))
      (println! NATIVE_OWNER_CONTRACTS_OK)))

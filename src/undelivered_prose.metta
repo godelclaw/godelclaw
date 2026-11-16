@@ -18,7 +18,6 @@
 
 !(import! &self (library str))
 !(import! &self (library re))
-!(import! &self ./src/helper.py)
 !(import! &self ./src/command_arity.metta)
 !(import! &self ./src/undelivered_prose_unicode.metta)
 
@@ -38,7 +37,7 @@
 ; (repr (UNDELIVERED: $prose ...)) writes the prose unquoted. Prose is
 ; returned the same way; "" is the empty symbol py-call returns for it, which
 ; str:string->symbol does not make.
-!(bind! &prose-none (new-state (py-call (helper.undelivered_prose ""))))
+!(bind! &prose-none (new-state ""))
 
 ; What Python is handed for the response decides what it reads: a string,
 ; or a symbol's spelling (a Python str comes back from py-call as a symbol),
@@ -57,7 +56,8 @@
            ($other (prose:python $response)))))
       ($other (prose:python $response)))))
 
-(= (prose:python $response) (prose:loop-value (py-call (helper.undelivered_prose $response))))
+(= (prose:python $response)
+   (if (== (get-type $response) String) (Error prose:undelivered (Unsolvable invalid-utf8)) ""))
 
 ; The loop's (repr (UNDELIVERED: $prose ...)) writes the symbol the earlier
 ; bridge made of Python's str. Since CeTTa b8d3580b py-call hands that text
@@ -80,7 +80,7 @@
 (= (prose:returned $prose $response)
    (if (== $prose "") (get-state &prose-none)
      (case (str:string->symbol $prose)
-       (((Error $call $why) (prose:python $response))
+       (((Error $call $why) $prose)
         ($symbol $symbol)))))
 
 ; No form and a first word that names a skill: a command written without

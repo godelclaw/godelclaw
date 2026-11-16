@@ -21,8 +21,22 @@ import time
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
-import runtime_health  # noqa: E402
+
+
+def _native_health(root, now):
+    """The external watcher transports one observation; native rules own it."""
+    root = pathlib.Path(root).resolve()
+    binary = os.environ.get("CETTA_BIN") or str(root / ".runtime/cetta/cetta")
+    environment = dict(os.environ, METTACLAW_HEALTH_OBSERVED_AT=repr(now))
+    result = subprocess.run(
+        [binary, "--no-results", "--lang", "petta", "--profile", "extended",
+         "--import-mode", "ancestor-walk", str(root / "scripts/runtime_health_cetta.metta")],
+        cwd=root, env=environment, text=True, capture_output=True, timeout=30,
+        check=True)
+    value = json.loads(result.stdout)
+    if not isinstance(value, dict) or not isinstance(value.get("problems"), list):
+        raise ValueError("invalid native health observation")
+    return value
 
 
 def _run(command, cwd=None, check=False):
@@ -316,7 +330,7 @@ def observe(args, deployment, now=None):
     if getattr(args, "cognitive_health", None):
         os.environ["METTACLAW_COGNITIVE_HEALTH_PATH"] = str(
             args.cognitive_health)
-    facts = runtime_health.status(now=now)
+    facts = _native_health(args.root, now)
     problems = list(facts["problems"])
     active = _service_active(args.service)
     if not active:

@@ -22,8 +22,9 @@
 !(import! &self cwp)
 !(import! &self system)
 !(import! &self (library path))
-!(import! &self ./src/helper.py)
-!(import! &self ./src/process_supervision.py)
+!(import! &self ./src/progress_receipt_cetta.metta)
+!(import! &self ./src/working_state_cetta.metta)
+!(import! &self ./src/boot_state_cetta.metta)
 !(import! &self ./channels/energy.metta)
 !(import! &self ./channels/access_policy.metta)
 !(import! &self ./channels/telegram_control_input.metta)
@@ -795,7 +796,18 @@
 ; receipt notice itself, which the responder sent.
 (= (tg:foreign-receipt $value)
    (if (nc:receipt $value) True
-     (py-call (input_ack.receipt (json-stringify $value)))))
+     (tg:input-receipt (state:canonical $value))))
+(= (tg:input-receipt $value)
+   (case $value
+     (((JsonArray ("delivery" $key 0 1 $outcome))
+       (if (== (get-type $key) String)
+         (state:ledger "receipt" ($key (tg:receipt-outcome $outcome))) 0))
+      ($other 0))))
+(= (tg:receipt-outcome $value)
+   (case $value
+     (((JsonArray ("delivered" $id))
+       (if (== (get-type $id) Number) (delivered $id) failed))
+      ($other failed))))
 
 (= (tg:handle $task $value)
    (case $value
@@ -990,19 +1002,19 @@
    (tg:sleep-until-message $seconds True))
 (= (tg:sleep-until-message $seconds $enabled)
    (let $n (if (< $seconds 0) 0 $seconds)
-     (let $_ (py-call (process_supervision.progress "channel-wait" 10))
+     (let $_ (progress:phase "channel-wait" 10)
      (let $deadline (+ (tg:now) $n)
        (let $a (tg:set wake-reason "")
         (let $stale (tg:drop-wake-request)
          (let $b (tg:set rest-notice 0)
            ;; Notices and health show when the rest ends, not this capped wait.
-           (let $c (tg:set sleep-until (max $deadline (py-call (helper.rest_until))))
+           (let $c (tg:set sleep-until (max $deadline (working-state:rest-until-at (working-state:read) (tg:now))))
              (let $p (tg:publish-rest (tg:get sleep-until 0))
                (let $result (tg:rest-loop $deadline $n $enabled)
                  (let $d (tg:set sleep-until 0)
                    (let $q (tg:publish-rest 0)
                      (let $e (tg:set wake-reason "")
-                       (let $_ (py-call (process_supervision.progress "channel-resume")) $result))))))))))))))
+                       (let $_ (progress:phase "channel-resume") $result))))))))))))))
 
 ; A wake requested while she was not resting belongs to that time, as with
 ; the Python client: a new rest starts from a clean request.
@@ -1037,11 +1049,11 @@
      $result))
 (= (tg:rest-check $deadline $seconds $enabled $milliseconds)
    (let $_ (if $enabled (semantic:maintain) True)
-   (if (== (py-call (helper.recycle_requested)) 1) "recycle requested"
+   (if (== (boot-state:recycle) True) "recycle requested"
    (if (and $enabled (mail:pending?)) "woken by mail"
    (if (and $enabled (jobs:pending?)) "woken by job"
    (let $polled (tg:poll)
-    (let $_ (py-call (process_supervision.progress "channel-wait" (+ 5 (/ $milliseconds 1000))))
+    (let $_ (progress:phase "channel-wait" (+ 5 (/ $milliseconds 1000)))
     (let $requested (tg:take-wake-request)
      (let $reason (tg:get wake-reason "")
        (if (not (== $reason "")) (format-args "woken by {}" ($reason))
@@ -1190,7 +1202,7 @@
 (= (tg:send-effect $text $chat)
    (let $target (tg:reply-target $chat)
      (let $body (tg:unescape-newlines $text)
-       (let $turn (py-call (telegram.metta_effect_turn))
+       (let $turn (tg:get effect-turn "")
          (if (== (collapse (match &self (tg:effect-sent $turn $target $body) True)) (True))
            "duplicate send suppressed"
            (let $marked (add-atom &self (tg:effect-sent $turn $target $body))
@@ -1465,28 +1477,27 @@
 (= (tg:recent-activity $n $chat $snippet)
    (let $path (tg:ledger)
      (if (or (<= $n 0) (or (== $path "") (not (fs:exists $path)))) ""
-       (let $needle (str:lower (format-args "{}" ($chat)))
-         (let $reader (py-call (helper.reverse_lines_open $path))
-           (let $entries (catch (tg:recent-backward $reader $n $needle $snippet ()))
-             (let $_ (py-call (helper.reverse_lines_close $reader))
-               (case $entries
-                 (((Error $code $detail) (Error $code $detail))
-                  ($ok (str:join " " (tg:list $ok))))))))))))
-
-; Escapes can hide a matching title/id. Such lines always reach the parser.
-; This pre-test is a sound superset, not the authority for matching a chat.
+       (tg:recent-tail $path $n (str:lower (format-args "{}" ($chat))) $snippet 65536))))
+; Geometric tail reads preserve bounded small recalls; worst-case reads are
+; less than twice the history size. A truncated first line is never parsed.
+(= (tg:recent-tail $path $n $needle $snippet $bytes)
+   (case (fs:tail-text $path $bytes)
+     (((fs:tail $size $truncated $text)
+       (let* (($lines (str:split "\n" $text))
+              ($whole (if $truncated (cdr-atom $lines) $lines))
+              ($chosen (tg:recent-select (list:reverse $whole) $n $needle $snippet ())))
+         (if (or (not $truncated) (>= (size-atom $chosen) $n))
+           (str:join " " $chosen)
+           (tg:recent-tail $path $n $needle $snippet (* $bytes 2)))))
+      ($bad (Error tg:recent-activity $bad)))))
+(= (tg:recent-select $newest $remaining $needle $snippet $chosen)
+   (if (or (<= $remaining 0) (== $newest ())) $chosen
+     (let $entry (tg:recent-entry (car-atom $newest) $needle $snippet)
+       (tg:recent-select (cdr-atom $newest) (- $remaining (if (== $entry "") 0 1))
+         $needle $snippet (if (== $entry "") $chosen (cons-atom $entry $chosen))))))
+; Escaped titles and ids always reach the parser.
 (= (tg:recent-candidate? $line $needle)
    (or (tg:contains? $line "\\") (tg:contains? (str:lower $line) $needle)))
-
-; The cursor's tags are Python text: Strings on CeTTa, symbols on SWI-PeTTa.
-(= (tg:recent-backward $reader $remaining $needle $snippet $chosen)
-   (if (<= $remaining 0) $chosen
-     (case (py-call (helper.reverse_lines_next $reader))
-       (((end) $chosen)
-        (("end") $chosen)
-        ((line $line) (tg:recent-line $reader $remaining $needle $snippet $chosen $line))
-        (("line" $text) (tg:recent-line $reader $remaining $needle $snippet $chosen $text))
-        ($bad (Error tg:recent-activity "invalid line cursor result"))))))
 (= (tg:recent-line $reader $remaining $needle $snippet $chosen $line)
    (let $entry (tg:recent-entry $line $needle $snippet)
      (if (== $entry "")

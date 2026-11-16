@@ -1,0 +1,5 @@
+!(import! &self ../src/runtime_health_cetta.metta)
+!(let $now (str:string->number (system:getenv-or-default "METTACLAW_HEALTH_OBSERVED_AT" (repr (system:wall-time))))
+   (case (rh:snapshot-at $now)
+     (((Error $where $why) (progn (println! (Error $where $why)) (system:exit 1)))
+      ($snapshot (system:write stdout (str:concat (json:stringify-python $snapshot) "\n"))))))

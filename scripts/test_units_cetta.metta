@@ -6,6 +6,22 @@
 
 (= (units:all)
    (("tests/unit/model_selection.metta" "UNIT_MODEL_SELECTION_OK")
+    ("tests/unit/mode_checkpoint.metta" "UNIT_NATIVE_MODE_CHECKPOINT_OK"
+     (("METTACLAW_MODE_RUNTIME" "{home}/mode") ("METTACLAW_MODE_PROFILE" "standalone")))
+    ("tests/unit/omega_native.metta" "UNIT_OMEGA_NATIVE_OK")
+    ("tests/unit/standalone_mode_config.metta" "UNIT_STANDALONE_MODE_CONFIG_OK")
+    ("tests/unit/context_registry.metta" "UNIT_NATIVE_CONTEXT_REGISTRY_OK")
+    ("tests/unit/mcp_reply_slot.metta" "UNIT_MCP_REPLY_SLOT_OK")
+    ("tests/unit/native_pin_admission.metta" "UNIT_NATIVE_PIN_ADMISSION_OK" (("METTACLAW_REQUIRE_NATIVE_CORE" "1")))
+    ("tests/unit/claude_client.metta" "UNIT_NATIVE_CLAUDE_CLIENT_OK"
+     (("METTACLAW_CLAUDE_TIMEOUT_SECONDS" "0.1") ("METTACLAW_TOOL_OUTPUT_DIR" "{home}/artifacts")))
+    ("tests/unit/native_components.metta" "UNIT_NATIVE_COMPONENT_DRIVER_OK"
+     (("NATIVE_COMPONENT_CASE" "{home}/components")))
+    ("tests/unit/native_clients.metta" "UNIT_NATIVE_CLIENTS_OK"
+     (("NATIVE_CASE_ROOT" "{home}")))
+    ("tests/unit/turn_frame.metta" "UNIT_NATIVE_TURN_FRAME_OK"
+     (("METTACLAW_INPUT_LEDGER_SOCKET" "{home}/l.sock") ("METTACLAW_OBSERVED_STRATEGY" "1")
+      ("METTACLAW_LIFECYCLE_PATH" "{home}/lifecycle.json")))
     ("tests/unit/model_menu.metta" "UNIT_MODEL_MENU_KEYED_OK"
      (("METTACLAW_PROVIDER_OBSERVATION_PATH" "{home}/state/provider-observations.json")
       ("ANTHROPIC_API_KEY" "unit-anthropic") ("ANTHROPIC_MODELS" " claude-unit-a , ,claude-unit-b") ("KIMI_API_KEY" "unit-kimi")
@@ -26,6 +42,7 @@
     ("tests/unit/completion_effects.metta" "UNIT_COMPLETION_EFFECTS_OK")
     ("tests/unit/rejection_gate.metta" "UNIT_REJECTION_GATE_OK")
     ("tests/unit/dispatch_stopped.metta" "UNIT_DISPATCH_STOPPED_OK")
+    ("tests/unit/dispatch_admission.metta" "UNIT_DISPATCH_ADMISSION_OK")
     ("tests/unit/benchmark_statistics.metta" "UNIT_BENCHMARK_STATISTICS_OK")
     ("tests/unit/growth_statistics.metta" "UNIT_GROWTH_STATISTICS_OK")
     ("tests/unit/progress_receipt.metta" "UNIT_PROGRESS_RECEIPT_OK"
@@ -80,16 +97,26 @@
         ("METTACLAW_MODEL_STATE_PATH" (nt:join $directory "model-state"))
         ("METTACLAW_HEARTBEAT_INTERVAL_SECONDS" " 45 ") ("METTACLAW_COMMAND_BATCH_LIMIT" "0")
         ("METTACLAW_HISTORY_PATH" (nt:join $directory "journal/history.metta"))
-        ("NATIVE_TEST_CORE" (nt:required-env "NATIVE_TEST_CORE")))
+        ("NATIVE_TEST_CORE" (nt:required-env "NATIVE_TEST_CORE"))
+        ("NATIVE_CORE_BIN" (path:join (nt:required-env "NATIVE_TEST_CORE") "cetta"))
+        ("CETTA_BIN" (path:join (nt:required-env "NATIVE_TEST_CORE") "cetta"))
+        ("NATIVE_CORE_PEER" (path:join (nt:required-env "NATIVE_TEST_ARTIFACTS") "native-core-peer"))
+        ("METTACLAW_CLAUDE_BIN" (path:join (nt:required-env "NATIVE_TEST_ARTIFACTS") "native-core-peer")))
        $base)))
 ; A setting may name a path in the unit's own scratch directory as "{home}/...".
 (= (units:homed $settings $directory)
    (map-atom $settings $setting
      (let ($name $value) $setting
-       ($name (if (str:starts-with $value "{home}/")
-                (nt:join $directory (str:byte-slice $value 7 (str:byte-length $value))) $value)))))
+       ($name (if (== $value "{home}") $directory
+                (if (str:starts-with $value "{home}/")
+                  (nt:join $directory (str:byte-slice $value 7 (str:byte-length $value))) $value))))))
 (= (preq-free:append $front $back)
    (if (== $front ()) $back (cons-atom (car-atom $front) (preq-free:append (cdr-atom $front) $back))))
+(= (units:override $base $extra)
+   (let $keys (map-atom $extra $entry (car-atom $entry))
+     (preq-free:append $extra (filter-atom $base $entry (not (units:member? (car-atom $entry) $keys))))))
+(= (units:member? $key $keys)
+   (if (== $keys ()) False (if (== $key (car-atom $keys)) True (units:member? $key (cdr-atom $keys)))))
 
 (= (units:one $root $engine $artifacts ($file $marker))
    (units:one $root $engine $artifacts ($file $marker ())))
@@ -97,7 +124,7 @@
    (let* (($directory (nt:join $artifacts (str:concat "unit-" (system:uuid4-hex))))
           ($_ (fs:make-directories $directory 448))
           ($output (nt:exit-ok (proc:run ($engine "--lang" "petta" "--profile" "extended" "--import-mode" "ancestor-walk" "--quiet" $file)
-                                         $root (preq-free:append (units:homed $extra $directory) (units:env $directory)) 120000 1048576)))
+                                         $root (units:override (units:env $directory) (units:homed $extra $directory)) 120000 1048576)))
           ($_ (nt:require unit-marker (nt:contains $output $marker)))
           ($_ (println! (UNIT_PASSED $file)))) 1))
 
@@ -112,12 +139,19 @@
    (if (== $cases ()) $count
      (let $_ (units:one $root $engine $artifacts (car-atom $cases))
        (units:run $root $engine $artifacts (cdr-atom $cases) (+ $count 1)))))
+(= (units:from $cases $start)
+   (if (or (== $start "") (== $cases ())) $cases
+     (if (nt:contains (car-atom (car-atom $cases)) $start) $cases
+       (units:from (cdr-atom $cases) $start))))
 
 (= (units:main)
    (let* (($root (system:cwd)) ($engine (nt:join (nt:required-env "NATIVE_TEST_CORE") "cetta"))
           ($artifacts (nt:required-env "NATIVE_TEST_ARTIFACTS"))
+          ($peer (path:join $artifacts "native-core-peer"))
+          ($_ (nt:exit-ok (proc:run ("cc" "-std=c11" "-O2" "-Wall" "-Wextra" "-Werror"
+                        "tests/fixtures/native_core_peer.c" "-o" $peer) $root (nt:environment $artifacts) 30000 65536)))
           ($only (system:getenv-or-default "NATIVE_UNIT" ""))
-          ($cases (units:selected (units:all) $only))
+          ($cases (units:selected (units:from (units:all) (system:getenv-or-default "NATIVE_UNIT_START" "")) $only))
           ($_ (nt:require unit-selection-nonempty (not (== $cases ())))))
      (units:run $root $engine $artifacts $cases 0)))
 !(let $count (units:main) (println! (NATIVE_UNITS_PASSED $count)))

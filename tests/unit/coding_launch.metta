@@ -5,7 +5,7 @@
 !(import! &self ../../src/coding_work.metta)
 !(let* (($command (work:launch-command "work-x" "/runtime dir" "/bin/cetta" "/sessions/work-x"))
         ($_ (nt:require session-engine-has-the-flags
-              (nt:contains $command "'/bin/cetta' '--value-bytes' '268435456' --lang petta --import-mode ancestor-walk coding_main.metta -- '/sessions/work-x'")))
-        ($_ (nt:require session-flags (nt:equal (session:engine-flags) ("--value-bytes" "268435456"))))
+              (nt:contains $command "'/bin/cetta' '--profile' 'extended' '--value-bytes' '268435456' --lang petta --import-mode ancestor-walk coding_main.metta -- '/sessions/work-x'")))
+        ($_ (nt:require session-flags (nt:equal (session:engine-flags) ("--profile" "extended" "--value-bytes" "268435456"))))
         ($_ (nt:require agent-launcher-allowance (nt:contains (fs:read-text "run.sh") "--value-bytes 268435456"))))
    (println! UNIT_CODING_LAUNCH_OK))

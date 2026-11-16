@@ -370,8 +370,9 @@
 (: lp:lower-codes (-> %Undefined% %Undefined%))
 (= (lp:lower-codes $codes)
    (if (ue:equal $codes ()) ()
-     (let* (($code (car-atom $codes)) ($rest (lp:lower-codes (cdr-atom $codes))))
-       (cons-atom (if (and (>= $code 65) (<= $code 90)) (+ $code 32) $code) $rest))))
+     (let* (($code (car-atom $codes)) ($rest (lp:lower-codes (cdr-atom $codes)))
+            ($lower (if (and (>= $code 65) (<= $code 90)) (+ $code 32) $code)))
+       (cons-atom $lower $rest))))
 (: lp:float-body (-> %Undefined% %Undefined% %Undefined%))
 (= (lp:float-body $codes $sign)
    (if (ue:equal $codes ()) FloatBad

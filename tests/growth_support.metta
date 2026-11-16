@@ -57,7 +57,8 @@
 (= (growth:run-once $root $engine $script $size $dir $index)
    (let* (($result (nt:join $dir (format-args "result-{}-{}" ($size $index))))
           ($env (growth:append (nt:environment $dir)
-                  (("GROWTH_SIZE" (repr $size)) ("GROWTH_DIR" $dir) ("GROWTH_RESULT" $result))))
+                  (("GROWTH_SIZE" (repr $size)) ("GROWTH_DIR" $dir) ("GROWTH_RESULT" $result)
+                   ("NATIVE_QUEUE_VARIANT" (system:getenv-or-default "NATIVE_QUEUE_VARIANT" "")))))
           ($run (proc:run ((nt:join $engine "cetta") "--lang" "petta" "--import-mode" "ancestor-walk" "--quiet"
                            (nt:join $root $script)) $root $env 600000 1048576))
           ($_ (nt:exit-ok $run))

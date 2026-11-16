@@ -4,6 +4,7 @@
 !(import! &self (library math))
 !(import! &self (library json))
 !(import! &self ./src/text_cetta)
+!(import! &self ./src/effect_receipt_values_cetta.metta)
 
 (= (get_time) (system:wall-time))
 (= (get_time_as_string) (system:format-time "%Y-%m-%d %H:%M:%S" (get_time) "local"))
@@ -36,14 +37,14 @@
           ((String $part)
            (Bool (if $part "True" "False"))
            (Number (utils:py-number-text $part))
-           ($other (py-call (str $part))))))
-      ($other (py-call (str $part))))))
+           ($other (erv:str (erv:cross $part))))))
+      ($other (erv:str (erv:cross $part))))))
 ; A number's str() is its JSON text but for the non-finite floats.  An integer
 ; past Python's digit limit still raises in Python, as it did.
 (= (utils:py-number-text $number)
    (case (json:stringify-python $number)
      (("Infinity" "inf") ("-Infinity" "-inf") ("NaN" "nan")
-      ((JsonPythonErrorV1 $class $message $prefix) (py-call (str $number)))
+      ((JsonPythonErrorV1 $class $message $prefix) (Error utils:py-number-text (Unsolvable ($class $message))))
       ($text $text))))
 
 ; An owned timer keeps other clients' completions available to them.

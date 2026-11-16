@@ -3,6 +3,9 @@
 ; retired Python structured_plan produced for the same requests.
 !(import! &self ../native_test_support.metta)
 !(import! &self ../../src/provider_request_cetta.metta)
+!(let* (($native (json:parse "{\"messages\":[{\"role\":\"user\",\"content\":\"(Error literal data)\"}],\"max_tokens\":64}"))
+        ($once (preq:tag $native)) ($twice (preq:tag $once)))
+   (nt:require request-normalization-is-idempotent (== $once $twice)))
 
 (= (sr:full) (preq:parse "{\"model\": \"session\", \"max_tokens\": 64, \"messages\": [{\"role\": \"system\", \"content\": \"S LAST_SKILL_USE_RESULTS: r\"}, {\"role\": \"developer\", \"content\": \"D\"}, {\"role\": \"user\", \"content\": \"U\"}], \"cache_messages\": true, \"cache_ttl\": \"1h\", \"extra_body\": {\"enable_thinking\": true, \"reasoning\": {\"effort\": \"low\"}, \"foo\": 1}, \"tools\": []}"))
 (= (sr:prepared $protocol $model $request)

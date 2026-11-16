@@ -1,0 +1,13 @@
+; Full casefold is pointwise; contextual lowercase is deliberately not used.
+!(import! &self (library str))
+!(import! &self ../config/unicode-casefold-15.metta)
+(= (unicode:casefold $text)
+   (if (!= (str:unicode-version) "15.0.0")
+     (Error unicode:casefold (Fault unsupported-unicode-version))
+     (let $pieces (map-atom (str:python-codepoints $text) $point (unicode:fold-point $point))
+       (str:join "" $pieces))))
+(= (unicode:fold-point $point)
+   (case (collapse (match &self (UnicodeFoldDeltaV1 $point $folded) $folded))
+     ((() (str:python-lower (str:from-python-codepoints ($point))))
+      (($text) $text)
+      ($bad (Error unicode:casefold (Fault ambiguous-casefold-table))))))

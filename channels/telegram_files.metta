@@ -128,23 +128,8 @@
 (= (tgf:last $items) (if (== (cdr-atom $items) ()) (car-atom $items) (tgf:last (cdr-atom $items))))
 
 ; RFC 3986 percent-encoding of a query value: unreserved characters stay.
-(= (tgf:query-value $text) (str:join "" (map-atom (str:python-codepoints $text) $code (tgf:encode-point $code))))
-(= (tgf:encode-point $code)
-   (if (tgf:unreserved? $code) (str:from-python-codepoints ($code))
-     (str:join "" (map-atom (tgf:utf8 $code) $byte (str:concat "%" (tgf:hex2 $byte))))))
-(= (tgf:unreserved? $code)
-   (if (and (>= $code 65) (<= $code 90)) True
-     (if (and (>= $code 97) (<= $code 122)) True
-       (if (and (>= $code 48) (<= $code 57)) True
-         (or (or (== $code 45) (== $code 95)) (or (== $code 46) (== $code 126)))))))
-(= (tgf:utf8 $code)
-   (if (< $code 128) ($code)
-     (if (< $code 2048) ((+ 192 (tgf:div $code 64)) (+ 128 (% $code 64)))
-       (if (< $code 65536) ((+ 224 (tgf:div $code 4096)) (+ 128 (% (tgf:div $code 64) 64)) (+ 128 (% $code 64)))
-         ((+ 240 (tgf:div $code 262144)) (+ 128 (% (tgf:div $code 4096) 64)) (+ 128 (% (tgf:div $code 64) 64)) (+ 128 (% $code 64)))))))
-(= (tgf:div $a $b) (/ (- $a (% $a $b)) $b))
-(= (tgf:hex2 $byte) (str:concat (tgf:hex-digit (tgf:div $byte 16)) (tgf:hex-digit (% $byte 16))))
-(= (tgf:hex-digit $d) (index-atom ("0" "1" "2" "3" "4" "5" "6" "7" "8" "9" "A" "B" "C" "D" "E" "F") $d))
+!(import! &self ../src/uri_cetta.metta)
+(= (tgf:query-value $text) (uri:encode $text))
 
 ;; ------------------------------------------------------------- downloads
 

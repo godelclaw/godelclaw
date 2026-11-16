@@ -36,7 +36,7 @@
 
 ;; ------------------------------------------------------------ values
 
-(= (model:env-set? $name) (not (== (system:getenv-or-default $name "") "")))
+(= (model:env-set? $name) (system:env-nonempty? $name))
 ; Python's truth of a JSON value.
 (= (model:truthy? $value)
    (case $value
@@ -314,6 +314,7 @@
 (= (model:ttl "models") 300.0)
 (= (model:ttl "kimi-models") 300.0)
 (= (model:ttl "quota") 60.0)
+(= (model:ttl "model-window") 300.0)
 (= (model:retry-seconds) 30.0)
 (= (model:refresh-due? $record $kind $now)
    (let* (($observed (model:stamp $record "observed_at")) ($attempted (model:stamp $record "attempted_at")))
@@ -349,7 +350,15 @@
 (= (model:credential-alias "kimi-models") "OBSERVE_KIMI")
 (= (model:credential-alias "models") "OBSERVE_SYNTHETIC")
 (= (model:credential-alias "quota") "OBSERVE_SYNTHETIC")
+(= (model:credential-alias "model-window") "OBSERVE_ANTHROPIC")
 (= (model:credential-env $kind)
+   (if (== $kind "model-window")
+     (("CETTA_IO_AUTH_OBSERVE_ANTHROPIC_URL_PREFIX" (str:concat (model:anthropic-base) "/"))
+      ("CETTA_IO_AUTH_OBSERVE_ANTHROPIC_HEADER" "x-api-key")
+      ("CETTA_IO_AUTH_OBSERVE_ANTHROPIC_ENV" "ANTHROPIC_API_KEY")
+      ("CETTA_IO_AUTH_OBSERVE_ANTHROPIC_PREFIX" ""))
+     (model:catalog-credential-env $kind)))
+(= (model:catalog-credential-env $kind)
    (let* (($alias (str:concat "CETTA_IO_AUTH_" (model:credential-alias $kind)))
           ($kimi (== $kind "kimi-models")))
      (((str:concat $alias "_URL_PREFIX") (str:concat (if $kimi (model:kimi-base) (model:api-root)) "/"))
@@ -365,6 +374,8 @@
    (let $base (system:getenv-or-default "SYNTHETIC_BASE_URL" "https://api.synthetic.new/openai/v1")
      (model:rstrip-slash (car-atom (str:split "/openai/" $base)))))
 (= (model:kimi-base) (model:rstrip-slash (system:getenv-or-default "KIMI_BASE_URL" "https://api.kimi.ai/coding/v1")))
+(= (model:anthropic-base)
+   (model:rstrip-slash (system:getenv-or-default "ANTHROPIC_BASE_URL" "https://api.anthropic.com/v1")))
 ; Merge FIELDS ((key value) ...) into KIND's record, or with REPLACE make
 ; them the whole record, and write the file back as Python's json.dump wrote
 ; it, readable by its owner only. One step under the file's lock, so two
@@ -407,6 +418,9 @@
    ((str:concat (model:api-root) "/v2/quotas") ((http:credential "OBSERVE_SYNTHETIC")) "SYNTHETIC_API_KEY"))
 ; The provider's JSON object for KIND, or (ModelObservationFailed reason).
 (= (model:fetch $kind)
+   (if (== $kind "model-window") (model:window-fetch)
+     (model:catalog-fetch $kind)))
+(= (model:catalog-fetch $kind)
    (let ($url $headers $key) (model:request $kind)
      (if (not (model:env-set? $key))
        (ModelObservationFailed (if (== $kind "kimi-models") "Kimi Code credential is not configured" (str:concat $key " is not set")))
@@ -481,7 +495,27 @@
 (= (model:value "models" $payload) (model:catalog $payload ""))
 (= (model:value "kimi-models" $payload) (model:catalog $payload "kimi:"))
 (= (model:value "quota" $payload) (model:quota-value $payload))
+(= (model:value "model-window" (ModelWindowPayloadV1 $id $capacity))
+   (JsonObject ((JsonPair "id" $id) (JsonPair "context" $capacity) (JsonPair "source" "provider-model-metadata"))))
+(= (model:window-fetch)
+   (let $selected (model:current "")
+     (if (or (not (model:anthropic? $selected)) (not (model:env-set? "ANTHROPIC_API_KEY")))
+       (ModelObservationFailed "selected model has no configured metadata route")
+       (let* (($url (str:concat (model:anthropic-base) (str:concat "/models/" (uri:encode $selected))))
+              ($reply (case (io:try-submit
+                        (http:request "GET" $url
+                          ((http:credential "OBSERVE_ANTHROPIC") (http:header "anthropic-version" "2023-06-01"))
+                          "" (model:introspect-ms) 4194304))
+                        (((io:pending $id) (model:received (model:await $id)))
+                         ($bad (ModelObservationFailed "submit-error"))))))
+         (case $reply
+           (((ModelObservationFailed $_) $reply)
+            ($payload
+              (let $capacity (model:number (json:get $payload "max_input_tokens") 0)
+                (if (> $capacity 0) (ModelWindowPayloadV1 $selected $capacity)
+                  (ModelObservationFailed "invalid model window"))))))))))
 (= (model:clip $text $limit) (if (> (str:char-length $text) $limit) (str:char-slice $text 0 $limit) $text))
+!(import! &self ./uri_cetta.metta)
 ; Read KIND from its provider and record it whole, or note the failure and
 ; keep the last good value. True when the file was written.
 (= (model:observe $kind)

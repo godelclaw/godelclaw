@@ -9,9 +9,7 @@
 !(import! &self (library math))
 !(import! &self ./src/small_views_cetta.metta)
 !(import! &self ./src/pins_context_cetta.metta)
-!(import! &self ./src/helper.py)
-!(import! &self ./src/strategy_host.py)
-!(import! &self ./src/goal_views_boundary.py)
+!(import! &self ./src/context_markers_cetta.metta)
 
 (= (gv:empty) "(no goals yet — add one with (goal-write ...))")
 (= (gv:path) (system:getenv-or-default "METTACLAW_GOALS_PATH"
@@ -236,7 +234,7 @@
             (((GvMalformed $number) (str:concat "work state unavailable: malformed goal record at line " (repr $number)))
              ((GvParsed $goals $flags)
                (let $body (gv:work-body $path $goals $flags $max-chars $note-chars)
-                 (str:join "\n" ((gv:text (py-call (helper.change_mark "work-state" $body))) $body))))))))))))
+                 (str:join "\n" ((mark:context "work-state" $body) $body))))))))))))
 (= (gv:kernel $path)
    (case (gv:read (gv:neighbor $path "goals_kernel.json"))
      ((GvMissing (JsonObject ()))
@@ -293,7 +291,7 @@
       ($text (let $lines (gv:lines $text)
         (if (== $lines ()) (gv:empty)
           (let $body (str:join "\n" $lines)
-            (if $fair (str:concat $body (json:parse (gv:text (py-call (goal_views_boundary.fair_suffix))))) $body))))))))
+            $body)))))))
 (= (gv:load $id)
    (sv:outcome (collapse (catch
      (case $id

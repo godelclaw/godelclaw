@@ -139,8 +139,8 @@
    (case (chatgpt:model-list)
      (((ChatGPTModelList $items)
        (let $slug (str:byte-slice $model 8 (str:byte-length $model))
-         (py-call (synthetic_llm.observe_model_window $model (chatgpt:window $slug $items) "chatgpt-models"))))
-      ((ChatGPTUnavailable $why) (py-call (synthetic_llm.observe_model_window $model 0 (repr $why)))))))
+         (model:observe-window $model (chatgpt:window $slug $items) "chatgpt-models")))
+      ((ChatGPTUnavailable $why) (model:observe-window $model 0 (repr $why))))))
 
 ; Controlled subscription-route repeats reused cache with session_id; the
 ; body's cache key alone did not reliably produce repeat hits. Keep this
@@ -258,8 +258,8 @@
 ; the display and command options of an API-key call, then this route's
 ; profile (stream, store false, no output limit field).
 (= (chatgpt:prepared $selected $tokens $kind $purpose $session $request $spec)
-   (let* ((($plan $text) (py-call (native_llm_host.subscription_seed $selected $tokens $kind $purpose
-                                    (chatgpt-policy "response-bytes"))))
+   (let* ((($plan $text) (host-native:subscription-seed $selected $tokens $kind $purpose
+                                    (chatgpt-policy "response-bytes")))
           ($seed (preq:parse $text)))
      (if (not (preq:truthy (preq:field $seed "ready"))) (pcall:seed-refused $plan $seed)
        ; The llm:v1 codec takes syntax: bind each value before it crosses.
@@ -292,9 +292,9 @@
 (= (chatgpt:command $selected $tokens $effort $prompt)
    (let $session-value (chatgpt:session)
     (case $session-value
-     (((ChatGPTUnavailable $why) (health:paced (py-call (synthetic_llm.unavailable_action $why))))
+     (((ChatGPTUnavailable $why) (health:paced (host-native:unavailable-action $why)))
       ($session
        (let $planned (catch (chatgpt:command-plan $selected $tokens $effort $prompt $session))
         (case $planned
-         (((Error $source $reason) (health:paced (py-call (synthetic_llm.unavailable_action chatgpt-plan-error))))
+         (((Error $source $reason) (health:paced (host-native:unavailable-action chatgpt-plan-error)))
           ($plan (llm:run $plan))))))))))

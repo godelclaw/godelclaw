@@ -21,6 +21,8 @@
 !(import! &self (library str))
 !(import! &self (library path))
 !(import! &self (library system))
+!(import! &self (library re))
+!(import! &self ./effect_receipt_values_cetta.metta)
 
 (= (rtev:spool $health-path) (path:join (path:dirname $health-path) "runtime-events"))
 
@@ -86,3 +88,33 @@
             ($update (let $offered (add-atom &self (RuntimeHandoverOfferedV1 $id))
                        (cons-atom ($id $update) $rest)))))))))
 (= (rtev:offered? $id) (not (== (collapse (match &self (RuntimeHandoverOfferedV1 $id) True)) ())))
+
+; Native producers use the same durable spool and occurrence identities.
+!(import! &self ./state_file_cetta.metta)
+!(import! &self ./input_scope_cetta.metta)
+!(bind! &runtime-event-order (new-state 0))
+(= (rtev:spooled? $folder $suffix $names)
+   (if (== $names ()) False
+     (if (str:ends-with (car-atom $names) $suffix) True
+       (rtev:spooled? $folder $suffix (cdr-atom $names)))))
+(= (rtev:enqueue $health-path $identity $text $reason)
+   (if (not (re:is-match (re:compile "^runtime:[A-Za-z0-9_.:-]{1,160}$") $identity))
+     (Error rtev:enqueue invalid-runtime-occurrence)
+     (case (input-scope:settled $identity)
+       ((True True)
+        (False (rtev:enqueue-new $health-path $identity $text $reason))
+        ($unavailable (Error rtev:enqueue settlement-unavailable))))))
+(= (rtev:enqueue-new $health-path $identity $text $reason)
+   (let* (($folder (rtev:spool $health-path)) ($_ (fs:make-directories $folder 511))
+          ($suffix (str:join "" ("-" (str:char-slice (str:sha256 $identity) 0 24) ".json"))))
+     (if (or (erv:contains (input-scope:ids) $identity) (rtev:spooled? $folder $suffix (rtev:names $folder))) True
+       (let* (($clock (max (system:wall-time-ns) (+ (get-state &runtime-event-order) 1)))
+              ($_ (change-state! &runtime-event-order $clock))
+              ($order (repr $clock))
+              ($padded (str:concat (str:byte-slice "00000000000000000000" 0 (max 0 (- 20 (str:char-length $order)))) $order))
+              ($path (path:join $folder (str:concat $padded $suffix)))
+              ($item (JsonObject
+                 ((JsonPair "chat" "runtime") (JsonPair "text" (str:concat "[runtime] " $text))
+                  (JsonPair "from_bot" False) (JsonPair "tier" "light")
+                  (JsonPair "update_id" $identity) (JsonPair "wake" $reason)))))
+         (sf:replace $path (json:stringify-python-with $item ((ensure-ascii False))) 432 True)))))

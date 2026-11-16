@@ -1,6 +1,8 @@
 !(import! &self ./src/context_compaction)
 !(import! &self ./src/runtime_cetta)
 !(import! &self ./src/strategy_broker_cetta.metta)
+!(import! &self ./src/context_budget_cetta.metta)
+!(import! &self ./src/model_receipts_cetta.metta)
 
 ; SWI-PeTTa eagerly visits imports in both branches above.  Keep the backend
 ; names distinct and expose one runtime-selected public interface.
@@ -19,14 +21,14 @@
         ($first $first)))))
 (= (state:prepare-context $prompt $tokens)
    (if (strategy:enabled?)
-       (let* (($evidence (format-args "{}" ((py-call (strategy_host.lifetime_context)))))
+       (let* (($evidence (format-args "{}" ((turn:lifetime-context))))
               ($base (request:append (request:append $prompt $evidence) (runtime:projection)))
-              ($focus (py-call (strategy_host.context_input "focus")))
-              ($trigger (py-call (strategy_host.context_input "trigger")))
+              ($focus (turn:context-input "focus"))
+              ($trigger (turn:context-input "trigger"))
               ($_ (llm:observe-window))
-              ($capacity-value (py-call (strategy_host.context_input "capacity" $tokens)))
+              ($capacity-value (turn:context-input "capacity" $tokens))
               ($capacity (format-args "{}" ($capacity-value)))
-              ($model (py-call (strategy_host.context_input "model")))
+              ($model (turn:context-input "model"))
               ($effort (system:getenv-or-default "METTACLAW_REASONING_EFFORT" "default")))
          (state:single-prepared
            (collapse (catch (context:prepare $base $focus $trigger $capacity $model $tokens $effort)))))

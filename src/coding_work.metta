@@ -125,12 +125,12 @@
           ;; agent's; a session from before models were recorded keeps the
           ;; agent's model of the moment it resumes.
           ($model (cio:session-model $dir (work:agent-model)))
-          ($pythonpath (cio:runtime-pythonpath $runtime (system:cwd)))
           ;; The session shares the account's ledger and usage tally, as
           ;; Codex sub-agents share rate limits, but keeps its own health,
           ;; last-completion and restart files: its calls are not the agent's turns.
           ($parent (system:getenv-or-default "METTACLAW_INSTANCE" "agent"))
-          ($own (("PYTHONPATH" $pythonpath) ("METTACLAW_ACTIVITY_CALL_SCOPE" $id) ("METTACLAW_STREAM_PARENT" $parent)
+          ($own (("METTACLAW_RUNTIME_ROOT" $runtime) ("METTACLAW_MODE_RUNTIME" "") ("CETTA_BIN" $binary)
+                 ("METTACLAW_ACTIVITY_CALL_SCOPE" $id) ("METTACLAW_STREAM_PARENT" $parent)
                  ("METTACLAW_ACTIVITY_CALL_LANE" "background")
                  ("METTACLAW_COGNITIVE_HEALTH_PATH" (path:join $dir "health.json"))
                  ("METTACLAW_LLM_COMPLETION_PATH" (path:join $dir "completion.json"))

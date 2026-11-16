@@ -76,6 +76,9 @@
 (= (progress:phase $phase)
    (let (ProgressV1 $sequence $held $reported $known) (get-state &progress)
      (progress:receipt $phase 0 $reported)))
+(= (progress:phase $phase $seconds)
+   (let (ProgressV1 $sequence $held $reported $known) (get-state &progress)
+     (progress:receipt $phase (+ (system:monotonic-ns) (* $seconds 1000000000)) $reported)))
 ; A submitted call owns its wait to the call's deadline; the answer's bytes
 ; count again from none.
 (= (progress:provider-wait $milliseconds)

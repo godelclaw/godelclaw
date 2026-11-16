@@ -1,5 +1,20 @@
 {
   "schema": 1,
+  "current_batch": {
+    "id": "python-free-cognitive-core",
+    "status": "native-candidate; completion requires recorded qualification and paired installed verification",
+    "selection": "config/runtime-files.json",
+    "role": "cognitive-core",
+    "native_audit": "scripts/audit_native_runtime.metta",
+    "engine_revision": "084cc598b622cd631ca7fe2b394bf163f78a9b0d",
+    "runtime_profile": "native-agent",
+    "shared_contracts": ["ResumableModeCheckpoint", "SingleReplyObservation"],
+    "qualification": ["native units", "PeTTa provider contracts", "real normal and managed-mode turns", "input crash recovery", "native client fixtures", "growth and alternating complete-flow performance"],
+    "he_scope": "Shared request and codec contracts; whole application hosts remain PeTTa extended",
+    "remaining_python_services": ["console-frontend", "gateway-server"],
+    "delivery": "one immutable paired release after native boot, recovery, clients and growth checks",
+    "policy": "Core behavior remains MeTTa on Python-disabled CeTTa. Deployment tools and explicitly requested external coding tools are separate process roles. Historical package lists below describe the original migration inventory, not the selected core."
+  },
   "milestone": "2026-11-15",
   "scope": "Deployed bootstrap, cognition, services, controls, provider and memory clients, coding management, advertised adapters and operator console run without Python. Build tools, independent test oracles and explicitly launched external tools may use other languages.",
   "acceptance": [

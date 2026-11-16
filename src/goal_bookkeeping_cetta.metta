@@ -14,7 +14,7 @@
 !(import! &self ./src/pins_context_cetta.metta)
 !(import! &self ./src/goal_bookkeeping_math_cetta.metta)
 !(import! &self ./src/text_cetta.metta)
-!(import! &self ./src/strategy_host.py)
+!(import! &self ./src/turn_frame_cetta.metta)
 
 !(bind! &gk-last-wake (new-state GkNoWake))
 (= (gk:dims) ("Cn" "C" "Ct" "I" "J" "A" "S" "Co" "Sp"))
@@ -423,7 +423,7 @@
          (((GkOk $l) (GkOk (gk:fmt $goal $s $l))) ($failure $failure))))
         ($failure $failure)))))
 (= (gk:retire $name $reason)
-   (case (catch (py-call (strategy_host.retire_goal $name $reason)))
+   (case (catch (turn:retire-goal $name $reason))
      (((Error $_ $_) 0) ($closed $closed))))
 (= (gk:goal-drop $name $reason) (gk:goal-drop $name $reason (gv:path)))
 (= (gk:goal-drop $name $reason $path)

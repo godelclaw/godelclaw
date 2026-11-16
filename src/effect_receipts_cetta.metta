@@ -10,7 +10,7 @@
 !(import! &self ./src/effect_receipt_io_cetta.metta)
 !(import! &self ./src/public_worklog_cetta.metta)
 !(import! &self ./src/worklog_sink_cetta.metta)
-!(import! &self ./src/strategy_host.py)
+!(import! &self ./src/turn_frame_cetta.metta)
 !(import! &self ./src/strategy_broker_cetta.metta)
 !(import! &self ./src/strategy_attempts_cetta.metta)
 !(import! &self ./src/display_cetta.metta)
@@ -167,8 +167,8 @@
 (= (er:strategy $turn $disposition $command $result $occurrence)
    (if (== (system:getenv-or-default "METTACLAW_OBSERVED_STRATEGY" "0") "1")
      (let* (($attempt (strategy:attempt $turn))
-            ($outcome (er:answer (collapse (catch (py-call (strategy_host.command_result $turn $disposition $command $result
-                                                             (er:attempt-position $attempt)))))))
+            ($outcome (er:answer (collapse (catch (turn:command-result $turn $disposition $command $result
+                                                             (er:attempt-position $attempt))))))
             ($receipt (if (er:failed? $outcome) 0 (strategy:command-progress $turn))))
        (if (er:failed? $outcome) $outcome
          (if (erv:truth $occurrence) $occurrence (er:attempt-identity $attempt)))) $occurrence))

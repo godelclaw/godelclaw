@@ -92,6 +92,7 @@
 ; This is the py-call argument conversion actually observed at the dispatcher:
 ; expressions/lists become Python lists, symbols/Bool become Python strings.
 ; JsonArray syntax at this crossing is NOT already a decoded Python JSON list.
+(: erv:cross (-> Atom %Undefined%))
 (= (erv:cross $value)
    (if (== (get-type $value) String) $value
      (case $value

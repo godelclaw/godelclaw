@@ -1,6 +1,12 @@
 ; Unit tests of the paired benchmark's statistics (tests/provider_native_benchmark.metta).
 !(import! &self ../native_test_support.metta)
 !(import! &self ../provider_native_benchmark.metta)
+!(import! &self ../cognitive_core_benchmark.metta)
+!(let $stats (core-bench:stats ((NativeBenchSampleV1 3 4) (NativeBenchSampleV1 1 8) (NativeBenchSampleV1 2 6)) 3)
+   (progn
+     (nt:require complete-flow-median (nt:equal (sf:get $stats "median_ns" 0) 2))
+     (nt:require complete-flow-p95 (nt:equal (sf:get $stats "p95_ns" 0) 3))
+     (nt:require complete-flow-maximum-memory (nt:equal (sf:get $stats "max_peak_rss_kib" 0) 8))))
 ; 21 pairs whose differences, candidate less baseline, are the given numbers.
 (= (bench-test:samples $values $rss)
    (if (nt:equal $values ()) ()

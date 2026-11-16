@@ -40,7 +40,7 @@
 ; helper.pad20 itself, so it raises exactly as it did.
 (= (tg-clock:pad20 $number)
    (case (if (== (get-type $number) Number) (catch (math:trunc $number)) (Error $number "not a number"))
-     (((Error $call $why) (py-call (helper.pad20 $number)))
+     (((Error $call $why) (Error telegram-clock (Unsolvable $number)))
       ($n (if (< $n 0) (str:concat "-" (tg-clock:zeros (str:number->string (- 0 $n)) 19))
             (tg-clock:zeros (str:number->string $n) 20))))))
 (= (tg-clock:zeros $digits $width)
@@ -65,7 +65,7 @@
    (if (and (== (get-type $seconds) Number) (>= $seconds 0))
      (let (io:pending $id) (io:submit (timer:after (math:ceil (* $seconds 1000))))
        (tg-clock:await $id))
-     (py-call (time.sleep $seconds))))
+     (sleep $seconds)))
 (= (tg-clock:await $id)
    (case (io:wait $id 30000)
      (((io:event $id (timer:fired $_)) ())

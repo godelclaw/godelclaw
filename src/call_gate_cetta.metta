@@ -24,4 +24,4 @@
                      (system:getenv-or-default "METTACLAW_MODE_RUNTIME" "")
                      (system:getenv-or-default "METTACLAW_CODING_SESSION" "")))
 (= (call-gate:pass)
-   (if (== (call-gate:state) clear) True (py-call (native_llm_host.gate))))
+   (if (== (call-gate:state) clear) True (host-native:gate)))

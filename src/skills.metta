@@ -1,6 +1,10 @@
-!(import! &self ./src/topic_jobs.py)
+!(import! &self ./src/state_ledger.metta)
+!(import! &self ./src/gateway_client_cetta.metta)
+!(import! &self ./src/mcp_bridge_cetta.metta)
 !(import! &self ./src/mode_state.metta)
 !(import! &self ./src/skills_help.metta)
+!(import! &self ./src/iter_authoring_cetta.metta)
+!(import! &self ./src/claude_bridge_cetta.metta)
 (= (getLegacySkills)
    (;INTERNAL:
     "- Coding mode for real work: (work \"task\") or (work \"task\" \"workdir\") starts a session that keeps working (plan, commands, patches, tests) until done and mails you its report; meanwhile you stay free. (work-status) lists sessions, (work-status \"id\") shows plan and report, (work-steer \"id\" \"text\") adds guidance, (work-resume \"id\" [\"current\"]) continues the same finished or interrupted session on its pin or after checking and re-pinning to the current runtime, (work-stop \"id\") stops it, (work-hold \"id\" \"why\" [\"YYYY-MM-DD\"]) holds it until a review date or indefinitely, and (work-archive \"id\" \"why\") sets it aside. Open sessions and pin verdicts appear in the coding-sessions context source, controlled by (setting \"work\" \"context\" \"open\"|\"summary\"|\"off\") and (setting \"work\" \"resume\" \"pinned\"|\"current\"). CeTTa only."
@@ -88,16 +92,15 @@
 ;; Background jobs return immediately, and the
 ;; runtime wakes the agent when a job ends.  Vitals are read on demand.
 
-(= (vitals) (py-call (helper.vitals)))
+(= (vitals) (runtime-support:vitals))
 
 ;; Shared execution code, separate agent-owned queues. These requests never
 ;; start a gateway and do not replace any existing skill implicitly.
-(= (gateway-tools) (py-call (gateway_bridge.tools)))
+(= (gateway-tools) (gateway:tools))
 (= (gateway-start $id $tool $json)
-   (py-call (gateway_bridge.start $id $tool
-             (utils:decode-safe $json))))
-(= (gateway-status $id) (py-call (gateway_bridge.status $id)))
-(= (gateway-cancel $id) (py-call (gateway_bridge.cancel $id)))
+   (gateway:start $id $tool (utils:decode-safe $json)))
+(= (gateway-status $id) (gateway:status $id))
+(= (gateway-cancel $id) (gateway:cancel $id))
 
 !(import! &self ./src/file_io)
 !(import! &self ./src/shell_io)
@@ -112,20 +115,26 @@
 ;; proposal-bound edits to stable source.  A captured in-flight request is
 ;; never rewritten.
 (= (iter-transformations)
-   (py-call (iter_authoring.list_transformations)))
+   (author:list))
 
 (= (iter-transform-write $name $source)
-   (py-call (iter_authoring.write_transformation $name $source)))
+   (author:run "write" $name $source))
 
 (= (iter-transform-disable $name)
-   (py-call (iter_authoring.disable_transformation $name)))
+   (author:run "disable" $name ""))
 
 (= (iter-transform-enable $name)
-   (py-call (iter_authoring.enable_transformation $name)))
+   (author:run "enable" $name ""))
 
 ;; Rest is a pause, not a spend. The budget still held is banked by the loop
 ;; and handed back when the rest ends, so a short nap no longer costs a whole
 ;; breath. The loop does the banking because only it can see the periphery.
+(= (rest:duration $seconds)
+   (case (erv:int (erv:cross $seconds))
+     (((ErFailure $class $message $_) (Error rest (Unsolvable ($class $message))))
+      ($number (if (== (get-type $number) Number) (max 1 $number)
+                 (Error rest (Unsolvable invalid-duration)))))))
+
 (= (rest)
    (progn (working:rest-cancel)
           (loop-directive-set rest-await-input 1)
@@ -136,7 +145,8 @@
 (= (rest $seconds)
    ;; Rest duration remains the agent's decision. An authenticated operator
    ;; message or /wake may deliberately end it; other activity queues.
-   (let $n (max 1 (py-call (int $seconds)))
+   (let $n (rest:duration $seconds)
+     (if (turn:failed? $n) $n
         (progn (working:rest-cancel)
                (working:rest-hold $n)
                (loop-directive-set rest-await-input 0)
@@ -144,13 +154,14 @@
                (loop-directive-set sleep-interval $n)
                (loop-directive-set pending-continuation
                                    (quote no-continuation))
-               (RESTING budget-banked sleep-interval-seconds $n))))
+               (RESTING budget-banked sleep-interval-seconds $n)))))
 
 (= (rest-command $seconds $continuation)
    ;; The opaque constructor keeps the command inert when it is read from the
    ;; generic coordinate store.  The wait adapter is the sole consumer that
    ;; unwraps it after the timer expires.
-   (let $n (max 1 (py-call (int $seconds)))
+   (let $n (rest:duration $seconds)
+     (if (turn:failed? $n) $n
         (progn (working:rest-schedule $n (quote $continuation))
                (working:rest-hold $n)
                (loop-directive-set rest-await-input 0)
@@ -160,12 +171,13 @@
                                    (continuation-value $continuation))
                (RESTING budget-banked
                         sleep-interval-seconds $n
-                        continuation (quote $continuation)))))
+                        continuation (quote $continuation))))))
 
 (= (rest $seconds $why)
    ;; Preserve the original intention-bearing rest.  Unlike a quoted command,
    ;; text is context for the next waking rather than executable data.
-   (let $n (max 1 (py-call (int $seconds)))
+   (let $n (rest:duration $seconds)
+     (if (turn:failed? $n) $n
         (progn (working:rest-cancel)
                (working:rest-hold $n)
                (loop-directive-set rest-await-input 0)
@@ -177,7 +189,7 @@
                           (utils:decode-safe $why))
                (RESTING budget-banked
                         sleep-interval-seconds $n
-                        intent (utils:decode-safe $why)))))
+                        intent (utils:decode-safe $why))))))
 
 ;; A burst ends at its step bound or via nop. Ending a burst is a pacing
 ;; decision; protected work remains active until its task checker accepts.
@@ -188,14 +200,14 @@
 
 (= (mode) (mode:view))
 (= (modes) (mode:list-view))
-(= (requests) (py-call (strategy_host.view)))
-(= (request-status $request) (py-call (strategy_host.request_status $request)))
-(= (request-focus $request) (py-call (strategy_host.focus_request $request)))
-(= (request-page $offset) (py-call (strategy_host.request_page $offset)))
-(= (request-page $offset $count) (py-call (strategy_host.request_page $offset $count)))
-(= (request-read $request $offset) (py-call (strategy_host.request_read $request $offset)))
+(= (requests) (turn:view))
+(= (request-status $request) (turn:request-status $request))
+(= (request-focus $request) (turn:focus-request $request))
+(= (request-page $offset) (turn:request-page $offset))
+(= (request-page $offset $count) (turn:request-page $offset $count))
+(= (request-read $request $offset) (turn:request-read $request $offset))
 (= (request-disposition $request $disposition $reason)
-   (py-call (strategy_host.request_disposition $request $disposition $reason)))
+   (turn:request-disposition $request $disposition $reason))
 (= (mode-set $name) (mode:set $name))
 
 ;; Telegram file/image delivery. The result string says what happened —
@@ -221,13 +233,13 @@
 (= (goal-write $atom) (gk:goal-write $atom))
 (= (goal-drop $name $reason) (gk:goal-drop $name $reason))
 (= (goal-review-save $digest $entries)
-   (py-call (strategy_host.goal_review_save $digest (utils:decode-safe $entries))))
+   (turn:goal-review-save $digest (utils:decode-safe $entries)))
 
 ;; Claude Code bridge + tmux interface. Headless claude-code remains gated by
 ;; the operator toggle. Every window on this Unix user's tmux server is shared
 ;; agent workspace, so tmux-send needs no separate authorization layer.
 (= (claude-code $prompt)
-   (py-call (claude_bridge.ask (utils:decode-safe $prompt))))
+   (claude:ask (utils:decode-safe $prompt)))
 !(import! &self ./src/tmux_io)
 
 ;; Progressive disclosure: one-line catalog above, full page on demand.
@@ -283,17 +295,17 @@
 (= (llm-set-model $name) (model:set $name))
 
 ;; Generic MCP bridge. Servers are configured in .mcp.json; arguments are JSON.
-(= (mcp-servers) (py-call (mcp_bridge.servers)))
-(= (mcp-tools $server) (py-call (mcp_bridge.tools $server)))
-(= (mcp-tool-info $server $tool) (py-call (mcp_bridge.tool_info $server $tool)))
+(= (mcp-servers) (mcp:servers))
+(= (mcp-tools $server) (mcp:tools $server))
+(= (mcp-tool-info $server $tool) (mcp:tool-info $server $tool))
 (= (mcp-call $server $tool $json)
    (let $args (utils:decode-safe $json)
-        (py-call (mcp_bridge.call_tool $server $tool $args))))
+        (mcp:call-tool $server $tool $args)))
 
-(= (command-receipts) (py-call (strategy_host.command_receipts)))
-(= (command-receipts $cursor) (py-call (strategy_host.command_receipts $cursor)))
-(= (model-jobs) (py-call (native_lifetime.jobs)))
-(= (model-result $id) (py-call (native_lifetime.model_result $id)))
-(= (model-result $id $offset) (py-call (native_lifetime.model_result $id $offset)))
+(= (command-receipts) (turn:command-receipts))
+(= (command-receipts $cursor) (turn:command-receipts $cursor))
+(= (model-jobs) (model-receipts:jobs))
+(= (model-result $id) (model-receipts:result $id))
+(= (model-result $id $offset) (model-receipts:result $id $offset))
 
 !(import! &self ./src/command_dispatch)

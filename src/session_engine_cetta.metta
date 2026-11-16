@@ -3,4 +3,4 @@
 ; agent and its ledger: a stored answer or command output is one value, and
 ; with the engine's 1 MiB default a large answer cannot reach the ledger and
 ; waits in local storage for good.
-(= (session:engine-flags) ("--value-bytes" "268435456"))
+(= (session:engine-flags) ("--profile" "extended" "--value-bytes" "268435456"))

@@ -155,7 +155,7 @@
 (= (coding:error-text $where $why)
    (case $where
      (((python_error $type $exc)
-        (case (catch (py-call (builtins.str $exc)))
+        (case (catch (erv:str (erv:cross $exc)))
           (((Error $a $b) (repr $where))
            ($message (format-args "{}: {}" ($type $message))))))
       ($other (str:join " " ((repr $where) (repr $why)))))))
@@ -168,7 +168,7 @@
         (let* (($text (coding:error-text $where $why))
                ($_ (println! (CodingCallFailed attempt $attempt $text))))
           (if (or (>= $attempt 4) (coding:rejected? $text)) (CallFailed $text)
-            (let* (($wait (* 2 (+ $attempt 1))) ($_ (py-call (time.sleep $wait)))) (coding:ask $dir $request (+ $attempt 1))))))
+            (let* (($wait (* 2 (+ $attempt 1))) ($_ (sleep $wait))) (coding:ask $dir $request (+ $attempt 1))))))
       ($reply (case (coding:field $reply "message")
                 ((JsonNull (if (>= $attempt 4) (CallFailed "no message in the reply")
                              (coding:ask $dir $request (+ $attempt 1))))
@@ -193,7 +193,7 @@
 (= (coding:estimate $dir $request) (cio:context-tokens $dir (str:byte-length (json-stringify $request))))
 ; Read at every step: the provider reports the model's window after the first.
 (= (coding:window)
-   (let* (($_ (llm:observe-window)) ($capacity (py-call (strategy_host.context_capacity 32768)))
+   (let* (($_ (llm:observe-window)) ($capacity (turn:context-capacity 32768))
           ($reported (if (== (get-metatype $capacity) Grounded) $capacity 200000))
           ($raw (str:string->number (system:getenv-or-default "METTACLAW_CODING_CONTEXT_TOKENS" "256000")))
           ($ceiling (if (== (get-type $raw) Number)
@@ -246,7 +246,7 @@
                   "Another model began this task and left this handoff summary; continue from it and do not restart from scratch.\n\n"
                   $summary)))
                 ($handoff (JsonObject (cons-atom
-                  (JsonPair "_coding_handoff" (JsonString (py-call (secrets.token_hex 8)))) $fields))))
+                  (JsonPair "_coding_handoff" (JsonString (str:char-slice (system:uuid4-hex) 0 16))) $fields))))
            (coding:rewrite $dir (coding:append-list $head ($handoff))))))))
 (= (coding:compact $dir $messages $effort)
    (let* (($_ (display:event "maintenance" "compaction" "Compacting task history" "running"))

@@ -146,6 +146,12 @@
    (case $value
      (((JsonObject $pairs) (preq:object (preq:tag-pairs $pairs)))
       ((JsonArray $items) (preq:array (preq:tag-items $items)))
+      ((JsonString $text) (if (== (get-type $text) String) (preq:string $text)
+                            (ProviderPreparationRefusedV1 invalid-json-value)))
+      ((JsonNumber $text) (if (== (get-type $text) String) (preq:number $text)
+                            (ProviderPreparationRefusedV1 invalid-json-value)))
+      ((JsonBool $flag) (if (== (get-type $flag) Bool) (preq:bool $flag)
+                          (ProviderPreparationRefusedV1 invalid-json-value)))
       (JsonNull JsonNull)
       ($scalar (if (== (get-type $scalar) String) (preq:string $scalar)
         (if (== (get-type $scalar) Bool) (preq:bool $scalar)

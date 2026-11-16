@@ -48,7 +48,7 @@
 ; The object without key, every occurrence removed.
 (= (sf:drop $object $key)
    (case $object
-     (((JsonObject $pairs) (JsonObject (sf:drop-pairs $pairs $key)))
+     (((JsonObject $pairs) (let $next (sf:drop-pairs $pairs $key) (JsonObject $next)))
       ($other $object))))
 (= (sf:drop-pairs $pairs $key)
    (if (== $pairs ()) ()
@@ -63,7 +63,7 @@
 ; The object with key set to value: replaced where it stands, else added last.
 (= (sf:put $object $key $value)
    (case $object
-     (((JsonObject $pairs) (JsonObject (sf:put-pairs $pairs $key $value)))
+     (((JsonObject $pairs) (let $next (sf:put-pairs $pairs $key $value) (JsonObject $next)))
       ($other (JsonObject ((JsonPair $key $value)))))))
 ; The rest is computed before cons-atom takes it: HE hands cons-atom its
 ; arguments unevaluated.

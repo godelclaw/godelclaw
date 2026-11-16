@@ -1,0 +1,26 @@
+CHANNELS
+The native runtime receives durable input and publishes addressed sends.
+Use a reply_channel from the route context. Acceptance of a send is not delivery.
+
+TOOLS
+Create .metta files in tools/. The next cycle captures their bytes.
+A name beginning with _ is inactive. A component declares its description
+and required text parameters as ordinary data:
+  (ComponentDeclarationV1 "Describe this tool" ("text"))
+and defines:
+  (= (component:run $arguments)
+     (sf:get $arguments "text" ""))
+The arguments are a native JsonObject. Return one native JSON value.
+Each custom tool runs in an owned native process with the existing deadline.
+The explicit python coding tool can call the other captured tools as functions;
+its execution does not implement the runtime's provider or input coordination.
+
+TRANSFORMATIONS
+Create .metta files in transformations/. They run in filename order.
+Declare a ComponentDeclarationV1 and define:
+  (= (component:transform-request (JsonArray ($messages $tools)))
+     (JsonArray ($messages $tools)))
+Both arguments are native JsonArrays. Return exactly those two arrays.
+An invalid or interrupted transformation preserves the previous request and
+adds a diagnostic. Source is captured once; editing a file does not rewrite
+an in-flight request.

@@ -1,4 +1,5 @@
 ;configured at runtime:
+!(import! &self ./src/websearch_cetta.metta)
 (= (commchannel) (empty))
 
 ;Connect all the channels. (configureChannel) is compiled into
@@ -98,15 +99,15 @@
 ;Search the internet for some information:
 (= (search $msg)
    (let $query (utils:decode-safe $msg)
-        (py-call (websearch.search $query))))
+        (search:auto $query)))
 
 (= (search-tavily $msg)
    (let $query (utils:decode-safe $msg)
-        (py-call (websearch.search_tavily $query))))
+        (search:run "tavily" $query)))
 
 (= (search-ddg $msg)
    (let $query (utils:decode-safe $msg)
-        (py-call (websearch.search_ddg $query))))
+        (search:run "ddg" $query)))
 
 ;; On-demand short-term recall for any chat the bot is in: last $k messages
 ;; (both sides) from the local update log, matched by chat title or id.

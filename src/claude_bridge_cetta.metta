@@ -1,0 +1,63 @@
+; The explicit external coding tool retains the existing operator authorization.
+!(import! &self ./tool_output_cetta.metta)
+!(import! &self ./progress_receipt_cetta.metta)
+!(import! &self ./loop_host_cetta.metta)
+!(import! &self (library io))
+!(import! &self (library proc))
+(= (claude:flag) (system:expanduser "~/.config/pettaclaw/claude_code_authorized"))
+(= (claude:authorized?)
+   (case (fs:read-text-result (claude:flag) 32 "replace")
+     ((("ok" $text) (== (str:trim $text) "1")) ($other False))))
+(= (claude:binary)
+   (let $explicit (system:getenv-or-default "METTACLAW_CLAUDE_BIN" "")
+     (if (!= $explicit "") $explicit
+       (let $local (system:expanduser "~/.local/bin/claude")
+         (if (fs:is-file $local) $local "claude")))))
+(= (claude:ask $offered)
+   (if (not (claude:authorized?))
+     "claude-code not authorized — Zar's /claude_code_authorization toggle is OFF"
+     (let* (($text (str:trim (erv:str $offered)))
+            ($seconds (claude:timeout (system:getenv-or-default "METTACLAW_CLAUDE_TIMEOUT_SECONDS" "0"))))
+       (if (== $text "") "claude-code: empty prompt"
+         (if (< $seconds 0) "claude-code: invalid configured timeout"
+           (claude:run $text (math:ceil (* $seconds 1000))))))))
+(= (claude:timeout $text)
+   (case (catch (str:string->number (str:trim $text)))
+     (((Error $_ $_) -1)
+      ($value (if (== (get-type $value) Number)
+                (if (and (>= $value 0) (< $value 1.0e12)) $value -1) -1)))))
+(= (claude:await $id)
+   (case (io:try-wait $id 1000)
+     (((io:idle) (claude:await $id)) ((io:event $_ $result) $result)
+      ($bad (Error claude-code (Incomplete wait-result-unavailable))))))
+(= (claude:run $text $milliseconds)
+   (let* (($root (artifact:directory)) ($_ (fs:make-directories $root 504))
+          ($id (system:uuid4-hex))
+          ($out (path:join $root (str:concat $id ".out")))
+          ($err (path:join $root (str:concat $id ".err")))
+          ($_ (progress:phase "external-coding-wait" (/ $milliseconds 1000)))
+          ($binary (claude:binary)) ($directory (system:expanduser "~"))
+          ($argv ("/usr/bin/env" $binary "-p" $text))
+          ($submitted (io:try-submit
+             (proc:request $argv $directory inherit $milliseconds $out $err))))
+     (case $submitted
+       (((io:pending $handle)
+         (let* (($ended (claude:await $handle))
+                ($stdout (artifact:retain-file $out))
+                ($stderr (artifact:retain-file $err))
+                ($_ (progress:phase "external-coding-returned")))
+           (claude:present $ended $stdout $stderr)))
+        ($bad "claude-code failed to launch")))))
+(= (claude:present $ended $stdout $stderr)
+   (if (or (artifact:failed? $stdout) (artifact:failed? $stderr))
+     (Error claude-code (Incomplete (output-retention $stdout $stderr)))
+     (case $ended
+       (((proc:finished $_ exited 0 $_ $_)
+         (let $view (str:trim (artifact:file-view $stdout 6000))
+           (if (== $view "") "(claude-code returned nothing)" $view)))
+        ((proc:finished $_ exited $code $_ $_)
+         (str:join "" ("claude-code error (exit " (repr $code) "): "
+           (artifact:file-view $stderr 800) "\n" (artifact:file-view $stdout 6000))))
+        ($unknown
+          (str:join "" ("claude-code: result and effects are unknown; inspect before retrying. stdout: "
+            (sf:get $stdout "path" "") "; stderr: " (sf:get $stderr "path" ""))))))))

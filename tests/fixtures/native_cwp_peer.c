@@ -79,6 +79,18 @@ int main(int argc, char **argv) {
         if (read_text(directory, name, text, sizeof(text))) pause_ms(atol(text));
         unsigned answer = code == 4 ? 66 : 64;
         char token[65] = {0};
+        char body[65537] = {0}, delivery[65] = {0};
+        if (!read_text(directory, "delivery-id", delivery, sizeof(delivery))) strcpy(delivery, "native-delivery-1");
+        snprintf(path, sizeof(path), "%s/delivery-acked", directory);
+        if (code == 1 && !length && access(path, F_OK) &&
+            read_text(directory, "delivery.json", body, sizeof(body))) {
+            answer = 65; strcpy(token, delivery);
+        }
+        if (code == 2 && !strcmp(id, delivery)) {
+            FILE *acked = fopen(path, "w");
+            if (!acked || fclose(acked)) fail("ack receipt");
+            answer = 66;
+        }
         if (code == 5) strcpy(token, TOKEN);
         snprintf(name, sizeof(name), "reply-%u", code);
         if (read_text(directory, name, text, sizeof(text))) {
@@ -92,7 +104,9 @@ int main(int argc, char **argv) {
         reply[4] = (unsigned char)answer;
         reply[5] = (unsigned char)token_length;
         memcpy(reply + 6, token, token_length);
-        if (send(peer, reply, 6 + token_length, MSG_NOSIGNAL) < 0 && errno != EPIPE) fail("send");
+        size_t body_length = strlen(body);
+        memcpy(reply + 6 + token_length, body, body_length);
+        if (send(peer, reply, 6 + token_length + body_length, MSG_NOSIGNAL) < 0 && errno != EPIPE) fail("send");
         close(peer);
     }
 }

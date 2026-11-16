@@ -21,6 +21,18 @@
       "source": "(llmProviderChat $request)",
       "native": "(omega-host:chat $request)",
       "reason": "A supervised call is the agent's native structured provider call"
+    },
+    {
+      "source": "Python project paths, provider codecs and mutable message lists",
+      "native": "omega-host paths and codecs, ordinary MeTTa message occurrences",
+      "reason": "Replace host infrastructure while preserving the loop, call order and tool outcomes"
+    },
+    {
+      "source": "Python Chroma initialization and normalization",
+      "native": "existing native memory service and native value normalization",
+      "reason": "Memory and error boundaries retain explicit results without a Python coordinator"
     }
-  ]
+  ],
+  "runtime": "PeTTa extended on a Python-disabled CeTTa bundle",
+  "recovery": "Owned native checkpoint with compatible legacy history import; uncertain tool outcomes are not replayed"
 }

@@ -1,7 +1,7 @@
 ; The native call owner records its policy and lifecycle in the native LLM
 ; ledger. Host calls here only publish existing host effects.
 !(import! &self ./native_lifetime_cetta.metta)
-!(import! &self ./native_llm_host.py)
+!(import! &self ./src/provider_host_cetta.metta)
 !(import! &self ./interop_flags_cetta.metta)
 !(import! &self ./native_call_cetta.metta)
 !(import! &self ./completion_effects_cetta.metta)
@@ -80,7 +80,7 @@
                         (lp:field $metadata "protocol" "") (lp:field $metadata "purpose" "turn")
                         "native" (account:request-origin $metadata) (system:wall-time))
        (((LedgerChanged $ignored4) True)
-        ($error (let $ignored5 (py-call (native_llm_host.accounting_observation_error (call:host $plan) "metadata")) False))))))
+        ($error (let $ignored5 (host-native:accounting-observation-error (call:host $plan) "metadata") False))))))
 (: account:submitted (-> %Undefined% %Undefined% %Undefined%))
 ; A submitted turn or structured call starts its health record; a compaction
 ; is maintenance and leaves it alone. The provider's wait is the last progress
@@ -94,7 +94,7 @@
      (case (nl:submitted $metadata $id (system:wall-time))
        (
         ((LedgerChanged $changed) 1)
-        ($error (py-call (native_llm_host.accounting_observation_error (call:host $plan) "submitted")))))))
+        ($error (host-native:accounting-observation-error (call:host $plan) "submitted"))))))
 (: account:progress (-> %Undefined% %Undefined% %Undefined% %Undefined%))
 ; The owner paces its own records; host observers hear only due records.
 (= (account:progress $plan $bytes $quiet)
@@ -106,7 +106,7 @@
               ($metadata (account:metadata $plan)))
          (case (nl:progress $metadata $bytes $quiet (lp:field $metadata "progress_soft" 0) (system:wall-time))
            (((LedgerChanged $changed) 1)
-            ($error (py-call (native_llm_host.accounting_observation_error (call:host $plan) "progress")))))))
+            ($error (host-native:accounting-observation-error (call:host $plan) "progress"))))))
       ((False $soft) 1))))
 (: account:failed (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 ; A failed call is reported and settled natively, from its own facts and what
@@ -129,7 +129,7 @@
        (case (nl:fail $metadata (lp:text $kind) (if (ue:equal $status 0) JsonNull $status)
                       $retry (lp:field $metadata "soft_elapsed" 0) (system:wall-time))
          (((LedgerError $ignored10)
-           (let $ignored11 (py-call (native_llm_host.accounting_observation_error (call:host $plan) "failure"))
+           (let $ignored11 (host-native:accounting-observation-error (call:host $plan) "failure")
              (account:report $plan $kind $status $seconds)))
           ($settled (account:report $plan $kind $status $seconds)))))
      (account:report $plan $kind $status -1)))
@@ -167,14 +167,14 @@
    (if (== $purpose "compaction") (failure:compaction (CallFailureV1 $code $type $status $transient $retry))
      (let* (($retained (if (and (== $kind "command") (gate:invalid-request? $status))
                          (let (CallStated $stated-code $stated-message) $stated
-                           (py-call (native_llm_host.rejected $status $stated-code $stated-message $correction)))
+                           (host-native:rejected $status $stated-code $stated-message $correction))
                          False))
             ($paced (health:paced ("failed" $code $status $transient $retry (failure:blocked) False))))
-       (if (== $kind "command") $paced (py-call (native_llm_host.structured_failed $status $type))))))
+       (if (== $kind "command") $paced (host-native:structured-failed $status $type)))))
 
 ; A retained rejection blocks retries; only a possible block asks the host.
 (= (failure:blocked)
-   (if (gate:possible?) (not (host:flag (py-call (native_llm_host.request_allowed)))) False))
+   (if (gate:possible?) (not (host:flag (host-native:request-allowed))) False))
 
 ; A command whose output the contract rejected: the ledger records the code
 ; the native classification gave, after the completion it belongs to.
@@ -184,7 +184,7 @@
      (((CommentaryRejectedV1 $code)
        (let $logged (system:write stderr (account:rejection-line $plan (lp:text $code)))
          (case (nl:command-output-rejected (account:metadata $plan) (lp:text $code) (system:wall-time))
-           (((LedgerError $ignored12) (py-call (native_llm_host.accounting_observation_error (call:host $plan) "rejection")))
+           (((LedgerError $ignored12) (host-native:accounting-observation-error (call:host $plan) "rejection"))
             ($recorded 1)))))
       ($other 1))))
 ; The operator's line for a rejected command output: its code and whether the
@@ -229,7 +229,7 @@
            ($answer (account:health $released))
            ($ignored14 (account:note-rejection $plan $decision)))
       (if (call:replies? $plan) (call:reply $plan $legacy) $answer))
-    (py-call (native_llm_host.completion_duplicate (call:host $plan)))))
+    (host-native:completion-duplicate (call:host $plan))))
 ; The host's release of a completion: a command's program, from the
 ; contract's decision; a structured call's answer. A compaction is
 ; maintenance: the host has nothing to release.
@@ -237,10 +237,10 @@
    (if (call:compaction? $plan) 1
      (case $decision
        (((CommentaryAcceptedV1 $program $publication)
-         (py-call (native_llm_host.finish (call:host $plan) $legacy "accepted" $program "")))
+         (host-native:finish (call:host $plan) $legacy "accepted" $program ""))
         ((CommentaryRejectedV1 $code)
-         (py-call (native_llm_host.finish (call:host $plan) $legacy "rejected" "" $code)))
-        ($not-applied (py-call (native_llm_host.finish (call:host $plan) $legacy)))))))
+         (host-native:finish (call:host $plan) $legacy "rejected" "" $code))
+        ($not-applied (host-native:finish (call:host $plan) $legacy))))))
 ; A released answer ends the provider wait for the watchdog.
 (= (account:answered $released)
    (case $released
@@ -301,7 +301,7 @@
 ; the host paces the retry.
 (= (account:recording-wait $plan $attempt)
    (let $recorded (if (call:compaction? $plan) 1 (health:record-wait $attempt))
-     (py-call (native_llm_host.completion_wait (call:host $plan) $attempt))))
+     (host-native:completion-wait (call:host $plan) $attempt)))
 ; $decision is the command contract's classification of this output, or
 ; CommentaryNotAppliedV1 when the contract does not apply to the call.
 (: account:complete (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))

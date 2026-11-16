@@ -1,0 +1,88 @@
+; Prepare persistent mode data without replacing an existing identity or memory.
+!(import! &self ./runtime_host_cetta.metta)
+!(import! &self ./components_cetta.metta)
+!(import! &self ../src/iter_authoring_cetta.metta)
+(= (mode-prepare:copy $source $destination)
+   (case (fs:read-text-result $source 0 "raw")
+     ((("ok" $bytes) (sf:replace $destination $bytes 432 True))
+      ($bad (Error mode-prepare (Fault (unreadable-seed $source)))))))
+(= (mode-prepare:seed $source $destination)
+   (if (fs:exists $destination) True (mode-prepare:copy $source $destination)))
+(= (mode-prepare:tree $source $destination)
+   (let* (($_ (fs:make-directories $destination 504))
+          ($results (map-atom (fs:entries $source) $name
+            (let* (($from (path:join $source $name)) ($to (path:join $destination $name)))
+              (if (component:directory? $from) (mode-prepare:tree $from $to)
+                (mode-prepare:seed $from $to))))))
+     (if (== (filter-atom $results $result (!= $result True)) ()) True
+       (Error mode-prepare (Incomplete seed-not-durable)))))
+(= (mode-prepare:identity)
+   (let* (($addition (system:getenv-or-default "METTACLAW_MODE_PROMPT_ADDITION" ""))
+          ($agent (system:getenv-or-default "METTACLAW_AGENT_ROOT" (component:app-root)))
+          ($path (if (!= $addition "") $addition
+                   (system:getenv-or-default "METTACLAW_PROMPT_PATH" (path:join $agent "memory/soul.md"))))
+          ($fallback (path:join $agent "identity/default-soul.md")))
+     (if (and (mode-host:standalone?) (== $addition "")) ""
+       (if (fs:is-file $path) (fs:read-text $path)
+         (if (fs:is-file $fallback) (fs:read-text $fallback) "")))))
+(= (mode-prepare:prompt $source $destination)
+   (if (fs:exists $destination) True
+     (let* (($base (fs:read-text $source)) ($identity (mode-prepare:identity))
+            ($text (str:concat $base (if (== $identity "") ""
+                     (str:concat "\n\nAgent identity and standing instructions:\n" $identity)))))
+       (sf:replace $destination $text 432 True))))
+(= (mode-prepare:iter-tool $name)
+   (let* (($root (component:app-root)) ($runtime (mode-host:root))
+          ($legacy (path:join (path:join $runtime "tools") (str:concat $name ".py")))
+          ($current (path:join (path:join $runtime "tools") (str:concat $name ".metta")))
+          ($pinned (mode-prepare:legacy-hash $name))
+          ($template (path:join (path:join $root "modes/iter/templates") (str:concat $name ".metta"))))
+     (if (fs:exists $current) True
+       (if (and (fs:exists $legacy) (!= (author:hash $legacy) $pinned))
+         (Error mode-prepare (Forbidden (modified-legacy-tool-needs-native-component $name)))
+         (mode-prepare:seed $template $current)))))
+(= (mode-prepare:legacy-hash $name)
+   (let* (($manifest (sf:native-object (path:join (component:app-root) "modes/iter/upstream-manifest.json")))
+          ($wanted (str:join "" ("tools/" $name ".py")))
+          ($rows (filter-atom (mode-host:array $manifest "files") $row (== (sf:get $row "path" "") $wanted))))
+     (if (== (size-atom $rows) 1) (sf:get (car-atom $rows) "sha256" "")
+       (Error mode-prepare (Unsolvable pinned-tool-not-declared)))))
+(= (mode-prepare:iter)
+   (let* (($root (component:app-root)) ($runtime (mode-host:root))
+          ($_ (map-atom ("tools" "channels" "memory" "transformations") $name
+                 (fs:make-directories (path:join $runtime $name) 504)))
+          ($tools (map-atom ("shell" "send" "python" "nop") $name (mode-prepare:iter-tool $name)))
+          ($prompt (mode-prepare:prompt (path:join $root "modes/iter/upstream/prompt.txt") (path:join $runtime "prompt.txt")))
+          ($guidance (mode-prepare:copy (path:join $root "modes/iter/reprogramming-native.txt") (path:join $runtime "reprogramming-native.txt"))))
+     (if (and (== (filter-atom $tools $result (!= $result True)) ()) (and (== $prompt True) (== $guidance True)))
+       True (Error mode-prepare (Incomplete iter-preparation-failed)))))
+(= (mode-prepare:omega)
+   (let* (($root (component:app-root)) ($runtime (mode-host:root))
+          ($memory (path:join $runtime "repos/Omega/memory"))
+          ($seeded (mode-prepare:tree (path:join $root "modes/omega/upstream/memory") $memory))
+          ($marker (path:join $runtime "identity-seeded")))
+     (if (!= $seeded True) $seeded
+       (if (fs:exists $marker) True
+         (let* (($identity (mode-prepare:identity)) ($path (path:join $memory "prompt.txt"))
+                ($prompt (sf:replace $path
+                  (str:concat (fs:read-text $path) (if (== $identity "") "" (str:concat "\n\nAgent identity and standing instructions:\n" $identity)))
+                  432 True)))
+           (if (== $prompt True) (sf:replace $marker "" 432 True) $prompt))))))
+(= (mode-prepare:run)
+   (let* (($runtime (mode-host:root))
+          ($ledger-path (path:join $runtime "adapter-ledger.json"))
+          ($previous (sf:native-object $ledger-path))
+          ($expected (system:getenv-or-default "METTACLAW_MODE_PROFILE" "supervised"))
+          ($profile (sf:get $previous "profile" $expected)))
+     (if (!= $profile $expected) (Error mode-prepare (Forbidden state-belongs-to-another-profile))
+       (let $result (if (== (mode-host:name) "iter") (mode-prepare:iter) (mode-prepare:omega))
+         (if (!= $result True) $result
+           (sf:replace $ledger-path
+             (turn:json (sf:put-all $previous
+               ((JsonPair "profile" $expected) (JsonPair "native_cognitive_core" True)
+                (JsonPair "mode" (mode-host:name)) (JsonPair "checkpoint_schema" 1)
+                (JsonPair "tool_protocol" "modes/protocol/ToolCalls.module"))))
+             432 True))))))
+!(let $prepared (mode-prepare:run)
+   (if (== $prepared True) True
+     (let $_ (system:write stderr (str:concat (diagnostic:text $prepared 1200) "\n")) (system:exit 2))))

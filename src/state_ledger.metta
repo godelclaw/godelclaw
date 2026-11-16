@@ -7,7 +7,10 @@
 ; answers each verb (src/input_ledger.metta).
 (= (state:ledger-socket) (system:getenv-or-default "METTACLAW_INPUT_LEDGER_SOCKET" ""))
 (= (state:native-ledger) (not (== (state:ledger-socket) "")))
-(= (state:ledger $verb $arguments) (ledger-client:call (state:ledger-socket) $verb $arguments))
+(= (state:ledger $verb $arguments)
+   (case (collapse (catch (ledger-client:call (state:ledger-socket) $verb $arguments)))
+     ((($answer) $answer)
+      ($invalid (Error state:ledger (Incomplete (invalid-reply $verb $invalid)))))))
 (= (state:request-id) (str:concat "rq1." (system:uuid4-hex)))
 
 (= (state:value $value)

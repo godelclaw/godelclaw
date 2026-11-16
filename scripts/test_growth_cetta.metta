@@ -8,7 +8,9 @@
 
 ; (GrowthCheck name workload n bounds), (SdkGrowthCheck name workload n bounds)
 (= (growth:registered)
-   ((GrowthCheck "coding-transcript-append" "tests/growth/coding_transcript_append.metta" 500 (growth:linear))
+   ((GrowthCheck "core-mcp-queue" "tests/growth/core_mcp_queue.metta" 500 (growth:linear))
+    (GrowthCheck "core-iter-json" "tests/growth/core_iter_json.metta" 500 (growth:linear))
+    (GrowthCheck "coding-transcript-append" "tests/growth/coding_transcript_append.metta" 500 (growth:linear))
     (GrowthCheck "coding-settle-report" "tests/growth/coding_settle_report.metta" 64 (growth:linear))
     (GrowthCheck "coding-execution-result" "tests/growth/coding_execution_result.metta" 1024 (growth:bounded))
     (GrowthCheck "coding-freeze-bundle" "tests/growth/coding_freeze_bundle.metta" 200 (growth:linear))

@@ -9,7 +9,7 @@
 !(import! &self ./src/coding_values.metta)
 !(import! &self ./src/coding_guidance.metta)
 
-(= (coding:now) (py-call (time.time)))
+(= (coding:now) (system:wall-time))
 (= (coding:file $dir $name) (path:join $dir $name))
 (= (coding:reverse $items $out)
    (if (== $items ()) $out (coding:reverse (cdr-atom $items) (cons-atom (car-atom $items) $out))))
@@ -70,11 +70,13 @@
 (= (coding:rewrite $dir $messages)
    (case (catch
            (let* (($history (coding:file $dir "messages.jsonl"))
-                  ($archive (str:join "" ($history "." (repr (coding:now)) "." (py-call (secrets.token_hex 4)) ".archived")))
+                  ($archive (str:join "" ($history "." (repr (coding:now)) "." (str:char-slice (system:uuid4-hex) 0 8) ".archived")))
                   ; Keep the live transcript available until the complete
                   ; replacement is published. Copy before the atomic write.
-                  ($_ (py-call (shutil.copyfile $history $archive)))
-                  ($receipt (fs:update-text $history "replace" (str:join "" (coding:message-lines $messages)) "" "")))
+                  ($copied (cio:copy-file $history $archive))
+                  ($receipt (if (== $copied True)
+                              (fs:update-text $history "replace" (str:join "" (coding:message-lines $messages)) "" "")
+                              (CompactionFailed (str:concat "History archive failed: " (repr $copied))))))
              (case $receipt
                ((("written" $_ $_ $_ $_) (Compacted $messages))
                 ($error (CompactionFailed (str:concat "History replacement failed: " (repr $error))))))))

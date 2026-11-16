@@ -67,7 +67,7 @@
                              (erv:str (erv:cross $command)) "dispatching")))
      1))
 (= (strategy:not-recorded $ticket $position $why)
-   (py-call (strategy_host.attempt_not_recorded $ticket $position (repr $why))))
+   (turn:attempt-not-recorded $ticket $position (repr $why)))
 (= (strategy:identity $ticket $position) (str:concat $ticket (str:concat ":" (repr $position))))
 
 ; The attempt a receipt of $turn belongs to: (StrategyAttemptV1 identity

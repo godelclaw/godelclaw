@@ -1,6 +1,7 @@
 ; Selection, recoverable compaction and paging are MeTTa policy. The original
 ; database rows remain unchanged and addressable after every excerpt.
 !(import! &self ./src/task_context_cetta)
+!(import! &self ./src/turn_frame_cetta.metta)
 !(import! &self ./src/request_context)
 !(import! &self (library math))
 !(import! &self ./src/task_idle_views)
@@ -501,7 +502,7 @@
         ((Error $_ $_) (ContextPreparationFailed "context-conversation-read-failed"))
         ($ok (task:full-context-view $base $ok $capacity $ratio))))))
 ; The calls a render carries with their results, reported to the host, which binds them to
-; the rendered prompt (strategy_host.context_presented, context_prepared): call ids of the rows
+; the rendered prompt's native receipt: call ids of the rows
 ; whose disposition is not not_run, uncertain or input. A cut, repeated or collapsed result
 ; still carries its content (lean/pettaclaw/ObservedReceipts.lean: presents).
 (= (task:carried-id $pair)
@@ -512,7 +513,7 @@
           ($other (JsonString $id)))))))
 (= (task:carried-ids $pairs) (collapse (let $pair (superpose $pairs) (task:carried-id $pair))))
 (= (task:report-carried $pairs)
-   (py-call (strategy_host.context_presented (json-stringify (JsonArray (task:carried-ids $pairs))))))
+   (turn:context-presented (json-stringify (JsonArray (task:carried-ids $pairs)))))
 
 (= (task:full-context-view $base $view $capacity $ratio)
    (let* (($trigger (task:string $view "trigger"))

@@ -26,7 +26,6 @@
 !(import! &self (library str))
 !(import! &self (library re))
 !(import! &self (library system))
-!(import! &self ./src/helper.py)
 !(import! &self ./src/undelivered_prose.metta)
 
 !(bind! &balance-lead
@@ -60,7 +59,7 @@
                       ($name (balance:text $name $raw))))))))
       ($other (balance:python $raw)))))
 
-(= (balance:python $raw) (balance:loop-value (py-call (helper.balance_parentheses $raw))))
+(= (balance:python $raw) (Error balance:parentheses (Unsolvable (ExpectedText (get-type $raw)))))
 
 ; The loop reads the balanced response as the symbol the earlier bridge made
 ; of Python's str (history and the action window read it unquoted). Since

@@ -18,7 +18,8 @@
 !(import! &self cwp)
 !(import! &self system)
 !(import! &self (library path))
-!(import! &self ./src/helper.py)
+!(import! &self ./src/control_menu_cetta.metta)
+!(import! &self ./src/diagnostic_cetta.metta)
 !(import! &self ./src/mode_state.metta)
 !(import! &self ./src/fuel_io)
 !(import! &self ./src/input_notice_cetta.metta)
@@ -89,17 +90,10 @@
 ;; A raised Python error names its exception, which reads as its type and
 ;; message; any other error reads as its reason.
 (= (tc:reason $call $why)
-   (case $call
-     (((python_error $type $exception)
-       (py-call (helper.exception_text $exception)))
-      (mode-state
-       (case $why
-         (((PythonException $class $message $_)
-           (py-call (helper.exception_text
-             (str:join "" ((if (== (get-type $class) String) $class (str:symbol->string $class))
-                           ": " $message)))))
-          ($other $why))))
-      ($other $why))))
+   (case $why
+     (((PythonException $class $message $_)
+       (diagnostic:text (str:join "" ((erv:str $class) ": " $message)) 300))
+      ($other (diagnostic:text $other 300)))))
 
 ; Native structured errors are values, unlike a raised Python bridge error.
 ; Propagate them before formatting or performing a later wake/resume effect.
@@ -157,7 +151,7 @@
        (case $head
          (((JsonPair $key $value) $value)
           ($other (tc:pair (cdr-atom $pairs) $key)))))))
-(= (tc:string $value) (case $value (((JsonString $s) $s) ($other ""))))
+(= (tc:string $value) (case $value (((JsonString $s) $s) ($other (if (== (get-type $other) String) $other "")))))
 (= (tc:strings $value)
    (case $value
      (((JsonArray $items) (collapse (let $item (tc:items $items) (tc:string $item))))
@@ -170,7 +164,7 @@
 (= (tc:settings-page $state $toast)
    (tc:menu $toast (tc:string (tc:at $state "text")) (tc:at $state "rows")))
 (= (tc:settings-menu $kind $prefix $toast)
-   (tc:settings-page (json-parse (tc:text (py-call (helper.menu_page $kind $prefix 0)))) $toast))
+   (tc:settings-page (menu:page $prefix 0 "") $toast))
 
 (= (tc:energy-menu $toast)
    (let $view (energy:view)
@@ -184,12 +178,12 @@
       ($at (let $kind (str:byte-slice $data 0 $at)
              (let $arg (str:byte-slice $data (+ $at 1) (str:byte-length $data))
                (case $kind
-                 (("menu" (tc:settings-page (json-parse (tc:text (py-call (helper.menu_page_button $arg)))) ""))
-                  ("choice" (tc:tap (tc:text (py-call (helper.menu_choice_button $arg)))))
+                 (("menu" (tc:settings-page (menu:button-page $arg) ""))
+                  ("choice" (tc:tap (menu:button-choice $arg)))
                   ("mode" (tc:mode-tap $arg))
                   ("fuel" (let $reply (tc:text (fuel:set $arg))
                             (tc:settings-menu "fuels" "fuel" $reply)))
-                  ("model" (let $reply (tc:text (py-call (synthetic_llm.set_model $arg)))
+                  ("model" (let $reply (tc:text (model:set $arg))
                              (tc:settings-menu "models" "model" $reply)))
                   ("energy" (case (str:find $arg ":")
                               (((TextNotFound $n) (format-args "unknown button {}" ($data)))
@@ -231,12 +225,12 @@
        (if (== $args "")
          (tc:mode-view (mode:view) "/mode <name> to switch, /modes to list")
          (tc:mode-set $args)))
-      ("/quota" (tc:text (py-call (synthetic_llm.quota))))
+      ("/quota" (tc:text (model:quota)))
       ("/model"
        (if (== $args "")
          (let $model (model:current "syn:large:text")
            (format-args "selected model: {} — applied at the next provider request; /model <name> to switch, /models to list, /quota for budget" ($model)))
-         (tc:text (py-call (synthetic_llm.set_model $args)))))
+         (tc:text (model:set $args))))
       ($other (format-args "unknown command {}" ($name))))))
 
 ; A task's body parsed once: the cache keeps each task's body and value

@@ -16,7 +16,7 @@
           (configure reasoningMode medium)
           (configure wakeupInterval 600) ;600=10 minutes
           (configure memoryDirectory
-               (joinPath ((py-call (omega_helper.projectRootDirectory)) memory)))
+               (joinPath ((omega-host:project-root) memory)))
           (change-state! &prevmsg "")
           (change-state! &loops (maxNewInputLoops))
           (messagesClear)
@@ -24,7 +24,7 @@
 
 (= (initKnowledge)
    (progn (log INFO "loop" "Initializing knowledge base")
-          (log INFO "loop" (py-call (rag.init_knowledge (embeddingprovider))))
+          (log INFO "loop" "Native memory adapter active")
           ()))
 
 (= (getContext)
@@ -60,17 +60,17 @@
       ($else False))))
 
 (= (collectTools)
-   (py-call (providers.getTools (getSkills))))
+   (omega-host:collect-tools (getSkills)))
 
 (= (messagesGet)
    (get-state &messages_all))
 
 (= (messagesClear)
-   (change-state! &messages_all (py-call (utils.listNew))))
+   (change-state! &messages_all ()))
 
 (= (messagesAppend $item)
    (let $episodic (get-state &messages_all)
-     (change-state! &messages_all (py-call (utils.listAppend $episodic $item)))))
+     (change-state! &messages_all (list:append $episodic ($item)))))
 
 (= (omega)
    (omega 1))
@@ -106,7 +106,7 @@
                                        ($_ (log INFO "loop" (REQUEST: (py-str ($request)))))
                                        ($response (omega-host:chat $request))
                                        ($_ (log INFO "loop" (RESPONSE: (py-str ($response)))))
-                                       ($respstr (py-call (providers.llmResponseToSExpr $response)))
+                                       ($respstr (omega-host:response-source $response))
                                        ($resp (catch (sread $respstr)))
                                        ($_ (log INFO "loop" (RESPONSE: $resp)))
                                        ($_ (change-state! &error ()))
@@ -120,7 +120,7 @@
                                                          (let ($callid $s) (superpose $resp)
                                                            (let $result
                                                              (if (HandleError (quote $s) $error) $error
-                                                               (let $rc (catch (let $R (collapse (eval $s)) (py-call (omega_helper.normalize_string $R))))
+                                                               (let $rc (catch (let $R (collapse (eval $s)) (omega-host:normalize $R)))
                                                                  (if (HandleError $rc $error) $error (strings-concat ("SUCCESS, RETURN: " $rc)))))
                                                              (progn
                                                                ($_ (log INFO "loop" (COMMAND_RETURN: ((quote $s) $result))))

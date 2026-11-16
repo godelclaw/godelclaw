@@ -1,0 +1,5 @@
+!(import! &self (library lib_prolog))
+!(import! &self ./native/bootstrap.metta)
+!(let $ready (mode-host:boot)
+   (if (== $ready True) True (mode-host:stop-uncommitted $ready)))
+!(omega)

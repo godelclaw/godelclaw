@@ -68,7 +68,7 @@
 ; The host's text is normalized at ingress (host:text): it crosses as a
 ; String on CeTTa and as a Symbol on SWI-PeTTa.
 (= (gate:host-hold)
-   (case (host:text (py-call (native_llm_host.rejection_hold)))
+   (case (host:text (host-native:rejection-hold))
      (("repair" repair)
       ("blocked" blocked)
       ("clear" clear)

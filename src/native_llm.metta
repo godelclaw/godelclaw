@@ -3,7 +3,7 @@
 ; prepared transport and phase are native, and so are its display and its
 ; commentary observer. The host plan is only the handle of the remaining host
 ; observers (the watchdog, the program's release and the failure report).
-!(import! &self ./src/native_llm_host.py)
+!(import! &self ./src/provider_host_cetta.metta)
 !(import! &self ./src/interop_flags_cetta.metta)
 !(import! &self ./src/model_selection_cetta.metta)
 !(import! &self ./src/native_call_cetta.metta)
@@ -18,8 +18,7 @@
 ; provider: a standalone terminal launch (modes/launch.py), and the offline
 ; conformance fixture that stands in for Iter's provider (modes/conformance).
 (= (llm:native?)
-   (and (not (== (system:getenv-or-default "METTACLAW_MODE_PROFILE" "") "standalone"))
-        (== (system:getenv-or-default "ITER_FIXTURE_ROOT" "") "")))
+   True)
 !(if (llm:native?)
      (let* (($command-module (import! &self llm:command))
             ($compat-module (import! &self llm:compat))
@@ -39,7 +38,7 @@
 ; provider's model ever reaches the ChatGPT list.
 (= (llm:observe-window)
    (if (and (llm:native?) (str:starts-with (model:current syn:large:text) "chatgpt:"))
-     (let $model (format-args "{}" ((py-call (synthetic_llm.model_window_due))))
+     (let $model (model:window-due)
        (if (== $model "") True (chatgpt:observe-window $model)))
      True))
 
@@ -47,7 +46,7 @@
 ; when a block is possible (src/rejection_gate_cetta.metta).
 (= (llm:request-allowed?)
    (if (gate:possible?)
-     (if (llm:host-flag (py-call (native_llm_host.request_allowed))) (gate:release) False)
+     (if (llm:host-flag (host-native:request-allowed)) (gate:release) False)
      True))
 (= (llm:command $model $tokens $effort $prompt)
    (if (not (llm:request-allowed?)) "()"
@@ -60,14 +59,14 @@
 ; the ledger's: "turn" (iter), "coding" or "compaction". Preparation captures
 ; both, so a plan is never retargeted after it exists.
 (= (llm:structured-plan $request $purpose)
-   (let $selected (model:current syn:large:text)
+   (let* (($selected (model:current syn:large:text)) ($native (preq:tag $request)))
      (if (str:starts-with $selected "chatgpt:")
        (if (== $purpose "turn") (Error llm:structured-plan chatgpt-command-mode-only)
          (let $session (chatgpt:session)
            (case $session
              (((ChatGPTUnavailable $why) (Error llm:structured-plan $why))
-              ($ready (chatgpt:structured-plan-purpose $selected $request $ready $purpose))))))
-       (pcall:structured-plan $selected $request $purpose))))
+              ($ready (chatgpt:structured-plan-purpose $selected $native $ready $purpose))))))
+       (pcall:structured-plan $selected $native $purpose))))
 
 ; The reply of a structured call, written as JSON where its caller keeps it
 ; (atomically) and returned as a value. It never crosses the host.
@@ -121,7 +120,7 @@
      (if (== $health "") $body
        (let $control (path:join (path:dirname $health) "request-capture/control.json")
          (case (catch (fs:is-file $control))
-           ((True (py-call (native_llm_host.observe_wire $plan $body)))
+           ((True (host-native:observe-wire $plan $body))
             ($disabled $body)))))))
 
 ; Callers hold the prepared call, its owner, or a refused preparation.
@@ -137,8 +136,8 @@
      (((llm:v1:pending $epoch $correlation $protocol $id)
         (llm:await $plan $state))
       ((llm:v1:failed duplicate duplicate duplicate-plan not-started)
-        (health:paced (py-call (native_llm_host.duplicate_plan (call:host $plan)))))
-      ((llm:v1:rejected $reason) (health:paced (py-call (native_llm_host.duplicate_plan (call:host $plan)))))
+        (health:paced (host-native:duplicate-plan (call:host $plan))))
+      ((llm:v1:rejected $reason) (health:paced (host-native:duplicate-plan (call:host $plan))))
       ($other (llm:deliver $plan $state)))))
 
 (: llm:await (-> Atom Atom %Undefined%))
@@ -191,7 +190,7 @@
          (if (and (>= $status 200) (< $status 300))
            (llm:decode-body $plan $epoch $correlation $protocol $body)
            ; Keep the provider's explanation, as Codex shows it.
-           (let $_ (call:note-stated $plan (py-call (native_llm_host.stated_error $body)))
+           (let $_ (call:note-stated $plan (host-native:stated-error $body))
              (llm:v1:failed $epoch $correlation (http-status $status) response-received)))
          $state))
       ; The answer reached the engine, which refused to keep it: it is named,
@@ -236,7 +235,7 @@
        (llm:v1:io-outcome $epoch $correlation $protocol (http:response 200 $text)))
       ((llm:v1:error stream-capacity)
        (let* (($recorded (if (call:compaction? $plan) 1 (health:record-wait $attempt)))
-              ($_ (py-call (native_llm_host.decoding_wait (call:host $plan) $attempt))))
+              ($_ (host-native:decoding-wait (call:host $plan) $attempt)))
          (llm:decode-received-body $plan $epoch $correlation $protocol $body $stream $limit (+ $attempt 1))))
       ((llm:v1:error $why)
        (llm:v1:failed $epoch $correlation incomplete-stream response-received))

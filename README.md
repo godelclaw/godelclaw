@@ -129,18 +129,16 @@ Prolog through `lib_prolog` while ordinary agent tools use the native path.
 Core upstream modes remain available through the separate SWI-PeTTa backend;
 full native settings and ECAN features require CeTTa.
 
-These launch paths need a Python-enabled [CeTTa](https://github.com/godelclaw/CeTTa)
-bundle and the selected mode's small dependency file. They do not require
-Telegram, a service installation, or the framework's full `requirements.txt`.
-Use a Python environment matching the Python version linked into CeTTa
-(`BUILD=python`); virtual environments are supported.
+These launch paths use a Python-disabled [CeTTa](https://github.com/godelclaw/CeTTa)
+`native-agent` bundle. Provider calls, mode state, memory and tool coordination
+are native. Telegram and a service installation are optional. An explicitly
+requested Python coding tool still runs Python as an external program.
 
 ```sh
 git clone https://github.com/godelclaw/godelclaw.git
 cd godelclaw
-python3 scripts/build_cetta.py
+python3 scripts/build_cetta.py --profile native-agent --prolog 0
 export CETTA_BIN="$PWD/.runtime/cetta/cetta"
-python3 -m pip install -r modes/iter/requirements.txt
 ./run.sh --mode iter
 ```
 
@@ -149,13 +147,12 @@ their pinned defaults. Set them to your model endpoint before starting. It
 keeps upstream's prompt, tools, transformations and context policy. Input and
 replies use the terminal; worker sends are forwarded to the foreground.
 
-Omega's standalone **core** uses upstream's provider SDK and `OMEGA_*`
+Omega's standalone **core** retains the pinned loop and `OMEGA_*`
 configuration, with terminal I/O, history and text recall. Its embedding,
 NAL/PLN and optional plugin startup are omitted; this profile does not run
 the entire Omega distribution. For an OpenAI-compatible local endpoint:
 
 ```sh
-python3 -m pip install -r modes/omega/requirements.txt
 OMEGA_provider=OpenAIAPI OMEGA_model=your-model \
 OMEGA_openaiapi_url=http://localhost:11434/v1 OPENAIAPI_API_KEY=dummy \
   ./run.sh --mode omega
@@ -485,16 +482,17 @@ without prematurely firing a later timer.
 
 ## Get started
 
-For CeTTa, install Python 3.11+, GCC, Make, `pkg-config`, Python development
-headers, GMP, libcurl, PCRE2 and [SWI-Prolog](https://www.swi-prolog.org/). On Ubuntu:
+For CeTTa, install GCC, Make, `pkg-config`, GMP, libcurl, PCRE2 and the native
+engine's authentication dependencies. Python 3.11+ runs the build tools; the
+agent core does not embed Python. Prolog is optional. On Ubuntu:
 
 ```sh
-sudo apt install build-essential git pkg-config python3-dev python3-venv \
-  libgmp-dev libcurl4-openssl-dev libpcre2-dev swi-prolog-nox
+sudo apt install build-essential git pkg-config python3 \
+  libgmp-dev libcurl4-openssl-dev libpcre2-dev libjansson-dev libssl-dev
 ```
 
-`python3 scripts/build_cetta.py` fetches the exact [CETTA_REF](CETTA_REF), builds
-the Python-enabled engine and durable Telegram service,
+`python3 scripts/build_cetta.py --profile native-agent --prolog 0` fetches the
+exact [CETTA_REF](CETTA_REF), builds the Python-disabled engine and native services,
 and installs their libraries/tools together under `.runtime/cetta`. It also
 writes a revision and artifact manifest. `--source PATH` uses an existing
 checkout at that revision; `--prefix PATH` selects another destination.
@@ -509,9 +507,14 @@ upstream pins.
 ```sh
 git clone https://github.com/godelclaw/godelclaw.git
 cd godelclaw
-python3 scripts/build_cetta.py
+python3 scripts/build_cetta.py --profile native-agent --prolog 0
 ./initialize.sh
 ```
+
+The console frontend and execution gateway server still require Python as
+separate process roles. Their native workers use the same engine bundle. The
+reviewed role selection is in `config/runtime-files.json`; this is a native
+cognitive core, not yet an entirely Python-free installation.
 
 Initialization creates local configuration and seeds the runtime files. It does
 not start an agent or register a Telegram bot.

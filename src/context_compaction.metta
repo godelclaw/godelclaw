@@ -294,7 +294,7 @@
                          $capacity $model $tokens $effort $ratio))))
 
 (= (context:prepare $base $focus $trigger $capacity $model $tokens $effort)
-   (let* (($fresh (py-call (strategy_host.context_presented "[]")))
+   (let* (($fresh (turn:context-presented "[]"))
           ($assembled (request:append $base (topics:context)))
           ($footer (commentary:output-tail))
           ($ratio (context:ratio $model))
@@ -309,7 +309,7 @@
          (case $view
            (((ContextPreparationFailed $_) $view)
             ((JsonObject $_)
-             (let* (($repair (== (py-call (provider_rejection.begin_context_repair)) 1))
+             (let* (($repair (== (rejection:begin-context-repair) 1))
                     ($ready (catch (if $repair
                               (context:repair-rejected $view $available $model $tokens $effort $ratio)
                               (context:drive $view $available $model $tokens $effort $ratio)))))
@@ -333,7 +333,7 @@
 ; Coverage travels separately from untrusted source text, bound to the exact
 ; rendered prompt. It never acknowledges an input or closes work by itself.
 (= (context:prepared-text $text $incomplete)
-   (let $_ (py-call (strategy_host.context_prepared (str:sha256 $text) $incomplete)) $text))
+   (let $_ (turn:context-prepared (str:sha256 $text) $incomplete) $text))
 
 (= (context:accept-first-window $view $capacity $ratio)
    (case (context:bounded $view $capacity $ratio "first-start")

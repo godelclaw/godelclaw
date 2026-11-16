@@ -4,10 +4,8 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "$0")" && pwd)"
 # Terminal modes do not initialize an agent identity or load instance secrets.
 if [ "${1:-}" = "--mode" ]; then
-    exec "${METTACLAW_MODE_PYTHON:-python3}" "$ROOT/modes/launch.py" --profile standalone "$@"
+    exec bash "$ROOT/modes/launch_native.sh" --profile standalone "$@"
 fi
-PETTA_ROOT="${PETTA_ROOT:-${HOME:-}/repos/PeTTa}"
-PETTA_PY_ENV="${PETTA_PY_ENV:-${HOME:-}/miniforge3/envs/petta}"
 CETTA_ROOT="${CETTA_ROOT:-${HOME:-}/repos/CeTTa-runtime}"
 STATE_HOME="${XDG_STATE_HOME:-${HOME:-}/.local/state}"
 INSTANCE="${METTACLAW_INSTANCE:-$(basename "$ROOT")}"
@@ -139,36 +137,10 @@ fi
 export METTACLAW_ENGINE=cetta
 export METTACLAW_ACTIVE_ENGINE=cetta
 
-python_site_paths=""
-if [ -d "$PETTA_PY_ENV" ]; then
-    export LD_LIBRARY_PATH="$PETTA_PY_ENV/lib:${LD_LIBRARY_PATH:-}"
-    if [ -f "$PETTA_PY_ENV/pyvenv.cfg" ]; then
-        # Embedded CPython needs the base stdlib and the venv's dependencies.
-        # A venv alone is not a valid PYTHONHOME.
-        mapfile -t python_layout < <(env -u PYTHONHOME -u PYTHONPATH \
-            "$PETTA_PY_ENV/bin/python3" -c \
-            'import sys,site,os; print(sys.base_prefix); print(os.pathsep.join(site.getsitepackages()))')
-        export PYTHONHOME="${python_layout[0]}"
-        python_site_paths="${python_layout[1]}"
-        export LD_LIBRARY_PATH="$PYTHONHOME/lib:$LD_LIBRARY_PATH"
-    else
-        export PYTHONHOME="$PETTA_PY_ENV"
-    fi
-    export PYTHONNOUSERSITE=1
-    # Keep PATH in sync with PYTHONHOME: a bare `python3` (e.g. from a shell
-    # skill or subprocess) must resolve to THIS env's interpreter, or it loads
-    # the wrong stdlib and dies with "ModuleNotFoundError: encodings".
-    export PATH="$PETTA_PY_ENV/bin:$HOME/.local/bin:$PATH"
-    # ~/.local/bin: systemd user services run no login shell, so ~/.profile
-    # never adds it — without this line the agent lives in a poorer PATH
-    # than any interactive shell (claude, cc-telegram, user tools all live there).
-else
-    echo "warning: PETTA_PY_ENV ($PETTA_PY_ENV) not found; the Python bridge will likely fail. Set petta_py_env in config/local.toml." >&2
-fi
-
-# Keep py-call module resolution local and reproducible. Do not inherit an
-# external PYTHONPATH, which would mix venvs again.
-export PYTHONPATH="$ROOT/src:$ROOT/channels${python_site_paths:+:$python_site_paths}"
+export METTACLAW_RUNTIME_ROOT="$ROOT"
+export CETTA_BIN="${CETTA_BIN:-$CETTA_ROOT/cetta}"
+unset PYTHONHOME PYTHONPATH PYTHONNOUSERSITE
+. "$ROOT/scripts/native_runtime_env.sh"
 
 export SYNTHETIC_MODEL="${SYNTHETIC_MODEL:-syn:large:text}"
 export METTACLAW_MEMORY_LOG_DIR="${METTACLAW_MEMORY_LOG_DIR:-$ROOT/memory/remembered}"
@@ -220,19 +192,19 @@ cd "$ROOT"
 # loop's lifecycle: no recycle acknowledgement.
 if [ "$REQUESTED_TARGET" = telegram-control ]; then
     CETTA_BIN="${CETTA_BIN:-$CETTA_ROOT/cetta}"
-    exec "$CETTA_BIN" --value-bytes 268435456 --lang petta --import-mode ancestor-walk \
+    exec "$CETTA_BIN" --value-bytes 268435456 --lang petta --profile extended --import-mode ancestor-walk \
         "$ROOT/channels/telegram_control_main.metta" default
 fi
 # An IRC or Mattermost channel's own service (channels/chat_service_main.metta)
 # keeps the connection beside cognition and shares the chat spool with it.
 if [ "$REQUESTED_TARGET" = chat-channel ]; then
     CETTA_BIN="${CETTA_BIN:-$CETTA_ROOT/cetta}"
-    exec "$CETTA_BIN" --lang petta --import-mode ancestor-walk \
+    exec "$CETTA_BIN" --lang petta --profile extended --import-mode ancestor-walk \
         "$ROOT/channels/chat_service_main.metta" default
 fi
 if [ "$REQUESTED_TARGET" = terminal-control ]; then
     CETTA_BIN="${CETTA_BIN:-$CETTA_ROOT/cetta}"
-    exec "$CETTA_BIN" --value-bytes 268435456 --lang petta --import-mode ancestor-walk \
+    exec "$CETTA_BIN" --value-bytes 268435456 --lang petta --profile extended --import-mode ancestor-walk \
         "$ROOT/channels/terminal_control_main.metta" default
 fi
 
@@ -269,14 +241,14 @@ engine_failed() {
     exit "$status"
 }
 
-if [ "$TARGET" = "$ROOT/run.metta" ] && [ -f "$ROOT/modes/launch.py" ]; then
+if [ "$TARGET" = "$ROOT/run.metta" ] && [ -f "$ROOT/modes/launch_native.sh" ]; then
     LOOP_MODE="$(METTACLAW_BOOT_OPERATION=capture METTACLAW_BOOT_PARENT_PID="$$" \
         "${CETTA_BIN:-$CETTA_ROOT/cetta}" --no-results --lang petta --profile extended \
         --import-mode ancestor-walk "$ROOT/scripts/loop_bootstrap_cetta.metta")"
     export METTACLAW_ACTIVE_LOOP_MODE="$LOOP_MODE"
     case "$LOOP_MODE" in
         iter|omega)
-            exec "$PETTA_PY_ENV/bin/python3" "$ROOT/modes/launch.py" \
+            exec bash "$ROOT/modes/launch_native.sh" \
                 --repo "$ROOT" --mode "$LOOP_MODE" --engine "$METTACLAW_ENGINE" --profile supervised
             ;;
     esac
@@ -320,7 +292,7 @@ case "$METTACLAW_ENGINE" in
         fi
         if [ "$TARGET" != "$ROOT/run.metta" ]; then
             status=0
-            run_probe "$CETTA_BIN" --value-bytes 268435456 --lang petta --import-mode ancestor-walk "$TARGET" default || status=$?
+            run_probe "$CETTA_BIN" --value-bytes 268435456 --lang petta --profile extended --import-mode ancestor-walk "$TARGET" default || status=$?
             exit "$status"
         fi
         # systemd stops the launcher and its CeTTa child as one control group.
@@ -335,7 +307,7 @@ case "$METTACLAW_ENGINE" in
         # --value-bytes gives this process the wire allowance of the ledger's
         # own workers: a ledger answer larger than the default (about 1 MiB,
         # a long conversation window) otherwise arrives as "uncertain".
-        "$CETTA_BIN" --value-bytes 268435456 --lang petta --import-mode ancestor-walk \
+        "$CETTA_BIN" --value-bytes 268435456 --lang petta --profile extended --import-mode ancestor-walk \
             "$ROOT/cetta_bootstrap.metta" \
             "$ROOT/cetta_run.metta" \
             default

@@ -14,8 +14,8 @@
 ;   selected fuel, mode and model.
 ;
 ; The texts are those runtime_health.report and activity_report gave. A field
-; that is not a number reads as absent; scripts/runtime_watch.py, outside the
-; agent, keeps runtime_health.status for itself.
+; that is not a number reads as absent. The external deployment watcher reads
+; the JSON projection of these same captured facts.
 !(import! &self (library fs))
 !(import! &self (library json))
 !(import! &self (library math))
@@ -120,11 +120,17 @@
 ; The facts of one status, from the records read at NOW:
 ; (RhStatusV1 PROBLEMS POLL-AGE CONTROL CONTROL-AGE LOOP WORKING-AGE TURN-AGE PENDING-AGE MEMORY-MODE).
 ; CONTROL is the readiness record, (JsonObject ()) when there is none.
+(= (rh:legitimate-wait? $channel $now)
+   (if (== (sf:get $channel "loop_status" JsonNull) "waiting")
+     (>= (rh:stamp $channel "waiting_until") (- $now 10)) False))
+(= (rh:required? $enabled $pending $obligation $loops $autonomous $waiting)
+   (if $enabled
+     (or (or (not (== $pending 0)) (not (== $obligation 0)))
+         (or (> $loops 0) (and $autonomous (not $waiting)))) False))
 (= (rh:status $now $channel $working $mode $cognition $enabled $control $memory)
    (let* (($poll-age (rh:age (rh:stamp $channel "last_poll_ok_at") $now))
           ($saved (rh:stamp $working "saved_at"))
-          ($waiting-until (rh:stamp $channel "waiting_until"))
-          ($legitimate-wait (if (== (sf:get $channel "loop_status" JsonNull) "waiting") (>= $waiting-until (- $now 10)) False))
+          ($legitimate-wait (rh:legitimate-wait? $channel $now))
           (($pending $obligation) (rh:turn-stamps $cognition))
           ($pending-age (rh:age $pending $now))
           ($turn-age (rh:age (rh:stamp $cognition "last_completed_at") $now))
@@ -139,10 +145,7 @@
           ($control-age (if $has-control (rh:age-from (rh:stamp $control "observed_at") $now) None))
           ; An autonomous mode expects cognition, but a rest in flight is a
           ; legitimate reason for there to be none.
-          ($required (if $enabled
-                       (or (or (not (== $pending 0)) (not (== $obligation 0)))
-                           (or (> $loops 0) (and $autonomous (not $legitimate-wait))))
-                       False))
+          ($required (rh:required? $enabled $pending $obligation $loops $autonomous $legitimate-wait))
           ($stale-after (rh:stale-after))
           ($channel-problems
             (if $has-control
@@ -259,6 +262,41 @@
              $lifecycle (rh:generation) (rh:engine-failure)))))))
 (= (rh:report) (rh:report-at (system:wall-time)))
 (= (rh:error? $value) (case $value (((Error $where $why) True) ($other False))))
+
+; Machine projection: capture each source once, then derive both decisions and
+; fields from that capture. Reading health never creates a cognitive turn.
+(= (rh:nullable $value) (if (== $value None) JsonNull $value))
+(= (rh:snapshot-at $now)
+   (let* (($enabled (lifecycle:enabled)) ($view (lifecycle:view)))
+     (if (rh:error? $enabled) $enabled
+       (if (rh:error? $view) $view
+         (rh:snapshot-of $now (sf:native-object (rh:channel-path))
+           (sf:native-object (rh:working-path)) (sf:native-object (rh:mode-path))
+           (health:read) (== $enabled 1) $view (rh:control) (rh:memory) (rh:generation))))))
+(= (rh:snapshot-of $now $channel $working $mode $cognition $enabled $view $control $memory $generation)
+   (let* (((RhStatusV1 $problems $poll-age $ignored $control-age $loop $working-age $turn-age $pending-age $memory-mode)
+            (rh:status $now $channel $working $mode $cognition $enabled $control $memory))
+          (($pending $obligation) (rh:turn-stamps $cognition))
+          ($active (loop-mode:canonical (sf:get $mode "mode" "default")))
+          ($required (rh:required? $enabled $pending $obligation (rh:count $working "loops")
+                        (rh:member? $active (loop-mode:names)) (rh:legitimate-wait? $channel $now))))
+     (JsonObject
+       ((JsonPair "state" (if (== $problems ()) "ok" "problem"))
+        (JsonPair "lifecycle" $view) (JsonPair "problems" (JsonArray $problems))
+        (JsonPair "generation" $generation)
+        (JsonPair "telegram_poll_age_seconds" (rh:nullable $poll-age))
+        (JsonPair "channel_health_source" (if (rh:empty-object? $control) "loop-client" "independent-control"))
+        (JsonPair "operator_control_age_seconds" (rh:nullable $control-age))
+        (JsonPair "channel_service_ready" (sf:get $control "channel_ready" JsonNull))
+        (JsonPair "loop" $loop) (JsonPair "working_set_age_seconds" (rh:nullable $working-age))
+        (JsonPair "cognition_required" $required)
+        (JsonPair "model_turn_age_seconds" (rh:nullable $turn-age))
+        (JsonPair "model_turn_pending_age_seconds" (rh:nullable $pending-age))
+        (JsonPair "model_turn_obligation_age_seconds" (rh:nullable (rh:age $obligation $now)))
+        (JsonPair "model_turn_expected_count" (rh:count-any $cognition "expected_count"))
+        (JsonPair "model_turn_completed_count" (rh:count-any $cognition "completed_count"))
+        (JsonPair "model_turn_last_outcome" (sf:get $cognition "last_outcome" "none"))
+        (JsonPair "memory" $memory-mode)))))
 
 ;; ------------------------------------------------------------- /activity
 

@@ -10,18 +10,20 @@
 ; A latch that cannot be read as running withholds them too.
 (= (dispatch:stopped)
    (case (catch (lifecycle-native:enabled)) ((1 0) ($other 1))))
-(= (dispatch:shadow $command) (py-call (effect_backend.dispatch $command)))
+(= (dispatch:shadow $command)
+   (handled (Error dispatch:shadow (Forbidden qualification-backend-requires-oracle-runtime))))
 (= (dispatch:argument-error $command)
    (case (api:argument-error $command)
      (((APINotRegistered $name) (help:command-error $command))
       ($result $result))))
+(: dispatch:normalize (-> Atom %Undefined%))
 (= (dispatch:normalize $value)
    (case $value
      (((Error (python_error $type $object) $_)
-        (format-args "{}: {}" ($type (py-call (str $object)))))
+        (format-args "{}: {}" ($type (erv:str (erv:cross $object)))))
       ((Error mode-state (PythonException $type $message $_))
         (format-args "{}: {}" ($type $message)))
-      ($other (format-args "{}" ($value))))))
+      ($other (if (== (get-type $value) String) $value (repr (quote $value)))))))
 (= (dispatch:record $turn $status $command $result)
    (catch (effect-receipts:record-command $turn $status $command $result)))
 ; Fixes the public-sharing epoch before the batch runs; never raises.

@@ -2,10 +2,10 @@
 ; observed-strategy state (the captured sample, the effect ledger); these
 ; answers never read it.
 !(import! &self (library system))
+!(import! &self ./src/turn_frame_cetta.metta)
+!(import! &self ./src/request_state_cetta.metta)
 
 ; Whether the observed strategy (the effect broker) is on for this process.
-(= (strategy:enabled?) (== (system:getenv-or-default "METTACLAW_OBSERVED_STRATEGY" "0") "1"))
-(= (strategy:enabled-flag) (if (strategy:enabled?) 1 0))
 
 ; Every call of an answer runs, in order: the batch limit is its length. The
 ; calls arrive quoted and are taken as written: they must stay unevaluated.
@@ -22,4 +22,4 @@
 ; Without the observed strategy a broker turn is the loop's own turn; with it,
 ; the turn follows the captured sample the host keeps.
 (= (strategy:broker-turn $turn)
-   (if (strategy:enabled?) (py-call (strategy_host.broker_turn $turn)) $turn))
+   (turn:broker-turn $turn))

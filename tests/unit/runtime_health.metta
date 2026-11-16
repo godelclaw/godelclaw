@@ -348,3 +348,16 @@
 !(let $blocks (collapse (match &self (rhu:block-passed $block) $block))
    (if (== (size-atom $blocks) 9) (println! UNIT_RUNTIME_HEALTH_OK)
      (println! (UNIT_RUNTIME_HEALTH_INCOMPLETE $blocks))))
+
+; The deployment reader and operator report share the same captured decision.
+!(let* (($channel (rhu:obj "{\"last_poll_ok_at\":999,\"loop_status\":\"waiting\",\"waiting_until\":1200}"))
+        ($working (rhu:obj "{\"saved_at\":1,\"loops\":0}"))
+        ($mode (rhu:obj "{\"mode\":\"iter\"}"))
+        ($cognition (rhu:obj "{\"schema\":2,\"obligation_since\":900}"))
+        ($memory (RhMemoryV1 "native" True))
+        ($snapshot (rh:snapshot-of 1000 $channel $working $mode $cognition True "running" (rhu:none) $memory "fixture"))
+        ($_ (nt:require snapshot-keeps-retry-obligation (== (sf:get $snapshot "cognition_required" False) True)))
+        ($_ (nt:require snapshot-keeps-unknown-ages (== (sf:get $snapshot "model_turn_pending_age_seconds" 1) JsonNull)))
+        ($_ (nt:require snapshot-wait-is-not-failure (== (sf:get $snapshot "problems" JsonNull) (JsonArray ()))))
+        ($_ (nt:require snapshot-retains-obligation-age (== (sf:get $snapshot "model_turn_obligation_age_seconds" 0) 100))))
+   (println! UNIT_RUNTIME_HEALTH_SNAPSHOT_OK))

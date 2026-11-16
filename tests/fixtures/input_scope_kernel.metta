@@ -1,8 +1,8 @@
 ; Deterministic kernel actions against the real candidate and native mailbox.
 !(import! &self ../../src/mail_cetta.metta)
 !(import! &self ../../src/jobs_cetta.metta)
-!(import! &self ../../src/strategy_host.py)
-!(import! &self ../../src/working_state_host.py)
+!(import! &self ../../src/turn_frame_cetta.metta)
+!(import! &self ../../src/request_state_cetta.metta)
 !(import! &self ../../channels/chat_spool.metta)
 !(import! &self ../../src/channels.metta)
 (= (commchannel) irc)
@@ -12,12 +12,12 @@
 (= (input-kernel:begin-with $text)
    (let* (($_ (nt:require actual-delivery-presentation (not (mail:empty? $text))))
           ($encoded (input-scope:json))
-          ($_ (py-call (strategy_host.begin "kernel-turn" "channel-event" $text $encoded)))
-          (($ids $request) (py-call (working_state_host.commit_scope 1)))
+          ($_ (turn:begin "kernel-turn" "channel-event" $text $encoded))
+          (($ids $request) (turn:commit-scope 1))
           ($_ (nt:require working-scope-matches-presented-deliveries (nt:equal $ids (input-scope:ids)))))
      (KernelInputV1 $text $encoded $ids $request)))
 (= (input-kernel:dispose $request)
-   (let $answer (py-call (strategy_host.request_disposition $request "addressed" "handled notification"))
+   (let $answer (turn:request-disposition $request "addressed" "handled notification")
      (nt:require disposition-actually-recorded (nt:equal $answer "REQUEST_DISPOSITION_RECORDED"))))
 (= (input-kernel:crash)
    (let* (($pid (system:pid)) ($text (preq:repr $pid)))
@@ -38,7 +38,7 @@
    (let* (((KernelInputV1 $first $encoded $captured $request) (input-kernel:begin))
           ($_ (input-kernel:dispose $request)) ($late (mail:receive))
           ($_ (nt:require novel-mail-was-prepared (not (mail:empty? $late))))
-          (($after $focus) (py-call (working_state_host.commit_scope 1)))
+          (($after $focus) (turn:commit-scope 1))
           ($_ (nt:require scope-does-not-resample-late-input (nt:equal $after $captured)))
           ($_ (nt:require late-mail-not-acknowledgeable (nt:equal (mail:ack) 0)))) NativeKernelLateScopeV1))
 (= (input-kernel:run "job-dispose-crash")
@@ -83,7 +83,7 @@
           ($_ (nt:require invalid-id-does-not-corrupt-scope
              (nt:equal (input-scope:ids) ("mattermost:post,one" "mattermost:post-two"))))
           ($_ (nt:require missing-delivery-ids-refused
-             (case (catch (py-call (strategy_host.begin "missing-id" "operator-event" "ok" "[]")))
+             (case (catch (turn:begin "missing-id" "operator-event" "ok" "[]"))
                (((Error $call $why) True) ($bad False)))))
           ; Messages no turn has committed stay in the inbox.
           ($_ (nt:require uncommitted-chat-is-not-settled

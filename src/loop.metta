@@ -106,7 +106,7 @@
 
         " LAST_SKILL_USE_RESULTS: "
         (loop:last-results-view (loop-last-results $periphery))
-        " WAKE: " (py-call (helper.wake_view (loop-iteration $periphery)))
+        " WAKE: " (runtime-support:wake-view (loop-iteration $periphery))
         " TIME: " (get_time_as_string)))))
 
 (= (getContextSuffix $periphery)
@@ -324,7 +324,7 @@
           ;; authoritative distinction for history and input settlement.
           ($providerSucceeded (health:turn-succeeded))
           ($_ (if (== $providerSucceeded 1) _
-                  (py-call (strategy_host.provider_failed))))
+                  (turn:provider-failed)))
           ;; The external observation is committed before parse recovery.
           ($_ (cut))
           ($resp (addition-balance-response $respi))
@@ -384,9 +384,9 @@
                 0))
           ($turnFeedback
             (if (== $requestObservations "")
-                (string-safe (repr $results))
+                (string-safe (repr (quote $results)))
                 (string-safe
-                  (utils:py-str ($requestObservations " " (repr $results))))))
+                  (utils:py-str ($requestObservations " " (repr (quote $results)))))))
           ($feedback
             (if (== $undelivered "") $turnFeedback
                 (string-safe (utils:py-str ($undelivered " " $turnFeedback)))))
@@ -483,12 +483,12 @@
      (((candidate $next) (success $next))
       ((Error $expression $exception)
        (progn
-         (py-call (strategy_host.fault))
+         (turn:fault)
          (println! (PROCESS_FAILURE $expression $exception))
          failure))
       ($unexpected
        (progn
-         (py-call (strategy_host.fault))
+         (turn:fault)
          (println! (PROCESS_MALFORMED_OUTCOME $unexpected))
          failure)))))
 
@@ -509,19 +509,19 @@
           ($turn (- 0 $iteration))
           ($_ (working:rest-claim))
           ($_ (addition-effect-turn-begin $turn))
-          (($actual $ticket) (py-call (strategy_host.begin_continuation $turn (quote ($continuation)))))
+          (($actual $ticket) (turn:begin-continuation $turn (quote ($continuation))))
           ($opened (strategy:open-batch $actual $ticket))
           ($records (run-command-batch-once $actual 1 (quote ($continuation))))
-          ($_ (py-call (strategy_host.broker_end $actual (quote $records))))
+          ($_ (turn:broker-end $actual (quote $records)))
           ($closed (strategy:close-batch))
           ($results (CONTINUATION_RESULTS: $records))
           ($_ (println! $results))
-          ($_ (hierarchy:begin $turn timed-continuation (py-call (strategy_host.view))))
+          ($_ (hierarchy:begin $turn timed-continuation (turn:view)))
           ($_ (hierarchy:record $turn timed-continuation "" (quote $continuation) (quote $records)))
           ($_ (working:rest-finish)))
      (coordinate-set pending-continuation no-continuation
        (coordinate-set loops 2
-         (coordinate-set last-results (string-safe (repr $results))
+         (coordinate-set last-results (string-safe (repr (quote $results)))
                          $periphery)))))
 
 (= (applyTimedContinuation $periphery $timedOut)
@@ -559,13 +559,13 @@
           ;; command responder remains live, and /stop is checked once per
           ;; second by this bounded wait.
           ($waitResult (if (and $enabled (> $retryWait 0))
-                         (py-call (cognitive_health.wait_for_retry $retryWait))
+                         (runtime-support:wait-for-retry $retryWait)
                          (channel:sleep-until-message $wait $enabled)))
           ($timedOut (mode:wait-timed-out $waitResult))
           ;; A recycle request ends the wait without waking: the rest, its
           ;; bank and any scheduled command carry over to the next process.
-          ($recycling (== (py-call (helper.recycle_requested)) 1))
-          ($_ (py-call (strategy_host.wake (get_time))))
+          ($recycling (== (runtime-support:recycle-requested) 1))
+          ($_ (turn:wake (get_time)))
           ($continued
             (if (and $enabled (not $recycling))
                 (applyTimedContinuation $periphery $timedOut)
@@ -578,7 +578,7 @@
                   $policy $continuedLoops $timedOut $paused)
                 0)))
      (candidate (coordinate-set autonomous-ready
-                  (py-call (strategy_host.autonomous_ready $ready)) $restored))))
+                  (turn:autonomous-ready $ready) $restored))))
 
 (= (waitProcess $periphery)
    (protectedOutcome (catch (waitCandidate $periphery))))
@@ -606,7 +606,7 @@
 (= (processCycle $state)
    (let* (($periphery (process-periphery $state))
           ($_ (working:turn-commit-reset))
-          ($_ (py-call (process_supervision.progress "turn-start")))
+          ($_ (progress:phase "turn-start"))
           ($_ (println! (---------iteration (loop-iteration $periphery))))
           ($outcome (turnProcess $periphery))
           ($_ (case $outcome (((success $p) 1) ($other (working:turn-commit-reset)))))
@@ -616,20 +616,20 @@
                 (let $acked (settleActivityBatch)
                   (if (== $acked 1) (health:settle) 0)) 0))
           ($_ (working:turn-commit-reset)))
-     (if (== (py-call (helper.recycle_requested)) 1)
+     (if (== (runtime-support:recycle-requested) 1)
          (progn
            (println! (RECYCLE_AT_TURN_BOUNDARY
                        iteration
                        (loop-iteration (process-periphery $next))))
-           (py-call (helper.recycle_exit)))
+           (runtime-support:recycle-exit))
          (let* (($waitOutcome (waitProcess (process-periphery $next)))
                 ($waiting (process-step $next $waitOutcome))
                 ($_ (persistProcessState $waiting)))
            $waiting))))
 
 (= (processLoop $state)
-   (if (== (py-call (helper.recycle_requested)) 1)
-     (py-call (helper.recycle_exit))
+   (if (== (runtime-support:recycle-requested) 1)
+     (runtime-support:recycle-exit)
      (let $waiting (once (processCycle $state))
        (processLoop $waiting))))
 

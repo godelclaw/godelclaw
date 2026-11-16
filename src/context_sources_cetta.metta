@@ -1,10 +1,9 @@
-; Native context projection and assembly. Python owns only the retained
-; loaders (including the ONE pins marker owner), never a bundle fallback.
+; Native context projection and assembly over a captured source registry.
 !(import! &self (library str))
 !(import! &self (library re))
 !(import! &self (library json))
 !(import! &self ./src/undelivered_prose_unicode)
-!(import! &self ./src/context_source_loaders.py)
+!(import! &self ./src/context_registry_cetta.metta)
 !(import! &self ./src/small_views_cetta.metta)
 !(import! &self ./src/coding_estate_cetta.metta)
 !(import! &self ./src/goal_views_cetta.metta)
@@ -16,15 +15,6 @@
    (if (== $epoch (get-state &ctx-epoch)) True
      (let* (($_ (change-state! &ctx-known ()))
             ($_ (change-state! &ctx-epoch $epoch))) True)))
-!(bind! &ctx-blank (new-state
-   (re:compile (str:join "" ("\\A" (prose:pattern space) "*\\z")))))
-!(bind! &ctx-first-space (new-state (re:compile (prose:pattern space))))
-
-(= (ctx:blank? $raw)
-   (if (== $raw "") True
-     (if (re:is-match (get-state &ctx-first-space) (str:char-slice $raw 0 1))
-       (re:is-match (get-state &ctx-blank) $raw) False)))
-
 (= (ctx:revision $raw) (str:concat "sha256:" (str:sha256 $raw)))
 (= (ctx:clip $raw $limit $tail)
    (let $length (str:char-length $raw)
@@ -67,14 +57,14 @@
 ; Assembly: prepare + five retained loaders = six loader crossings (was eight).
 ; Add the shared Python work-state marker on successfully rendered work and
 ; the allowed capability engine lookup: eight total. NOT a full-turn count.
-(= (ctx:load $loaders $id)
+(= (ctx:load (CtxLoadersV1 $views $conversation) $id)
    (case $id
      (("active-query-declaration" (sv:load $id)) ("commitment-state" (sv:load $id))
       ("task-phase" (sv:load $id)) ("development-state" (sv:load $id))
       ("project-capabilities" (sv:load $id)) ("project-evidence" (sv:load $id))
       ("work-state" (gv:load $id)) ("affect-gestalt" (gv:load $id))
       ("effect-receipts" (er:context-load)) ("coding-sessions" (estate:load))
-      ($retained (ctx:decode (py-call (context_source_loaders.load $loaders $id)))))))
+      ($retained (ctx:source (CtxSourceV1 $views $conversation $id))))))
 ; Python text is String on the native bridge and Symbol on older bridges.
 (= (ctx:text $value)
    (if (== (get-type $value) String) $value (str:symbol->string $value)))
@@ -142,4 +132,4 @@
      ((($text) (if (== (get-type $text) String) $text "SOURCE[context-bundle] status=unavailable"))
       ($other "SOURCE[context-bundle] status=unavailable"))))
 (= (context-bundle:with-views $views $conversation)
-   (ctx:safe (collapse (catch (ctx:build (py-call (context_source_loaders.prepare $views $conversation)))))))
+   (ctx:safe (collapse (catch (ctx:build (ctx:native-prepare $views $conversation))))))
