@@ -13,6 +13,8 @@
     ("tests/unit/context_registry.metta" "UNIT_NATIVE_CONTEXT_REGISTRY_OK")
     ("tests/unit/mcp_reply_slot.metta" "UNIT_MCP_REPLY_SLOT_OK")
     ("tests/unit/native_pin_admission.metta" "UNIT_NATIVE_PIN_ADMISSION_OK" (("METTACLAW_REQUIRE_NATIVE_CORE" "1")))
+    ("tests/unit/coding_report_mail.metta" "UNIT_NATIVE_CODING_REPORT_MAIL_OK"
+     (("METTACLAW_MAIL_SOCKET" "{home}/s") ("METTACLAW_WORK_MAIL" "/unused/bin/claw-mail")))
     ("tests/unit/claude_client.metta" "UNIT_NATIVE_CLAUDE_CLIENT_OK"
      (("METTACLAW_CLAUDE_TIMEOUT_SECONDS" "0.1") ("METTACLAW_TOOL_OUTPUT_DIR" "{home}/artifacts")))
     ("tests/unit/native_components.metta" "UNIT_NATIVE_COMPONENT_DRIVER_OK"

@@ -681,6 +681,7 @@
     "cetta_bootstrap.metta",
     "cetta_run.metta",
     "coding_main.metta",
+    "work_delivery_main.metta",
     "channels/telegram_control_main.metta",
     "channels/chat_service_main.metta",
     "modes/iter/native_main.metta",
@@ -705,6 +706,11 @@
     }
   ],
   "external_tools": [
+    {
+      "name": "configured-report-transport",
+      "file": "src/coding_delivery.metta",
+      "policy": "explicit custom command only; the default claw-mail name and installed path use the native mailbox, never the Python CLI"
+    },
     {
       "name": "python",
       "file": "modes/python_tool_cetta.metta",

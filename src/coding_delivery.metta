@@ -8,6 +8,7 @@
 !(import! &self (library system))
 !(import! &self (library str))
 !(import! &self (library json))
+!(import! &self ./mail_cetta.metta)
 
 (= (delivery:json $path) (if (fs:is-file $path) (json-parse (fs:read-text $path)) (JsonObject ())))
 (= (delivery:field $value $key)
@@ -63,7 +64,7 @@
               ($envelope (JsonObject ((JsonPair "id" (JsonString $mail)) (JsonPair "from" (JsonString $id))
                                      (JsonPair "to" (JsonString $requester)) (JsonPair "text" (JsonString $text))
                                      (JsonPair "space" (JsonString (delivery:space $task $requester))))))
-              ($_ (proc:run ("mkdir" "-p" "--" (delivery:outbox $dir)) $dir inherit 10000 0 "separate"))
+              ($_ (fs:make-directories (delivery:outbox $dir) 504))
               ($_ (fs:update-text $path "replace" (json-stringify $envelope) "" "")))
      $path))
 
@@ -79,6 +80,40 @@
       ((proc:signaled $signal $out $err) (str:concat "mailer killed by signal " (repr $signal)))
       ((proc:timed-out $out $err) "mailer timed out")
       ($other "mailer did not run"))))
+(= (delivery:native $item $id)
+   (let* (($socket (system:getenv-or-default "METTACLAW_MAIL_SOCKET"
+                    (system:getenv-or-default "CETTA_SHARED_MAIL_SOCKET" "")))
+          ($to (delivery:text (delivery:field $item "to")))
+          ($explicit (delivery:text (delivery:field $item "space")))
+          ((mail:route-to $routed $recipient) (mail:route $to))
+          ($space (if (== $explicit "") $routed $explicit))
+          ($sender (delivery:text (delivery:field $item "from")))
+          ($body (delivery:text (delivery:field $item "text"))))
+     (if (== $socket "") (DeliveryFailedV1 "native mailbox has no configured socket")
+       (case (mailbox:send $socket $space $id $recipient $sender $body)
+         (((mailbox:sent $sent $status)
+           (if (and (== $sent $id) (or (== $status accepted) (== $status duplicate)))
+             (DeliveryAcceptedV1 (json-stringify (JsonObject
+               ((JsonPair "id" (JsonString $id)) (JsonPair "status" (JsonString (mail:text $status)))))))
+             (DeliveryFailedV1 "native mailbox returned no matching acceptance")))
+          ($bad (DeliveryFailedV1 "native mailbox has not established acceptance; retain this occurrence for retry")))))))
+; An explicitly configured custom transport remains an external tool. The
+; ordinary claw-mail command, including its absolute installed path, uses the
+; native mailbox path and never launches its Python CLI.
+(= (delivery:submit $dir $item $id $mailer)
+   (if (or (== $mailer "") (== (delivery:last (str:split "/" $mailer)) "claw-mail"))
+     (delivery:native $item $id)
+     (let* (($sender (delivery:text (delivery:field $item "from")))
+            ($to (delivery:text (delivery:field $item "to")))
+            ($body (delivery:text (delivery:field $item "text")))
+            ($space (delivery:text (delivery:field $item "space")))
+            ($argv ($mailer "send" $to $body "--id" $id "--json" "--space" $space))
+            ($result (proc:run $argv $dir (inherit (("CLAW_MAIL_AGENT" $sender))) 60000 0 "separate")))
+       (case $result
+         (((proc:exited 0 $out $err)
+           (if (delivery:accepted? $out $id) (DeliveryAcceptedV1 $out)
+             (DeliveryFailedV1 (delivery:failure $result))))
+          ($failed (DeliveryFailedV1 (delivery:failure $failed))))))))
 (= (delivery:attempt $dir $path)
    (if (== $path "") "none"
      (if (fs:is-file (str:concat $path ".accepted")) "delivered"
@@ -86,18 +121,12 @@
               ($id (delivery:text (delivery:field $item "id")))
               ($mailer (system:getenv-or-default "METTACLAW_WORK_MAIL" "claw-mail")))
          (if (== $id "") (delivery:pending-error $path "report envelope has no message identity")
-           (let* (($sender (delivery:text (delivery:field $item "from")))
-                  ($result (proc:run ($mailer "send" (delivery:text (delivery:field $item "to"))
-                                      (delivery:text (delivery:field $item "text")) "--id" $id "--json" "--space"
-                                      (delivery:text (delivery:field $item "space")))
-                                     $dir (inherit (("CLAW_MAIL_AGENT" $sender))) 60000 0 "separate")))
-             (case $result
-               (((proc:exited 0 $out $err)
-                 (if (delivery:accepted? $out $id)
-                   (let $_ (fs:update-text (str:concat $path ".accepted") "replace" $out "" "")
-                     (if (fs:is-file (str:concat $path ".accepted")) "delivered" "pending"))
-                   (delivery:pending-error $path (delivery:failure $result))))
-                ($failed (delivery:pending-error $path (delivery:failure $failed)))))))))))
+           (case (delivery:submit $dir $item $id $mailer)
+             (((DeliveryAcceptedV1 $receipt)
+               (let $_ (fs:update-text (str:concat $path ".accepted") "replace" $receipt "" "")
+                 (if (fs:is-file (str:concat $path ".accepted")) "delivered" "pending")))
+              ((DeliveryFailedV1 $why) (delivery:pending-error $path $why))
+              ($bad (delivery:pending-error $path "mail transport produced no acceptance receipt")))))))))
 (= (delivery:pending-error $path $why)
    (let $_ (fs:update-text (str:concat $path ".error") "replace" $why "" "") "pending"))
 (= (delivery:preserve $dir)
