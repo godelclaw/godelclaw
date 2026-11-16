@@ -1,0 +1,9 @@
+[Unit]
+Description=Request a completed-turn recycle of the native agent
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/godelclaw/runtime.env
+EnvironmentFile=%h/.config/godelclaw/native-housekeeping.env
+ExecStart=/usr/bin/env ${CETTA_BIN} --no-results --lang petta --profile extended --import-mode ancestor-walk ${RECYCLE_ENTRY} recycle --unit pettaclaw-lila.service --jobs ${RECYCLE_JOBS} --flag ${RECYCLE_FLAG}
+Nice=19

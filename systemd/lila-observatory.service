@@ -1,0 +1,9 @@
+[Unit]
+Description=Sample runtime and ingest journal and receipts as read-only observations
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/godelclaw/runtime.env
+EnvironmentFile=%h/.config/godelclaw/native-housekeeping.env
+ExecStart=/usr/bin/env ${CETTA_BIN} --no-results --lang petta --profile extended --import-mode ancestor-walk ${OBS_ENTRY} --unit pettaclaw-lila.service --root ${OBS_ROOT} --state ${OBS_STATE} --persistent-state ${OBS_PERSISTENT_STATE} --data ${OBS_DATA}
+Nice=19

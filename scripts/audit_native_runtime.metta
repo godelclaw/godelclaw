@@ -84,7 +84,8 @@
           ($core (audit:array $roles "cognitive-core"))
           ($runtime (unique-atom (list:append $core
              (list:append (audit:array $roles "console-frontend")
-               (list:append (audit:array $roles "gateway-server") (audit:array $roles "periodic-monitor"))))))
+               (list:append (audit:array $roles "gateway-server")
+                 (list:append (audit:array $roles "periodic-monitor") (audit:array $roles "service-launchers")))))))
           ($dynamic (map-atom (audit:array $selection "dynamic_imports") $row (sf:get $row "file" "")))
           ($lexer (re:compile ";[^\n]*|\"(?:\\\\.|[^\"\\\\])*\"|[()]|[^\\s();]+"))
           ($python (re:compile "(^|[; \\t])python[0-9.]*[ \\t]|PYTHON(HOME|PATH)=|METTACLAW_MODE_PYTHON"))
@@ -94,7 +95,7 @@
           ($_ (map-atom $runtime $file
             (if (str:ends-with $file ".py") (audit:fail (python-in-core $file))
               (if (str:ends-with $file ".metta") (audit:source $root $file $lexer $files $dynamic)
-                (if (str:ends-with $file ".sh") (audit:launcher $root $file $python) True)))))
+                (if (or (str:ends-with $file ".sh") (str:ends-with $file ".service")) (audit:launcher $root $file $python) True)))))
           ($_ (re:close $lexer)) ($_ (re:close $python))
           ($artifact (audit:artifact)))
      (system:write stdout (str:concat (json:stringify-python

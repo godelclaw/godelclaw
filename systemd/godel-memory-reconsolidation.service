@@ -1,0 +1,13 @@
+[Unit]
+Description=Deliver daily memory reconsolidation input
+After=cetta-mailbox.service
+Requires=cetta-mailbox.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/godelclaw/runtime.env
+EnvironmentFile=%h/.config/godelclaw/native-housekeeping.env
+ExecStart=/usr/bin/env ${CETTA_BIN} --no-results --lang petta --profile extended --import-mode ancestor-walk ${RECON_ENTRY} review --mode daily --from godel --to godel --state-dir ${RECON_STATE}
+UMask=0077
+Nice=19
+IOSchedulingClass=3
