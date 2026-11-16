@@ -43,4 +43,12 @@
 (= (ed:member $name $items)
    (if (== $items ()) False (if (== $name (car-atom $items)) True (ed:member $name (cdr-atom $items)))))
 !(nt:require native-editor-controls (ed:run))
+!(import! &self ../../src/console/config_cetta.metta)
+!(nt:require incompatible-console-actions-refused
+   (case (cc:option-args ("--status" "--submit" "must not send"))
+     (((CliFailureV1 $_) True) ($bad False))))
+!(nt:require equal-sign-keeps-literal-argument
+   (== (sf:get (cc:option-args ("--submit=(system:exit 91)=data")) "--submit" "") "(system:exit 91)=data"))
+!(nt:require missing-console-value-refused
+   (case (cc:option-args ("--root")) (((CliFailureV1 $_) True) ($bad False))))
 !(println! UNIT_NATIVE_EDITOR_OK)

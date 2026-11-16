@@ -33,8 +33,10 @@
           ($_ (if (< $queued 1048576) (progn (cc:streams-step) (cc:archive-step)) True))
           ($_ (if (and (cc:get "draft-dirty" False) (>= $now (cc:get "next-draft" 0)))
                 (progn (cc:save-draft) (cc:set "next-draft" (+ $now 500000000))) True))) True))
-(= (cc:interactive-loop $terminal $signals)
-   (let* (($now (system:monotonic-ns))
+(= (cc:interactive-tick $terminal $signals)
+   ; Only the explicit editor/projection state crosses an event boundary.
+   (once
+    (let* (($now (system:monotonic-ns))
           ($_ (cc:background $now))
           ($_ (case (host:read $terminal 65536)
              (((HostBytes $bytes) (progn (buffer:append (cc:get "input" ConsoleNoBufferV1) $bytes)
@@ -47,12 +49,16 @@
           ($stop (or (cc:get "stop" False) (!= (host:signal $signals) 0))))
      (if $stop True
        (let* (($watch (cc:get "stream-watch" ConsoleNoWatchV1))
-              ($interests (if (cc:buffer-failed? $watch) (($terminal read) ($terminal resize))
+              ((HostBufferInfo $output-size $_) (buffer:info (cc:get "output" ConsoleNoBufferV1)))
+              ($base (if (cc:buffer-failed? $watch) (($terminal read) ($terminal resize))
                              (($terminal read) ($terminal resize) ($watch read))))
+              ($interests (if (> $output-size (cc:get "output-offset" 0)) (cons-atom ($terminal write) $base) $base))
               ($ready (host:wait $interests 25))
               ($_ (case $ready (((HostReady $events)
                     (if (cli:member? ($terminal resize) $events) (cc:set "dirty" True) True)) ($failed True)))))
-         (cc:interactive-loop $terminal $signals)))))
+         False)))))
+(= (cc:interactive-loop $terminal $signals)
+   (if (cc:interactive-tick $terminal $signals) True (cc:interactive-loop $terminal $signals)))
 (= (cc:write-final $terminal $text $offset $until)
    (if (or (>= $offset (str:byte-length $text)) (>= (system:monotonic-ns) $until)) True
      (case (host:write $terminal $text $offset)

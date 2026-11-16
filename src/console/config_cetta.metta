@@ -2,11 +2,27 @@
 !(import! &self (library toml))
 !(import! &self (library list))
 (= (cc:option-args $args)
-   (let $parsed (cli:pair-args (cli:strings $args) ("--json" "--status" "--help" "--check-console-imports") (JsonObject ()))
+   (let $parsed (cc:parse-options (cli:strings $args) (JsonObject ()))
      (case $parsed
        (((JsonObject $pairs)
-         (if (cc:known-options? $pairs) $parsed (CliFailureV1 "unknown console option")))
+         (if (not (cc:known-options? $pairs)) (CliFailureV1 "unknown console option")
+           (if (> (foldl-atom ("--submit" "--submit-file" "--command" "--status") 0 $count $key
+                     (+ $count (if (!= (sf:get $parsed $key ConsoleNoOperationV1) ConsoleNoOperationV1) 1 0))) 1)
+             (CliFailureV1 "choose one of --submit, --submit-file, --command or --status") $parsed)))
         ($failure $failure)))))
+(= (cc:parse-options $args $object)
+   (if (== $args ()) $object
+     (let* (($word (car-atom $args)) ($parts (str:split "=" $word)) ($flag (car-atom $parts))
+            ($rest (cdr-atom $args))
+            ($switch (cli:member? $flag ("--json" "--status" "--help" "--check-console-imports"))))
+       (if $switch
+         (if (> (size-atom $parts) 1) (CliFailureV1 "switch takes no value")
+           (cc:parse-options $rest (sf:put $object $flag True)))
+         (if (> (size-atom $parts) 1)
+           (cc:parse-options $rest (sf:put $object $flag (str:join "=" (cdr-atom $parts))))
+           (if (== $rest ()) (CliFailureV1 "option needs a value")
+             (if (str:starts-with (car-atom $rest) "--") (CliFailureV1 "option needs a value")
+               (cc:parse-options (cdr-atom $rest) (sf:put $object $flag (car-atom $rest))))))))))
 (= (cc:known-options? $pairs)
    (if (== $pairs ()) True
      (let (JsonPair $key $_) (car-atom $pairs)

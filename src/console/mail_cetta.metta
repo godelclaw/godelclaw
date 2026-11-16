@@ -73,8 +73,9 @@
         ("publish" (cm:publish $settings (sf:native-object (sf:get $request "path" ""))))
         ("retry" (JsonArray (cm:retry $settings (cm:pending $settings))))
         ($bad (ConsoleFailureV1 "unknown client operation"))))))
-(= (cm:serve $settings)
-   (let $line (system:read-line)
+(= (cm:serve-one $settings)
+   (once
+    (let $line (system:read-line)
      (if (== $line end_of_file) True
        (let* (($request (json:parse-python $line)) ($id (sf:get $request "id" JsonNull))
               ($answers (collapse (catch (cm:work $settings $request))))
@@ -82,4 +83,6 @@
               ($value (case $body (((ConsoleFailureV1 $why) (JsonObject ((JsonPair "error" $why)))) ($ok $ok))))
               ($_ (system:write stdout (str:concat (json:stringify-python
                    (JsonObject ((JsonPair "id" $id) (JsonPair "body" $value)))) "\n"))))
-         (cm:serve $settings)))))
+         False)))))
+(= (cm:serve $settings)
+   (if (cm:serve-one $settings) True (cm:serve $settings)))

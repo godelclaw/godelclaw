@@ -45,7 +45,7 @@
                (GatewayClientV1 $fd $input $output (+ $offset $count) $until))))
           (HostPending (GatewayClientV1 $fd $input $output $offset $until))
           ($bad (progn (ng:client-close (GatewayClientV1 $fd $input $output $offset $until)) GatewayClientClosedV1))))
-       (case (host:read $fd 65536)
+       (case (host:read $fd 1048576)
          (((HostBytes $bytes)
            (let $appended (buffer:append $input $bytes)
              (if (ng:host-failed? $appended)
@@ -110,7 +110,7 @@
            (let* (($argv (ng:command $tool $request $input-path)) ($environment (ng:environment $tool))
                   ($credentials (ng:credentials $tool))
                   ($options ((cwd (sf:get $tool "cwd" (system:getcwd))) (env $environment)
-                    (credential-files $credentials) (mode stream) (max-bytes 262144) (stdin $input) (lifetime owner)))
+                    (credential-files $credentials) (mode stream) (max-bytes 262144) (stdin $input) (lifetime group)))
                   ($child (proc:spawn $argv $options)))
              (case $child
                (((NativeHandle $_ $_)
@@ -172,7 +172,7 @@
       ($launched ""))))
 (= (ng:settle-active $id $effect $tool $child $out $err $out-path $err-path $reason $until)
    (let* (($result (proc:await $child)) ($_ (proc:close $child))
-          ($_ (fs:sync $out)) ($_ (fs:sync $err)) ($_ (fs:close $out)) ($_ (fs:close $err))
+          ($_ (fs:close $out)) ($_ (fs:close $err))
           ($launch-error (ng:launch-error $result))
           ($complete (== $reason "")) ($stdout (ng:artifact $out-path $complete)) ($stderr (ng:artifact $err-path $complete)))
      (if (or (ngq:failed? $stdout) (ngq:failed? $stderr)) (ng:fatal "artifact retention unavailable; claimed effect remains unresolved")
@@ -255,8 +255,11 @@
        (ng:validation-step $id $effect $cursor $value $outputs $artifact $until $stopping)))))
 (= (ng:close-clients $clients)
    (if (== $clients ()) True (progn (ng:client-close (car-atom $clients)) (ng:close-clients (cdr-atom $clients)))))
-(= (ng:loop $listener $signals)
-   (let* (($requested (!= (host:signal $signals) 0))
+(= (ng:tick $listener $signals)
+   ; A tick has one result. Retire its local query bindings before the next
+   ; tick; durable authority and pending bytes remain in the explicit owners.
+   (once
+    (let* (($requested (!= (host:signal $signals) 0))
           ($_ (if $requested (change-state! &ng-requested-stop True) True))
           ($stop (or $requested (!= (get-state &ng-fatal) "")))
           ($clients (if $stop (get-state &ng-clients) (ng:accept $listener 8 (get-state &ng-clients))))
@@ -267,7 +270,9 @@
        (let* (($interests (cons-atom ($listener read) (ng:client-interests $next)))
               ($timeout (case (get-state &ng-active) ((GatewayIdleV1 50) ((GatewayValidatingV1 $_ $_ $_ $_ $_ $_ $_) 0) ($other 5))))
               ($_ (host:wait $interests $timeout)))
-         (ng:loop $listener $signals)))))
+         False)))))
+(= (ng:loop $listener $signals)
+   (if (ng:tick $listener $signals) True (ng:loop $listener $signals)))
 (= (ng:physical $path)
    (foldl-atom (fs:entries $path) 0 $sum $name
      (+ $sum (case (fs:metadata (path:join $path $name) no-follow)

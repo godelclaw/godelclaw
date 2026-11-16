@@ -98,6 +98,7 @@
     ("tests/unit/native_terminal.metta" "UNIT_NATIVE_TERMINAL_OK")
     ("tests/unit/native_gateway_queue.metta" "UNIT_NATIVE_GATEWAY_QUEUE_OK")
     ("tests/unit/native_gateway_host.metta" "UNIT_NATIVE_GATEWAY_HOST_OK")
+    ("tests/unit/native_gateway_growth.metta" "UNIT_NATIVE_GATEWAY_GROWTH_OK")
     ("tests/unit/memory_monitor.metta" "UNIT_NATIVE_MEMORY_MONITOR_OK")
     ("tests/unit/housekeeping.metta" "UNIT_NATIVE_HOUSEKEEPING_OK")
     ("tests/unit/observatory.metta" "UNIT_NATIVE_OBSERVATORY_OK")
