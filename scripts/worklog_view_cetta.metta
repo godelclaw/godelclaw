@@ -4,13 +4,16 @@
 (= (cv:flush)
    (let* (($owner (cc:get "events" ConsoleNoBufferV1)) ($text (buffer:value $owner))
           ($_ (system:write stdout $text)) ($_ (buffer:drop $owner (str:byte-length $text)))) True))
-(= (cv:loop $signals $once $interval)
-   (let* (($_ (cc:streams-step)) ($_ (cv:flush))
+(= (cv:tick $signals $once $interval)
+   (once
+    (let* (($_ (cc:streams-step)) ($_ (cv:flush))
           ($work (cc:get "stream-work" ())))
-     (if (or (!= (host:signal $signals) 0) (and $once (== $work ()))) 0
+     (if (or (!= (host:signal $signals) 0) (and $once (== $work ()))) True
        (progn (if (== $work ())
                  (let $watch (cc:get "stream-watch" ConsoleNoWatchV1) (host:wait (($watch read)) $interval)) True)
-              (cv:loop $signals $once $interval)))))
+              False)))))
+(= (cv:loop $signals $once $interval)
+   (if (cv:tick $signals $once $interval) 0 (cv:loop $signals $once $interval)))
 (= (cv:seed $names $full)
    (if (== $names ()) True
      (let* (($name (car-atom $names))
