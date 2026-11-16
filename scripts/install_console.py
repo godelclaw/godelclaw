@@ -14,7 +14,7 @@ import subprocess
 import sys
 import tempfile
 
-from build_console_release import digest, encoded, inventory, relative, verify
+from build_console_release import commands, digest, encoded, inventory, relative, verify
 
 
 def absolute(path):
@@ -81,9 +81,11 @@ def replace(path, value):
     sync_directory(path.parent)
 
 
-def locations(prefix):
+def locations(prefix, names=("agent-console", "godel-cli")):
     home = prefix / "share/godelclaw"
-    return home, [home / "console-current", prefix / "bin/agent-console", prefix / "bin/godel-cli"]
+    if any(not isinstance(name, str) or not name or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for c in name) for name in names):
+        raise ValueError("console destinations must be simple executable names")
+    return home, [home / "console-current", *(prefix / "bin" / name for name in names)]
 
 
 @contextmanager
@@ -187,16 +189,15 @@ def prepare(release, prefix, python, mail_script=None, replace_existing=False, e
                              capture_output=True, text=True, timeout=30)
     if version is not None and (version.returncode or json.loads(version.stdout) != manifest["python"]):
         raise ValueError("selected Python major/minor differs from the build interpreter")
-    home, destinations = locations(prefix)
+    entrypoints = commands(manifest)
+    home, destinations = locations(prefix, entrypoints)
     target = home / "releases" / ("console-" + manifest["release"])
     if release == target or release.is_relative_to(prefix):
         raise ValueError("build the input release outside the installation prefix")
     bindings = {}
-    for name in ("agent-console", "godel-cli"):
-        command = [*launch, str(target / (manifest["entrypoint"] if native else "files/scripts/console_entry.py"))]
-        if name == "godel-cli":
-            command += ["--agent", "godel"]
-        if mail_script is not None:
+    for name, declaration in entrypoints.items():
+        command = [*launch, str(target / declaration["entrypoint"]), *declaration["arguments"]]
+        if mail_script is not None and name in ("agent-console", "godel-cli"):
             command += ["--mail-script", str(mail_script)]
         bindings[name] = ("#!/bin/sh\nexec " + shlex.join(command) + ' "$@"\n').encode()
     binding_payload = {"release": manifest["release"], ("engine_sha256" if native else "python_sha256"):
@@ -208,7 +209,7 @@ def prepare(release, prefix, python, mail_script=None, replace_existing=False, e
     check_published(binding, {name: {"sha256": digest(body), "mode": 0o555}
                               for name, body in bindings.items()}, encoded(binding_payload))
     after = [{"kind": "link", "target": str(binding)}]
-    for name in ("agent-console", "godel-cli"):
+    for name in entrypoints:
         body = ('#!/bin/sh\nexec ' + shlex.quote(str(home / "console-current" / name)) + ' "$@"\n').encode()
         after.append(file_snapshot(body))
     before = [snapshot(path) for path in destinations]
@@ -238,7 +239,8 @@ def check_backup(backup, plan):
 def save_receipt(backup, plan):
     backup = check_backup(backup, plan)
     backup.mkdir(parents=True, exist_ok=False, mode=0o700)
-    payload = {"schema": 1, "prefix": plan["prefix"], "release": plan["release"], "entries": plan["entries"]}
+    payload = {"schema": 1, "prefix": plan["prefix"], "release": plan["release"],
+               "commands": list(plan["bindings"]), "entries": plan["entries"]}
     replace(backup / "before.json", file_snapshot(encoded(dict(payload, sha256=digest(encoded(payload)))), 0o600))
     sync_directory(backup.parent)
 
@@ -273,7 +275,7 @@ def rollback(backup, apply_changes=False):
     if document.get("schema") != 1 or digest(encoded(payload)) != document.get("sha256"):
         raise ValueError("backup receipt identity mismatch")
     prefix = absolute(Path(document["prefix"]))
-    _, expected = locations(prefix)
+    _, expected = locations(prefix, document.get("commands", ("agent-console", "godel-cli")))
     if [entry["path"] for entry in document["entries"]] != list(map(str, expected)):
         raise ValueError("backup destinations do not match its prefix")
 

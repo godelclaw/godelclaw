@@ -6,6 +6,7 @@ import hashlib
 import importlib.metadata
 import json
 import os
+import re
 from pathlib import Path
 import stat
 import sys
@@ -43,6 +44,27 @@ def inventory(root):
     return files
 
 
+def commands(manifest):
+    entry = "files/scripts/console_entry.py" if manifest["schema"] == 1 else manifest["entrypoint"]
+    table = manifest.get("commands", {
+        "agent-console": {"entrypoint": entry, "arguments": []},
+        "godel-cli": {"entrypoint": entry, "arguments": ["--agent", "godel"]},
+    })
+    if not isinstance(table, dict) or not table:
+        raise ValueError("console commands must be a nonempty mapping")
+    for name, command in table.items():
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", name):
+            raise ValueError("console command must be a simple executable name")
+        if not isinstance(command, dict) or set(command) != {"entrypoint", "arguments"}:
+            raise ValueError("console command requires an entrypoint and arguments")
+        target = str(relative(command["entrypoint"]))
+        if target not in manifest["files"] or (manifest["schema"] == 2 and not target.endswith(".metta")):
+            raise ValueError("console command entrypoint is not in its release")
+        if not isinstance(command["arguments"], list) or any(not isinstance(x, str) or "\0" in x for x in command["arguments"]):
+            raise ValueError("console command arguments must be strings without NUL")
+    return table
+
+
 def verify(root):
     if root.is_symlink() or not root.is_dir() or (root / "manifest.json").is_symlink():
         raise ValueError("release must be a regular snapshot directory")
@@ -61,6 +83,7 @@ def verify(root):
     entry = ("files/scripts/console_entry.py" if manifest["schema"] == 1 else manifest.get("entrypoint"))
     if entry not in manifest["files"]:
         raise ValueError("console entry is missing")
+    commands(manifest)
     if manifest["schema"] == 2:
         engine = manifest.get("engine", {})
         if engine.get("runtime_profile") != "native-agent" or engine.get("python_enabled") is not False:
@@ -130,6 +153,9 @@ def build(source, output):
                 "revision": (source / "CETTA_REF").read_text().strip(),
                 "runtime_profile": "native-agent", "python_enabled": False,
                 "libraries": ["host_io", "fs", "proc", "json", "toml", "mailbox"]})
+            command_source = source / "config/console-entrypoints.json"
+            if command_source.is_file():
+                payload["commands"] = json.loads(command_source.read_text())
         else:
             payload["python"] = list(sys.version_info[:2])
         manifest = dict(payload, release=digest(encoded(payload)))

@@ -101,6 +101,7 @@
     ("tests/unit/native_gateway_growth.metta" "UNIT_NATIVE_GATEWAY_GROWTH_OK")
     ("tests/unit/memory_monitor.metta" "UNIT_NATIVE_MEMORY_MONITOR_OK")
     ("tests/unit/housekeeping.metta" "UNIT_NATIVE_HOUSEKEEPING_OK")
+    ("tests/unit/native_worklog_cli.metta" "UNIT_NATIVE_WORKLOG_CLI_OK")
     ("tests/unit/observatory.metta" "UNIT_NATIVE_OBSERVATORY_OK")
     ("tests/unit/native_console.metta" "UNIT_NATIVE_CONSOLE_OK"
      (("CETTA_SHARED_MAIL_SOCKET" "{home}/s")))))

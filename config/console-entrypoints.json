@@ -1,0 +1,6 @@
+{
+  "agent-console": {"entrypoint": "files/scripts/agent_console_cetta.metta", "arguments": []},
+  "godel-cli": {"entrypoint": "files/scripts/agent_console_cetta.metta", "arguments": ["--agent", "godel"]},
+  "godel-worklog": {"entrypoint": "files/scripts/public_worklog_cetta.metta", "arguments": []},
+  "godel-worklog-view": {"entrypoint": "files/scripts/worklog_view_cetta.metta", "arguments": ["--session", "godel"]}
+}

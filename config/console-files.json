@@ -14,5 +14,9 @@
   "src/console/presentation_cetta.metta",
   "src/console/render_cetta.metta",
   "src/console/session_cetta.metta",
-  "src/console/streams_cetta.metta"
+  "src/console/streams_cetta.metta",
+  "scripts/public_worklog_cetta.metta",
+  "src/public_worklog_cetta.metta",
+  "src/effect_receipt_values_cetta.metta",
+  "src/effect_receipt_io_cetta.metta"
 ]
