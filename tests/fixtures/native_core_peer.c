@@ -112,6 +112,13 @@ static void serve_unix(int fd){
     close(fd);
 }
 int main(int argc,char **argv){
+    const char *channel_capture=getenv("NATIVE_CHANNEL_CAPTURE");
+    if(channel_capture && argc>1 && !strcmp(argv[1],"--run")){
+        FILE *f=fopen(channel_capture,"w");if(!f)return 2;
+        for(int i=1;i<argc;i++)fprintf(f,"%s\n",argv[i]);
+        fprintf(f,"listener-inherited=%d\noperator-inherited=%d\n",fcntl(3,F_GETFD)>=0,fcntl(4,F_GETFD)>=0);
+        fclose(f);return 0;
+    }
     const char *capture=getenv("NATIVE_LAUNCH_CAPTURE");
     int native_launch=0;for(int i=1;i<argc;i++)if(!strcmp(argv[i],"--no-results"))native_launch=1;
     if(capture && native_launch){

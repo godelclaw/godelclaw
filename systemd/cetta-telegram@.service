@@ -9,7 +9,8 @@ Type=exec
 WorkingDirectory=%h/pettaclaw-%i
 Environment=METTACLAW_INSTANCE=%i
 EnvironmentFile=%h/.config/pettaclaw/%i-channel.env
-ExecStart=/usr/bin/python3 %h/pettaclaw-%i/src/start_telegram_service.py --repo %h/pettaclaw-%i --state %S/cetta-telegram-%i --credential %d/bot-token
+EnvironmentFile=-%h/.config/godelclaw/runtime.env
+ExecStart=/bin/bash %h/pettaclaw-%i/scripts/start_telegram_service.sh --repo %h/pettaclaw-%i --state %S/cetta-telegram-%i --credential %d/bot-token
 LoadCredential=bot-token:%h/.config/cetta-telegram-credentials/%i/token
 StateDirectory=cetta-telegram-%i
 StateDirectoryMode=0700

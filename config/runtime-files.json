@@ -87,6 +87,8 @@
     "scripts/native_runtime_env.sh",
     "scripts/render_config_native.sh",
     "scripts/runtime_health_cetta.metta",
+    "scripts/start_telegram_service.sh",
+    "scripts/telegram_service_cetta.metta",
     "scripts/runtime_watch.py",
     "scripts/telegram_admission.metta",
     "scripts/telegram_journal_retention.metta",
@@ -420,6 +422,8 @@
       "scripts/native_runtime_env.sh",
       "scripts/render_config_native.sh",
       "scripts/runtime_health_cetta.metta",
+      "scripts/start_telegram_service.sh",
+      "scripts/telegram_service_cetta.metta",
       "scripts/telegram_admission.metta",
       "scripts/telegram_journal_retention.metta",
       "scripts/telegram_journal_retention_main.metta",
@@ -682,6 +686,7 @@
     "cetta_run.metta",
     "coding_main.metta",
     "work_delivery_main.metta",
+    "scripts/telegram_service_cetta.metta",
     "channels/telegram_control_main.metta",
     "channels/chat_service_main.metta",
     "modes/iter/native_main.metta",
@@ -706,6 +711,11 @@
     }
   ],
   "external_tools": [
+    {
+      "name": "curl",
+      "file": "scripts/start_telegram_service.sh",
+      "policy": "native startup HTTP; curl owns credential-file expansion, with no key bytes in evaluator data or process arguments"
+    },
     {
       "name": "configured-report-transport",
       "file": "src/coding_delivery.metta",
