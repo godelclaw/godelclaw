@@ -4,6 +4,11 @@
    (let $record (nline:request $job $buffer "R 50\n" 2000)
      (if (or (sf:get $record "ended" False) (<= $left 0)) $record
        (term-test:ended $job $buffer (- $left 1)))))
+(= (term-test:until $job $buffer $capture $needle $left)
+   (if (nt:contains (fs:read-text $capture) $needle) True
+     (if (<= $left 0) False
+       (progn (nline:request $job $buffer "R 50\n" 2000)
+              (term-test:until $job $buffer $capture $needle (- $left 1))))))
 (= (term-test:run)
    (let* (($root (nt:required-env "TEST_REPOSITORY")) ($binary (system:executable))
           ($capture (path:join (nt:required-env "HOME") "terminal.bin"))
@@ -17,8 +22,7 @@
           ($_ (nt:require actual-terminal-output (nt:contains (fs:read-text $capture) "TERMINAL_NATIVE_READY")))
           ($_ (nline:request $job $buffer "W 7\naž🌿" 2000))
           ($_ (nline:request $job $buffer "S 101 31\n" 2000))
-          ($_ (nline:request $job $buffer "R 1000\n" 2000))
-          ($_ (nline:request $job $buffer "R 1000\n" 2000))
+          ($_ (term-test:until $job $buffer $capture "HostSize 101 31" 80))
           ($text (fs:read-text $capture))
           ($_ (nt:require utf8-passes-real-terminal (nt:contains $text "INPUT=až🌿")))
           ($_ (nt:require resize-observed (nt:contains $text "HostSize 101 31")))
