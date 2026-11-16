@@ -1,12 +1,14 @@
-# Independent execution gateway prototype
+# Native execution gateway
 
 Part of [MeTTaClaw](../../README.md). See the [service setup guide](../../systemd/README.md)
 for the surrounding channel and cognition processes.
 
-One reusable implementation, independently configured per agent. The optional
-Python/MeTTa client submits work and reads receipts; it never starts the server.
+One reusable implementation, independently configured per agent. The native
+MeTTa client submits work and reads receipts; it never starts the server.
 Run the gateway separately from the cognition service so their lifetimes differ.
-The prototype is opt-in and does not change the agent loop or existing skills.
+The host executes the existing MeTTa queue kernel in process. Tool children
+retain their configured isolation, and socket/control requests remain responsive
+while a tool runs or a large JSON artifact is validated.
 
 ```mermaid
 flowchart LR
@@ -23,28 +25,27 @@ flowchart LR
 From the project root:
 
 ```sh
-PYTHONPATH=src python3 examples/execution_gateway_demo.py
-python3 -m unittest discover -s tests -p test_execution_gateway.py -v
+cetta --lang petta --profile extended --import-mode ancestor-walk \
+  scripts/execution_gateway_cetta.metta --config gateway.json
 ```
 
-The demo uses local test tools and two temporary gateway processes, reports
-submission/status latency while a slow tool runs, and cleans up afterward.
-The tests also exercise real PeTTa and CeTTa clients when those engines are
-available. Configure their existing `PETTA_ROOT`, `PETTA_PY_ENV` or `CETTA_BIN`
-settings if they live elsewhere.
+The native unit driver exercises queue ownership, duplicates/conflicts,
+cancellation, interrupted writes, raw output retention and the supplied read
+adapters. The retained Python host and demonstration remain independent
+references outside the production selection.
 
 ## Configuration and requests
 
 A gateway takes a trusted JSON config via
-`PYTHONPATH=src python3 -m execution_gateway --config gateway.json`:
+`scripts/execution_gateway_cetta.metta --config gateway.json`:
 
 ```json
 {
   "agent": "alpha",
-  "state_directory": "/tmp/gateway-alpha",
+  "state_directory": "./.gateway-alpha",
   "tools": {
     "echo": {
-      "command": ["python3", "tests/fixtures/gateway_tool.py", "echo"],
+      "command": ["cetta", "--lang", "petta", "--profile", "extended", "tests/fixtures/gateway_tool_native.metta", "echo"],
       "effect": "read",
       "result_format": "json"
     }
@@ -75,11 +76,18 @@ cognition process. `gateway_bridge.py` provides JSON-text `submit`, `status`
 and `cancel` functions for `py-call`; it binds through
 `METTACLAW_GATEWAY_SOCKET` and `METTACLAW_GATEWAY_AGENT`.
 
+The five supplied legacy read-tool command descriptors bind to native handlers.
+Their configuration values remain in request fingerprints, preserving retained
+jobs; their former Python entrypoints are never executed. Custom commands remain
+explicit external tools.
+
 Wire protocol: one newline-terminated JSON frame per connection, version 1,
 with an agent identifier and operation. Submissions carry `id`, `tool`,
 `arguments`, `input` and an absolute deadline. The first accepted deadline
 remains fixed; a duplicate submission cannot extend it. Message framing is
-bounded at 1 MiB and captured tool output at 128 KiB.
+bounded at 1 MiB. Raw tool output is retained as content-addressed artifacts with
+bounded previews. JSON validation resumes through an owned file cursor and
+does not materialize large result values.
 
 ## Failure and retry semantics
 

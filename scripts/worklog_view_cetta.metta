@@ -1,0 +1,38 @@
+; The standalone working view uses the same observation projection as the
+; attach client. --json retains typed records; --full reads complete sources.
+!(import! &self ../src/console/main_cetta.metta)
+(= (cv:flush)
+   (let* (($owner (cc:get "events" ConsoleNoBufferV1)) ($text (buffer:value $owner))
+          ($_ (system:write stdout $text)) ($_ (buffer:drop $owner (str:byte-length $text)))) True))
+(= (cv:loop $signals $once $interval)
+   (let* (($_ (cc:streams-step)) ($_ (cv:flush))
+          ($work (cc:get "stream-work" ())))
+     (if (or (!= (host:signal $signals) 0) (and $once (== $work ()))) 0
+       (progn (if (== $work ())
+                 (let $watch (cc:get "stream-watch" ConsoleNoWatchV1) (host:wait (($watch read)) $interval)) True)
+              (cv:loop $signals $once $interval)))))
+(= (cv:seed $names $full)
+   (if (== $names ()) True
+     (let* (($name (car-atom $names))
+            ($_ (if $full True
+              (case (fs:metadata-v2 (path:join (cc:stream-directory) $name) no-follow)
+                (((fs:info-v2 regular $size $identity $_ $_ $_ $_)
+                  (cc:file-set $name (ConsoleFileCursorV1 $identity (max 0 (- $size 1048576)) (buffer:new 33554432 bytes) 0)))
+                 ($bad True)))))
+            ($_ (cc:queue-stream $name))) (cv:seed (cdr-atom $names) $full))))
+(= (cv:main)
+   (let* (($options (cli:pair-args (cli:strings (system:args)) ("--once" "--json" "--full") (JsonObject ())))
+          ($directory (sf:get $options "--dir" (system:getenv-or-default "METTACLAW_STREAM_DIR"
+                        (system:expanduser "~/.local/state/godelclaw/display"))))
+          ($session (sf:get $options "--session" ""))
+          ($settings (JsonObject ((JsonPair "display" $directory) (JsonPair "agent" $session) (JsonPair "view_all" (== $session "")))))
+          ($_ (cc:initialize $settings)) ($_ (cc:set "viewer-json" (sf:get $options "--json" False)))
+          ($_ (cc:set "viewer-full" (sf:get $options "--full" False)))
+          ($_ (fs:make-directories $directory 448)) ($watch (host:watch $directory))
+          ($_ (cc:set "stream-watch" $watch)) ($_ (cc:stream-control))
+          ($_ (cv:seed (cc:stream-names) (or (sf:get $options "--full" False) (sf:get $options "--json" False))))
+          ($signals (host:signals))
+          ($interval (max 50 (math:floor (* 1000 (cli:number (sf:get $options "--interval" "0.15") 0.15)))))
+          ($status (cv:loop $signals (sf:get $options "--once" False) $interval))
+          ($_ (host:close $signals)) ($_ (host:close $watch))) $status))
+!(system:exit (cv:main))

@@ -1,0 +1,12 @@
+!(import! &self ../src/cli_values_cetta.metta)
+!(let* (($args (cli:strings (system:args))) ($state (car-atom $args))
+         ($options (cli:pair-args (cdr-atom $args) () (JsonObject ())))
+         ($directory (sf:get $options "--dir" (system:getenv-or-default "METTACLAW_STREAM_DIR"
+             (system:expanduser "~/.local/state/godelclaw/display"))))
+         ($valid (or (== $state "on") (== $state "off"))))
+   (if (not $valid) (system:exit 78)
+     (let* (($_ (fs:make-directories $directory 448))
+            ($record (JsonObject ((JsonPair "enabled" (== $state "on")) (JsonPair "epoch" (system:uuid4-hex)))))
+            ($saved (sf:replace (path:join $directory "control.json") (json:stringify-python $record) 384 True)))
+       (if (!= $saved True) (system:exit 1)
+         (system:write stdout (str:join "" ("Local stream " $state ". Earlier epochs will not be replayed.\n")))))))

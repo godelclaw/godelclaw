@@ -14,7 +14,7 @@ import subprocess
 import sys
 import tempfile
 
-from build_console_release import digest, encoded, inventory, verify
+from build_console_release import digest, encoded, inventory, relative, verify
 
 
 def absolute(path):
@@ -133,10 +133,33 @@ def publish(source, target):
         sync_directory(target.parent)
 
 
-def prepare(release, prefix, python, mail_script=None, replace_existing=False):
+def native_engine(binary, expected):
+    binary = absolute(binary)
+    if not binary.is_file() or not os.access(binary, os.X_OK):
+        raise ValueError("native console engine is missing")
+    root = binary.resolve().parent
+    document = json.loads((root / "build-manifest.json").read_text())
+    if (document.get("revision") != expected["revision"] or
+            document.get("runtime_profile") != "native-agent" or document.get("python_enabled") is not False):
+        raise ValueError("console engine does not match the required native release")
+    files = document.get("files", {})
+    for required in ("cetta", "cetta.proc-scope", "lib/host_io.metta", "lib/petta/host_io.metta"):
+        if required not in files:
+            raise ValueError("console engine lacks a required file: " + required)
+    for name, expected_hash in files.items():
+        path = root / relative(name)
+        if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(root):
+            raise ValueError("console engine contains a missing or linked file")
+        if digest(path.read_bytes()) != expected_hash:
+            raise ValueError("console engine file identity mismatch: " + name)
+    return binary, document
+
+
+def prepare(release, prefix, python, mail_script=None, replace_existing=False, engine=None):
     release, prefix, python = map(absolute, (release, prefix, python))
     manifest = verify(release)
-    if not python.is_file() or not os.access(python, os.X_OK):
+    native = manifest["schema"] == 2
+    if not native and (not python.is_file() or not os.access(python, os.X_OK)):
         raise ValueError("Python executable is missing or not executable")
     if mail_script is not None:
         mail_script = absolute(mail_script)
@@ -144,15 +167,23 @@ def prepare(release, prefix, python, mail_script=None, replace_existing=False):
             raise ValueError("configured mail script is missing")
     # Isolated Python cannot accidentally satisfy missing bundle imports from the
     # source checkout, user site, PYTHONPATH or the selected interpreter's site.
-    entry = release / "files/scripts/console_entry.py"
-    probe = subprocess.run([str(python), "-I", "-S", "-B", str(entry), "--check-console-imports"],
+    if native:
+        if engine is None:
+            raise ValueError("native console installation requires --engine")
+        engine, engine_manifest = native_engine(engine, manifest["engine"])
+        entry = release / manifest["entrypoint"]
+        launch = [str(engine), "--no-results", "--lang", "petta", "--profile", "extended", "--import-mode", "ancestor-walk"]
+    else:
+        entry = release / "files/scripts/console_entry.py"
+        launch = [str(python), "-I", "-S", "-B"]
+    probe = subprocess.run([*launch, str(entry), "--check-console-imports"],
                            capture_output=True, text=True, timeout=30)
     if probe.returncode or probe.stdout.strip() != "console imports OK":
         raise ValueError("isolated console import check failed: " + probe.stderr.strip())
-    version = subprocess.run([str(python), "-I", "-S", "-c",
+    version = None if native else subprocess.run([str(python), "-I", "-S", "-c",
                               "import json,sys; print(json.dumps(list(sys.version_info[:2])))"],
                              capture_output=True, text=True, timeout=30)
-    if version.returncode or json.loads(version.stdout) != manifest["python"]:
+    if version is not None and (version.returncode or json.loads(version.stdout) != manifest["python"]):
         raise ValueError("selected Python major/minor differs from the build interpreter")
     home, destinations = locations(prefix)
     target = home / "releases" / ("console-" + manifest["release"])
@@ -160,13 +191,14 @@ def prepare(release, prefix, python, mail_script=None, replace_existing=False):
         raise ValueError("build the input release outside the installation prefix")
     bindings = {}
     for name in ("agent-console", "godel-cli"):
-        command = [str(python), "-I", "-S", "-B", str(target / "files/scripts/console_entry.py")]
+        command = [*launch, str(target / (manifest["entrypoint"] if native else "files/scripts/console_entry.py"))]
         if name == "godel-cli":
             command += ["--agent", "godel"]
         if mail_script is not None:
             command += ["--mail-script", str(mail_script)]
         bindings[name] = ("#!/bin/sh\nexec " + shlex.join(command) + ' "$@"\n').encode()
-    binding_payload = {"release": manifest["release"], "python_sha256": digest(python.read_bytes()),
+    binding_payload = {"release": manifest["release"], ("engine_sha256" if native else "python_sha256"):
+                       digest((engine if native else python).read_bytes()),
                        "files": {name: digest(body) for name, body in bindings.items()}}
     binding_id = digest(encoded(binding_payload))
     binding = home / "console-bindings" / binding_id
@@ -267,6 +299,7 @@ def main():
     parser.add_argument("--release", type=Path)
     parser.add_argument("--prefix", type=Path, default=Path.home() / ".local")
     parser.add_argument("--python", type=Path, default=Path(sys.executable))
+    parser.add_argument("--engine", type=Path, help="Python-disabled CeTTa matching the console manifest")
     parser.add_argument("--mail-script", type=Path)
     parser.add_argument("--replace-existing", action="store_true")
     parser.add_argument("--backup-dir", type=Path)
@@ -284,7 +317,7 @@ def main():
             if args.release is None or (args.apply and args.backup_dir is None):
                 raise ValueError("installation requires --release; --apply also requires a new --backup-dir")
             prefix = absolute(args.prefix)
-            plan = prepare(args.release, prefix, args.python, args.mail_script, args.replace_existing)
+            plan = prepare(args.release, prefix, args.python, args.mail_script, args.replace_existing, args.engine)
             if args.backup_dir is not None:
                 check_backup(args.backup_dir, plan)
             if args.apply:

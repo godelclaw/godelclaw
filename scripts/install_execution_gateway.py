@@ -31,16 +31,17 @@ def prepare(instance, runtime, config_dir, unit_dir, worker=None):
     if any(c in str(source) for c in ("\n", "\r", os.pathsep)):
         raise ValueError("runtime path cannot contain a line break or path separator")
     for name in (
-        "execution_gateway/__main__.py",
-        "execution_gateway/read_tools.py",
-        "execution_gateway/cetta_worker.py",
+        "execution_gateway/host_cetta.metta",
+        "execution_gateway/protocol_cetta.metta",
+        "execution_gateway/native_queue_cetta.metta",
+        "execution_gateway/read_tools_cetta.metta",
         "execution_gateway/GATEWAY_CETTA_REF",
         "execution_gateway/metta/gateway_queue.metta",
         "execution_gateway/metta/native_kb_server.metta",
         "execution_gateway/metta/native_space_query_server.metta",
         "execution_gateway/metta/kb/space_job_queue.metta",
-        "fsops.py",
-        "tool_output.py",
+        "file_io.metta",
+        "tool_output_cetta.metta",
     ):
         if not (source / name).is_file():
             raise ValueError("deployed gateway module is missing: " + name)
@@ -62,18 +63,26 @@ def prepare(instance, runtime, config_dir, unit_dir, worker=None):
     except WorkerUnavailable as error:
         raise ValueError("gateway needs a verified worker for its runtime pin; supply --worker") from error
     config["cetta_worker"] = str(verified["path"])
-    # Only the supplied read adapter imports this runtime's modules. Preserve
-    # custom tools, identities, state paths, credentials and effect classes.
-    for tool in config["tools"].values():
-        command = tool["command"]
-        if len(command) >= 3 and command[1:3] == ["-m", "execution_gateway.read_tools"]:
-            tool.setdefault("environment", {})["PYTHONPATH"] = str(source)
+    # Tool descriptors, including legacy PYTHONPATH compatibility data, remain
+    # byte-for-byte values in fingerprints. The native host binds supplied
+    # read descriptors to native handlers without executing their old modules.
+    engine = Path(verified["path"]).parent / "cetta"
+    engine_info = json.loads((engine.parent / "build-manifest.json").read_text())
+    if engine_info.get("python_enabled") is not False or engine_info.get("runtime_profile") != "native-agent":
+        raise ValueError("gateway host requires the Python-disabled native engine")
+    entry = runtime / "scripts/execution_gateway_cetta.metta"
+    if not entry.is_file() or not (runtime / "scripts/gateway_read_cetta.metta").is_file():
+        raise ValueError("native gateway entrypoint or read adapters are missing")
     lines = env_path.read_text().splitlines()
-    lines = [line for line in lines if not line.startswith("PYTHONPATH=")]
-    lines.append("PYTHONPATH=" + json.dumps(str(source), ensure_ascii=False))
+    lines = [line for line in lines if not line.startswith(("PYTHONPATH=", "PYTHONHOME=", "GATEWAY_CETTA_BIN=", "GATEWAY_CETTA_ENTRY="))]
+    lines.extend(("GATEWAY_CETTA_BIN=" + json.dumps(str(engine), ensure_ascii=False),
+                  "GATEWAY_CETTA_ENTRY=" + json.dumps(str(entry), ensure_ascii=False)))
     template = (ROOT / "systemd/pettaclaw-gateway@.service").read_bytes()
+    native_exec = (b"ExecStart=/usr/bin/env ${GATEWAY_CETTA_BIN} --no-results --lang petta --profile extended "
+                   b"--import-mode ancestor-walk ${GATEWAY_CETTA_ENTRY} --config %h/.config/pettaclaw/gateway-%i.json")
+    legacy = template.replace(native_exec, b"ExecStart=/usr/bin/python3 -m execution_gateway --config %h/.config/pettaclaw/gateway-%i.json")
     unit = unit_dir / "pettaclaw-gateway@.service"
-    if unit.is_file() and unit.read_bytes() != template:
+    if unit.is_file() and unit.read_bytes() not in (template, legacy):
         raise ValueError("custom gateway unit differs; preserve it and adapt its paths explicitly")
     links = {unit_dir / f"pettaclaw-gateway@{instance}.service": "pettaclaw-gateway@.service"}
     enabled = unit_dir / f"default.target.wants/pettaclaw-gateway@{instance}.service"
@@ -81,7 +90,7 @@ def prepare(instance, runtime, config_dir, unit_dir, worker=None):
     if enabled.exists() or enabled.is_symlink():
         links[enabled] = "../pettaclaw-gateway@.service"
     for path in links:
-        if path.exists() and (not path.is_symlink() or path.read_bytes() != template):
+        if path.exists() and (not path.is_symlink() or path.read_bytes() not in (template, legacy)):
             raise ValueError("custom instance unit exists: " + str(path))
     return {
         "files": {config_path: (json.dumps(config, indent=2) + "\n").encode(),

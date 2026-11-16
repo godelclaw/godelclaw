@@ -1,0 +1,9 @@
+[Unit]
+Description=Observe agent and command responder memory growth
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/godelclaw/runtime.env
+EnvironmentFile=%h/.config/godelclaw/memory-watch.env
+ExecStart=/usr/bin/env ${CETTA_BIN} --no-results --lang petta --profile extended --import-mode ancestor-walk ${MEMORY_WATCH_ENTRY} --units pettaclaw-godel.service pettaclaw-lila.service pettaclaw-telegram-control@godel.service pettaclaw-telegram-control.service cetta-telegram@godel.service cetta-telegram-channel.service pettaclaw-gateway@godel.service pettaclaw-gateway@lila.service --state ${MEMORY_WATCH_STATE} --window ${MEMORY_WATCH_WINDOW} --growth-mib-per-minute ${MEMORY_WATCH_GROWTH_MIB_PER_MINUTE} --minimum-growth-mib ${MEMORY_WATCH_MINIMUM_GROWTH_MIB}
+Nice=19

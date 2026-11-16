@@ -1,0 +1,21 @@
+!(import! &self ../../src/state_file_cetta.metta)
+(= (cf:answer $request)
+   (case (sf:get $request "kind" "")
+     (("status" (json:parse-python "{\"model\":{\"name\":\"fixture-model\"},\"call\":{\"phase\":\"resting\"}}"))
+      ("choice"
+       (progn (fs:append-text (path:join (system:getenv-or-default "HOME" "") "control-effects.txt")
+                (str:concat (sf:get $request "value" "") "\n"))
+         (JsonObject ((JsonPair "kind" "text") (JsonPair "text" "choice recorded")))))
+      ("command"
+       (if (== (sf:get $request "name" "") "/models")
+         (json:parse-python "{\"kind\":\"menu\",\"text\":\"Choose a model\",\"rows\":[[[\"One\",\"model-one\"],[\"Two\",\"model-two\"]]]}")
+         (JsonObject ((JsonPair "kind" "text") (JsonPair "text" "fixture control complete")))))
+      ($other (JsonObject ((JsonPair "error" "unknown fixture operation")))))))
+(= (cf:serve)
+   (let $line (system:read-line)
+     (if (== $line end_of_file) True
+       (let* (($request (json:parse-python $line)) ($body (cf:answer $request))
+              ($response (JsonObject ((JsonPair "id" (sf:get $request "id" JsonNull)) (JsonPair "body" $body))))
+              ($_ (system:write stdout (str:concat "CLAW_CONTROL " (str:concat (json:stringify-python $response) "\n")))))
+         (cf:serve)))))
+!(cf:serve)

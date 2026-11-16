@@ -50,7 +50,7 @@ def verify(root):
     if stat.S_IMODE((root / "manifest.json").stat().st_mode) != 0o444:
         raise ValueError("console manifest must have read-only file mode")
     payload = {key: value for key, value in manifest.items() if key != "release"}
-    if manifest.get("schema") != 1 or manifest.get("kind") != "godelclaw-console":
+    if manifest.get("schema") not in (1, 2) or manifest.get("kind") != "godelclaw-console":
         raise ValueError("not a console release manifest")
     if digest(encoded(payload)) != manifest.get("release"):
         raise ValueError("console manifest identity mismatch")
@@ -58,8 +58,17 @@ def verify(root):
         raise ValueError("console release files or modes differ from manifest")
     for name in manifest["files"]:
         relative(name)
-    if "files/scripts/console_entry.py" not in manifest["files"]:
+    entry = ("files/scripts/console_entry.py" if manifest["schema"] == 1 else manifest.get("entrypoint"))
+    if entry not in manifest["files"]:
         raise ValueError("console entry is missing")
+    if manifest["schema"] == 2:
+        engine = manifest.get("engine", {})
+        if engine.get("runtime_profile") != "native-agent" or engine.get("python_enabled") is not False:
+            raise ValueError("native console requires a Python-disabled engine")
+        if not isinstance(engine.get("revision"), str) or len(engine["revision"]) != 40:
+            raise ValueError("native console needs an exact engine revision")
+        if manifest.get("dependencies") or any(name.endswith(".py") or name.startswith("vendor/") for name in manifest["files"]):
+            raise ValueError("native console cannot contain Python modules or dependency vendoring")
     return manifest
 
 
@@ -70,6 +79,9 @@ def build(source, output):
         raise ValueError("refusing to overwrite release output")
     selection = json.loads((source / "config/console-files.json").read_text())
     dependencies = json.loads((source / "config/console-dependencies.json").read_text())
+    native = "scripts/agent_console_cetta.metta" in selection
+    if native and dependencies:
+        raise ValueError("native console uses the engine libraries, not vendored Python packages")
     if len(selection) != len(set(selection)):
         raise ValueError("duplicate console source selection")
     bodies = {}
@@ -111,8 +123,15 @@ def build(source, output):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(body)
             path.chmod(0o444)
-        payload = {"schema": 1, "kind": "godelclaw-console", "python": list(sys.version_info[:2]),
+        payload = {"schema": 2 if native else 1, "kind": "godelclaw-console",
                    "dependencies": dependencies, "files": inventory(stage)}
+        if native:
+            payload.update(entrypoint="files/scripts/agent_console_cetta.metta", engine={
+                "revision": (source / "CETTA_REF").read_text().strip(),
+                "runtime_profile": "native-agent", "python_enabled": False,
+                "libraries": ["host_io", "fs", "proc", "json", "toml", "mailbox"]})
+        else:
+            payload["python"] = list(sys.version_info[:2])
         manifest = dict(payload, release=digest(encoded(payload)))
         (stage / "manifest.json").write_bytes(encoded(manifest))
         (stage / "manifest.json").chmod(0o444)

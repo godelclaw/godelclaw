@@ -4,7 +4,7 @@ Description=Independent PeTTaClaw execution gateway (%i)
 [Service]
 Type=simple
 EnvironmentFile=%h/.config/pettaclaw/gateway-%i.env
-ExecStart=/usr/bin/python3 -m execution_gateway --config %h/.config/pettaclaw/gateway-%i.json
+ExecStart=/usr/bin/env ${GATEWAY_CETTA_BIN} --no-results --lang petta --profile extended --import-mode ancestor-walk ${GATEWAY_CETTA_ENTRY} --config %h/.config/pettaclaw/gateway-%i.json
 Restart=on-failure
 RestartSec=3
 KillMode=control-group

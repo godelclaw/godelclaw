@@ -90,7 +90,17 @@
      (("METTACLAW_MODEL_COMMENTARY" "1") ("METTACLAW_PUBLIC_WORK_DIR" "{home}/worklog")))
     ("tests/unit/strategy_attempts.metta" "UNIT_STRATEGY_ATTEMPTS_OK"
      (("METTACLAW_STREAM_DIR" "{home}/display") ("METTACLAW_INSTANCE" "unit")
-      ("METTACLAW_INPUT_LEDGER_SOCKET" "{home}/l.sock") ("METTACLAW_PROGRESS_PATH" "{home}/state/progress.json")))))
+      ("METTACLAW_INPUT_LEDGER_SOCKET" "{home}/l.sock") ("METTACLAW_PROGRESS_PATH" "{home}/state/progress.json")))
+    ("tests/unit/host_io.metta" "UNIT_NATIVE_HOST_IO_OK")
+    ("tests/unit/host_io_files.metta" "UNIT_NATIVE_HOST_FILES_OK")
+    ("tests/unit/native_json_cursor.metta" "UNIT_NATIVE_JSON_CURSOR_OK")
+    ("tests/unit/native_editor.metta" "UNIT_NATIVE_EDITOR_OK")
+    ("tests/unit/native_terminal.metta" "UNIT_NATIVE_TERMINAL_OK")
+    ("tests/unit/native_gateway_queue.metta" "UNIT_NATIVE_GATEWAY_QUEUE_OK")
+    ("tests/unit/native_gateway_host.metta" "UNIT_NATIVE_GATEWAY_HOST_OK")
+    ("tests/unit/memory_monitor.metta" "UNIT_NATIVE_MEMORY_MONITOR_OK")
+    ("tests/unit/native_console.metta" "UNIT_NATIVE_CONSOLE_OK"
+     (("CETTA_SHARED_MAIL_SOCKET" "{home}/s")))))
 
 (= (units:env $directory)
    (let $base (nt:environment $directory)
@@ -102,6 +112,9 @@
         ("NATIVE_TEST_CORE" (nt:required-env "NATIVE_TEST_CORE"))
         ("NATIVE_CORE_BIN" (path:join (nt:required-env "NATIVE_TEST_CORE") "cetta"))
         ("CETTA_BIN" (path:join (nt:required-env "NATIVE_TEST_CORE") "cetta"))
+        ("TEST_REPOSITORY" (system:getcwd))
+        ("TEST_PTY_FIXTURE" (path:join (nt:required-env "NATIVE_TEST_ARTIFACTS") "native-pty"))
+        ("METTACLAW_CONSOLE_CONTROL_ENTRY" (path:join (system:getcwd) "tests/fixtures/console_control_native.metta"))
         ("NATIVE_CORE_PEER" (path:join (nt:required-env "NATIVE_TEST_ARTIFACTS") "native-core-peer"))
         ("METTACLAW_CLAUDE_BIN" (path:join (nt:required-env "NATIVE_TEST_ARTIFACTS") "native-core-peer")))
        $base)))
@@ -123,7 +136,7 @@
 (= (units:one $root $engine $artifacts ($file $marker))
    (units:one $root $engine $artifacts ($file $marker ())))
 (= (units:one $root $engine $artifacts ($file $marker $extra))
-   (let* (($directory (nt:join $artifacts (str:concat "unit-" (system:uuid4-hex))))
+   (let* (($directory (nt:join $artifacts (str:concat "u-" (str:byte-slice (system:uuid4-hex) 0 10))))
           ($_ (fs:make-directories $directory 448))
           ($output (nt:exit-ok (proc:run ($engine "--lang" "petta" "--profile" "extended" "--import-mode" "ancestor-walk" "--quiet" $file)
                                          $root (units:override (units:env $directory) (units:homed $extra $directory)) 120000 1048576)))
@@ -152,6 +165,9 @@
           ($peer (path:join $artifacts "native-core-peer"))
           ($_ (nt:exit-ok (proc:run ("cc" "-std=c11" "-O2" "-Wall" "-Wextra" "-Werror"
                         "tests/fixtures/native_core_peer.c" "-o" $peer) $root (nt:environment $artifacts) 30000 65536)))
+          ($pty (path:join $artifacts "native-pty"))
+          ($_ (nt:exit-ok (proc:run ("cc" "-std=c11" "-O2" "-Wall" "-Wextra" "-Werror"
+                        "tests/fixtures/native_pty.c" "-o" $pty) $root (nt:environment $artifacts) 30000 65536)))
           ($only (system:getenv-or-default "NATIVE_UNIT" ""))
           ($cases (units:selected (units:from (units:all) (system:getenv-or-default "NATIVE_UNIT_START" "")) $only))
           ($_ (nt:require unit-selection-nonempty (not (== $cases ())))))
