@@ -6,6 +6,10 @@
    (if (== $pairs ()) True
      (let (JsonPair $key $_) (car-atom $pairs)
        (and (cli:member? $key $allowed) (ngr:keys? (cdr-atom $pairs) $allowed)))))
+; JSON booleans reached Python's int() as booleans in the original adapter.
+; Normalize at this crossing, without changing the generic filesystem API.
+(= (ngr:integer-input $value)
+   (if (== (get-type $value) Bool) (if $value 1 0) $value))
 (= (ngr:git $args)
    (let $argv (cons-atom "git" $args)
      (case (proc:run $argv (system:getcwd) inherit 3000 0)
@@ -32,11 +36,12 @@
                  (JsonPair "memory_pressure" (fs:read-text "/proc/pressure/memory")))))))
           ("read-lines"
            (if (and (ngr:keys? $pairs ("path" "start" "count")) (== (get-type (sf:get $value "path" JsonNull)) String))
-             (read-lines (sf:get $value "path" "") (sf:get $value "start" 1) (sf:get $value "count" 60))
+             (read-lines (sf:get $value "path" "") (ngr:integer-input (sf:get $value "start" 1))
+                         (ngr:integer-input (sf:get $value "count" 60)))
              (GatewayReadFailureV1 "read-lines needs path, optional start and count")))
           ("ls-tree"
            (if (and (ngr:keys? $pairs ("path" "depth")) (== (get-type (sf:get $value "path" JsonNull)) String))
-             (ls-tree (sf:get $value "path" "") (sf:get $value "depth" 2))
+             (ls-tree (sf:get $value "path" "") (ngr:integer-input (sf:get $value "depth" 2)))
              (GatewayReadFailureV1 "ls-tree needs path and optional depth")))
           ("grep-files"
            (if (and (ngr:keys? $pairs ("path" "pattern"))
@@ -46,10 +51,23 @@
              (GatewayReadFailureV1 "grep-files needs path and pattern")))
           ($unknown (GatewayReadFailureV1 "unknown read-only tool")))))
       ($bad (GatewayReadFailureV1 "tool input must be an object")))))
+(= (ngr:fail $message)
+   (progn (system:write stderr (str:concat $message "\n")) (system:exit 2)))
+(= (ngr:emit $name $value)
+   (let* (($envelope (JsonObject
+            ((JsonPair "agent" (system:getenv-or-default "METTACLAW_GATEWAY_AGENT" ""))
+             (JsonPair "tool" $name) (JsonPair "value" $value))))
+          ($encoded (collapse (catch (json:stringify-python $envelope)))))
+     (case $encoded
+       ((($text) (if (== (get-type $text) String) (system:write stdout (str:concat $text "\n"))
+                    (ngr:fail "read adapter result is not serializable")))
+        ($bad (ngr:fail "read adapter produced no single JSON result"))))))
+(= (ngr:emit-outcome $name $result)
+   (case $result
+     (((GatewayReadFailureV1 $message) (ngr:fail $message))
+      ($value (ngr:emit $name $value)))))
 (= (ngr:main $name $input-path)
-   (let $result (ngr:execute $name (json:parse-python (fs:read-text $input-path)))
-     (case $result
-       (((GatewayReadFailureV1 $message) (progn (system:write stderr $message) (system:exit 2)))
-        ($value (system:write stdout (str:concat (json:stringify-python (JsonObject
-          ((JsonPair "agent" (system:getenv-or-default "METTACLAW_GATEWAY_AGENT" ""))
-           (JsonPair "tool" $name) (JsonPair "value" $value)))) "\n")))))))
+   (let $outcomes (collapse (catch (ngr:execute $name (json:parse-python (fs:read-text $input-path)))))
+     (case $outcomes
+       ((($result) (ngr:emit-outcome $name $result))
+        ($bad (ngr:fail "read adapter produced no single outcome"))))))
