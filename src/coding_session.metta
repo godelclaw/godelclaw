@@ -191,10 +191,17 @@
 ; Tokens are estimated at four bytes each, as Codex estimates new items, or at
 ; the higher rate the provider counted for this session's last request.
 (= (coding:estimate $dir $request) (cio:context-tokens $dir (str:byte-length (json-stringify $request))))
+; An unavailable capacity is the budget API's empty-text sentinel, not a
+; number. A known zero remains zero; data never reaches numeric min by type.
+(: coding:capacity-value (-> Atom Number))
+(= (coding:capacity-value $capacity)
+   (if (== (get-type $capacity) Number)
+     (if (and (>= $capacity 0) (and (not (math:isnan $capacity)) (not (math:isinf $capacity)))) $capacity 200000)
+     200000))
 ; Read at every step: the provider reports the model's window after the first.
 (= (coding:window)
    (let* (($_ (llm:observe-window)) ($capacity (turn:context-capacity 32768))
-          ($reported (if (== (get-metatype $capacity) Grounded) $capacity 200000))
+          ($reported (coding:capacity-value $capacity))
           ($raw (str:string->number (system:getenv-or-default "METTACLAW_CODING_CONTEXT_TOKENS" "256000")))
           ($ceiling (if (== (get-type $raw) Number)
                        (if (and (>= $raw 4096) (not (math:isinf $raw))) (math:floor $raw) 256000)
@@ -302,6 +309,19 @@
          (CodingFinished $status)))))
 (= (coding:fail $dir $workdir $reason $steps $inbox)
    (coding:finish $dir "failed" (coding:failure-handover $dir $workdir $reason) $steps $inbox))
+(= (coding:start-observation $answers)
+   (case $answers
+     ((((CodingFinished $status)) (CodingFinished $status))
+      (((CodingAborted $reason)) (CodingAborted $reason))
+      ($other (CodingUnestablished $other)))))
+(= (coding:unexpected-start $dir $observed)
+   (let* (($state (coding:json-file (coding:file $dir "state.json") (JsonObject ())))
+          ($task (coding:json-file (coding:file $dir "task.json") (JsonObject ())))
+          ($given (coding:text (coding:field $task "workdir")))
+          ($where (if (== $given "") (system:cwd) $given))
+          ($reason (str:concat "Coding execution did not establish one terminal result. Observed: " (repr $observed))))
+     (coding:fail $dir $where $reason (coding:number (coding:field $state "steps") 0)
+                               (coding:number (coding:field $state "inbox") 0))))
 (= (coding:loop $dir $workdir $effort $tools $messages $steps $inbox)
    (if (fs:is-file (coding:file $dir "stop")) (coding:finish $dir "stopped" "Stopped by the requester." $steps $inbox)
      (let* (((Folded $steered $next) (coding:fold-inbox $dir $messages $inbox))
