@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "scope": "Native cognitive core, gateway and periodic helpers. Native console sources remain experimental; the restored attach frontend is a Python runtime role, so full Python-free runtime acceptance is withdrawn.",
+  "scope": "Selected native sources for the cognitive core, execution gateways and periodic prototypes. Installed frontend/viewer/observatory fallbacks and the retained Nostr engine still depend on Python; full runtime closure is withdrawn. See native-migration.json for active role gaps.",
   "files": [
     "CETTA_REF",
     "LICENSE",
