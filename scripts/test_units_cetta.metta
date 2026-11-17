@@ -109,6 +109,7 @@
     ("tests/unit/observatory_stream.metta" "UNIT_OBSERVATORY_STREAM_OK")
     ("tests/unit/observatory_publication.metta" "UNIT_OBSERVATORY_PUBLICATION_OK")
     ("tests/unit/viewer_scope.metta" "UNIT_VIEWER_SCOPE_OK")
+    ("tests/unit/audit_scope.metta" "UNIT_AUDIT_SCOPE_OK")
     ("tests/unit/native_console.metta" "UNIT_NATIVE_CONSOLE_OK"
      (("CETTA_SHARED_MAIL_SOCKET" "{home}/s")))))
 

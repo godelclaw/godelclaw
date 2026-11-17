@@ -87,22 +87,32 @@
                (list:append (audit:array $roles "gateway-server")
                  (list:append (audit:array $roles "periodic-monitor") (audit:array $roles "service-launchers")))))))
           ($dynamic (map-atom (audit:array $selection "dynamic_imports") $row (sf:get $row "file" "")))
+          ; A selected imported module can be missing from a role's hand-written
+          ; list. Inspect every selected MeTTa source, including such modules.
+          ($inspected (unique-atom (list:append $runtime
+             (filter-atom $files $file (str:ends-with $file ".metta")))))
           ($lexer (re:compile ";[^\n]*|\"(?:\\\\.|[^\"\\\\])*\"|[()]|[^\\s();]+"))
           ($python (re:compile "(^|[; \\t])python[0-9.]*[ \\t]|PYTHON(HOME|PATH)=|METTACLAW_MODE_PYTHON"))
           ($_ (if (audit:unique? (sort-strings $files) "") True (audit:fail duplicate-selected-file)))
           ($_ (map-atom $files $file
             (if (fs:is-file (path:join $root $file)) True (audit:fail (missing-selected-file $file)))))
-          ($_ (map-atom $runtime $file
+          ($_ (map-atom $inspected $file
             (if (str:ends-with $file ".py") (audit:fail (python-in-core $file))
               (if (str:ends-with $file ".metta") (audit:source $root $file $lexer $files $dynamic)
                 (if (or (str:ends-with $file ".sh") (str:ends-with $file ".service")) (audit:launcher $root $file $python) True)))))
           ($_ (re:close $lexer)) ($_ (re:close $python))
-          ($artifact (audit:artifact)))
+          ($artifact (audit:artifact))
+          ($inventory (sf:native-object (path:join $root "config/native-migration.json")))
+          ($remaining (sf:get (sf:get $inventory "current_batch" JsonNull) "remaining_python_services" JsonNull))
+          ($declared-closed (case $remaining (((JsonArray $services) (== $services ())) ($unreported False)))))
      (system:write stdout (str:concat (json:stringify-python
        (JsonObject ((JsonPair "schema" 3) (JsonPair "statically_closed_core" True)
-         (JsonPair "statically_closed_runtime" True) (JsonPair "runtime_files" (size-atom $runtime))
+         (JsonPair "native_selection_closed" True)
+         (JsonPair "statically_closed_runtime" $declared-closed) (JsonPair "runtime_files" (size-atom $runtime))
          (JsonPair "core_files" (size-atom $core)) (JsonPair "selected_files" (size-atom $files))
          (JsonPair "python_disabled_artifact" $artifact)
-         (JsonPair "remaining_services" (JsonArray ()))
+         (JsonPair "remaining_services" $remaining)
+         (JsonPair "installed_runtime_audited" False)
+         (JsonPair "scope" "selected native source closure; runtime roles declared by migration inventory; installed bindings require a separate check")
          (JsonPair "functional_qualification" "separate required gate")))) "\n"))))
 !(audit:run)
