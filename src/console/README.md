@@ -6,6 +6,11 @@ names, repeated reconciliation notices, missing block styling and reduced status
 information made it unsuitable for everyday use. Functional markers and input
 latency alone do not qualify its appearance or interaction behavior.
 
+The standalone native viewer is also experimental. Its JSON path must apply
+the same enabled/epoch/session boundary as formatted output. The established
+viewer remains available while grouping, plans/timing and viewport behavior
+are compared; a curated-note CLI test does not qualify those workflows.
+
 Console builds select the established frontend by default. `--frontend native`
 builds the port for continued development. A replacement must compare the same
 event recordings with the established block renderer, including incremental

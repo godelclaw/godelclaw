@@ -12,7 +12,7 @@
     "shared_contracts": ["ResumableModeCheckpoint", "SingleReplyObservation", "GatewayRequestedStop", "PublicationBarrier"],
     "qualification": ["complete registered native units", "PeTTa provider contracts", "real normal and managed-mode turns", "input crash recovery", "native gateway/read adapters", "actual terminal and native mail/control fixtures", "growth and alternating complete-flow performance", "paired production forward/rollback/forward with forward-written state"],
     "he_scope": "Shared request and codec contracts; whole application hosts remain PeTTa extended",
-    "remaining_python_services": ["restored operator attach frontend and its legacy mail client"],
+    "remaining_python_services": ["restored operator attach frontend and its legacy mail client", "restored standalone worklog viewer"],
     "console_status": "established frontend restored; native frontend experimental until appearance, interaction and complete-flow performance match",
     "remaining_delivery_gates": ["batch qualification", "matching immutable artifacts", "paired rollout", "real worker canary", "production rollback recovery", "draft-safe console cutover"],
     "delivery": "one immutable paired release after native boot, recovery, clients and growth checks",
