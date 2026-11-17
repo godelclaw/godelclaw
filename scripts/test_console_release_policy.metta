@@ -1,0 +1,56 @@
+; Console release policy, driven natively. Python is the existing operator
+; packager and the deliberately restored frontend, not the test controller.
+!(import! &self ../tests/native_test_support.metta)
+!(import! &self ../src/state_file_cetta.metta)
+(= (cp:run $arguments)
+   (proc:run (cons-atom (system:getenv-or-default "CONSOLE_BUILD_PYTHON" "python3") $arguments)
+     (system:getcwd) inherit 60000 1048576))
+(= (cp:main)
+   (let* (($root (system:getcwd)) ($home (nt:required-env "NATIVE_TEST_ARTIFACTS"))
+          ($stable (path:join $home "stable")) ($native (path:join $home "native"))
+          ($builder (path:join $root "scripts/build_console_release.py"))
+          ($installer (path:join $root "scripts/install_console.py"))
+          ($python (system:getenv-or-default "CONSOLE_BUILD_PYTHON" "python3"))
+          ($stable-result (nt:exit-ok (cp:run ($builder "--source" $root "--output" $stable))))
+          ($stable-manifest (sf:native-object (path:join $stable "manifest.json")))
+          ($a (nt:require default-frontend-is-established (== (sf:get $stable-manifest "schema" 0) 1)))
+          ($b (nt:require established-block-renderer-is-packaged
+                (fs:is-file (path:join $stable "files/ui/worklog/inlineview/render.py"))))
+          ($c (nt:require established-editor-is-packaged
+                (fs:is-file (path:join $stable "files/ui/worklog/console.py"))))
+          ($native-result (nt:exit-ok (cp:run ($builder "--source" $root "--output" $native "--frontend" "native"))))
+          ($native-manifest (sf:native-object (path:join $native "manifest.json")))
+          ($d (nt:require native-frontend-requires-explicit-selection (== (sf:get $native-manifest "schema" 0) 2)))
+          ($prefix (path:join $home "prefix with spaces"))
+          ($bin (path:join $prefix "bin"))
+          ($selection (path:join $prefix "share/godelclaw/console-current"))
+          ($made-bin (fs:make-directories $bin 448))
+          ($made-selection (fs:make-directories $selection 448))
+          ($recorder (path:join $selection "godel-worklog"))
+          ($saved-recorder (fs:write $recorder "native recorder must remain selected\n"))
+          ($godel (path:join $bin "godel-cli")) ($agent (path:join $bin "agent-console"))
+          ($saved-godel (fs:write $godel "old editor wrapper\n"))
+          ($saved-agent (fs:write $agent "old generic wrapper\n"))
+          ($unsafe (cp:run ($installer "--release" $stable "--prefix" $prefix "--python" $python "--replace-existing")))
+          ($e (nt:require whole-selector-replacement-cannot-disconnect-helpers
+                (case $unsafe
+                  (((proc:exited $code $out $err)
+                    (and (!= $code 0) (nt:contains $err "would disconnect native worklog helpers")))
+                   ($bad False)))))
+          ($backup (path:join $home "backup"))
+          ($installed (nt:exit-ok (cp:run ($installer "--release" $stable "--prefix" $prefix "--python" $python
+                         "--replace-existing" "--attach-only" "--apply" "--backup-dir" $backup))))
+          ($plan (json:parse-python $installed))
+          ((JsonArray $entries) (sf:get $plan "entries" JsonNull))
+          ($f (nt:require attach-only-changes-two-launchers (== (size-atom $entries) 2)))
+          ($g (nt:require recorder-selection-survives-frontend-install
+                (== (fs:read-text $recorder) "native recorder must remain selected\n")))
+          ($h (nt:require restored-launcher-is-pinned-to-its-binding
+                (not (nt:contains (fs:read-text $godel) "console-current"))))
+          ($rolled-back (nt:exit-ok (cp:run ($installer "--rollback" $backup "--apply"))))
+          ($i (nt:require rollback-restores-original-editor-wrapper (== (fs:read-text $godel) "old editor wrapper\n")))
+          ($j (nt:require rollback-restores-original-generic-wrapper (== (fs:read-text $agent) "old generic wrapper\n")))
+          ($k (nt:require rollback-does-not-touch-native-recorder
+                (== (fs:read-text $recorder) "native recorder must remain selected\n")))) True))
+!(nt:require console-release-policy (cp:main))
+!(println! CONSOLE_RELEASE_POLICY_PASSED)

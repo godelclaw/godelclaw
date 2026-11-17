@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "scope": "Python-free managed runtime: cognitive core, operator console, gateway host and periodic memory monitor. Build/deployment tools and explicitly configured external tools retain separate roles.",
+  "scope": "Native cognitive core, gateway and periodic helpers. Native console sources remain experimental; the restored attach frontend is a Python runtime role, so full Python-free runtime acceptance is withdrawn.",
   "files": [
     "CETTA_REF",
     "LICENSE",

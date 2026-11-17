@@ -1,0 +1,22 @@
+[
+  "LICENSE",
+  "scripts/agent_console_cetta.metta",
+  "scripts/console_mail_cetta.metta",
+  "scripts/shared_mail.metta",
+  "scripts/worklog_control_cetta.metta",
+  "scripts/worklog_view_cetta.metta",
+  "src/cli_values_cetta.metta",
+  "src/state_file_cetta.metta",
+  "src/console/config_cetta.metta",
+  "src/console/editor_cetta.metta",
+  "src/console/mail_cetta.metta",
+  "src/console/main_cetta.metta",
+  "src/console/presentation_cetta.metta",
+  "src/console/render_cetta.metta",
+  "src/console/session_cetta.metta",
+  "src/console/streams_cetta.metta",
+  "scripts/public_worklog_cetta.metta",
+  "src/public_worklog_cetta.metta",
+  "src/effect_receipt_values_cetta.metta",
+  "src/effect_receipt_io_cetta.metta"
+]

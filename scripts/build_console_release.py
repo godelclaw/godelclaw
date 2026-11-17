@@ -95,14 +95,19 @@ def verify(root):
     return manifest
 
 
-def build(source, output):
+def build(source, output, frontend="stable"):
     if sys.version_info < (3, 11):
         raise ValueError("console packaging requires Python 3.11 or newer")
     if output.exists() or output.is_symlink():
         raise ValueError("refusing to overwrite release output")
-    selection = json.loads((source / "config/console-files.json").read_text())
-    dependencies = json.loads((source / "config/console-dependencies.json").read_text())
+    if frontend not in ("stable", "native"):
+        raise ValueError("unknown console frontend")
+    selection_name = "console-native-files.json" if frontend == "native" else "console-files.json"
+    selection = json.loads((source / "config" / selection_name).read_text())
+    dependencies = {} if frontend == "native" else json.loads((source / "config/console-dependencies.json").read_text())
     native = "scripts/agent_console_cetta.metta" in selection
+    if native != (frontend == "native"):
+        raise ValueError("console selection does not match its declared frontend")
     if native and dependencies:
         raise ValueError("native console uses the engine libraries, not vendored Python packages")
     if len(selection) != len(set(selection)):
@@ -173,9 +178,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, default=ROOT)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--frontend", choices=("stable", "native"), default="stable",
+                        help="stable preserves the established console; native is an experimental port")
     args = parser.parse_args()
     try:
-        manifest = build(args.source, args.output)
+        manifest = build(args.source, args.output, args.frontend)
         print(json.dumps({"release": manifest["release"], "files": len(manifest["files"])}))
     except (OSError, ValueError, KeyError, TypeError, importlib.metadata.PackageNotFoundError) as error:
         parser.error(str(error))

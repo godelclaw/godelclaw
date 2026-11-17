@@ -1,5 +1,22 @@
 # Native attach client
 
+The native attach frontend is experimental. Its production rollout was withdrawn
+after the presentation failed to preserve the established console: raw event
+names, repeated reconciliation notices, missing block styling and reduced status
+information made it unsuitable for everyday use. Functional markers and input
+latency alone do not qualify its appearance or interaction behavior.
+
+Console builds select the established frontend by default. `--frontend native`
+builds the port for continued development. A replacement must compare the same
+event recordings with the established block renderer, including incremental
+text, reconciliation, Markdown, tool grouping/folding and the activity/status
+rows. Native performance must be measured on those complete interactions.
+
+Use `install_console.py --attach-only` when replacing just the editor frontend.
+This preserves the native worklog recorder/viewer selection and independent
+cognitive services. A legacy frontend is a Python runtime role; it does not count
+as completion of the full native-runtime migration.
+
 The attach client runs on Python-disabled CeTTa with PeTTa extended. It keeps
 one owned edit buffer and an observation-only display projection. The terminal
 library supplies modes, readiness, Unicode boundaries and cell widths;

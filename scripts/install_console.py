@@ -157,7 +157,7 @@ def native_engine(binary, expected):
     return binary, document
 
 
-def prepare(release, prefix, python, mail_script=None, replace_existing=False, engine=None):
+def prepare(release, prefix, python, mail_script=None, replace_existing=False, engine=None, attach_only=False):
     release, prefix, python = map(absolute, (release, prefix, python))
     manifest = verify(release)
     native = manifest["schema"] == 2
@@ -190,7 +190,15 @@ def prepare(release, prefix, python, mail_script=None, replace_existing=False, e
     if version is not None and (version.returncode or json.loads(version.stdout) != manifest["python"]):
         raise ValueError("selected Python major/minor differs from the build interpreter")
     entrypoints = commands(manifest)
+    if attach_only:
+        entrypoints = {name: entrypoints[name] for name in ("agent-console", "godel-cli") if name in entrypoints}
+        if not entrypoints:
+            raise ValueError("release has no attach frontend commands")
     home, destinations = locations(prefix, entrypoints)
+    if attach_only:
+        destinations = [prefix / "bin" / name for name in entrypoints]
+    elif (home / "console-current" / "godel-worklog").is_file() and "godel-worklog" not in entrypoints:
+        raise ValueError("frontend would disconnect native worklog helpers; use --attach-only")
     target = home / "releases" / ("console-" + manifest["release"])
     if release == target or release.is_relative_to(prefix):
         raise ValueError("build the input release outside the installation prefix")
@@ -208,15 +216,16 @@ def prepare(release, prefix, python, mail_script=None, replace_existing=False, e
     check_published(target, manifest["files"], (release / "manifest.json").read_bytes())
     check_published(binding, {name: {"sha256": digest(body), "mode": 0o555}
                               for name, body in bindings.items()}, encoded(binding_payload))
-    after = [{"kind": "link", "target": str(binding)}]
+    after = [] if attach_only else [{"kind": "link", "target": str(binding)}]
     for name in entrypoints:
-        body = ('#!/bin/sh\nexec ' + shlex.quote(str(home / "console-current" / name)) + ' "$@"\n').encode()
+        command_path = binding / name if attach_only else home / "console-current" / name
+        body = ('#!/bin/sh\nexec ' + shlex.quote(str(command_path)) + ' "$@"\n').encode()
         after.append(file_snapshot(body))
     before = [snapshot(path) for path in destinations]
     for path, old, new in zip(destinations, before, after):
         if old != new and old["kind"] != "absent" and not replace_existing:
             raise ValueError("existing launcher/selection requires --replace-existing and backup: " + str(path))
-    return {"prefix": str(prefix), "release_source": str(release), "release_target": str(target),
+    return {"prefix": str(prefix), "release_source": str(release), "release_target": str(target), "attach_only": attach_only,
             "release": manifest["release"], "binding": str(binding), "bindings": bindings,
             "binding_payload": binding_payload,
             "entries": [{"path": str(path), "before": old, "after": new}
@@ -240,7 +249,7 @@ def save_receipt(backup, plan):
     backup = check_backup(backup, plan)
     backup.mkdir(parents=True, exist_ok=False, mode=0o700)
     payload = {"schema": 1, "prefix": plan["prefix"], "release": plan["release"],
-               "commands": list(plan["bindings"]), "entries": plan["entries"]}
+               "commands": list(plan["bindings"]), "attach_only": plan.get("attach_only", False), "entries": plan["entries"]}
     replace(backup / "before.json", file_snapshot(encoded(dict(payload, sha256=digest(encoded(payload)))), 0o600))
     sync_directory(backup.parent)
 
@@ -275,7 +284,12 @@ def rollback(backup, apply_changes=False):
     if document.get("schema") != 1 or digest(encoded(payload)) != document.get("sha256"):
         raise ValueError("backup receipt identity mismatch")
     prefix = absolute(Path(document["prefix"]))
-    _, expected = locations(prefix, document.get("commands", ("agent-console", "godel-cli")))
+    names = document.get("commands", ("agent-console", "godel-cli"))
+    _, expected = locations(prefix, names)
+    if document.get("attach_only", False):
+        if any(name not in ("agent-console", "godel-cli") for name in names):
+            raise ValueError("attach-only backup contains a non-frontend command")
+        expected = [prefix / "bin" / name for name in names]
     if [entry["path"] for entry in document["entries"]] != list(map(str, expected)):
         raise ValueError("backup destinations do not match its prefix")
 
@@ -306,6 +320,8 @@ def main():
     parser.add_argument("--engine", type=Path, help="Python-disabled CeTTa matching the console manifest")
     parser.add_argument("--mail-script", type=Path)
     parser.add_argument("--replace-existing", action="store_true")
+    parser.add_argument("--attach-only", action="store_true",
+                        help="replace attach frontends while preserving native worklog helpers and their selection")
     parser.add_argument("--backup-dir", type=Path)
     parser.add_argument("--rollback", type=Path)
     mode = parser.add_mutually_exclusive_group()
@@ -314,14 +330,14 @@ def main():
     args = parser.parse_args()
     try:
         if args.rollback:
-            if args.release or args.backup_dir or args.mail_script or args.replace_existing:
+            if args.release or args.backup_dir or args.mail_script or args.replace_existing or args.attach_only:
                 raise ValueError("--rollback cannot be combined with installation options")
             result = rollback(args.rollback, args.apply)
         else:
             if args.release is None or (args.apply and args.backup_dir is None):
                 raise ValueError("installation requires --release; --apply also requires a new --backup-dir")
             prefix = absolute(args.prefix)
-            plan = prepare(args.release, prefix, args.python, args.mail_script, args.replace_existing, args.engine)
+            plan = prepare(args.release, prefix, args.python, args.mail_script, args.replace_existing, args.engine, args.attach_only)
             if args.backup_dir is not None:
                 check_backup(args.backup_dir, plan)
             if args.apply:
