@@ -32,6 +32,7 @@
     ("tests/unit/model_menu.metta" "UNIT_MODEL_MENU_UNKEYED_OK"
      (("METTACLAW_PROVIDER_OBSERVATION_PATH" "{home}/state/provider-observations.json")
       ("METTACLAW_MODEL_STATE_PATH" "{home}/missing/model-state")))
+    ("tests/unit/inert_value_formatting.metta" "UNIT_INERT_VALUE_FORMATTING_OK")
     ("tests/unit/loop_host.metta" "UNIT_LOOP_HOST_OK")
     ("tests/unit/commentary_contract.metta" "UNIT_COMMENTARY_ON_OK" (("METTACLAW_MODEL_COMMENTARY" "1")))
     ("tests/unit/commentary_contract.metta" "UNIT_COMMENTARY_OFF_OK" (("METTACLAW_MODEL_COMMENTARY" "0")))
@@ -98,11 +99,13 @@
     ("tests/unit/native_terminal.metta" "UNIT_NATIVE_TERMINAL_OK")
     ("tests/unit/native_gateway_queue.metta" "UNIT_NATIVE_GATEWAY_QUEUE_OK")
     ("tests/unit/native_gateway_host.metta" "UNIT_NATIVE_GATEWAY_HOST_OK")
+    ("tests/unit/native_gateway_lifecycle.metta" "UNIT_NATIVE_GATEWAY_LIFECYCLE_OK")
     ("tests/unit/native_gateway_growth.metta" "UNIT_NATIVE_GATEWAY_GROWTH_OK")
     ("tests/unit/memory_monitor.metta" "UNIT_NATIVE_MEMORY_MONITOR_OK")
     ("tests/unit/housekeeping.metta" "UNIT_NATIVE_HOUSEKEEPING_OK")
     ("tests/unit/native_worklog_cli.metta" "UNIT_NATIVE_WORKLOG_CLI_OK")
     ("tests/unit/observatory.metta" "UNIT_NATIVE_OBSERVATORY_OK")
+    ("tests/unit/observatory_stream.metta" "UNIT_OBSERVATORY_STREAM_OK")
     ("tests/unit/native_console.metta" "UNIT_NATIVE_CONSOLE_OK"
      (("CETTA_SHARED_MAIL_SOCKET" "{home}/s")))))
 
