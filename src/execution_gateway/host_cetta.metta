@@ -246,7 +246,9 @@
               ($failure (if (!= $reason "") $reason (if (!= $out-error "") $out-error $err-error)))
               ($_ (if (!= $failure "") (proc:cancel $child) True))
               ($status (proc:status $child)))
-         (if (or (and $next-out $next-err) (and (!= $failure "") (== $status proc:ready)))
+         ; Closed streams do not establish process termination. Keep the event
+         ; loop observing deadlines/cancellation until awaiting cannot block.
+         (if (and (== $status proc:ready) (or (and $next-out $next-err) (!= $failure "")))
            (let $settled (ng:settle-active $id $effect $tool $child $out $err $out-path $err-path $failure $until)
              (if (== $settled GatewayKeepActiveV1) True (change-state! &ng-active GatewayIdleV1)))
            (change-state! &ng-active (GatewayActiveV1 $id $effect $tool $child $out $err
