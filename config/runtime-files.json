@@ -257,6 +257,7 @@
     "src/observation_range_cetta.metta",
     "src/observation_reconcile_cetta.metta",
     "src/observatory_cetta.metta",
+    "src/observatory_publication_cetta.metta",
     "src/open_assemblage.metta",
     "src/pins_context_cetta.metta",
     "src/process_identity_cetta.metta",

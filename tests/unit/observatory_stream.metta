@@ -13,6 +13,7 @@
           ($started (change-state! &obs-cursor $cursor)) ($counts (change-state! &obs-counts (JsonObject ())))
           ($writes (change-state! &obs-write-failed False))
           ($cursor-file (sf:replace (obs:path "cursor.json") (json:stringify-python $cursor) 384 True))
+          ($recovered (op:recover $home)) ($begun (op:begin $home))
           ($input-path (path:join $home "stream")) ($saved (fs:write $input-path $bytes))
           ($entry (path:join (nt:required-env "TEST_REPOSITORY") "tests/fixtures/journal_stream_native.metta"))
           ($process (proc:spawn ((system:executable) "--no-results" "--lang" "petta" "--profile" "extended"
