@@ -41,7 +41,15 @@
 (= (ctx:pins $views)
    (case (ctx:supplied $views "pins-body")
      (((CtxSuppliedV1 $text) (mark:pins $text))
-      ($none (mark:pins (pinsctx:view))))))
+      ($none (ctx:pins-read (pinsctx:read))))))
+; A read diagnostic remains visible without becoming a new pins observation.
+; Use the producer's typed outcome, rather than classifying diagnostic text.
+(= (ctx:pins-read $read)
+   (case $read
+     (((PinsctxUnavailable $_) (pinsctx:render-read $read))
+      ((PinsctxText $_) (mark:pins (pinsctx:render-read $read)))
+      ((Error $where $why) (Error ctx:pins $why))
+      ($bad (Error ctx:pins unsupported-read-outcome)))))
 (= (ctx:retained (CtxSourceV1 $views $conversation $id))
    (case $id
      (("pins" (ctx:pins $views))

@@ -6,20 +6,19 @@
 ; What the oracle's file read means, reproduced here:
 ;  - the file is UTF-8, strictly. Malformed bytes make the oracle raise, which
 ;    the bundle records as an unavailable (or stale-known) source, so here
-;    they are an (Error ...) and the bundle's own loader answers instead;
+;    they are an (Error ...) handled by the source boundary;
 ;  - a missing path means no pins; other filesystem failures remain
 ;    explicitly unavailable, so an unreadable memory is never erased;
-;  - unsupported native read errors are left to the Python loader (Error);
+;  - unsupported native read errors remain explicit (Error) outcomes;
 ;  - text mode ends a line at \n, \r\n or a lone \r and at nothing else
 ;    (not \x0b, \x1c, \x85, \u2028 ...); a line is kept when it holds a
 ;    character that Python's str.strip() does not strip, and kept whole;
 ;  - the newest 12 lines show, each cut to 399 characters and "…" past 400.
 ;
 ; The change marker is NOT computed here. There is one owner of that state:
-; helper.change_mark("pins-context", body), applied once by pins.mark_context_body
-; at context_sources' pins loader, to this body or to the body pins.py's own
-; reader made when this view is unavailable. Native therefore supplies the
-; marker-free body, or "(no pins)" (which the oracle never marks).
+; context_markers_cetta, matching helper.change_mark("pins-context", body).
+; The registry marks a successful body once. Read diagnostics remain visible
+; without changing that streak. "(no pins)" is never marked.
 !(import! &self (library fs))
 !(import! &self (library str))
 !(import! &self (library re))
