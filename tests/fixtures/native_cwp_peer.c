@@ -9,7 +9,9 @@
  * "CODE NAME" with NAME optional; without that file the reply is the
  * service's ordinary one: NEXT 64, SUBMIT 66, WAIT 64 with a fixed token.
  * DIRECTORY/delay-N, a number of milliseconds, holds the reply that long. The
- * socket is ready once DIRECTORY/ready exists. */
+ * socket is ready once DIRECTORY/ready exists. Optional second.json exposes a
+ * second queued delivery (fixture-second), acknowledged in second-acked. The
+ * peer never reads agent lifecycle state; CeTTa decides when to consume it. */
 #define _POSIX_C_SOURCE 200809L
 #define _DEFAULT_SOURCE
 #include <errno.h>
@@ -89,6 +91,16 @@ int main(int argc, char **argv) {
         if (code == 2 && !strcmp(id, delivery)) {
             FILE *acked = fopen(path, "w");
             if (!acked || fclose(acked)) fail("ack receipt");
+            answer = 66;
+        }
+        snprintf(path, sizeof(path), "%s/second-acked", directory);
+        if (code == 1 && answer == 64 && (!length || !strcmp(id, delivery)) &&
+            access(path, F_OK) && read_text(directory, "second.json", body, sizeof(body))) {
+            answer = 65; strcpy(token, "fixture-second");
+        }
+        if (code == 2 && !strcmp(id, "fixture-second")) {
+            FILE *acked = fopen(path, "w");
+            if (!acked || fclose(acked)) fail("ack second");
             answer = 66;
         }
         if (code == 5) strcpy(token, TOKEN);

@@ -81,6 +81,17 @@ int main(int argc,char **argv) {
         if(used!=header+length){free(request);close(client);count--;continue;}
         char name[64];snprintf(name,sizeof(name),"request-%lu.headers",count);FILE *out=file(root,name,"wb");fwrite(request,1,header,out);fclose(out);
         snprintf(name,sizeof(name),"request-%lu.body",count);out=file(root,name,"wb");fwrite(request+header,1,length,out);fclose(out);free(request);write_number(root,"count",count);
+        /* An optional first-response barrier lets the native controller
+         * exercise lifecycle changes while an inference is outstanding. */
+        if(count==1){
+            char hold[4096],release[4096];
+            if(snprintf(hold,sizeof(hold),"%s/hold-first-response",root)>=(int)sizeof(hold) ||
+               snprintf(release,sizeof(release),"%s/release-1",root)>=(int)sizeof(release)) fail("barrier path");
+            if(!access(hold,F_OK)) while(access(release,F_OK)!=0){
+                struct timespec pause={.tv_nsec=10000000L};
+                while(nanosleep(&pause,&pause)&&errno==EINTR){}
+            }
+        }
         size_t n=0;char *setting=read_file(root,"delay-ms",&n);long delay=strtol(setting,NULL,10);free(setting);
         if(delay>0){struct timespec pause={.tv_sec=delay/1000,.tv_nsec=(delay%1000)*1000000L};while(nanosleep(&pause,&pause)&&errno==EINTR){}}
         setting=read_file(root,"status",&n);int status=(int)strtol(setting,NULL,10);free(setting);
