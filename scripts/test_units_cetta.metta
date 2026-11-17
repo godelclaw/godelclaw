@@ -23,6 +23,7 @@
      (("NATIVE_CASE_ROOT" "{home}")))
     ("tests/unit/turn_frame.metta" "UNIT_NATIVE_TURN_FRAME_OK"
      (("METTACLAW_INPUT_LEDGER_SOCKET" "{home}/l.sock") ("METTACLAW_OBSERVED_STRATEGY" "1")
+      ("METTACLAW_COGNITIVE_HEALTH_PATH" "{home}/health.json") ("METTACLAW_RECYCLE_REQUEST_PATH" "{home}/recycle.requested")
       ("METTACLAW_LIFECYCLE_PATH" "{home}/lifecycle.json")))
     ("tests/unit/model_menu.metta" "UNIT_MODEL_MENU_KEYED_OK"
      (("METTACLAW_PROVIDER_OBSERVATION_PATH" "{home}/state/provider-observations.json")

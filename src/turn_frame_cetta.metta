@@ -4,6 +4,8 @@
 !(import! &self ./input_scope_cetta.metta)
 !(import! &self ./loop_modes_cetta.metta)
 !(import! &self ./lifecycle_cetta.metta)
+!(import! &self ./boot_state_cetta.metta)
+!(import! &self ./turn_health_cetta.metta)
 !(bind! &turn-frame (new-state ()))
 
 (= (strategy:enabled?) (== (system:getenv-or-default "METTACLAW_OBSERVED_STRATEGY" "0") "1"))
@@ -267,7 +269,14 @@
           ($_ (turn:put "sample" none)) ($_ (turn:put "ticket" ""))
           ($_ (turn:put "phase" "failed")))
      (if (!= $restored True) (Error turn:fault $restored)
-       (let $_ (if (strategy:enabled?) (turn:recover-actions) True) 1))))
+       (let $recovered (if (strategy:enabled?) (turn:recover-actions) True)
+         (if (turn:failed? $recovered) (Error turn:fault $recovered)
+           (if (not (strategy:enabled?)) 1
+             (case (boot-state:recycle)
+               ((True 1)
+                (False (if (== (health:fail "host-transition-error" 0) 1) 1
+                         (Error turn:fault health-publication-unavailable)))
+                ($unknown (Error turn:fault recycle-observation-unavailable))))))))))
 (: turn:command-result (-> Number Atom Atom Atom Number %Undefined%))
 (= (turn:command-result $turn $disposition $command $result $position)
    (if (and (strategy:enabled?) (== (turn:text $turn) (turn:get "turn" "")))
