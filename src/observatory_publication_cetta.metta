@@ -17,6 +17,11 @@
    (case (fs:read-text-result $path 0 "raw")
      ((("ok" $text) $text) (("missing" $_) JsonNull)
       ($bad (op:failure "publication state is unreadable")))))
+(= (op:cursor-outcome $root $receipt)
+   (let* (($current (op:read (path:join $root "cursor.json"))) ($after (sf:get $receipt "after" JsonNull)))
+     (if (and (== (get-type $after) String) (== $current $after)) "committed; cleanup incomplete"
+       (if (== $current (sf:get $receipt "before" JsonNull)) "commit not observed; recovery required"
+         "unresolved; retain publication evidence"))))
 (= (op:valid-id? $id)
    (and (== (get-type $id) String) (re:is-match (re:compile "^[0-9a-f]{32}$") $id)))
 (= (op:begin $root)

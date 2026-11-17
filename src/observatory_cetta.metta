@@ -252,7 +252,8 @@
                       (progn (op:cleanup $root (sf:get (get-state &op-batch) "id" "")) False) $prepared))))
      (if (== $saved True)
        (progn (system:write stdout (str:concat "native observation sample; rows=" (str:concat (json:stringify-python (get-state &obs-counts)) "\n"))) 0)
-       (progn (system:write stderr (str:join "" ("native observation incomplete; cursor not advanced; rows="
+       (progn (system:write stderr (str:join "" ("native observation incomplete; "
+                 (if (== $prepared True) (op:cursor-outcome $root (get-state &op-batch)) "publication not admitted") "; rows="
                  (json:stringify-python (get-state &obs-counts)) "; sample=" (repr (quote $sample))
                  "; receipts=" (repr (quote $effects)) "; journal=" (repr (quote $journal)) "\n"))) 1))))
 (= (obs:collect)

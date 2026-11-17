@@ -77,5 +77,11 @@
                          (fs:is-file (op:receipt $root))))))) True))
 !(let* (($root (ot:root "retry")) ($_ (ot:prefix-failure $root)) ($_ (ot:prefix-failure $root))
          ($_ (map-atom ("collecting" "prepared" "mid-line" "between-files" "outputs-synced" "cursor-committed") $at (ot:crash $at)))
-         ($_ (map-atom ("replaced" "truncated" "mismatch" "extended" "stage-changed" "cursor-changed" "write-refused") $kind (ot:conflict $kind))))
+         ($_ (map-atom ("replaced" "truncated" "mismatch" "extended" "stage-changed" "cursor-changed" "write-refused") $kind (ot:conflict $kind)))
+         ($diagnostic-root (ot:root "diagnostic")) ($receipt (ot:prepared $diagnostic-root))
+         ($_ (nt:require unobserved-commit-is-not-labelled-committed
+              (== (op:cursor-outcome $diagnostic-root $receipt) "commit not observed; recovery required")))
+         ($_ (sf:replace (path:join $diagnostic-root "cursor.json") (sf:get $receipt "after" "") 384 True))
+         ($_ (nt:require committed-cursor-is-not-labelled-unchanged
+              (== (op:cursor-outcome $diagnostic-root $receipt) "committed; cleanup incomplete"))))
    (println! UNIT_OBSERVATORY_PUBLICATION_OK))
