@@ -19,6 +19,13 @@
      (case (car-atom $answers)
        (((Error $_ $_) (ContextPreparationFailed "context-preparation-failed"))
         ($first $first)))))
+(= (state:capacity-text $answers)
+   (case $answers
+     ((($value)
+       (if (or (== (get-type $value) Number) (== $value ""))
+         (format-args "{}" (cons-atom $value ()))
+         (ContextPreparationFailed (str:concat "context-capacity-unavailable: " (turn:syntax-text $value)))))
+      ($unestablished (ContextPreparationFailed "context-capacity-unavailable")))))
 (= (state:prepare-context $prompt $tokens)
    (if (strategy:enabled?)
        (let* (($evidence (format-args "{}" ((turn:lifetime-context))))
@@ -26,10 +33,11 @@
               ($focus (turn:context-input "focus"))
               ($trigger (turn:context-input "trigger"))
               ($_ (llm:observe-window))
-              ($capacity-value (turn:context-input "capacity" $tokens))
-              ($capacity (format-args "{}" (cons-atom $capacity-value ())))
+              ($capacity (state:capacity-text (collapse (catch (turn:context-input "capacity" $tokens)))))
               ($model (turn:context-input "model"))
               ($effort (system:getenv-or-default "METTACLAW_REASONING_EFFORT" "default")))
-         (state:single-prepared
-           (collapse (catch (context:prepare $base $focus $trigger $capacity $model $tokens $effort)))))
+         (case $capacity
+           (((ContextPreparationFailed $_) $capacity)
+            ($available (state:single-prepared
+              (collapse (catch (context:prepare $base $focus $trigger $available $model $tokens $effort))))))))
        (request:render $prompt)))
