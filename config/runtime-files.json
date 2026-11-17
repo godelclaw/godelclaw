@@ -27,6 +27,7 @@
     "coding_check.metta",
     "coding_main.metta",
     "config/default.toml",
+    "config/secrets.env.example",
     "config/environment_fields.metta",
     "config/native-libraries.json",
     "config/native-migration.json",

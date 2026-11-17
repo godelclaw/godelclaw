@@ -177,7 +177,9 @@ def main():
     for name, expected in files.items():
         if sha(release / "files" / name) != expected:
             raise ValueError("release source hash mismatch: " + name)
-        if name.startswith(("memory/", "config/secrets", "config/local")) or name in (".env", "AGENTS.md", "CLAUDE.md"):
+        if (name.startswith(("memory/", "config/local"))
+                or (name.startswith("config/secrets") and name != "config/secrets.env.example")
+                or name in (".env", "AGENTS.md", "CLAUDE.md")):
             raise ValueError("instance data cannot be a shared release file")
     output = args.receipt_dir.resolve()
     output.mkdir(parents=True, exist_ok=False)
