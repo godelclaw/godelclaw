@@ -95,7 +95,7 @@
      (if (model:valid-id? $name) ModelUsable
        (ModelUnusable (str:join "" ("invalid model id '" $name "'")) True))))
 (= (model:session-problem $requested)
-   (case (model:problem (str:strip-python (format-args "{}" ($requested))))
+   (case (model:problem (str:strip-python (format-args "{}" (cons-atom $requested ()))))
      ((ModelUsable "") ((ModelUnusable $text $unchanged) $text))))
 
 ;; ------------------------------------------------------------ observations
@@ -237,7 +237,7 @@
 ; A switch that cannot be persisted is not applied; one that is survives
 ; restarts, since every process reads the state file.
 (= (model:set $requested)
-   (let $name (str:strip-python (format-args "{}" ($requested)))
+   (let $name (str:strip-python (format-args "{}" (cons-atom $requested ())))
      (case (model:problem $name)
        (((ModelUnusable $text True) (str:concat $text "; model unchanged"))
         ((ModelUnusable $text False) $text)

@@ -12,7 +12,7 @@
 
 (= (jobs:root) (system:getenv-or-default "METTACLAW_JOBS_DIR" "memory/jobs"))
 (= (jobs:path $id $suffix) (path:join (jobs:root) (str:concat $id $suffix)))
-(= (jobs:text $value) (format-args "{}" ($value)))
+(= (jobs:text $value) (format-args "{}" (cons-atom $value ())))
 (= (jobs:number $value) (let $text (jobs:text $value) (JsonNumber $text)))
 (= (jobs:string $value) (let $text (jobs:text $value) (JsonString $text)))
 (= (jobs:field $record $key $default)

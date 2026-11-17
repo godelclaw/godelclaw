@@ -51,7 +51,7 @@
 (= (sibling:systemctl $args)
    (case (catch (proc:run (cons-atom "systemctl" (cons-atom "--user" $args)) (system:cwd) inherit 30000 65536))
      (((proc:exited $code $out $err) ($code (str:trim (if (== $out "") $err $out))))
-      ((proc:signaled $signal $out $err) (1 (format-args "signal {}" ($signal))))
+      ((proc:signaled $signal $out $err) (1 (format-args "signal {}" (cons-atom $signal ()))))
       ((proc:timed-out $out $err) (1 "TimeoutExpired: systemctl did not answer in 30 s"))
       ((proc:failed $why) (1 (str:concat "OSError: " $why)))
       ($other (1 (repr $other))))))
@@ -90,7 +90,7 @@
                  (if (== $state "inactive")
                    (format-args "{} paused: service stopped, pause marker set — the watchdog will leave them down"
                                 ((sibling:label $sib)))
-                   (format-args "sibling-off incomplete: marker set but service is '{}' ({})" ($state $out))))))))))))
+                   (format-args "sibling-off incomplete: marker set but service is '{}' ({})" (cons-atom $state (cons-atom $out ())))))))))))))
 (= (sibling:marker-text $me $reason)
    (format-args "# PAUSED BY OPERATOR\n\nPaused: {}\nPaused by: {} via (sibling-off)\nReason: {}\n\nThe watchdog sees this file and will not restart the agent. To resume: use (sibling-on) from the other claw, or delete this file and start the service.\n"
      ((system:format-time "%Y-%m-%d %H:%M:%S %Z" (system:wall-time) local)
@@ -113,7 +113,7 @@
                (format-args "{} resumed: pause marker cleared, service active — they will boot, read their inbox, and start their loop"
                             ((sibling:label $sib)))
                (format-args "sibling-on incomplete: marker cleared but service is '{}' ({}) — the watchdog will retry within 30 min"
-                            ($state $out))))))))))
+                            (cons-atom $state (cons-atom $out ())))))))))))
 ; How long a start is given before the service is looked at again.
 (= (sibling:start-settle-seconds)
    (str:string->number (system:getenv-or-default "METTACLAW_SIBLING_START_SETTLE_SECONDS" "3")))
@@ -133,7 +133,7 @@
                   ($started (if (== (sibling:active $me) "active") ()
                               (let ($code $out) (sibling:systemctl ("start" (sibling:unit $me)))
                                 (if (== $code 0) ((str:concat "service " (sibling:active $me)))
-                                  ((format-args "service start failed ({})" ($out)))))))
+                                  ((format-args "service start failed ({})" (cons-atom $out ())))))))
                   ($notes (sibling:join $cleared $started)))
              (if (== $notes ()) "service already active" (str:join "; " $notes)))))))))
 (= (sibling:join $left $right)

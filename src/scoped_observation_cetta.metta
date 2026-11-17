@@ -104,7 +104,7 @@
               ($r (obs:descriptor-text $region))
               ($p (obs:descriptor-text $policy)))
          (format-args "source={} epoch={} revision={} query={} region={} policy={} observation={}"
-           ($domain $epoch $revision $q $r $p $run))))
+           (cons-atom $domain (cons-atom $epoch (cons-atom $revision (cons-atom $q (cons-atom $r (cons-atom $p (cons-atom $run ()))))))))))
       ($other (repr $other)))))
 (= (obs:descriptor-text $bytes)
    (case (collapse (store:decode $bytes))
@@ -116,8 +116,8 @@
      (((Empty $scope) "Empty")
       ((Observed $scope) "Observed")
       ((ObservedWithFaults $scope) "ObservedWithFaults")
-      ((Faulted $scope $reason) (format-args "Faulted: {}" ($reason)))
-      ((Incomplete $scope $reason) (format-args "Incomplete: {}" ($reason)))
+      ((Faulted $scope $reason) (format-args "Faulted: {}" (cons-atom $reason ())))
+      ((Incomplete $scope $reason) (format-args "Incomplete: {}" (cons-atom $reason ())))
       ((NotObserved $scope) "NotObserved")
       ($other "invalid report"))))
 (= (obs:explain $report)
@@ -178,7 +178,7 @@
    (function (let $out (obs:diagnostics-events (obs:events $report)) (return $out))))
 (= (obs:diagnostic-text (ObservationDiagnosticV1 $operation $code $detail))
    (format-args "operation={} reason={} detail={}"
-     ($operation $code (obs:descriptor-text $detail))))
+     (cons-atom $operation (cons-atom $code (cons-atom (obs:descriptor-text $detail) ())))))
 (= (obs:diagnostics-events $events)
    (function (if (== $events ()) (return ())
      (let $rest (obs:diagnostics-events (cdr-atom $events))

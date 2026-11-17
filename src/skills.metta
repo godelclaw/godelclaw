@@ -214,12 +214,12 @@
 ;; "sent <name> (<n> bytes) to chat <id>" or the actual failure reason.
 ;; send-image previews inline; SVG is rasterized to PNG when a converter
 ;; exists, otherwise delivered as a file (Telegram cannot preview SVG).
-(= (send-file $path) (tg:send-file (format-args "{}" ($path)) "" ""))
+(= (send-file $path) (tg:send-file (format-args "{}" (cons-atom $path ())) "" ""))
 (= (send-file $path $caption)
-   (tg:send-file (format-args "{}" ($path)) (utils:decode-safe $caption) ""))
-(= (send-image $path) (tg:send-image (format-args "{}" ($path)) "" ""))
+   (tg:send-file (format-args "{}" (cons-atom $path ())) (utils:decode-safe $caption) ""))
+(= (send-image $path) (tg:send-image (format-args "{}" (cons-atom $path ())) "" ""))
 (= (send-image $path $caption)
-   (tg:send-image (format-args "{}" ($path)) (utils:decode-safe $caption) ""))
+   (tg:send-image (format-args "{}" (cons-atom $path ())) (utils:decode-safe $caption) ""))
 
 ;; Filesystem awareness: line-numbered reads, exact-string edits with
 ;; uniqueness enforced, bounded tree/search. Result strings are the

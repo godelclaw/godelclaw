@@ -90,7 +90,7 @@
                           ((if (== $token "") "<empty>" $token) (cio:shown $run) (cio:shown $phase))))
        (if (and (!= $pinned "") (!= (cio:canonical $pinned) (cio:canonical $root)))
          (cio:refuse $dir (format-args "refused run token {}: bundle mismatch manifest root={} worker root={}"
-                            ($token $pinned $root)))
+                            (cons-atom $token (cons-atom $pinned (cons-atom $root ())))))
          (let* (($prior (sf:object (path:join $dir "state.json")))
                 ($state (JsonObject ((JsonPair "status" (JsonString "running"))
                                      (JsonPair "steps" (cio:count (coding:field $prior "steps")))
@@ -104,7 +104,7 @@
                 ($started (cio:publish-json $runtime-path (sf:put $runtime "phase" (JsonString "started"))))
                 ($published (if (== $started True) (cio:publish-json (path:join $dir "state.json") $state) $started)))
            (if (== $published True) 1
-             (cio:refuse $dir (format-args "uncertain publication for run token {}: {}" ($token (repr $published))))))))))
+             (cio:refuse $dir (format-args "uncertain publication for run token {}: {}" (cons-atom $token (cons-atom (repr $published) ()))))))))))
 
 ; A worker's progress or ending, written only while this worker owns the
 ; started run. A terminal status also ends the run in runtime.json. Report is
@@ -227,7 +227,7 @@
                       (cio:publish-json $runtime-path (sf:put $runtime "phase" (JsonString "ended"))) True)
                     True)))
          (if (== $written True) 1
-           (cio:refuse $dir (format-args "settle error: could not record the {} ending: {}" ($status (repr $written)))))))))
+           (cio:refuse $dir (format-args "settle error: could not record the {} ending: {}" (cons-atom $status (cons-atom (repr $written) ())))))))))
 
 ;; -------------------------------------------------------- executions
 ; A command the worker runs is recorded before it starts and again when it
@@ -421,7 +421,7 @@
                  (((fs:info $kind $size $identity (fs:permissions $bits))
                    (let $moded (fs:set-mode $target $bits) (if (sf:failed? $moded) $moded True)))
                   ($other $other))))))))
-      ($other (CioFreezeFailed (format-args "cannot read {}: {}" ($source (repr $other))))))))
+      ($other (CioFreezeFailed (format-args "cannot read {}: {}" (cons-atom $source (cons-atom (repr $other) ()))))))))
 
 ; The engine a session runs on, pinned by its resolved file and content: a
 ; resume after an upgrade or a link flip must not run a different engine.
@@ -601,7 +601,7 @@
           ($state (path:join $dir "model.metta"))
           ($saved (if (and (== $recorded "") (fs:is-file $state)) (cio:active-model (fs:read-text $state)) ""))
           ($model (if (!= $recorded "") $recorded (if (!= $saved "") $saved $fallback)))
-          ($text (format-args "(active-model {})\n" ($model)))
+          ($text (format-args "(active-model {})\n" (cons-atom $model ())))
           ($_ (if (and (fs:is-file $state) (== (fs:read-text $state) $text)) () (fs:write $state $text))))
      $model))
 (= (cio:active-model $text)
@@ -647,7 +647,7 @@
      (let* (($name (car-atom $names))
             ($line (case (fs:sha256-file (path:join $dir $name))
                      (((fs:hashed-v1 $hex (fs:info-v2 $kind $size $identity $modified $changed $permissions $blocks))
-                       (format-args "{}\t{}\t{}" ($name $size $hex)))
+                       (format-args "{}\t{}\t{}" (cons-atom $name (cons-atom $size (cons-atom $hex ())))))
                       ($other (str:concat $name "\tunreadable"))))))
        (cons-atom $line (cio:revision-lines $dir (cdr-atom $names))))))
 

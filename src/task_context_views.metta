@@ -97,7 +97,7 @@
      (case $value (((Error $where $reason) $value) ($other (task:page $id $value $offset $size))))))
 (= (task-read $id) (task-read $id 0 8192))
 (= (task-read $id $offset) (task-read $id $offset 8192))
-(= (task:argument-number $value) (str:string->number (format-args "{}" ($value))))
+(= (task:argument-number $value) (str:string->number (format-args "{}" (cons-atom $value ()))))
 (= (task-read $id $offset $size)
    (case (catch (task:read $id (task:argument-number $offset) (task:argument-number $size)))
      (((Error $where $reason) (str:concat "TASK_READ_FAILED: " (repr $reason)))
@@ -156,7 +156,7 @@
           ($file (state:json-file $path (JsonObject ())))
           ; Older Python bridges carry host text as symbols. This field is a
           ; JSON object key in either bridge representation, never code.
-          ($key (format-args "{}" ($model)))
+          ($key (format-args "{}" (cons-atom $model ())))
           ($entry (json-object-get $file $key))
           ($ratio (json-object-get $entry "bytes_per_token")))
      (case $ratio

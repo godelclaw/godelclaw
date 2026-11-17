@@ -35,4 +35,4 @@
 (: model:current (-> %Undefined% %Undefined%))
 (= (model:current $default)
    (model:select (model:recorded (model:state-path))
-                 (system:getenv-or-default "SYNTHETIC_MODEL" (format-args "{}" ($default)))))
+                 (system:getenv-or-default "SYNTHETIC_MODEL" (format-args "{}" (cons-atom $default ())))))

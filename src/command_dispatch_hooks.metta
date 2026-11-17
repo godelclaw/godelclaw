@@ -20,9 +20,9 @@
 (= (dispatch:normalize $value)
    (case $value
      (((Error (python_error $type $object) $_)
-        (format-args "{}: {}" ($type (erv:str (erv:cross $object)))))
+        (format-args "{}: {}" (cons-atom $type (cons-atom (erv:str (erv:cross $object)) ()))))
       ((Error mode-state (PythonException $type $message $_))
-        (format-args "{}: {}" ($type $message)))
+        (format-args "{}: {}" (cons-atom $type (cons-atom $message ()))))
       ($other (if (== (get-type $value) String) $value (repr (quote $value)))))))
 (= (dispatch:record $turn $status $command $result)
    (catch (effect-receipts:record-command $turn $status $command $result)))

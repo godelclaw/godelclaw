@@ -9,7 +9,7 @@
 (: host:text (-> %Undefined% %Undefined%))
 (= (host:text $value)
    (if (== (get-type $value) String) $value
-     (if (== (get-metatype $value) Symbol) (format-args "{}" ($value))
+     (if (== (get-metatype $value) Symbol) (format-args "{}" (cons-atom $value ()))
        (Error host:text expected-text))))
 
 ; Python text crossed py-call as the symbol it spells before CeTTa b8d3580b,

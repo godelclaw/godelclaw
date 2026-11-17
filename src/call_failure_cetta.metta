@@ -8,7 +8,7 @@
 !(import! &self (library str))
 !(import! &self ./turn_health_cetta.metta)
 
-(= (failure:text $value) (if (== (get-type $value) String) $value (format-args "{}" ($value))))
+(= (failure:text $value) (if (== (get-type $value) String) $value (format-args "{}" (cons-atom $value ()))))
 
 ; ------------------------------------------------------------ failure facts
 ; A failed call's facts, natively: (CallFailureV1 code type status transient

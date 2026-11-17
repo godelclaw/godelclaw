@@ -6,7 +6,7 @@
 ; Use the native sequence library in both HE and PeTTa profiles.
 !(case (import! &self (library list))
      (((Error $where $why)
-       (let $reason (format-args "{}" ($why))
+       (let $reason (format-args "{}" (cons-atom $why ()))
          (if (or (== $reason "import! expects a module name") (== $reason "unknown library"))
            (import! &self list) (Error $where $why))))
       ($loaded $loaded)))

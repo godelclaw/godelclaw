@@ -101,7 +101,7 @@
                  (if (== (get-type $text) String)
                    (let $quoted (cfg:quote $text) (str:join "" ("export " $env "=" $quoted "\n")))
                    $text)))))
-        (if (not (== (get-type $line) String)) (ConfigFailedV1 (format-args "cannot encode configuration field: {}" ($env)))
+        (if (not (== (get-type $line) String)) (ConfigFailedV1 (format-args "cannot encode configuration field: {}" (cons-atom $env ())))
           (case (cfg:render-fields $defaults $local $root (cdr-atom $fields))
             (((ConfigTextV1 $tail) (ConfigTextV1 (str:concat $line $tail)))
              ($error $error))))))))
@@ -160,7 +160,7 @@
       (let $value (cfg:value $defaults $local $section $key $fallback)
         (if (cfg:valid? $rule $value)
           (cfg:validate-checks $defaults $local (cdr-atom $checks))
-          (ConfigFailedV1 (format-args "invalid configuration field: {}.{}" ($section $key))))))))
+          (ConfigFailedV1 (format-args "invalid configuration field: {}.{}" (cons-atom $section (cons-atom $key ())))))))))
 (= (cfg:validate $defaults $local)
   (case (cfg:validate-checks $defaults $local (cfg:checks))
     ((ConfigValidV1

@@ -151,7 +151,7 @@
       ($ready (aw:select $ready (max 1 $limit) (max 500 $budget) 0 ())))))
 (= (aw:path-text $path)
    (case (get-type $path)
-     ((Bool (if $path "True" "False")) ($other (format-args "{}" ($path))))))
+     ((Bool (if $path "True" "False")) ($other (format-args "{}" (cons-atom $path ()))))))
 (= (aw:select $blocks $left $budget $used $chosen)
    (let (AwBlocks $text $starts $end) $blocks
      (if (or (== $left 0) (== $starts LNil)) (aw:window $chosen)
@@ -258,7 +258,7 @@
 (= (action-window:history-path)
    (let $text (system:getenv-or-default "METTACLAW_HISTORY_PATH" "./memory/history.metta")
      (if (== $text "") ""
-       (let $atom (str:string->symbol $text) (format-args "{}" ($atom))))))
+       (let $atom (str:string->symbol $text) (format-args "{}" (cons-atom $atom ()))))))
 (= (action-window:recent $path $limit) (aw:legacy-atom (aw:recent-actions $path $limit)))
 (= (action-window:files $path $limit) (aw:legacy-atom (aw:relevant-files $path $limit)))
 

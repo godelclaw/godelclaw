@@ -27,7 +27,7 @@
               ($trigger (turn:context-input "trigger"))
               ($_ (llm:observe-window))
               ($capacity-value (turn:context-input "capacity" $tokens))
-              ($capacity (format-args "{}" ($capacity-value)))
+              ($capacity (format-args "{}" (cons-atom $capacity-value ())))
               ($model (turn:context-input "model"))
               ($effort (system:getenv-or-default "METTACLAW_REASONING_EFFORT" "default")))
          (state:single-prepared

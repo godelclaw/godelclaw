@@ -27,7 +27,8 @@
 (= (turn:failed? $value)
    (case $value (((Error $_ $_) True) ((ContextPreparationFailed $_) True) ($other False))))
 (= (turn:text $value)
-   (if (== (get-type $value) String) $value (format-args "{}" ($value))))
+   ; A callable head remains a value; ($value) would invoke a nullary command.
+   (if (== (get-type $value) String) $value (format-args "{}" (cons-atom $value ()))))
 (= (turn:json $value)
    (json:stringify-python-with $value ((ensure-ascii False) (sort-keys True) (separators "," ":"))))
 (: turn:command-json (-> Atom %Undefined%))

@@ -36,7 +36,7 @@
 (= (rt:take-last $items $count) (rt:drop $items (max 0 (- (size-atom $items) $count))))
 (= (rt:drop $items $count) (if (or (== $items ()) (<= $count 0)) $items (rt:drop (cdr-atom $items) (- $count 1))))
 (= (rt:contains $text $part) (== (get-type (str:find $text $part)) Number))
-(= (rt:text $number) (format-args "{}" ($number)))
+(= (rt:text $number) (format-args "{}" (cons-atom $number ())))
 ; Python writes a float with a point or exponent even when it is whole.
 (= (rt:float-text $number)
    (let $text (rt:text $number)
@@ -390,7 +390,7 @@
         ($other None)))))
 (= (rt:model)
    (let $name (model:current syn:large:text)
-     (Val (JsonObject ((JsonPair "name" (JsonString (format-args "{}" ($name))))
+     (Val (JsonObject ((JsonPair "name" (JsonString (format-args "{}" (cons-atom $name ()))))
                        (JsonPair "reasoningEffort" (JsonString (system:getenv-or-default "METTACLAW_REASONING_EFFORT" "default"))))))))
 
 ; ---- assembly and projection ----------------------------------------------

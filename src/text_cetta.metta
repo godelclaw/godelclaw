@@ -4,7 +4,8 @@
 (= (claw-text:replace $text $old $new)
    (str:join $new (str:split $old $text)))
 (= (claw-text:decode-safe $value)
-   (let $text (format-args "{}" ($value))
+   ; Build the format arguments as data, even when the value is callable.
+   (let $text (format-args "{}" (cons-atom $value ()))
      (claw-text:replace
        (claw-text:replace (claw-text:replace $text "_newline_" "\n") "_quote_" "\"")
        "_apostrophe_" "'")))

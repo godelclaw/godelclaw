@@ -81,20 +81,20 @@
 (= (send-telegram-chat $chat_id $msg)
    (let $safemsg (string-replace $msg  "\n" "\\n")
         (let $outmsg (utils:decode-safe $safemsg)
-             (let $temp (cut) (tg:send-effect $outmsg (format-args "{}" ($chat_id)))))))
+             (let $temp (cut) (tg:send-effect $outmsg (format-args "{}" (cons-atom $chat_id ())))))))
 
 ;; Clean up after a test send: delete your own last k messages to a chat,
 ;; newest first, using the ids recorded when they were sent. Only your own
 ;; messages, only within Telegram's 48h window.
 (= (delete-my-recent $chat_id $k)
-   (tg:delete-my-recent (format-args "{}" ($chat_id)) $k))
+   (tg:delete-my-recent (format-args "{}" (cons-atom $chat_id ())) $k))
 
 ;; Exact-address cleanup for a receipt-backed bot-owned Telegram message.
 ;; Legacy ids absent from the own-send ledger require the authenticated
 ;; operator's /delete fast path; group-admin deletion authority is not exposed
 ;; through the model skill.
 (= (delete-message-exact $chat_id $message_id)
-   (tg:delete-recorded (format-args "{}" ($chat_id)) $message_id))
+   (tg:delete-recorded (format-args "{}" (cons-atom $chat_id ())) $message_id))
 
 ;Search the internet for some information:
 (= (search $msg)

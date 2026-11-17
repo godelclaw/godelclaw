@@ -92,7 +92,7 @@
 (= (work:start-at $task $workdir $model $effort $guidance)
    (let* (($stamp (system:format-time "%Y%m%d-%H%M%S" (system:wall-time) "local"))
           ($salt (str:char-slice (system:uuid4-hex) 0 4))
-          ($id (format-args "work-{}-{}" ($stamp $salt)))
+          ($id (format-args "work-{}-{}" (cons-atom $stamp (cons-atom $salt ()))))
           ($dir (work:dir $id))
           ($_ (proc:run ("mkdir" "-p" "--" $dir) (system:cwd) inherit 10000 0 "merged"))
           ($where $workdir)

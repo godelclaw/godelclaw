@@ -102,7 +102,7 @@
 ; Hunks are collected newest first, each with its lines newest first.
 (= (patch:parse-hunks $path $move $lines $number $hunks $ops)
    (if (patch:hunks-end? $lines)
-     (if (and (== $hunks ()) (== $move NoMove)) (PatchFailed (format-args "update of {} has no hunks" ($path)))
+     (if (and (== $hunks ()) (== $move NoMove)) (PatchFailed (format-args "update of {} has no hunks" (cons-atom $path ())))
        (patch:parse-body $lines $number (cons-atom (PatchUpdate $path $move (patch:finish-hunks $hunks ())) $ops)))
      (let $row (car-atom $lines)
        (if (str:starts-with $row "@@")
@@ -184,10 +184,10 @@
      (let (Hunk $context $rows $eof) (car-atom $hunks)
        (let $anchor (if (== $context "") $position (patch:find $lines ($context) $position False))
          (if (== $anchor None)
-           (PatchFailed (format-args "{} hunk {}: context {} not found" ($name $number (repr $context))))
+           (PatchFailed (format-args "{} hunk {}: context {} not found" (cons-atom $name (cons-atom $number (cons-atom (repr $context) ())))))
            (let* (($old (patch:old-rows $rows)) ($at (patch:find $lines $old $anchor $eof)))
              (if (== $at None)
-               (PatchFailed (format-args "{} hunk {}: the lines to change were not found" ($name $number)))
+               (PatchFailed (format-args "{} hunk {}: the lines to change were not found" (cons-atom $name (cons-atom $number ()))))
                (let* (($new (patch:new-rows $rows (patch:drop $lines $at)))
                       ($spliced (patch:append (patch:take $lines $at) (patch:append $new (patch:drop $lines (+ $at (patch:length $old)))))))
                  (patch:hunks $name $spliced (cdr-atom $hunks) (+ $at (patch:length $new)) (+ $number 1))))))))))
@@ -219,7 +219,7 @@
 (= (patch:utf8 $path)
    (case (fs:read-text-result $path 0 "raw")
      ((("ok" $text) (if (== (str:utf8-error $text) StrUtf8WellFormedV1) (Text $text) (PatchFailed (str:concat $path " is not UTF-8 text"))))
-      ($other (PatchFailed (format-args "cannot read {}: {}" ($path (repr $other))))))))
+      ($other (PatchFailed (format-args "cannot read {}: {}" (cons-atom $path (cons-atom (repr $other) ()))))))))
 
 ; Planned steps are (Write target text name mode) and (Remove target name);
 ; mode is the permission bits to give the new content, or None for a new file.

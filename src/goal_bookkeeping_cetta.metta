@@ -38,7 +38,7 @@
           (if (math:isnan $other) "nan"
             (if (math:isinf $other) (if (< $other 0) "-inf" "inf") (json:stringify-python $other)))
           (if (== (get-metatype $other) Symbol) (str:symbol->string $other)
-            (format-args "{}" ($other)))))))))
+            (format-args "{}" (cons-atom $other ())))))))))
 (= (gk:r $x)
    (if (== (get-type $x) String) (gv:r $x)
      (gk:r-double (if (== (get-type $x) Number) $x (gv:float $x)))))

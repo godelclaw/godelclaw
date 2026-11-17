@@ -157,7 +157,7 @@
      (((python_error $type $exc)
         (case (catch (erv:str (erv:cross $exc)))
           (((Error $a $b) (repr $where))
-           ($message (format-args "{}: {}" ($type $message))))))
+           ($message (format-args "{}: {}" (cons-atom $type (cons-atom $message ())))))))
       ($other (str:join " " ((repr $where) (repr $why)))))))
 ; Failed calls are retried with a growing wait, as Codex retries five times.
 ; A request the provider rejected would only be rejected again: the session

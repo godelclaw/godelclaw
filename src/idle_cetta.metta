@@ -47,7 +47,7 @@
    (if (== $socket "") ()
      (if (> (idle:retry-until) (system:wall-time))
        (idle:submit retry (timer:after (math:ceil (* 1000 (- (idle:retry-until) (system:wall-time))))))
-     (let $body (format-args "{}" ($milliseconds))
+     (let $body (format-args "{}" (cons-atom $milliseconds ()))
        (idle:submit cwp (cwp:request $socket 5 (idle:token) $body (+ $milliseconds 1000))))))))
 (= (idle:retry-until)
    (let $values (collapse (match &self (idle:cwp-retry $time) $time))

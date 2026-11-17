@@ -89,7 +89,7 @@
 
 ; A file replaced at once: written beside its target, then renamed over it.
 (= (effects:replace $path $text)
-   (let* (($id (system:uuid4-hex)) ($suffix (format-args ".{}.tmp" ($id)))
+   (let* (($id (system:uuid4-hex)) ($suffix (format-args ".{}.tmp" (cons-atom $id ())))
           ($temporary (str:concat $path $suffix))
           ($written (fs:write $temporary $text)))
      (case (fs:rename $temporary $path)

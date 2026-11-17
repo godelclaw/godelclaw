@@ -25,7 +25,7 @@
    "one fresh full burst per renewal; unspent budget is lost (the loop's original behaviour)")
 (= (fuel:description "accumulate") "every grant adds; unspent budget compounds without limit")
 (= (fuel:description "carry")
-   (let $carry (fuel:carry) (format-args "grants add up to a ceiling of {} full bursts" ($carry))))
+   (let $carry (fuel:carry) (format-args "grants add up to a ceiling of {} full bursts" (cons-atom $carry ()))))
 (= (fuel:description "decay")
    "three quarters of what is held carries over, then the grant; same ceiling as carry, approached gradually")
 (= (fuel:description "unlimited") "turns do not spend the burst; nop, rest or operator stop ends it")
@@ -105,7 +105,7 @@
        (if (== $name "unlimited") "FUEL: unlimited"
          (let $remaining (mv:budget $loops)
            (if (mv:failed? $remaining) (mv:raise $remaining)
-             (format-args "LOOPS_LEFT: {}" ($remaining))))))))
+             (format-args "LOOPS_LEFT: {}" (cons-atom $remaining ()))))))))
 (= (fuel:list-lines $names $current)
    (if (== $names ()) ()
      (let* (($name (car-atom $names))

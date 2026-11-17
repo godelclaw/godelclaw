@@ -67,7 +67,7 @@
 (= (health:count $record $key) (+ (health:counted $record $key) 1))
 (= (health:integer $value) (if (health:number? $value) (trunc-math $value) 0))
 (= (health:nonnegative $value) (if (< $value 0) 0 $value))
-(= (health:text $value) (if (== (get-type $value) String) $value (format-args "{}" ($value))))
+(= (health:text $value) (if (== (get-type $value) String) $value (format-args "{}" (cons-atom $value ()))))
 
 ; cognitive_health._label: lower case, letters, digits, '-' and '_' kept, at
 ; most 64 characters, the default when nothing is kept. Labels are ASCII

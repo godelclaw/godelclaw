@@ -4,7 +4,7 @@
 !(import! &self (library system))
 !(import! &self ./effect_receipt_values_cetta.metta)
 (= (diagnostic:text $value $limit)
-   (let* (($raw (if (== (get-type $value) String) $value (format-args "{}" ($value))))
+   (let* (($raw (if (== (get-type $value) String) $value (format-args "{}" (cons-atom $value ()))))
           ($masked (system:redact-secrets $raw))
           ($keys (re:replace-literal (re:compile "\\bsk-[A-Za-z0-9_-]{8,}\\b") $masked "[redacted]"))
           ($printable (str:from-python-codepoints (map-atom (tuple:from (str:python-codepoints $keys)) $cp

@@ -24,7 +24,7 @@
 ; Numeric counts truncate toward zero; invalid text retains the old default.
 (= (tmux-io:count $value)
    (let $number (catch (if (== (get-type $value) Number) $value
-                          (tmux-io:integer-text (format-args "{}" ($value)))))
+                          (tmux-io:integer-text (format-args "{}" (cons-atom $value ())))))
      (case $number
        (((Error $_ $_) 25)
         ($n (max 1 (math:floor $n)))))))
@@ -39,7 +39,7 @@
      (tmux-io:drop (cdr-atom $lines) (- $count 1))))
 (= (tmux-peek $window $count)
    (let* (($n (tmux-io:count $count))
-          ($target (format-args "{}" ($window))))
+          ($target (format-args "{}" (cons-atom $window ()))))
      (case (tmux-io:run ("capture-pane" "-p" "-S" (repr (- 0 $n)) "-t" $target))
        (((TmuxResult 0 $out)
          (let* (($lines (claw-text:nonempty-lines (str:split "\n" $out)))
@@ -50,7 +50,7 @@
            (str:concat $why " — name a window from (tmux-windows), e.g. \"session:window\"")))))))
 
 (= (tmux-send $window $value)
-   (let* (($target (format-args "{}" ($window)))
+   (let* (($target (format-args "{}" (cons-atom $window ())))
           ($text (str:trim (claw-text:decode-safe $value))))
      (if (== $text "") "tmux-send: empty message"
        (case (tmux-io:run ("send-keys" "-l" "-t" $target "--" $text))
