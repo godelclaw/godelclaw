@@ -6,6 +6,7 @@
 !(import! &self (library math))
 !(import! &self ./src/task_idle_views)
 !(import! &self ./src/handoff_evidence_cetta.metta)
+!(import! &self ./src/llm_policy_cetta.metta)
 
 (= (task:items $record $key)
    (case (state:json-field $record $key)
@@ -151,6 +152,17 @@
 
 ; Bytes-per-token comes from the selected provider's existing observation.
 ; Until calibrated, the fallback is labelled by its configurable value.
+(= (context:positive-ratio $value)
+   (let $number (lp:python-float $value)
+     (if (!= (get-type $number) Number) ContextRatioUnknownV1
+       (if (or (math:isnan $number) (math:isinf $number)) ContextRatioUnknownV1
+         (if (> $number 0) $number ContextRatioUnknownV1)))))
+(= (context:ratio-field $field)
+   (case $field
+     (((JsonNumber $text) (context:positive-ratio $text))
+      ((JsonString $text) (context:positive-ratio $text))
+      ((JsonBool $flag) (context:positive-ratio $flag))
+      ($other ContextRatioUnknownV1))))
 (= (context:ratio $model)
    (let* (($path (path:join (path:dirname (context:path)) "context-token-calibration.json"))
           ($file (state:json-file $path (JsonObject ())))
@@ -158,10 +170,10 @@
           ; JSON object key in either bridge representation, never code.
           ($key (format-args "{}" (cons-atom $model ())))
           ($entry (json-object-get $file $key))
-          ($ratio (json-object-get $entry "bytes_per_token")))
-     (case $ratio
-       (((JsonNumber $value) (let $n (str:string->number $value) (if (> $n 0) $n 2.5)))
-        ($other (str:string->number (system:getenv-or-default "METTACLAW_CONTEXT_BYTES_PER_TOKEN" "2.5")))))))
+          ($ratio (context:ratio-field (json-object-get $entry "bytes_per_token"))))
+     (if (!= $ratio ContextRatioUnknownV1) $ratio
+       (let $fallback (context:positive-ratio (system:getenv-or-default "METTACLAW_CONTEXT_BYTES_PER_TOKEN" "2.5"))
+         (if (== $fallback ContextRatioUnknownV1) 2.5 $fallback)))))
 (= (context:measure $value $ratio) (math:ceil (/ (str:byte-length (state:encoded $value)) $ratio)))
 (= (context:target)
    (case (json-object-get (context:policy) "task_tokens")

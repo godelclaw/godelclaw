@@ -11,7 +11,8 @@
     ("tests/unit/omega_native.metta" "UNIT_OMEGA_NATIVE_OK")
     ("tests/unit/standalone_mode_config.metta" "UNIT_STANDALONE_MODE_CONFIG_OK")
     ("tests/unit/context_registry.metta" "UNIT_NATIVE_CONTEXT_REGISTRY_OK")
-    ("tests/unit/context_capacity.metta" "UNIT_CONTEXT_CAPACITY_OK")
+    ("tests/unit/context_capacity.metta" "UNIT_CONTEXT_CAPACITY_OK"
+     (("METTACLAW_ENGINE_STATE_PATH" "{home}/state/engine")))
     ("tests/unit/mcp_reply_slot.metta" "UNIT_MCP_REPLY_SLOT_OK")
     ("tests/unit/native_pin_admission.metta" "UNIT_NATIVE_PIN_ADMISSION_OK" (("METTACLAW_REQUIRE_NATIVE_CORE" "1")))
     ("tests/unit/coding_report_mail.metta" "UNIT_NATIVE_CODING_REPORT_MAIL_OK"

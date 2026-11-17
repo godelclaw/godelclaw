@@ -22,6 +22,13 @@
 (= (bc:row $value) (JsonObject ((JsonPair "id" "hf:fixture") (JsonPair "context" $value))))
 (= (bc:catalog $name $value $configured $kind $expected)
    (bc:one $name (cons-atom (bc:row $value) ()) (JsonObject ()) $configured $kind $expected))
+(= (bc:ratio $literal $expected)
+   (let* (($file (path:join (path:dirname (context:path)) "context-token-calibration.json"))
+          ($_ (nt:require calibration-fixture-is-owned-by-the-test (str:starts-with $file (nt:required-env "HOME"))))
+          ($_ (fs:make-directories (path:dirname $file) 448))
+          ($_ (sf:replace $file (str:join "" ("{\"ratio-fixture\":{\"bytes_per_token\":" $literal "}}")) 384 True))
+          ($actual (context:ratio "ratio-fixture")))
+     (nt:require (calibration-ratio $literal) (== $actual $expected))))
 !(progn
    (bc:catalog "numeric" 131072 JsonNull "known" 98304)
    (bc:catalog "numeric-string" "131072" JsonNull "known" 98304)
@@ -58,4 +65,20 @@
           ($failure (state:capacity-text (cons-atom $invalid ()))))
      (nt:require preparation-failure-keeps-the-conversion-cause
        (case $failure (((ContextPreparationFailed $why) (nt:contains $why "ValueError")) ($bad False)))))
+   (bc:ratio "4.0" 4.0)
+   (bc:ratio "\"4.0\"" 4.0)
+   (bc:ratio "true" 1.0)
+   (bc:ratio "0" 2.5)
+   (bc:ratio "-1" 2.5)
+   (bc:ratio "Infinity" 2.5)
+   (bc:ratio "NaN" 2.5)
+   (bc:ratio "{}" 2.5)
+   (bc:ratio "\"invalid\"" 2.5)
+   (nt:require invalid-ratio-configuration-is-not-admitted
+      (== (context:positive-ratio "inf") ContextRatioUnknownV1))
+   (nt:require zero-ratio-configuration-is-not-admitted
+      (== (context:positive-ratio "0") ContextRatioUnknownV1))
+   (nt:require fallback-calibration-does-not-invalidate-zero-capacity
+      (case (catch (context:checked-text "nonempty content" "" 0 (context:ratio "ratio-fixture") 1))
+        (((ContextPreparationFailed $_) True) ($bad False))))
    (println! UNIT_CONTEXT_CAPACITY_OK))
