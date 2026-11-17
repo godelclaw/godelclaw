@@ -18,11 +18,11 @@ text, reconciliation, Markdown, tool grouping/folding and the activity/status
 rows. Native performance must be measured on those complete interactions.
 
 Use `install_console.py --attach-only` when replacing just the editor frontend.
-This preserves the native worklog recorder/viewer selection and independent
+This preserves independent worklog bindings and
 cognitive services. A legacy frontend is a Python runtime role; it does not count
 as completion of the full native-runtime migration.
 
-The attach client runs on Python-disabled CeTTa with PeTTa extended. It keeps
+The experimental native client runs on Python-disabled CeTTa with PeTTa extended. It keeps
 one owned edit buffer and an observation-only display projection. The terminal
 library supplies modes, readiness, Unicode boundaries and cell widths;
 MeTTa supplies key bindings, menus, history, formatting and command policy.
@@ -52,5 +52,6 @@ pending, and the next frame uses the latest draft. Closing restores the terminal
 and stops owned clients; accepted mail and cognition retain their owners.
 
 Console manifest schema 2 names the native entrypoint and exact required engine.
-The installer also accepts legacy schema 1 manifests for rollback. New console
-artifacts contain no Python modules or vendored Python dependencies.
+The installer also accepts legacy schema 1 manifests for rollback. Explicit
+native artifacts contain no Python modules or vendored Python dependencies;
+the established frontend selection retains its Python runtime dependencies.

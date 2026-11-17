@@ -5,12 +5,17 @@
    (str:concat (json:stringify-python (JsonObject
      ((JsonPair "schema" 1) (JsonPair "epoch" $epoch) (JsonPair "session" $session)
       (JsonPair "parent_session" $parent) (JsonPair "producer" "fixture")
-      (JsonPair "sequence" $sequence) (JsonPair "kind" "text.delta") (JsonPair "channel" "commentary")
+      (JsonPair "sequence" $sequence) (JsonPair "time" $sequence) (JsonPair "kind" "text.delta") (JsonPair "channel" "commentary")
       (JsonPair "attempt" "attempt") (JsonPair "item" "text") (JsonPair "text" $text)))) "\n"))
 (= (vs:read $directory)
    (nt:exit-ok (proc:run ((system:executable) "--no-results" "--lang" "petta" "--profile" "extended"
          "--import-mode" "ancestor-walk" (path:join (nt:required-env "TEST_REPOSITORY") "scripts/worklog_view_cetta.metta")
          "--dir" $directory "--session" "godel" "--once" "--json" "--full")
+      (system:getcwd) inherit 10000 1048576)))
+(= (vs:formatted $directory)
+   (nt:exit-ok (proc:run ((system:executable) "--no-results" "--lang" "petta" "--profile" "extended"
+         "--import-mode" "ancestor-walk" (path:join (nt:required-env "TEST_REPOSITORY") "scripts/worklog_view_cetta.metta")
+         "--dir" $directory "--session" "godel" "--once" "--full")
       (system:getcwd) inherit 10000 1048576)))
 !(let* (($directory (path:join (nt:required-env "HOME") "display"))
          ($made (fs:make-directories $directory 448))
@@ -22,6 +27,11 @@
              (vs:event "current" "other" "" 3 "OTHER_SESSION")
              (vs:event "current" "child" "godel" 4 "VISIBLE_CHILD")))))
          ($current (vs:read $directory))
+         ($formatted (vs:formatted $directory))
+         ($short (nt:require formatted-one-shot-keeps-short-open-items
+             (and (nt:contains $formatted "VISIBLE_CURRENT") (nt:contains $formatted "VISIBLE_CHILD"))))
+         ($scoped (nt:require formatted-one-shot-keeps-scope
+             (and (not (nt:contains $formatted "PRIOR_PRIVATE")) (not (nt:contains $formatted "OTHER_SESSION")))))
          ($a (nt:require current-epoch-is-visible (nt:contains $current "VISIBLE_CURRENT")))
          ($b (nt:require child-session-remains-visible (nt:contains $current "VISIBLE_CHILD")))
          ($c (nt:require prior-epoch-is-not-disclosed (not (nt:contains $current "PRIOR_PRIVATE"))))

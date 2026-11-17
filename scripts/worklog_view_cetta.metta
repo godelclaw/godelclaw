@@ -8,7 +8,8 @@
    (once
     (let* (($_ (cc:streams-step)) ($_ (cv:flush))
           ($work (cc:get "stream-work" ())))
-     (if (or (!= (host:signal $signals) 0) (and $once (== $work ()))) True
+     (if (or (!= (host:signal $signals) 0) (and $once (== $work ())))
+       (progn (if (cc:get "viewer-json" False) True (cc:flush-visible-items)) (cv:flush) True)
        (progn (if (== $work ())
                  (let $watch (cc:get "stream-watch" ConsoleNoWatchV1) (host:wait (($watch read)) $interval)) True)
               False)))))

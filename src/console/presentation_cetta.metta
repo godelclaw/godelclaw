@@ -42,6 +42,13 @@
                        (cc:item-set $key (ConsoleTextV1 $full $pending (+ $emitted $size))))
            (cc:item-set $key (ConsoleTextV1 $full $pending $emitted))))
        (cc:item-set $key (ConsoleTextV1 $full $pending $emitted)))))
+; A one-shot reader must show even a short, still-open item. Flushing a view
+; neither closes the item nor manufactures a completion/receipt event.
+(= (cc:flush-visible-items)
+   (map-atom (collapse (match &cc-items (ConsoleItemV1 $key (ConsoleTextV1 $full $pending $emitted))
+                (ConsolePendingV1 $key $full $pending $emitted))) $item
+     (let (ConsolePendingV1 $key $full $pending $emitted) $item
+       (cc:flush-item $key $full $pending $emitted True))))
 (= (cc:text-event $event $snapshot $final $prime)
    (let* (($key (cc:event-key $event)) ($text (sf:get $event "text" ""))
           ($previous (cc:item $key))
