@@ -36,6 +36,11 @@
       "source": "Shared utility and file-tool names in an imported space",
       "native": "Native parse and representation, private Omega host helpers, and one selected file-tool implementation per call",
       "reason": "Avoid extra answers and effects from competing equations while retaining provider call IDs and wire names"
+    },
+    {
+      "source": "Startup announcement of (version) on the communication channel",
+      "native": "No startup message; the version tool still answers on request",
+      "reason": "A supervised agent restarts at every recycle, so the operator received a banner each time; it named the upstream base rather than the running agent"
     }
   ],
   "runtime": "PeTTa extended on a Python-disabled CeTTa bundle",

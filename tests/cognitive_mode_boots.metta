@@ -36,6 +36,10 @@
      (let $_ (proc:wait $owner 20) (core-boot:wait-posts $world $owner $count (- $remaining 1)))))
 (= (core-boot:posts $world)
    (if (fs:is-file (nq:path $world "count")) (nq:posts $world) 0))
+(= (core-boot:outbox-texts $folder)
+   (if (not (fs:exists $folder)) ()
+     (map-atom (filter-atom (fs:entries $folder) $name (str:ends-with $name ".json")) $name
+       (fs:read-text (path:join $folder $name)))))
 (= (core-boot:mode $mode)
    (let* (($root (system:getenv-or-default "NATIVE_TEST_RUNTIME_ROOT" (system:cwd)))
           ($core (nt:required-env "NATIVE_TEST_CORE"))
@@ -112,6 +116,8 @@
                 (nt:contains (fs:read-text (nq:path $world "request-1.body")) "boot-test operator message")))
           ($_ (nt:require input-acknowledged-after-checkpoint (fs:exists (path:join $cwp-root "delivery-acked"))))
           ($_ (nt:require delivered-receipt-acknowledged (fs:exists (path:join $cwp-root "second-acked"))))
+          ($_ (nt:require no-startup-banner
+                (not (nt:contains (repr (core-boot:outbox-texts (path:join $shared "channel-outbox"))) "native infrastructure"))))
           ($_ (nt:require delivered-receipt-not-presented
                 (not (nt:contains (sf:get $before "payload" "") "channel receipt"))))
           ($_ (nt:require provider-failure-retried (> (nq:posts $world) 1)))
