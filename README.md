@@ -147,10 +147,10 @@ their pinned defaults. Set them to your model endpoint before starting. It
 keeps upstream's prompt, tools, transformations and context policy. Input and
 replies use the terminal; worker sends are forwarded to the foreground.
 
-Omega's standalone **core** retains the pinned loop and `OMEGA_*`
-configuration, with terminal I/O, history and text recall. Its embedding,
-NAL/PLN and optional plugin startup are omitted; this profile does not run
-the entire Omega distribution. For an OpenAI-compatible local endpoint:
+Omega's standalone **core** retains the pinned loop, NAL and PLN, `OMEGA_*`
+configuration, terminal I/O, history and local text recall. This profile
+excludes embedding-backed recall and optional upstream plugin startup. For an
+OpenAI-compatible local endpoint, run
 
 ```sh
 OMEGA_provider=OpenAIAPI OMEGA_model=your-model \
@@ -1079,9 +1079,9 @@ The launcher defaults to `http://127.0.0.1:8876`; the service itself is not
 installed by this repository. Configure `METTACLAW_EMBED_ENDPOINT` and the
 matching model/protocol before using these skills.
 
-Upstream modes keep their own memory behavior: Iter retains its experience and
-transformations; the Omega host currently provides text recall with its embedding,
-NAL/PLN and plugin startup add-ons disabled. The [adapter ledger](modes/README.md#divergence-and-add-on-ledger)
+Iter retains its experience and transformations. Omega loads its NAL and PLN
+libraries and uses local text recall in standalone mode or the configured
+semantic-memory service under supervision. The [adapter ledger](modes/README.md#divergence-and-add-on-ledger)
 details these boundaries.
 
 ## Verification and development

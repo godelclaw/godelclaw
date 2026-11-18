@@ -1,9 +1,9 @@
 ; Omega's native request and tool-call codecs, over ordinary JSON records.
-!(import! &self ../../components_cetta.metta)
+!(import! &self ../../tool_io_cetta.metta)
 (= (omega-host:collect-tools $skills)
    (map-atom $skills $skill
      (let ($name $description $parameters) $skill
-       (component:schema (turn:text $name) $description $parameters))))
+       (mode-tool:schema (turn:text $name) $description $parameters))))
 (= (llmProviderStart $provider) True)
 (= (llmRequestMessage role $role content $content)
    (JsonObject ((JsonPair "role" $role) (JsonPair "content" $content))))

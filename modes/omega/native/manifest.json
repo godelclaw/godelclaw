@@ -31,6 +31,11 @@
       "source": "Python Chroma initialization and normalization",
       "native": "existing native memory service and native value normalization",
       "reason": "Memory and error boundaries retain explicit results without a Python coordinator"
+    },
+    {
+      "source": "Shared utility and file-tool names in an imported space",
+      "native": "Native parse and representation, private Omega host helpers, and one selected file-tool implementation per call",
+      "reason": "Avoid extra answers and effects from competing equations while retaining provider call IDs and wire names"
     }
   ],
   "runtime": "PeTTa extended on a Python-disabled CeTTa bundle",

@@ -1,8 +1,6 @@
 ; Captured native components: metadata, schemas and invocation share one record.
-!(import! &self ./runtime_host_cetta.metta)
+!(import! &self ./tool_io_cetta.metta)
 !(import! &self ../src/tool_output_cetta.metta)
-(= (component:app-root)
-   (system:getenv-or-default "METTACLAW_RUNTIME_ROOT" (system:getenv-or-default "METTACLAW_AGENT_ROOT" (system:getcwd))))
 (= (component:failed? $value) (case $value (((Error $_ $_) True) ($other False))))
 (= (component:names $directory)
    (if (fs:exists $directory)
@@ -51,19 +49,10 @@
        (((NativeComponentV1 $id $_ $_ $_ $_)
          (if (== $id $name) (car-atom $refs) (component:find-in (cdr-atom $refs) $name)))))))
 (= (component:has? $set $name) (!= (component:find $set $name) none))
-(= (component:schema $name $description $parameters)
-   (JsonObject ((JsonPair "type" "function") (JsonPair "function" (JsonObject
-     ((JsonPair "name" (turn:text $name)) (JsonPair "description" $description)
-      (JsonPair "parameters" (JsonObject
-        ((JsonPair "type" "object")
-         (JsonPair "properties" (JsonObject (map-atom $parameters $parameter
-           (JsonPair (turn:text $parameter) (JsonObject ((JsonPair "type" "string")))))))
-         (JsonPair "required" (JsonArray (map-atom $parameters $parameter (turn:text $parameter))))
-         (JsonPair "additionalProperties" False))))))))))
 (= (component:schemas (ComponentSetV1 $refs $_ $_))
    (map-atom $refs $ref
      (case $ref (((NativeComponentV1 $name $description $parameters $_ $_)
-       (component:schema $name
+       (mode-tool:schema $name
          (if (> (str:char-length $description) 500) (str:concat (str:char-slice $description 0 500) " [DESCRIPTION TRUNCATED]") $description)
          $parameters))))))
 (= (component:argument-error $parameters $arguments)
@@ -97,7 +86,7 @@
           ($input-written (sf:replace $payload (turn:json $input) 384 False)))
      (if (or (!= $source-written True) (!= $input-written True))
        (Error component-call (Fault staging-failed))
-       (let* (($worker (path:join (component:app-root) "modes/component_worker_cetta.metta"))
+       (let* (($worker (path:join (mode-tool:app-root) "modes/component_worker_cetta.metta"))
               ($ran (proc:run ((system:executable) "--no-results" "--lang" "petta" "--profile" "extended"
                        "--import-mode" "ancestor-walk" $worker "--" $operation $module $payload $result)
                       (system:getcwd) inherit 5000 65536))
@@ -118,23 +107,11 @@
      (("nop" "SUCCESS")
       ("send" (let $sent (mode-host:send (sf:get $arguments "content" "") (sf:get $arguments "channel" "telegram"))
                 (if (turn:failed? $sent) $sent "SUCCESS")))
-      ("shell" (component:shell (sf:get $arguments "cmd" "")))
+      ("shell" (mode-tool:shell (sf:get $arguments "cmd" "")))
       ("python" (component:python (sf:get $arguments "code" "")))
       ($unknown (Error component-call (Unsolvable unknown-native-builtin))))))
-(= (component:shell $command)
-   (let $result (proc:run ("/bin/sh" "-c" $command) (system:getcwd) inherit 5000 0)
-     (case $result
-       (((proc:exited 0 $out $err) (str:join "" ("SUCCESS, RETURN: " $out $err)))
-        ((proc:exited $code $out $err)
-          (str:join "" ("Tool failed (exit " (repr $code) "): " $out $err)))
-        ((proc:timed-out $out $err)
-          (str:join "" ("Tool result and effects are unknown after the 5s deadline.\n" $out $err)))
-        ($bad (Error component-call (Fault process-failed)))))))
 (= (component:memory $directory)
    (sort-atom (component:memory-at $directory "")))
-(= (component:directory? $path)
-   (case (fs:metadata $path no-follow)
-     (((fs:info directory $_ $_) True) ($other False))))
 (= (component:memory-at $directory $prefix)
    (if (not (fs:exists $directory)) ()
      (component:memory-names $directory $prefix (sort-atom (fs:entries $directory)))))
@@ -144,7 +121,7 @@
             ($display (path:join (if (== $prefix "") "memory" $prefix) $name))
             ($rest (component:memory-names $directory $prefix (cdr-atom $names))))
        (if (str:starts-with $name "_") $rest
-         (if (component:directory? $path)
+         (if (mode-tool:directory? $path)
            (list:append (component:memory-at $path $display) $rest)
            (if (fs:is-file $path)
              (case (fs:read-text-result $path 0 "replace")

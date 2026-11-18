@@ -1,6 +1,6 @@
 (= (commchannel) (empty))
 (= (initChannels)
-   (configure commchannel telegram))
+   (omega-host:configure commchannel telegram))
 (= (commChannelStart $channel) True)
 (= (commChannelReceive) (mode-host:receive))
 (= (commChannelSend $message) (mode-host:send $message (if (mode-host:standalone?) "terminal" "telegram")))
@@ -9,4 +9,4 @@
 (= (send $message)
    (if (!= $message (get-state &lastsend))
      (let $_ (change-state! &lastsend $message)
-       (commChannelSend (string-replace $message "\n" "\\n"))) _))
+       (commChannelSend (omega-host:replace-chars $message "\n" "\\n"))) _))

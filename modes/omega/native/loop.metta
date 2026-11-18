@@ -8,14 +8,14 @@
 (= (memoryDirectory) (empty))
 
 (= (initLoop)
-   (progn (configure maxNewInputLoops 50) ;20
-          (configure maxWakeLoops 1)
-          (configure sleepInterval 1) ;10
-          (configure provider Anthropic)
-          (configure maxOutputToken 6000)
-          (configure reasoningMode medium)
-          (configure wakeupInterval 600) ;600=10 minutes
-          (configure memoryDirectory
+   (progn (omega-host:configure maxNewInputLoops 50) ;20
+          (omega-host:configure maxWakeLoops 1)
+          (omega-host:configure sleepInterval 1) ;10
+          (omega-host:configure provider Anthropic)
+          (omega-host:configure maxOutputToken 6000)
+          (omega-host:configure reasoningMode medium)
+          (omega-host:configure wakeupInterval 600) ;600=10 minutes
+          (omega-host:configure memoryDirectory
                (joinPath ((omega-host:project-root) memory)))
           (change-state! &prevmsg "")
           (change-state! &loops (maxNewInputLoops))
@@ -28,23 +28,23 @@
           ()))
 
 (= (getContext)
-   (string-safe (py-str ("PROMPT: " (getPrompt (provider)) " SKILLS: " (getSkillRules)
-                         (newline) (getPromptExtensions) (newline)
+   (omega-host:prompt-text (py-str ("PROMPT: " (getPrompt (provider)) " SKILLS: " (getSkillRules)
+                         "\n" (getPromptExtensions) "\n"
                          " SAVE_PERMANENT_FILES_DIR: " (memoryDirectory)
                          " HISTORY: " (getHistory) 
-                         " TIME: " (get_time_as_string)))))
+                         " TIME: " (omega-host:timestamp)))))
 
 (= (addTelegramPromptExtension)
    (if (== (commchannel) telegram)
        (let $path (joinPath ((memoryDirectory) "tg_prompt.txt"))
-            (if (exists-file $path)
+            (if (fs:is-file $path)
                 (add-prompt-extension tg-prompt (read-file $path))
                 (progn (log WARN "loop" (TELEGRAM_PROMPT_NOT_FOUND: $path))
                        ())))
        ()))
 
 (= (getPromptExtensions)
-   (join (newline) (collapse (prompt-extension $_))))
+   (join "\n" (collapse (prompt-extension $_))))
 
 ; dynamic prompt extension placeholder to eliminate error when no extension is added
 (= (prompt-extension placeholder) (empty))
@@ -52,7 +52,7 @@
 (= (HandleError $result $error)
    (case $result (
       ((Error $cmd $msg) (let $new (append (get-state &error) (($msg $cmd)))
-                           (let $errorstr (swrite $result)
+                           (let $errorstr (repr $result)
                              (progn
                                (change-state! &error $new)
                                (let $error (strings-concat ("ALERT_FAILED" $errorstr))
@@ -91,14 +91,14 @@
                (progn (log INFO "loop" (---------iteration $k))
                       (heartbeat $k)
                       (let* (($msgrcv (omega-host:receive-text (receive)))
-                             ($msgnew (prog1 (and (> (string_length $msgrcv) 0) (!= $msgrcv (get-state &prevmsg)))
-                                             (if (> (string_length $msgrcv) 0) (change-state! &prevmsg $msgrcv) _)))
+                             ($msgnew (prog1 (and (> (str:char-length $msgrcv) 0) (!= $msgrcv (get-state &prevmsg)))
+                                             (if (> (str:char-length $msgrcv) 0) (change-state! &prevmsg $msgrcv) _)))
                              ($msg (get-state &prevmsg))
                              ($_ (if (and (> $k 1) $msgnew)
                                      (change-state! &loops (maxNewInputLoops)) _)))
                             (if (> (get-state &loops) 0)
                                 (let* (($lastmessage (if $msgnew $msg "[NO NEW USER INPUT. CONTINUE AUTONOMOUS WORK. DO NOT REPEAT THE PREVIOUS RESPONSE. ONLY USE send FOR GENUINELY NEW INFORMATION OR WHEN USER INPUT IS NEEDED.]"))
-                                       ($_ (change-state! &nextWakeAt (+ (get_time) (wakeupInterval))))
+                                       ($_ (change-state! &nextWakeAt (+ (system:wall-time) (wakeupInterval))))
                                        ($_ (log INFO "loop" $lastmessage))
                                        ($system (llmRequestMessage role "system" content $prompt))
                                        ($_ (messagesAppend (llmRequestMessage role "user" content $lastmessage)))
@@ -107,7 +107,7 @@
                                        ($response (omega-host:chat $request))
                                        ($_ (log INFO "loop" (RESPONSE: (py-str ($response)))))
                                        ($respstr (omega-host:response-source $response))
-                                       ($resp (catch (sread $respstr)))
+                                       ($resp (catch (parse $respstr)))
                                        ($_ (log INFO "loop" (RESPONSE: $resp)))
                                        ($_ (change-state! &error ()))
                                        ($_ (messagesClear))
@@ -120,16 +120,16 @@
                                                          (let ($callid $s) (superpose $resp)
                                                            (let $result
                                                              (if (HandleError (quote $s) $error) $error
-                                                               (let $rc (catch (let $R (collapse (eval $s)) (omega-host:normalize $R)))
+                                                               (let $rc (catch (let $R (collapse (omega-host:execute $s)) (omega-host:normalize $R)))
                                                                  (if (HandleError $rc $error) $error (strings-concat ("SUCCESS, RETURN: " $rc)))))
                                                              (progn
                                                                ($_ (log INFO "loop" (COMMAND_RETURN: ((quote $s) $result))))
-                                                               (messagesAppend (llmToolCallResponseMessage role "tool" callid $callid content (last_chars $result (maxFeedback))))
+                                                               (messagesAppend (llmToolCallResponseMessage role "tool" callid $callid content (omega-host:feedback-tail $result (maxFeedback))))
                                                                (quote $s)))))))))
                                            (if (or $msgnew  (not (== $sexpr ()))) (addToHistory $msg $sexpr $msgnew) _))
-                                (if (> (get_time) (get-state &nextWakeAt))
+                                (if (> (system:wall-time) (get-state &nextWakeAt))
                                     (change-state! &loops (+ 1 (maxWakeLoops))) _)))
-                      (sleep (sleepInterval))
+                      (omega-host:wait-at-boundary (sleepInterval))
                       (cut)
                       (gc)
                       (omega (+ 1 $k))))))

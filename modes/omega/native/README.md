@@ -1,17 +1,16 @@
 # Omega on CeTTa
 
-These are the explicit adapters for the pinned Omega source in `../upstream`.
-The launcher copies these files; it does not rewrite the loop or generate
-replacement equations from upstream text at startup.
+This mode runs the pinned Omega loop on CeTTa with the PeTTa extended profile.
+It loads the original NAL and PLN libraries. The runtime uses the checked-in
+native adapters and owns state in a separate directory.
 
-`loop.metta` preserves Omega's control flow, budgets, message history, tool
-dispatch, wake timing, and checkpoint order. Its two adaptations select the
-separate Omega host helper and preserve native text received from a channel.
-`manifest.json` records the upstream source hashes and those substitutions.
-The launcher tests require the loop to equal that precise adaptation.
+`loop.metta` retains Omega's control flow, budgets, message history, wake
+timing and checkpoint order. `manifest.json` records the upstream source
+hashes and host adaptations. The provider wire names and call IDs stay intact
+when file calls select the native Omega implementation. Keep host helpers
+scoped so imports cannot create a second effecting rule for an operation.
 
-The utility, memory, and skill files expose the existing host boundaries and
-current PeTTa annotations. Supervised semantic memory uses the CeTTa service;
-standalone modes retain their private text store. Provider, channel, and
-operating-system adapters still have host components. The vendored upstream
-source remains available for comparison.
+Supervised semantic memory uses the native memory service; standalone launches
+keep a mode-private text store. The vendored upstream source remains available
+for comparison. See the [mode guide](../../README.md) for launching, provider
+settings and the tests.
