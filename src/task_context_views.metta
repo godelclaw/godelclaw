@@ -281,21 +281,23 @@
        (((ContextPreparationFailed $_) $initial)
         ((Error $_ $_) (ContextPreparationFailed "context-conversation-read-failed"))
         ((TaskConversationV1 $view $checkpoint)
-          (let* (($root (task:string $view "root"))
-                 ($handoff (task:checkpoint-handoff $root $checkpoint))
-                 ($reserve (math:ceil (/ (str:byte-length $handoff) $ratio)))
-                 ($selected (task:compact $view (max 0 (- $available $reserve)) $ratio))
-                 ($carried (task:report-carried (task:items $selected "transcript")))
-                 ($candidate (state:json-set $selected "transcript"
-                               (JsonArray (task:idle-pairs
-                                 (task:items $selected "transcript")))))
-                 ($view (if (<= (str:byte-length (state:encoded $candidate))
-                                (str:byte-length (state:encoded $selected)))
-                           $candidate $selected))
-                 ($text (str:concat "TASK_CONTEXT " (state:encoded $view))))
-            (request:append (task:place-transcript $base ())
-              (if (== $handoff "") $text (str:join "\n\n" ($handoff $text))))))
+          (task:render-budget-view $base $view $checkpoint $available $ratio))
         ($bad (ContextPreparationFailed "context-conversation-read-failed"))))))
+
+(= (task:render-budget-view $base $source-view $checkpoint $available $ratio)
+   (let* (($root (task:string $source-view "root"))
+          ($handoff (task:checkpoint-handoff $root $checkpoint))
+          ($reserve (math:ceil (/ (str:byte-length $handoff) $ratio)))
+          ($selected (task:compact $source-view (max 0 (- $available $reserve)) $ratio))
+          ($pairs (task:items $selected "transcript"))
+          ($_ (task:report-carried $pairs))
+          ($candidate (state:json-set $selected "transcript" (JsonArray (task:idle-pairs $pairs))))
+          ($view (if (<= (str:byte-length (state:encoded $candidate))
+                         (str:byte-length (state:encoded $selected)))
+                    $candidate $selected))
+          ($text (str:concat "TASK_CONTEXT " (state:encoded $view))))
+     (request:append (task:place-transcript $base ())
+       (if (== $handoff "") $text (str:join "\n\n" ($handoff $text))))))
 
 ; The whole-window view spans task frames. The transcript is append-only from a
 ; saved start and is compacted when it passes 90% of the available window;

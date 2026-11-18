@@ -63,10 +63,12 @@
             (str:concat "Native integration fixture. Follow the requested command protocol.\n"
               (core-turn:padding $prompt-bytes "fixture context "))))
           ($_ (fs:write (nq:path $world "history.metta") ""))
+          ($task-budget (system:getenv-or-default "NATIVE_TEST_TASK_BUDGET" ""))
           ($environment (nq:guest-env $world "fixture-model"
             (("METTACLAW_SKIP_INITIALIZE" "1") ("METTACLAW_SKIP_CONFIG" "1")
              ("METTACLAW_NATIVE_LEDGER" "1") ("METTACLAW_OBSERVED_STRATEGY" "1")
              ("METTACLAW_COMMAND_BATCH_LIMIT" "1") ("METTACLAW_CONTEXT_WINDOW_TOKENS" "262144")
+             ("METTACLAW_TASK_CONTEXT_TOKENS" $task-budget)
              ("METTACLAW_TELEGRAM_SERVICE_SOCKET" $socket) ("METTACLAW_TELEGRAM_PRIMARY_CHAT_ID" "42")
              ("METTACLAW_TELEGRAM_ALLOWED_CHAT_IDS" "42")
              ("METTACLAW_RUNTIME_ROOT" $root)
@@ -93,6 +95,9 @@
           ($_ (fs:write (nq:path $world "working-result.metta") (repr $working)))
           ($_ (nt:require normal-loop-settled-captured-input (not (case $working (((Error $_ $_) True) ($other False))))))
           ($_ (nt:require normal-loop-made-native-provider-call (> (nq:posts $world) 0)))
+          ($_ (if (== $task-budget "") True
+                (nt:require budgeted-turn-submitted-its-context-view
+                  (nt:contains (fs:read-text (nq:path $world "request-1.body")) "TASK_CONTEXT "))))
           ($_ (nt:require rest-directive-was-applied
                 (== (sf:get (sf:native-object (nq:path $world "working.json")) "rest_await_input" False) True)))
           ($_ (nt:require actual-command-receipt-written

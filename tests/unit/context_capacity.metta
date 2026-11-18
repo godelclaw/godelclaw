@@ -30,12 +30,16 @@
           ($actual (context:ratio "ratio-fixture")))
      (nt:require (calibration-ratio $literal) (== $actual $expected))))
 (= (bc:test-absolute-archive)
-   (let* (($row (JsonObject ((JsonPair "result" (JsonString "one retained observation")))))
+   (let* (($row (JsonObject ((JsonPair "id" (JsonString "task-input:fixture"))
+                            (JsonPair "result" (JsonString "one retained observation")))))
           ($view (JsonObject ((JsonPair "root" (JsonString "conversation:fixture"))
                    (JsonPair "offset" (JsonNumber "15"))
                    (JsonPair "transcript" (JsonArray ($row $row))))))
           ($fits (task:compact $view 1000 1))
-          ($trimmed (task:compact $view 4 1)))
+          ($trimmed (task:compact $view 4 1))
+          ($checkpoint (JsonObject ((JsonPair "start" (JsonNumber "15"))
+                                    (JsonPair "summary" (JsonString "saved handoff fixture")))))
+          ($rendered (collapse (catch (task:render-budget-view "base" $view $checkpoint 4000 1)))))
      (progn
        (nt:require saved-prefix-remains-discoverable-when-the-tail-fits
          (and (== (task:checkpoint-number (state:json-field $fits "archive") "count") 15)
@@ -43,7 +47,13 @@
        (nt:require projection-with-no-room-counts-both-omitted-occurrences
          (and (== (task:checkpoint-number $trimmed "offset") 17)
            (and (== (task:checkpoint-number (state:json-field $trimmed "archive") "count") 17)
-                (== (task:items $trimmed "transcript") ())))))))
+                (== (task:items $trimmed "transcript") ()))))
+       (nt:require budget-render-keeps-handoff-and-archive
+         (case $rendered
+           ((($text)
+             (and (nt:contains $text "saved handoff fixture")
+                  (and (nt:contains $text "TASK_CONTEXT") (nt:contains $text "task-history"))))
+            ($bad False)))))))
 !(progn
    (bc:catalog "numeric" 131072 JsonNull "known" 98304)
    (bc:catalog "numeric-string" "131072" JsonNull "known" 98304)
