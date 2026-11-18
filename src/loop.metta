@@ -583,9 +583,9 @@
 (= (waitProcess $periphery)
    (protectedOutcome (catch (waitCandidate $periphery))))
 
-(= (persistProcessState $state)
+(= (prepareProcessCheckpoint $state)
    (let $periphery (process-periphery $state)
-     (working:save
+     (working-state:prepare-save
          (loop-budget $periphery)
          (loop-sleep $periphery)
          (loop-last-results $periphery)
@@ -594,6 +594,24 @@
                  no-continuation) 0 1)
          (coordinate-get-or banked-loops 0 $periphery)
          (coordinate-get-or rest-await-input 0 $periphery))))
+
+(= (persistProcessState $state)
+   (once (working-state:commit-save (prepareProcessCheckpoint $state))))
+
+;; Keep the completed turn's scope and checkpoint ID while storage recovers.
+;; Retry only the checkpoint. A new turn or a recycle would discard that scope.
+(= (awaitProcessCheckpoint $state $plan $waiting)
+   (if (== (once (working-state:commit-save $plan)) 1) 1
+     (let* (($_ (if $waiting 0
+                   (progn (progress:phase "checkpoint-wait")
+                          (println! (CHECKPOINT_PENDING waiting-for-durable-state)))))
+            ($_ (sleep 1))
+            ($next (case $plan
+                     (((WorkingFailure $_ $_) (prepareProcessCheckpoint $state))
+                      ($prepared $prepared)))))
+       (awaitProcessCheckpoint $state $next True))))
+(= (persistProcessBoundary $state)
+   (awaitProcessCheckpoint $state (prepareProcessCheckpoint $state) False))
 
 (= (settleActivityBatch)
    (let $channel (catch (tg:ack-activity-batch))
@@ -611,7 +629,7 @@
           ($outcome (turnProcess $periphery))
           ($_ (case $outcome (((success $p) 1) ($other (working:turn-commit-reset)))))
           ($next (process-step $state $outcome))
-          ($checkpoint (persistProcessState $next))
+          ($checkpoint (persistProcessBoundary $next))
           ($_ (if (and (== $checkpoint 1) (== (working:turn-commit-ready) 1))
                 (let $acked (settleActivityBatch)
                   (if (== $acked 1) (health:settle) 0)) 0))
@@ -624,7 +642,7 @@
            (runtime-support:recycle-exit))
          (let* (($waitOutcome (waitProcess (process-periphery $next)))
                 ($waiting (process-step $next $waitOutcome))
-                ($_ (persistProcessState $waiting)))
+                ($_ (persistProcessBoundary $waiting)))
            $waiting))))
 
 (= (processLoop $state)

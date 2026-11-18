@@ -28,6 +28,8 @@
       ((post (fs:is-file (nq:path $world "request-1.body")))
        (withheld (if (fs:is-file (nq:path $world "loop.log"))
           (nt:contains (fs:read-text (nq:path $world "loop.log")) "operator stopped cognition") False))
+       (checkpoint-wait (if (fs:is-file (nq:path $world "loop.log"))
+          (nt:contains (fs:read-text (nq:path $world "loop.log")) "CHECKPOINT_PENDING") False))
        (acked (fs:is-file (nq:path $world "cwp/second-acked")))))
      (if $ready True
        (if (or (<= $left 0) (== (proc:status $job) proc:ready))
@@ -58,10 +60,43 @@
         ($bad (ss:control-fail write-refused))))))
 (= (ss:text $reply) (sf:get (sf:get $reply "body" JsonNull) "text" ""))
 (= (ss:stop-owner $owner) (progn (proc:cancel $owner) (proc:await $owner) (proc:close $owner)))
+(= (ss:recycle $world $loop)
+   (let* (($_ (ss:put $world "recycle" "fixture recycle"))
+          ($_ (host:wait () 250))
+          ($_ (nt:require recycle-does-not-interrupt-in-flight-provider
+                 (and (not (== (proc:status $loop) proc:ready))
+                      (not (fs:exists (nq:path $world "effect.txt"))))))
+          ($_ (ss:put $world "release-1" "release"))
+          ($_ (ss:wait $world $loop checkpoint-wait 440))
+          ($_ (nt:require committed-effect-awaits-checkpoint-confirmation
+                 (and (fs:is-file (nq:path $world "checkpoint-withheld"))
+                      (== (fs:read-text (nq:path $world "effect.txt")) "A"))))
+          ($_ (nt:require recycle-stays-pending-without-a-receipt
+                 (and (not (== (proc:status $loop) proc:ready))
+                      (not (fs:exists (nq:path $world "cwp/delivery-acked"))))))
+          ($_ (ss:put $world "checkpoint-release" "release"))
+          ($finished (proc:wait $loop 10000))
+          ($_ (nt:exit-ok $finished))
+          ($_ (nt:require exact-checkpoint-occurrence-replayed
+                 (and (not (fs:exists (nq:path $world "checkpoint-conflict")))
+                      (== (fs:read-text (nq:path $world "checkpoint-withheld"))
+                          (fs:read-text (nq:path $world "checkpoint-replayed"))))))
+          ($_ (nt:require confirmed-recycle-follows-acknowledgement
+                 (and (fs:is-file (nq:path $world "cwp/delivery-acked"))
+                      (nt:contains (fs:read-text (nq:path $world "loop.log")) "RECYCLE_AT_TURN_BOUNDARY"))))
+          ($_ (nt:require checkpoint-retry-performs-no-extra-effect-or-inference
+                 (and (== (fs:read-text (nq:path $world "effect.txt")) "A")
+                      (== (nq:posts $world) 1)))))
+     (let $_ (println! NATIVE_RECYCLE_CHECKPOINT_PASSED) True)))
 (= (ss:run)
    (let* (($root (system:getenv-or-default "NATIVE_TEST_RUNTIME_ROOT" (system:cwd))) ($engine (nt:required-env "NATIVE_TEST_CORE"))
           ($artifacts (nt:required-env "NATIVE_TEST_ARTIFACTS"))
-          ($world (nq:world $root $engine $engine $artifacts (nt:required-env "NATIVE_TEST_HTTP_FIXTURE") "stop"))
+          ($recycle (== (system:getenv-or-default "NATIVE_TEST_RECYCLE" "0") "1"))
+          ($http (nt:required-env "NATIVE_TEST_HTTP_FIXTURE"))
+          ($world (if $recycle
+                    (nq:world-at $root $engine $engine $artifacts $http "recycle"
+                      (path:join (system:cwd) "tests/fixtures/held_checkpoint.metta") "held:configuration")
+                    (nq:world $root $engine $engine $artifacts $http "stop")))
           ($directory (nq:path $world "")) ($cwp-dir (nq:path $world "cwp"))
           ($chan (nq:path $world "c.sock")) ($_ (fs:make-directories $cwp-dir 448))
           ($_ (ss:put $world "cwp/delivery.json" (ss:input 777 "FIRST_FIXTURE_INPUT")))
@@ -102,7 +137,12 @@
           ($_ (nt:require first-call-is-inference-for-first-arrival
              (and (str:starts-with (fs:read-text (nq:path $world "request-1.headers")) "POST ")
                   (nt:contains (fs:read-text (nq:path $world "request-1.body")) "FIRST_FIXTURE_INPUT"))))
-          ($stopped (ss:control $control $buffer "stop"))
+          ($_ (if $recycle (ss:recycle $world $loop) (ss:pause-resume $world $loop $control $buffer)))
+          ($_ (ss:stop-owner $loop)) ($_ (ss:stop-owner $control)) ($_ (host:close $buffer))
+          ($_ (ss:stop-owner $cwp)) ($_ (nq:close $world)))
+      True))
+(= (ss:pause-resume $world $loop $control $buffer)
+   (let* (($stopped (ss:control $control $buffer "stop"))
           ($_ (ss:put $world "stop.json" (json:stringify-python $stopped)))
           ($_ (nt:require stop-control-durably-stopped (and (== (ss:state $world) "stopped") (str:starts-with (ss:text $stopped) "Stopped."))))
           ($_ (ss:put $world "cwp/second.json" (ss:input 778 "SECOND_FIXTURE_INPUT")))
@@ -124,9 +164,7 @@
           ($_ (nt:require no-extra-inference-after-rest (== (nq:posts $world) 2)))
           ($lines (str:split "\n" (fs:read-text (nq:path $world "cwp/requests"))))
           ($acks (filter-atom $lines $line (str:starts-with $line "2\tfixture-second\t")))
-          ($_ (nt:require second-transport-acknowledged-once (== (size-atom $acks) 1)))
-          ($_ (ss:stop-owner $loop)) ($_ (ss:stop-owner $control)) ($_ (host:close $buffer))
-          ($_ (ss:stop-owner $cwp)) ($_ (nq:close $world)))
+          ($_ (nt:require second-transport-acknowledged-once (== (size-atom $acks) 1))))
       True))
 !(let* (($root (system:cwd)) ($artifacts (nt:required-env "NATIVE_TEST_ARTIFACTS"))
          ($http (path:join $artifacts "stop-http-peer")) ($cwp (path:join $artifacts "stop-cwp-peer"))
@@ -140,4 +178,7 @@
          ($_ (nt:exit-ok (proc:run ("cc" "-std=c11" "-O2" "-Wall" "-Wextra" "-Werror"
                     (path:join $root "tests/fixtures/native_cwp_peer.c") "-o" $cwp) $root inherit 30000 65536)))
          ($result (ss:run)))
-   (if (== $result True) (println! NATIVE_STOP_START_PASSED) (system:exit 1)))
+   (if (== $result True)
+       (if (== (system:getenv-or-default "NATIVE_TEST_RECYCLE" "0") "1") True
+         (println! NATIVE_STOP_START_PASSED))
+       (system:exit 1)))

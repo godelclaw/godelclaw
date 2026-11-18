@@ -18,6 +18,10 @@
    (nt:environment $home))
 (: nq:world (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (nq:world $root $sdk $core $artifacts $fixture $name)
+   (nq:world-at $root $sdk $core $artifacts $fixture $name
+     (nt:join $root "src/input_ledger_server.metta") "db-server:configuration"))
+(: nq:world-at (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
+(= (nq:world-at $root $sdk $core $artifacts $fixture $name $server-module $configuration)
    (let* (($id (system:uuid4-hex)) ($suffix (str:byte-slice $id 0 10))
           ($case-name (format-args "{}-{}" ($name $suffix)))
           ($directory (nt:join $artifacts $case-name))
@@ -25,11 +29,10 @@
           ($_ (fs:make-directories $directory 448))
           ($socket (nt:join $directory "s.sock")) ($store (nt:join $directory "store"))
           ($core-worker (nt:join $core "cetta-value-worker"))
-          ($server-module (nt:join $root "src/input_ledger_server.metta"))
           ($env-base (nq:base-env $root $directory))
           ($server-env (preq:append $env-base (("CETTA_DB_SOURCE" $store) ("CETTA_DB_SOCKET" $socket))))
           ($server (proc:spawn ($core-worker "--value-bytes" "268435456" "--serve" "--lang" "petta"
-                               $server-module "db-server:configuration")
+                               $server-module $configuration)
                               ((cwd $root) (env $server-env) (max-bytes 65536))))
           ($_ (nq:wait-file $server $socket 500))
           ($_ (fs:write (nt:join $directory "delay-ms") "0"))

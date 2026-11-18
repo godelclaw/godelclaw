@@ -52,6 +52,6 @@
      ((True True) (true True)
       ((ErFailure $class $message $detail) (ErFailure $class $message $detail))
       ($other (checkpoint:failure "checkpoint" (invalid-commit $other))))))
+(= (checkpoint:new-id) (str:concat "ck1." (system:uuid4-hex)))
 (= (checkpoint:write $text $ids $request $now)
-   (let $occurrence (str:concat "ck1." (system:uuid4-hex))
-     (checkpoint:write-with-id $text $ids $request $now $occurrence)))
+   (checkpoint:write-with-id $text $ids $request $now (checkpoint:new-id)))

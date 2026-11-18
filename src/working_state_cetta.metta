@@ -85,13 +85,22 @@
    (let $projected (mio:save (working-state:path) (str:concat (working-state:path) ".tmp") $encoded True ())
      (if (== $projected 1) WorkingWritten
        (if $committed WorkingWritten (WorkingFailure projection $projected)))))
-(= (working-state:write-encoded $data $encoded $ids $request)
+(= (working-state:prepare-write $data $encoded $ids $request)
    (if (working-state:managed?)
-     (let* (($saved (working-state:number-or-zero (erv:get $data "saved_at" 0)))
-            ($committed (checkpoint:write $encoded $ids $request $saved)))
-       (if (== $committed True) (working-state:project True $encoded)
-         (WorkingFailure checkpoint $committed)))
-     (working-state:project False $encoded)))
+     (WorkingLedgerWrite $encoded $ids $request
+       (working-state:number-or-zero (erv:get $data "saved_at" 0)) (checkpoint:new-id))
+     (WorkingFileWrite $encoded)))
+(= (working-state:write-prepared $plan)
+   (case $plan
+     (((WorkingLedgerWrite $encoded $ids $request $saved $occurrence)
+       (let $committed (checkpoint:write-with-id $encoded $ids $request $saved $occurrence)
+         (if (== $committed True) (working-state:project True $encoded)
+           (WorkingFailure checkpoint $committed))))
+      ((WorkingFileWrite $encoded) (working-state:project False $encoded))
+      ((WorkingFailure $_ $_) $plan)
+      ($other (WorkingFailure invalid-plan invalid-checkpoint-shape)))))
+(= (working-state:write-encoded $data $encoded $ids $request)
+   (working-state:write-prepared (working-state:prepare-write $data $encoded $ids $request)))
 (= (working-state:write $data $ids $request)
    (let $encoded (working-state:encoded $data)
      (if (working-state:failed? $encoded) (WorkingFailure encoding $encoded)
@@ -232,19 +241,25 @@
      (working-state:turn-commit-reset)))
 (= (working-state:turn-commit-ready)
    (case (get-state &working-state-turn-commit) ((WorkingNoCommit 0) ($other 1))))
-(= (working-state:working-set-save $loops $sleep $results $heartbeat $continuation $banked $await)
+(= (working-state:prepare-save $loops $sleep $results $heartbeat $continuation $banked $await)
    (let* (($now (system:wall-time)) ($state (working-state:read)))
-     (if (working-state:failed? $state) 0
+     (if (working-state:failed? $state) (WorkingFailure read $state)
        (let $next (working-state:transition $state
          (WorkingSaveV1 $loops $sleep $results $heartbeat $continuation $banked $await) $now)
-         (if (working-state:failed? $next) 0
-           (let* (($scope (get-state &working-state-turn-commit))
-                  ($written (case $scope
-                    (((WorkingCommit $ids $request) (working-state:write $next $ids $request))
-                     ($other (working-state:write $next () ""))))))
-             (case $written
-               ((WorkingWritten (let $_ (progress:phase "turn-checkpoint") 1))
-                ($other 0)))))))))
+         (if (working-state:failed? $next) (WorkingFailure transition $next)
+           (let* (($encoded (working-state:encoded $next))
+                  ($scope (get-state &working-state-turn-commit)))
+             (if (working-state:failed? $encoded) (WorkingFailure encoding $encoded)
+               (case $scope
+                 (((WorkingCommit $ids $request) (working-state:prepare-write $next $encoded $ids $request))
+                  ($other (working-state:prepare-write $next $encoded () "")))))))))))
+(= (working-state:commit-save $prepared)
+   (case (working-state:write-prepared $prepared)
+     ((WorkingWritten (let $_ (progress:phase "turn-checkpoint") 1))
+      ($other 0))))
+(= (working-state:working-set-save $loops $sleep $results $heartbeat $continuation $banked $await)
+   (working-state:commit-save
+     (working-state:prepare-save $loops $sleep $results $heartbeat $continuation $banked $await)))
 
 ; Boot is a pure persisted/cache transition followed by at most one persistence
 ; of intent consumption or interrupted-timer retirement. Running commands are
