@@ -96,6 +96,8 @@
     "scripts/runtime_health_cetta.metta",
     "scripts/runtime_housekeeping_cetta.metta",
     "scripts/runtime_watch.py",
+    "scripts/shadow_eval.sh",
+    "scripts/shadow_hierarchy.metta",
     "scripts/shared_mail.metta",
     "scripts/start_telegram_service.sh",
     "scripts/telegram_admission.metta",
@@ -686,7 +688,9 @@
       "src/execution_gateway/read_tools_cetta.metta"
     ],
     "deployment-tools": [
-      "scripts/runtime_watch.py"
+      "scripts/runtime_watch.py",
+      "scripts/shadow_eval.sh",
+      "scripts/shadow_hierarchy.metta"
     ],
     "periodic-monitor": [
       "scripts/memory_monitor_cetta.metta",

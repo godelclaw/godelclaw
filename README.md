@@ -511,13 +511,55 @@ python3 scripts/build_cetta.py --profile native-agent --prolog 0
 ./initialize.sh
 ```
 
-The console frontend and execution gateway server still require Python as
-separate process roles. Their native workers use the same engine bundle. The
-reviewed role selection is in `config/runtime-files.json`; this is a native
-cognitive core, not yet an entirely Python-free installation.
+The cognitive core and execution gateway run on the native engine. The
+established console frontend and some companion services still use Python.
+See the runtime roles in [the release selection](config/runtime-files.json)
+and [the migration inventory](config/native-migration.json).
 
 Initialization creates local configuration and seeds the runtime files. It does
 not start an agent or register a Telegram bot.
+
+### Compare two releases with shadow evaluation
+
+Use release directories produced by `scripts/build_runtime_release.py` and
+Python-disabled CeTTa bundles. The command runs before instance configuration
+is loaded. It needs Linux user namespaces, Bubblewrap, jq and GNU time.
+
+```sh
+./run.sh --shadow-eval \
+  --baseline /path/to/baseline-release \
+  --candidate /path/to/candidate-release \
+  --engine /path/to/cetta-bundle --pairs 3 --output ./shadow-run
+```
+
+The default replay uses each release's hierarchy implementation. It exercises
+equal bodies with distinct identities, append, reorder, retirement, and
+versioned readback after an actual restart of the native store. Use
+`--baseline-engine` and `--candidate-engine` to compare different engine
+bundles. Each trial uses a fresh writable directory, a private network
+namespace, and hash-checked application and engine files mounted read-only.
+Timing order alternates between pairs.
+
+A custom `--suite DRIVER.metta` runs from `/app` against the selected release,
+with its engine under `/sdk`. An optional `--input FILE` gives each driver the
+same read-only bytes at `SHADOW_INPUT`. The built-in replay uses them as the
+two equal bodies. A driver that needs generated configuration can copy `/app`
+into `/work` for initialization. Write a JSON report to `SHADOW_REPORT` with
+`schema: 1`, `complete: true`, a boolean `checks_passed`, and a nonempty
+`observations` array of strings. Render structured values exactly in those
+strings so numeric conversions in the report tool cannot merge distinct values.
+Keep storage, timing and other measurements in an
+optional `metrics` object. Observation sequence and multiplicity matter.
+
+The output includes both release and engine identities, input hashes, individual
+observations, timings, peak process RSS and a paired `report.json`. Exit
+status 0 requires matching observations and passing checks on both sides.
+Status 1 records a difference or failed check and status 2 records an
+incomplete run.
+
+The former Python tmux shadow qualification is available at
+`c8f94ccbf13d6725ac958ae7197d2b894a8f081c` with that checkout's
+`CETTA_REF`. Its test script and fixtures belong to that historical runtime.
 
 ### 2. Configure your instance
 

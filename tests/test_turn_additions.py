@@ -35,19 +35,6 @@ class TurnAdditionShapeTests(unittest.TestCase):
         self.assertNotIn("(py-call (synthetic_llm.chat", loop)
         self.assertNotIn("(run-command-batch-once\n", loop)
 
-    def test_shadow_and_live_share_the_same_parser_and_broker_adapters(self):
-        shadow = (ROOT / "src" / "godel_shadow.py").read_text(
-            encoding="utf-8"
-        )
-        for name in (
-            "addition-balance-response",
-            "addition-envelope-response",
-            "addition-read-response",
-            "addition-command-sequence",
-            "addition-effect-broker",
-        ):
-            self.assertIn(name, shadow)
-
     def test_non_command_envelope_cannot_reach_the_effect_broker(self):
         pipeline = (ROOT / "src" / "command_pipeline.metta").read_text(
             encoding="utf-8"

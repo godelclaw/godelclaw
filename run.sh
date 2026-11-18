@@ -2,6 +2,10 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "$0")" && pwd)"
+if [ "${1:-}" = "--shadow-eval" ]; then
+    shift
+    exec bash "$ROOT/scripts/shadow_eval.sh" "$@"
+fi
 # Terminal modes do not initialize an agent identity or load instance secrets.
 if [ "${1:-}" = "--mode" ]; then
     exec bash "$ROOT/modes/launch_native.sh" --profile standalone "$@"

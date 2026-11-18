@@ -4,8 +4,6 @@ import json
 import os
 from pathlib import Path
 import resource
-import shlex
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -22,7 +20,6 @@ SUITES = {
     "regression": ["-m", "unittest", "-v", "test_pins_context_native", "test_turn_additions",
                    "test_context_continuity", "test_action_window_native", "test_undelivered_prose",
                    "test_context_sources"],
-    "shadow": ["-m", "unittest", "-v", "test_godel_full_shadow"],
     "bench": ["tests/context_bundle_bench.py"],
 }
 
@@ -38,18 +35,9 @@ def main():
         directory = Path(temp)
         deny = directory / "bin"
         deny.mkdir()
-        # The one exception is the shadow's disposable world: IsolatedTmux's
-        # exact form, its own socket and no configuration, which cannot reach
-        # the operator's server.
-        tmux = shlex.quote(shutil.which("tmux") or "/nonexistent/tmux")
         (deny / "tmux").write_text(
             "#!/bin/sh\n"
-            'if [ "$1" = -L ] && [ "$3" = -f ] && [ "$4" = /dev/null ]; then\n'
-            '  case "$2" in */*) ;; godel-full-shadow-*)\n'
-            '    case "$5" in -*) ;; *) exec %s "$@" ;; esac ;;\n'
-            "  esac\n"
-            "fi\n"
-            "printf '%%s\\n' 'BLOCKED: project 02 prohibits tmux' >&2\nexit 126\n" % tmux)
+            "printf '%s\\n' 'BLOCKED: project 02 prohibits tmux' >&2\nexit 126\n")
         (deny / "tmux").chmod(0o700)
         env = isolated_environ()
         # No inherited channel/provider secrets, including non-METTACLAW keys.
@@ -90,7 +78,7 @@ def main():
     (evidence / (args.suite + "-result.json")).write_text(json.dumps({
         "command": command, "cwd": str(ROOT), "returncode": result.returncode,
         "engine": ENGINE, "address_space_limits_bytes": resource.getrlimit(resource.RLIMIT_AS),
-        "tmux": "denied by PATH stub, no server access; the shadow's disposable -L servers only"},
+        "tmux": "denied by PATH stub"},
         indent=2) + "\n")
     print(transcript, end="")
     return result.returncode
