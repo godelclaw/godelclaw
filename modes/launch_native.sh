@@ -30,11 +30,23 @@ if [ -n "$prompt" ]; then
     [ "$profile" = standalone ] && [ -r "$prompt" ] || { echo '--prompt requires a readable standalone prompt' >&2; exit 2; }
     prompt="$(realpath -- "$prompt")"
 fi
-engine="${METTACLAW_MODE_CETTA_BIN:-${CETTA_BIN:-}}"
+# A terminal launch never takes an instance's mode engine.
+engine="${CETTA_BIN:-}"
+if [ "$profile" = supervised ]; then engine="${METTACLAW_MODE_CETTA_BIN:-$engine}"; fi
 if [ -z "$engine" ] && [ -x "$runtime_root/.runtime/cetta/cetta" ]; then engine="$runtime_root/.runtime/cetta/cetta"; fi
 if [ -z "$engine" ] && [ -n "${CETTA_ROOT:-}" ]; then engine="$CETTA_ROOT/cetta"; fi
 [ -n "$engine" ] && [ -x "$engine" ] || { echo 'set CETTA_BIN to an installed native runtime' >&2; exit 2; }
 engine="$(realpath -- "$engine")"
+if [ "$profile" = standalone ]; then
+    # Its value worker and libraries come from the same bundle as the engine.
+    sdk="$(dirname -- "$engine")"
+    if [ ! -x "$sdk/cetta-value-worker" ] || [ ! -d "$sdk/lib" ]; then
+        echo 'standalone modes need cetta, cetta-value-worker and lib in one bundle' >&2
+        exit 2
+    fi
+    export CETTA_ROOT="$sdk" CETTA_STDLIB="$sdk/lib"
+    export CETTA_VALUE_WORKER_BIN="$sdk/cetta-value-worker"
+fi
 if [ -z "$state" ]; then
     if [ "$profile" = standalone ]; then
         state="${XDG_STATE_HOME:-$HOME/.local/state}/mettaclaw/$(basename "$repo")/standalone"
@@ -102,7 +114,21 @@ if [ "$profile" = standalone ]; then
     state_digest="$(printf '%s' "$METTACLAW_MODE_RUNTIME" | sha256sum)"
     state_digest="${state_digest%% *}"
     export METTACLAW_INPUT_LEDGER_SOCKET="$socket_root/mode-$state_digest.sock"
+    export METTACLAW_LOOP_MODE_PATH="$state/selection.json"
+    export METTACLAW_ANTHROPIC_USAGE_PATH="$METTACLAW_MODE_RUNTIME/anthropic-usage.json"
 fi
+# The loop runs in its mode-private directory. The agent-wide selections stay
+# the agent's: resolve them here, as the framework loop sees them from the
+# agent root, before changing directory.
+for name in METTACLAW_LOOP_MODE_PATH:memory/loop_mode.json \
+        METTACLAW_MODEL_STATE_PATH:memory/persistent.metta \
+        METTACLAW_ANTHROPIC_USAGE_PATH:memory/anthropic_usage.json \
+        METTACLAW_PROMPT_PATH:memory/soul.md; do
+    variable="${name%%:*}"
+    value="${!variable:-$repo/${name#*:}}"
+    case "$value" in /*) ;; *) value="$PWD/$value" ;; esac
+    export "$variable=$(realpath -m -- "$value")"
+done
 unset PYTHONHOME PYTHONPATH PYTHONNOUSERSITE
 . "$runtime_root/scripts/native_runtime_env.sh"
 "$engine" --no-results --lang petta --profile extended --import-mode ancestor-walk "$runtime_root/modes/prepare_native.metta"

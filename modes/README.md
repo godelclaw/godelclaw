@@ -15,9 +15,10 @@ verification scope on `main`.
 ## Standalone terminal launches
 
 From a clean checkout, build CeTTa with `--profile native-agent --prolog 0`.
-The selected mode's provider, state and tool coordination use native libraries.
-Neither mode needs Python SDKs, Torch, Chroma or a Telegram service. Python is
-used only when the agent explicitly selects the external Python coding tool.
+Select the `cetta` executable in that bundle. `cetta-value-worker` and `lib/`
+are resolved beside it. Both modes use native provider, state and tool coordination.
+Iter can also explicitly launch an external Python coding tool. Omega's
+standalone launch needs no Python runtime, SDK or separate service.
 
 ```sh
 export CETTA_BIN=/path/to/native-cetta/cetta
@@ -30,38 +31,43 @@ Configure the model endpoint before starting:
 | Mode | Upstream configuration retained |
 |---|---|
 | ITER | `LLM_MODEL`, `BASE_URL`, `AI_API_KEY`; the pinned defaults apply when absent. |
-| Omega core | `OMEGA_provider`, `OMEGA_model`, and upstream provider settings. `OpenAIAPI` uses `OMEGA_openaiapi_url`, `OMEGA_openaiapi_model`, and the key variable named by `OMEGA_api_token_var` (default `OPENAIAPI_API_KEY`). The vendored modules also register `ASICloud`, `Anthropic`, and `OpenAI`. |
+| Omega core | `OMEGA_provider` and `OMEGA_model`. `OpenAIAPI` uses `OMEGA_openaiapi_url`, `OMEGA_openaiapi_model`, and the key variable named by `OMEGA_api_token_var` (default `OPENAIAPI_API_KEY`). The launcher also accepts `ASICloud`, `Anthropic`, and `OpenAI` with their provider-specific API keys. |
 
 The two commands select the standalone profile explicitly. They do not read
 an instance's identity, model-selection file, pause latch, or Telegram inbox,
 even when invoked from a configured service's environment. ITER keeps the
 upstream request and tool-return protocol. Its terminal channel forwards
 worker output at the foreground checkpoint because upstream workers suppress
-stdout. Omega keeps its pinned core loop and provider modules; its transport
-is terminal-only and memory uses the existing history/text adapter. Its actual
-NAL and PLN libraries are loaded. Upstream Chroma and arbitrary plugin startup
-are not part of this profile. The runtime's `adapter-ledger.json` records these
-differences.
+stdout. Omega keeps its pinned core loop, terminal transport, local text memory
+and the upstream NAL and PLN libraries. Its shell and MeTTa tools execute with
+the launcher's account permissions. Use a trusted endpoint, prompt and working
+directory. Upstream Chroma and plugin startup are outside this profile.
 
 State is outside the checkout and survives restart. Use `--state-dir PATH`
 for a separate instance, and `--prompt FILE` to append your own instructions
 when seeding new state. Existing prompts, tools, channels and memory files
 are retained. Add-on experimentation should use a separate state directory.
-The old Python/SWI launchers remain in the source tree as independent reference
-implementations; they are outside the selected native runtime.
+The retired Python launcher and host remain available at `cefcf3dc74` for
+historical comparisons. The independent core fixtures stay under `conformance/`.
 
 Direct launcher calls accept `--profile standalone` or `--profile supervised`.
 Without an explicit profile, a configured Telegram socket selects supervised
 operation; otherwise startup selects the terminal. The existing agent service
 launcher requests the supervised profile explicitly.
 
-Qualification uses a local HTTP peer and actual terminal input, checks replies,
-upstream request fields and saved history, and verifies that instance controls
-cannot leak into standalone startup:
+The native test drives the real terminal launcher, a scripted HTTP provider and
+restart from the same state. It checks reply IDs and physical file writes. Run
+from the checkout with a scratch directory for logs and a short socket directory.
 
 ```sh
-MODE_TEST_CETTA_BIN=/path/to/python-enabled-cetta/cetta \
-python3 -m unittest discover -s tests -p test_standalone_modes.py
+cc -O2 tests/fixtures/native_http_peer.c -o /path/to/scratch/http-peer
+export NATIVE_TEST_HTTP_FIXTURE=/path/to/scratch/http-peer
+export NATIVE_TEST_CORE=/path/to/native-cetta
+export NATIVE_TEST_RUNTIME_ROOT="$PWD"
+export NATIVE_TEST_ARTIFACTS=/path/to/scratch/results
+export NATIVE_TEST_MODE_SOCKET_ROOT=/short/socket/directory
+"$NATIVE_TEST_CORE/cetta" --lang petta --profile extended --import-mode ancestor-walk \
+  scripts/test_standalone_modes_cetta.metta
 ```
 
 ## Select and operate a mode
@@ -140,37 +146,16 @@ and request a supervised recycle.
 The UI distinguishes the requested selection from the currently running loop.
 `/mode godelclaw` returns to the framework loop.
 
-`launch.py` prepares private state and launches the selected MeTTa entrypoint.
-It freezes the agent-wide selection path before changing CWD. The installed
-CeTTa bundle includes its library directory beside the binary. Tests exercise
-this installed layout with implicit selection-path defaults.
+`launch_native.sh` owns the mode state directory and launches the selected
+MeTTa entrypoint there. Before changing directory it resolves the agent-wide
+selections (loop mode, model, Anthropic usage and prompt) against the agent
+root, as the framework loop sees them. `prepare_native.metta` seeds prompts
+and mode data. Iter's
+worker and Omega's host operations use the common native tool schema and I/O
+helpers. The launchers and tests use PeTTa extended on CeTTa.
 
-The PeTTa runner is invoked through Bash, including upstream scripts without a
-shebang. Both evaluators use explicit MeTTa Boolean atoms at Iter's Python
-predicate boundary. A Python `True` alone crosses Janus as `(@ true)`, which is
-not SWI-PeTTa's Boolean `true`.
-On PeTTa, tool subprocesses use Iter's pinned upstream Python helper; on CeTTa,
-they use `lib/proc`. The loop's tool selection, ordering and result protocol stay
-the same. Omega's Boolean configuration and filesystem predicates also use
-explicit MeTTa atoms. Its host text concatenation has an exclusive empty-list
-case: the inherited overlapping helper otherwise enumerates indefinitely when
-asked for all answers. These adaptations leave the vendored loops unchanged.
-
-To check startup, switching, checkpoints and restart with both installed engines:
-
-```sh
-MODE_TEST_CETTA_BIN=/path/to/cetta \
-MODE_TEST_PETTA_ROOT=/path/to/PeTTa \
-python3 -m unittest discover -s tests -p 'test_mode_launcher.py'
-MODE_TEST_CETTA_BIN=/path/to/cetta \
-MODE_TEST_PETTA_ROOT=/path/to/PeTTa \
-python3 -m unittest discover -s tests -p 'test_upstream_mode_runtime.py'
-```
-
-Use the Python environment configured for the engines. These checks use local
-fake providers and channels and temporary instance state. Omega runs through
-100 boundaries per restart with a controlled host sleep, exercising evaluator
-cleanup beyond a short startup smoke test.
+The historical two-engine tests, including the controlled 100-boundary Omega
+run, are available alongside the retired host at `cefcf3dc74`.
 
 For long-running Omega on CeTTa, use a build containing
 [the suspended-cursor relocation fix](https://github.com/godelclaw/CeTTa/commit/b256939464c4b334016b8cc7500aa8933511d745).
@@ -201,15 +186,17 @@ Inputs are acknowledged after history checkpoints. Mode switches before a
 checkpoint leave the input with its existing channel owner. Iter experience,
 Omega history and transformations are mode-private. Omega loads the pinned
 upstream NAL and PLN libraries. On supervised CeTTa it uses the agent's native
-semantic-memory service; standalone and SWI-PeTTa launches retain mode-private
-text recall. Optional plugins and upstream Chroma startup remain excluded. All
-these differences are explicit in the generated `adapter-ledger.json`.
+semantic-memory service. Standalone launches use mode-private text recall.
+Optional plugins and upstream Chroma startup remain outside these native modes.
 
-Production process verification, using scripted HTTP/CWP peers:
+The supervised process test uses scripted HTTP and CWP peers. Set the same
+native bundle, checkout and scratch settings as above.
 
 ```sh
-MODE_TEST_CETTA_BIN=/path/to/installed/cetta \
-  python -m unittest discover -s tests -p test_upstream_mode_runtime.py
+cc -O2 tests/fixtures/native_cwp_peer.c -o /path/to/scratch/cwp-peer
+export NATIVE_TEST_CWP_FIXTURE=/path/to/scratch/cwp-peer
+"$NATIVE_TEST_CORE/cetta" --lang petta --profile extended --import-mode ancestor-walk \
+  tests/cognitive_mode_boots.metta
 ```
 
 The test runs both actual loops, verifies provider protocol shapes, saved input,
@@ -306,14 +293,13 @@ Iter's entrypoint is `(iter:start)` in `iter/core.metta`. The host selects an
 isolated working directory containing `prompt.txt`, `tools/`, `channels/`,
 `memory/`, `transformations/` and `experience.json`. MeTTa owns control flow,
 retry selection, dispatch policy, cleanup boundaries, checkpointing and pacing.
-`iter_host.py` boxes JSON values and reuses the pinned Python helper sections
-for filesystem/component operations. Tool workers execute through `lib/proc`.
+`host_cetta.metta` owns JSON and filesystem adapters. Tool workers execute
+through `lib/proc`. `iter_host.py` remains with the offline reference fixtures.
 
-Omega's entrypoint remains `(omega)` in the **unchanged** vendored
-`src/loop.metta`. `omega/offline.py` loads the isolated core with explicit host
-bindings. The host supplies configuration, provider, channel, clock, optional
-startup facilities and a private `repos/Omega/memory/` directory. Runtime copies
-may persist state; the vendor directory is never a state directory.
+Omega's native entrypoint calls `(omega)` through `omega/native/bootstrap.metta`.
+The adapted loop uses namespaced host operations and a private
+`repos/Omega/memory/` directory. `omega/offline.py` loads a historical comparison
+with explicit fixture bindings. The vendored source stays available unchanged.
 
 The production launcher uses distinct per-agent `modes/iter` and `modes/omega`
 state roots. The fixture adapters remain isolated from production adapters.
@@ -389,9 +375,7 @@ The recorded qualification command exited zero. Reproducing it creates a
 toolchain. Keep that receipt with the tested source revisions. The claims apply
 to the listed adapters and scenarios, with the host assumptions stated above.
 
-Mode registration, real providers/channels/tools and supervised startup are
-implemented by `launch.py`, `runtime_host.py` and the agent host hooks described
-above. The buffered native CeTTa client is now available; streaming and automatic
-lossless native replay in imported histories remain later work. Credentials use
-scoped host aliases or the Python adapter. Keep generated traces, state and build
-outputs in your own runtime or verification directories.
+`launch_native.sh`, `runtime_host_cetta.metta` and the native provider and
+channel modules implement mode startup and integration. The tests above use
+local provider peers. Credentials use scoped host aliases. Keep generated
+traces, state and build outputs in your own runtime or verification directories.

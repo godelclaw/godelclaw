@@ -21,14 +21,28 @@
                   (== (sf:get (sf:native-object $path) "status" "") "settled")) True
            (progn (println! (EARLY_MODE_EXIT $status $kind $stdout $stderr $capture)) False))))
       ($running (core-boot:wait-checkpoint $owner $path (- $remaining 1))))))
+; The service's environment names none of these; drop the world's defaults.
+(= (core-boot:without $environment $names)
+   (filter-atom $environment $pair (not (erv:contains $names (car-atom $pair)))))
+(= (core-boot:wait-exit $owner $remaining)
+   (if (<= $remaining 0) (progn (println! (MODE_DID_NOT_EXIT_ON_SWITCH (proc:poll $owner))) False)
+     (case (proc:wait $owner 100)
+       (((proc:exited $code $_ $_) (== $code 0))
+        ((proc:result $status $_ $_ $_ $_) (== $status (proc:exited 0)))
+        ($running (core-boot:wait-exit $owner (- $remaining 1)))))))
 (= (core-boot:mode $mode)
    (let* (($root (system:getenv-or-default "NATIVE_TEST_RUNTIME_ROOT" (system:cwd)))
           ($core (nt:required-env "NATIVE_TEST_CORE"))
           ($artifacts (nt:required-env "NATIVE_TEST_ARTIFACTS")) ($fixture (nt:required-env "NATIVE_TEST_HTTP_FIXTURE"))
           ($world (nq:world $root $core $core $artifacts $fixture $mode))
           ($directory (nq:path $world "")) ($shared (nq:path $world "modes")) ($runtime (path:join $shared $mode))
-          ($mode-path (nq:path $world "loop-mode.json"))
+          ; As in the service: the agent's selections live under the root that
+          ; run.sh passes as --repo, and no state path or state root is given.
+          ($agent (nq:path $world "agent")) ($_ (fs:make-directories (path:join $agent "memory") 448))
+          ($mode-path (path:join $agent "memory/loop_mode.json"))
           ($_ (fs:write $mode-path (json:stringify-python (JsonObject ((JsonPair "mode" $mode))))))
+          ($_ (fs:write (path:join $agent "memory/persistent.metta") "(active-model fixture-selected-model)\n"))
+          ($_ (fs:write (path:join $agent "memory/soul.md") "Boot-test agent identity\n"))
           ($cwp-root (nq:path $world "cwp")) ($_ (fs:make-directories $cwp-root 448))
           ($cwp-socket (nq:path $world "c.sock"))
           ($cwp (proc:spawn ((nt:required-env "NATIVE_TEST_CWP_FIXTURE") $cwp-socket $cwp-root)
@@ -39,20 +53,29 @@
           ($arguments (json:stringify-python (JsonObject ((JsonPair "cmd" $shell)))))
           ($function (JsonObject ((JsonPair "name" "shell") (JsonPair "arguments" $arguments))))
           ($call (JsonObject ((JsonPair "id" "t1") (JsonPair "type" "function") (JsonPair "function" $function))))
-          ($message (JsonObject ((JsonPair "role" "assistant") (JsonPair "tool_calls" (JsonArray ($call))))))
+          ; Omega's file tools share names with the framework's; each call must run once.
+          ($counter (nq:path $world "append-counter"))
+          ($append-arguments (json:stringify-python (JsonObject ((JsonPair "filename" $counter) (JsonPair "content" "x")))))
+          ($append (JsonObject ((JsonPair "name" "append-file") (JsonPair "arguments" $append-arguments))))
+          ($calls (if (== $mode "omega")
+                    ($call (JsonObject ((JsonPair "id" "t2") (JsonPair "type" "function") (JsonPair "function" $append)))
+                           (JsonObject ((JsonPair "id" "t3") (JsonPair "type" "function") (JsonPair "function" $append))))
+                    ($call)))
+          ($message (JsonObject ((JsonPair "role" "assistant") (JsonPair "tool_calls" (JsonArray $calls)))))
           ($choice (JsonObject ((JsonPair "message" $message) (JsonPair "finish_reason" "tool_calls"))))
           ($response (JsonObject ((JsonPair "id" "fixture") (JsonPair "choices" (JsonArray ($choice)))
                      (JsonPair "usage" (JsonObject ((JsonPair "prompt_tokens" 10) (JsonPair "completion_tokens" 2)))))))
           ($_ (fs:write (nq:path $world "response.body") (json:stringify-python $response)))
-          ($environment (nq:guest-env $world "fixture-model"
-             (("METTACLAW_MODE_CETTA_BIN" (path:join $core "cetta"))
-              ("METTACLAW_RUNTIME_ROOT" $root) ("METTACLAW_AGENT_ROOT" $root)
-              ("METTACLAW_MODE_STATE_ROOT" $shared)
-              ("METTACLAW_LOOP_MODE_PATH" $mode-path)
-              ("METTACLAW_TELEGRAM_SERVICE_SOCKET" $cwp-socket)
-              ("METTACLAW_NATIVE_LEDGER" "1"))))
-          ($command ("bash" (path:join $root "modes/launch_native.sh") "--mode" $mode "--profile" "supervised"
-                       "--state-dir" $shared "--repo" $root))
+          ($environment (core-boot:without
+             (nq:guest-env $world "fixture-model"
+               (("METTACLAW_RUNTIME_ROOT" $root)
+                ("METTACLAW_TELEGRAM_SERVICE_SOCKET" $cwp-socket)
+                ("METTACLAW_NATIVE_LEDGER" "1")))
+             ("METTACLAW_LOOP_MODE_PATH" "METTACLAW_MODEL_STATE_PATH" "METTACLAW_ANTHROPIC_USAGE_PATH"
+              "METTACLAW_MODE_STATE_ROOT" "METTACLAW_MODE_CETTA_BIN" "METTACLAW_AGENT_ROOT")))
+          ; The arguments run.sh passes for a selected mode.
+          ($command ("bash" (path:join $root "modes/launch_native.sh")
+                       "--repo" $agent "--mode" $mode "--engine" "cetta" "--profile" "supervised"))
           ($owner (proc:spawn $command ((cwd $root) (env $environment) (max-bytes 1048576))))
           ($checkpoint (path:join $runtime "native-checkpoint-v1.json"))
           ($ready (core-boot:wait-checkpoint $owner $checkpoint 250))
@@ -63,8 +86,17 @@
           ($_ (nt:require actual-tool-result
             (nt:contains (sf:get $before "payload" "") (if (== $mode "iter") "SUCCESS" "shell"))))
           ($_ (nt:require mode-physical-effect-once (== (fs:read-text $effect-path) "X")))
+          ($_ (if (== $mode "omega")
+                (nt:require omega-file-call-effect-once (== (fs:read-text $counter) "xx")) True))
           ($_ (nt:require no-adapter-shaped-tool-name (not (nt:contains (sf:get $before "payload" "") "Unknown tool"))))
           ($_ (nt:require real-mode-provider-submitted (> (nq:posts $world) 0)))
+          ($_ (nt:require mode-uses-agent-model-selection
+                (nt:contains (fs:read-text (nq:path $world "request-1.body")) "fixture-selected-model")))
+          ($_ (nt:require mode-keeps-agent-identity
+                (nt:contains (fs:read-text (nq:path $world "request-1.body")) "Boot-test agent identity")))
+          ($_ (if (== $mode "iter")
+                (nt:require iter-prompt-names-its-channel
+                  (nt:contains (fs:read-text (path:join $runtime "prompt.txt")) "Keep your own identity")) True))
           ($_ (nt:require checkpoint-has-identity (!= (sf:get $before "sha256" "") "")))
           ($_ (fs:remove $recycle))
           ($_ (fs:write (nq:path $world "response.body")
@@ -74,6 +106,11 @@
           ($_ (nt:require restart-keeps-settled-checkpoint
                 (== (sf:get (sf:native-object $checkpoint) "status" "") "settled")))
           ($_ (nt:require restart-does-not-replay-mode-effect (== (fs:read-text $effect-path) "X")))
+          ; /mode godelclaw: the running mode ends at its next boundary.
+          ($_ (fs:write $mode-path (json:stringify-python (JsonObject ((JsonPair "mode" "godelclaw"))))))
+          ($_ (nt:require mode-exits-for-selected-switch (core-boot:wait-exit $again 150)))
+          ($_ (nt:require switch-keeps-settled-checkpoint
+                (== (sf:get (sf:native-object $checkpoint) "status" "") "settled")))
           ($_ (proc:cancel $again)) ($restarted (proc:await $again)) ($_ (proc:close $again))
           ($_ (fs:write (nq:path $world "mode-restart.log") (repr $restarted)))
           ($_ (proc:cancel $cwp)) ($_ (proc:await $cwp)) ($_ (proc:close $cwp))

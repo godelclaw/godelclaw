@@ -24,10 +24,12 @@
        (if (fs:is-file $path) (fs:read-text $path)
          (if (fs:is-file $fallback) (fs:read-text $fallback) "")))))
 (= (mode-prepare:prompt $source $destination)
+   (mode-prepare:prompt $source $destination ""))
+(= (mode-prepare:prompt $source $destination $channel-note)
    (if (fs:exists $destination) True
      (let* (($base (fs:read-text $source)) ($identity (mode-prepare:identity))
             ($text (str:concat $base (if (== $identity "") ""
-                     (str:concat "\n\nAgent identity and standing instructions:\n" $identity)))))
+                     (str:join "" ("\n\nAgent identity and standing instructions:\n" $identity $channel-note))))))
        (sf:replace $destination $text 432 True))))
 (= (mode-prepare:iter-tool $name)
    (let* (($root (mode-tool:app-root)) ($runtime (mode-host:root))
@@ -53,7 +55,9 @@
           ($_ (map-atom ("tools" "channels" "memory" "transformations") $name
                  (fs:make-directories (path:join $runtime $name) 504)))
           ($tools (map-atom ("shell" "send" "python" "nop") $name (mode-prepare:iter-tool $name)))
-          ($prompt (mode-prepare:prompt (path:join $root "modes/iter/upstream/prompt.txt") (path:join $runtime "prompt.txt")))
+          ($prompt (mode-prepare:prompt (path:join $root "modes/iter/upstream/prompt.txt") (path:join $runtime "prompt.txt")
+                     (if (mode-host:standalone?) ""
+                       "\nThis mode's Telegram channel is named telegram. Keep your own identity.\n")))
           ($guidance (mode-prepare:copy (path:join $root "modes/iter/reprogramming-native.txt") (path:join $runtime "reprogramming-native.txt"))))
      (if (and (== (filter-atom $tools $result (!= $result True)) ()) (and (== $prompt True) (== $guidance True)))
        True (Error mode-prepare (Incomplete iter-preparation-failed)))))
