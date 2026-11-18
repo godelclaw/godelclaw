@@ -216,9 +216,12 @@
      (let* (($pair (car-atom $reverse)) ($size (+ 1 (context:measure $pair $ratio))))
        (if (> $size $space) $chosen
          (task:recent (cdr-atom $reverse) (- $space $size) $ratio (cons-atom $pair $chosen))))))
+(= (task:with-offset $view $root $start)
+   (state:json-set (state:json-set $view "offset" (task:number $start))
+                   "archive" (task:archive $root $start)))
 (= (task:fit $view $root $total $chosen $budget $ratio)
-   (let* (($archive (task:archive $root (- $total (length $chosen))))
-          ($next (state:json-set (state:json-set $view "transcript" (JsonArray $chosen)) "archive" $archive)))
+   (let $next (task:with-offset (state:json-set $view "transcript" (JsonArray $chosen))
+                              $root (- $total (length $chosen)))
      (if (or (== $chosen ()) (<= (context:measure $next $ratio) $budget)) $next
        (task:fit $view $root $total (cdr-atom $chosen) $budget $ratio))))
 (= (task:stub $pair $allowance $ratio)
@@ -247,16 +250,21 @@
    (if (> (math:ceil (/ (task:text-bytes $view) $ratio)) $budget) False
      (<= (context:measure $view $ratio) $budget)))
 (= (task:compact $view $budget $ratio)
-   (if (task:fits $view $budget $ratio) $view
-     (let* (($root (task:string $view "root")) ($pairs (task:items $view "transcript"))
-            ($base (state:json-set (state:json-set $view "transcript" (JsonArray ())) "archive" (task:archive $root (length $pairs))))
-            ($frame (task:frame $base $root $budget $ratio))
-            ($space (max 0 (- $budget (context:measure $frame $ratio))))
-            ($reverse (task:reverse $pairs ()))
-            ($recent (task:recent $reverse $space $ratio ()))
-            ($chosen (if (or (not (== $recent ())) (== $reverse ())) $recent
-                         ((task:stub (car-atom $reverse) (max 16 (math:floor (/ $space 2))) $ratio)))))
-       (task:fit $frame $root (length $pairs) $chosen $budget $ratio))))
+   (let* (($root (task:string $view "root"))
+          ($offset (max 0 (task:checkpoint-number $view "offset")))
+          ($anchored (if (> $offset 0) (task:with-offset $view $root $offset) $view)))
+     (if (task:fits $anchored $budget $ratio) $anchored
+       (let* (($pairs (task:items $anchored "transcript"))
+              ($total (+ $offset (length $pairs)))
+              ($base (task:with-offset
+                       (state:json-set $anchored "transcript" (JsonArray ())) $root $total))
+              ($frame (task:frame $base $root $budget $ratio))
+              ($space (max 0 (- $budget (context:measure $frame $ratio))))
+              ($reverse (task:reverse $pairs ()))
+              ($recent (task:recent $reverse $space $ratio ()))
+              ($chosen (if (or (not (== $recent ())) (== $reverse ())) $recent
+                           ((task:stub (car-atom $reverse) (max 16 (math:floor (/ $space 2))) $ratio)))))
+         (task:fit $frame $root $total $chosen $budget $ratio)))))
 (= (task:append-context $prompt $focus $trigger $capacity $model)
    (task:render-context (str:join "\n" ($prompt (topics:context))) $focus $trigger $capacity $model))
 (= (task:render-context $base $focus $trigger $capacity $model)
@@ -268,20 +276,26 @@
    (let* (($target (context:target))
           ($available (if (== $capacity "") $target
                         (min $target (max 0 (- (- (str:string->number $capacity) (math:ceil (/ (request:bytes $base) $ratio))) 128)))))
-          ($initial (task:conversation-view $focus $trigger)))
+          ($initial (task:conversation-with-checkpoint $focus $trigger)))
      (case $initial
        (((ContextPreparationFailed $_) $initial)
         ((Error $_ $_) (ContextPreparationFailed "context-conversation-read-failed"))
-        ($ok
-          (let* (($selected (task:compact $ok $available $ratio))
+        ((TaskConversationV1 $view $checkpoint)
+          (let* (($root (task:string $view "root"))
+                 ($handoff (task:checkpoint-handoff $root $checkpoint))
+                 ($reserve (math:ceil (/ (str:byte-length $handoff) $ratio)))
+                 ($selected (task:compact $view (max 0 (- $available $reserve)) $ratio))
                  ($carried (task:report-carried (task:items $selected "transcript")))
                  ($candidate (state:json-set $selected "transcript"
                                (JsonArray (task:idle-pairs
                                  (task:items $selected "transcript")))))
                  ($view (if (<= (str:byte-length (state:encoded $candidate))
                                 (str:byte-length (state:encoded $selected)))
-                           $candidate $selected)))
-            (request:append (task:place-transcript $base ()) (str:concat "TASK_CONTEXT " (state:encoded $view)))))))))
+                           $candidate $selected))
+                 ($text (str:concat "TASK_CONTEXT " (state:encoded $view))))
+            (request:append (task:place-transcript $base ())
+              (if (== $handoff "") $text (str:join "\n\n" ($handoff $text))))))
+        ($bad (ContextPreparationFailed "context-conversation-read-failed"))))))
 
 ; The whole-window view spans task frames. The transcript is append-only from a
 ; saved start and is compacted when it passes 90% of the available window;
@@ -318,7 +332,7 @@
                        (== (task:checkpoint-number $gap "until") $start))))) $start 0)))
 (= (task:saved-start $root)
    (task:checkpoint-start (state:meta (task:window-key $root))))
-(= (task:conversation-view $focus $trigger)
+(= (task:conversation-with-checkpoint $focus $trigger)
    (case (state:meta "owner")
      (((Error $_ $_) (ContextPreparationFailed "context-conversation-read-failed"))
       ($owner
@@ -326,8 +340,14 @@
           (case (state:meta (task:window-key $root))
             (((Error $_ $_) (ContextPreparationFailed "context-conversation-read-failed"))
              ($checkpoint
-               (task:conversation-projection $focus $trigger
-                 (task:checkpoint-start $checkpoint) (task:result-chars))))))))))
+               (let $view (task:conversation-projection $focus $trigger
+                             (task:checkpoint-start $checkpoint) (task:result-chars))
+                 (case $view
+                   (((JsonObject $_) (TaskConversationV1 $view $checkpoint))
+                    ($failed $failed))))))))))))
+(= (task:conversation-view $focus $trigger)
+   (case (task:conversation-with-checkpoint $focus $trigger)
+     (((TaskConversationV1 $view $checkpoint) $view) ($failed $failed))))
 (= (task:handoff-text $root)
    (task:checkpoint-handoff $root (state:meta (task:window-key $root))))
 (= (task:checkpoint-handoff $root $checkpoint)

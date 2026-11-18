@@ -29,6 +29,21 @@
           ($_ (sf:replace $file (str:join "" ("{\"ratio-fixture\":{\"bytes_per_token\":" $literal "}}")) 384 True))
           ($actual (context:ratio "ratio-fixture")))
      (nt:require (calibration-ratio $literal) (== $actual $expected))))
+(= (bc:test-absolute-archive)
+   (let* (($row (JsonObject ((JsonPair "result" (JsonString "one retained observation")))))
+          ($view (JsonObject ((JsonPair "root" (JsonString "conversation:fixture"))
+                   (JsonPair "offset" (JsonNumber "15"))
+                   (JsonPair "transcript" (JsonArray ($row $row))))))
+          ($fits (task:compact $view 1000 1))
+          ($trimmed (task:compact $view 4 1)))
+     (progn
+       (nt:require saved-prefix-remains-discoverable-when-the-tail-fits
+         (and (== (task:checkpoint-number (state:json-field $fits "archive") "count") 15)
+              (== (task:items $fits "transcript") ($row $row))))
+       (nt:require projection-with-no-room-counts-both-omitted-occurrences
+         (and (== (task:checkpoint-number $trimmed "offset") 17)
+           (and (== (task:checkpoint-number (state:json-field $trimmed "archive") "count") 17)
+                (== (task:items $trimmed "transcript") ())))))))
 !(progn
    (bc:catalog "numeric" 131072 JsonNull "known" 98304)
    (bc:catalog "numeric-string" "131072" JsonNull "known" 98304)
@@ -81,4 +96,5 @@
    (nt:require fallback-calibration-does-not-invalidate-zero-capacity
       (case (catch (context:checked-text "nonempty content" "" 0 (context:ratio "ratio-fixture") 1))
         (((ContextPreparationFailed $_) True) ($bad False))))
+   (bc:test-absolute-archive)
    (println! UNIT_CONTEXT_CAPACITY_OK))
