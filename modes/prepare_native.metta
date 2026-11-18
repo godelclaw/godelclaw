@@ -55,11 +55,15 @@
           ($_ (map-atom ("tools" "channels" "memory" "transformations") $name
                  (fs:make-directories (path:join $runtime $name) 504)))
           ($tools (map-atom ("shell" "send" "python" "nop") $name (mode-prepare:iter-tool $name)))
+          ($shared (if (mode-host:standalone?) ()
+                     (map-atom ("remember" "query" "episodes") $name
+                       (mode-prepare:seed (path:join (path:join $root "modes/iter/templates") (str:concat $name ".metta"))
+                                          (path:join (path:join $runtime "tools") (str:concat $name ".metta"))))))
           ($prompt (mode-prepare:prompt (path:join $root "modes/iter/upstream/prompt.txt") (path:join $runtime "prompt.txt")
                      (if (mode-host:standalone?) ""
                        "\nThis mode's Telegram channel is named telegram. Keep your own identity.\n")))
           ($guidance (mode-prepare:copy (path:join $root "modes/iter/reprogramming-native.txt") (path:join $runtime "reprogramming-native.txt"))))
-     (if (and (== (filter-atom $tools $result (!= $result True)) ()) (and (== $prompt True) (== $guidance True)))
+     (if (and (== (filter-atom (list:append $tools $shared) $result (!= $result True)) ()) (and (== $prompt True) (== $guidance True)))
        True (Error mode-prepare (Incomplete iter-preparation-failed)))))
 (= (mode-prepare:omega)
    (let* (($source (path:join (mode-tool:app-root) "modes/omega/upstream/memory"))

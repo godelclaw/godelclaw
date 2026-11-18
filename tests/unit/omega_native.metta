@@ -22,13 +22,13 @@
         ($_ (nt:require completed-no-calls-is-observable
               (== (omega-host:response-source (omega-host:response $request (JsonObject ())))
                   "(Error () \"List of tool calls is empty\")")))
-        ($_ (nt:require leap-day-accepted (!= (omega-host:civil-seconds "2024-02-29 00:00:00") none)))
-        ($_ (nt:require invalid-leap-day-refused (== (omega-host:civil-seconds "2023-02-29 00:00:00") none)))
+        ($_ (nt:require leap-day-accepted (!= (mode-history:civil-seconds "2024-02-29 00:00:00") none)))
+        ($_ (nt:require invalid-leap-day-refused (== (mode-history:civil-seconds "2023-02-29 00:00:00") none)))
         ($_ (nt:require gregorian-century-rule
-              (and (== (omega-host:civil-seconds "1900-02-29 00:00:00") none)
-                   (!= (omega-host:civil-seconds "2000-02-29 00:00:00") none))))
+              (and (== (mode-history:civil-seconds "1900-02-29 00:00:00") none)
+                   (!= (mode-history:civil-seconds "2000-02-29 00:00:00") none))))
         ($_ (nt:require adjacent-date-distance
-              (== (- (omega-host:civil-seconds "2024-03-01 00:00:00")
-                     (omega-host:civil-seconds "2024-02-29 00:00:00")) 86400)))
+              (== (- (mode-history:civil-seconds "2024-03-01 00:00:00")
+                     (mode-history:civil-seconds "2024-02-29 00:00:00")) 86400)))
         ($_ (nt:require full-casefold-preserved (== (unicode:casefold "Straße ΣΟΣ") "strasse σοσ"))))
    (println! UNIT_OMEGA_NATIVE_OK))

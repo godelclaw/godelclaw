@@ -112,7 +112,8 @@
    (case $lines
      ((LNil ())
       ((LCons $line $rest)
-       (if (str:starts-with (aw:journal-line $line) "ERROR_FEEDBACK:") ()
+       (if (or (str:starts-with (aw:journal-line $line) "ERROR_FEEDBACK:")
+               (str:starts-with (aw:journal-line $line) "RESULTS:")) ()
          (if (== (aw:trim $line) "\")") ()
            (let $more (aw:command-lines $rest) (cons-atom $line $more))))))))
 (= (aw:unquote $text)

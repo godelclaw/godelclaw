@@ -53,6 +53,10 @@
           ($_ (fs:write $mode-path (json:stringify-python (JsonObject ((JsonPair "mode" $mode))))))
           ($_ (fs:write (path:join $agent "memory/persistent.metta") "(active-model fixture-selected-model)\n"))
           ($_ (fs:write (path:join $agent "memory/soul.md") "Boot-test agent identity\n"))
+          ; A turn the framework loop recorded before the switch.
+          ($agent-history (path:join $agent "memory/history.metta"))
+          ($_ (fs:write $agent-history
+                "(\"2026-11-18 20:00:00\" \"\n\" \"HUMAN_MESSAGE: \" \"framework-era marker message\" \"\n\" ((send \"framework-era reply\")) \"\n\")\n"))
           ($cwp-root (nq:path $world "cwp")) ($_ (fs:make-directories $cwp-root 448))
           ($cwp-socket (nq:path $world "c.sock"))
           ($cwp (proc:spawn ((nt:required-env "NATIVE_TEST_CWP_FIXTURE") $cwp-socket $cwp-root)
@@ -121,6 +125,16 @@
           ($_ (nt:require delivered-receipt-not-presented
                 (not (nt:contains (sf:get $before "payload" "") "channel receipt"))))
           ($_ (nt:require provider-failure-retried (> (nq:posts $world) 1)))
+          ($_ (nt:require mode-sees-agent-history
+                (nt:contains (fs:read-text (nq:path $world "request-1.body")) "framework-era marker message")))
+          ($_ (nt:require mode-turn-joins-agent-history
+                (nt:contains (fs:read-text $agent-history) "boot-test operator message")))
+          ($_ (nt:require catch-up-not-mirrored (not (nt:contains (fs:read-text $agent-history) "[AGENT HISTORY:"))))
+          ($_ (if (== $mode "iter")
+                (nt:require iter-results-recorded (nt:contains (fs:read-text $agent-history) "RESULTS:")) True))
+          ($_ (if (== $mode "iter")
+                (nt:require iter-has-shared-memory-tools
+                  (nt:contains (fs:read-text (nq:path $world "request-1.body")) "\"remember\"")) True))
           ($_ (nt:require mode-keeps-agent-identity
                 (nt:contains (fs:read-text (nq:path $world "request-1.body")) "Boot-test agent identity")))
           ($_ (if (== $mode "iter")
@@ -135,6 +149,9 @@
           ($_ (nt:require restart-keeps-settled-checkpoint
                 (== (sf:get (sf:native-object $checkpoint) "status" "") "settled")))
           ($_ (nt:require restart-does-not-replay-mode-effect (== (fs:read-text $effect-path) "X")))
+          ($_ (if (== $mode "iter")
+                (nt:require restart-adds-no-second-catch-up
+                  (== (size-atom (str:split "[AGENT HISTORY:" (fs:read-text (path:join $runtime "experience.json")))) 2)) True))
           ; /mode godelclaw: the running mode ends at its next boundary.
           ($_ (fs:write $mode-path (json:stringify-python (JsonObject ((JsonPair "mode" "godelclaw"))))))
           ($_ (nt:require mode-exits-for-selected-switch (core-boot:wait-exit $again 150)))

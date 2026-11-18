@@ -117,18 +117,21 @@ if [ "$profile" = standalone ]; then
     export METTACLAW_LOOP_MODE_PATH="$state/selection.json"
     export METTACLAW_ANTHROPIC_USAGE_PATH="$METTACLAW_MODE_RUNTIME/anthropic-usage.json"
 fi
-# The loop runs in its mode-private directory. The agent-wide selections stay
-# the agent's: resolve them here, as the framework loop sees them from the
-# agent root, before changing directory.
-for name in METTACLAW_LOOP_MODE_PATH:memory/loop_mode.json \
-        METTACLAW_MODEL_STATE_PATH:memory/persistent.metta \
-        METTACLAW_ANTHROPIC_USAGE_PATH:memory/anthropic_usage.json \
-        METTACLAW_PROMPT_PATH:memory/soul.md; do
-    variable="${name%%:*}"
-    value="${!variable:-$repo/${name#*:}}"
-    case "$value" in /*) ;; *) value="$PWD/$value" ;; esac
-    export "$variable=$(realpath -m -- "$value")"
-done
+# The loop runs in its mode-private directory. The agent-wide selections and
+# history stay the agent's: resolve them here, as the framework loop sees them
+# from the agent root, before changing directory.
+if [ "$profile" = supervised ]; then
+    for name in METTACLAW_LOOP_MODE_PATH:memory/loop_mode.json \
+            METTACLAW_MODEL_STATE_PATH:memory/persistent.metta \
+            METTACLAW_ANTHROPIC_USAGE_PATH:memory/anthropic_usage.json \
+            METTACLAW_PROMPT_PATH:memory/soul.md \
+            METTACLAW_HISTORY_PATH:memory/history.metta; do
+        variable="${name%%:*}"
+        value="${!variable:-$repo/${name#*:}}"
+        case "$value" in /*) ;; *) value="$PWD/$value" ;; esac
+        export "$variable=$(realpath -m -- "$value")"
+    done
+fi
 unset PYTHONHOME PYTHONPATH PYTHONNOUSERSITE
 . "$runtime_root/scripts/native_runtime_env.sh"
 "$engine" --no-results --lang petta --profile extended --import-mode ancestor-walk "$runtime_root/modes/prepare_native.metta"

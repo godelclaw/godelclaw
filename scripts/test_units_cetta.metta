@@ -37,6 +37,7 @@
       ("METTACLAW_MODEL_STATE_PATH" "{home}/missing/model-state")))
     ("tests/unit/inert_value_formatting.metta" "UNIT_INERT_VALUE_FORMATTING_OK")
     ("tests/unit/loop_host.metta" "UNIT_LOOP_HOST_OK")
+    ("tests/unit/history_records.metta" "UNIT_HISTORY_RECORDS_OK")
     ("tests/unit/commentary_contract.metta" "UNIT_COMMENTARY_ON_OK" (("METTACLAW_MODEL_COMMENTARY" "1")))
     ("tests/unit/commentary_contract.metta" "UNIT_COMMENTARY_OFF_OK" (("METTACLAW_MODEL_COMMENTARY" "0")))
     ("tests/unit/native_call.metta" "UNIT_NATIVE_CALL_KINDS_OK")

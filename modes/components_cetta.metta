@@ -1,6 +1,8 @@
 ; Captured native components: metadata, schemas and invocation share one record.
 !(import! &self ./tool_io_cetta.metta)
 !(import! &self ../src/tool_output_cetta.metta)
+!(import! &self ../src/semantic_memory_cetta.metta)
+!(import! &self ./history_cetta.metta)
 (= (component:failed? $value) (case $value (((Error $_ $_) True) ($other False))))
 (= (component:names $directory)
    (if (fs:exists $directory)
@@ -109,6 +111,12 @@
                 (if (turn:failed? $sent) $sent "SUCCESS")))
       ("shell" (mode-tool:shell (sf:get $arguments "cmd" "")))
       ("python" (component:python (sf:get $arguments "code" "")))
+      ; The agent's long-term memory and history, shared with every loop.
+      ("remember" (semantic:remember (sf:get $arguments "content" "")))
+      ("query" (semantic:query (sf:get $arguments "content" "") 20))
+      ("episodes" (if (mode-history:shared?)
+                    (mode-history:episodes (mode-history:path) (sf:get $arguments "timestamp" "") 20)
+                    (Error component-call (Unsolvable agent-history-unavailable))))
       ($unknown (Error component-call (Unsolvable unknown-native-builtin))))))
 (= (component:memory $directory)
    (sort-atom (component:memory-at $directory "")))

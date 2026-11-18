@@ -183,10 +183,16 @@ selection and the operator lifecycle latch are instance-specific. Neither
 transport nor controller is a child of the cognitive process.
 
 Inputs are acknowledged after history checkpoints. Mode switches before a
-checkpoint leave the input with its existing channel owner. Iter experience,
-Omega history and transformations are mode-private. Omega loads the pinned
-upstream NAL and PLN libraries. On supervised CeTTa it uses the agent's native
-semantic-memory service. Standalone launches use mode-private text recall.
+checkpoint leave the input with its existing channel owner.
+
+Supervised modes share the agent's memory. Omega reads and appends the
+agent's history, the same file the framework loop writes. Iter adds each
+saved step to that history in the framework's record form, with its results,
+and on entry receives what the other loops recorded since it last ran. Iter's
+`remember`, `query` and `episodes` tools use the agent's semantic memory and
+history, as Omega's do. Iter's experience and transformations stay its working
+state. Omega loads the pinned upstream NAL and PLN libraries. Standalone
+launches keep their own history and text recall.
 Optional plugins and upstream Chroma startup remain outside these native modes.
 
 The supervised process test uses scripted HTTP and CWP peers. Set the same
