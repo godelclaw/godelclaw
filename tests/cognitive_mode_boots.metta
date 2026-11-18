@@ -31,6 +31,11 @@
        (((proc:exited $code $_ $_) (== $code 0))
         ((proc:result $status $_ $_ $_ $_) (== $status (proc:exited 0)))
         ($running (core-boot:wait-exit $owner (- $remaining 1)))))))
+(= (core-boot:wait-posts $world $owner $count $remaining)
+   (if (or (<= $remaining 0) (>= (core-boot:posts $world) $count)) True
+     (let $_ (proc:wait $owner 20) (core-boot:wait-posts $world $owner $count (- $remaining 1)))))
+(= (core-boot:posts $world)
+   (if (fs:is-file (nq:path $world "count")) (nq:posts $world) 0))
 (= (core-boot:mode $mode)
    (let* (($root (system:getenv-or-default "NATIVE_TEST_RUNTIME_ROOT" (system:cwd)))
           ($core (nt:required-env "NATIVE_TEST_CORE"))
@@ -49,6 +54,9 @@
           ($cwp (proc:spawn ((nt:required-env "NATIVE_TEST_CWP_FIXTURE") $cwp-socket $cwp-root)
                    ((env (nt:environment $directory)) (max-bytes 65536))))
           ($_ (nq:wait-file $cwp (path:join $cwp-root "ready") 100))
+          ; A delivered-send receipt behind it is transport state, not input.
+          ($_ (fs:write (path:join $cwp-root "second.json")
+                "[\"delivery\",\"42.0.00000000000000000001\",0,1,[\"delivered\",99]]"))
           ; One queued operator message, as the Telegram service offers it.
           ($_ (fs:write (path:join $cwp-root "delivery.json")
                 "[\"input\",\"42.0\",\"message\",\"operator\",{\"update_id\":7,\"message\":{\"message_id\":5,\"date\":1795000000,\"chat\":{\"id\":42,\"type\":\"private\"},\"from\":{\"id\":7,\"first_name\":\"Operator\",\"is_bot\":false},\"text\":\"boot-test operator message\"}}]"))
@@ -80,7 +88,11 @@
           ; The arguments run.sh passes for a selected mode.
           ($command ("bash" (path:join $root "modes/launch_native.sh")
                        "--repo" $agent "--mode" $mode "--engine" "cetta" "--profile" "supervised"))
+          ; The provider's first answer is a failure; the mode must stay up.
+          ($_ (fs:write (nq:path $world "status") "503"))
           ($owner (proc:spawn $command ((cwd $root) (env $environment) (max-bytes 1048576))))
+          ($_ (core-boot:wait-posts $world $owner 1 1500))
+          ($_ (fs:write (nq:path $world "status") "200"))
           ($checkpoint (path:join $runtime "native-checkpoint-v1.json"))
           ($ready (core-boot:wait-checkpoint $owner $checkpoint 250 (if (== $mode "iter") "SUCCESS" "shell")))
           ($_ (proc:cancel $owner)) ($ended (proc:await $owner)) ($_ (proc:close $owner))
@@ -99,6 +111,10 @@
           ($_ (nt:require operator-input-reaches-provider
                 (nt:contains (fs:read-text (nq:path $world "request-1.body")) "boot-test operator message")))
           ($_ (nt:require input-acknowledged-after-checkpoint (fs:exists (path:join $cwp-root "delivery-acked"))))
+          ($_ (nt:require delivered-receipt-acknowledged (fs:exists (path:join $cwp-root "second-acked"))))
+          ($_ (nt:require delivered-receipt-not-presented
+                (not (nt:contains (sf:get $before "payload" "") "channel receipt"))))
+          ($_ (nt:require provider-failure-retried (> (nq:posts $world) 1)))
           ($_ (nt:require mode-keeps-agent-identity
                 (nt:contains (fs:read-text (nq:path $world "request-1.body")) "Boot-test agent identity")))
           ($_ (if (== $mode "iter")

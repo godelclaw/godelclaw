@@ -307,6 +307,10 @@
               (mode-host:offer (cdr-atom $rows) $capture $texts)))
           ((JsonArray ((JsonString "callback") $_ $_ $_))
             (mode-host:offer (cdr-atom $rows) $capture $texts))
+          ; A delivered send is settled transport state, as in the framework
+          ; loop: acknowledge it without presenting it to the loop.
+          ((JsonArray ((JsonString "delivery") $_ $_ $_ (JsonArray ((JsonString "delivered") $_))))
+            (let $_ (mode-host:ack-one $task) (mode-host:offer (cdr-atom $rows) $capture $texts)))
           ((JsonArray $_)
             (mode-host:offer (cdr-atom $rows) (cons-atom (ModeInputV1 $task "") $capture)
               (cons-atom (str:concat "[channel receipt; this is delivery status, not a user message]\n" $body) $texts)))

@@ -178,8 +178,14 @@
      ((((JsonObject $pairs))
        (case (collapse (catch (llm:run (llm:structured-plan (JsonObject $pairs) "coding"))))
          ((((ProviderReplyV1 $reply)) (ih:box (state:canonical $reply)))
-          ($failure (mode-host:stop-uncommitted $failure)))))
+          ($failure (ih:provider-recover $failure $experience $temporary $tools $surface)))))
       ($failure (mode-host:stop-uncommitted (Error iter-provider (Fault (request-preparation $failure))))))))
+; Upstream Iter reports a failed step, waits ERROR_RECOVERY_TIME and goes on.
+; The wait passes the mode gate, and the next call waits out provider pacing.
+(= (ih:provider-recover $failure $experience $temporary $tools $surface)
+   (let* (($_ (system:write stderr (str:join "" ("Output> " (diagnostic:text $failure 400) "\n"))))
+          ($_ (ih:sleep 1)))
+     (ih:provider $experience $temporary $tools $surface)))
 (= (ih:retry-no-tool $content)
    (str:join "" ("[YOUR PREVIOUS RESPONSE CONTAINED NO TOOL CALL AND WAS NOT DELIVERED. CALL AT LEAST ONE TOOL NOW. IF YOU INTENDED THIS CONTENT AS COMMUNICATION, USE send: " (repr (ih:json $content)) "]")))
 (= (ih:decode $arguments)
