@@ -17,33 +17,35 @@ spec.loader.exec_module(update)
 class ReleasePermissionsTest(unittest.TestCase):
     def test_public_release_contains_the_mode_runtime_and_every_vendored_file(self):
         root = Path(__file__).resolve().parents[1]
-        selected = set(json.loads((root / "config/runtime-files.json").read_text()))
+        selected = set(json.loads((root / "config/runtime-files.json").read_text())["files"])
         for required in (
-            "modes/launch.py", "modes/runtime_host.py",
-            "modes/iter/iter_host.py", "modes/conformance/verify.py",
-            "modes/tool_protocol.py", "modes/protocol/ToolCalls.module",
-            "src/native_llm.metta", "src/native_llm_host.py",
-            "src/native_lifetime.py", "src/llm_policy.py",
-            "src/cognitive_health.py", "src/provider_protocol.py",
-            "src/model_commentary.py", "src/commentary_observer_cetta.metta",
-            "src/worklog_sink_cetta.metta",
+            "modes/launch_native.sh", "modes/prepare_native.metta",
+            "modes/runtime_host_cetta.metta", "modes/tool_io_cetta.metta",
+            "modes/components_cetta.metta", "modes/component_worker_cetta.metta",
+            "modes/iter/native_main.metta", "modes/iter/core.metta", "modes/iter/host_cetta.metta",
+            "modes/omega/native_main.metta", "modes/omega/native/bootstrap.metta",
+            "modes/protocol/ToolCalls.module",
+            "src/native_llm.metta", "src/boot_state_cetta.metta", "src/loop_modes_cetta.metta",
+            "src/commentary_observer_cetta.metta", "src/worklog_sink_cetta.metta",
         ):
             self.assertIn(required, selected)
         for retired in ("src/provider_stream.py", "src/commentary_stream.py"):
             self.assertNotIn(retired, selected)
-        for mode in ("iter", "omega"):
-            manifest = json.loads(
-                (root / f"modes/{mode}/upstream-manifest.json").read_text())
-            vendored = {
-                f"modes/{mode}/upstream/{item['path']}"
-                for item in manifest["files"] if item.get("vendored")
-            }
-            self.assertLessEqual(vendored, selected)
+        # The native ports read these upstream files; the pinned Python tools
+        # and providers stay in the source tree for comparison only.
+        for required in ("modes/iter/upstream/prompt.txt", "modes/iter/upstream/LICENSE",
+                         "modes/iter/templates/shell.metta", "modes/iter/templates/send.metta",
+                         "modes/iter/templates/python.metta", "modes/iter/templates/nop.metta"):
+            self.assertIn(required, selected)
+        for required in ("modes/omega/upstream/lib_nal.metta", "modes/omega/upstream/lib_pln.metta",
+                         "modes/omega/upstream/memory/prompt.txt", "modes/omega/upstream/LICENSE",
+                         "modes/omega/upstream-manifest.json", "modes/iter/upstream-manifest.json"):
+            self.assertIn(required, selected)
 
     def test_every_relative_import_of_a_selected_module_is_selected(self):
         # A module that is imported but not selected never reaches an instance: the agent then fails at boot.
         root = Path(__file__).resolve().parents[1]
-        selected = set(json.loads((root / "config/runtime-files.json").read_text()))
+        selected = set(json.loads((root / "config/runtime-files.json").read_text())["files"])
         instance_local = {"config/channel.metta", "src/instance_hooks.metta"}  # written per instance
         missing = []
         for name in sorted(selected):
@@ -111,7 +113,9 @@ class ReleasePermissionsTest(unittest.TestCase):
         path = Path(__file__).resolve().parents[1]/'scripts/sync_instances.py'
         spec = importlib.util.spec_from_file_location('sync_instances_test', path)
         sync = importlib.util.module_from_spec(spec)
-        with mock.patch.dict(sys.modules, {'update_instances': update}):
+        # sync_instances imports its sibling cetta_source_snapshot module.
+        with mock.patch.dict(sys.modules, {'update_instances': update}), \
+             mock.patch.object(sys, 'path', [str(path.parent)] + sys.path):
             spec.loader.exec_module(sync)
         config = dict(instances=[dict(service='fixture', required_runtime=dict(CETTA_BIN='new'))])
         with mock.patch.object(update, 'running_settings', return_value=dict(CETTA_BIN='old')):

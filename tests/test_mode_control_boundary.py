@@ -13,7 +13,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT / "channels"), str(ROOT / "modes")]
 import durable_telegram
 import mode_channel
-import runtime_host
 import synthetic_llm
 
 
@@ -54,55 +53,11 @@ class ControlBoundaryTests(unittest.TestCase):
                 child.kill()
                 child.wait()
 
-    def test_group_bot_reply_and_operator_have_separate_destinations(self):
-        update = {"update_id": 11, "message": {"message_id": 81,
-            "chat": {"id": -84, "type": "supergroup", "title": "Lab"},
-            "from": {"id": 9, "first_name": "Sibling", "is_bot": True},
-            "message_thread_id": 5, "is_topic_message": True,
-            "reply_to_message": {"message_id": 80, "from": {"id": 7, "first_name": "Other"}},
-            "text": "verdict"}}
-        client = mock.Mock()
-        client.pending.return_value = [("input-11", json.dumps(["input", "-84.5", "message", "bot", update])),
-                                       ("control-12", json.dumps(["command", "42.0", "/mode", "omega", "operator"]))]
-        with mock.patch.object(runtime_host, "gate"), mock.patch.object(runtime_host, "channel", return_value=client):
-            observed = runtime_host.receive()
-            self.assertNotIn("/mode", observed)
-            self.assertIn('chat_type="supergroup"', observed)
-            self.assertIn("from_is_bot=true", observed)
-            self.assertIn('thread_id="5"', observed)
-            self.assertIn('reply_to_message_id="80"', observed)
-            self.assertIn("reply_channel=telegram_m84_5", observed)
-            runtime_host.commit_inputs()
-        client.acknowledge.assert_called_once_with("input-11")
-        self.assertTrue((self.runtime / "channels/telegram_m84_5.py").exists())
-        self.assertIn("telegram_m84_5", mode_channel.context())
-        mode_channel.enqueue("private status")
-        mode_channel.enqueue("sibling reply", "telegram_m84_5")
-        intents = [json.loads(p.read_text()) for p in (self.base / "modes/channel-outbox").glob("*.json")]
-        lanes = {i["commands"][0][1]: durable_telegram.lane_of(i["key"]) for i in intents}
-        self.assertEqual(lanes, {"private status": "42.0", "sibling reply": "-84.5"})
-
     def test_sender_text_cannot_create_a_destination(self):
         for destination in ("../operator", "telegram_m84_5", "other", "telegram_0_0"):
             with self.assertRaises(ValueError):
                 mode_channel.enqueue("text", destination)
         self.assertFalse((self.base / "modes/channel-outbox").exists())
-
-    def test_handover_input_survives_until_a_cognitive_checkpoint(self):
-        update = {"update_id": 19, "message": {"chat": {"id": 42, "type": "private"},
-                  "from": {"id": 7, "is_bot": False}, "text": "pending during handover"}}
-        mode_channel.store(self.base / "modes/channel-handover/19.json", update)
-        client = mock.Mock()
-        client.pending.return_value = []
-        with mock.patch.object(runtime_host, "gate"), mock.patch.object(runtime_host, "channel", return_value=client):
-            first = runtime_host.receive()
-            self.assertIn("pending during handover", first)
-            self.assertEqual(runtime_host.receive(), first)
-            self.assertEqual(len(mode_channel.handover_inputs()), 1)
-            runtime_host.commit_inputs()
-            self.assertEqual(runtime_host.receive(), "")
-        client.acknowledge.assert_not_called()
-        self.assertTrue((self.base / "modes/channel-handover/19.done").exists())
 
     def test_normal_metta_client_preserves_the_same_handover_receipt(self):
         update = {"update_id": 21, "message": {"chat": {"id": -84, "type": "group"},

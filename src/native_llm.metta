@@ -14,9 +14,7 @@
 (: llm:host-flag (-> %Undefined% Bool))
 (= (llm:host-flag $value)
    (host:flag $value))
-; Every provider call is native, except where an upstream mode keeps its own
-; provider: a standalone terminal launch (modes/launch.py), and the offline
-; conformance fixture that stands in for Iter's provider (modes/conformance).
+; Managed and standalone modes share the native provider transport.
 (= (llm:native?)
    True)
 !(if (llm:native?)

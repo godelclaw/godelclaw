@@ -116,10 +116,7 @@ def gate():
     if os.environ.get("METTACLAW_CODING_CHECK") == "1":
         raise RuntimeError("provider calls are refused under METTACLAW_CODING_CHECK=1")
     if os.environ.get("METTACLAW_MODE_RUNTIME"):
-        import runtime_host
-        runtime_host.gate()
-        runtime_host.provider_retry_boundary()
-        return True
+        raise RuntimeError("mode provider calls require the native mode launcher")
     import engine_modes
     import lifecycle
     if not coding_session() and engine_modes.recycle_requested():
@@ -422,12 +419,7 @@ def rejected(status, code, message, correction):
 def structured_failed(status, error_type):
     """End a structured call's caller with the error its failure names. The
     native owner has reported and paced it, but has no raise its caller's
-    catch could catch. A mode runtime first waits out the pacing at its gate."""
-    if os.environ.get("METTACLAW_MODE_RUNTIME"):
-        import runtime_host
-        wait = cognitive_health.retry_wait_seconds()
-        if wait:
-            runtime_host.sleep(wait)
+    catch could catch."""
     status = int(status)
     if 400 <= status < 500 and status not in (408, 409, 425, 429):
         raise RuntimeError("native provider rejected the request: HTTP %d" % status) from None

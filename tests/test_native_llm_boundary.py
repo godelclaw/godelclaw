@@ -760,19 +760,6 @@ class FailureSettlementHostTests(unittest.TestCase):
                  self.assertRaisesRegex(RuntimeError, "^%s$" % re.escape(message)):
                 native_llm_host.structured_failed(status, error_type)
 
-    def test_a_mode_runtime_waits_out_the_pacing_at_its_gate(self):
-        from unittest import mock
-        import types
-        import native_llm_host
-        sleeps = []
-        runtime = types.SimpleNamespace(sleep=sleeps.append)
-        with mock.patch.dict(os.environ, {"METTACLAW_MODE_RUNTIME": "fixture-runtime"}), \
-             mock.patch.dict(sys.modules, {"runtime_host": runtime}), \
-             mock.patch.object(native_llm_host.cognitive_health, "retry_wait_seconds", return_value=15), \
-             self.assertRaises(RuntimeError):
-            native_llm_host.structured_failed(0, "OSError")
-        self.assertEqual(sleeps, [15])
-
     def test_a_rejection_is_retained_with_the_state_its_plan_captured(self):
         from unittest import mock
         import native_llm_host
