@@ -291,9 +291,10 @@
      (let* ((($task $body) (car-atom $rows)) ($value (catch (json-parse $body))))
        (case $value
          (((JsonArray ((JsonString "input") $_ $_ $_ $update))
+           ; $body is already the row's JSON: a second let* binding would unify, not shadow.
            (let* ((($kind $message) (tg:message-of $update))
-                  ($body (tg:message-text $message))
-                  ($text (if (== $body "") "[attachment received; use the agent attachment tools to inspect it]" $body))
+                  ($message-text (tg:message-text $message))
+                  ($text (if (== $message-text "") "[attachment received; use the agent attachment tools to inspect it]" $message-text))
                   ($destination (mode-host:remember-route $message))
                   ($id (tg:str (tg:at $update "update_id"))))
              (if (turn:failed? $destination) $destination

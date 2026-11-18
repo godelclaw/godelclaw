@@ -3,24 +3,25 @@
 !(import! &self ./provider_native_qualification.metta)
 !(import! &self ../src/state_file_cetta.metta)
 !(import! &self ../src/coding_io_cetta.metta)
-(= (core-boot:wait-checkpoint $owner $path $remaining)
+; A settled checkpoint whose payload holds $needle; an input is checkpointed
+; before the provider call, so the first settled record need not be the turn's.
+(= (core-boot:settled-with? $path $needle)
+   (let $record (sf:native-object $path)
+     (and (== (sf:get $record "status" "") "settled") (nt:contains (sf:get $record "payload" "") $needle))))
+(= (core-boot:wait-checkpoint $owner $path $remaining $needle)
    (if (<= $remaining 0) (progn (println! (BOOT_DID_NOT_CHECKPOINT $path (proc:poll $owner))) False)
-     (if (fs:is-file $path)
-       (let $record (sf:native-object $path)
-         (if (== (sf:get $record "status" "") "settled") True
-           (core-boot:wait-next $owner $path $remaining)))
-       (core-boot:wait-next $owner $path $remaining))))
-(= (core-boot:wait-next $owner $path $remaining)
+     (if (and (fs:is-file $path) (core-boot:settled-with? $path $needle)) True
+       (core-boot:wait-next $owner $path $remaining $needle))))
+(= (core-boot:wait-next $owner $path $remaining $needle)
    (case (proc:wait $owner 100)
      (((proc:exited $code $stdout $stderr)
        (progn (println! (EARLY_MODE_EXIT $code $stdout $stderr)) False))
       ((proc:result $status $kind $stdout $stderr $capture)
        (let $_ (fs:write (path:join (path:dirname $path) "mode-native-exit.log")
                   (repr (proc:result $status $kind $stdout $stderr $capture)))
-         (if (and (== $status (proc:exited 0))
-                  (== (sf:get (sf:native-object $path) "status" "") "settled")) True
+         (if (and (== $status (proc:exited 0)) (core-boot:settled-with? $path $needle)) True
            (progn (println! (EARLY_MODE_EXIT $status $kind $stdout $stderr $capture)) False))))
-      ($running (core-boot:wait-checkpoint $owner $path (- $remaining 1))))))
+      ($running (core-boot:wait-checkpoint $owner $path (- $remaining 1) $needle)))))
 ; The service's environment names none of these; drop the world's defaults.
 (= (core-boot:without $environment $names)
    (filter-atom $environment $pair (not (erv:contains $names (car-atom $pair)))))
@@ -48,6 +49,9 @@
           ($cwp (proc:spawn ((nt:required-env "NATIVE_TEST_CWP_FIXTURE") $cwp-socket $cwp-root)
                    ((env (nt:environment $directory)) (max-bytes 65536))))
           ($_ (nq:wait-file $cwp (path:join $cwp-root "ready") 100))
+          ; One queued operator message, as the Telegram service offers it.
+          ($_ (fs:write (path:join $cwp-root "delivery.json")
+                "[\"input\",\"42.0\",\"message\",\"operator\",{\"update_id\":7,\"message\":{\"message_id\":5,\"date\":1795000000,\"chat\":{\"id\":42,\"type\":\"private\"},\"from\":{\"id\":7,\"first_name\":\"Operator\",\"is_bot\":false},\"text\":\"boot-test operator message\"}}]"))
           ($effect-path (nq:path $world "physical-effect")) ($recycle (nq:path $world "recycle"))
           ($shell (str:join "" ("printf X >> " (cio:shell-quote $effect-path) "; : > " (cio:shell-quote $recycle))))
           ($arguments (json:stringify-python (JsonObject ((JsonPair "cmd" $shell)))))
@@ -78,7 +82,7 @@
                        "--repo" $agent "--mode" $mode "--engine" "cetta" "--profile" "supervised"))
           ($owner (proc:spawn $command ((cwd $root) (env $environment) (max-bytes 1048576))))
           ($checkpoint (path:join $runtime "native-checkpoint-v1.json"))
-          ($ready (core-boot:wait-checkpoint $owner $checkpoint 250))
+          ($ready (core-boot:wait-checkpoint $owner $checkpoint 250 (if (== $mode "iter") "SUCCESS" "shell")))
           ($_ (proc:cancel $owner)) ($ended (proc:await $owner)) ($_ (proc:close $owner))
           ($_ (fs:write (nq:path $world "mode-first.log") (repr $ended)))
           ($_ (nt:require real-mode-checkpoint $ready))
@@ -92,6 +96,9 @@
           ($_ (nt:require real-mode-provider-submitted (> (nq:posts $world) 0)))
           ($_ (nt:require mode-uses-agent-model-selection
                 (nt:contains (fs:read-text (nq:path $world "request-1.body")) "fixture-selected-model")))
+          ($_ (nt:require operator-input-reaches-provider
+                (nt:contains (fs:read-text (nq:path $world "request-1.body")) "boot-test operator message")))
+          ($_ (nt:require input-acknowledged-after-checkpoint (fs:exists (path:join $cwp-root "delivery-acked"))))
           ($_ (nt:require mode-keeps-agent-identity
                 (nt:contains (fs:read-text (nq:path $world "request-1.body")) "Boot-test agent identity")))
           ($_ (if (== $mode "iter")
