@@ -3,7 +3,7 @@
 !(import! &self ../tests/native_test_support.metta)
 !(import! &self ../src/state_file_cetta.metta)
 !(import! &self (library list))
-(= (boot:path-guard $release $artifacts $name $relative $allowed)
+(= (boot:path-guard $operator $artifacts $name $relative $allowed)
    (let* (($root (path:join $artifacts $name)) ($source (path:join $root "release"))
           ($instance (path:join $root "instance")) ($state (path:join $root "state"))
           ($file (path:join (path:join $source "files") $relative))
@@ -24,15 +24,18 @@
                (JsonPair "expected" (JsonObject ((JsonPair $relative JsonNull)))))))))))) 384 True))
           ; This is the existing permitted deployment operator, under a CeTTa
           ; test controller. It is never a candidate agent or guest fixture.
-          ($result (proc:run ("/usr/bin/python3" (path:join $release "files/scripts/update_instances.py")
+          ($result (proc:run ("/usr/bin/python3" $operator
                   "--plan" $plan "--release" $source "--receipt-dir" (path:join $root "receipt"))
                   (system:cwd) inherit 10000 1048576)))
-     (nt:require (release-path-boundary $name)
+     (let $verified
        (case $result
          (((proc:exited $code $out $err)
            (if $allowed (and (== $code 0) (nt:contains $out "prepared"))
              (and (!= $code 0) (nt:contains $err "instance data cannot be a shared release file"))))
-          ($bad False))))))
+          ($bad False)))
+       (if $verified (nt:require (release-path-boundary $name) True)
+         (let $_ (println! (RELEASE_PATH_UNEXPECTED $name $result))
+           (nt:require (release-path-boundary $name) False))))))
 !(let* (($release (nt:required-env "NATIVE_TEST_RELEASE"))
          ($artifacts (nt:required-env "NATIVE_TEST_ARTIFACTS"))
          ($instance (path:join $artifacts (str:concat "fresh-" (system:uuid4-hex))))
@@ -56,8 +59,9 @@
          ((fs:hashed-v1 $after $_) (fs:sha256-file $secret-copy))
          ($_ (nt:require repeated-initialization-preserves-private-configuration-and-identity
               (and (== $before $after) (== (fs:read-text (path:join $instance "memory/soul.md")) "fixture identity; preserve this\n"))))
-         ($_ (boot:path-guard $release $artifacts "public-template" "config/secrets.env.example" True))
-         ($_ (boot:path-guard $release $artifacts "private-secrets" "config/secrets.env" False))
-         ($_ (boot:path-guard $release $artifacts "private-local" "config/local.toml" False))
-         ($_ (boot:path-guard $release $artifacts "private-environment" ".env" False)))
+         ($operator (path:join (nt:required-env "NATIVE_TEST_SOURCE") "scripts/update_instances.py"))
+         ($_ (boot:path-guard $operator $artifacts "public-template" "config/secrets.env.example" True))
+         ($_ (boot:path-guard $operator $artifacts "private-secrets" "config/secrets.env" False))
+         ($_ (boot:path-guard $operator $artifacts "private-local" "config/local.toml" False))
+         ($_ (boot:path-guard $operator $artifacts "private-environment" ".env" False)))
    (println! (NATIVE_ARTIFACT_BOOTSTRAP_PASSED $instance)))
