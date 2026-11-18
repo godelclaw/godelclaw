@@ -270,9 +270,19 @@
           ($_ (if (and (not $stop) (== (get-state &ng-active) GatewayIdleV1)) (ng:maintenance) True)))
      (if (and $stop (== (get-state &ng-active) GatewayIdleV1)) True
        (let* (($interests (cons-atom ($listener read) (ng:client-interests $next)))
-              ($timeout (case (get-state &ng-active) ((GatewayIdleV1 50) ((GatewayValidatingV1 $_ $_ $_ $_ $_ $_ $_) 0) ($other 5))))
+              ($timeout (case (get-state &ng-active)
+                          ((GatewayIdleV1 (ng:idle-timeout $next))
+                           ((GatewayValidatingV1 $_ $_ $_ $_ $_ $_ $_) 0) ($other 5))))
               ($_ (host:wait $interests $timeout)))
          False)))))
+; Without a client the wait returns on a connection or a signal, so an idle
+; gateway sleeps until its next maintenance deadline instead of ticking.
+(= (ng:idle-timeout $clients)
+   (if (!= $clients ()) 50
+     (case (get-state &ng-maintenance)
+       (((GatewayMaintenanceV1 $_ $when)
+         (max 0 (min 5000 (math:ceil (/ (- $when (system:monotonic-ns)) 1000000)))))
+        ($scanning 50)))))
 (= (ng:loop $listener $signals)
    (if (ng:tick $listener $signals) True (ng:loop $listener $signals)))
 (= (ng:physical $path)
