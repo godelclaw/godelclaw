@@ -18,9 +18,6 @@
           ($_ (nq:provider-case $root $sdk $core $artifacts $fixture "kimi" "kimi:k3.1-pro" "responses" "petta"))
           ($_ (nq:provider-case $root $sdk $core $artifacts $fixture "openai" "openai:fixture" "responses" "petta"))
           ($_ (nq:provider-case $root $sdk $core $artifacts $fixture "anthropic" "claude-fixture" "anthropic" "petta"))
-          ($_ (if (== (system:getenv-or-default "NATIVE_PROVIDER_HOST_PROFILE" "all") "petta-production")
-                (println! (NATIVE_PROVIDER_HOST_SCOPE "petta extended; shared HE library contracts run separately"))
-                (nq:provider-case $root $sdk $core $artifacts $fixture "he" "fixture-model" "chat-completions" "he")))
           ($_ (nq:refusal $root $sdk $core $artifacts $fixture "bad-role"
                  "!(nt:require no-provider-answer (nt:equal (llm:command \"fixture-model\" 42 \"low\" \"{\\\"kind\\\":\\\"role-context-v1\\\",\\\"messages\\\":[]}\") \"()\"))\n!(println! NATIVE_REFUSAL_OK)"))
           ($_ (nq:refusal $root $sdk $core $artifacts $fixture "bad-effort"
