@@ -106,15 +106,17 @@
    (if (> (str:char-length $value) 5000) (str:concat (str:char-slice $value 0 5000) " [TRUNCATED]") $value))
 (= (ih:sleep $seconds) (mode-host:sleep $seconds))
 (= (ih:receive) (mode-host:receive))
+; A mode that cannot boot or read its experience says why and stops, as Omega
+; does; it never starts a loop over an error value.
 (= (ih:initialize)
    (let* (($root (mode-host:root)) ($_ (fs:make-directories "memory" 448)) ($_ (fs:make-directories "transformations" 448))
           ($ready (mode-host:boot))
-          ($history (if (!= $ready True) $ready
-            (if (fs:exists "experience.json") (catch (json:parse (fs:read-text "experience.json"))) (JsonArray ())))))
+          ($booted (if (== $ready True) True (mode-host:stop-uncommitted $ready)))
+          ($history (if (fs:exists "experience.json") (catch (json:parse (fs:read-text "experience.json"))) (JsonArray ()))))
      (case $history
        (((JsonArray $_)
          (let* (($_ (mode-host:sleep 10)) ($boxed (ih:box $history)) ($_ (ih:catch-up $boxed))) $boxed))
-        ($bad (Error iter:initialize (Fault invalid-experience)))))))
+        ($bad (mode-host:stop-uncommitted (Error iter:initialize (Fault invalid-experience $bad))))))))
 ; The agent's history since this mode last ran enters as one message, before
 ; the first step; it is the record of the other loops, never mirrored back.
 (= (ih:catch-up-header)

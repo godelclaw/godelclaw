@@ -111,9 +111,16 @@ if [ "$profile" = standalone ]; then
     export METTACLAW_NATIVE_LEDGER=1
     socket_root="${XDG_RUNTIME_DIR:-$HOME/.cache/godelclaw/run}"
     mkdir -p -- "$socket_root"
+    # A Unix socket path holds at most 107 bytes. 128 bits of the state's
+    # digest name its socket and leave the rest for the directory.
     state_digest="$(printf '%s' "$METTACLAW_MODE_RUNTIME" | sha256sum)"
-    state_digest="${state_digest%% *}"
-    export METTACLAW_INPUT_LEDGER_SOCKET="$socket_root/mode-$state_digest.sock"
+    socket="$socket_root/mode-${state_digest:0:32}.sock"
+    if [ "$(printf '%s' "$socket" | wc -c)" -gt 107 ]; then
+        echo "the mode's ledger socket path is longer than 107 bytes: $socket" >&2
+        echo 'set XDG_RUNTIME_DIR to a shorter directory' >&2
+        exit 2
+    fi
+    export METTACLAW_INPUT_LEDGER_SOCKET="$socket"
     export METTACLAW_LOOP_MODE_PATH="$state/selection.json"
     export METTACLAW_ANTHROPIC_USAGE_PATH="$METTACLAW_MODE_RUNTIME/anthropic-usage.json"
 fi
