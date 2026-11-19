@@ -22,9 +22,9 @@
    (let $length (str:char-length $text)
      (str:char-slice $text (max 0 (- $length $count)) $length)))
 
-; py-str's text: Python's str() of each part as the bridge converts it,
-; concatenated.  Strings, symbols, Booleans and numbers convert here, without
-; py-str's two Python calls a part; any other atom still converts in Python.
+; py-str's text: Python's str() of each part as the py-call bridge converted
+; it, concatenated. Strings, symbols, Booleans and numbers convert directly;
+; an expression converts as a list.
 (= (utils:py-str $parts) (str:join "" (utils:py-texts $parts)))
 (= (utils:py-texts $parts)
    (if (== $parts ()) ()
@@ -37,8 +37,17 @@
           ((String $part)
            (Bool (if $part "True" "False"))
            (Number (utils:py-number-text $part))
-           ($other (erv:str (erv:cross $part))))))
-      ($other (erv:str (erv:cross $part))))))
+           ($other (erv:str (utils:py-cross $part))))))
+      ($other (erv:str (utils:py-cross $part))))))
+; The bridge passed a list's Booleans as Python Booleans, where a receipt's
+; crossing (erv:cross) records them as text.
+(= (utils:py-cross $value)
+   (if (== (get-type $value) String) $value
+     (case $value
+       ((True True) (False False)
+        ($other (if (or (== (get-metatype $other) Expression) (== (get-metatype $other) List))
+                  (JsonArray (map-atom $other $item (utils:py-cross $item)))
+                  (erv:cross $other)))))))
 ; A number's str() is its JSON text but for the non-finite floats.  An integer
 ; past Python's digit limit still raises in Python, as it did.
 (= (utils:py-number-text $number)
