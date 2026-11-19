@@ -109,18 +109,30 @@ if [ "$profile" = standalone ]; then
     export METTACLAW_LIFECYCLE_PATH="$METTACLAW_MODE_RUNTIME/lifecycle.json"
     export METTACLAW_RECYCLE_REQUEST_PATH="$METTACLAW_MODE_RUNTIME/recycle.requested"
     export METTACLAW_NATIVE_LEDGER=1
-    socket_root="${XDG_RUNTIME_DIR:-$HOME/.cache/godelclaw/run}"
-    mkdir -p -- "$socket_root"
     # A Unix socket path holds at most 107 bytes. 128 bits of the state's
     # digest name its socket and leave the rest for the directory.
     state_digest="$(printf '%s' "$METTACLAW_MODE_RUNTIME" | sha256sum)"
-    socket="$socket_root/mode-${state_digest:0:32}.sock"
-    if [ "$(printf '%s' "$socket" | wc -c)" -gt 107 ]; then
-        echo "the mode's ledger socket path is longer than 107 bytes: $socket" >&2
+    socket_name="mode-${state_digest:0:32}.sock"
+    socket_fits() { [ "$(printf '%s/%s' "$1" "$socket_name" | wc -c)" -le 107 ]; }
+    if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
+        socket_root="$XDG_RUNTIME_DIR"
+    else
+        # Without a runtime directory, a home too deep for the socket falls
+        # back to a private directory under /tmp, as other tools do.
+        socket_root="$HOME/.cache/godelclaw/run"
+        socket_fits "$socket_root" || socket_root="/tmp/godelclaw-$(id -u)"
+    fi
+    if ! socket_fits "$socket_root"; then
+        echo "the mode's ledger socket path is longer than 107 bytes: $socket_root/$socket_name" >&2
         echo 'set XDG_RUNTIME_DIR to a shorter directory' >&2
         exit 2
     fi
-    export METTACLAW_INPUT_LEDGER_SOCKET="$socket"
+    mkdir -p -m 700 -- "$socket_root"
+    if [ -L "$socket_root" ] || [ ! -O "$socket_root" ]; then
+        echo "the mode's socket directory is not this user's own: $socket_root" >&2
+        exit 2
+    fi
+    export METTACLAW_INPUT_LEDGER_SOCKET="$socket_root/$socket_name"
     export METTACLAW_LOOP_MODE_PATH="$state/selection.json"
     export METTACLAW_ANTHROPIC_USAGE_PATH="$METTACLAW_MODE_RUNTIME/anthropic-usage.json"
 fi
