@@ -8,8 +8,8 @@
                "(True True) (true True) (False False) (false False)"
                "(True False) (true False) (False False) (false False)"
                "scripts/test_input_delivery_canary_cetta.metta" "FAIL settled-mail-is-quiet"))
-          ($_ (im:case "resampled-scope" "src/working_state_host.py"
-               "captured = strategy_host._turn_input_ids" "captured = None"
-               "scripts/test_input_delivery_canary_cetta.metta" "FAIL working-scope-matches-presented-deliveries"))) NativeInputMutantsPassedV1))
+          ($_ (im:case "resampled-scope" "src/turn_frame_cetta.metta"
+               "((if (== $activity 1) (turn:get \"inputs\" ()) ())" "((if (== $activity 1) (input-scope:ids) ())"
+               "scripts/test_input_delivery_canary_cetta.metta" "FAIL scope-does-not-resample-late-input"))) NativeInputMutantsPassedV1))
 !(nt:require mutation-driver-completed (nt:equal (collapse (im:run)) (NativeInputMutantsPassedV1)))
 !(println! NATIVE_INPUT_MUTANTS_PASSED)
