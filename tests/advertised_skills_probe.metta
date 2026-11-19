@@ -1,5 +1,6 @@
 !(import! &self (library lib_import))
 !(import! &self ./lib_mettaclaw)
+!(import! &self ./tests/prompt_checks.metta)
 
 (= (assertEqual $A $B) (assert (== $A $B)))
 !(bind! &help-effects (new-state 0))
@@ -12,8 +13,6 @@
 
 ;; A structured request advertises one skill a line, in the agent and the
 ;; coding mode alike.
-!(py-eval "__import__('sys').path.insert(0, 'tests')")
-!(py-eval "(__import__('helper').__dict__.__setitem__('_working_boot_cache', {}), __import__('helper').__dict__.__setitem__('working_boot', lambda: 3))")
 !(initMemory)
 !(configure commchannel telegram)
 
@@ -22,8 +21,8 @@
           ($turn (process-periphery (initLoop)))
           ($prompt (request:render (coding-request-prompt (turnRequest $turn (NEW_ACTIVITY: first)))))
           ($_ (cut)))
-     (py-call (advertised_skills_check.one_skill_a_line $prompt (getSkills)))))
+     (pc:one-skill-a-line $prompt (getSkills))))
 
-!(let* (($_ (assertEqual (skills-a-line "godelclaw") 1))
-        ($_ (assertEqual (skills-a-line "coding") 1)))
+!(let* (($_ (assertEqual (skills-a-line "godelclaw") True))
+        ($_ (assertEqual (skills-a-line "coding") True)))
     (println! ADVERTISED_SKILLS_OK))
