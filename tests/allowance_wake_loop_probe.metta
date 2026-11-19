@@ -43,7 +43,7 @@
 (= (aw:bank $p) (coordinate-get-or banked-loops 0 $p))
 (= (aw:waiting $p) (coordinate-get-or rest-await-input 0 $p))
 
-!(let* (($_ (py-call (loop_modes.set_mode "godelclaw")))
+!(let* (($_ (loop-mode:set "godelclaw"))
          ($boot (process-periphery (initLoop)))
          ($parked (coordinate-set iteration 5
                     (coordinate-set loops 0
@@ -106,10 +106,11 @@
          ($_ (println! (HEARTBEAT_BANK $renewed)))
          ;; A recycle request ends the wait without waking: nothing is handed
          ;; back, so the next process boots still resting.
-         ($_ (py-eval "open(__import__('os').environ['METTACLAW_RECYCLE_REQUEST_PATH'], 'w').write('probe')"))
+         ($_ (assertEqual (engine-native:recycle) True))
          ((success $p7r) (waitProcess $p7))
          ($_ (persistProcessState (rooted weak-process-core-v1 $p7r)))
-         ($_ (py-call (helper.recycle_ack)))
+         ;; The next process's launcher consumes the request at boot, as run.sh does.
+         ($_ (fs:remove (system:getenv-or-default "METTACLAW_RECYCLE_REQUEST_PATH" "")))
          ($_ (assertEqual (loop-budget $p7r) 0))
          ($_ (assertEqual (aw:bank $p7r) $renewed))
          ($_ (assertEqual (aw:waiting $p7r) 1))
