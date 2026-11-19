@@ -34,7 +34,7 @@
             ("METTACLAW_WAKE_REQUEST_PATH" (nq:path $world "wake.requested"))
             ("METTACLAW_CHATGPT_POLICY_PATH" (nq:path $world "chatgpt.json"))
             ("METTACLAW_LOOP_MODE_PATH" (nq:path $world "loop-mode.json"))
-            ("METTACLAW_CHROMA_DIR" (nq:path $world "chroma"))
+            ("METTACLAW_CHROMA_DIR" (nq:path $world "chroma")) ("METTACLAW_JOBS_DIR" (nq:path $world "jobs"))
             ("METTACLAW_ITER_PROCESS_DIR" $iteration) ("METTACLAW_ITER_PROCESS_TIMEOUT_SECONDS" ".2")
             ("METTACLAW_PROMPT_PATH" $prompt) ("METTACLAW_PINS_PATH" $pins)
             ("METTACLAW_HISTORY_PATH" (nq:path $world "history.metta"))

@@ -1,66 +1,50 @@
+;; utils:py-str gives, once, the text Python's str() gave each part as the
+;; retired py-call bridge converted it. The expected texts are that bridge's
+;; own, taken from the last Python-enabled engine. Native arithmetic refuses
+;; non-finite floats and has no Python objects, so neither can reach py-str.
 !(import! &self (library lib_import))
 !(import! &self ./lib_mettaclaw)
 
 (= (assertEqual $A $B) (assert (== $A $B)))
-;; Python's comparison as an integer: the engines return its Boolean differently.
-!(py-eval "setattr(__import__('builtins'), 'py_str_probe_same', lambda a, b: int(a == b)) or 0")
-
-;; utils:py-str returns py-str's text once, for every kind of part.  The
-;; oracle is py-str's own Python conversion with exclusive branches, so that
-;; it too returns once on CeTTa.
-(= (oracle-py-str $parts $out)
-   (if (== $parts ()) $out
-     (let* (($head (car-atom $parts))
-            ($tail (cdr-atom $parts))
-            ($next (py-call (operator.add $out (py-call (str $head))))))
-       (oracle-py-str $tail $next))))
-
-(= (same-text $parts)
-   (let* (($native (collapse (utils:py-str $parts)))
-          ($_ (assertEqual (cdr-atom $native) ()))
-          ($oracle (oracle-py-str $parts "")))
-     (assertEqual (py-call (py_str_probe_same (car-atom $native) $oracle)) 1)))
-
-(= (each-part-same $parts)
-   (if (== $parts ()) True
-     (let $_ (same-text (cons-atom (car-atom $parts) ()))
-       (each-part-same (cdr-atom $parts)))))
-
+(= (same-text $parts $expected) (assertEqual (collapse (utils:py-str $parts)) ($expected)))
 (= (pow10 $n) (if (== $n 0) 1 (* 10 (pow10 (- $n 1)))))
 
-(= (portable-parts)
-   ("plain" "" "q\"x\"'y'" "ünï ✓ tab\tline\nend" plain-symbol NEW_ACTIVITY:
-    (py-call (str "Output a ((skill args) ...) S-expr")) (py-call (str ","))
-    True False 0 1 -7 1000000000000000000000000000000 2.5 0.1 100.0 (x "y" 3)))
-
-;; Python's text where CeTTa's own number text differs (1e+16 against
-;; 1.0000000000000000e+16), the non-finite floats, a returned "True", an empty
-;; returned text, and the integer digit limit on both sides of it. Both Boolean
-;; spellings and computed Booleans convert as Booleans; quoted ones stay text.
-(= (cetta-parts)
-   ((py-call (str "")) (py-call (str "a\"b")) (py-call (str "True"))
-    "true" "false" "True" "False" true false (== 1 1) (== 1 2)
-    (nested True false (== 1 1))
-    1e16 1e22 1.0e-5 -0.0 123456789012345680.0
-    (py-call (float "inf")) (py-call (float "-inf")) (py-call (float "nan"))
-    (pow10 4299) (py-call (dict))))
-
-!(let* (($portable (portable-parts))
-        ($_ (each-part-same $portable))
-        ($_ (same-text $portable))
+!(let* (($_ (same-text ("plain") "plain"))
+        ($_ (same-text ("") ""))
+        ($_ (same-text ("q\"x\"'y'") "q\"x\"'y'"))
+        ($_ (same-text ("ünï ✓ tab\tline\nend") "ünï ✓ tab\tline\nend"))
+        ($_ (same-text (plain-symbol) "plain-symbol"))
+        ($_ (same-text (NEW_ACTIVITY:) "NEW_ACTIVITY:"))
+        ($_ (same-text ("Output a ((skill args) ...) S-expr") "Output a ((skill args) ...) S-expr"))
+        ($_ (same-text (True) "True"))
+        ($_ (same-text (False) "False"))
+        ($_ (same-text (0) "0"))
+        ($_ (same-text (-7) "-7"))
+        ($_ (same-text (1000000000000000000000000000000) "1000000000000000000000000000000"))
+        ($_ (same-text (2.5) "2.5"))
+        ($_ (same-text (0.1) "0.1"))
+        ($_ (same-text (100.0) "100.0"))
+        ($_ (same-text ((x "y" 3)) "['x', 'y', 3]"))
+        ;; Quoted Boolean spellings stay text; both unquoted spellings and
+        ;; computed Booleans convert as Booleans, inside lists too.
+        ($_ (same-text ("true") "true"))
+        ($_ (same-text ("False") "False"))
+        ($_ (same-text (true) "True"))
+        ($_ (same-text (false) "False"))
+        ($_ (same-text ((== 1 1)) "True"))
+        ($_ (same-text ((== 1 2)) "False"))
+        ($_ (same-text ((nested True false (== 1 1))) "['nested', True, False, True]"))
+        ;; Python's float text where CeTTa's own differs.
+        ($_ (same-text (1e16) "1e+16"))
+        ($_ (same-text (1e22) "1e+22"))
+        ($_ (same-text (1.0e-5) "1e-05"))
+        ($_ (same-text (-0.0) "-0.0"))
+        ($_ (same-text (123456789012345680.0) "1.2345678901234568e+17"))
+        ;; The parts concatenate.
+        ($_ (same-text ("a" plain-symbol 3 True (x "y") ",") "aplain-symbol3True['x', 'y'],"))
         ($_ (assertEqual (utils:py-str ()) ""))
-        ($_ (if (utils:cetta? (engine:active))
-                (let* (($cetta (cetta-parts))
-                       ($_ (each-part-same $cetta))
-                       ($_ (same-text $cetta))
-                       ($big (pow10 4400))
-                       ($_ (assertEqual
-                             (case (catch (oracle-py-str ($big) ""))
-                               (((Error $where1 $why1) raised) ($text1 $text1)))
-                             raised)))
-                  (assertEqual
-                    (case (catch (utils:py-str ($big)))
-                      (((Error $where2 $why2) raised) ($text2 $text2)))
-                    raised))
-                True)))
+        ;; Python's integer digit limit: 4300 digits convert, 4401 raise.
+        ($_ (assertEqual (str:char-length (utils:py-str ((pow10 4299)))) 4300))
+        ($_ (assertEqual (case (catch (utils:py-str ((pow10 4400)))) (((Error $where $why) raised) ($text $text)))
+                         raised)))
     (println! PY_STR_NATIVE_OK))
