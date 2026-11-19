@@ -48,7 +48,7 @@
           ($_ (batch:identity))
           ($_ (assertEqual (client-published "pending_count" -1) 3))
           ($_ (assertEqual (client-published "prepared_count" -1) 3))
-          ($_ (assertEqual (py-call (telegram._reply_target "")) "1"))
+          ($_ (assertEqual (tg:reply-target "") "1"))
           ($_ (assertEqual (health-field "poll_status") "ok"))
           ($_ (assertEqual (before? $one "first" "second") True))
           ($_ (assertEqual (before? $one "second" "third") True))
@@ -103,17 +103,32 @@
 
 ; A runtime event keeps the reply target and arms lightly; a message beside
 ; it decides the reply and the arming.
+; A runtime event as its producer spools it: one whole JSON file, named in
+; arrival order, in the spool beside the Telegram health record
+; (src/runtime_events_cetta.metta).
+!(bind! &batch-spooled (new-state 0))
+(= (batch:spool-runtime-event $text $reason)
+   (let* (($folder (rtev:spool (tg:health-path)))
+          ($_ (fs:make-directories $folder 448))
+          ($n (+ 1 (get-state &batch-spooled)))
+          ($_ (change-state! &batch-spooled $n))
+          ($path (path:join $folder (format-args "{}-probe-{}.json" ((system:wall-time-ns) $n)))))
+     (fs:write $path
+       (json:stringify-python (JsonObject
+         ((JsonPair "chat" "runtime") (JsonPair "text" (str:concat "[runtime] " $text))
+          (JsonPair "from_bot" (JsonBool False)) (JsonPair "tier" "light")
+          (JsonPair "update_id" (format-args "runtime:probe-{}" ($n))) (JsonPair "wake" $reason)))))))
 (= (batch:runtime-event)
    (let* (($_ (tg:activity-add "" "181" "from 181" False "full" "20" False))
           ($_ (tg:activity-batch))
           ($_ (assertEqual (tg:ack-activity-batch) 1))
-          ($_ (py-call (telegram.enqueue_runtime_event "job 2 finished with exit 0" "job 2")))
+          ($_ (batch:spool-runtime-event "job 2 finished with exit 0" "job 2"))
           ($batch (tg:activity-batch))
           ($_ (assertEqual (has? $batch "[runtime] job 2 finished") True))
           ($_ (assertEqual (tg:get reply-chat "") "181"))
           ($_ (assertEqual (tg:last-message-arm-loops) (tg:tier-loops "light")))
           ($_ (assertEqual (tg:ack-activity-batch) 1))
-          ($_ (py-call (telegram.enqueue_runtime_event "job 3 finished" "job 3")))
+          ($_ (batch:spool-runtime-event "job 3 finished" "job 3"))
           ($_ (tg:activity-add "" "555" "hello" False "full" "21" False))
           ($_ (tg:activity-batch))
           ($_ (assertEqual (tg:get reply-chat "") "555"))

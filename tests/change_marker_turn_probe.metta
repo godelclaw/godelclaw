@@ -12,7 +12,7 @@
 !(configure commchannel telegram)
 
 (= (marker-counts-turns $mode)
-   (let* (($_ (py-call (loop_modes.set_mode $mode)))
+   (let* (($_ (loop-mode:set $mode))
           ($_ (py-eval "__import__('helper')._change_marks.clear()"))
           ($turn (process-periphery (initLoop)))
           ($first (coding-request-prompt (turnRequest $turn (NEW_ACTIVITY: first))))

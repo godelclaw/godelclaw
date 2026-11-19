@@ -12,7 +12,7 @@
 !(py-eval "(__import__('helper').__dict__.__setitem__('_working_boot_cache', {}), __import__('helper').__dict__.__setitem__('working_boot', lambda: 4))")
 !(initMemory)
 !(configure commchannel telegram)
-!(let* (($_ (py-call (loop_modes.set_mode "godelclaw")))
+!(let* (($_ (loop-mode:set "godelclaw"))
          ($initial (initLoop))
          ($first (process-step $initial (turnProcess (process-periphery $initial))))
          ($_ (assertEqual (py-call (helper.feedback_first_ok)) 1))

@@ -27,7 +27,7 @@
 !(py-eval "__import__('helper').__dict__.__setitem__('tools_view_ok', lambda: (lambda view: int(len(view['transcript']) == 10 and 'pending' not in view and 'SIX_SECOND_COMMAND' in view['transcript'][6]['result'] and 'PARTIAL_OUTPUT' in view['transcript'][7]['result'] and 'SHELL_TIMEOUT' in view['transcript'][7]['result'] and 'FINAL_COMMAND' in view['transcript'][8]['result']))(__import__('task_context').projection(__import__('strategy_host').ledger(), __import__('strategy_host')._focus)))")
 !(initMemory)
 !(configure commchannel telegram)
-!(let* (($_ (py-call (loop_modes.set_mode "godelclaw")))
+!(let* (($_ (loop-mode:set "godelclaw"))
          ($initial (initLoop))
          ($first (process-step $initial (turnProcess (process-periphery $initial))))
          ($_ (assertEqual (fs:read-text (tools:file "written")) "first second\n"))

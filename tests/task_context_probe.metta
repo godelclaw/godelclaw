@@ -23,7 +23,7 @@
 !(py-eval "__import__('helper').__dict__.__setitem__('task_view_ok', lambda: (lambda view: int(len(view['transcript']) == 18 and view['transcript'][14]['disposition'] == 'returned' and 'pending' not in view))(__import__('task_context').projection(__import__('strategy_host').ledger(), __import__('strategy_host')._focus)))")
 !(initMemory)
 !(configure commchannel telegram)
-!(let* (($_ (py-call (loop_modes.set_mode "godelclaw")))
+!(let* (($_ (loop-mode:set "godelclaw"))
          ($initial (initLoop))
          ($first (process-step $initial (turnProcess (process-periphery $initial))))
          ($_ (assertEqual (fs:read-text (task:file "written")) "fixed content"))

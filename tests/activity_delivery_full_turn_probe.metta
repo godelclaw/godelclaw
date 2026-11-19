@@ -20,7 +20,7 @@
 !(configure commchannel telegram)
 !(tg:activity-add "" "probe" "stable turn input" False "full" "702" False)
 
-!(let* (($_ (py-call (loop_modes.set_mode "godelclaw")))
+!(let* (($_ (loop-mode:set "godelclaw"))
          ($initial (initLoop))
          ;; A stopped lifecycle keeps eligible input and its effects pending.
          ($_ (lifecycle:stop))

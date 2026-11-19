@@ -18,7 +18,7 @@
 !(configure commchannel telegram)
 
 (= (skills-a-line $mode)
-   (let* (($_ (py-call (loop_modes.set_mode $mode)))
+   (let* (($_ (loop-mode:set $mode))
           ($turn (process-periphery (initLoop)))
           ($prompt (request:render (coding-request-prompt (turnRequest $turn (NEW_ACTIVITY: first)))))
           ($_ (cut)))

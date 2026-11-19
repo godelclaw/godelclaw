@@ -13,7 +13,7 @@
 !(configure commchannel telegram)
 
 (= (layout-sound $mode)
-   (let* (($_ (py-call (loop_modes.set_mode $mode)))
+   (let* (($_ (loop-mode:set $mode))
           ($first-turn (process-periphery (initLoop)))
           ($second-turn
             (coordinate-set loops 7

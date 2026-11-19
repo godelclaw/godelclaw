@@ -30,7 +30,7 @@
 !(initMemory)
 !(configure commchannel telegram)
 
-!(let* (($_ (py-call (loop_modes.set_mode "coding")))
+!(let* (($_ (loop-mode:set "coding"))
          ($initial (initLoop))
          ($after-first
           (process-step $initial

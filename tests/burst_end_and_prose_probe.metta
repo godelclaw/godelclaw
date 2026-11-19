@@ -23,7 +23,7 @@
 !(initMemory)
 !(configure commchannel telegram)
 
-!(let* (($_ (py-call (loop_modes.set_mode "godelclaw")))
+!(let* (($_ (loop-mode:set "godelclaw"))
          ($start (process-periphery (initLoop)))
          ;; A renewal keeps how the finished burst ended and starts anew.
          ($after-nop (applyAutonomousBurst (coordinate-set burst-end nop $start) True))
