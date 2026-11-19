@@ -27,11 +27,11 @@
 ; send it again, and the control plane's own sends are not counted. Without a
 ; service a send or delete fails at once and says why.
 (= (send:once-per-turn)
-   (let* (($_ (py-call (telegram.begin_effect_turn "1")))
+   (let* (($_ (assertEqual (addition-effect-turn-begin 1) "LIVE_EFFECT_TURN_READY"))
           ($_ (assertEqual (tg:send-effect "same message" "-1") "send failed: the Telegram service is not configured"))
           ($_ (assertEqual (tg:send-effect "same message" "-1") "duplicate send suppressed"))
           ($_ (assertEqual (suppressed? (tg:send-effect "other message" "-1")) False))
-          ($_ (py-call (telegram.begin_effect_turn "2")))
+          ($_ (assertEqual (addition-effect-turn-begin 2) "LIVE_EFFECT_TURN_READY"))
           ($_ (assertEqual (suppressed? (tg:send-effect "same message" "-1")) False))
           ($_ (assertEqual (suppressed? (tg:send "same message" "-1")) False))
           ($_ (assertEqual (tg:delete "-1" 5) "delete failed: the Telegram service is not configured")))
