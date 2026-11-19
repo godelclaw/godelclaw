@@ -13,7 +13,6 @@
    (tg:activity-add "" "probe" "new stimulus" False "full" "123" False))
 !(scripted:answer 1 "((probe-stimulus) (help _quote_query_quote_) (send-telegram-chat _quote_probe_quote_ _quote_stale-reply_quote_))")
 !(scripted:answer 2 "((help _quote_send_quote_) (help _quote_query_quote_))")
-!(py-eval "(__import__('helper').__dict__.__setitem__('_working_boot_cache', {}), __import__('helper').__dict__.__setitem__('working_boot', lambda: 3))")
 !(initMemory)
 !(configure commchannel telegram)
 

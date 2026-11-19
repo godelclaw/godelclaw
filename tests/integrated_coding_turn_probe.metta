@@ -26,7 +26,6 @@
 !(assert (not (== (system:getenv-or-default "NATIVE_TEST_WORLD" "") "")))
 !(fs:write (probe:world "response-1.body") (probe:reply "((help \\\"send\\\"))"))
 !(fs:write (probe:world "response-2.body") (probe:reply "((nop))"))
-!(py-eval "(__import__('helper').__dict__.__setitem__('_working_boot_cache', {}), __import__('helper').__dict__.__setitem__('working_boot', lambda: 1))")
 !(initMemory)
 !(configure commchannel telegram)
 

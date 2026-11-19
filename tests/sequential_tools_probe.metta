@@ -3,9 +3,19 @@
 !(import! &self ./tests/scripted_provider.metta)
 
 (= (assertEqual $a $b) (assert (== $a $b)))
+; The task view the model's task-history reads, from the native ledger: its
+; transcript holds one entry per command.
+(= (probe:focus) (state:text (state:meta "context_focus")))
+(= (probe:view) (task:projection (probe:focus) "continuation-tick"))
+(= (probe:transcript) (task:items (probe:view) "transcript"))
+(= (probe:field $n $key) (json-object-get (index-atom (probe:transcript) $n) $key))
+(= (probe:text-has $value $text) (case (str:find $value $text) (((TextNotFound $t) False) ($at True))))
+(= (probe:result-has $n $text)
+   (case (probe:field $n "result") (((JsonString $s) (probe:text-has $s $text)) ($other (probe:text-has (repr $other) $text)))))
+(= (probe:pending-free)
+   (let (JsonObject $pairs) (probe:view)
+     (== (collapse (case (superpose $pairs) (((JsonPair "pending" $v) True) ($other (empty))))) ())))
 
-;; Actual tool dispatch with local files and a scripted model: a slow shell,
-;; a shell that times out and the commands after them all run in order.
 (= (tools:file $name) (str:concat (system:getenv-or-default "TMPDIR" "") (str:concat "/sequential-tools-" $name)))
 (= (tools:command $words) (str:join "" ("(" (str:join " " $words) ")")))
 (= (tools:quoted $text) (json:stringify (JsonString $text)))
@@ -23,8 +33,6 @@
       (tools:command ("shell" (tools:quoted "printf PARTIAL_OUTPUT; sleep 2") "1"))
       (tools:command ("shell" (tools:quoted "printf FINAL_COMMAND"))))) ")")))
 !(scripted:answer 2 "((help \"shell\"))")
-!(py-eval "(__import__('helper').__dict__.update(_working_boot_cache={}, working_boot=lambda: 8))")
-!(py-eval "__import__('helper').__dict__.__setitem__('tools_view_ok', lambda: (lambda view: int(len(view['transcript']) == 10 and 'pending' not in view and 'SIX_SECOND_COMMAND' in view['transcript'][6]['result'] and 'PARTIAL_OUTPUT' in view['transcript'][7]['result'] and 'SHELL_TIMEOUT' in view['transcript'][7]['result'] and 'FINAL_COMMAND' in view['transcript'][8]['result']))(__import__('task_context').projection(__import__('strategy_host').ledger(), __import__('strategy_host')._focus)))")
 !(initMemory)
 !(configure commchannel telegram)
 !(let* (($_ (loop-mode:set "godelclaw"))
@@ -36,5 +44,10 @@
          ($_ (assertEqual (scripted:prompt-has 2 "FINAL_COMMAND") 1))
          ($_ (assertEqual (scripted:prompt-has 2 "PARTIAL_OUTPUT") 1))
          ($_ (assertEqual (scripted:calls) 2))
-         ($_ (assertEqual (py-call (helper.tools_view_ok)) 1)))
+         ($_ (assertEqual (length (probe:transcript)) 10))
+         ($_ (assertEqual (probe:pending-free) True))
+         ($_ (assertEqual (probe:result-has 6 "SIX_SECOND_COMMAND") True))
+         ($_ (assertEqual (probe:result-has 7 "PARTIAL_OUTPUT") True))
+         ($_ (assertEqual (probe:result-has 7 "SHELL_TIMEOUT") True))
+         ($_ (assertEqual (probe:result-has 8 "FINAL_COMMAND") True)))
    (println! SEQUENTIAL_TOOLS_OK))

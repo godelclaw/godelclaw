@@ -15,7 +15,6 @@
 !(assert (not (== (system:getenv-or-default "NATIVE_TEST_WORLD" "") "")))
 !(scripted:answer 1 "")
 !(scripted:answer 2 "((nop))")
-!(py-eval "(__import__('helper').__dict__.__setitem__('_working_boot_cache', {}), __import__('helper').__dict__.__setitem__('working_boot', lambda: 1))")
 !(initMemory)
 !(configure commchannel telegram)
 !(tg:activity-add "" "probe" "stable turn input" False "full" "702" False)

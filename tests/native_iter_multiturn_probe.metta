@@ -12,7 +12,6 @@
 !(scripted:answer 2 "((help \"pin\"))")
 !(scripted:answer 3 "((help \"mode\"))")
 !(scripted:default "((nop))")
-!(py-eval "(__import__('helper').__dict__.__setitem__('_working_boot_cache', {}), __import__('helper').__dict__.__setitem__('working_boot', lambda: 1))")
 !(initMemory)
 !(configure commchannel telegram)
 

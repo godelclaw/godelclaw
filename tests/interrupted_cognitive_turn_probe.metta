@@ -6,7 +6,6 @@
 (= (probe-stimulus)
    (tg:activity-add "" "probe" "new stimulus" False "full" "811" False))
 !(scripted:default "((probe-stimulus) (pin _quote_pin-after-new-input-lands_quote_) (send-telegram-chat _quote_probe_quote_ _quote_stale-reply-must-not-be-sent_quote_) (pin _quote_pin-after-withheld-send-must-not-land_quote_))")
-!(py-eval "__import__('helper').__dict__.__setitem__('_working_boot_cache', {})")
 !(initMemory)
 !(configure commchannel telegram)
 

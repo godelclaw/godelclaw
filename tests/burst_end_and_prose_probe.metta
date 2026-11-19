@@ -19,7 +19,6 @@
      (if (fs:exists $path)
        (case (str:find (fs:read-text $path) $text) (((TextNotFound $missing) 0) ($found 1)))
        0)))
-!(py-eval "(__import__('helper').__dict__.__setitem__('_working_boot_cache', {}), __import__('helper').__dict__.__setitem__('working_boot', lambda: 1))")
 !(initMemory)
 !(configure commchannel telegram)
 

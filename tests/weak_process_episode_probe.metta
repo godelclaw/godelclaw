@@ -7,7 +7,6 @@
 ;; One real policy episode through the production MeTTa loop.  Isolate the
 ;; boot snapshot; the scripted model gives a deterministic no-command reply,
 ;; so the probe is independent of a running agent's rest.
-!(py-eval "(__import__('helper').__dict__.__setitem__('_working_boot_cache', {}), __import__('helper').__dict__.__setitem__('working_boot', lambda: 1))")
 !(scripted:default "()")
 !(initMemory)
 !(configure commchannel telegram)

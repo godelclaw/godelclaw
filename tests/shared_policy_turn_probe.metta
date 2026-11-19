@@ -8,7 +8,6 @@
 ;; it does not select a different kernel or revoke any part of the periphery.
 ;; A mode is selected at boot, as an agent runs it after the recycle that a
 ;; switch requests: the runner boots this probe once in each mode.
-!(py-eval "(__import__('helper').__dict__.__setitem__('_working_boot_cache', {}), __import__('helper').__dict__.__setitem__('working_boot', lambda: 1))")
 !(scripted:default "()")
 !(initMemory)
 !(configure commchannel telegram)
