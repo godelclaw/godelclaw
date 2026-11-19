@@ -755,6 +755,36 @@ The transport byte cap is not a guarantee that the JSON codec accepts every
 body below it. Parser work and depth limits can reject a smaller body; these
 remain an explicit qualification limit for large contexts and replies.
 
+### Nostr gateway and relay on native CeTTa
+
+Use the CeTTa installation pinned in [NOSTR_CETTA_REF](NOSTR_CETTA_REF), with
+HTTP, WebSockets, crypto and durable spaces. To build it locally, run
+
+```sh
+python3 scripts/build_cetta.py --profile native-agent --prolog 0
+sdk="$PWD/.runtime/nostr-cetta"
+export CETTA_STDLIB="$sdk/lib"
+```
+
+With an existing installation of that revision, set `sdk` to its directory
+and use the libraries beside its executable. Python runs the installer.
+The gateway and relay run directly in the CeTTa core build.
+
+```sh
+"$sdk/cetta" --lang petta --quiet scripts/nostr_gateway.metta --config "$GATEWAY_CONFIG"
+"$sdk/cetta" --lang petta --quiet scripts/nostr_relay.metta --config "$RELAY_CONFIG"
+```
+
+The gateway uses the existing mailbox socket, registry, keys and state file
+named in its configuration. Pass `--once` to run a single cycle. The relay
+uses the allowlist and space-service socket named in its configuration. Use
+`cetta-space-service --socket PATH --data DIRECTORY` from the same
+installation to serve that store.
+
+The pinned core is qualified for these PeTTa entrypoints. The generated
+Prime entrypoint is experimental. The Prime mail suite currently reports
+`capacity-exhausted` in parts of its letter and receipt tests on this pin.
+
 ### Provider calls and tools
 
 The native Responses decoder accepts JSON replies and collected SSE bodies. It

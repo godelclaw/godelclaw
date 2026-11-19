@@ -2,11 +2,13 @@
 *
 !Dockerfile
 !CETTA_REF
+!NOSTR_CETTA_REF
 !run.sh
 !modes/
 !modes/**
 !scripts/
 !scripts/build_cetta.py
+!scripts/cetta_profile.py
 !src/
 !src/**
 !channels/
