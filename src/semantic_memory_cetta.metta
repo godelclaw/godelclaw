@@ -120,6 +120,13 @@
       ((reply $rid error stale-revision) (MemoryChanged))
       ($error (MemoryUnavailable commit $error)))))
 
+; A reload starts from an empty collection that screens rows with certified
+; 8-bit copies: the same results as the full scan, from about an eighth of the
+; bytes. An engine without that tier keeps the full scan.
+(= (sm:reset-collection)
+   (let $reset (memory:dispatch (reset))
+     (let $tier (memory:dispatch (scan-tier int8)) $reset)))
+
 (= (sm:refresh $space $profile $dim)
    (case
      $space
@@ -136,7 +143,7 @@
                 ($rows
                   (let
                     $_
-                    (memory:dispatch (reset))
+                    (sm:reset-collection)
                     (case
                       (memory:dispatch (load $profile $dim $rows))
                       (((Loaded $n)
