@@ -3,7 +3,13 @@
 (= (source-snapshot-test:run)
    (let* (($root (system:cwd)) ($artifacts (nt:required-env "NATIVE_TEST_ARTIFACTS"))
           ($id (system:uuid4-hex)) ($name (str:concat "runtime-source-" (str:byte-slice $id 0 10)))
-          ($snapshot (nt:join $artifacts $name)) ($plan (nt:required-env "NATIVE_INSTANCES_PLAN"))
+          ($snapshot (nt:join $artifacts $name))
+          ; The freeze needs a plan for its file selection, not live instances.
+          ($plan (nt:join $artifacts (str:concat $name ".plan.json")))
+          ($_ (fs:write $plan (json:stringify-python (JsonObject
+                 ((JsonPair "selection" (nt:join $root "config/runtime-files.json"))
+                  (JsonPair "release_dir" (nt:join $artifacts (str:concat $name ".releases")))
+                  (JsonPair "instances" (JsonArray ())))))))
           ($env (nt:environment $artifacts))
           ($revision (str:strip-python (nt:exit-ok (proc:run ("git" "rev-parse" "HEAD") $root $env 5000 1024))))
           ($tool (nt:join $root "scripts/sync_instances.py"))
