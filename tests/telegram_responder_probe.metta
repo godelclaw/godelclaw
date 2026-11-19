@@ -12,11 +12,12 @@
 (= (wake-file) (system:getenv-or-default "METTACLAW_WAKE_REQUEST_PATH" ""))
 (= (woken) (if (fs:exists (wake-file)) (let $why (fs:read-text (wake-file)) (let $_ (fs:remove (wake-file)) $why)) ""))
 (= (text? $reply) (== (get-type $reply) String))
-; A menu's button data, row by row.
+; A menu's button data, row by row. A button's text is a JSON string atom
+; either way it was written; both serialize alike.
 (= (menu-data $reply)
    (case $reply
      (((tc:menu $toast $text (JsonArray $rows))
-       (collapse (let (JsonArray $row) (tc:items $rows) (let (JsonArray ($label (JsonString $data))) (tc:items $row) $data))))
+       (collapse (let (JsonArray $row) (tc:items $rows) (let (JsonArray ($label $data)) (tc:items $row) (tc:string $data)))))
       ($other not-a-menu))))
 (= (all-prefixed? $items $prefix)
    (if (== $items ()) True
