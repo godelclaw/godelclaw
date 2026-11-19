@@ -33,7 +33,7 @@
           ($server-env (preq:append $env-base (("CETTA_DB_SOURCE" $store) ("CETTA_DB_SOCKET" $socket))))
           ($server (proc:spawn ($core-worker "--value-bytes" "268435456" "--serve" "--lang" "petta"
                                $server-module $configuration)
-                              ((cwd $root) (env $server-env) (max-bytes 65536))))
+                              ((cwd $root) (env $server-env) (max-bytes 65536) (lifetime owner))))
           ($_ (nq:wait-file $server $socket 500))
           ($_ (fs:write (nt:join $directory "delay-ms") "0"))
           ($_ (fs:write (nt:join $directory "status") "200"))
@@ -163,7 +163,7 @@
           ($module (nt:join $root "src/input_ledger_server.metta"))
           ($environment (preq:append $env (("CETTA_DB_SOURCE" (nt:join $directory "store")) ("CETTA_DB_SOCKET" $socket))))
           ($reopened (proc:spawn ($worker "--value-bytes" "268435456" "--serve" "--lang" "petta" $module "db-server:configuration")
-                       ((cwd $root) (env $environment) (max-bytes 65536))))
+                       ((cwd $root) (env $environment) (max-bytes 65536) (lifetime owner))))
           ($ready (nq:wait-file $reopened $socket 500)))
      (NativeProviderTestWorldV1 $root $sdk $core $directory $socket $base $peer $reopened $env $fixture)))
 (: nq:one (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))

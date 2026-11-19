@@ -194,7 +194,7 @@
         ($module (path:join $root "src/input_ledger_server.metta"))
         ($server-env (cons-atom ("CETTA_DB_SOURCE" $store) (cons-atom ("CETTA_DB_SOCKET" $socket) (nt:environment $home))))
         ($server (proc:spawn ($worker "--value-bytes" "268435456" "--serve" "--lang" "petta" $module "db-server:configuration")
-                             ((cwd $root) (env $server-env) (max-bytes 65536))))
+                             ((cwd $root) (env $server-env) (max-bytes 65536) (lifetime owner))))
         ($_ (nt:require ledger-ready (in:wait-socket $server $socket 500)))
         ($config (NoticeConfigV1 $socket True "unit" 15))
         ($seven (JsonObject ((JsonPair "update_id" (JsonNumber "7")))))

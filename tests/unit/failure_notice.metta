@@ -48,7 +48,7 @@
           ($env (cons-atom ("CETTA_DB_SOURCE" (fnu:store)) (cons-atom ("CETTA_DB_SOCKET" $socket) (nt:environment (fnu:home)))))
           ($server (proc:spawn ($worker "--value-bytes" "268435456" "--serve" "--lang" "petta"
                                 (path:join $root "src/input_ledger_server.metta") "db-server:configuration")
-                               ((cwd $root) (env $env) (max-bytes 65536))))
+                               ((cwd $root) (env $env) (max-bytes 65536) (lifetime owner))))
           ($_ (nt:require ledger-ready (fnu:wait-socket $server $socket 500))))
      $server))
 (= (fnu:stop-ledger $server)

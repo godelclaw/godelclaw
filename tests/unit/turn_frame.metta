@@ -15,7 +15,7 @@
         ($module (path:join $root "src/input_ledger_server.metta"))
         ($environment (cons-atom ("CETTA_DB_SOURCE" $store) (cons-atom ("CETTA_DB_SOCKET" $socket) (nt:environment $home))))
         ($server (proc:spawn ($worker "--value-bytes" "268435456" "--serve" "--lang" "petta" $module "db-server:configuration")
-                             ((cwd $root) (env $environment) (max-bytes 65536))))
+                             ((cwd $root) (env $environment) (max-bytes 65536) (lifetime owner))))
         ($_ (nt:require ledger-ready (tf:ready $server $socket 500)))
         ($_ (lifecycle-native:start))
         ($_ (nt:require begins-with-transport-ids (nt:equal (turn:begin 1 "operator-event" "do a task" "[\"tg:one\",\"mail:two\"]") 1)))

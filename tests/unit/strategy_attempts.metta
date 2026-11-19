@@ -46,7 +46,7 @@
         ($module (path:join $root "src/input_ledger_server.metta"))
         ($server-env (cons-atom ("CETTA_DB_SOURCE" $store) (cons-atom ("CETTA_DB_SOCKET" $socket) (nt:environment $home))))
         ($server (proc:spawn ($worker "--value-bytes" "268435456" "--serve" "--lang" "petta" $module "db-server:configuration")
-                             ((cwd $root) (env $server-env) (max-bytes 65536))))
+                             ((cwd $root) (env $server-env) (max-bytes 65536) (lifetime owner))))
         ($_ (nt:require ledger-ready (sa:wait-socket $server $socket 500)))
         ; No open batch: nothing is recorded or shown.
         ($_ (nt:require no-batch-no-attempt (nt:equal (strategy:reserve 5 (quote (shell "ls"))) 0)))
