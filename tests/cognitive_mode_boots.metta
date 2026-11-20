@@ -135,6 +135,8 @@
    (let* (($kept (str:byte-slice (fs:read-text $path) 0 $bytes))
           ($owner (fs:open-write $path ("truncate") 420))
           ($_ (fs:write-all $owner $kept)) ($_ (fs:close $owner))) True))
+(= (core-boot:append $path $text)
+   (let* (($owner (fs:open-write $path ("create" "append") 420)) ($_ (fs:write-all $owner $text)) ($_ (fs:close $owner))) True))
 (= (core-boot:put $path $object $fields)
    (nt:require state-file-rewritten (== (sf:replace $path (json:stringify-python (sf:put-all $object $fields)) 384 True) True)))
 ; Iter's own record as a death leaves it: the intent pending, the history cut
@@ -182,6 +184,21 @@
           ($_ (core-boot:relaunch $command $root $environment $runtime $history "boot-test operator message"))
           ($_ (nt:require checkpointed-turn-recorded-once
                 (== (core-boot:count (fs:read-text $history) "boot-test operator message") 1)))
+          ; A whole record still pending, another loop's record after it, and a
+          ; history that cannot be read: a read that failed establishes
+          ; nothing, so the record stays pending, and once the file reads
+          ; again it settles without being written twice.
+          ($last (core-boot:intent $runtime)) ($last-payload (sf:get $last "payload" ""))
+          ($foreign "(\"2026-11-20 05:00:00\" \"\n\" \"HUMAN_MESSAGE: \" \"FOREIGN_SUFFIX_RECORD\" \"\n\" ((send \"other loop\")) \"\n\")\n")
+          ($_ (core-boot:append $history $foreign))
+          ($_ (core-boot:interrupt $runtime $history $last none))
+          ($_ (core-boot:chmod $history "0200"))
+          ($_ (core-boot:relaunch-started $command $root $environment $runtime))
+          ($_ (core-boot:chmod $history "0644"))
+          ($_ (nt:require unread-record-stays-pending (== (core-boot:intent-status $runtime) "pending")))
+          ($_ (core-boot:relaunch $command $root $environment $runtime $history $last-payload))
+          ($_ (nt:require unread-record-settles-once (== (core-boot:count (fs:read-text $history) $last-payload) 1)))
+          ($_ (nt:require foreign-suffix-kept-once (== (core-boot:count (fs:read-text $history) "FOREIGN_SUFFIX_RECORD") 1)))
           ; Started again with nothing to repair: nothing is written twice.
           ($before (fs:read-text $history))
           ($_ (core-boot:relaunch-started $command $root $environment $runtime))

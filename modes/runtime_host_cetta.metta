@@ -165,6 +165,10 @@
              (mode-host:new-record $path $payload (mode-host:record-read) "append")
              ((JsonPair "offset" $offset) (JsonPair "device" $device) (JsonPair "inode" $inode)))))
           ($bad $bad))))))
+; A read that failed says nothing of the bytes it was to read: no match and
+; no mismatch is established from it.
+(= (mode-host:read-failed? $value)
+   (case $value (((Error $_ $_) True) ((fs:failed $_ $_ $_ $_ $_ $_) True) ($text False))))
 (= (mode-host:read-at $path $offset $bytes)
    (let $owner (fs:open-read $path)
      (case $owner
@@ -191,12 +195,13 @@
              ; A shared history may have grown past a complete append.
              (if (> $progress (str:byte-length $data)) (mode-host:verify-append $record)
              (let $observed (mode-host:read-at $path $offset $progress)
+               (if (mode-host:read-failed? $observed) (Error mode-checkpoint (Incomplete prefix-unavailable))
                (if (!= $observed (str:byte-slice $data 0 $progress))
                  (Error mode-checkpoint (Forbidden foreign-append-prefix))
                  (let $appended (mode-host:append-rest $path
                                       (str:byte-slice $data $progress (str:byte-length $data)))
                    (if (!= $appended True) $appended
-                     (mode-host:verify-append $record)))))))))
+                     (mode-host:verify-append $record))))))))))
         ($bad $bad)))))
 (= (mode-host:append-rest $path $bytes)
    (let $owner (fs:open-write $path ("append") 384)
@@ -210,11 +215,16 @@
 (= (mode-host:verify-append $record)
    (let* (($path (sf:get $record "path" "")) ($data (sf:get $record "payload" ""))
           ($offset (sf:get $record "offset" 0)) ($length (str:byte-length $data)))
+     ; Another file, a shorter one, or other bytes at the offset: established.
+     ; A read that failed: unknown, and the record stays as it is.
      (case (mode-host:file-info $path)
        (((ModeFileV1 $size $device $inode)
-         (if (and (== $device (sf:get $record "device" "")) (and (== $inode (sf:get $record "inode" ""))
-               (and (>= $size (+ $offset $length)) (== (mode-host:read-at $path $offset $length) $data))))
-           True (Error mode-checkpoint (Incomplete append-verification-failed))))
+         (if (not (and (== $device (sf:get $record "device" "")) (== $inode (sf:get $record "inode" ""))))
+           (Error mode-checkpoint (Forbidden append-generation-changed))
+           (if (< $size (+ $offset $length)) (Error mode-checkpoint (Forbidden append-verification-short))
+             (let $observed (mode-host:read-at $path $offset $length)
+               (if (mode-host:read-failed? $observed) (Error mode-checkpoint (Incomplete verification-unavailable))
+                 (if (== $observed $data) True (Error mode-checkpoint (Forbidden append-verification-mismatch))))))))
         ($bad $bad)))))
 (= (mode-host:route-name $chat $thread)
    (str:join "" ("telegram_" (str:join "m" (str:split "-" $chat)) "_" (repr $thread))))
