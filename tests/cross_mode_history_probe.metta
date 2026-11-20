@@ -35,9 +35,11 @@
 !(configure commchannel telegram)
 !(let* (($_ (loop-mode:set "godelclaw"))
         ($s0 (initLoop))
-        ; This loop's own record starts the history, and the cursor after it.
+        ; A mode wrote before this loop's first turn, to a history that did not
+        ; exist when the loop started: all of it is the mode's.
+        ($_ (probe:append (probe:record "2026-11-20 01:00:00" "BEFORE_FIRST_TURN_RECORD" "zero")))
         ($s1 (probe:turn $s0 1 "own turn one"))
-        ($_ (assertEqual (probe:count 1 "[AGENT HISTORY bytes") 0))
+        ($_ (assertEqual (probe:count 1 "BEFORE_FIRST_TURN_RECORD") 1))
         ; A mode ran: a request and its reply, then one record written twice.
         ($_ (probe:append (probe:record "2026-11-20 01:21:44" "MODE_ERA_REQUEST add the models" "MODE_ERA_REPLY on it")))
         ($twice (probe:record "2026-11-20 01:22:05" "EQUAL_OCCURRENCE yes" "EQUAL_REPLY ok"))
@@ -69,5 +71,6 @@
         ($s6 (probe:turn $s5 6 "own turn six"))
         ($_ (assertEqual (probe:count 6 "UNREADABLE_THEN_READ") 1))
         ($_ (assertEqual (probe:count 6 "INTERRUPTED_RECORD") 1))
+        ($_ (assertEqual (probe:count 6 "BEFORE_FIRST_TURN_RECORD") 1))
         ($_ (assertEqual (scripted:calls) 6)))
    (println! CROSS_MODE_HISTORY_OK))
