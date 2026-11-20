@@ -52,6 +52,9 @@
           ($_ (nt:require missing-directory-sync-fails (sf:failed? (sf:sync-directory (path:join $root "nowhere"))))))
      True))
 
+; Whether a locked body ran: a state bound at the top, as a let*-bound state
+; inside a body passed unevaluated leaves the whole expression without answer.
+!(bind! &sft-ran (new-state False))
 (= (sft:locked $root)
    (let* (($dir (path:join $root "locked")) ($_ (fs:make-directories $dir 504))
           ($lock (path:join $dir ".state.lock"))
@@ -65,7 +68,13 @@
           ($_ (nt:require lock-taken-again (nt:equal (sf:locked $lock 432 taken) taken)))
           ($_ (nt:require unopenable-lock-fails
                 (case (sf:locked (path:join (path:join $root "no-such-dir") ".lock") 432 never)
-                  (((SfLockFailed $why) True) ($other False))))))
+                  (((SfLockFailed $why) True) ($other False)))))
+          ; A lock that was not taken runs nothing and answers its failure.
+          ($_ (nt:require untaken-lock-runs-nothing
+                (case (sf:while-held (fs:failed fs:busy fs:lock $lock 11 0 "not taken") (change-state! &sft-ran True))
+                  (((SfLockFailed $untaken) (== (get-state &sft-ran) False)) ($ran-anyway False)))))
+          ($_ (nt:require taken-lock-runs-body
+                (let $_ (sf:while-held fs:locked (change-state! &sft-ran True)) (== (get-state &sft-ran) True)))))
      True))
 
 ; Native leaves, last-wins lookup, removal and Python's json.dump bytes.

@@ -58,6 +58,8 @@
         ($_ (nt:require no-result-ends-step (turn:failed? (ih:provider-failed () "key-3")))))
    (println! UNIT_ITER_REFUSAL_OK))
 
+(= (iter-unit:chmod $mode $path)
+   (proc:run ("/bin/chmod" $mode $path) (system:cwd) (("PATH" "/usr/bin:/bin")) 5000 1024))
 ; An operator's submission limit (submission-limit.json beside the health
 ; record): each submission of its purpose takes one, a call finding none left
 ; is refused, and a limit that cannot be read refuses.
@@ -82,6 +84,28 @@
             ($_ (nt:require non-count-refuses (not (llm:submission-allowed $coding))))
             ($_ (fs:write $limit "{\"remaining\": 3, \"purpose\": null}"))
             ($_ (nt:require non-purpose-refuses (not (llm:submission-allowed $coding))))
+            ($_ (fs:write $limit "{\"remaining\": 1.5}"))
+            ($_ (nt:require fractional-count-refuses (not (llm:submission-allowed $coding))))
+            ($_ (fs:write $limit "{\"remaining\": -1}"))
+            ($_ (nt:require negative-count-refuses (not (llm:submission-allowed $coding))))
             ($_ (fs:remove $limit))
-            ($_ (nt:require removed-limit-allows (llm:submission-allowed $coding))))
+            ($_ (nt:require removed-limit-allows (llm:submission-allowed $coding)))
+            ; Only a limit known to be missing is no limit: a lookup or a lock
+            ; that fails refuses, and the count stays.
+            ($home (path:dirname $health))
+            ($_ (nt:require missing-directory-allows (llm:submission-allowed-in $coding (path:join $home "nowhere"))))
+            ($file (path:join $home "a-file")) ($_ (fs:write $file "not a directory"))
+            ($_ (nt:require path-through-a-file-allows (llm:submission-allowed-in $coding $file)))
+            ($denied (path:join $home "denied")) ($_ (fs:make-directories $denied 448))
+            ($_ (fs:write (path:join $denied "submission-limit.json") "{\"remaining\": 5}"))
+            ($_ (iter-unit:chmod "000" $denied))
+            ($blind (llm:submission-allowed-in $coding $denied))
+            ($_ (iter-unit:chmod "700" $denied))
+            ($_ (nt:require failed-lookup-refuses (not $blind)))
+            ($unlockable (path:join $home "unlockable"))
+            ($_ (fs:make-directories (path:join $unlockable "submission-limit.json.lock") 448))
+            ($_ (fs:write (path:join $unlockable "submission-limit.json") "{\"remaining\": 5}"))
+            ($_ (nt:require failed-lock-refuses (not (llm:submission-allowed-in $coding $unlockable))))
+            ($_ (nt:require failed-lock-keeps-count
+                  (== (sf:get (sf:native-object (path:join $unlockable "submission-limit.json")) "remaining" -1) 5))))
        (println! UNIT_SUBMISSION_LIMIT_OK))))

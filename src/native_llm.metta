@@ -127,11 +127,13 @@
 ; finds none left fails before it is sent. Without the file nothing is counted.
 (= (llm:submission-allowed $plan)
    (let $health (system:getenv-or-default "METTACLAW_COGNITIVE_HEALTH_PATH" "")
-     (if (== $health "") True
-       (let $limit (path:join (path:dirname $health) "submission-limit.json")
-         (case (catch (fs:exists $limit))
-           ((False True)
-            ($present (host-native:submission-allowed $plan $limit))))))))
+     (if (== $health "") True (llm:submission-allowed-in $plan (path:dirname $health)))))
+; Only a limit known to be absent lets the call go uncounted; a lookup that
+; fails is a limit that cannot be read.
+(= (llm:submission-allowed-in $plan $directory)
+   (let $limit (path:join $directory "submission-limit.json")
+     (if (host-native:limit-absent? (catch (fs:read-text-result $limit 0 "raw"))) True
+       (host-native:submission-allowed $plan $limit))))
 
 ; Callers hold the prepared call, its owner, or a refused preparation.
 (: llm:after-submit (-> Atom Atom %Undefined%))

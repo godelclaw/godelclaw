@@ -8,6 +8,7 @@
 !(import! &self ./commentary_contract_cetta.metta)
 !(import! &self ./provider_rejection_cetta.metta)
 !(import! &self (library io))
+!(import! &self (library math))
 !(import! &self ./line_rpc_cetta.metta)
 !(bind! &provider-session-epoch (new-state ""))
 !(let $epoch (system:uuid4-hex) (change-state! &provider-session-epoch $epoch))
@@ -272,19 +273,31 @@
          (if (not (== $written True)) 0
            (let $updated (sf:put $setting "remaining" (- $remaining 1))
              (sf:replace $control (sf:python-json $updated) 384 False)))))))
-; A limit that cannot be read, or whose count or purpose is not one, refuses:
-; it was set to bound what is sent.
+; A limit that cannot be read or locked, or whose count or purpose is not one,
+; refuses: it was set to bound what is sent. Removed meanwhile, it is gone.
 (= (host-native:submission-allowed $plan $limit)
    (case (collapse (catch (sf:locked (str:concat $limit ".lock") 432 (host-native:submission-take $plan $limit))))
      (((True) True) ($refused False))))
+; Absent: no such file, or a path through a file that is not a directory,
+; which can name none. A lookup that was denied or failed cannot tell.
+(= (host-native:limit-absent? $read)
+   (case $read ((("missing" $_) True) (("error" "NotADirectoryError" $_) True) ($other False))))
 (= (host-native:submission-take $plan $limit)
-   (let* (($setting (sf:native-object $limit))
-          ($remaining (sf:get $setting "remaining" JsonNull))
-          ($purpose (sf:get $setting "purpose" "")))
-     (if (or (!= (get-type $remaining) Number) (!= (get-type $purpose) String)) False
-       (if (and (!= $purpose "") (!= $purpose (host-native:field $plan "purpose" "turn"))) True
-         (if (<= $remaining 0) False
-           (== (sf:replace $limit (sf:python-json (sf:put $setting "remaining" (- $remaining 1))) 384 False) True))))))
+   (case (fs:read-text-result $limit 0 "raw")
+     ((("ok" $text)
+       (let* (($setting (json:parse $text))
+              ($remaining (sf:get $setting "remaining" JsonNull))
+              ($purpose (sf:get $setting "purpose" "")))
+         (if (or (not (host-native:count? $remaining)) (!= (get-type $purpose) String)) False
+           (if (and (!= $purpose "") (!= $purpose (host-native:field $plan "purpose" "turn"))) True
+             (if (<= $remaining 0) False
+               (== (sf:replace $limit (sf:python-json (sf:put $setting "remaining" (- $remaining 1))) 384 False) True))))))
+      ($other (host-native:limit-absent? $other)))))
+; A count is a whole number, neither negative nor unbounded.
+(= (host-native:count? $value)
+   (if (!= (get-type $value) Number) False
+     (if (or (math:isnan $value) (math:isinf $value)) False
+       (and (>= $value 0) (== $value (math:floor $value))))))
 (= (host-native:gate)
    (if (not (== (system:getenv-or-default "METTACLAW_MODE_RUNTIME" "") ""))
      (if (== (system:getenv-or-default "METTACLAW_CODING_CHECK" "0") "1")

@@ -109,14 +109,21 @@
 
 ; Run body while holding an exclusive lock on lock-path, created with mode and
 ; kept at that mode whatever the umask; the lock is released whatever the body
-; answers. The body's first answer, (SfNoAnswer), or (SfLockFailed failure).
+; answers. The body's first answer, (SfNoAnswer), or (SfLockFailed failure):
+; a lock that cannot be opened or taken runs nothing.
 (: sf:locked (-> %Undefined% %Undefined% Atom %Undefined%))
 (= (sf:locked $lock-path $mode $body)
    (let $lock (fs:open-write $lock-path ("create" "append") $mode)
      (if (sf:failed? $lock) (SfLockFailed $lock)
        (let* (($moded (fs:set-mode $lock $mode))
               ($held (fs:lock $lock exclusive))
-              ($result (collapse (catch (eval $body))))
+              ($result (sf:while-held $held $body))
               ($released (fs:unlock $lock))
               ($closed (fs:close $lock)))
-         (if (== $result ()) (SfNoAnswer) (car-atom $result))))))
+         $result))))
+(: sf:while-held (-> %Undefined% Atom %Undefined%))
+(= (sf:while-held $held $body)
+   (if (== $held fs:locked)
+     (let $answers (collapse (catch (eval $body)))
+       (if (== $answers ()) (SfNoAnswer) (car-atom $answers)))
+     (SfLockFailed $held)))
