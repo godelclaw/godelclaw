@@ -134,10 +134,12 @@
        (let $restored (mode-host:restore $record)
          (if (!= $restored True) $restored
            (let $_ (change-state! &mode-capture ()) True))))))
-(= (mode-host:checkpoint $path $payload)
+(= (mode-host:checkpoint $path $payload) (mode-host:checkpoint-with $path $payload ()))
+; A replacement whose record also carries <fields>, durable with the payload.
+(= (mode-host:checkpoint-with $path $payload $fields)
    (let $ready (mode-host:recover)
      (if (!= $ready True) $ready
-       (mode-host:publish (mode-host:new-record $path $payload (mode-host:record-read) "replace")))))
+       (mode-host:publish (sf:put-all (mode-host:new-record $path $payload (mode-host:record-read) "replace") $fields)))))
 (= (mode-host:file-info $path)
    (case (fs:metadata $path follow-observed)
      (((fs:info-v2 regular $size (fs:identity $device $inode) $_ $_ $_ $_)

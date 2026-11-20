@@ -2,7 +2,12 @@
 !(import! &self ../runtime_host_cetta.metta)
 !(import! &self ../python_tool_cetta.metta)
 !(import! &self ../history_cetta.metta)
-!(bind! &ih-mirrored (new-state ()))
+; Occurrence numbers of the experience's messages, by identity; the next
+; number; and the frontier: every message numbered at or below it is in the
+; agent's history.
+!(bind! &ih-numbers (new-state ()))
+!(bind! &ih-next-number (new-state 1))
+!(bind! &ih-frontier (new-state 0))
 (= (ih:list)
    (let* (($space (new-space)) ($length (new-space))
           ($_ (add-atom $length (IterLengthV1 0))))
@@ -112,41 +117,93 @@
    (let* (($root (mode-host:root)) ($_ (fs:make-directories "memory" 448)) ($_ (fs:make-directories "transformations" 448))
           ($ready (mode-host:boot))
           ($booted (if (== $ready True) True (mode-host:stop-uncommitted $ready)))
-          ($history (if (fs:exists "experience.json") (catch (json:parse (fs:read-text "experience.json"))) (JsonArray ()))))
+          ($text (if (fs:exists "experience.json") (fs:read-text "experience.json") "[]"))
+          ($history (catch (json:parse $text))))
      (case $history
        (((JsonArray $_)
-         (let* (($_ (mode-host:sleep 10)) ($boxed (ih:box $history)) ($_ (ih:catch-up $boxed))) $boxed))
+         (let* (($_ (mode-host:sleep 10)) ($boxed (ih:box $history))
+                ($_ (ih:restore-numbers $boxed $text)) ($_ (ih:catch-up $boxed))) $boxed))
         ($bad (mode-host:stop-uncommitted (Error iter:initialize (Fault invalid-experience $bad))))))))
 ; The agent's history since this mode last ran enters as one message, before
 ; the first step; it is the record of the other loops, never mirrored back.
-; Saved messages a failed write left owed join the history first.
+; A record of this mode's that a death left pending is completed first.
 (= (ih:catch-up-header)
    "[AGENT HISTORY: what happened in the agent's other modes since Iter last ran, oldest first, as recorded in the agent's shared history]\n")
 (= (ih:catch-up $experience)
-   (let* (($text (mode-history:catch-up 30000))
-          ($_ (ih:mirror-init $experience (mode-history:owed))))
-     (if (== $text "") (ih:mirror $experience)
-       (let $_ (ih:append $experience (ih:message "user" (str:concat (ih:catch-up-header) $text)))
-         (ih:save $experience)))))
+   (let* (($_ (ih:resolve-intent))
+          ($size (mode-history:size (mode-history:path)))
+          ($text (mode-history:catch-up 30000)))
+     (if (== $text "") (ih:mirror $experience (ih:numbers $experience))
+       (let* (($_ (ih:append $experience (ih:message "user" (str:concat (ih:catch-up-header) $text))))
+              ($numbers (ih:numbers $experience))
+              ($_ (ih:checkpoint $experience $numbers))
+              ($_ (mode-history:mark-at $size)))
+         (ih:mirror $experience $numbers)))))
 ; Each saved message joins the agent's history once, in the framework's record
 ; form: input as HUMAN_MESSAGE, a step's calls as commands, then its results.
-; A message is known by identity, never by content, so equal messages are each
-; recorded and a message pruned in place is not recorded again. A failed write
-; leaves its messages owed: they are written at the next save, and the cursor
-; counts them for a restart.
-(= (ih:mirror-init $experience $owed)
-   (let $values (ih:values $experience)
-     (change-state! &ih-mirrored (list:take (max 0 (- (size-atom $values) $owed)) $values))))
-(= (ih:mirror $experience)
+; A message keeps the occurrence number it was first given, by identity, so
+; equal messages are each recorded and a message pruned in place is not
+; recorded again. The checkpoint that saves the experience carries the numbers
+; and the frontier; the record of the messages past the frontier is a durable
+; intent (mode-history:append-own) whose settlement moves the frontier. A
+; failed write leaves the intent pending, and the next save completes it.
+(= (ih:number-of $message $known)
+   (case (filter-atom $known $pair (== (index-atom $pair 0) $message))
+     ((() none) ($found (index-atom (car-atom $found) 1)))))
+(= (ih:number-all $values $known $next $out)
+   (if (== $values ()) (IterNumbersV1 (list:reverse $out) $next)
+     (let* (($message (car-atom $values)) ($number (ih:number-of $message $known)))
+       (if (== $number none)
+         (ih:number-all (cdr-atom $values) $known (+ $next 1) (cons-atom ($message $next) $out))
+         (ih:number-all (cdr-atom $values) $known $next (cons-atom ($message $number) $out))))))
+; The experience's numbers, in order; a message seen first now takes the next.
+(= (ih:numbers $experience)
+   (let (IterNumbersV1 $pairs $next)
+        (ih:number-all (ih:values $experience) (get-state &ih-numbers) (get-state &ih-next-number) ())
+     (let* (($_ (change-state! &ih-numbers $pairs)) ($_ (change-state! &ih-next-number $next)))
+       (map-atom $pairs $pair (index-atom $pair 1)))))
+; At a start: the numbers and frontier the checkpoint saved with this very
+; experience. An experience saved without them is all in the history.
+(= (ih:restore-numbers $experience $text)
+   (let* (($record (mode-host:record-read))
+          ($values (ih:values $experience))
+          ($saved (case $record (((JsonObject $_) (mode-host:array $record "mirror_sequences")) ($other ()))))
+          ($matches (case $record
+                      (((JsonObject $_) (and (== (sf:get $record "sha256" "") (str:sha256 $text))
+                                             (== (size-atom $saved) (size-atom $values))))
+                       ($other False))))
+          ($numbers (if $matches (map-atom $saved $n (ih:integer $n)) (ih:count-up 1 (size-atom $values) ())))
+          ($frontier (if $matches (ih:integer (sf:get $record "mirror_frontier" 0)) (size-atom $values)))
+          ($top (foldl-atom $numbers $frontier $m $n (max $m $n)))
+          ($_ (change-state! &ih-numbers (ih:zip $values $numbers)))
+          ($_ (change-state! &ih-next-number (+ $top 1))))
+     (change-state! &ih-frontier $frontier)))
+(= (ih:integer $value)
+   (case $value (((JsonNumber $text) (str:string->number $text)) ($number $number))))
+(= (ih:count-up $from $count $out)
+   (if (<= $count 0) (list:reverse $out) (ih:count-up (+ $from 1) (- $count 1) (cons-atom $from $out))))
+(= (ih:zip $left $right)
+   (if (or (== $left ()) (== $right ())) ()
+     (cons-atom ((car-atom $left) (car-atom $right)) (ih:zip (cdr-atom $left) (cdr-atom $right)))))
+; A pending record completed; the frontier is then at least its own.
+(= (ih:resolve-intent)
+   (case (mode-history:resolve-intent)
+     (((ModeIntentClearV1 $frontier)
+       (let $_ (change-state! &ih-frontier (max (get-state &ih-frontier) (ih:integer $frontier))) True))
+      ($pending False))))
+(= (ih:mirror $experience $numbers)
    (if (not (mode-history:shared?)) True
-     (let* (($seen (get-state &ih-mirrored))
-            ($values (ih:values $experience))
-            ($new (filter-atom $values $message (not (erv:contains $seen $message))))
-            ($text (ih:history-text $new))
-            ($appended (if (== $text "") True (mode-history:append $text))))
-       (if (== $appended True)
-         (let $_ (change-state! &ih-mirrored $values) (mode-history:mark 0))
-         (mode-history:mark (size-atom $new))))))
+     (if (not (ih:resolve-intent)) True
+       (let* (($frontier (get-state &ih-frontier))
+              ($pairs (filter-atom (ih:zip (ih:values $experience) $numbers) $pair (> (index-atom $pair 1) $frontier)))
+              ($new (map-atom $pairs $pair (index-atom $pair 0)))
+              ($top (foldl-atom $pairs $frontier $m $pair (max $m (index-atom $pair 1))))
+              ($text (ih:history-text $new)))
+         (if (== $text "") (let $_ (change-state! &ih-frontier $top) True)
+           (case (mode-history:append-own $text $top)
+             ((True (let $_ (change-state! &ih-frontier $top) True))
+              ; Pending or abandoned: the next save writes them.
+              ($not-yet True))))))))
 (= (ih:history-text $messages)
    (if (== $messages ()) ""
      (let* (($message (car-atom $messages)) ($role (ih:get $message "role")))
@@ -181,11 +238,15 @@
       ($other ()))))
 (= (ih:observe $experience $post $steps $burst $pending $bucket)
    (let* (($_ (health:settle)) ($_ (mode-host:record "boundary" ()))) (mode-host:gate)))
-(= (ih:save $experience)
-   (let $written (mode-host:checkpoint (path:join (mode-host:root) "experience.json") (turn:json (ih:json $experience)))
+(= (ih:checkpoint $experience $numbers)
+   (let $written (mode-host:checkpoint-with (path:join (mode-host:root) "experience.json") (turn:json (ih:json $experience))
+                   ((JsonPair "mirror_sequences" (JsonArray $numbers)) (JsonPair "mirror_frontier" (get-state &ih-frontier))))
      (if (!= $written True) (mode-host:stop-uncommitted $written)
-       (let* (($_ (mode-host:record "checkpoint" ((JsonPair "messages" (ih:size $experience)))))
-              ($_ (ih:mirror $experience))) True))))
+       (mode-host:record "checkpoint" ((JsonPair "messages" (ih:size $experience)))))))
+(= (ih:save $experience)
+   (let* (($numbers (ih:numbers $experience))
+          ($_ (ih:checkpoint $experience $numbers))
+          ($_ (ih:mirror $experience $numbers))) True))
 (= (ih:cleanup-message $message)
    (let* (($_ (if (and (== (ih:get $message "role") "tool") (ih:truth (ih:get $message "content")))
                      (ih:put $message "content" " [TRUNCATED]") True))

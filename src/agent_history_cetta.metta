@@ -35,9 +35,18 @@
    (state:encoded (JsonObject ((JsonPair "path" (JsonString (agent-history:path)))
                                (JsonPair "device" (JsonString $device)) (JsonPair "inode" (JsonString $inode))
                                (JsonPair "size" (JsonNumber (repr $size)))))))
-; The cursor as (AgentHistoryCursorV1 <raw text> <device> <inode> <size>); the
-; path is recorded for readers, and a file is known by its identity. Device and
-; inode "" mean no file existed when the cursor was set.
+; Before this loop appends its own record, the cursor also names it: its
+; length and digest at the cursor's size. A death between the write and the
+; cursor's move then leaves the record recognisable, never shown back.
+(= (agent-history:record-own (AgentHistoryFileV1 $device $inode $size) $length $digest)
+   (state:encoded (JsonObject ((JsonPair "path" (JsonString (agent-history:path)))
+                               (JsonPair "device" (JsonString $device)) (JsonPair "inode" (JsonString $inode))
+                               (JsonPair "size" (JsonNumber (repr $size)))
+                               (JsonPair "own_length" (JsonNumber (repr $length))) (JsonPair "own_sha256" (JsonString $digest))))))
+; The cursor as (AgentHistoryCursorV1 <raw text> <device> <inode> <size> <own>),
+; <own> none or (AgentHistoryOwnV1 <length> <digest>); the path is recorded for
+; readers, and a file is known by its identity. Device and inode "" mean no
+; file existed when the cursor was set.
 (= (agent-history:number $value)
    (case $value (((JsonNumber $text) (str:string->number $text)) ($other -1))))
 (= (agent-history:parse $raw)
@@ -45,7 +54,10 @@
      (((JsonObject $pairs)
        (case ((state:json-member $pairs "device") (state:json-member $pairs "inode"))
          ((((JsonString $device) (JsonString $inode))
-           (AgentHistoryCursorV1 $raw $device $inode (agent-history:number (state:json-member $pairs "size"))))
+           (AgentHistoryCursorV1 $raw $device $inode (agent-history:number (state:json-member $pairs "size"))
+             (case ((state:json-member $pairs "own_length") (state:json-member $pairs "own_sha256"))
+               ((((JsonNumber $length) (JsonString $digest)) (AgentHistoryOwnV1 (str:string->number $length) $digest))
+                ($absent none)))))
           ($bad none))))
       ($bad none))))
 (= (agent-history:cursor-raw)
@@ -101,14 +113,24 @@
                ; A cursor that could not be set at the start begins at the end.
                ((none (agent-history:move $raw $file $size))
                 ; No file when the loop started: all of it is another loop's.
-                ((AgentHistoryCursorV1 $_ "" "" $_)
+                ((AgentHistoryCursorV1 $_ "" "" $_ $_)
                   (if (== $size 0) (agent-history:move $raw $file 0) (agent-history:import $raw $file 0 $size)))
-                ((AgentHistoryCursorV1 $_ $d $i $at)
+                ; This loop's own record was being written: past it when it is
+                ; there whole, else from where it would have begun.
+                ((AgentHistoryCursorV1 $_ $device $inode $at (AgentHistoryOwnV1 $length $digest))
+                  (let $moved (agent-history:move $raw $file
+                                (if (agent-history:holds? $at $length $digest $size) (+ $at $length) $at))
+                    (if (== $moved True) (agent-history:catch-up-now) $moved)))
+                ((AgentHistoryCursorV1 $_ $d $i $at $_)
                   (if (or (or (!= $d $device) (!= $i $inode)) (> $at $size))
                     ; Another file, or a shorter one: its old positions mean nothing.
                     (agent-history:move $raw $file $size)
                     (if (== $at $size) True (agent-history:import $raw $file $at $size))))))))))))
 
+(= (agent-history:holds? $at $length $digest $size)
+   (and (>= $size (+ $at $length))
+        (let $text (agent-history:read-at (agent-history:path) $at $length)
+          (and (not (agent-history:failed? $text)) (== (str:sha256 $text) $digest)))))
 (= (agent-history:id (AgentHistoryFileV1 $device $inode $size) $from)
    (str:join ":" ("agent-history" (str:byte-slice (str:sha256 (str:join "\n" ($device $inode))) 0 16) (repr $from))))
 (= (agent-history:header $from $shown $to)
@@ -194,16 +216,28 @@
            (case (catch (str:string->number (index-atom $range 1)))
              (((Error $_ $_) none) ($end (if (== (get-type $end) Number) $end none)))))))))
 
-; This loop's own record: written, then the cursor follows it when it stood
-; where the record began. Otherwise another loop's bytes lie before it, and the
-; next catch-up shows them with this record after them.
+; This loop's own record: named in the cursor when the cursor stands at the
+; file's end, written, then the cursor moves past it. Otherwise another loop's
+; bytes lie before it, and the next catch-up shows them with this record after.
 (= (agent-history:append-own $text)
    (if (not (agent-history:enabled?)) (loop-host:history-append $text)
-     (let* (($before (agent-history:file))
-            ($written (loop-host:history-append $text)))
+     (let* (($payload (if (str:ends-with $text "\n") $text (str:concat $text "\n")))
+            ($before (agent-history:file))
+            ; collapse: a step that yields nothing must not take the receipt with it.
+            ($_ (collapse (catch (agent-history:own-intent $before $payload))))
+            ($written (loop-host:history-append $payload)))
        (if (!= $written 1) $written
-         ; collapse: a step that yields nothing must not take the receipt with it.
          (let $_ (collapse (catch (agent-history:own-appended $before))) 1)))))
+(= (agent-history:own-intent $before $payload)
+   (case $before
+     (((AgentHistoryFileV1 $device $inode $start)
+       (let $raw (agent-history:cursor-raw)
+         (if (agent-history:failed? $raw) $raw
+           (case (if (== $raw none) none (agent-history:parse $raw))
+             (((AgentHistoryCursorV1 $_ $device $inode $start none)
+               (agent-history:set $raw (agent-history:record-own $before (str:byte-length $payload) (str:sha256 $payload))))
+              ($other True))))))
+      ($missing True))))
 (= (agent-history:own-appended $before)
    (case (agent-history:file)
      (((AgentHistoryFileV1 $device $inode $end)
@@ -214,10 +248,10 @@
              (if (agent-history:failed? $raw) $raw
                (case (if (== $raw none) none (agent-history:parse $raw))
                  ((none (agent-history:move $raw (AgentHistoryFileV1 $device $inode $end) $end))
-                  ((AgentHistoryCursorV1 $_ $device $inode $start)
+                  ((AgentHistoryCursorV1 $_ $device $inode $start $_)
                     (agent-history:move $raw (AgentHistoryFileV1 $device $inode $end) $end))
                   ; This record created the file: nothing before it is another loop's.
-                  ((AgentHistoryCursorV1 $_ "" "" $_)
+                  ((AgentHistoryCursorV1 $_ "" "" $_ $_)
                     (if (== $start 0) (agent-history:move $raw (AgentHistoryFileV1 $device $inode $end) $end) True))
                   ($elsewhere True))))))))
       ($missing True))))
