@@ -4,17 +4,21 @@
 !(import! &self (library re))
 !(import! &self (library math))
 !(import! &self (library proc))
+!(bind! &ng-name-re (new-state (re:compile "\\A[A-Za-z0-9_.-]{1,100}\\z")))
+!(bind! &ng-python-re (new-state (re:compile "\\Apython(?:3(?:\\.[0-9]+)?)?\\z")))
+!(bind! &ng-nul-byte (new-state (str:from-python-codepoints (0))))
+!(bind! &ng-advertised-cache (new-state GatewayNoAdvertisedCacheV1))
 (= (ng:invalid $message) (GatewayProtocolErrorV1 "invalid-request" $message))
 (= (ng:name? $name)
    (if (!= (get-type $name) String) False
-     (re:is-match (re:compile "\\A[A-Za-z0-9_.-]{1,100}\\z") $name)))
+     (re:is-match (get-state &ng-name-re) $name)))
 (= (ng:strings? $items)
    (if (== $items ()) True
      (and (== (get-type (car-atom $items)) String) (ng:strings? (cdr-atom $items)))))
 (= (ng:arguments? $items)
    (if (== $items ()) True
      (and (and (== (get-type (car-atom $items)) String)
-               (case (str:find (car-atom $items) (str:from-python-codepoints (0)))
+               (case (str:find (car-atom $items) (get-state &ng-nul-byte))
                  (((TextNotFound $_) True) ($found False)))) (ng:arguments? (cdr-atom $items)))))
 (= (ng:keys? $pairs $allowed)
    (if (== $pairs ()) True
@@ -52,10 +56,15 @@
    (if (== $pairs ()) True
      (let (JsonPair $name $tool) (car-atom $pairs)
        (and (ng:tool-valid? $name $tool) (ng:tools-valid? (cdr-atom $pairs))))))
-(= (ng:advertise $tools)
+(= (ng:advertise-compute $tools)
    (case $tools (((JsonObject $pairs) (JsonObject (map-atom $pairs $pair
      (let (JsonPair $name $tool) $pair
        (JsonPair $name (JsonObject (ng:advertised-fields $tool ("effect" "description" "input_schema")))))))))))
+(= (ng:advertise $tools)
+   (case (get-state &ng-advertised-cache)
+     (((GatewayAdvertisedCacheV1 $cached-source $cached-view)
+       (if (== $cached-source $tools) $cached-view (ng:advertise-compute $tools)))
+      ($miss (ng:advertise-compute $tools)))))
 (= (ng:advertised-fields $tool $keys)
    (if (== $keys ()) ()
      (let* (($key (car-atom $keys)) ($value (sf:get $tool $key GatewayFieldAbsentV1))
@@ -86,8 +95,8 @@
          (if (not $valid) (ng:invalid "invalid request fields")
            (if (== $tool GatewayToolAbsentV1) (ng:invalid "unknown tool or field")
              (if (and (ng:finite-json? $request) (ng:finite-json? $tool))
-               (ngq:submit $request (ng:fingerprint $request $tool)
-                 (if (== (sf:get $tool "effect" "read") "write") (quote write) (quote read)))
+               (ngq:submit-with-tool $request (ng:fingerprint $request $tool)
+                 (if (== (sf:get $tool "effect" "read") "write") (quote write) (quote read)) $tool)
                (ng:invalid "non-finite request or tool configuration"))))))
       ($bad (ng:invalid "invalid request fields")))))
 (= (ng:envelope $agent $result)
@@ -103,7 +112,7 @@
 (= (ng:legacy-read $command)
    (case $command
      (((JsonArray ($python "-m" "execution_gateway.read_tools" $name))
-       (if (and (re:is-match (re:compile "\\Apython(?:3(?:\\.[0-9]+)?)?\\z") (sf:basename $python))
+       (if (and (re:is-match (get-state &ng-python-re) (sf:basename $python))
                 (ng:member? $name ("project-status" "vitals" "read-lines" "ls-tree" "grep-files")))
          (GatewayNativeReadV1 $name) GatewayExternalToolV1))
       ($external GatewayExternalToolV1))))

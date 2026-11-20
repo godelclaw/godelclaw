@@ -2,7 +2,7 @@
 ; src/provider_request_cetta.metta; no Python. Expected texts are what the
 ; retired Python structured_plan produced for the same requests.
 !(import! &self ../native_test_support.metta)
-!(import! &self ../../src/provider_request_cetta.metta)
+!(import! &self ../../src/provider_call_cetta.metta)
 !(let* (($native (json:parse "{\"messages\":[{\"role\":\"user\",\"content\":\"(Error literal data)\"}],\"max_tokens\":64}"))
         ($once (preq:tag $native)) ($twice (preq:tag $once)))
    (nt:require request-normalization-is-idempotent (== $once $twice)))
@@ -61,5 +61,17 @@
               (nt:equal (preq:structured-synthetic (preq:parse "{\"extensions\": {\"reasoning_effort\": \"max\"}}"))
                         (ProviderPreparationRefusedV1 unsupported-synthetic-effort))))
         ($valid (preq:parse "{\"max_tokens\": 1, \"extensions\": {\"reasoning_effort\": \"high\", \"foo\": 1}}"))
-        ($_ (nt:require synthetic-valid-request-unchanged (nt:equal (preq:structured-synthetic $valid) $valid))))
+        ($_ (nt:require synthetic-valid-request-unchanged (nt:equal (preq:structured-synthetic $valid) $valid)))
+        ($orig-tr (PreparedProviderTransportV1 "e-seal" "c-seal" "anthropic" "http://127.0.0.1:9/v1/messages"
+                    "[]" "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"trusted\"}]}" 10 1048576 5 5 5))
+        ($mut-body-tr (PreparedProviderTransportV1 "e-seal" "c-seal" "anthropic" "http://127.0.0.1:9/v1/messages"
+                        "[]" "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"mutated\"}]}" 10 1048576 5 5 5))
+        ($mut-url-tr (PreparedProviderTransportV1 "e-seal" "c-seal" "anthropic" "http://127.0.0.1:9/v1/other"
+                       "[]" "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"trusted\"}]}" 10 1048576 5 5 5))
+        ($seal-owner (call:owner inert-host (json:parse "{\"epoch\":\"e-seal\",\"correlation\":\"c-seal\",\"cap\":1048576}")
+                       (pcall:seal $orig-tr)))
+        ($_ (nt:require transport-seal-accepts-exact (call:seal-matches? $seal-owner (pcall:seal $orig-tr))))
+        ($_ (nt:require transport-seal-rejects-mutated-body (not (call:seal-matches? $seal-owner (pcall:seal $mut-body-tr)))))
+        ($_ (nt:require transport-seal-rejects-mutated-url (not (call:seal-matches? $seal-owner (pcall:seal $mut-url-tr)))))
+        ($_ (call:release $seal-owner)))
    (println! UNIT_STRUCTURED_REFUSALS_OK))

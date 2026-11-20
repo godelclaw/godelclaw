@@ -66,9 +66,27 @@
            (ProviderPreparationRefusedV1 invalid-role-context))))
      ($_ (nt:require duplicate-json-last-value-first-position
          (nt:equal (preq:render (preq:parse "{\"a\":1,\"b\":2,\"a\":3}")) "{\"a\": 3, \"b\": 2}")))
-     ($_ (nt:require unsupported-effort
+     ($c7 (nt:require unsupported-effort
          (nt:equal (preq:synthetic (preq:parse "{\"reasoning\":{\"effort\":\"xhigh\"}}"))
-             (ProviderPreparationRefusedV1 unsupported-synthetic-reasoning))))) 5))
+             (ProviderPreparationRefusedV1 unsupported-synthetic-reasoning))))
+     ($obs1 (preq:observation "αβ_cache_boundary_γ" LegacyPrompt))
+     ($c8 (nt:require single-part-observation-exact
+         (and (nt:equal (preq:field $obs1 "stable_chars") (JsonNumber "2"))
+              (and (nt:equal (preq:field $obs1 "dynamic_chars") (JsonNumber "1"))
+                   (nt:equal (preq:field $obs1 "stable_digest") (preq:string (str:sha256 "αβ")))))))
+     ($obs2 (preq:observation "α_cache_boundary_β_cache_boundary_γδ" LegacyPrompt))
+     ($c9 (nt:require multi-part-observation-exact
+         (and (nt:equal (preq:field $obs2 "stable_chars") (JsonNumber "2"))
+              (and (nt:equal (preq:field $obs2 "dynamic_chars") (JsonNumber "2"))
+                   (nt:equal (preq:field $obs2 "stable_digest") (preq:string (str:sha256 "αβ")))))))
+     ($dup-obj (preq:object ((preq:pair "a" (JsonNumber "1")) (preq:pair "b" (JsonNumber "2")) (preq:pair "a" (JsonNumber "9")))))
+     ($dup-updated (preq:put $dup-obj "a" (JsonNumber "5")))
+     ($c10 (nt:require preq-put-updates-first-retains-tail
+         (nt:equal $dup-updated
+           (preq:object ((preq:pair "a" (JsonNumber "5")) (preq:pair "b" (JsonNumber "2")) (preq:pair "a" (JsonNumber "9")))))))
+     ($c11 (nt:require preq-put-propagates-refusal-and-non-object
+         (and (nt:equal (preq:put JsonNull "a" (JsonNumber "1")) (ProviderPreparationRefusedV1 expected-object))
+              (nt:equal (preq:put $dup-obj "a" (ProviderPreparationRefusedV1 bad-val)) (ProviderPreparationRefusedV1 bad-val)))))) 9))
 (= (request-test:wire-contracts)
    (let* (
      ($chat (request-test:body "synthetic" "chat-completions" "S_cache_boundary_U" False))
