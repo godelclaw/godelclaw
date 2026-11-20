@@ -146,6 +146,17 @@
    (let* (($owner (proc:spawn $command ((cwd $root) (env $environment) (max-bytes 1048576))))
           ($_ (core-boot:wait-recorded $owner $history $needle $runtime 300)))
      (core-boot:stop $owner)))
+(= (core-boot:boundaries-seen $runtime)
+   (core-boot:count (fs:read-text (path:join $runtime "runtime.jsonl")) "\"kind\":\"boundary\""))
+; A restart that has finished starting: it has reached its loop's first boundary.
+(= (core-boot:relaunch-started $command $root $environment $runtime)
+   (let* (($seen (core-boot:boundaries-seen $runtime))
+          ($owner (proc:spawn $command ((cwd $root) (env $environment) (max-bytes 1048576))))
+          ($_ (core-boot:wait-boundary $owner $runtime $seen 300)))
+     (core-boot:stop $owner)))
+(= (core-boot:wait-boundary $owner $runtime $seen $remaining)
+   (if (or (<= $remaining 0) (> (core-boot:boundaries-seen $runtime) $seen)) True
+     (let $_ (proc:wait $owner 100) (core-boot:wait-boundary $owner $runtime $seen (- $remaining 1)))))
 ; Each interrupted state a death can leave, rebuilt on disk from the last
 ; settled record; each restart leaves the record in the history exactly once
 ; and runs no step again.
@@ -170,6 +181,17 @@
           ($_ (core-boot:cut $history $first-size))
           ($_ (core-boot:relaunch $command $root $environment $runtime $history "boot-test operator message"))
           ($_ (nt:require checkpointed-turn-recorded-once
+                (== (core-boot:count (fs:read-text $history) "boot-test operator message") 1)))
+          ; Started again with nothing to repair: nothing is written twice.
+          ($before (fs:read-text $history))
+          ($_ (core-boot:relaunch-started $command $root $environment $runtime))
+          ($_ (nt:require repeated-restart-repeats-nothing
+                (== (core-boot:count (fs:read-text $history) "boot-test operator message") 1)))
+          ; Another history file in its place: nothing of the old one's frontier
+          ; holds for it, and every message is written to it once.
+          ($_ (nt:require replaced-history-written (== (sf:replace $history (str:byte-slice $before 0 $first-size) 420 True) True)))
+          ($_ (core-boot:relaunch $command $root $environment $runtime $history "boot-test operator message"))
+          ($_ (nt:require replaced-history-gets-each-record-once
                 (== (core-boot:count (fs:read-text $history) "boot-test operator message") 1)))
           ($_ (nt:require boundaries-replay-no-effect (== (fs:read-text $effect) "X"))))
      True))

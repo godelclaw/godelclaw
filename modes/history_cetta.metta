@@ -32,15 +32,21 @@
      False))
 
 ; A mode's cursor is the history size up to which it has accounted for the
-; file: its own records, and the other loops' records it has caught up on.
+; file: its own records, and the other loops' records it has caught up on. It
+; is a place in one file: a file with another identity starts it again.
 (= (mode-history:cursor-path) (path:join (mode-host:root) "agent-history-cursor.json"))
 (= (mode-history:cursor)
    (let $record (sf:native-object (mode-history:cursor-path))
-     (if (== (sf:get $record "path" "") (mode-history:path)) (sf:get $record "size" -1) -1)))
+     (if (and (== (sf:get $record "path" "") (mode-history:path))
+              (or (== (sf:get $record "device" "") "")
+                  (== ((sf:get $record "device" "") (sf:get $record "inode" "")) (mode-history:identity))))
+       (sf:get $record "size" -1) -1)))
 (= (mode-history:mark-at $size)
-   (sf:replace (mode-history:cursor-path)
-     (turn:json (JsonObject ((JsonPair "path" (mode-history:path)) (JsonPair "size" $size))))
-     384 True))
+   (let $identity (case (mode-history:identity) ((none ("" "")) ($pair $pair)))
+     (sf:replace (mode-history:cursor-path)
+       (turn:json (JsonObject ((JsonPair "path" (mode-history:path)) (JsonPair "size" $size)
+                               (JsonPair "device" (index-atom $identity 0)) (JsonPair "inode" (index-atom $identity 1)))))
+       384 True)))
 
 ; A mode's own record is a durable intent before it is written: its text, the
 ; offset and identity of the file, and the frontier the record brings the mode
@@ -53,8 +59,12 @@
 (= (mode-history:intent) (sf:native-object (mode-history:intent-path)))
 (= (mode-history:write-intent $record)
    (sf:replace (mode-history:intent-path) (turn:json $record) 384 True))
-; Writes <text> as the mode's own record; True once it is in the file.
-(= (mode-history:append-own $text $frontier)
+; The history file's identity, as an intent records it; none when absent.
+(= (mode-history:identity)
+   (case (mode-host:file-info (mode-history:path)) (((ModeFileV1 $_ $device $inode) ($device $inode)) ($missing none))))
+; Writes <text> as the mode's own record; True once it is in the file. The
+; frontier is in the numbering <lineage>, and holds only for this file.
+(= (mode-history:append-own $text $frontier $lineage)
    (let* (($path (mode-history:path)) ($created (mode-host:ensure-file $path)))
      (if (!= $created True) (ModeIntentFailedV1 $created)
        (case (mode-host:file-info $path)
@@ -63,7 +73,7 @@
                   ($record (JsonObject ((JsonPair "schema" 1) (JsonPair "status" "pending") (JsonPair "path" $path)
                               (JsonPair "payload" $payload) (JsonPair "sha256" (str:sha256 $payload))
                               (JsonPair "offset" $offset) (JsonPair "device" $device) (JsonPair "inode" $inode)
-                              (JsonPair "frontier" $frontier))))
+                              (JsonPair "frontier" $frontier) (JsonPair "lineage" $lineage))))
                   ($written (mode-history:write-intent $record)))
              (if (!= $written True) (ModeIntentFailedV1 (Error mode-history (Incomplete intent-not-durable)))
                (mode-history:complete $record))))
@@ -89,19 +99,26 @@
    (let* (($_ (mode-history:report (Error mode-history (abandoned-intent $why))))
           ($_ (mode-history:write-intent (sf:put-all $record ((JsonPair "status" "abandoned"))))))
      ModeIntentAbandonedV1))
-; The pending intent, if any, resolved: (ModeIntentClearV1 <frontier>) when
-; nothing is pending (<frontier> that of a settled intent, or 0), else the
-; failure that keeps it pending.
-(= (mode-history:resolve-intent)
+; The pending intent, if any, resolved. Nothing pending: (ModeIntentClearV1
+; <frontier>), the frontier of the last settled intent when it is of
+; <lineage> and of the history file as it is now, else 0: a frontier never
+; passes to another numbering or another file. Otherwise the failure that
+; keeps it pending.
+(= (mode-history:resolve-intent $lineage)
    (let $record (mode-history:intent)
      (case (sf:get $record "status" "none")
        (("pending"
           (case (mode-history:complete $record)
-            ((True (ModeIntentClearV1 (sf:get $record "frontier" 0)))
+            ((True (mode-history:frontier-of $record $lineage))
              (ModeIntentAbandonedV1 (ModeIntentClearV1 0))
              ($failed $failed))))
-        ("settled" (ModeIntentClearV1 (sf:get $record "frontier" 0)))
+        ("settled" (mode-history:frontier-of $record $lineage))
         ($other (ModeIntentClearV1 0))))))
+(= (mode-history:frontier-of $record $lineage)
+   (if (and (== (sf:get $record "lineage" "") $lineage)
+            (== (mode-history:identity) ((sf:get $record "device" "") (sf:get $record "inode" ""))))
+     (ModeIntentClearV1 (sf:get $record "frontier" 0))
+     (ModeIntentClearV1 0)))
 
 ; Records other loops appended since this mode's cursor, oldest first. A larger
 ; gap shows its newest $limit bytes and says where the rest is.
