@@ -186,11 +186,29 @@ Inputs are acknowledged after history checkpoints. Mode switches before a
 checkpoint leave the input with its existing channel owner.
 
 Supervised modes share the agent's memory. Omega reads and appends the
-agent's history, the same file the framework loop writes. Iter adds each
-saved step to that history in the framework's record form, with its results,
-and on entry receives what the other loops recorded since it last ran. Iter's
-`remember`, `query` and `episodes` tools use the agent's semantic memory and
-history, as Omega's do. Iter's experience and transformations stay its working
+agent's history, the same file the framework loop writes. After each record
+it appends one result line per call it ran (`HistoryResultV1`: the call's
+place in the record, how it ended, how much of its text is kept, and the
+text), in the same durable append. The framework loop and Iter read those
+lines with the rest of the history; Omega's own HISTORY leaves them out, so
+its prompt keeps the upstream shape and does not show other loops' results.
+Iter adds each saved step to that history in the framework's record form,
+with its results, and on entry receives what the other loops recorded since
+it last ran. A mode that died mid-append leaves its payload in its record:
+the loop that runs next completes it from there before it reads or writes,
+so no record lands behind a partial one and nothing runs again. A loop reads
+another mode's records only up to an append that is not whole, and stops at
+a mode's record it cannot read. While a mode's record cannot be read, no
+loop writes past it, since the append it names may still be completed in
+place: the framework loop leaves that turn's record out of the history and
+reports why, Iter keeps its records queued, and Omega waits before it takes
+the next turn's input. An append that can never complete (other bytes at its
+place, or a payload that fails its digest) holds no one: nothing is written
+from it, and its owner abandons it when it next runs. A new record always
+starts on a line of its own: after an abandoned append whose written part
+ends inside a line, the next record begins with a line break, so it reads as
+a record by itself, and the fragment stays where it was. Iter's `remember`, `query` and `episodes` tools use the
+agent's semantic memory and history, as Omega's do. Iter's experience and transformations stay its working
 state. Omega loads the pinned upstream NAL and PLN libraries. Standalone
 launches keep their own history and text recall.
 Optional plugins and upstream Chroma startup remain outside these native modes.
