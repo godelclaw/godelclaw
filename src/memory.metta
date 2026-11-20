@@ -7,6 +7,7 @@
 
 (= (initMemory)
    (progn (println! "Initializing memory")
+          (collapse (agent-history:start))
           (configure maxFeedback 200000)
           (configure maxRecallItems 20)
           (configure maxRecentTurns 8)))

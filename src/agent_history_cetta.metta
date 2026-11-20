@@ -5,12 +5,15 @@
 ; the start of a turn, the bytes after this loop's cursor become one settled
 ; request, before the turn's own input.
 ;
-; The cursor (ledger meta agent_history_cursor) is the file's identity and the
-; size after the last byte this loop has accounted for: its own record, or an
-; import. Bytes are taken by position, never by content, so equal records are
-; each kept. An import's request is named by its first byte: a repeated import
-; finds its own request and moves the cursor to the end that request recorded,
-; so nothing is shown twice and a failed write is retried at the next turn.
+; The cursor (ledger meta agent_history_cursor) is the file's identity (device
+; and inode) and the size after the last byte this loop has accounted for: its
+; own record, or an import. Bytes are taken by position, never by content, so
+; equal records are each kept. An import's request is named by its first byte:
+; a repeated import finds its own request and moves the cursor to the end that
+; request recorded, so nothing is shown twice and a failed write is retried at
+; the next turn. The loop sets the cursor when it starts, so a mode that runs
+; before its first turn is caught up too; with no file yet, the cursor says so,
+; and the whole file is another loop's when it appears.
 !(import! &self ./state_ledger.metta)
 !(bind! &agent-history-cursor (new-state unread))
 
@@ -32,17 +35,18 @@
    (state:encoded (JsonObject ((JsonPair "path" (JsonString (agent-history:path)))
                                (JsonPair "device" (JsonString $device)) (JsonPair "inode" (JsonString $inode))
                                (JsonPair "size" (JsonNumber (repr $size)))))))
-; The cursor as (AgentHistoryCursorV1 <raw text> <device> <inode> <size>), or
-; none when there is none for this file.
+; The cursor as (AgentHistoryCursorV1 <raw text> <device> <inode> <size>); the
+; path is recorded for readers, and a file is known by its identity. Device and
+; inode "" mean no file existed when the cursor was set.
 (= (agent-history:number $value)
    (case $value (((JsonNumber $text) (str:string->number $text)) ($other -1))))
 (= (agent-history:parse $raw)
    (case (catch (json-parse $raw))
      (((JsonObject $pairs)
-       (if (== (state:json-member $pairs "path") (JsonString (agent-history:path)))
-         (AgentHistoryCursorV1 $raw (state:text (state:json-member $pairs "device"))
-           (state:text (state:json-member $pairs "inode")) (agent-history:number (state:json-member $pairs "size")))
-         none))
+       (case ((state:json-member $pairs "device") (state:json-member $pairs "inode"))
+         ((((JsonString $device) (JsonString $inode))
+           (AgentHistoryCursorV1 $raw $device $inode (agent-history:number (state:json-member $pairs "size"))))
+          ($bad none))))
       ($bad none))))
 (= (agent-history:cursor-raw)
    (let $cached (get-state &agent-history-cursor)
@@ -52,16 +56,34 @@
            (let $_ (change-state! &agent-history-cursor $raw) $raw))))))
 ; Moves the cursor from <raw> (none: absent) to <file>'s identity at <size>.
 (= (agent-history:move $raw $file $size)
-   (let* (((AgentHistoryFileV1 $device $inode $_) $file)
-          ($next (agent-history:record (AgentHistoryFileV1 $device $inode $size))))
-     (case (state:ledger "meta-cas" ((agent-history:key) $raw $next (state:request-id)))
-       ((published (let $_ (change-state! &agent-history-cursor $next) True))
-        ; Another writer moved it: read it again next time.
-        ($other (let $_ (change-state! &agent-history-cursor unread) (Error agent-history:move $other)))))))
+   (let (AgentHistoryFileV1 $device $inode $_) $file
+     (agent-history:set $raw (agent-history:record (AgentHistoryFileV1 $device $inode $size)))))
+(= (agent-history:set $raw $next)
+   (case (state:ledger "meta-cas" ((agent-history:key) $raw $next (state:request-id)))
+     ((published (let $_ (change-state! &agent-history-cursor $next) True))
+      ; Another writer moved it: read it again next time.
+      ($other (let $_ (change-state! &agent-history-cursor unread) (Error agent-history:set $other))))))
 
 (= (agent-history:report $failure)
-   (let $_ (system:write stderr (str:concat "[loop] agent history catch-up: " (str:concat (repr $failure) "\n")))
+   (let $_ (system:write stderr (str:concat "[loop] agent history: " (str:concat (repr $failure) "\n")))
      $failure))
+
+; At the loop's start, a history with no cursor gets one: what is there now is
+; the record this loop begins with.
+(= (agent-history:start)
+   (if (not (agent-history:enabled?)) True
+     (case (catch (agent-history:start-now))
+       ((True True) ($failure (let $_ (agent-history:report $failure) True))))))
+(= (agent-history:start-now)
+   (let $raw (agent-history:cursor-raw)
+     (if (agent-history:failed? $raw) $raw
+       (if (!= $raw none) True
+         (case (agent-history:file)
+           ((AgentHistoryMissingV1
+              (agent-history:set none (state:encoded (JsonObject ((JsonPair "path" (JsonString (agent-history:path)))
+                (JsonPair "device" (JsonString "")) (JsonPair "inode" (JsonString "")) (JsonPair "size" (JsonNumber "0")))))))
+            ((AgentHistoryFileV1 $device $inode $size)
+              (agent-history:move none (AgentHistoryFileV1 $device $inode $size) $size))))))))
 
 ; At a turn's start: what other loops wrote since this loop's cursor joins the
 ; conversation. Never fails the turn; a failure is retried at the next turn.
@@ -76,8 +98,11 @@
          (if (agent-history:failed? $raw) $raw
            (let (AgentHistoryFileV1 $device $inode $size) $file
              (case (if (== $raw none) none (agent-history:parse $raw))
-               ; A first run starts at the end: earlier records are the file's.
+               ; A cursor that could not be set at the start begins at the end.
                ((none (agent-history:move $raw $file $size))
+                ; No file when the loop started: all of it is another loop's.
+                ((AgentHistoryCursorV1 $_ "" "" $_)
+                  (if (== $size 0) (agent-history:move $raw $file 0) (agent-history:import $raw $file 0 $size)))
                 ((AgentHistoryCursorV1 $_ $d $i $at)
                   (if (or (or (!= $d $device) (!= $i $inode)) (> $at $size))
                     ; Another file, or a shorter one: its old positions mean nothing.
@@ -85,7 +110,7 @@
                     (if (== $at $size) True (agent-history:import $raw $file $at $size))))))))))))
 
 (= (agent-history:id (AgentHistoryFileV1 $device $inode $size) $from)
-   (str:join ":" ("agent-history" (str:byte-slice (str:sha256 (str:join "\n" ((agent-history:path) $device $inode))) 0 16) (repr $from))))
+   (str:join ":" ("agent-history" (str:byte-slice (str:sha256 (str:join "\n" ($device $inode))) 0 16) (repr $from))))
 (= (agent-history:header $from $shown $to)
    (str:join "" ("[AGENT HISTORY bytes " (repr $shown) "-" (repr $to) " of " (agent-history:path)
      ": what the agent's other modes recorded in its shared history after this loop's last turn, oldest first."
@@ -191,5 +216,8 @@
                  ((none (agent-history:move $raw (AgentHistoryFileV1 $device $inode $end) $end))
                   ((AgentHistoryCursorV1 $_ $device $inode $start)
                     (agent-history:move $raw (AgentHistoryFileV1 $device $inode $end) $end))
+                  ; This record created the file: nothing before it is another loop's.
+                  ((AgentHistoryCursorV1 $_ "" "" $_)
+                    (if (== $start 0) (agent-history:move $raw (AgentHistoryFileV1 $device $inode $end) $end) True))
                   ($elsewhere True))))))))
       ($missing True))))
