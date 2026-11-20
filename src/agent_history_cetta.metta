@@ -15,6 +15,7 @@
 ; before its first turn is caught up too; with no file yet, the cursor says so,
 ; and the whole file is another loop's when it appears.
 !(import! &self ./state_ledger.metta)
+!(import! &self ./history_pending_cetta.metta)
 !(bind! &agent-history-cursor (new-state unread))
 
 (= (agent-history:failed? $value)
@@ -132,8 +133,12 @@
    (if (not (agent-history:enabled?)) True
      (case (catch (agent-history:catch-up-now))
        ((True True) ($failure (let $_ (agent-history:report $failure) True))))))
+;; The running loop is the history's only writer: before it reads, it
+;; completes another mode's torn append from its record, so the record joins
+;; now; one it cannot complete stays where the import stops.
 (= (agent-history:catch-up-now)
-   (let $file (agent-history:file)
+   (let* (($_ (collapse (catch (agent-history:complete-others))))
+          ($file (agent-history:file)))
      (case $file
        ((AgentHistoryMissingV1 True)
         ((AgentHistoryUnknownV1 $why) (Error agent-history:catch-up (Incomplete (file-unknown $why))))
@@ -145,7 +150,7 @@
                ((none (agent-history:move $raw $file $size))
                 ; No file when the loop started: all of it is another loop's.
                 ((AgentHistoryCursorV1 $_ "" "" $_ $_)
-                  (if (== $size 0) (agent-history:move $raw $file 0) (agent-history:import $raw $file 0 $size)))
+                  (if (== $size 0) (agent-history:move $raw $file 0) (agent-history:import-settled $raw $file 0 $size)))
                 ; This loop's own records were being written: past those there
                 ; whole, else from the first that is not. Unread, they stay named.
                 ((AgentHistoryCursorV1 $_ $device $inode $at (AgentHistoryOwnV1 $entries))
@@ -158,7 +163,22 @@
                   (if (or (or (!= $d $device) (!= $i $inode)) (> $at $size))
                     ; Another file, or a shorter one: its old positions mean nothing.
                     (agent-history:move $raw $file $size)
-                    (if (== $at $size) True (agent-history:import $raw $file $at $size)))))))))))))
+                    (if (== $at $size) True (agent-history:import-settled $raw $file $at $size)))))))))))))
+
+;; Only what is settled joins: a mode's append into this history that has not
+;; settled may be torn, and its owner completes it when it next starts. The
+;; bytes from its offset wait; a mode's record that cannot be read imports
+;; nothing this turn, and the next turn tries again.
+(= (agent-history:modes-root)
+   (let $configured (system:getenv-or-default "METTACLAW_MODE_STATE_ROOT" "")
+     (if (!= $configured "") $configured
+       (let $engine (system:getenv-or-default "METTACLAW_ENGINE_STATE_PATH" "")
+         (if (== $engine "") "" (path:join (path:dirname $engine) "modes"))))))
+(= (agent-history:import-settled $raw $file $from $size)
+   (let (AgentHistoryFileV1 $device $inode $_) $file
+     (let $end (history-pending:end (agent-history:modes-root) (agent-history:path) $device $inode $size)
+       (if (== $end unknown) (Error agent-history:catch-up (Incomplete mode-record-unread))
+         (if (<= $end $from) True (agent-history:import $raw $file $from $end))))))
 
 (= (agent-history:id (AgentHistoryFileV1 $device $inode $size) $from)
    (str:join ":" ("agent-history" (str:byte-slice (str:sha256 (str:join "\n" ($device $inode))) 0 16) (repr $from))))
@@ -178,14 +198,13 @@
        (if (agent-history:failed? $text) $text (AgentHistoryTextV1 $from $text)))
      (agent-history:tail $to)))
 (= (agent-history:tail $to)
-   (case (fs:tail-text (agent-history:path) (agent-history:limit))
-     (((fs:tail $size $_ $text)
-       (if (!= $size $to) (Error agent-history:tail (Incomplete changed-while-read))
-         (let $aligned (case (str:find $text "\n(\"")
-                         (((TextNotFound $_) $text)
-                          ($at (str:byte-slice $text (+ $at 1) (str:byte-length $text)))))
-           (AgentHistoryTextV1 (- $to (str:byte-length $aligned)) $aligned))))
-      ($bad (Error agent-history:tail $bad)))))
+   (let* (($start (max 0 (- $to (agent-history:limit))))
+          ($text (agent-history:read-at (agent-history:path) $start (- $to $start))))
+     (if (agent-history:failed? $text) (Error agent-history:tail $text)
+       (let $aligned (case (str:find $text "\n(\"")
+                       (((TextNotFound $_) (history-pending:as-tail-text $text))
+                        ($at (str:byte-slice $text (+ $at 1) (str:byte-length $text)))))
+         (AgentHistoryTextV1 (- $to (str:byte-length $aligned)) $aligned)))))
 (= (agent-history:read-at $path $offset $bytes)
    (case (fs:open-read $path)
      (((NativeHandle $kind $id)
@@ -251,13 +270,27 @@
 ; and the next catch-up shows them with this record after them.
 (= (agent-history:append-own $text)
    (if (not (agent-history:enabled?)) (loop-host:history-append $text)
-     (let* (($payload (if (str:ends-with $text "\n") $text (str:concat $text "\n")))
+     (let $ready (agent-history:complete-others)
+       (if (!= $ready True) (let $_ (agent-history:report $ready) 0)
+         (agent-history:append-own-now $text)))))
+;; Another mode's recorded append that is torn is completed from its record
+;; first, so this loop's record never lands behind a partial one; bytes that
+;; are not its payload, or a record that cannot be read, refuse the write.
+(= (agent-history:complete-others)
+   (case (agent-history:file)
+     ((AgentHistoryMissingV1 True)
+      ((AgentHistoryFileV1 $device $inode $_)
+        (history-pending:complete (agent-history:modes-root) (agent-history:path) $device $inode))
+      ((AgentHistoryUnknownV1 $why) (Error agent-history:append (Incomplete (file-unknown $why)))))))
+(= (agent-history:append-own-now $text)
+   (let* (($payload (history-pending:on-own-line (agent-history:path)
+                      (if (str:ends-with $text "\n") $text (str:concat $text "\n"))))
             ($before (agent-history:file))
             ; collapse: a step that yields nothing must not take the receipt with it.
             ($_ (collapse (catch (agent-history:own-intent $before $payload))))
             ($written (loop-host:history-append $payload)))
        (if (!= $written 1) $written
-         (let $_ (collapse (catch (agent-history:own-appended $before (str:byte-length $payload)))) 1)))))
+         (let $_ (collapse (catch (agent-history:own-appended $before (str:byte-length $payload)))) 1))))
 (= (agent-history:own-intent $before $payload)
    (case $before
      (((AgentHistoryFileV1 $device $inode $start)

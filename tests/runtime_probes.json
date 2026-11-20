@@ -43,5 +43,7 @@
   ["tests/sequential_tools_probe.metta", "SEQUENTIAL_TOOLS_OK"],
   ["tests/runtime_context_probe.metta", "RUNTIME_CONTEXT_OK"],
   ["tests/cross_mode_history_probe.metta", "CROSS_MODE_HISTORY_OK"],
-  ["tests/cross_mode_own_records_probe.metta", "CROSS_MODE_OWN_RECORDS_OK"]
+  ["tests/cross_mode_own_records_probe.metta", "CROSS_MODE_OWN_RECORDS_OK"],
+  ["tests/cross_mode_pending_probe.metta", "CROSS_MODE_PENDING_OK"],
+  ["tests/cross_mode_writer_probe.metta", "CROSS_MODE_WRITER_OK"]
 ]

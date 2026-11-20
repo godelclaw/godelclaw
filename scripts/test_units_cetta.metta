@@ -9,6 +9,17 @@
     ("tests/unit/mode_checkpoint.metta" "UNIT_NATIVE_MODE_CHECKPOINT_OK"
      (("METTACLAW_MODE_RUNTIME" "{home}/mode") ("METTACLAW_MODE_PROFILE" "standalone")))
     ("tests/unit/omega_native.metta" "UNIT_OMEGA_NATIVE_OK")
+    ("tests/unit/mode_catch_up_pending.metta" "UNIT_MODE_CATCH_UP_PENDING_OK"
+     (("METTACLAW_MODE_RUNTIME" "{home}/modes/iter") ("METTACLAW_MODE_PROFILE" "supervised")
+      ("METTACLAW_HISTORY_PATH" "{home}/history.metta")))
+    ("tests/unit/iter_catch_up_cursor.metta" "UNIT_ITER_CATCH_UP_CURSOR_OK"
+     (("METTACLAW_MODE_RUNTIME" "{home}/modes/iter") ("METTACLAW_MODE_PROFILE" "supervised")
+      ("METTACLAW_HISTORY_PATH" "{home}/history.metta")))
+    ("tests/unit/iter_invalid_requeue.metta" "UNIT_ITER_INVALID_REQUEUE_OK"
+     (("METTACLAW_MODE_RUNTIME" "{home}/modes/iter") ("METTACLAW_MODE_PROFILE" "supervised")
+      ("METTACLAW_HISTORY_PATH" "{home}/history.metta")))
+    ("tests/unit/history_pending_standalone.metta" "UNIT_HISTORY_PENDING_STANDALONE_OK" (("PENDING_HOME" "{home}")))
+    ("tests/unit/agent_history_bounds.metta" "UNIT_AGENT_HISTORY_BOUNDS_OK" (("METTACLAW_HISTORY_PATH" "{home}/history.metta")))
     ("tests/unit/iter_request.metta" "UNIT_ITER_REQUEST_OK")
     ("tests/unit/iter_request.metta" "UNIT_ITER_TOOL_FAILURE_OK")
     ("tests/unit/iter_request.metta" "UNIT_ITER_REFUSAL_OK")

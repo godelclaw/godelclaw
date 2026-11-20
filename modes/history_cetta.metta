@@ -3,6 +3,7 @@
 ; own cursor, and timestamp windows that do not read a large file whole.
 !(import! &self ./runtime_host_cetta.metta)
 !(import! &self ../src/unicode_casefold_cetta.metta)
+!(import! &self ../src/history_pending_cetta.metta)
 
 ; Supervised modes use the agent's history; a terminal launch has none.
 (= (mode-history:path)
@@ -77,11 +78,12 @@
 ; occurrences numbered after <from> up to the frontier, in the numbering
 ; <lineage>; the frontier holds only for this file.
 (= (mode-history:place-own $text $from $frontier $lineage)
-   (let* (($path (mode-history:path)) ($created (mode-host:ensure-file $path)))
-     (if (!= $created True) (ModeIntentFailedV1 $created)
+   (let* (($path (mode-history:path)) ($created (mode-host:ensure-file $path))
+          ($ready (if (!= $created True) $created (mode-history:complete-others $path))))
+     (if (!= $ready True) (ModeIntentFailedV1 $ready)
        (case (mode-host:file-info $path)
          (((ModeFileV1 $offset $device $inode)
-           (let* (($payload (if (str:ends-with $text "\n") $text (str:concat $text "\n")))
+           (let* (($payload (history-pending:on-own-line $path (if (str:ends-with $text "\n") $text (str:concat $text "\n"))))
                   ($record (JsonObject ((JsonPair "schema" 1) (JsonPair "status" "pending") (JsonPair "path" $path)
                               (JsonPair "payload" $payload) (JsonPair "sha256" (str:sha256 $payload))
                               (JsonPair "offset" $offset) (JsonPair "device" $device) (JsonPair "inode" $inode)
@@ -94,8 +96,12 @@
 ; failure that may pass leaves it pending: (ModeIntentFailedV1 <why>); a file
 ; that no longer holds its place abandons it: ModeIntentAbandonedV1.
 ; Only what is established abandons an intent: a missing file, another one,
-; or other bytes at its place. A read or a write that failed keeps it pending.
+; other bytes at its place, or a payload that does not match its recorded
+; digest, from which nothing is written. A read or a write that failed keeps
+; it pending.
 (= (mode-history:complete $record)
+   (if (!= (str:sha256 (sf:get $record "payload" "")) (sf:get $record "sha256" ""))
+     (mode-history:abandon-intent $record invalid-payload)
    (case (fs:metadata (sf:get $record "path" "") follow-observed)
      (((fs:failed fs:missing $_ $_ $_ $_ $_) (mode-history:abandon-intent $record file-missing))
       ((fs:failed $kind $_ $_ $_ $_ $_)
@@ -104,7 +110,7 @@
         (case (mode-host:resume-append $record)
           ((True (mode-history:settle-intent $record))
            ((Error mode-checkpoint (Forbidden $why)) (mode-history:abandon-intent $record $why))
-           ($failed (let $_ (mode-history:report $failed) (ModeIntentFailedV1 $failed)))))))))
+           ($failed (let $_ (mode-history:report $failed) (ModeIntentFailedV1 $failed))))))))))
 (= (mode-history:settle-intent $record)
    (let* (($offset (sf:get $record "offset" 0)) ($end (+ $offset (str:byte-length (sf:get $record "payload" ""))))
           ($settled (mode-history:write-intent (sf:put-all $record ((JsonPair "status" "settled"))))))
@@ -115,25 +121,60 @@
    (let* (($_ (mode-history:report (Error mode-history (abandoned-intent $why))))
           ($_ (mode-history:write-intent (sf:put-all $record ((JsonPair "status" "abandoned"))))))
      ModeIntentAbandonedV1))
-; Records other loops appended since this mode's cursor, oldest first; "" when
-; there are none, ModeCatchUpUnavailableV1 when they could not be read. A larger
-; gap shows its newest $limit bytes and says where the rest is.
-(= (mode-history:catch-up $limit)
-   (if (not (mode-history:shared?)) ""
-     (let* (($path (mode-history:path)) ($size (mode-history:size $path))
+;; Records other loops appended since this mode's cursor, oldest first, with
+;; the end they were read up to: (ModeCatchUpV1 <text> <end>), the text ""
+;; when there are none; ModeCatchUpUnavailableV1 when they could not be read.
+;; The end is the settled end, never the file's: a mode marks its cursor
+;; there, so an append that was not whole is read once it is. A larger gap
+;; shows its newest $limit bytes and says where the rest is.
+(= (mode-history:catch-up-to $limit)
+   (if (not (mode-history:shared?)) (ModeCatchUpV1 "" 0)
+     (let* (($path (mode-history:path))
+            ; This mode now writes alone: another mode's torn append is
+            ; completed from its record first; one it cannot complete stays
+            ; where reading stops.
+            ($_ (collapse (catch (mode-history:complete-others $path))))
+            ; Only what is settled: another mode's unsettled append may be torn.
+            ($size (mode-history:settled-size $path))
             ($cursor (mode-history:cursor)))
-      (if (== $cursor unknown) ModeCatchUpUnavailableV1
+      (if (or (== $cursor unknown) (== $size unknown)) ModeCatchUpUnavailableV1
        (let $from (if (< $cursor 0) 0 $cursor)
-       (if (<= $size $from) ""
+       (if (<= $size $from) (ModeCatchUpV1 "" $from)
          (if (<= (- $size $from) $limit)
            (let $text (mode-host:read-at $path $from (- $size $from))
-             (if (mode-host:read-failed? $text) ModeCatchUpUnavailableV1 $text))
-           (case (fs:tail-text $path $limit)
-             (((fs:tail $_ $_ $text)
-               (str:join "" ("[" (repr (- (- $size $from) (str:byte-length $text)))
-                             " earlier bytes of the agent history since this mode last ran are not shown here;"
-                             " use episodes or query to read them]\n" $text)))
-              ($bad ModeCatchUpUnavailableV1))))))))))
+             (if (mode-host:read-failed? $text) ModeCatchUpUnavailableV1 (ModeCatchUpV1 $text $size)))
+           ; The newest $limit bytes up to the settled end, not the file's end.
+           (let* (($start (- $size $limit))
+                  ($text (mode-host:read-at $path $start $limit)))
+             (if (mode-host:read-failed? $text) ModeCatchUpUnavailableV1
+               (ModeCatchUpV1
+                 (str:join "" ("[" (repr (- $start $from))
+                               " earlier bytes of the agent history since this mode last ran are not shown here;"
+                               " use episodes or query to read them]\n" (history-pending:as-tail-text $text)))
+                 $size))))))))))
+;; The text alone: "" when there is none, ModeCatchUpUnavailableV1 when unread.
+(= (mode-history:catch-up $limit)
+   (case (mode-history:catch-up-to $limit)
+     (((ModeCatchUpV1 $text $_) $text)
+      ($unavailable $unavailable))))
+
+; The history's size up to the first append a mode has not settled, from the
+; modes' records beside this mode's own directory; unknown when one of them,
+; or the file's identity, could not be read.
+(= (mode-history:settled-size $path)
+   (let $size (mode-history:size $path)
+     (case (mode-history:identity)
+       ((none $size)
+        (unknown unknown)
+        (($device $inode) (history-pending:end (path:dirname (mode-host:root)) $path $device $inode $size))))))
+; Before this mode appends: another mode's recorded append that is torn is
+; completed from its record, so this record never lands behind a partial one;
+; bytes that are not its payload, or a record that cannot be read, refuse.
+(= (mode-history:complete-others $path)
+   (case (mode-history:identity)
+     ((none True)
+      (unknown (Error mode-history (Incomplete history-identity-unknown)))
+      (($device $inode) (history-pending:complete (path:dirname (mode-host:root)) $path $device $inode)))))
 
 ; Timestamps as the history writes them, as civil seconds.
 (= (mode-history:leap? $year)

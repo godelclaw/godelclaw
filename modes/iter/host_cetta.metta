@@ -142,16 +142,19 @@
    "[AGENT HISTORY: what happened in the agent's other modes since Iter last ran, oldest first, as recorded in the agent's shared history]\n")
 (= (ih:catch-up $experience)
    (let* (($_ (ih:resolve))
-          ($size (mode-history:size (mode-history:path)))
-          ($text (mode-history:catch-up 30000)))
-     ; Nothing to show, or nothing readable: the cursor stays where it is.
-     (if (or (== $text "") (== $text ModeCatchUpUnavailableV1)) (ih:place)
-       (let* (($_ (ih:append $experience (ih:message "user" (str:concat (ih:catch-up-header) $text))))
-              ($numbers (ih:numbers $experience))
-              ($_ (ih:capture $experience $numbers))
-              ($_ (ih:checkpoint $experience $numbers))
-              ($_ (mode-history:mark-at $size)))
-         (ih:place)))))
+          ($caught (mode-history:catch-up-to 30000)))
+     (case $caught
+       ; The cursor moves to the end that was read, which an append that is
+       ; not whole yet lies past; nothing to show, or nothing readable: it stays.
+       (((ModeCatchUpV1 $text $end)
+         (if (== $text "") (ih:place)
+           (let* (($_ (ih:append $experience (ih:message "user" (str:concat (ih:catch-up-header) $text))))
+                  ($numbers (ih:numbers $experience))
+                  ($_ (ih:capture $experience $numbers))
+                  ($_ (ih:checkpoint $experience $numbers))
+                  ($_ (mode-history:mark-at $end)))
+             (ih:place))))
+        ($unavailable (ih:place))))))
 ; Each saved message joins the agent's history once, in the framework's record
 ; form: input as HUMAN_MESSAGE, a step's calls as commands, then its results.
 ; A message keeps the occurrence number it was first given, by identity, so
@@ -299,7 +302,7 @@
 (= (ih:requeue $record)
    (let $identity (ih:record-identity $record)
      (if (== $identity (get-state &ih-requeued)) True
-       (let* (($payload (sf:get $record "payload" ""))
+       (let* (($payload (ih:payload-for $record))
               ($own (== (sf:get $record "lineage" "") (get-state &ih-lineage)))
               ($from (ih:integer (sf:get $record "from" (get-state &ih-queued-from))))
               ($_ (if (ih:holds-queue? $record)
@@ -307,6 +310,30 @@
                     (let $_ (change-state! &ih-queued (str:concat $payload (get-state &ih-queued)))
                       (if $own (change-state! &ih-queued-from (min $from (get-state &ih-queued-from))) True)))))
          (let $_ (change-state! &ih-requeued $identity) True)))))
+; What a record queued again holds: its payload when that matches its digest.
+; A payload that fails its digest is never written from: the occurrences the
+; record held are rendered again from the experience, and those the
+; experience no longer holds are reported missing.
+(= (ih:payload-for $record)
+   (let $payload (sf:get $record "payload" "")
+     (if (== (str:sha256 $payload) (sf:get $record "sha256" "")) $payload
+       (let* (($pairs (ih:occurrences-of $record))
+              ($missing (ih:occurrences-missing $record))
+              ($_ (if (> $missing 0)
+                    (mode-history:report (Error mode-history
+                      (missing-occurrences (after (ih:integer (sf:get $record "from" 0)))
+                                           (through (ih:integer (sf:get $record "frontier" 0))) (count $missing))))
+                    True)))
+         (ih:history-text (map-atom $pairs $pair (index-atom $pair 0)))))))
+; The experience's messages numbered in a record's range, in its numbering.
+(= (ih:occurrences-of $record)
+   (if (!= (sf:get $record "lineage" "") (get-state &ih-lineage)) ()
+     (let* (($from (ih:integer (sf:get $record "from" 0))) ($to (ih:integer (sf:get $record "frontier" 0))))
+       (filter-atom (get-state &ih-numbers) $pair
+         (and (> (index-atom $pair 1) $from) (<= (index-atom $pair 1) $to))))))
+(= (ih:occurrences-missing $record)
+   (let* (($from (ih:integer (sf:get $record "from" 0))) ($to (ih:integer (sf:get $record "frontier" 0))))
+     (- (max 0 (- $to $from)) (size-atom (ih:occurrences-of $record)))))
 (= (ih:rewrite-for $current)
    (let* (($frontier (get-state &ih-frontier))
           ($pairs (filter-atom (get-state &ih-numbers) $pair (<= (index-atom $pair 1) $frontier)))

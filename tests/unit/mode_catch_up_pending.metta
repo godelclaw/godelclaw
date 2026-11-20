@@ -1,0 +1,41 @@
+!(import! &self ../native_test_support.metta)
+!(import! &self ../../modes/history_cetta.metta)
+; A mode catching up on the agent's history reads only up to another mode's
+; unsettled append; settled, it reads it; a record that cannot be read leaves
+; the catch-up unavailable rather than past it.
+(= (catch:record $status $offset)
+   (case (mode-host:file-info (mode-history:path))
+     (((ModeFileV1 $_ $device $inode)
+       (str:join "" ("{\"status\": \"" $status "\", \"operation\": \"append\", \"device\": \"" $device
+                     "\", \"inode\": \"" $inode "\", \"offset\": " (repr $offset) "}"))))))
+(= (catch:append $path $text)
+   (let $owner (fs:open-write $path ("create" "append") 384)
+     (let* (($_ (fs:write-all $owner $text)) ($_ (fs:close $owner))) True)))
+!(let* (($history (mode-history:path))
+        ($_ (fs:make-directories (mode-host:root) 448))
+        ($_ (nt:require supervised-history (!= $history "")))
+        ($_ (fs:write $history "(\"a\" \"\n\" \"SETTLED_TEXT\" \"\n\")\n"))
+        ($at (mode-history:size $history))
+        ($_ (catch:append $history "(\"b\" \"\n\" \"PENDING_TEXT\" \"\n\")\n"))
+        ($omega (path:join (path:join (path:dirname (mode-host:root)) "omega") "native-checkpoint-v1.json"))
+        ($_ (fs:make-directories (path:dirname $omega) 448))
+        ($_ (fs:write $omega (catch:record "pending" $at)))
+        ($held (mode-history:catch-up 30000))
+        ($_ (nt:require reads-what-is-settled (nt:contains $held "SETTLED_TEXT")))
+        ($_ (nt:require stops-before-pending-append (not (nt:contains $held "PENDING_TEXT"))))
+        ($_ (fs:write $omega (catch:record "settled" $at)))
+        ($_ (nt:require reads-it-once-settled (nt:contains (mode-history:catch-up 30000) "PENDING_TEXT")))
+        ($_ (fs:write $omega "{not json"))
+        ($_ (nt:require unreadable-record-reads-nothing (== (mode-history:catch-up 30000) ModeCatchUpUnavailableV1)))
+        ; A long gap shows the newest bytes up to the settled end: the last
+        ; settled record, never the pending suffix after it.
+        ($_ (fs:write $history (str:join "" ("(\"c\" \"\n\" \"" (str:join "" (map-atom (1 2 3 4 5 6 7 8) $i "early text ")) "\" \"\n\")\n"
+                                            "(\"d\" \"\n\" \"LAST_SETTLED\" \"\n\")\n"))))
+        ($end (mode-history:size $history))
+        ($_ (catch:append $history "(\"e\" \"\n\" \"PENDING_TAIL_TEXT_AFTER_IT\" \"\n\")\n"))
+        ($_ (fs:write $omega (catch:record "pending" $end)))
+        ($gap (mode-history:catch-up 40))
+        ($_ (nt:require long-gap-shows-last-settled (nt:contains $gap "LAST_SETTLED")))
+        ($_ (nt:require long-gap-hides-pending (not (nt:contains $gap "PENDING_TAIL"))))
+        ($_ (nt:require long-gap-counts-hidden-bytes (str:starts-with $gap (str:concat "[" (repr (- $end 40)))))))
+   (println! UNIT_MODE_CATCH_UP_PENDING_OK))
