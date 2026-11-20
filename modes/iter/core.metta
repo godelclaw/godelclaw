@@ -80,6 +80,29 @@
 
 (= (iter:dynamic $tools $name $arguments)
    (ih:invoke $tools $name $arguments))
+; As upstream Iter (iter.py:306-316): a tool's failure, raised or returned,
+; is its output, and its output is the text of what it returned; the step
+; goes on either way. A failure whose effect may have happened (Incomplete,
+; such as a worker that died) is said to be uncertain, not failed, so that it
+; is not simply done again. An ordinary value is its text, whatever it says.
+(= (iter:tool-run $tools $name $arguments)
+   (iter:tool-outcome (collapse (catch (iter:dynamic $tools $name $arguments)))))
+(= (iter:tool-outcome $answers)
+   (case $answers
+     ((() "Tool execution failed: no result")
+      (((Error $where (Incomplete $why)))
+        (str:concat "Tool outcome uncertain: " (diagnostic:text (Error $where (Incomplete $why)) 600)))
+      (((Error $where $why)) (str:concat "Tool execution failed: " (diagnostic:text (Error $where $why) 600)))
+      (($result) (if (== (get-type $result) String) $result (repr $result)))
+      ($results (repr $results)))))
+; Consecutive failed steps: upstream waits one second and tries again, which
+; repeats a deterministic failure, and its provider call, without end. After
+; three in a row each wait doubles from 15 seconds up to ten minutes; the wait
+; passes the mode gate, and a step that succeeds starts the count again.
+!(bind! &iter-failures (new-state 0))
+(= (iter:failure-wait $count)
+   (if (<= $count 3) 1 (min 600 (* 15 (iter:power-of-two (- $count 4))))))
+(= (iter:power-of-two $n) (if (<= $n 0) 1 (* 2 (iter:power-of-two (- $n 1)))))
 (= (iter:dispatch $tools $call)
    (let* (($function (ih:get $call "function"))
           ($name (ih:get $function "name"))
@@ -87,7 +110,7 @@
      (if (iter:true (ih:flag $decoded "ok"))
          (if (iter:true (ih:has-tool $tools $name))
              (if (iter:true (ih:flag $decoded "object"))
-                 (iter:dynamic $tools $name (ih:get $decoded "value"))
+                 (iter:tool-run $tools $name (ih:get $decoded "value"))
                  "Tool arguments must be a JSON object")
              (ih:unknown $name))
          (ih:get $decoded "error"))))
@@ -133,13 +156,18 @@
             (progn (change-state! &iter-checkpoint (ih:size $clean))
                    (change-state! &iter-control ($post $steps $new $pending))
                    (case (catch (iter:cycle $clean $post $steps $new $pending $next-bucket))
+                     ; As upstream (iter.py:333): the failed step is reported.
                      (((Error $a $b)
-                       (progn (ih:sleep 1)
+                       (let* (($count (+ (get-state &iter-failures) 1)) ($_ (change-state! &iter-failures $count))
+                              ($wait (iter:failure-wait $count)))
+                       (progn (system:write stderr (str:join "" ("Output> " (diagnostic:text (Error $a $b) 600)
+                                                                 " [failed step " (repr $count) "; next attempt in " (repr $wait) " s]\n")))
+                              (ih:sleep $wait)
                               (let ($p $s $n $e) (get-state &iter-control)
                                 (iter:loop (iter:state
                                    (ih:take $clean (get-state &iter-checkpoint))
-                                   $p $s $n $e $next-bucket)))))
-                      ($next (iter:loop $next))))))))
+                                   $p $s $n $e $next-bucket))))))
+                      ($next (let $_ (change-state! &iter-failures 0) (iter:loop $next)))))))))
 (= (iter:start)
    (let $history (ih:initialize)
      (iter:loop (iter:state $history False 0 True ""

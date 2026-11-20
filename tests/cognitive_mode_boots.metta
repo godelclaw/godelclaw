@@ -54,6 +54,19 @@
 (= (core-boot:reply $calls)
    (json:stringify-python (JsonObject ((JsonPair "id" "fixture") (JsonPair "status" "completed") (JsonPair "output" (JsonArray $calls))
      (JsonPair "usage" (JsonObject ((JsonPair "input_tokens" 10) (JsonPair "output_tokens" 2))))))))
+; Two of Iter's own tools that fail: one returns an Error, one's worker dies.
+(= (core-boot:test-tools $runtime)
+   (let* (($tools (path:join $runtime "tools")) ($_ (fs:make-directories $tools 448))
+          ($_ (fs:write (path:join $tools "fail_returned.metta")
+                "(ComponentDeclarationV1 \"Test tool: always fails.\" ())\n(= (component:run $input) (Error test-tool (Fault deliberate-failure)))\n"))
+          ($_ (fs:write (path:join $tools "crash_tool.metta")
+                "(ComponentDeclarationV1 \"Test tool: its worker dies.\" ())\n(= (component:run $input) (system:exit 3))\n")))
+     True))
+; Until the mode's checkpoint is settled: a running mode publishes a record
+; before each write and settles it after, so a read can land between them.
+(= (core-boot:wait-settled $owner $path $remaining)
+   (if (or (<= $remaining 0) (== (sf:get (sf:native-object $path) "status" "") "settled")) True
+     (let $_ (proc:wait $owner 100) (core-boot:wait-settled $owner $path (- $remaining 1)))))
 (= (core-boot:outbox-texts $folder)
    (if (not (fs:exists $folder)) ()
      (map-atom (filter-atom (fs:entries $folder) $name (str:ends-with $name ".json")) $name
@@ -95,9 +108,15 @@
           ; Omega's file tools share names with the framework's; each call must run once.
           ($counter (nq:path $world "append-counter"))
           ($append-arguments (json:stringify-python (JsonObject ((JsonPair "filename" $counter) (JsonPair "content" "x")))))
+          ; Iter's step: an effect, a tool that fails, one whose worker dies, an
+          ; ordinary value, and an effect after them all.
+          ($after-path (nq:path $world "after-effect"))
+          ($after (json:stringify-python (JsonObject ((JsonPair "cmd" (str:concat "printf B >> " (cio:shell-quote $after-path)))))))
+          ($_ (if (== $mode "iter") (core-boot:test-tools $runtime) True))
           ($calls (if (== $mode "omega")
                     ($call (core-boot:call "t2" "append-file" $append-arguments) (core-boot:call "t3" "append-file" $append-arguments))
-                    ($call)))
+                    ($call (core-boot:call "t4" "fail_returned" "{}") (core-boot:call "t5" "crash_tool" "{}")
+                           (core-boot:call "t6" "query" "{\"content\": \"unit\"}") (core-boot:call "t7" "shell" $after))))
           ($_ (fs:write (nq:path $world "response.body") (core-boot:reply $calls)))
           ($environment (core-boot:without
              (nq:guest-env $world "fixture-model"
@@ -123,6 +142,13 @@
           ($_ (nt:require actual-tool-result
             (nt:contains (sf:get $before "payload" "") (if (== $mode "iter") "SUCCESS" "shell"))))
           ($_ (nt:require mode-physical-effect-once (== (fs:read-text $effect-path) "X")))
+          ($_ (if (== $mode "iter")
+                (let $saved (sf:get $before "payload" "")
+                  (let* (($_ (nt:require tool-after-failures-ran-once (== (fs:read-text $after-path) "B")))
+                         ($_ (nt:require returned-failure-is-output (nt:contains $saved "Tool execution failed: ")))
+                         ($_ (nt:require dead-worker-is-uncertain (nt:contains $saved "Tool outcome uncertain: ")))
+                         ($_ (nt:require ordinary-value-is-output (nt:contains $saved "(MemoryUnavailable"))))
+                    (nt:require ordinary-value-is-no-failure (not (nt:contains $saved "failed: (MemoryUnavailable"))))) True))
           ($_ (if (== $mode "omega")
                 (nt:require omega-file-call-effect-once (== (fs:read-text $counter) "xx")) True))
           ($_ (nt:require no-adapter-shaped-tool-name (not (nt:contains (sf:get $before "payload" "") "Unknown tool"))))
@@ -158,6 +184,7 @@
           ($_ (nt:require checkpoint-has-identity (!= (sf:get $before "sha256" "") "")))
           ($_ (fs:remove $recycle))
           ($_ (fs:write (nq:path $world "response.body") (core-boot:reply ((core-boot:call "t2" "nop" "{}")))))
+          ($first-posts (nq:posts $world))
           ($again (proc:spawn $command ((cwd $root) (env $environment) (max-bytes 1048576))))
           ($_ (proc:wait $again 1500))
           ; Restarted with the history writable, Iter writes what it owed, once.
@@ -169,6 +196,14 @@
                   (nt:require owed-count-cleared (== (core-boot:owed $runtime) 0)))
                 True))
           ($_ (nt:require catch-up-not-mirrored (not (nt:contains (fs:read-text $agent-history) "[AGENT HISTORY:"))))
+          ($_ (core-boot:wait-settled $again $checkpoint 100))
+          ; The restart's first request carries the step's results.
+          ($_ (if (== $mode "iter")
+                (let* (($_ (core-boot:wait-posts $world $again (+ $first-posts 1) 600))
+                       ($next (fs:read-text (nq:path $world (format-args "request-{}.body" ((+ $first-posts 1))))))
+                       ($_ (nt:require next-request-sees-failure (nt:contains $next "Tool execution failed: ")))
+                       ($_ (nt:require next-request-sees-uncertain (nt:contains $next "Tool outcome uncertain: "))))
+                  (nt:require failed-step-not-reissued (== (fs:read-text $after-path) "B"))) True))
           ($_ (nt:require restart-keeps-settled-checkpoint
                 (== (sf:get (sf:native-object $checkpoint) "status" "") "settled")))
           ($_ (nt:require restart-does-not-replay-mode-effect (== (fs:read-text $effect-path) "X")))
