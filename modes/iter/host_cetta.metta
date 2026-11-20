@@ -11,6 +11,10 @@
 ; The numbering the frontier counts in, and the history file it holds for.
 !(bind! &ih-lineage (new-state ""))
 !(bind! &ih-frontier-file (new-state none))
+; The queue: the record text of the messages taken at their first save and
+; not yet placed in the history, and the highest number taken.
+!(bind! &ih-queued (new-state ""))
+!(bind! &ih-queued-top (new-state 0))
 (= (ih:list)
    (let* (($space (new-space)) ($length (new-space))
           ($_ (add-atom $length (IterLengthV1 0))))
@@ -133,24 +137,29 @@
 (= (ih:catch-up-header)
    "[AGENT HISTORY: what happened in the agent's other modes since Iter last ran, oldest first, as recorded in the agent's shared history]\n")
 (= (ih:catch-up $experience)
-   (let* (($_ (ih:resolve-intent))
+   (let* (($_ (ih:resolve))
           ($size (mode-history:size (mode-history:path)))
           ($text (mode-history:catch-up 30000)))
      ; Nothing to show, or nothing readable: the cursor stays where it is.
-     (if (or (== $text "") (== $text ModeCatchUpUnavailableV1)) (ih:mirror $experience (ih:numbers $experience))
+     (if (or (== $text "") (== $text ModeCatchUpUnavailableV1)) (ih:place)
        (let* (($_ (ih:append $experience (ih:message "user" (str:concat (ih:catch-up-header) $text))))
               ($numbers (ih:numbers $experience))
+              ($_ (ih:capture $experience $numbers))
               ($_ (ih:checkpoint $experience $numbers))
               ($_ (mode-history:mark-at $size)))
-         (ih:mirror $experience $numbers)))))
+         (ih:place)))))
 ; Each saved message joins the agent's history once, in the framework's record
 ; form: input as HUMAN_MESSAGE, a step's calls as commands, then its results.
 ; A message keeps the occurrence number it was first given, by identity, so
 ; equal messages are each recorded and a message pruned in place is not
-; recorded again. The checkpoint that saves the experience carries the numbers
-; and the frontier; the record of the messages past the frontier is a durable
-; intent (mode-history:append-own) whose settlement moves the frontier. A
-; failed write leaves the intent pending, and the next save completes it.
+; recorded again.
+; Its record text is taken once, at its first save, into the queue, which the
+; checkpoint saves with the experience. The queue is then placed as one durable
+; intent (mode-history:place-own) once no earlier one is pending, and its
+; settlement moves the frontier. What the experience held unwritten is thus in
+; the queue or in the placed intent, never only in the prompt: the experience
+; is cut freely (iter:clean), and the queue waits, durable, for as long as the
+; history cannot be written.
 (= (ih:number-of $message $known)
    (case (filter-atom $known $pair (== (index-atom $pair 0) $message))
      ((() none) ($found (index-atom (car-atom $found) 1)))))
@@ -166,9 +175,10 @@
         (ih:number-all (ih:values $experience) (get-state &ih-numbers) (get-state &ih-next-number) ())
      (let* (($_ (change-state! &ih-numbers $pairs)) ($_ (change-state! &ih-next-number $next)))
        (map-atom $pairs $pair (index-atom $pair 1)))))
-; At a start: the numbers, lineage and frontier the checkpoint saved with
-; this very experience; the frontier holds only for the file it was saved for.
-; An experience saved without them is all in the history, numbered anew.
+; At a start: the numbers, lineage, frontier and queue the checkpoint saved
+; with this very experience; the frontier holds only for the file it was saved
+; for. An experience saved without them is in the history, numbered anew,
+; except the newest messages an earlier version's failed write left owed.
 (= (ih:restore-numbers $experience $text)
    (let* (($record (mode-host:record-read))
           ($values (ih:values $experience))
@@ -184,13 +194,24 @@
                    (if (== (sf:get $record "mirror_device" "") "") none
                      ((sf:get $record "mirror_device" "") (sf:get $record "mirror_inode" "")))
                    (case (mode-history:identity) ((unknown none) ($known $known)))))
-          ($frontier (if $matches (ih:integer (sf:get $record "mirror_frontier" 0)) (size-atom $values)))
-          ($top (foldl-atom $numbers $frontier $m $n (max $m $n)))
+          ($frontier (if $matches (ih:integer (sf:get $record "mirror_frontier" 0))
+                       (max 0 (- (size-atom $values) (ih:legacy-owed)))))
+          ($queued (if $matches (sf:get $record "mirror_queued" "") ""))
+          ($queued-top (if $matches (max $frontier (ih:integer (sf:get $record "mirror_queued_top" $frontier))) $frontier))
+          ($top (foldl-atom $numbers $queued-top $m $n (max $m $n)))
           ($_ (change-state! &ih-numbers (ih:zip $values $numbers)))
           ($_ (change-state! &ih-next-number (+ $top 1)))
           ($_ (change-state! &ih-lineage $lineage))
-          ($_ (change-state! &ih-frontier-file $file)))
+          ($_ (change-state! &ih-frontier-file $file))
+          ($_ (change-state! &ih-queued (if (== (get-type $queued) String) $queued "")))
+          ($_ (change-state! &ih-queued-top $queued-top)))
      (change-state! &ih-frontier $frontier)))
+; How many of its newest saved messages an earlier version's cursor counted as
+; owed after a failed write.
+(= (ih:legacy-owed)
+   (let $record (sf:native-object (mode-history:cursor-path))
+     (if (== (sf:get $record "path" "") (mode-history:path))
+       (let $owed (sf:get $record "owed" 0) (if (== (get-type $owed) Number) (max 0 $owed) 0)) 0)))
 (= (ih:file-part $index)
    (case (get-state &ih-frontier-file) ((none "") ($pair (index-atom $pair $index)))))
 (= (ih:integer $value)
@@ -200,34 +221,88 @@
 (= (ih:zip $left $right)
    (if (or (== $left ()) (== $right ())) ()
      (cons-atom ((car-atom $left) (car-atom $right)) (ih:zip (cdr-atom $left) (cdr-atom $right)))))
-; A pending record completed; the frontier is then at least its own. A
-; history file other than the one the frontier was for holds none of the
-; messages: the frontier starts again, and they are all written to it.
-; A file that could not be observed decides nothing: the mirror waits.
-(= (ih:resolve-intent)
+; The record text of the messages first seen at this save joins the queue.
+(= (ih:capture $experience $numbers)
+   (let* (($top (get-state &ih-queued-top))
+          ($pairs (filter-atom (ih:zip (ih:values $experience) $numbers) $pair (> (index-atom $pair 1) $top)))
+          ($text (ih:history-text (map-atom $pairs $pair (index-atom $pair 0))))
+          ($last (foldl-atom $pairs $top $m $pair (max $m (index-atom $pair 1))))
+          ($_ (change-state! &ih-queued (str:concat (get-state &ih-queued) $text))))
+     (change-state! &ih-queued-top $last)))
+; The last placed record resolved: True when none is pending, False while one
+; is or the history file cannot be observed (the queue then waits, durable).
+; - pending: completed once, by offset and prefix; a record whose place in the
+;   file is gone (abandoned) is queued again, ahead of the rest;
+; - settled: its frontier holds, in its file;
+; - a record placed from this very queue (a death between its placement and
+;   the next checkpoint) leaves the queue empty: nothing is placed twice.
+; Another history file in place of the one the frontier is for holds none of
+; this mode's records: those the experience still has go to it again, ahead
+; of everything queued, and the frontier starts again in it.
+(= (ih:resolve)
    (let $current (mode-history:identity)
      (if (== $current unknown) False
-       (let* (($_ (if (and (!= (get-state &ih-frontier-file) none) (!= (get-state &ih-frontier-file) $current))
-                    (change-state! &ih-frontier 0) True))
-              ($_ (change-state! &ih-frontier-file $current)))
-         (case (mode-history:resolve-intent (get-state &ih-lineage))
-           (((ModeIntentClearV1 $frontier)
-             (let $_ (change-state! &ih-frontier (max (get-state &ih-frontier) (ih:integer $frontier))) True))
-            ($pending False)))))))
-(= (ih:mirror $experience $numbers)
+       (let* (($record (mode-history:intent))
+              ($status (sf:get $record "status" "none"))
+              ($own (== (sf:get $record "lineage" "") (get-state &ih-lineage)))
+              ($there (and (!= $status "none")
+                           (== ((sf:get $record "device" "") (sf:get $record "inode" "")) $current)))
+              ($clear (case $status
+                        (("pending"
+                           (case (mode-history:complete $record)
+                             ((True (ih:settled $record $own))
+                              (ModeIntentAbandonedV1 (ih:requeue $record))
+                              ($failed (let $_ (ih:covered $record) False)))))
+                         ("settled" (if $there (ih:settled $record $own) (let $_ (ih:covered $record) True)))
+                         ("abandoned" (ih:requeue $record))
+                         ($none True)))))
+         (if (not $clear) False
+           (let $_ (if (and $own $there) (change-state! &ih-frontier-file $current)
+                     (if (or (== (get-state &ih-frontier-file) none) (== (get-state &ih-frontier-file) $current))
+                       (change-state! &ih-frontier-file $current)
+                       (ih:rewrite-for $current)))
+             True))))))
+(= (ih:settled $record $own)
+   (let $_ (if $own (change-state! &ih-frontier (max (get-state &ih-frontier) (ih:integer (sf:get $record "frontier" 0))))
+             True)
+     (let $_ (ih:covered $record) True)))
+(= (ih:covered $record)
+   (if (and (== (sf:get $record "lineage" "") (get-state &ih-lineage))
+            (>= (ih:integer (sf:get $record "frontier" 0)) (get-state &ih-queued-top)))
+     (change-state! &ih-queued "") True))
+; A record whose place is gone, queued again ahead of the rest. A record
+; placed from this very queue covers it; one queued again already leads it.
+(= (ih:requeue $record)
+   (let* (($payload (sf:get $record "payload" ""))
+          ($queued (get-state &ih-queued))
+          ($covers (and (== (sf:get $record "lineage" "") (get-state &ih-lineage))
+                        (>= (ih:integer (sf:get $record "frontier" 0)) (get-state &ih-queued-top))))
+          ($_ (change-state! &ih-queued
+                (if $covers $payload (if (str:starts-with $queued $payload) $queued (str:concat $payload $queued))))))
+     True))
+(= (ih:rewrite-for $current)
+   (let* (($frontier (get-state &ih-frontier))
+          ($pairs (filter-atom (get-state &ih-numbers) $pair (<= (index-atom $pair 1) $frontier)))
+          ($text (ih:history-text (map-atom $pairs $pair (index-atom $pair 0))))
+          ($_ (change-state! &ih-queued (str:concat $text (get-state &ih-queued))))
+          ($_ (change-state! &ih-frontier 0)))
+     (change-state! &ih-frontier-file $current)))
+; The queue placed as the mode's record, once nothing earlier is pending; it
+; leaves the queue as soon as its intent is durable.
+(= (ih:place)
    (if (not (mode-history:shared?)) True
-     (if (not (ih:resolve-intent)) True
-       (let* (($frontier (get-state &ih-frontier))
-              ($pairs (filter-atom (ih:zip (ih:values $experience) $numbers) $pair (> (index-atom $pair 1) $frontier)))
-              ($new (map-atom $pairs $pair (index-atom $pair 0)))
-              ($top (foldl-atom $pairs $frontier $m $pair (max $m (index-atom $pair 1))))
-              ($text (ih:history-text $new)))
-         (if (== $text "") (let $_ (change-state! &ih-frontier $top) True)
-           (case (mode-history:append-own $text $top (get-state &ih-lineage))
-             (((ModeAppendedV1 $identity)
-               (let* (($_ (change-state! &ih-frontier $top)) ($_ (change-state! &ih-frontier-file $identity))) True))
-              ; Pending or abandoned: the next save writes them.
-              ($not-yet True))))))))
+     (if (not (ih:resolve)) True
+       (let $queued (get-state &ih-queued)
+         (if (== $queued "") True
+           (case (mode-history:place-own $queued (get-state &ih-queued-top) (get-state &ih-lineage))
+             (((ModePlacedV1 $record)
+               (let $_ (change-state! &ih-queued "")
+                 (case (mode-history:complete $record)
+                   ((True (let $_ (change-state! &ih-frontier (max (get-state &ih-frontier) (get-state &ih-queued-top)))
+                            (change-state! &ih-frontier-file ((sf:get $record "device" "") (sf:get $record "inode" "")))))
+                    (ModeIntentAbandonedV1 (ih:requeue $record))
+                    ($pending True)))))
+              ($unplaced True))))))))
 (= (ih:history-text $messages)
    (if (== $messages ()) ""
      (let* (($message (car-atom $messages)) ($role (ih:get $message "role")))
@@ -266,13 +341,15 @@
    (let $written (mode-host:checkpoint-with (path:join (mode-host:root) "experience.json") (turn:json (ih:json $experience))
                    ((JsonPair "mirror_sequences" (JsonArray $numbers)) (JsonPair "mirror_frontier" (get-state &ih-frontier))
                     (JsonPair "mirror_lineage" (get-state &ih-lineage))
-                    (JsonPair "mirror_device" (ih:file-part 0)) (JsonPair "mirror_inode" (ih:file-part 1))))
+                    (JsonPair "mirror_device" (ih:file-part 0)) (JsonPair "mirror_inode" (ih:file-part 1))
+                    (JsonPair "mirror_queued" (get-state &ih-queued)) (JsonPair "mirror_queued_top" (get-state &ih-queued-top))))
      (if (!= $written True) (mode-host:stop-uncommitted $written)
        (mode-host:record "checkpoint" ((JsonPair "messages" (ih:size $experience)))))))
 (= (ih:save $experience)
    (let* (($numbers (ih:numbers $experience))
+          ($_ (ih:capture $experience $numbers))
           ($_ (ih:checkpoint $experience $numbers))
-          ($_ (ih:mirror $experience $numbers))) True))
+          ($_ (ih:place))) True))
 (= (ih:cleanup-message $message)
    (let* (($_ (if (and (== (ih:get $message "role") "tool") (ih:truth (ih:get $message "content")))
                      (ih:put $message "content" " [TRUNCATED]") True))

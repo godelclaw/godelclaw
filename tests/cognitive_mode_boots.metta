@@ -176,9 +176,12 @@
           ($_ (core-boot:interrupt $runtime $history $intent none))
           ($_ (core-boot:relaunch $command $root $environment $runtime $history $payload))
           ($_ (nt:require written-record-not-repeated (== (core-boot:count (fs:read-text $history) $payload) 1)))
-          ; A death after the checkpoint and before any record of it began.
+          ; A death after the checkpoint and before its queue was placed: the
+          ; checkpoint holds the records, and no intent was made of them.
           ($checkpoint (path:join $runtime "native-checkpoint-v1.json"))
-          ($_ (core-boot:put $checkpoint (sf:native-object $checkpoint) ((JsonPair "mirror_frontier" 0))))
+          ($whole (fs:read-text $history))
+          ($records (str:byte-slice $whole $first-size (str:byte-length $whole)))
+          ($_ (core-boot:put $checkpoint (sf:native-object $checkpoint) ((JsonPair "mirror_queued" $records))))
           ($_ (fs:remove (core-boot:intent-path $runtime)))
           ($_ (core-boot:cut $history $first-size))
           ($_ (core-boot:relaunch $command $root $environment $runtime $history "boot-test operator message"))
@@ -212,6 +215,78 @@
                 (== (core-boot:count (fs:read-text $history) "boot-test operator message") 1)))
           ($_ (nt:require boundaries-replay-no-effect (== (fs:read-text $effect) "X"))))
      True))
+; A queue that outlives the experience. With the history unwritable, the
+; first placed record stays pending while the steps go on; the experience is
+; cut at its bound (iter:clean) and its old tool results are truncated, and
+; every message's record waits in the queue the checkpoint saves. Restarted
+; with the history writable, each record is written once, in order, with the
+; text it had when it was first saved. Each tool call prints the next of a
+; sequence of markers, M1. M2. ...; each step has its own call ids.
+(= (core-boot:iter-backlog $command $root $environment $world $runtime $history $mode-path)
+   (let* (($_ (fs:write $mode-path (json:stringify-python (JsonObject ((JsonPair "mode" "iter"))))))
+          ($counter (nq:path $world "backlog-counter"))
+          ($script (str:join "" ("n=$(cat " (cio:shell-quote $counter) " 2>/dev/null || echo 0); n=$((n+1)); echo $n > "
+                                 (cio:shell-quote $counter) "; echo \"M$n.\"")))
+          ($arguments (json:stringify-python (JsonObject ((JsonPair "cmd" $script)))))
+          ($posts (core-boot:posts $world))
+          ($_ (core-boot:script-steps $world $arguments (+ $posts 1) 1 13))
+          ($_ (fs:write (nq:path $world "status") "200"))
+          ($_ (core-boot:chmod $history "0444"))
+          ($before (fs:read-text $history))
+          ($owner (proc:spawn $command ((cwd $root) (env $environment) (max-bytes 1048576))))
+          ; Twelve steps of eleven messages each: past the experience's bound.
+          ($_ (core-boot:wait-posts $world $owner (+ $posts 12) 3000))
+          ; Then the provider refuses: no step is taken after the last saved one.
+          ($_ (fs:write (nq:path $world "status") "400"))
+          ($_ (core-boot:wait-posts $world $owner (+ $posts 13) 600))
+          ($_ (proc:wait $owner 3000))
+          ($_ (core-boot:stop $owner))
+          ($taken (nq:read-number $counter))
+          ($record (sf:native-object (path:join $runtime "native-checkpoint-v1.json")))
+          ($kept (sf:get $record "payload" ""))
+          ($queued (str:concat (sf:get (core-boot:intent $runtime) "payload" "") (sf:get $record "mirror_queued" "")))
+          ($_ (nt:require backlog-steps-taken (>= $taken 120)))
+          ($_ (nt:require backlog-history-unwritten (== (fs:read-text $history) $before)))
+          ($_ (nt:require backlog-record-pending (== (core-boot:intent-status $runtime) "pending")))
+          ($_ (nt:require backlog-prompt-bounded
+                (case (json:parse $kept) (((JsonArray $items) (<= (size-atom $items) 100)) ($other False)))))
+          ($_ (nt:require backlog-first-left-the-prompt (not (nt:contains $kept "M1."))))
+          ($_ (nt:require backlog-first-kept-in-queue (core-boot:each-once $queued 1 $taken)))
+          ; Restarted with the history writable: each record written once, in order.
+          ($_ (core-boot:chmod $history "0644"))
+          ($_ (fs:write (nq:path $world "status") "200"))
+          ($_ (fs:write (nq:path $world "response.body") (core-boot:reply ((core-boot:call "t2" "nop" "{}")))))
+          ($_ (core-boot:relaunch $command $root $environment $runtime $history (format-args "M{}." ($taken))))
+          ($text (fs:read-text $history))
+          ($_ (nt:require backlog-written-once (core-boot:each-once $text 1 $taken)))
+          ($_ (nt:require backlog-written-in-order (core-boot:in-order $text 1 $taken -1)))
+          ($_ (nt:require backlog-written-as-first-saved (not (nt:contains $text "[TRUNCATED]"))))
+          ; Started again before any later save: the queue the checkpoint still
+          ; holds was placed already, and is not placed twice.
+          ($_ (core-boot:relaunch-started $command $root $environment $runtime))
+          ($_ (nt:require backlog-not-placed-twice (core-boot:each-once (fs:read-text $history) 1 $taken))))
+     True))
+; Requests from $first on answer step $k: ten calls of the marker script.
+(= (core-boot:script-steps $world $arguments $first $k $last)
+   (if (> $k $last) True
+     (let* (($calls (core-boot:step-calls $arguments $k 1 ()))
+            ($_ (fs:write (nq:path $world (format-args "response-{}.body" ((+ $first (- $k 1))))) (core-boot:reply $calls))))
+       (core-boot:script-steps $world $arguments $first (+ $k 1) $last))))
+(= (core-boot:step-calls $arguments $k $i $out)
+   (if (> $i 10) (list:reverse $out)
+     (core-boot:step-calls $arguments $k (+ $i 1)
+       (cons-atom (core-boot:call (format-args "s{}c{}" ($k $i)) "shell" $arguments) $out))))
+(= (core-boot:each-once $text $i $last)
+   (if (> $i $last) True
+     (let $count (core-boot:count $text (format-args "M{}." ($i)))
+       (if (== $count 1) (core-boot:each-once $text (+ $i 1) $last)
+         (let $_ (println! (BACKLOG_MARKER $i $count)) False)))))
+(= (core-boot:in-order $text $i $last $after)
+   (if (> $i $last) True
+     (case (str:find $text (format-args "M{}." ($i)))
+       (((TextNotFound $_) False)
+        ($at (if (> $at $after) (core-boot:in-order $text (+ $i 1) $last $at)
+               (let $_ (println! (BACKLOG_OUT_OF_ORDER $i $at $after)) False)))))))
 (= (core-boot:outbox-texts $folder)
    (if (not (fs:exists $folder)) ()
      (map-atom (filter-atom (fs:entries $folder) $name (str:ends-with $name ".json")) $name
@@ -367,6 +442,7 @@
           ($_ (if (== $mode "iter")
                 (core-boot:iter-boundaries $command $root $environment $runtime $agent-history $mode-path $first-size $effect-path)
                 True))
+          ($_ (if (== $mode "iter") (core-boot:iter-backlog $command $root $environment $world $runtime $agent-history $mode-path) True))
           ($_ (if (== $mode "iter") (core-boot:iter-controls $root $world $command $environment $mode-path $recycle) True))
           ($_ (proc:cancel $cwp)) ($_ (proc:await $cwp)) ($_ (proc:close $cwp))
           ($_ (nq:close $world)))

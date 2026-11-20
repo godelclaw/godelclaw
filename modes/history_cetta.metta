@@ -53,10 +53,11 @@
        (((fs:failed fs:missing $_ $_ $_ $_ $_) none)
         ((fs:failed $_ $_ $_ $_ $_ $_) unknown)
         ($found (case (mode-host:file-info $path) (((ModeFileV1 $_ $device $inode) ($device $inode)) ($other unknown))))))))
-; Writes <text> as the mode's own record: (ModeAppendedV1 <file identity>)
-; once it is in the file. The frontier is in the numbering <lineage>, and
-; holds only for this file.
-(= (mode-history:append-own $text $frontier $lineage)
+; Places <text> as the mode's own record, at the file's end: (ModePlacedV1
+; <intent>) once the intent is durable, to be completed; else
+; (ModeIntentFailedV1 <why>), and nothing is placed. The frontier is in the
+; numbering <lineage>, and holds only for this file.
+(= (mode-history:place-own $text $frontier $lineage)
    (let* (($path (mode-history:path)) ($created (mode-host:ensure-file $path)))
      (if (!= $created True) (ModeIntentFailedV1 $created)
        (case (mode-host:file-info $path)
@@ -68,8 +69,7 @@
                               (JsonPair "frontier" $frontier) (JsonPair "lineage" $lineage))))
                   ($written (mode-history:write-intent $record)))
              (if (!= $written True) (ModeIntentFailedV1 (Error mode-history (Incomplete intent-not-durable)))
-               (case (mode-history:complete $record)
-                 ((True (ModeAppendedV1 ($device $inode))) ($not-yet $not-yet))))))
+               (ModePlacedV1 $record))))
           ($bad (ModeIntentFailedV1 $bad)))))))
 ; A pending intent's text written or found written, then settled: True; a
 ; failure that may pass leaves it pending: (ModeIntentFailedV1 <why>); a file
@@ -96,30 +96,6 @@
    (let* (($_ (mode-history:report (Error mode-history (abandoned-intent $why))))
           ($_ (mode-history:write-intent (sf:put-all $record ((JsonPair "status" "abandoned"))))))
      ModeIntentAbandonedV1))
-; The pending intent, if any, resolved. Nothing pending: (ModeIntentClearV1
-; <frontier>), the frontier of the last settled intent when it is of
-; <lineage> and of the history file as it is now, else 0: a frontier never
-; passes to another numbering or another file. Otherwise the failure that
-; keeps it pending.
-(= (mode-history:resolve-intent $lineage)
-   (let $record (mode-history:intent)
-     (case (sf:get $record "status" "none")
-       (("pending"
-          (case (mode-history:complete $record)
-            ((True (mode-history:frontier-of $record $lineage))
-             (ModeIntentAbandonedV1 (ModeIntentClearV1 0))
-             ($failed $failed))))
-        ("settled" (mode-history:frontier-of $record $lineage))
-        ($other (ModeIntentClearV1 0))))))
-; A file that could not be observed decides nothing: the caller waits.
-(= (mode-history:frontier-of $record $lineage)
-   (let $identity (mode-history:identity)
-     (if (== $identity unknown) (ModeIntentFailedV1 identity-unknown)
-       (if (and (== (sf:get $record "lineage" "") $lineage)
-                (== $identity ((sf:get $record "device" "") (sf:get $record "inode" ""))))
-         (ModeIntentClearV1 (sf:get $record "frontier" 0))
-         (ModeIntentClearV1 0)))))
-
 ; Records other loops appended since this mode's cursor, oldest first; "" when
 ; there are none, ModeCatchUpUnavailableV1 when they could not be read. A larger
 ; gap shows its newest $limit bytes and says where the rest is.
