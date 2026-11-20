@@ -36,6 +36,9 @@
      (let $_ (proc:wait $owner 20) (core-boot:wait-posts $world $owner $count (- $remaining 1)))))
 (= (core-boot:posts $world)
    (if (fs:is-file (nq:path $world "count")) (nq:posts $world) 0))
+; A setting the test provider reads at each request, replaced whole: a
+; running mode's request never finds it half written.
+(= (core-boot:set $path $text) (nt:require setting-replaced (== (sf:replace $path $text 384 True) True)))
 (= (core-boot:chmod $path $mode)
    (proc:run ("/bin/chmod" $mode $path) (system:cwd) (("PATH" "/usr/bin:/bin")) 5000 1024))
 (= (core-boot:count $text $needle) (- (size-atom (str:split $needle $text)) 1))
@@ -77,7 +80,7 @@
           ($health (nq:path $world "health.json"))
           ; The provider rejects every request: the unchanged request is sent once.
           ($_ (core-boot:fresh $health $recycle))
-          ($_ (fs:write (nq:path $world "status") "400"))
+          ($_ (core-boot:set (nq:path $world "status") "400"))
           ($posts (core-boot:posts $world))
           ($rejected (core-boot:run-until-posts $root $world $command $environment (+ $posts 1) 4000))
           ($_ (fs:write (nq:path $world "control-rejected.log") $rejected))
@@ -94,7 +97,7 @@
           ($_ (nt:require refused-request-not-retried (>= (core-boot:count $refused "it is not sent again") 2)))
           ; An operator's limit of one submission: the next call fails before it is sent.
           ($_ (core-boot:fresh $health $recycle))
-          ($_ (fs:write (nq:path $world "status") "200"))
+          ($_ (core-boot:set (nq:path $world "status") "200"))
           ($_ (fs:write (nq:path $world "response.body")
                 (core-boot:reply ((core-boot:call "t8" "shell" (json:stringify-python (JsonObject ((JsonPair "cmd" ":")))))))))
           ($limit (nq:path $world "submission-limit.json"))
@@ -230,14 +233,14 @@
           ($arguments (json:stringify-python (JsonObject ((JsonPair "cmd" $script)))))
           ($posts (core-boot:posts $world))
           ($_ (core-boot:script-steps $world $arguments (+ $posts 1) 1 13))
-          ($_ (fs:write (nq:path $world "status") "200"))
+          ($_ (core-boot:set (nq:path $world "status") "200"))
           ($_ (core-boot:chmod $history "0444"))
           ($before (fs:read-text $history))
           ($owner (proc:spawn $command ((cwd $root) (env $environment) (max-bytes 1048576))))
           ; Twelve steps of eleven messages each: past the experience's bound.
           ($_ (core-boot:wait-posts $world $owner (+ $posts 12) 3000))
           ; Then the provider refuses: no step is taken after the last saved one.
-          ($_ (fs:write (nq:path $world "status") "400"))
+          ($_ (core-boot:set (nq:path $world "status") "400"))
           ($_ (core-boot:wait-posts $world $owner (+ $posts 13) 600))
           ($_ (proc:wait $owner 3000))
           ($_ (core-boot:stop $owner))
@@ -254,7 +257,7 @@
           ($_ (nt:require backlog-first-kept-in-queue (core-boot:each-once $queued 1 $taken)))
           ; Restarted with the history writable: each record written once, in order.
           ($_ (core-boot:chmod $history "0644"))
-          ($_ (fs:write (nq:path $world "status") "200"))
+          ($_ (core-boot:set (nq:path $world "status") "200"))
           ($_ (fs:write (nq:path $world "response.body") (core-boot:reply ((core-boot:call "t2" "nop" "{}")))))
           ($_ (core-boot:relaunch $command $root $environment $runtime $history (format-args "M{}." ($taken))))
           ($text (fs:read-text $history))
@@ -421,10 +424,10 @@
           ($command ("bash" (path:join $root "modes/launch_native.sh")
                        "--repo" $agent "--mode" $mode "--engine" "cetta" "--profile" "supervised"))
           ; The provider's first answer is a failure; the mode must stay up.
-          ($_ (fs:write (nq:path $world "status") "503"))
+          ($_ (core-boot:set (nq:path $world "status") "503"))
           ($owner (proc:spawn $command ((cwd $root) (env $environment) (max-bytes 1048576))))
           ($_ (core-boot:wait-posts $world $owner 1 1500))
-          ($_ (fs:write (nq:path $world "status") "200"))
+          ($_ (core-boot:set (nq:path $world "status") "200"))
           ($checkpoint (path:join $runtime "native-checkpoint-v1.json"))
           ($ready (core-boot:wait-checkpoint $owner $checkpoint 250 (if (== $mode "iter") "SUCCESS" "shell")))
           ($_ (proc:cancel $owner)) ($ended (proc:await $owner)) ($_ (proc:close $owner))
@@ -519,7 +522,14 @@
           ($_ (if (== $mode "iter") (core-boot:iter-controls $root $world $command $environment $mode-path $recycle) True))
           ($_ (proc:cancel $cwp)) ($_ (proc:await $cwp)) ($_ (proc:close $cwp))
           ($_ (nq:close $world)))
-     (println! (NATIVE_MODE_BOOT_OK $mode))))
+     (let $_ (println! (NATIVE_MODE_BOOT_OK $mode)) (ModeBootDoneV1 $mode))))
+; Every selected mode runs to its end: a case that leaves no answer, as a
+; condition that is no Boolean does, fails the suite rather than skip the rest.
+(= (core-boot:run-modes $modes)
+   (if (== $modes ()) True
+     (let $done (collapse (core-boot:mode (car-atom $modes)))
+       (if (== $done ((ModeBootDoneV1 (car-atom $modes)))) (core-boot:run-modes (cdr-atom $modes))
+         (let $_ (println! (NATIVE_MODE_BOOT_INCOMPLETE (car-atom $modes) $done)) (system:exit 1))))))
 !(let $selected (system:getenv-or-default "NATIVE_MODE_TEST" "all")
-   (if (== $selected "all") (progn (core-boot:mode "iter") (core-boot:mode "omega")) (core-boot:mode $selected)))
-!(println! NATIVE_MODE_BOOTS_OK)
+   (let $_ (core-boot:run-modes (if (== $selected "all") ("iter" "omega") ($selected)))
+     (println! NATIVE_MODE_BOOTS_OK)))

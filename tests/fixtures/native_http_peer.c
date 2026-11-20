@@ -22,8 +22,14 @@ static FILE *file(const char *root, const char *name, const char *mode) {
     if (snprintf(path,sizeof(path),"%s/%s",root,name)>=(int)sizeof(path)) { errno=ENAMETOOLONG;fail("path"); }
     FILE *out=fopen(path,mode); if(!out)fail(path); return out;
 }
+/* A number a test polls is replaced whole: a reader never sees it empty. */
 static void write_number(const char *root,const char *name,unsigned long value) {
-    FILE *out=file(root,name,"w");fprintf(out,"%lu\n",value);if(fclose(out))fail("close");
+    char temporary[256],from[4096],to[4096];
+    if(snprintf(temporary,sizeof(temporary),"%s.tmp",name)>=(int)sizeof(temporary) ||
+       snprintf(from,sizeof(from),"%s/%s",root,temporary)>=(int)sizeof(from) ||
+       snprintf(to,sizeof(to),"%s/%s",root,name)>=(int)sizeof(to)){errno=ENAMETOOLONG;fail("path");}
+    FILE *out=file(root,temporary,"w");fprintf(out,"%lu\n",value);if(fclose(out))fail("close");
+    if(rename(from,to))fail("rename");
 }
 static char *read_file(const char *root,const char *name,size_t *length) {
     FILE *in=file(root,name,"rb");if(fseek(in,0,SEEK_END))fail("seek");long n=ftell(in);
