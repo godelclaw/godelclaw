@@ -182,15 +182,24 @@
        (if (not (account:claim $plan))
          (if (llm:plan-ready $plan) (llm:v1:failed duplicate duplicate duplicate-plan not-started)
            (llm:v1:failed unsubmitted unsubmitted admission-error not-started))
-         ; Distinct names: HE unifies a repeated $_ binding. A visible call
-         ; that streams shows its model on the wire.
-         (let* (($gated (call-gate:pass))
-                ($shown (if (and (== (call:fact $plan "visible" false) true)
-                                 (== (call:fact $plan "prepared_stream" false) true))
-                          (display:call-wire (call:correlation $plan) (call:fact $plan "provider" "")
-                                             (call:fact $plan "wire_model" ""))
-                          0)))
-           (pcall:submit $plan $transport)))))))
+         ; A gate that refuses (a coding check, a lifecycle state that cannot
+         ; be read) fails the claimed call before it is sent, as the host's
+         ; gate raised; any other answer lets it go on. A visible call that
+         ; streams shows its model on the wire.
+         (let $gated (call-gate:pass)
+           (if (pcall:gate-refused? $gated) (pcall:gate-refused $transport $gated)
+             (let $shown (if (and (== (call:fact $plan "visible" false) true)
+                                  (== (call:fact $plan "prepared_stream" false) true))
+                           (display:call-wire (call:correlation $plan) (call:fact $plan "provider" "")
+                                              (call:fact $plan "wire_model" ""))
+                           0)
+               (pcall:submit $plan $transport)))))))))
+(= (pcall:gate-refused? $answer) (case $answer (((Error $where $why) True) ($other False))))
+(= (pcall:gate-refused (PreparedProviderTransportV1 $epoch $correlation $protocol $url $headers-json $wire
+                                               $timeout $cap $connect $first $idle) $why)
+   (let $_ (system:write stderr (str:join "" ("[native_llm] the provider gate refused the call: "
+                                              (format-args "{}" ($why)) "\n")))
+     (llm:v1:failed $epoch $correlation gate-refused not-started)))
 (= (pcall:submit $plan (PreparedProviderTransportV1 $epoch $correlation $protocol $url $headers-json $wire
                                               $timeout $cap $connect $first $idle))
    (case (llm:v1:headers-json $headers-json)
