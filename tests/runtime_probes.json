@@ -41,5 +41,6 @@
   ["tests/command_feedback_probe.metta", "COMMAND_FEEDBACK_OK"],
   ["tests/task_context_probe.metta", "TASK_CONTEXT_OK"],
   ["tests/sequential_tools_probe.metta", "SEQUENTIAL_TOOLS_OK"],
-  ["tests/runtime_context_probe.metta", "RUNTIME_CONTEXT_OK"]
+  ["tests/runtime_context_probe.metta", "RUNTIME_CONTEXT_OK"],
+  ["tests/cross_mode_history_probe.metta", "CROSS_MODE_HISTORY_OK"]
 ]

@@ -31,15 +31,20 @@
    (let $_ (system:write stderr (str:concat "[mode] agent history append error: " (str:concat (diagnostic:text $failure 400) "\n")))
      False))
 
-; A mode's cursor is the history size after its own last record.
+; A mode's cursor is the history size after its own last record, and how many
+; of its newest saved messages the history still owes after a failed write.
 (= (mode-history:cursor-path) (path:join (mode-host:root) "agent-history-cursor.json"))
 (= (mode-history:cursor)
    (let $record (sf:native-object (mode-history:cursor-path))
      (if (== (sf:get $record "path" "") (mode-history:path)) (sf:get $record "size" -1) -1)))
-(= (mode-history:mark)
+(= (mode-history:owed)
+   (let $record (sf:native-object (mode-history:cursor-path))
+     (if (== (sf:get $record "path" "") (mode-history:path)) (sf:get $record "owed" 0) 0)))
+(= (mode-history:mark $owed)
    (sf:replace (mode-history:cursor-path)
      (turn:json (JsonObject ((JsonPair "path" (mode-history:path))
-                             (JsonPair "size" (mode-history:size (mode-history:path))))))
+                             (JsonPair "size" (mode-history:size (mode-history:path)))
+                             (JsonPair "owed" $owed))))
      384 True))
 
 ; Records other loops appended since this mode's cursor, oldest first. A larger

@@ -119,30 +119,34 @@
         ($bad (mode-host:stop-uncommitted (Error iter:initialize (Fault invalid-experience $bad))))))))
 ; The agent's history since this mode last ran enters as one message, before
 ; the first step; it is the record of the other loops, never mirrored back.
+; Saved messages a failed write left owed join the history first.
 (= (ih:catch-up-header)
    "[AGENT HISTORY: what happened in the agent's other modes since Iter last ran, oldest first, as recorded in the agent's shared history]\n")
 (= (ih:catch-up $experience)
-   (let $text (mode-history:catch-up 30000)
-     (if (== $text "") (let $_ (ih:mirror-init $experience) True)
-       (let* (($_ (ih:append $experience (ih:message "user" (str:concat (ih:catch-up-header) $text))))
-              ($_ (ih:mirror-init $experience)))
+   (let* (($text (mode-history:catch-up 30000))
+          ($_ (ih:mirror-init $experience (mode-history:owed))))
+     (if (== $text "") (ih:mirror $experience)
+       (let $_ (ih:append $experience (ih:message "user" (str:concat (ih:catch-up-header) $text)))
          (ih:save $experience)))))
-(= (ih:fingerprint $message) (str:sha256 (turn:json (ih:json $message))))
-(= (ih:recent-messages $experience) (ih:values (ih:tail $experience 24)))
-(= (ih:mirror-init $experience)
-   (change-state! &ih-mirrored (map-atom (ih:recent-messages $experience) $message (ih:fingerprint $message))))
-; Each saved step joins the agent's history in the framework's record form:
-; input as HUMAN_MESSAGE, a step's calls as commands, then its results.
+; Each saved message joins the agent's history once, in the framework's record
+; form: input as HUMAN_MESSAGE, a step's calls as commands, then its results.
+; A message is known by identity, never by content, so equal messages are each
+; recorded and a message pruned in place is not recorded again. A failed write
+; leaves its messages owed: they are written at the next save, and the cursor
+; counts them for a restart.
+(= (ih:mirror-init $experience $owed)
+   (let $values (ih:values $experience)
+     (change-state! &ih-mirrored (list:take (max 0 (- (size-atom $values) $owed)) $values))))
 (= (ih:mirror $experience)
    (if (not (mode-history:shared?)) True
      (let* (($seen (get-state &ih-mirrored))
-            ($new (filter-atom (ih:recent-messages $experience) $message
-                    (not (erv:contains $seen (ih:fingerprint $message)))))
+            ($values (ih:values $experience))
+            ($new (filter-atom $values $message (not (erv:contains $seen $message))))
             ($text (ih:history-text $new))
-            ($appended (if (== $text "") True (mode-history:append $text)))
-            ($kept (list:append $seen (map-atom $new $message (ih:fingerprint $message))))
-            ($_ (change-state! &ih-mirrored (list:drop (max 0 (- (size-atom $kept) 200)) $kept))))
-       (mode-history:mark))))
+            ($appended (if (== $text "") True (mode-history:append $text))))
+       (if (== $appended True)
+         (let $_ (change-state! &ih-mirrored $values) (mode-history:mark 0))
+         (mode-history:mark (size-atom $new))))))
 (= (ih:history-text $messages)
    (if (== $messages ()) ""
      (let* (($message (car-atom $messages)) ($role (ih:get $message "role")))

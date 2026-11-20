@@ -6,6 +6,7 @@
 !(import! &self ./lifecycle_cetta.metta)
 !(import! &self ./boot_state_cetta.metta)
 !(import! &self ./turn_health_cetta.metta)
+!(import! &self ./agent_history_cetta.metta)
 !(bind! &turn-frame (new-state ()))
 
 (= (strategy:enabled?) (== (system:getenv-or-default "METTACLAW_OBSERVED_STRATEGY" "0") "1"))
@@ -230,8 +231,11 @@
          (case (state:ledger "request-get" ($previous head))
            (((got $_ $_ $_ "addressed" $_ $_ $_) $previous) ($other none))))
        $resumed)))
+; What another loop wrote since this loop's last turn joins the conversation
+; first, so this turn's input follows it.
 (= (turn:begin-managed $source $message $ids $incoming)
-   (let* (($previous (turn:get "focus" (turn:current-focus)))
+   (let* (($_ (collapse (agent-history:catch-up)))
+          ($previous (turn:get "focus" (turn:current-focus)))
           ($continued (turn:resume-focus $previous $source))
           ($control (turn:write "control"
                       ((loop-mode:process) (turn:cognition-paused?) (turn:json "sequential-tools-v1")))))

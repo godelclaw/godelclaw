@@ -36,6 +36,16 @@
      (let $_ (proc:wait $owner 20) (core-boot:wait-posts $world $owner $count (- $remaining 1)))))
 (= (core-boot:posts $world)
    (if (fs:is-file (nq:path $world "count")) (nq:posts $world) 0))
+(= (core-boot:chmod $path $mode)
+   (proc:run ("/bin/chmod" $mode $path) (system:cwd) (("PATH" "/usr/bin:/bin")) 5000 1024))
+(= (core-boot:count $text $needle) (- (size-atom (str:split $needle $text)) 1))
+(= (core-boot:owed $runtime)
+   (sf:get (sf:native-object (path:join $runtime "agent-history-cursor.json")) "owed" 0))
+; Until the history holds $needle and the mode's cursor owes nothing.
+(= (core-boot:wait-recorded $owner $path $needle $runtime $remaining)
+   (if (or (<= $remaining 0)
+           (and (nt:contains (fs:read-text $path) $needle) (== (core-boot:owed $runtime) 0))) True
+     (let $_ (proc:wait $owner 100) (core-boot:wait-recorded $owner $path $needle $runtime (- $remaining 1)))))
 (= (core-boot:outbox-texts $folder)
    (if (not (fs:exists $folder)) ()
      (map-atom (filter-atom (fs:entries $folder) $name (str:ends-with $name ".json")) $name
@@ -57,6 +67,8 @@
           ($agent-history (path:join $agent "memory/history.metta"))
           ($_ (fs:write $agent-history
                 "(\"2026-11-18 20:00:00\" \"\n\" \"HUMAN_MESSAGE: \" \"framework-era marker message\" \"\n\" ((send \"framework-era reply\")) \"\n\")\n"))
+          ; Iter's first run cannot write the agent history: its turn stays owed.
+          ($_ (if (== $mode "iter") (core-boot:chmod $agent-history "0444") True))
           ($cwp-root (nq:path $world "cwp")) ($_ (fs:make-directories $cwp-root 448))
           ($cwp-socket (nq:path $world "c.sock"))
           ($cwp (proc:spawn ((nt:required-env "NATIVE_TEST_CWP_FIXTURE") $cwp-socket $cwp-root)
@@ -127,11 +139,13 @@
           ($_ (nt:require provider-failure-retried (> (nq:posts $world) 1)))
           ($_ (nt:require mode-sees-agent-history
                 (nt:contains (fs:read-text (nq:path $world "request-1.body")) "framework-era marker message")))
-          ($_ (nt:require mode-turn-joins-agent-history
-                (nt:contains (fs:read-text $agent-history) "boot-test operator message")))
-          ($_ (nt:require catch-up-not-mirrored (not (nt:contains (fs:read-text $agent-history) "[AGENT HISTORY:"))))
           ($_ (if (== $mode "iter")
-                (nt:require iter-results-recorded (nt:contains (fs:read-text $agent-history) "RESULTS:")) True))
+                (let* (($_ (nt:require failed-history-write-records-nothing
+                             (not (nt:contains (fs:read-text $agent-history) "boot-test operator message"))))
+                       ($_ (nt:require failed-history-write-is-owed (> (core-boot:owed $runtime) 0))))
+                  (core-boot:chmod $agent-history "0644"))
+                (nt:require mode-turn-joins-agent-history
+                  (nt:contains (fs:read-text $agent-history) "boot-test operator message"))))
           ($_ (if (== $mode "iter")
                 (nt:require iter-has-shared-memory-tools
                   (nt:contains (fs:read-text (nq:path $world "request-1.body")) "\"remember\"")) True))
@@ -146,6 +160,15 @@
              "{\"id\":\"fixture\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"t2\",\"type\":\"function\",\"function\":{\"name\":\"nop\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}"))
           ($again (proc:spawn $command ((cwd $root) (env $environment) (max-bytes 1048576))))
           ($_ (proc:wait $again 1500))
+          ; Restarted with the history writable, Iter writes what it owed, once.
+          ($_ (if (== $mode "iter")
+                (let* (($_ (core-boot:wait-recorded $again $agent-history "boot-test operator message" $runtime 300))
+                       ($history (fs:read-text $agent-history))
+                       ($_ (nt:require owed-turn-recorded-once (== (core-boot:count $history "boot-test operator message") 1)))
+                       ($_ (nt:require iter-results-recorded (nt:contains $history "RESULTS:"))))
+                  (nt:require owed-count-cleared (== (core-boot:owed $runtime) 0)))
+                True))
+          ($_ (nt:require catch-up-not-mirrored (not (nt:contains (fs:read-text $agent-history) "[AGENT HISTORY:"))))
           ($_ (nt:require restart-keeps-settled-checkpoint
                 (== (sf:get (sf:native-object $checkpoint) "status" "") "settled")))
           ($_ (nt:require restart-does-not-replay-mode-effect (== (fs:read-text $effect-path) "X")))

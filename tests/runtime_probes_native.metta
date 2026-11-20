@@ -63,7 +63,8 @@
 ; model's window is known.
 (= (nr:managed? $name)
    (preq:member? $name ("tests/task_context_probe.metta" "tests/sequential_tools_probe.metta"
-     "tests/command_feedback_probe.metta" "tests/runtime_context_probe.metta")))
+     "tests/command_feedback_probe.metta" "tests/runtime_context_probe.metta"
+     "tests/cross_mode_history_probe.metta")))
 (= (nr:managed)
    (("SYNTHETIC_API_KEY" "fixture-secret") ("SYNTHETIC_MODEL" "syn:large:text")
     ("METTACLAW_OBSERVED_STRATEGY" "1") ("METTACLAW_COMMAND_BATCH_LIMIT" "1")))
@@ -75,6 +76,7 @@
 (= (nr:expected-commands "tests/sequential_tools_probe.metta") 10)
 (= (nr:expected-commands "tests/command_feedback_probe.metta")
    ("['pin', 'verified note']" "['help', 'shell']" "['not-a-tool']" "['help', 'pin']"))
+(= (nr:expected-commands "tests/cross_mode_history_probe.metta") 6)
 (= (nr:expected-commands "tests/runtime_context_probe.metta")
    ("['help', 'vitals']" "['help', 'vitals']" "['help', 'vitals']"))
 (= (nr:field $pairs $key)
@@ -143,6 +145,7 @@
 (= (nr:probe-settings "tests/sequential_tools_probe.metta") (nr:managed))
 (= (nr:probe-settings "tests/command_feedback_probe.metta") (nr:managed))
 (= (nr:probe-settings "tests/runtime_context_probe.metta") (nr:managed))
+(= (nr:probe-settings "tests/cross_mode_history_probe.metta") (nr:managed))
 ; Coding mode asks for a reasoning effort the Anthropic protocol carries.
 (= (nr:probe-settings "tests/integrated_coding_turn_probe.metta")
    (("ANTHROPIC_API_KEY" "fixture-secret") ("SYNTHETIC_MODEL" "claude-fixture")))

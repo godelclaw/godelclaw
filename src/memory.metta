@@ -35,8 +35,10 @@
            (appendToHistory ((get_time_as_string) (newline) $response (newline)))
            (appendToHistory ((get_time_as_string) (newline) $response (newline) ERROR_FEEDBACK: (get-state &error))))))
 
+; The cursor of what other loops wrote follows this loop's own records.
+!(import! &self ./src/agent_history_cetta)
 (= (appendToHistory $addition)
-   (loop-host:history-append (swrite $addition)))
+   (agent-history:append-own (swrite $addition)))
 
 ; The native memory service owns memory controls and durable write retries in MeTTa.
 !(import! &self ./src/semantic_memory_cetta)
