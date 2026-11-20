@@ -217,10 +217,14 @@
      (change-state! &ih-frontier $frontier)))
 ; How many of its newest saved messages an earlier version's cursor counted as
 ; owed after a failed write.
+; A cursor that cannot be read says nothing of what is owed: the mode stops
+; rather than count those messages written or write them twice.
 (= (ih:legacy-owed)
-   (let $record (sf:native-object (mode-history:cursor-path))
-     (if (== (sf:get $record "path" "") (mode-history:path))
-       (let $owed (sf:get $record "owed" 0) (if (== (get-type $owed) Number) (max 0 $owed) 0)) 0)))
+   (case (mode-history:object-at (mode-history:cursor-path))
+     ((none 0)
+      (unknown (mode-host:stop-uncommitted (Error iter:restore (Incomplete legacy-cursor-unreadable))))
+      ($record (if (== (sf:get $record "path" "") (mode-history:path))
+                 (let $owed (sf:get $record "owed" 0) (if (== (get-type $owed) Number) (max 0 $owed) 0)) 0)))))
 (= (ih:file-part $index)
    (case (get-state &ih-frontier-file) ((none "") ($pair (index-atom $pair $index)))))
 (= (ih:integer $value)
@@ -239,7 +243,8 @@
           ($_ (change-state! &ih-queued (str:concat (get-state &ih-queued) $text))))
      (change-state! &ih-queued-top $last)))
 ; The last placed record resolved: True when none is pending, False while one
-; is or the history file cannot be observed (the queue then waits, durable).
+; is, or while the history file or the record itself cannot be read: the queue
+; then waits, durable, and the record is not replaced.
 ; - pending: completed once, by offset and prefix; a record whose place in the
 ;   file is gone (abandoned) is queued again, ahead of the rest;
 ; - settled: its frontier holds, in its file;
@@ -250,9 +255,9 @@
 ; this mode's records: those the experience still has go to it again, ahead
 ; of everything queued, and the frontier starts again in it.
 (= (ih:resolve)
-   (let $current (mode-history:identity)
-     (if (== $current unknown) False
-       (let* (($record (mode-history:intent))
+   (let* (($current (mode-history:identity)) ($found (mode-history:intent)))
+     (if (or (== $current unknown) (== $found unknown)) False
+       (let* (($record (if (== $found none) (JsonObject ()) $found))
               ($status (sf:get $record "status" "none"))
               ($own (== (sf:get $record "lineage" "") (get-state &ih-lineage)))
               ($there (and (!= $status "none")

@@ -21,12 +21,25 @@
 ; file: its own records, and the other loops' records it has caught up on. It
 ; is a place in one file: a file with another identity starts it again.
 (= (mode-history:cursor-path) (path:join (mode-host:root) "agent-history-cursor.json"))
+; A small state file of the mode's, read three ways: none when it does not
+; exist; its object when it reads as one; unknown when it cannot be read or is
+; not an object. Only a file known to be missing is no record.
+(= (mode-history:object-at $path)
+   (case (fs:read-text-result $path 0 "raw")
+     ((("missing" $_) none)
+      (("ok" $text) (case (catch (json:parse $text)) (((JsonObject $pairs) (JsonObject $pairs)) ($bad unknown))))
+      ($unavailable unknown))))
+; The cursor's offset in the current file; -1 without one; unknown when the
+; cursor cannot be read.
 (= (mode-history:cursor)
-   (let* (($record (sf:native-object (mode-history:cursor-path))) ($identity (mode-history:identity)))
-     (if (and (== (sf:get $record "path" "") (mode-history:path))
-              (or (or (== (sf:get $record "device" "") "") (== $identity unknown))
-                  (== ((sf:get $record "device" "") (sf:get $record "inode" "")) $identity)))
-       (sf:get $record "size" -1) -1)))
+   (case (mode-history:object-at (mode-history:cursor-path))
+     ((none -1) (unknown unknown)
+      ($record
+        (let $identity (mode-history:identity)
+          (if (and (== (sf:get $record "path" "") (mode-history:path))
+                   (or (or (== (sf:get $record "device" "") "") (== $identity unknown))
+                       (== ((sf:get $record "device" "") (sf:get $record "inode" "")) $identity)))
+            (sf:get $record "size" -1) -1))))))
 (= (mode-history:mark-at $size)
    (let $identity (case (mode-history:identity) ((none ("" "")) (unknown ("" "")) ($pair $pair)))
      (sf:replace (mode-history:cursor-path)
@@ -42,7 +55,12 @@
 ; grown with other bytes at the offset abandons the intent: its messages stay
 ; unrecorded and are written anew.
 (= (mode-history:intent-path) (path:join (mode-host:root) "agent-history-intent.json"))
-(= (mode-history:intent) (sf:native-object (mode-history:intent-path)))
+; The mode's last own record: none when there is none; the record when it
+; reads as one with a known status; unknown otherwise, which decides nothing.
+(= (mode-history:intent)
+   (case (mode-history:object-at (mode-history:intent-path))
+     ((none none) (unknown unknown)
+      ($record (if (erv:contains ("pending" "settled" "abandoned") (sf:get $record "status" "")) $record unknown)))))
 (= (mode-history:write-intent $record)
    (sf:replace (mode-history:intent-path) (turn:json $record) 384 True))
 ; The history file's identity, as an intent records it; none when it does not
@@ -103,7 +121,9 @@
 (= (mode-history:catch-up $limit)
    (if (not (mode-history:shared?)) ""
      (let* (($path (mode-history:path)) ($size (mode-history:size $path))
-            ($cursor (mode-history:cursor)) ($from (if (< $cursor 0) 0 $cursor)))
+            ($cursor (mode-history:cursor)))
+      (if (== $cursor unknown) ModeCatchUpUnavailableV1
+       (let $from (if (< $cursor 0) 0 $cursor)
        (if (<= $size $from) ""
          (if (<= (- $size $from) $limit)
            (let $text (mode-host:read-at $path $from (- $size $from))
@@ -113,7 +133,7 @@
                (str:join "" ("[" (repr (- (- $size $from) (str:byte-length $text)))
                              " earlier bytes of the agent history since this mode last ran are not shown here;"
                              " use episodes or query to read them]\n" $text)))
-              ($bad ModeCatchUpUnavailableV1))))))))
+              ($bad ModeCatchUpUnavailableV1))))))))))
 
 ; Timestamps as the history writes them, as civil seconds.
 (= (mode-history:leap? $year)

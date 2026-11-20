@@ -300,6 +300,39 @@
           ($_ (nt:require equal-requeue-not-repeated
                 (and (== (core-boot:count $again "EQUAL_BYTES_RECORD") 2) (== (core-boot:count $again "AFTER_EQUAL_RECORD") 1)))))
      True))
+; An older record still pending whose intent cannot be read, and a newer
+; occurrence queued: an intent that cannot be read decides nothing, so it is
+; not replaced and nothing is placed. Readable again, the older record is
+; written and then the newer one, each once.
+(= (core-boot:iter-unreadable-intent $command $root $environment $runtime $history $mode-path)
+   (let* (($_ (fs:write $mode-path (json:stringify-python (JsonObject ((JsonPair "mode" "iter"))))))
+          ($checkpoint (path:join $runtime "native-checkpoint-v1.json"))
+          ($record (sf:native-object $checkpoint))
+          ($top (sf:get $record "mirror_queued_top" 0))
+          ($older "(\"2026-11-20 09:00:00\" \"\n\" \"HUMAN_MESSAGE: \" \"OLDER_PENDING_RECORD\" \"\n\")\n")
+          ($newer "(\"2026-11-20 09:00:01\" \"\n\" \"HUMAN_MESSAGE: \" \"NEWER_QUEUED_RECORD\" \"\n\")\n")
+          ($intent (sf:put-all (core-boot:intent $runtime)
+                     ((JsonPair "status" "pending") (JsonPair "payload" $older) (JsonPair "sha256" (str:sha256 $older))
+                      (JsonPair "offset" (str:byte-length (fs:read-text $history)))
+                      (JsonPair "from" $top) (JsonPair "frontier" (+ $top 1)))))
+          ($path (core-boot:intent-path $runtime))
+          ($written (json:stringify-python $intent))
+          ($_ (nt:require older-intent-written (== (sf:replace $path $written 384 True) True)))
+          ($_ (core-boot:put $checkpoint $record ((JsonPair "mirror_queued" $newer) (JsonPair "mirror_queued_from" (+ $top 1))
+                                                  (JsonPair "mirror_queued_top" (+ $top 2)) (JsonPair "mirror_requeued" ""))))
+          ($before (fs:read-text $history))
+          ($_ (core-boot:chmod $path "000"))
+          ($_ (core-boot:relaunch-started $command $root $environment $runtime))
+          ($_ (core-boot:chmod $path "600"))
+          ($_ (nt:require unreadable-intent-not-replaced (== (fs:read-text $path) $written)))
+          ($_ (nt:require unreadable-intent-places-nothing (== (fs:read-text $history) $before)))
+          ($_ (core-boot:relaunch $command $root $environment $runtime $history "NEWER_QUEUED_RECORD"))
+          ($text (fs:read-text $history))
+          ($_ (nt:require older-written-once (== (core-boot:count $text "OLDER_PENDING_RECORD") 1)))
+          ($_ (nt:require newer-written-once (== (core-boot:count $text "NEWER_QUEUED_RECORD") 1)))
+          ($_ (nt:require older-before-newer
+                (< (core-boot:find-after $text "OLDER_PENDING_RECORD" -1) (core-boot:find-after $text "NEWER_QUEUED_RECORD" -1)))))
+     True))
 ; The position of $needle after position $after, or -1.
 (= (core-boot:find-after $text $needle $after)
    (let $rest (str:char-slice $text (+ $after 1) (str:char-length $text))
@@ -482,6 +515,7 @@
                 True))
           ($_ (if (== $mode "iter") (core-boot:iter-backlog $command $root $environment $world $runtime $agent-history $mode-path) True))
           ($_ (if (== $mode "iter") (core-boot:iter-equal-requeue $command $root $environment $runtime $agent-history $mode-path) True))
+          ($_ (if (== $mode "iter") (core-boot:iter-unreadable-intent $command $root $environment $runtime $agent-history $mode-path) True))
           ($_ (if (== $mode "iter") (core-boot:iter-controls $root $world $command $environment $mode-path $recycle) True))
           ($_ (proc:cancel $cwp)) ($_ (proc:await $cwp)) ($_ (proc:close $cwp))
           ($_ (nq:close $world)))
