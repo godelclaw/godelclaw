@@ -46,6 +46,14 @@
    (if (or (<= $remaining 0)
            (and (nt:contains (fs:read-text $path) $needle) (== (core-boot:owed $runtime) 0))) True
      (let $_ (proc:wait $owner 100) (core-boot:wait-recorded $owner $path $needle $runtime (- $remaining 1)))))
+; The agents' models speak the Responses API, which also checks each request
+; against the native request contract: the fixture answers as it does.
+(= (core-boot:call $id $name $arguments)
+   (JsonObject ((JsonPair "type" "function_call") (JsonPair "id" (str:concat "f" $id)) (JsonPair "call_id" $id)
+                (JsonPair "name" $name) (JsonPair "arguments" $arguments) (JsonPair "status" "completed"))))
+(= (core-boot:reply $calls)
+   (json:stringify-python (JsonObject ((JsonPair "id" "fixture") (JsonPair "status" "completed") (JsonPair "output" (JsonArray $calls))
+     (JsonPair "usage" (JsonObject ((JsonPair "input_tokens" 10) (JsonPair "output_tokens" 2))))))))
 (= (core-boot:outbox-texts $folder)
    (if (not (fs:exists $folder)) ()
      (map-atom (filter-atom (fs:entries $folder) $name (str:ends-with $name ".json")) $name
@@ -61,7 +69,7 @@
           ($agent (nq:path $world "agent")) ($_ (fs:make-directories (path:join $agent "memory") 448))
           ($mode-path (path:join $agent "memory/loop_mode.json"))
           ($_ (fs:write $mode-path (json:stringify-python (JsonObject ((JsonPair "mode" $mode))))))
-          ($_ (fs:write (path:join $agent "memory/persistent.metta") "(active-model fixture-selected-model)\n"))
+          ($_ (fs:write (path:join $agent "memory/persistent.metta") "(active-model openai:fixture-selected-model)\n"))
           ($_ (fs:write (path:join $agent "memory/soul.md") "Boot-test agent identity\n"))
           ; A turn the framework loop recorded before the switch.
           ($agent-history (path:join $agent "memory/history.metta"))
@@ -83,21 +91,14 @@
           ($effect-path (nq:path $world "physical-effect")) ($recycle (nq:path $world "recycle"))
           ($shell (str:join "" ("printf X >> " (cio:shell-quote $effect-path) "; : > " (cio:shell-quote $recycle))))
           ($arguments (json:stringify-python (JsonObject ((JsonPair "cmd" $shell)))))
-          ($function (JsonObject ((JsonPair "name" "shell") (JsonPair "arguments" $arguments))))
-          ($call (JsonObject ((JsonPair "id" "t1") (JsonPair "type" "function") (JsonPair "function" $function))))
+          ($call (core-boot:call "t1" "shell" $arguments))
           ; Omega's file tools share names with the framework's; each call must run once.
           ($counter (nq:path $world "append-counter"))
           ($append-arguments (json:stringify-python (JsonObject ((JsonPair "filename" $counter) (JsonPair "content" "x")))))
-          ($append (JsonObject ((JsonPair "name" "append-file") (JsonPair "arguments" $append-arguments))))
           ($calls (if (== $mode "omega")
-                    ($call (JsonObject ((JsonPair "id" "t2") (JsonPair "type" "function") (JsonPair "function" $append)))
-                           (JsonObject ((JsonPair "id" "t3") (JsonPair "type" "function") (JsonPair "function" $append))))
+                    ($call (core-boot:call "t2" "append-file" $append-arguments) (core-boot:call "t3" "append-file" $append-arguments))
                     ($call)))
-          ($message (JsonObject ((JsonPair "role" "assistant") (JsonPair "tool_calls" (JsonArray $calls)))))
-          ($choice (JsonObject ((JsonPair "message" $message) (JsonPair "finish_reason" "tool_calls"))))
-          ($response (JsonObject ((JsonPair "id" "fixture") (JsonPair "choices" (JsonArray ($choice)))
-                     (JsonPair "usage" (JsonObject ((JsonPair "prompt_tokens" 10) (JsonPair "completion_tokens" 2)))))))
-          ($_ (fs:write (nq:path $world "response.body") (json:stringify-python $response)))
+          ($_ (fs:write (nq:path $world "response.body") (core-boot:reply $calls)))
           ($environment (core-boot:without
              (nq:guest-env $world "fixture-model"
                (("METTACLAW_RUNTIME_ROOT" $root)
@@ -156,8 +157,7 @@
                   (nt:contains (fs:read-text (path:join $runtime "prompt.txt")) "Keep your own identity")) True))
           ($_ (nt:require checkpoint-has-identity (!= (sf:get $before "sha256" "") "")))
           ($_ (fs:remove $recycle))
-          ($_ (fs:write (nq:path $world "response.body")
-             "{\"id\":\"fixture\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"t2\",\"type\":\"function\",\"function\":{\"name\":\"nop\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}"))
+          ($_ (fs:write (nq:path $world "response.body") (core-boot:reply ((core-boot:call "t2" "nop" "{}")))))
           ($again (proc:spawn $command ((cwd $root) (env $environment) (max-bytes 1048576))))
           ($_ (proc:wait $again 1500))
           ; Restarted with the history writable, Iter writes what it owed, once.

@@ -9,6 +9,7 @@
     ("tests/unit/mode_checkpoint.metta" "UNIT_NATIVE_MODE_CHECKPOINT_OK"
      (("METTACLAW_MODE_RUNTIME" "{home}/mode") ("METTACLAW_MODE_PROFILE" "standalone")))
     ("tests/unit/omega_native.metta" "UNIT_OMEGA_NATIVE_OK")
+    ("tests/unit/iter_request.metta" "UNIT_ITER_REQUEST_OK")
     ("tests/unit/standalone_mode_config.metta" "UNIT_STANDALONE_MODE_CONFIG_OK")
     ("tests/unit/context_registry.metta" "UNIT_NATIVE_CONTEXT_REGISTRY_OK")
     ("tests/unit/context_capacity.metta" "UNIT_CONTEXT_CAPACITY_OK"

@@ -237,9 +237,19 @@
                      ($with-notice (list:append $routed-items ($notice))))
                 (JsonArray $with-notice)))))
           ($selected (model:current (system:getenv-or-default "LLM_MODEL" "mlx-community/gemma-4-26b-a4b-it-4bit"))))
-     (JsonObject ((JsonPair "model" $selected) (JsonPair "messages" $final-messages)
-       (JsonPair "tools" $after-tools) (JsonPair "tool_choice" "required")
-       (JsonPair "max_tokens" 2524) (JsonPair "extra_body" (JsonObject ((JsonPair "enable_thinking" True))))))))
+     (ih:request-body $selected $final-messages $after-tools)))
+; The provider request, in the fields the native request contract admits.
+; Upstream Iter asks its provider to think through extra_body.enable_thinking,
+; which the contract refuses before sending, for the agents' ChatGPT models
+; among others. The contract carries thinking as a reasoning effort: the
+; agent's own, or medium as Omega uses.
+(= (ih:request-body $model $messages $tools)
+   (JsonObject ((JsonPair "model" $model) (JsonPair "messages" $messages)
+     (JsonPair "tools" $tools) (JsonPair "tool_choice" "required")
+     (JsonPair "max_tokens" 2524) (JsonPair "reasoning" (JsonObject ((JsonPair "effort" (ih:reasoning-effort))))))))
+(= (ih:reasoning-effort)
+   (let $effort (system:getenv-or-default "METTACLAW_REASONING_EFFORT" "")
+     (if (or (== $effort "") (== $effort "default")) "medium" $effort)))
 (= (ih:provider $experience $temporary $tools $surface)
    (case (collapse (catch (ih:request-plan $experience $temporary $tools $surface)))
      ((((JsonObject $pairs))
