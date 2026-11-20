@@ -22,6 +22,7 @@
     ("tests/unit/iter_catch_up_cursor.metta" "UNIT_ITER_CATCH_UP_CURSOR_OK"
      (("METTACLAW_MODE_RUNTIME" "{home}/modes/iter") ("METTACLAW_MODE_PROFILE" "supervised")
       ("METTACLAW_HISTORY_PATH" "{home}/history.metta")))
+    ("tests/unit/mode_episodes.metta" "UNIT_MODE_EPISODES_OK" (("EPISODES_HOME" "{home}")))
     ("tests/unit/iter_invalid_requeue.metta" "UNIT_ITER_INVALID_REQUEUE_OK"
      (("METTACLAW_MODE_RUNTIME" "{home}/modes/iter") ("METTACLAW_MODE_PROFILE" "supervised")
       ("METTACLAW_HISTORY_PATH" "{home}/history.metta")))

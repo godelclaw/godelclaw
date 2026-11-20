@@ -224,8 +224,11 @@
            (let* (($piece (str:join "" ((repr $index) ":" $line "\n"))) ($next (+ $index 1)))
              (ModeHistoryLinesV1 $next (cons-atom $piece $pieces)))))
      (str:join "" (list:reverse $reverse))))
+; Line breaks as the history's readers take them: CRLF and CR read as LF.
+(= (mode-history:universal $text)
+   (str:join "\n" (str:split "\r" (str:join "\n" (str:split "\r\n" $text)))))
 (= (mode-history:lines $text)
-   (let $all (str:split "\n" (erio:universal $text))
+   (let $all (str:split "\n" (mode-history:universal $text))
      (if (str:ends-with $text "\n") (list:take (- (size-atom $all) 1) $all) $all)))
 (= (mode-history:around $lines $target $count $first)
    (let $best (mode-history:nearest $lines $target 0 -1 0)
