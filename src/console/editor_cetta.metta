@@ -71,7 +71,7 @@
           ($trimmed (str:trim $text)))
      (if (== $trimmed "") True
        (let* (($_ (cc:history-save $text)) ($_ (cc:set "view-epoch" (+ (cc:get "view-epoch" 0) 1)))
-              ($_ (cc:note (str:concat "you · " $text))))
+              ($_ (cc:emit-user-input $text)))
          (if (str:starts-with $text "//") (cc:publish-text (str:byte-slice $text 1 (str:byte-length $text)))
           (if (or (str:starts-with $text "/") (and (not (== (cc:get "menu" ()) ())) (str:is-all-in digit $text)))
            (progn (cc:command $text) (cc:replace-draft ""))

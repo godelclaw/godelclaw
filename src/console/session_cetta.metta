@@ -115,8 +115,8 @@
           ("receive"
            (if (== (sf:get $body "status" "") "delivery")
              (let $record (sf:native-object (sf:get $body "path" ""))
-               (cc:note (str:join "" ((sf:get $record "from" (sf:get (cc:settings) "agent" "agent"))
-                 " → " (sf:get $record "text" ""))))) True))
+               (cc:emit-reply (sf:get $record "from" (sf:get (cc:settings) "agent" "agent"))
+                 (sf:get $record "text" "") "")) True))
           ($other True))))))
 (= (cc:control-reply $request $body)
    (if (== (sf:get $request "kind" "") "status")
