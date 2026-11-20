@@ -41,6 +41,11 @@
       "source": "Startup announcement of (version) on the communication channel",
       "native": "No startup message; the version tool still answers on request",
       "reason": "A supervised agent restarts at every recycle, so the operator received a banner each time; it named the upstream base rather than the running agent"
+    },
+    {
+      "source": "(quote $s) after the tool response message",
+      "native": "(omega-host:note-result $result) before (quote $s)",
+      "reason": "Keep each call's outcome for the result records written after the command record; the record itself stays upstream's"
     }
   ],
   "runtime": "PeTTa extended on a Python-disabled CeTTa bundle",

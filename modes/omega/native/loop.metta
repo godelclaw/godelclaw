@@ -124,6 +124,7 @@
                                                              (progn
                                                                ($_ (log INFO "loop" (COMMAND_RETURN: ((quote $s) $result))))
                                                                (messagesAppend (llmToolCallResponseMessage role "tool" callid $callid content (omega-host:feedback-tail $result (maxFeedback))))
+                                                               (omega-host:note-result $result)
                                                                (quote $s)))))))))
                                            (if (or $msgnew  (not (== $sexpr ()))) (addToHistory $msg $sexpr $msgnew) _))
                                 (if (> (system:wall-time) (get-state &nextWakeAt))

@@ -12,14 +12,16 @@
           (omega-host:configure embeddingprovider Local) ;OpenAI, ASICloud or Local
           (if (== (embeddingprovider) Local)
               True _)))
+; The record is upstream's, byte for byte; its calls' results follow it in the
+; same append (native/history.metta).
 (= (addToHistory $lastmessage $response $msgnew)
    (if $msgnew
        (if (== (get-state &error) ())
-           (appendToHistory ((omega-host:timestamp) "\n" "HUMAN_MESSAGE: " $lastmessage "\n" $response "\n"))
-           (appendToHistory ((omega-host:timestamp) "\n" "HUMAN_MESSAGE: " $lastmessage "\n" $response "\n" ERROR_FEEDBACK: (get-state &error))))
+           (omega-host:append-record ((omega-host:timestamp) "\n" "HUMAN_MESSAGE: " $lastmessage "\n" $response "\n") $response)
+           (omega-host:append-record ((omega-host:timestamp) "\n" "HUMAN_MESSAGE: " $lastmessage "\n" $response "\n" ERROR_FEEDBACK: (get-state &error)) $response))
        (if (== (get-state &error) ())
-           (appendToHistory ((omega-host:timestamp) "\n" $response "\n"))
-           (appendToHistory ((omega-host:timestamp) "\n" $response "\n" ERROR_FEEDBACK: (get-state &error))))))
+           (omega-host:append-record ((omega-host:timestamp) "\n" $response "\n") $response)
+           (omega-host:append-record ((omega-host:timestamp) "\n" $response "\n" ERROR_FEEDBACK: (get-state &error)) $response))))
 (= (embed $text)
    (sm:embed "query" (turn:text $text)
      (str:string->number (system:getenv-or-default "METTACLAW_EMBED_DIM" "1024"))))
@@ -27,11 +29,8 @@
 (= (getPrompt $provider)
    (fs:read-text (path:join (path:join (omega-host:project-root) "memory") "prompt.txt")))
 (= (getHistory)
-   (if (<= (maxHistory) 0) ""
-     (case (fs:tail-text (omega-host:history-path) (maxHistory))
-       (((fs:tail $_ $_ $text) $text)
-        ((missing $_) "")
-        ($bad (Error omega-history (Fault $bad)))))))
+   (let $_ (omega-host:await-history)
+     (if (<= (maxHistory) 0) "" (omega-host:history-view (omega-host:history-path) (maxHistory)))))
 (= (appendToHistory $addition)
    (omega-host:append-history (repr $addition)))
 (= (remember $text)

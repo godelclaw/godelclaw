@@ -9,6 +9,13 @@
     ("tests/unit/mode_checkpoint.metta" "UNIT_NATIVE_MODE_CHECKPOINT_OK"
      (("METTACLAW_MODE_RUNTIME" "{home}/mode") ("METTACLAW_MODE_PROFILE" "standalone")))
     ("tests/unit/omega_native.metta" "UNIT_OMEGA_NATIVE_OK")
+    ("tests/unit/omega_results.metta" "UNIT_OMEGA_RESULT_LINES_OK" (("OMEGA_RESULTS_HOME" "{home}")))
+    ("tests/unit/omega_results.metta" "UNIT_OMEGA_RESULT_STATES_OK" (("OMEGA_RESULTS_HOME" "{home}")))
+    ("tests/unit/omega_results.metta" "UNIT_OMEGA_HISTORY_VIEW_OK" (("OMEGA_RESULTS_HOME" "{home}")))
+    ("tests/unit/omega_results.metta" "UNIT_HISTORY_PENDING_OK" (("OMEGA_RESULTS_HOME" "{home}")))
+    ("tests/unit/omega_view_pending.metta" "UNIT_OMEGA_VIEW_PENDING_OK"
+     (("METTACLAW_MODE_RUNTIME" "{home}/modes/omega") ("METTACLAW_MODE_PROFILE" "supervised")
+      ("METTACLAW_HISTORY_PATH" "{home}/history.metta")))
     ("tests/unit/mode_catch_up_pending.metta" "UNIT_MODE_CATCH_UP_PENDING_OK"
      (("METTACLAW_MODE_RUNTIME" "{home}/modes/iter") ("METTACLAW_MODE_PROFILE" "supervised")
       ("METTACLAW_HISTORY_PATH" "{home}/history.metta")))
@@ -20,6 +27,15 @@
       ("METTACLAW_HISTORY_PATH" "{home}/history.metta")))
     ("tests/unit/history_pending_standalone.metta" "UNIT_HISTORY_PENDING_STANDALONE_OK" (("PENDING_HOME" "{home}")))
     ("tests/unit/agent_history_bounds.metta" "UNIT_AGENT_HISTORY_BOUNDS_OK" (("METTACLAW_HISTORY_PATH" "{home}/history.metta")))
+    ("tests/unit/history_handoff.metta" "UNIT_HISTORY_HANDOFF_OK"
+     (("METTACLAW_MODE_RUNTIME" "{home}/modes/omega") ("METTACLAW_MODE_PROFILE" "supervised")
+      ("METTACLAW_HISTORY_PATH" "{home}/history.metta")))
+    ("tests/unit/history_handoff.metta" "UNIT_HISTORY_VIEW_COMPLETES_OK"
+     (("METTACLAW_MODE_RUNTIME" "{home}/modes/omega") ("METTACLAW_MODE_PROFILE" "supervised")
+      ("METTACLAW_HISTORY_PATH" "{home}/history.metta")))
+    ("tests/unit/history_handoff.metta" "UNIT_HISTORY_APPEND_FAULTS_OK"
+     (("METTACLAW_MODE_RUNTIME" "{home}/modes/omega") ("METTACLAW_MODE_PROFILE" "supervised")
+      ("METTACLAW_HISTORY_PATH" "{home}/history.metta")))
     ("tests/unit/iter_request.metta" "UNIT_ITER_REQUEST_OK")
     ("tests/unit/iter_request.metta" "UNIT_ITER_TOOL_FAILURE_OK")
     ("tests/unit/iter_request.metta" "UNIT_ITER_REFUSAL_OK")

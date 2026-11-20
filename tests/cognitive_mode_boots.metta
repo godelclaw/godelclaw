@@ -45,6 +45,52 @@
 (= (core-boot:intent-path $runtime) (path:join $runtime "agent-history-intent.json"))
 (= (core-boot:intent $runtime) (sf:native-object (core-boot:intent-path $runtime)))
 (= (core-boot:intent-status $runtime) (sf:get (core-boot:intent $runtime) "status" "none"))
+; Another mode's valid append, torn after its first 12 bytes, whose record
+; cannot be read for now (mode 0000): Omega must take no input, ask no model
+; and run no tool until it can be read; then it completes that append from its
+; record and its own record follows.
+(= (core-boot:older-payload) "(\"2026-11-18 21:00:00\" \"\n\" \"HUMAN_MESSAGE: \" \"OLDER_ITER_RECORD\" \"\n\")\n")
+(= (core-boot:held-intent $shared) (path:join (path:join $shared "iter") "agent-history-intent.json"))
+(= (core-boot:held-record $shared $history)
+   (case (fs:metadata $history follow-observed)
+     (((fs:info-v2 $_ $size (fs:identity $device $inode) $_ $_ $_ $_)
+       (let* (($payload (core-boot:older-payload)) ($intent (core-boot:held-intent $shared))
+              ($_ (fs:make-directories (path:dirname $intent) 448))
+              ($_ (fs:write $intent (json:stringify-python (JsonObject ((JsonPair "schema" 1) (JsonPair "status" "pending")
+                     (JsonPair "path" $history) (JsonPair "payload" $payload) (JsonPair "sha256" (str:sha256 $payload))
+                     (JsonPair "offset" $size) (JsonPair "device" $device) (JsonPair "inode" $inode))))))
+              ($owner (fs:open-write $history ("append") 384))
+              ($_ (fs:write-all $owner (str:byte-slice $payload 0 12))) ($_ (fs:close $owner)))
+         (core-boot:chmod $intent "0000"))))))
+(= (core-boot:omega-held $world $owner $shared $history $size)
+   (let* (($_ (proc:wait $owner 3000))
+          ($_ (nt:require omega-held-before-dispatch (== (nq:posts $world) 0)))
+          ($_ (nt:require omega-held-wrote-nothing
+                (== (str:byte-length (fs:read-text $history)) (+ $size 12)))))
+     (core-boot:chmod (core-boot:held-intent $shared) "0600")))
+(= (core-boot:older-in-order $history $size)
+   (let* (($text (fs:read-text $history)) ($older (core-boot:older-payload))
+          ($after (+ $size (str:byte-length $older))))
+     (and (== (str:byte-slice $text $size $after) $older)
+          (and (== (core-boot:count $text "OLDER_ITER_RECORD") 1)
+               (case (str:find $text "boot-test operator message")
+                 (((TextNotFound $_) False) ($at (>= $at $after))))))))
+(= (core-boot:omega-results $history $payload)
+   (let* (($lines (filter-atom (str:split "\n" (fs:read-text $history)) $line
+                    (str:starts-with $line "(HistoryResultV1 omega ")))
+          ($at (str:find $payload "\n(HistoryResultV1 "))
+          ($record (case $at (((TextNotFound $_) "") ($found (str:byte-slice $payload 0 $found)))))
+          ($of (str:join "" ("(of \"" (str:byte-slice (str:sha256 $record) 0 16) "\")")))
+          ($_ (nt:require omega-result-per-call (== (size-atom $lines) 3)))
+          ($_ (nt:require omega-results-name-their-record
+                (and (!= $record "") (== (filter-atom $lines $line (not (nt:contains $line $of))) ()))))
+          ($_ (nt:require omega-results-in-call-order
+                (and (nt:contains (index-atom $lines 0) " 0 returned full ")
+                     (and (nt:contains (index-atom $lines 1) " 1 returned full ")
+                          (nt:contains (index-atom $lines 2) " 2 returned full "))))))
+     (nt:require omega-equal-calls-own-results
+       (and (nt:contains (index-atom $lines 1) ": 1 bytes")
+            (and (nt:contains (index-atom $lines 2) ": 2 bytes") (not (nt:contains (index-atom $lines 1) ": 2 bytes")))))))
 ; Until the history holds $needle and the mode's own record is settled.
 (= (core-boot:wait-recorded $owner $path $needle $runtime $remaining)
    (if (or (<= $remaining 0)
@@ -383,6 +429,9 @@
           ($_ (fs:write $agent-history
                 "(\"2026-11-18 20:00:00\" \"\n\" \"HUMAN_MESSAGE: \" \"framework-era marker message\" \"\n\" ((send \"framework-era reply\")) \"\n\")\n"))
           ($first-size (str:byte-length (fs:read-text $agent-history)))
+          ; Omega starts beside another mode's torn append whose record cannot be
+          ; read for now: it is held before it reads, asks or runs anything.
+          ($_ (if (== $mode "omega") (core-boot:held-record $shared $agent-history) True))
           ; Iter's first run cannot write the agent history: its turn stays owed.
           ($_ (if (== $mode "iter") (core-boot:chmod $agent-history "0444") True))
           ($cwp-root (nq:path $world "cwp")) ($_ (fs:make-directories $cwp-root 448))
@@ -426,6 +475,7 @@
           ; The provider's first answer is a failure; the mode must stay up.
           ($_ (core-boot:set (nq:path $world "status") "503"))
           ($owner (proc:spawn $command ((cwd $root) (env $environment) (max-bytes 1048576))))
+          ($_ (if (== $mode "omega") (core-boot:omega-held $world $owner $shared $agent-history $first-size) True))
           ($_ (core-boot:wait-posts $world $owner 1 1500))
           ($_ (core-boot:set (nq:path $world "status") "200"))
           ($checkpoint (path:join $runtime "native-checkpoint-v1.json"))
@@ -466,8 +516,11 @@
                              (not (nt:contains (fs:read-text $agent-history) "boot-test operator message"))))
                        ($_ (nt:require failed-history-write-stays-pending (== (core-boot:intent-status $runtime) "pending"))))
                   (core-boot:chmod $agent-history "0644"))
-                (nt:require mode-turn-joins-agent-history
-                  (nt:contains (fs:read-text $agent-history) "boot-test operator message"))))
+                (let* (($_ (nt:require mode-turn-joins-agent-history
+                             (nt:contains (fs:read-text $agent-history) "boot-test operator message")))
+                       ($_ (nt:require older-append-completed-before-omega-record
+                             (core-boot:older-in-order $agent-history $first-size))))
+                  (core-boot:omega-results $agent-history (sf:get $before "payload" "")))))
           ($_ (if (== $mode "iter")
                 (nt:require iter-has-shared-memory-tools
                   (nt:contains (fs:read-text (nq:path $world "request-1.body")) "\"remember\"")) True))
