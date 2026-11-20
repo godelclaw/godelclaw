@@ -49,7 +49,7 @@
    ("admission-error" "submit-error" "transport-error" "decode-error" "http-status" "correlation-error"
     "duplicate-completion" "invalid-phase" "retired-handle" "unfinished-provider-response"
     "refused-tool-call" "incomplete-stream" "ownership-error" "response-too-large"
-    "response-budget-exceeded" "non-text-response" "credential-in-response"))
+    "response-budget-exceeded" "non-text-response" "credential-in-response" "submission-limit"))
 (= (failure:line $cause $provider $kind $status $sent $elapsed $deadline $stated)
    (let* (($text (failure:text $kind))
           ($named (if (failure:member? $text (failure:known-kinds)) $text "provider-error"))

@@ -195,7 +195,9 @@
                                               $timeout $cap $connect $first $idle))
    (case (llm:v1:headers-json $headers-json)
      (((llm:v1:ok $headers)
-       (let $observed (llm:observe-wire (call:host $plan) $wire)
-         (llm:network-ready $plan $epoch $correlation $protocol $url $headers $observed $timeout $cap
-                            (NativeCallWaitsV1 $connect $first $idle))))
+       (if (llm:submission-allowed (call:host $plan))
+         (let $observed (llm:observe-wire (call:host $plan) $wire)
+           (llm:network-ready $plan $epoch $correlation $protocol $url $headers $observed $timeout $cap
+                              (NativeCallWaitsV1 $connect $first $idle)))
+         (llm:v1:failed $epoch $correlation submission-limit not-started)))
       ((llm:v1:error $why) (llm:v1:failed $epoch $correlation $why not-started)))))

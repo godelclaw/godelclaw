@@ -272,6 +272,19 @@
          (if (not (== $written True)) 0
            (let $updated (sf:put $setting "remaining" (- $remaining 1))
              (sf:replace $control (sf:python-json $updated) 384 False)))))))
+; A limit that cannot be read, or whose count or purpose is not one, refuses:
+; it was set to bound what is sent.
+(= (host-native:submission-allowed $plan $limit)
+   (case (collapse (catch (sf:locked (str:concat $limit ".lock") 432 (host-native:submission-take $plan $limit))))
+     (((True) True) ($refused False))))
+(= (host-native:submission-take $plan $limit)
+   (let* (($setting (sf:native-object $limit))
+          ($remaining (sf:get $setting "remaining" JsonNull))
+          ($purpose (sf:get $setting "purpose" "")))
+     (if (or (!= (get-type $remaining) Number) (!= (get-type $purpose) String)) False
+       (if (and (!= $purpose "") (!= $purpose (host-native:field $plan "purpose" "turn"))) True
+         (if (<= $remaining 0) False
+           (== (sf:replace $limit (sf:python-json (sf:put $setting "remaining" (- $remaining 1))) 384 False) True))))))
 (= (host-native:gate)
    (if (not (== (system:getenv-or-default "METTACLAW_MODE_RUNTIME" "") ""))
      (if (== (system:getenv-or-default "METTACLAW_CODING_CHECK" "0") "1")

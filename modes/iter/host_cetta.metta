@@ -236,8 +236,12 @@
               (let* (($notice (JsonObject ((JsonPair "role" "user") (JsonPair "content" $errors))))
                      ($with-notice (list:append $routed-items ($notice))))
                 (JsonArray $with-notice)))))
-          ($selected (model:current (system:getenv-or-default "LLM_MODEL" "mlx-community/gemma-4-26b-a4b-it-4bit"))))
-     (ih:request-body $selected $final-messages $after-tools)))
+          ($selected (model:current (system:getenv-or-default "LLM_MODEL" "mlx-community/gemma-4-26b-a4b-it-4bit")))
+          ; What decides a refusal: everything sent but the loop's own notices,
+          ; whose step stamps change every second.
+          ($key (str:sha256 (str:join "\n" ($selected (ih:reasoning-effort) $system
+                  (turn:json (JsonArray $history-items)) (turn:json $tools) (repr $transforms))))))
+     (IterRequestV1 (ih:request-body $selected $final-messages $after-tools) $key)))
 ; The provider request, in the fields the native request contract admits.
 ; Upstream Iter asks its provider to think through extra_body.enable_thinking,
 ; which the contract refuses before sending, for the agents' ChatGPT models
@@ -250,19 +254,42 @@
 (= (ih:reasoning-effort)
    (let $effort (system:getenv-or-default "METTACLAW_REASONING_EFFORT" "")
      (if (or (== $effort "") (== $effort "default")) "medium" $effort)))
+; A failed call ends the step, as upstream's exception does: the loop reports
+; it and waits before the next step (iter:loop). A request that the provider
+; or the request contract refused would be refused again unchanged, so it is
+; not sent again until it changes: new input, memory, tools or prompt.
+!(bind! &iter-refused (new-state ""))
 (= (ih:provider $experience $temporary $tools $surface)
    (case (collapse (catch (ih:request-plan $experience $temporary $tools $surface)))
-     ((((JsonObject $pairs))
-       (case (collapse (catch (llm:run (llm:structured-plan (JsonObject $pairs) "coding"))))
-         ((((ProviderReplyV1 $reply)) (ih:box (state:canonical $reply)))
-          ($failure (ih:provider-recover $failure $experience $temporary $tools $surface)))))
+     ((((IterRequestV1 (JsonObject $pairs) $key))
+       (if (== $key (get-state &iter-refused))
+         (Error iter-provider (Unsolvable "the refused request is unchanged; it is not sent again"))
+         (case (collapse (catch (llm:run (llm:structured-plan (JsonObject $pairs) "coding"))))
+           ((((ProviderReplyV1 $reply)) (ih:box (state:canonical $reply)))
+            ($failure (ih:provider-failed $failure $key))))))
       ($failure (mode-host:stop-uncommitted (Error iter-provider (Fault (request-preparation $failure))))))))
-; Upstream Iter reports a failed step, waits ERROR_RECOVERY_TIME and goes on.
-; The wait passes the mode gate, and the next call waits out provider pacing.
-(= (ih:provider-recover $failure $experience $temporary $tools $surface)
-   (let* (($_ (system:write stderr (str:join "" ("Output> " (diagnostic:text $failure 400) "\n"))))
-          ($_ (ih:sleep 1)))
-     (ih:provider $experience $temporary $tools $surface)))
+(= (ih:provider-failed $failure $key)
+   (let $error (case $failure ((((Error $where $why)) (Error $where $why))
+                               ($other (Error iter-provider (Fault (provider-result $other))))))
+     (if (ih:refusal? $error)
+       (let $_ (change-state! &iter-refused $key)
+         (Error iter-provider (Unsolvable (str:concat "the request was refused; it is not sent again unchanged: "
+                                                      (diagnostic:text $error 400)))))
+       $error)))
+; A failure that the same request would meet again, as the provider call
+; reports it (host-native:structured-failed): the provider rejected the request
+; (a 4xx other than a timeout, a conflict or a rate limit); the request
+; contract or the call's configuration refused it before sending (ValueError);
+; or a completion came back without its local receipt (CompletionConflict),
+; whose resending could repeat a paid call. Anything else may pass later.
+(= (ih:refusal? $error)
+   (case $error
+     (((Error provider (Fault $text))
+       (if (== (get-type $text) String)
+         (or (str:starts-with $text "native provider rejected the request:")
+             (erv:contains ("native provider failed: ValueError" "native provider failed: CompletionConflict") $text))
+         False))
+      ($other False))))
 (= (ih:retry-no-tool $content)
    (str:join "" ("[YOUR PREVIOUS RESPONSE CONTAINED NO TOOL CALL AND WAS NOT DELIVERED. CALL AT LEAST ONE TOOL NOW. IF YOU INTENDED THIS CONTENT AS COMMUNICATION, USE send: " (repr (ih:json $content)) "]")))
 (= (ih:decode $arguments)

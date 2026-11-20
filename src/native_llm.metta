@@ -121,6 +121,18 @@
            ((True (host-native:observe-wire $plan $body))
             ($disabled $body)))))))
 
+; An operator's limit on what is sent: while submission-limit.json is present
+; beside the health record, each submission of the purpose it names (of every
+; purpose, when it names none) takes one of its remaining, and a call that
+; finds none left fails before it is sent. Without the file nothing is counted.
+(= (llm:submission-allowed $plan)
+   (let $health (system:getenv-or-default "METTACLAW_COGNITIVE_HEALTH_PATH" "")
+     (if (== $health "") True
+       (let $limit (path:join (path:dirname $health) "submission-limit.json")
+         (case (catch (fs:exists $limit))
+           ((False True)
+            ($present (host-native:submission-allowed $plan $limit))))))))
+
 ; Callers hold the prepared call, its owner, or a refused preparation.
 (: llm:after-submit (-> Atom Atom %Undefined%))
 (= (llm:after-submit $plan $state)

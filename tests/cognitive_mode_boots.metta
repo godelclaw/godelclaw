@@ -67,6 +67,67 @@
 (= (core-boot:wait-settled $owner $path $remaining)
    (if (or (<= $remaining 0) (== (sf:get (sf:native-object $path) "status" "") "settled")) True
      (let $_ (proc:wait $owner 100) (core-boot:wait-settled $owner $path (- $remaining 1)))))
+; Offline controls of what Iter sends after a refusal, each a run of the mode
+; through several failed steps: the provider rejects every request; the
+; configuration refuses every request before it is sent; an operator limits
+; submissions to one. Each run starts without the previous run's pacing.
+(= (core-boot:iter-controls $root $world $command $environment $mode-path $recycle)
+   (let* (($_ (fs:write $mode-path (json:stringify-python (JsonObject ((JsonPair "mode" "iter"))))))
+          ($health (nq:path $world "health.json"))
+          ; The provider rejects every request: the unchanged request is sent once.
+          ($_ (core-boot:fresh $health $recycle))
+          ($_ (fs:write (nq:path $world "status") "400"))
+          ($posts (core-boot:posts $world))
+          ($rejected (core-boot:run-until-posts $root $world $command $environment (+ $posts 1) 4000))
+          ($_ (fs:write (nq:path $world "control-rejected.log") $rejected))
+          ($_ (nt:require rejected-request-sent-once (== (core-boot:posts $world) (+ $posts 1))))
+          ($_ (nt:require rejected-request-not-resent (>= (core-boot:count $rejected "it is not sent again") 2)))
+          ; The configuration refuses every request before it is sent: tried once, never sent.
+          ($_ (core-boot:fresh $health $recycle))
+          ($tight (cons-atom ("METTACLAW_LLM_RESPONSE_BYTES" "10")
+                    (core-boot:without $environment ("METTACLAW_LLM_RESPONSE_BYTES"))))
+          ($refused (core-boot:run-until-text $root $command $tight $health "\"valueerror\"" 4000))
+          ($_ (fs:write (nq:path $world "control-refused.log") $refused))
+          ($_ (nt:require refused-request-never-sent (== (core-boot:posts $world) (+ $posts 1))))
+          ($_ (nt:require refused-request-tried-once (== (core-boot:count $refused "failed request: admission-error") 1)))
+          ($_ (nt:require refused-request-not-retried (>= (core-boot:count $refused "it is not sent again") 2)))
+          ; An operator's limit of one submission: the next call fails before it is sent.
+          ($_ (core-boot:fresh $health $recycle))
+          ($_ (fs:write (nq:path $world "status") "200"))
+          ($_ (fs:write (nq:path $world "response.body")
+                (core-boot:reply ((core-boot:call "t8" "shell" (json:stringify-python (JsonObject ((JsonPair "cmd" ":")))))))))
+          ($limit (nq:path $world "submission-limit.json"))
+          ($_ (fs:write $limit "{\"remaining\": 1, \"purpose\": \"coding\"}"))
+          ($limited (core-boot:run-until-posts $root $world $command $environment (+ $posts 2) 3000))
+          ($_ (fs:write (nq:path $world "control-limited.log") $limited))
+          ($spent (sf:get (sf:native-object $limit) "remaining" -1))
+          ($_ (fs:remove $limit))
+          ($_ (nt:require limited-submission-sent-once (== (core-boot:posts $world) (+ $posts 2))))
+          ($_ (nt:require limit-spent (== $spent 0)))
+          ($_ (nt:require limit-refusal-reported (nt:contains $limited "failed request: submission-limit"))))
+     True))
+(= (core-boot:fresh $health $recycle)
+   (let $_ (if (fs:exists $health) (fs:remove $health) True)
+     (if (fs:exists $recycle) (fs:remove $recycle) True)))
+; A run of the mode until the provider has $count requests, then for $settle
+; milliseconds more; its result, with its output.
+(= (core-boot:run-until-posts $root $world $command $environment $count $settle)
+   (let* (($owner (proc:spawn $command ((cwd $root) (env $environment) (max-bytes 1048576))))
+          ($_ (core-boot:wait-posts $world $owner $count 1500))
+          ($_ (proc:wait $owner $settle)))
+     (core-boot:ended $owner)))
+; A run of the mode until $path holds $needle, then for $settle milliseconds.
+(= (core-boot:run-until-text $root $command $environment $path $needle $settle)
+   (let* (($owner (proc:spawn $command ((cwd $root) (env $environment) (max-bytes 1048576))))
+          ($_ (core-boot:wait-text $owner $path $needle 1500))
+          ($_ (proc:wait $owner $settle)))
+     (core-boot:ended $owner)))
+(= (core-boot:wait-text $owner $path $needle $remaining)
+   (if (<= $remaining 0) False
+     (if (if (fs:is-file $path) (nt:contains (fs:read-text $path) $needle) False) True
+       (let $_ (proc:wait $owner 20) (core-boot:wait-text $owner $path $needle (- $remaining 1))))))
+(= (core-boot:ended $owner)
+   (let* (($_ (proc:cancel $owner)) ($ended (proc:await $owner)) ($_ (proc:close $owner))) (repr $ended)))
 (= (core-boot:outbox-texts $folder)
    (if (not (fs:exists $folder)) ()
      (map-atom (filter-atom (fs:entries $folder) $name (str:ends-with $name ".json")) $name
@@ -217,6 +278,7 @@
                 (== (sf:get (sf:native-object $checkpoint) "status" "") "settled")))
           ($_ (proc:cancel $again)) ($restarted (proc:await $again)) ($_ (proc:close $again))
           ($_ (fs:write (nq:path $world "mode-restart.log") (repr $restarted)))
+          ($_ (if (== $mode "iter") (core-boot:iter-controls $root $world $command $environment $mode-path $recycle) True))
           ($_ (proc:cancel $cwp)) ($_ (proc:await $cwp)) ($_ (proc:close $cwp))
           ($_ (nq:close $world)))
      (println! (NATIVE_MODE_BOOT_OK $mode))))

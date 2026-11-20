@@ -59,8 +59,11 @@
           ($_ (if (> $length 3000)
                   (ih:append $temporary (ih:message "user" (ih:memory-overflow $length))) True))
           ($surface (ih:memory-surface $memory (<= $length 3000)))
-          ($response (iter:structured $history $temporary $tools $surface))
-          ($message (ih:get $response "message"))
+          ($response (iter:structured $history $temporary $tools $surface)))
+     (if (turn:failed? $response) $response (iter:answer $history $base $response $tools))))
+; A reply without a tool call is asked again, as upstream asks.
+(= (iter:answer $history $base $response $tools)
+   (let* (($message (ih:get $response "message"))
           ($content (ih:optional $message "content"))
           ($_ (if (iter:true (ih:truth $content))
                   (ih:put $message "content" (ih:concat $content "\n[NOT DELIVERED TO ANY CHANNEL. IF THIS WAS INTENDED AS COMMUNICATION, USE send.]")) True))
@@ -97,8 +100,9 @@
       ($results (repr $results)))))
 ; Consecutive failed steps: upstream waits one second and tries again, which
 ; repeats a deterministic failure, and its provider call, without end. After
-; three in a row each wait doubles from 15 seconds up to ten minutes; the wait
-; passes the mode gate, and a step that succeeds starts the count again.
+; three in a row each wait doubles from 15 seconds up to ten minutes. The wait
+; passes the mode gate and ends early on new input, which the next step takes;
+; a step that succeeds starts the count again.
 !(bind! &iter-failures (new-state 0))
 (= (iter:failure-wait $count)
    (if (<= $count 3) 1 (min 600 (* 15 (iter:power-of-two (- $count 4))))))
@@ -122,9 +126,13 @@
               ($_ (ih:append $history (ih:tool-message $call $output))))
          (iter:dispatch-all $history $tools $calls (+ $i 1) (or $nop (iter:true (ih:equal $name "nop")))))))
 
+; A failed provider call is the step's failure (iter:loop).
 (= (iter:act $history $base $event $post $steps $bucket)
-   (let* (((iter:response $message $tools) (iter:request $history $base ""))
-          ($_ (ih:append $history $message))
+   (case (iter:request $history $base "")
+     (((iter:response $message $tools) (iter:acted $history $message $tools $event $post $steps $bucket))
+      ($failed $failed))))
+(= (iter:acted $history $message $tools $event $post $steps $bucket)
+   (let* (($_ (ih:append $history $message))
           ($nop (iter:dispatch-all $history $tools (ih:get $message "tool_calls") 0 False))
           ($_ (change-state! &iter-checkpoint (ih:size $history)))
           ($_ (ih:save $history))
@@ -159,14 +167,12 @@
                      ; As upstream (iter.py:333): the failed step is reported.
                      (((Error $a $b)
                        (let* (($count (+ (get-state &iter-failures) 1)) ($_ (change-state! &iter-failures $count))
-                              ($wait (iter:failure-wait $count)))
-                       (progn (system:write stderr (str:join "" ("Output> " (diagnostic:text (Error $a $b) 600)
-                                                                 " [failed step " (repr $count) "; next attempt in " (repr $wait) " s]\n")))
-                              (ih:sleep $wait)
-                              (let ($p $s $n $e) (get-state &iter-control)
-                                (iter:loop (iter:state
-                                   (ih:take $clean (get-state &iter-checkpoint))
-                                   $p $s $n $e $next-bucket))))))
+                              ($wait (iter:failure-wait $count))
+                              ($_ (system:write stderr (str:join "" ("Output> " (diagnostic:text (Error $a $b) 600)
+                                    " [failed step " (repr $count) "; next attempt in " (repr $wait) " s or on new input]\n"))))
+                              (($p $s $n $e) (get-state &iter-control))
+                              ($arrived (if (iter:true (ih:not-equal $e "")) (let $_ (ih:sleep $wait) $e) (iter:slow $wait))))
+                         (iter:loop (iter:state (ih:take $clean (get-state &iter-checkpoint)) $p $s $n $arrived $next-bucket))))
                       ($next (let $_ (change-state! &iter-failures 0) (iter:loop $next)))))))))
 (= (iter:start)
    (let $history (ih:initialize)
