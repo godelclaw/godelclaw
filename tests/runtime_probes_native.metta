@@ -76,7 +76,7 @@
 (= (nr:expected-commands "tests/sequential_tools_probe.metta") 10)
 (= (nr:expected-commands "tests/command_feedback_probe.metta")
    ("['pin', 'verified note']" "['help', 'shell']" "['not-a-tool']" "['help', 'pin']"))
-(= (nr:expected-commands "tests/cross_mode_history_probe.metta") 6)
+(= (nr:expected-commands "tests/cross_mode_history_probe.metta") 7)
 (= (nr:expected-commands "tests/runtime_context_probe.metta")
    ("['help', 'vitals']" "['help', 'vitals']" "['help', 'vitals']"))
 (= (nr:field $pairs $key)

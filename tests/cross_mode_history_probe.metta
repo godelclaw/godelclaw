@@ -25,11 +25,21 @@
 ; An import whose request was written and whose cursor did not move.
 (= (probe:interrupted-import)
    (let* (($file (agent-history:file)) ((AgentHistoryFileV1 $_ $_ $size) $file)
-          ((AgentHistoryCursorV1 $_ $_ $_ $at) (agent-history:parse (agent-history:cursor-raw)))
+          ((AgentHistoryCursorV1 $_ $_ $_ $at $_) (agent-history:parse (agent-history:cursor-raw)))
           ((AgentHistoryTextV1 $shown $text) (agent-history:text $at $size))
           ($content (str:concat (agent-history:header $at $shown $size) $text)))
      (state:ledger "request-accept" ((agent-history:id $file $at) $content "operator" "notification"
                                      "interrupted import" (str:sha256 $content) (state:request-id)))))
+(= (probe:size) (let (AgentHistoryFileV1 $_ $_ $size) (agent-history:file) $size))
+; A death after this loop's own record from <from> and before its cursor moved.
+(= (probe:interrupted-own $from)
+   (let* (((AgentHistoryFileV1 $device $inode $end) (agent-history:file))
+          ($text (agent-history:read-at (agent-history:path) $from (- $end $from))))
+     (agent-history:set (agent-history:cursor-raw)
+       (agent-history:record-own (AgentHistoryFileV1 $device $inode $from) (- $end $from) (str:sha256 $text)))))
+(= (probe:cursor-clean-at-end)
+   (case (agent-history:parse (agent-history:cursor-raw))
+     (((AgentHistoryCursorV1 $_ $_ $_ $at none) (== $at (probe:size))) ($other False))))
 
 !(initMemory)
 !(configure commchannel telegram)
@@ -68,9 +78,18 @@
         ($s5 (probe:turn $s4 5 "own turn five"))
         ($_ (probe:chmod "0600"))
         ($_ (assertEqual (probe:count 5 "UNREADABLE_THEN_READ") 0))
+        ($six (probe:size))
         ($s6 (probe:turn $s5 6 "own turn six"))
         ($_ (assertEqual (probe:count 6 "UNREADABLE_THEN_READ") 1))
         ($_ (assertEqual (probe:count 6 "INTERRUPTED_RECORD") 1))
         ($_ (assertEqual (probe:count 6 "BEFORE_FIRST_TURN_RECORD") 1))
-        ($_ (assertEqual (scripted:calls) 6)))
+        ; A death between this loop's own record and its cursor's move: the
+        ; record is passed over, never shown back as another loop's.
+        ($_ (assertEqual (probe:interrupted-own $six) True))
+        ($s7 (probe:turn $s6 7 "own turn seven"))
+        ; As often as the latest turn's own note is shown with no import of it.
+        ($_ (assertEqual (probe:count 7 "own turn six") (probe:count 5 "own turn four")))
+        ($_ (assertEqual (state:ledger "request-get" ((agent-history:id (agent-history:file) $six) head)) none))
+        ($_ (assertEqual (probe:cursor-clean-at-end) True))
+        ($_ (assertEqual (scripted:calls) 7)))
    (println! CROSS_MODE_HISTORY_OK))

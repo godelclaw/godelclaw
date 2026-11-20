@@ -31,21 +31,77 @@
    (let $_ (system:write stderr (str:concat "[mode] agent history append error: " (str:concat (diagnostic:text $failure 400) "\n")))
      False))
 
-; A mode's cursor is the history size after its own last record, and how many
-; of its newest saved messages the history still owes after a failed write.
+; A mode's cursor is the history size up to which it has accounted for the
+; file: its own records, and the other loops' records it has caught up on.
 (= (mode-history:cursor-path) (path:join (mode-host:root) "agent-history-cursor.json"))
 (= (mode-history:cursor)
    (let $record (sf:native-object (mode-history:cursor-path))
      (if (== (sf:get $record "path" "") (mode-history:path)) (sf:get $record "size" -1) -1)))
-(= (mode-history:owed)
-   (let $record (sf:native-object (mode-history:cursor-path))
-     (if (== (sf:get $record "path" "") (mode-history:path)) (sf:get $record "owed" 0) 0)))
-(= (mode-history:mark $owed)
+(= (mode-history:mark-at $size)
    (sf:replace (mode-history:cursor-path)
-     (turn:json (JsonObject ((JsonPair "path" (mode-history:path))
-                             (JsonPair "size" (mode-history:size (mode-history:path)))
-                             (JsonPair "owed" $owed))))
+     (turn:json (JsonObject ((JsonPair "path" (mode-history:path)) (JsonPair "size" $size))))
      384 True))
+
+; A mode's own record is a durable intent before it is written: its text, the
+; offset and identity of the file, and the frontier the record brings the mode
+; to. A pending intent is completed exactly once, by offset and prefix, with
+; mode-host:resume-append; a restart completes it before anything new is
+; written, and no action of the mode runs again. A file replaced, cut, or
+; grown with other bytes at the offset abandons the intent: its messages stay
+; unrecorded and are written anew.
+(= (mode-history:intent-path) (path:join (mode-host:root) "agent-history-intent.json"))
+(= (mode-history:intent) (sf:native-object (mode-history:intent-path)))
+(= (mode-history:write-intent $record)
+   (sf:replace (mode-history:intent-path) (turn:json $record) 384 True))
+; Writes <text> as the mode's own record; True once it is in the file.
+(= (mode-history:append-own $text $frontier)
+   (let* (($path (mode-history:path)) ($created (mode-host:ensure-file $path)))
+     (if (!= $created True) (ModeIntentFailedV1 $created)
+       (case (mode-host:file-info $path)
+         (((ModeFileV1 $offset $device $inode)
+           (let* (($payload (if (str:ends-with $text "\n") $text (str:concat $text "\n")))
+                  ($record (JsonObject ((JsonPair "schema" 1) (JsonPair "status" "pending") (JsonPair "path" $path)
+                              (JsonPair "payload" $payload) (JsonPair "sha256" (str:sha256 $payload))
+                              (JsonPair "offset" $offset) (JsonPair "device" $device) (JsonPair "inode" $inode)
+                              (JsonPair "frontier" $frontier))))
+                  ($written (mode-history:write-intent $record)))
+             (if (!= $written True) (ModeIntentFailedV1 (Error mode-history (Incomplete intent-not-durable)))
+               (mode-history:complete $record))))
+          ($bad (ModeIntentFailedV1 $bad)))))))
+; A pending intent's text written or found written, then settled: True; a
+; failure that may pass leaves it pending: (ModeIntentFailedV1 <why>); a file
+; that no longer holds its place abandons it: ModeIntentAbandonedV1.
+(= (mode-history:complete $record)
+   (if (not (fs:exists (sf:get $record "path" ""))) (mode-history:abandon-intent $record file-missing)
+   (case (mode-host:resume-append $record)
+     ((True (mode-history:settle-intent $record))
+      ((Error mode-checkpoint (Forbidden $why)) (mode-history:abandon-intent $record $why))
+      ((Error mode-checkpoint (Incomplete append-verification-failed))
+        (mode-history:abandon-intent $record append-verification-failed))
+      ($failed (let $_ (mode-history:report $failed) (ModeIntentFailedV1 $failed)))))))
+(= (mode-history:settle-intent $record)
+   (let* (($offset (sf:get $record "offset" 0)) ($end (+ $offset (str:byte-length (sf:get $record "payload" ""))))
+          ($settled (mode-history:write-intent (sf:put-all $record ((JsonPair "status" "settled"))))))
+     (if (!= $settled True) (ModeIntentFailedV1 (Error mode-history (Incomplete settlement-not-durable)))
+       ; The cursor follows the mode's own record when nothing came between.
+       (let $_ (if (== (mode-history:cursor) $offset) (mode-history:mark-at $end) True) True))))
+(= (mode-history:abandon-intent $record $why)
+   (let* (($_ (mode-history:report (Error mode-history (abandoned-intent $why))))
+          ($_ (mode-history:write-intent (sf:put-all $record ((JsonPair "status" "abandoned"))))))
+     ModeIntentAbandonedV1))
+; The pending intent, if any, resolved: (ModeIntentClearV1 <frontier>) when
+; nothing is pending (<frontier> that of a settled intent, or 0), else the
+; failure that keeps it pending.
+(= (mode-history:resolve-intent)
+   (let $record (mode-history:intent)
+     (case (sf:get $record "status" "none")
+       (("pending"
+          (case (mode-history:complete $record)
+            ((True (ModeIntentClearV1 (sf:get $record "frontier" 0)))
+             (ModeIntentAbandonedV1 (ModeIntentClearV1 0))
+             ($failed $failed))))
+        ("settled" (ModeIntentClearV1 (sf:get $record "frontier" 0)))
+        ($other (ModeIntentClearV1 0))))))
 
 ; Records other loops appended since this mode's cursor, oldest first. A larger
 ; gap shows its newest $limit bytes and says where the rest is.
