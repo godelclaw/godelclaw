@@ -105,21 +105,55 @@ class NativeRoleTests(unittest.TestCase):
         self.assertEqual(frame['messages'][-2]['content'], clause)
         self.assertEqual(frame['messages'][-1]['content'], clause)
 
-    def test_native_subscription_wire_preserves_evidence_and_cache_literals(self):
-        frame = self.frame()
+    def subscription_wire(self, frame):
         session = json.dumps(json.dumps(dict(value=dict(credential_alias='FIXTURE'),
                                              api_base=self.env['SYNTHETIC_BASE_URL'] + '/')))
         path = self.directory / 'subscription-wire.json'
+        path.unlink(missing_ok=True)
         self.run_guest(f'!(import! &self "{ROOT}/src/native_llm.metta")\n'
             f'!(let* (($plan (chatgpt:command-plan "chatgpt:fixture-model" 100 "high" '
             f'{json.dumps(json.dumps(frame))} (json-parse {session}))) '
             '((PreparedProviderCallV1 $owner (PreparedProviderTransportV1 $e $c $p $u $h $wire $t $cap $co $f $i)) $plan)) '
             f'(fs:update-text {json.dumps(str(path))} "replace" $wire "" ""))\n')
         self.assertTrue(path.exists(), self.last_stderr)
-        body = json.loads(path.read_text())
-        self.assertEqual(body['input'], frame['messages'])
-        self.assertNotIn('instructions', body)
         self.assertEqual(self.peer.requests, [])
+        return json.loads(path.read_text())
+
+    def test_native_subscription_wire_sends_evidence_as_developer_items(self):
+        # The subscription route reuses its prompt cache only at system and
+        # developer item boundaries, so evidence travels as developer items.
+        frame = self.frame()
+        body = self.subscription_wire(frame)
+        first_user = next(i for i, m in enumerate(frame['messages']) if m['role'] == 'user')
+        expected = [dict(m, role='developer') if m['role'] == 'assistant' and i < first_user else m
+                    for i, m in enumerate(frame['messages'])]
+        self.assertEqual(body['input'], expected)
+        self.assertIn(dict(role='developer', content=NOTE), body['input'])
+        self.assertNotIn(NOTE, '\n'.join(m['content'] for m in body['input'] if m['role'] == 'system'))
+        self.assertEqual(body['input'][-1], dict(role='user', content=CURRENT))
+        self.assertNotIn('instructions', body)
+
+    def test_native_subscription_wire_keeps_conversation_roles(self):
+        messages = [dict(role='system', content='Current authored protocol'),
+                    dict(role='assistant', content=NOTE), dict(role='user', content=CURRENT),
+                    dict(role='assistant', content='((nop))'), dict(role='user', content='next')]
+        body = self.subscription_wire(dict(kind='role-context-v1', messages=messages, cache_points=[0]))
+        self.assertEqual([m['role'] for m in body['input']],
+                         ['system', 'developer', 'user', 'assistant', 'user'])
+        self.assertEqual([m['content'] for m in body['input']], [m['content'] for m in messages])
+
+    def test_request_index_chunks_are_separate_evidence_messages(self):
+        chunks = ['TASK_REQUESTS entries 0-7:\n[{"id":"a","excerpt":"\\u005fcache_chunk_"}]',
+                  'TASK_REQUESTS entries 8-8:\n[{"id":"b"}]']
+        frame = self.render('(request:place (iter-process-render-request (iter-process-prepare-request '
+            f'(InstructionContext "Authored protocol" {json.dumps(NOTE)}) {json.dumps(CURRENT)} "tools" 0)) '
+            f'("TASK_TRANSCRIPT steps 0-7") ({" ".join(json.dumps(c) for c in chunks)}))')
+        roles = {m['content']: m['role'] for m in frame['messages']}
+        contents = [m['content'] for m in frame['messages']]
+        self.assertEqual([c for c in contents if c.startswith('TASK_REQUESTS')], chunks)
+        self.assertEqual(contents.index(chunks[0]), contents.index('TASK_TRANSCRIPT steps 0-7') + 1)
+        self.assertEqual({roles[c] for c in chunks}, {'assistant'})
+        self.assertEqual(frame['messages'][-1], dict(role='user', content=CURRENT))
 
     def test_native_api_request_keeps_roles_on_actual_http_wire(self):
         frame = self.frame()

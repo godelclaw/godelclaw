@@ -436,14 +436,21 @@
                      (repr (+ $first (- (length $group) 1))) ":\n" $body)))
             ($tail (task:index-chunks (task:drop $requests (task:chunk-size)) (+ $first (length $group)))))
        (cons-atom $text $tail))))
+; A role context carries the chunks as a list, one evidence message each, so a
+; new request changes only the last chunk's message. Prompt text joins them.
+(= (task:index-list $requests)
+   (if (== $requests ()) ("TASK_REQUESTS []") (task:index-chunks $requests 0)))
 (= (task:index-text $requests)
-   (if (== $requests ()) "TASK_REQUESTS []"
-     (let $chunks (task:index-chunks $requests 0) (str:join "\n_cache_chunk_\n" $chunks))))
+   (let $chunks (task:index-list $requests) (str:join "\n_cache_chunk_\n" $chunks)))
 ; Planning and rendering must reserve the same request-index framing. A
 ; renderer-only reserve can demand a fold after the driver decided to skip it.
+; A role context sends each chunk as its own message: reserve one message
+; wrapper per chunk ({"role":"developer","content":""}, and its comma).
 (= (task:index-overhead $requests $ratio)
-   (max 0 (math:ceil (/ (- (str:byte-length (task:index-text $requests))
-                         (str:byte-length (state:encoded (JsonArray $requests)))) $ratio))))
+   (let $chunks (task:index-list $requests)
+     (max 0 (math:ceil (/ (+ (- (str:byte-length (str:join "\n_cache_chunk_\n" $chunks))
+                               (str:byte-length (state:encoded (JsonArray $requests))))
+                            (* 34 (length $chunks))) $ratio)))))
 (= (task:working-cost $frame $ratio)
    (let $requests (task:quiet-focus (task:items $frame "requests")
                                    (task:string $frame "focus") (task:string $frame "trigger"))
@@ -503,12 +510,13 @@
 ; per-turn state follow both. Keep three region boundaries, with a separate
 ; wire block for each complete transcript chunk.
 (= (task:place-transcript $base $chunks)
-   (task:place-transcript $base $chunks ""))
+   (task:place-transcript $base $chunks ()))
 (= (task:place-transcript $base $chunks $index)
    (case $base
      (((RoleContext $messages $advertised $observations $history $old-index $data $instructions)
        (request:place $base $chunks $index))
-      ($plain (task:place-transcript-text $plain $chunks $index)))))
+      ($plain (task:place-transcript-text $plain $chunks
+                (if (== $index ()) "" (str:join "\n_cache_chunk_\n" $index)))))))
 (= (task:place-transcript-text $base $chunks $index)
    (case (str:find $base "_cache_boundary_")
      (((TextNotFound $_) $base)
@@ -559,7 +567,7 @@
           ($offset (str:string->number (state:text (state:json-field $view "offset"))))
           ($frame (task:working-frame $view $available $ratio))
           ($requests (task:quiet-focus (task:items $frame "requests") (task:string $view "focus") $trigger))
-          ($index (task:index-text $requests))
+          ($index (task:index-list $requests))
           ($space (max 0 (- (- $available (task:working-cost $frame $ratio))
                          (math:ceil (/ (str:byte-length $handoff) $ratio)))))
           ((Window $start $shown) (task:window-from $root $pairs $offset $space $ratio))

@@ -52,6 +52,10 @@
 (= (request:place
      (RoleContext $messages $advertised $observations $history $old-index $data $instructions) $chunks $index)
    (RoleContext $messages $advertised $observations $chunks $index $data $instructions))
+; The request index is a list of chunk texts once placed (one evidence message
+; each, so a new request rewrites only the last one), and text before that.
+(= (request:index-list $index)
+   (if (== (get-type $index) String) ($index) $index))
 (= (request:data-messages $chunks)
    (if (== $chunks ()) ()
      (if (== (car-atom $chunks) "") (request:data-messages (cdr-atom $chunks))
@@ -79,7 +83,8 @@
               ($policy (request:message "system" (str:join "\n\n"
                  ((str:concat "ADVERTISED_CAPABILITIES:\n" $advertised) $instructions))))
               ($evidence (request:data-messages
-                 (request:append-list $history ($index $observations $data))))
+                 (request:append-list $history
+                   (request:append-list (request:index-list $index) ($observations $data)))))
               ($all (cons-atom $policy (request:append-list $trusted
                        (request:append-list $evidence $conversation)))))
          (json-stringify (JsonObject ((JsonPair "kind" (JsonString "role-context-v1"))

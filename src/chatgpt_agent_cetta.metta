@@ -187,6 +187,23 @@
          (JsonObject ((JsonPair "role" (JsonString "system"))
                       (JsonPair "content" (JsonString $text))))
          (chatgpt:system-messages (cdr-atom $parts))))))
+; This route reuses a cached prefix at the boundaries of system and developer
+; items, but reuses user or assistant items only when a request extends the
+; previous one whole. Evidence changes near its end every turn: as assistant
+; items, consecutive 550k-token turns reused 0.6% of their input; as developer
+; items, one per chunk, 97%. Evidence before the first user message therefore
+; travels as developer here. It never becomes system, and the conversation
+; keeps its roles.
+(= (chatgpt:evidence-roles $messages $conversation)
+   (if (== $messages ()) ()
+     (let* (($message (car-atom $messages)) ($rest (cdr-atom $messages))
+            ($role (llm:v1:get $message "role"))
+            ($started (or $conversation (== $role (JsonString "user"))))
+            ($tail (chatgpt:evidence-roles $rest $started)))
+       (cons-atom
+         (if (and (not $started) (== $role (JsonString "assistant")))
+           (llm:v1:with $message "role" (JsonString "developer")) $message)
+         $tail))))
 ; A subscription call is prepared natively and owned like an API-key call.
 ; The account's session supplies the base, the credential alias and the
 ; session id; the host keeps only the effects handle of the call.
@@ -204,14 +221,13 @@
           ($tool (json-parse (commentary:tool-schema-text)))
           ($system-messages (chatgpt:system-messages $stable))
           ($messages (case $frame
-             (((RoleMessages $explicit $_) $explicit)
+             (((RoleMessages $explicit $_) (chatgpt:evidence-roles $explicit False))
               ($legacy (llm:v1:append $system-messages
                 ((JsonObject ((JsonPair "role" (JsonString "user"))
                               (JsonPair "content" (JsonString $user))))))))))
           ($cache (str:sha256 (repr ($model (if (== $messages ()) () (car-atom $messages))))))
           ; The route rejects `instructions` longer than 1,048,576 characters,
-          ; so context remains ordered input items. Explicit message roles are
-          ; independent of prefix-cache boundaries; the window decides.
+          ; so context remains ordered input items, with the roles above.
           ($base-request
             (if $native
               (JsonObject ((JsonPair "model" (JsonString $model))
