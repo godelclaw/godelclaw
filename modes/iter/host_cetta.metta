@@ -12,9 +12,13 @@
 !(bind! &ih-lineage (new-state ""))
 !(bind! &ih-frontier-file (new-state none))
 ; The queue: the record text of the messages taken at their first save and
-; not yet placed in the history, and the highest number taken.
+; not yet placed in the history; the occurrences it holds, those numbered
+; after its start up to its top (the highest number taken); and the identity
+; of the abandoned record already queued again, if any.
 !(bind! &ih-queued (new-state ""))
+!(bind! &ih-queued-from (new-state 0))
 !(bind! &ih-queued-top (new-state 0))
+!(bind! &ih-requeued (new-state ""))
 (= (ih:list)
    (let* (($space (new-space)) ($length (new-space))
           ($_ (add-atom $length (IterLengthV1 0))))
@@ -198,12 +202,17 @@
                        (max 0 (- (size-atom $values) (ih:legacy-owed)))))
           ($queued (if $matches (sf:get $record "mirror_queued" "") ""))
           ($queued-top (if $matches (max $frontier (ih:integer (sf:get $record "mirror_queued_top" $frontier))) $frontier))
+          ($queued-from (if $matches (ih:integer (sf:get $record "mirror_queued_from" (if (== $queued "") $queued-top $frontier)))
+                          $queued-top))
+          ($requeued (if $matches (sf:get $record "mirror_requeued" "") ""))
           ($top (foldl-atom $numbers $queued-top $m $n (max $m $n)))
           ($_ (change-state! &ih-numbers (ih:zip $values $numbers)))
           ($_ (change-state! &ih-next-number (+ $top 1)))
           ($_ (change-state! &ih-lineage $lineage))
           ($_ (change-state! &ih-frontier-file $file))
           ($_ (change-state! &ih-queued (if (== (get-type $queued) String) $queued "")))
+          ($_ (change-state! &ih-queued-from $queued-from))
+          ($_ (change-state! &ih-requeued (if (== (get-type $requeued) String) $requeued "")))
           ($_ (change-state! &ih-queued-top $queued-top)))
      (change-state! &ih-frontier $frontier)))
 ; How many of its newest saved messages an earlier version's cursor counted as
@@ -235,7 +244,8 @@
 ;   file is gone (abandoned) is queued again, ahead of the rest;
 ; - settled: its frontier holds, in its file;
 ; - a record placed from this very queue (a death between its placement and
-;   the next checkpoint) leaves the queue empty: nothing is placed twice.
+;   the next checkpoint) holds the queue's occurrences, and leaves the queue
+;   empty: nothing is placed twice.
 ; Another history file in place of the one the frontier is for holds none of
 ; this mode's records: those the experience still has go to it again, ahead
 ; of everything queued, and the frontier starts again in it.
@@ -266,25 +276,38 @@
    (let $_ (if $own (change-state! &ih-frontier (max (get-state &ih-frontier) (ih:integer (sf:get $record "frontier" 0))))
              True)
      (let $_ (ih:covered $record) True)))
+; Whether a record of this numbering holds every occurrence of the queue.
+(= (ih:holds-queue? $record)
+   (and (== (sf:get $record "lineage" "") (get-state &ih-lineage))
+        (and (<= (ih:integer (sf:get $record "from" (get-state &ih-queued-from))) (get-state &ih-queued-from))
+             (>= (ih:integer (sf:get $record "frontier" 0)) (get-state &ih-queued-top)))))
 (= (ih:covered $record)
-   (if (and (== (sf:get $record "lineage" "") (get-state &ih-lineage))
-            (>= (ih:integer (sf:get $record "frontier" 0)) (get-state &ih-queued-top)))
-     (change-state! &ih-queued "") True))
-; A record whose place is gone, queued again ahead of the rest. A record
-; placed from this very queue covers it; one queued again already leads it.
+   (if (ih:holds-queue? $record)
+     (let $_ (change-state! &ih-queued "") (change-state! &ih-queued-from (get-state &ih-queued-top))) True))
+; A record whose place is gone, queued again ahead of the rest, once: it is
+; known by its numbering, occurrences, place and digest, never by its bytes,
+; for two occurrences can render alike. A record that holds the whole queue
+; takes its place.
+(= (ih:record-identity $record)
+   (str:join "|" (map-atom ("lineage" "from" "frontier" "offset" "device" "inode" "sha256") $key
+                   (format-args "{}" ((sf:get $record $key ""))))))
 (= (ih:requeue $record)
-   (let* (($payload (sf:get $record "payload" ""))
-          ($queued (get-state &ih-queued))
-          ($covers (and (== (sf:get $record "lineage" "") (get-state &ih-lineage))
-                        (>= (ih:integer (sf:get $record "frontier" 0)) (get-state &ih-queued-top))))
-          ($_ (change-state! &ih-queued
-                (if $covers $payload (if (str:starts-with $queued $payload) $queued (str:concat $payload $queued))))))
-     True))
+   (let $identity (ih:record-identity $record)
+     (if (== $identity (get-state &ih-requeued)) True
+       (let* (($payload (sf:get $record "payload" ""))
+              ($own (== (sf:get $record "lineage" "") (get-state &ih-lineage)))
+              ($from (ih:integer (sf:get $record "from" (get-state &ih-queued-from))))
+              ($_ (if (ih:holds-queue? $record)
+                    (let $_ (change-state! &ih-queued $payload) (change-state! &ih-queued-from $from))
+                    (let $_ (change-state! &ih-queued (str:concat $payload (get-state &ih-queued)))
+                      (if $own (change-state! &ih-queued-from (min $from (get-state &ih-queued-from))) True)))))
+         (let $_ (change-state! &ih-requeued $identity) True)))))
 (= (ih:rewrite-for $current)
    (let* (($frontier (get-state &ih-frontier))
           ($pairs (filter-atom (get-state &ih-numbers) $pair (<= (index-atom $pair 1) $frontier)))
           ($text (ih:history-text (map-atom $pairs $pair (index-atom $pair 0))))
           ($_ (change-state! &ih-queued (str:concat $text (get-state &ih-queued))))
+          ($_ (change-state! &ih-queued-from 0))
           ($_ (change-state! &ih-frontier 0)))
      (change-state! &ih-frontier-file $current)))
 ; The queue placed as the mode's record, once nothing earlier is pending; it
@@ -294,9 +317,10 @@
      (if (not (ih:resolve)) True
        (let $queued (get-state &ih-queued)
          (if (== $queued "") True
-           (case (mode-history:place-own $queued (get-state &ih-queued-top) (get-state &ih-lineage))
+           (case (mode-history:place-own $queued (get-state &ih-queued-from) (get-state &ih-queued-top) (get-state &ih-lineage))
              (((ModePlacedV1 $record)
-               (let $_ (change-state! &ih-queued "")
+               (let* (($_ (change-state! &ih-queued "")) ($_ (change-state! &ih-requeued ""))
+                      ($_ (change-state! &ih-queued-from (get-state &ih-queued-top))))
                  (case (mode-history:complete $record)
                    ((True (let $_ (change-state! &ih-frontier (max (get-state &ih-frontier) (get-state &ih-queued-top)))
                             (change-state! &ih-frontier-file ((sf:get $record "device" "") (sf:get $record "inode" "")))))
@@ -342,7 +366,8 @@
                    ((JsonPair "mirror_sequences" (JsonArray $numbers)) (JsonPair "mirror_frontier" (get-state &ih-frontier))
                     (JsonPair "mirror_lineage" (get-state &ih-lineage))
                     (JsonPair "mirror_device" (ih:file-part 0)) (JsonPair "mirror_inode" (ih:file-part 1))
-                    (JsonPair "mirror_queued" (get-state &ih-queued)) (JsonPair "mirror_queued_top" (get-state &ih-queued-top))))
+                    (JsonPair "mirror_queued" (get-state &ih-queued)) (JsonPair "mirror_queued_from" (get-state &ih-queued-from))
+                    (JsonPair "mirror_queued_top" (get-state &ih-queued-top)) (JsonPair "mirror_requeued" (get-state &ih-requeued))))
      (if (!= $written True) (mode-host:stop-uncommitted $written)
        (mode-host:record "checkpoint" ((JsonPair "messages" (ih:size $experience)))))))
 (= (ih:save $experience)

@@ -55,9 +55,10 @@
         ($found (case (mode-host:file-info $path) (((ModeFileV1 $_ $device $inode) ($device $inode)) ($other unknown))))))))
 ; Places <text> as the mode's own record, at the file's end: (ModePlacedV1
 ; <intent>) once the intent is durable, to be completed; else
-; (ModeIntentFailedV1 <why>), and nothing is placed. The frontier is in the
-; numbering <lineage>, and holds only for this file.
-(= (mode-history:place-own $text $frontier $lineage)
+; (ModeIntentFailedV1 <why>), and nothing is placed. The record holds the
+; occurrences numbered after <from> up to the frontier, in the numbering
+; <lineage>; the frontier holds only for this file.
+(= (mode-history:place-own $text $from $frontier $lineage)
    (let* (($path (mode-history:path)) ($created (mode-host:ensure-file $path)))
      (if (!= $created True) (ModeIntentFailedV1 $created)
        (case (mode-host:file-info $path)
@@ -66,7 +67,7 @@
                   ($record (JsonObject ((JsonPair "schema" 1) (JsonPair "status" "pending") (JsonPair "path" $path)
                               (JsonPair "payload" $payload) (JsonPair "sha256" (str:sha256 $payload))
                               (JsonPair "offset" $offset) (JsonPair "device" $device) (JsonPair "inode" $inode)
-                              (JsonPair "frontier" $frontier) (JsonPair "lineage" $lineage))))
+                              (JsonPair "from" $from) (JsonPair "frontier" $frontier) (JsonPair "lineage" $lineage))))
                   ($written (mode-history:write-intent $record)))
              (if (!= $written True) (ModeIntentFailedV1 (Error mode-history (Incomplete intent-not-durable)))
                (ModePlacedV1 $record))))

@@ -266,6 +266,44 @@
           ($_ (core-boot:relaunch-started $command $root $environment $runtime))
           ($_ (nt:require backlog-not-placed-twice (core-boot:each-once (fs:read-text $history) 1 $taken))))
      True))
+; An abandoned record whose bytes equal the start of the newer queue: two
+; occurrences that render alike are still two records. Restarted, the history
+; holds the abandoned record and then the queue, each occurrence once; started
+; again, nothing is written twice.
+(= (core-boot:iter-equal-requeue $command $root $environment $runtime $history $mode-path)
+   (let* (($_ (fs:write $mode-path (json:stringify-python (JsonObject ((JsonPair "mode" "iter"))))))
+          ($checkpoint (path:join $runtime "native-checkpoint-v1.json"))
+          ($record (sf:native-object $checkpoint))
+          ($lineage (sf:get $record "mirror_lineage" ""))
+          ($top (sf:get $record "mirror_queued_top" 0))
+          ($equal "(\"2026-11-20 08:00:00\" \"\n\" \"HUMAN_MESSAGE: \" \"EQUAL_BYTES_RECORD\" \"\n\")\n")
+          ($after "(\"2026-11-20 08:00:01\" \"\n\" \"HUMAN_MESSAGE: \" \"AFTER_EQUAL_RECORD\" \"\n\")\n")
+          ($intent (JsonObject ((JsonPair "schema" 1) (JsonPair "status" "abandoned") (JsonPair "path" $history)
+                     (JsonPair "payload" $equal) (JsonPair "sha256" (str:sha256 $equal))
+                     (JsonPair "offset" 0) (JsonPair "device" 0) (JsonPair "inode" 0)
+                     (JsonPair "from" $top) (JsonPair "frontier" (+ $top 1)) (JsonPair "lineage" $lineage))))
+          ($_ (nt:require equal-intent-written
+                (== (sf:replace (core-boot:intent-path $runtime) (json:stringify-python $intent) 384 True) True)))
+          ($_ (core-boot:put $checkpoint $record ((JsonPair "mirror_queued" (str:concat $equal $after))
+                                                  (JsonPair "mirror_queued_from" (+ $top 1))
+                                                  (JsonPair "mirror_queued_top" (+ $top 3)))))
+          ($_ (core-boot:relaunch $command $root $environment $runtime $history "AFTER_EQUAL_RECORD"))
+          ($text (fs:read-text $history))
+          ($_ (nt:require equal-occurrences-both-written (== (core-boot:count $text "EQUAL_BYTES_RECORD") 2)))
+          ($_ (nt:require later-occurrence-written-once (== (core-boot:count $text "AFTER_EQUAL_RECORD") 1)))
+          ($first (core-boot:find-after $text "EQUAL_BYTES_RECORD" -1))
+          ($second (core-boot:find-after $text "EQUAL_BYTES_RECORD" $first))
+          ($_ (nt:require equal-occurrences-in-order
+                (and (>= $first 0) (and (> $second $first) (> (core-boot:find-after $text "AFTER_EQUAL_RECORD" $second) $second)))))
+          ($_ (core-boot:relaunch-started $command $root $environment $runtime))
+          ($again (fs:read-text $history))
+          ($_ (nt:require equal-requeue-not-repeated
+                (and (== (core-boot:count $again "EQUAL_BYTES_RECORD") 2) (== (core-boot:count $again "AFTER_EQUAL_RECORD") 1)))))
+     True))
+; The position of $needle after position $after, or -1.
+(= (core-boot:find-after $text $needle $after)
+   (let $rest (str:char-slice $text (+ $after 1) (str:char-length $text))
+     (case (str:find $rest $needle) (((TextNotFound $_) -1) ($at (+ $at (+ $after 1)))))))
 ; Requests from $first on answer step $k: ten calls of the marker script.
 (= (core-boot:script-steps $world $arguments $first $k $last)
    (if (> $k $last) True
@@ -443,6 +481,7 @@
                 (core-boot:iter-boundaries $command $root $environment $runtime $agent-history $mode-path $first-size $effect-path)
                 True))
           ($_ (if (== $mode "iter") (core-boot:iter-backlog $command $root $environment $world $runtime $agent-history $mode-path) True))
+          ($_ (if (== $mode "iter") (core-boot:iter-equal-requeue $command $root $environment $runtime $agent-history $mode-path) True))
           ($_ (if (== $mode "iter") (core-boot:iter-controls $root $world $command $environment $mode-path $recycle) True))
           ($_ (proc:cancel $cwp)) ($_ (proc:await $cwp)) ($_ (proc:close $cwp))
           ($_ (nq:close $world)))
