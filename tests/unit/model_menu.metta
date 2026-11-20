@@ -87,7 +87,8 @@
           ((ModelMenuV1 $ids $current $unavailable $status) (model:menu-state))
           ($_ (nt:require menu-ids
                 (nt:equal $ids ("syn-a" "syn-b" "kimi:k1" "chatgpt:gpt-5.6-sol" "chatgpt:gpt-6-sol" "chatgpt:gpt-6.1-sol"
-                                "chatgpt:gpt-6-astra" "unit-configured-model" "claude-unit-a" "claude-unit-b"))))
+                                "chatgpt:gpt-6-astra" "chatgpt:gpt-6.2-sol" "chatgpt:gpt-6.2-astra"
+                                "unit-configured-model" "claude-unit-a" "claude-unit-b"))))
           ($_ (nt:require menu-current (nt:equal $current "unit-configured-model")))
           ; Pinned subscription choices are not observed, so not unavailable.
           ($_ (nt:require menu-unavailable (nt:equal $unavailable ("unit-configured-model"))))
@@ -111,6 +112,12 @@
                 (nt:equal (model:set "syn-new") "model set to 'syn-new' (Synthetic); persists across restarts; warning: absent from the latest provider catalog, so the provider may reject it")))
           ($_ (nt:require switch-kimi (nt:equal (model:set kimi:k1) "model set to 'kimi:k1' (Kimi Code API); persists across restarts")))
           ($_ (nt:require switch-chatgpt (nt:equal (model:set "chatgpt:gpt-6-sol") "model set to 'chatgpt:gpt-6-sol' (ChatGPT subscription); persists across restarts")))
+          ($_ (nt:require switch-chatgpt-6.2-sol
+                (nt:equal (model:set "chatgpt:gpt-6.2-sol")
+                          "model set to 'chatgpt:gpt-6.2-sol' (ChatGPT subscription); persists across restarts")))
+          ($_ (nt:require switch-chatgpt-6.2-astra
+                (nt:equal (model:set "chatgpt:gpt-6.2-astra")
+                          "model set to 'chatgpt:gpt-6.2-astra' (ChatGPT subscription); persists across restarts")))
           ($_ (nt:require switch-anthropic (nt:equal (model:set "claude-unit-b") "model set to 'claude-unit-b' (anthropic); persists across restarts")))
           ($_ (nt:require anthropic-unknown
                 (nt:equal (model:set "claude-other") "unknown anthropic model 'claude-other'; available: claude-unit-a, claude-unit-b")))

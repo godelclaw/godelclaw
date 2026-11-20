@@ -65,9 +65,10 @@
    (if (== $items ()) ()
      (let* (($item (str:strip-python (car-atom $items))) ($rest (model:nonblank (cdr-atom $items))))
        (if (== $item "") $rest (cons-atom $item $rest)))))
-; Subscription choices observed on 2026-10-15: pinned, not a claim of the
-; account's current availability.
-(= (model:chatgpt-choices) ("chatgpt:gpt-5.6-sol" "chatgpt:gpt-6-sol" "chatgpt:gpt-6.1-sol" "chatgpt:gpt-6-astra"))
+; Pinned subscription choices. Availability depends on the selected account.
+(= (model:chatgpt-choices)
+   ("chatgpt:gpt-5.6-sol" "chatgpt:gpt-6-sol" "chatgpt:gpt-6.1-sol"
+    "chatgpt:gpt-6-astra" "chatgpt:gpt-6.2-sol" "chatgpt:gpt-6.2-astra"))
 (= (model:chatgpt-policy-path)
    (let $configured (system:getenv-or-default "METTACLAW_CHATGPT_POLICY_PATH" "")
      (if (== $configured "")
