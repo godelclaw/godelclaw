@@ -47,6 +47,11 @@
    (if (or (<= $remaining 0)
            (and (nt:contains (fs:read-text $path) $needle) (== (core-boot:intent-status $runtime) "settled"))) True
      (let $_ (proc:wait $owner 100) (core-boot:wait-recorded $owner $path $needle $runtime (- $remaining 1)))))
+; Until the mode's checkpoint is settled: a running mode publishes a record
+; before each write and settles it after, so a read can land between them.
+(= (core-boot:wait-settled $owner $path $remaining)
+   (if (or (<= $remaining 0) (== (sf:get (sf:native-object $path) "status" "") "settled")) True
+     (let $_ (proc:wait $owner 100) (core-boot:wait-settled $owner $path (- $remaining 1)))))
 (= (core-boot:stop $owner) (let* (($_ (proc:cancel $owner)) ($_ (proc:await $owner)) ($_ (proc:close $owner))) True))
 ; The history cut to its first $bytes bytes, in place: the same file.
 (= (core-boot:cut $path $bytes)
@@ -216,6 +221,7 @@
                   (nt:require own-record-settled (== (core-boot:intent-status $runtime) "settled")))
                 True))
           ($_ (nt:require catch-up-not-mirrored (not (nt:contains (fs:read-text $agent-history) "[AGENT HISTORY:"))))
+          ($_ (core-boot:wait-settled $again $checkpoint 100))
           ($_ (nt:require restart-keeps-settled-checkpoint
                 (== (sf:get (sf:native-object $checkpoint) "status" "") "settled")))
           ($_ (nt:require restart-does-not-replay-mode-effect (== (fs:read-text $effect-path) "X")))
