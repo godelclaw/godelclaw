@@ -8,6 +8,9 @@
 !(bind! &ih-numbers (new-state ()))
 !(bind! &ih-next-number (new-state 1))
 !(bind! &ih-frontier (new-state 0))
+; The numbering the frontier counts in, and the history file it holds for.
+!(bind! &ih-lineage (new-state ""))
+!(bind! &ih-frontier-file (new-state none))
 (= (ih:list)
    (let* (($space (new-space)) ($length (new-space))
           ($_ (add-atom $length (IterLengthV1 0))))
@@ -162,22 +165,33 @@
         (ih:number-all (ih:values $experience) (get-state &ih-numbers) (get-state &ih-next-number) ())
      (let* (($_ (change-state! &ih-numbers $pairs)) ($_ (change-state! &ih-next-number $next)))
        (map-atom $pairs $pair (index-atom $pair 1)))))
-; At a start: the numbers and frontier the checkpoint saved with this very
-; experience. An experience saved without them is all in the history.
+; At a start: the numbers, lineage and frontier the checkpoint saved with
+; this very experience; the frontier holds only for the file it was saved for.
+; An experience saved without them is all in the history, numbered anew.
 (= (ih:restore-numbers $experience $text)
    (let* (($record (mode-host:record-read))
           ($values (ih:values $experience))
           ($saved (case $record (((JsonObject $_) (mode-host:array $record "mirror_sequences")) ($other ()))))
           ($matches (case $record
-                      (((JsonObject $_) (and (== (sf:get $record "sha256" "") (str:sha256 $text))
-                                             (== (size-atom $saved) (size-atom $values))))
+                      (((JsonObject $_) (and (and (== (sf:get $record "sha256" "") (str:sha256 $text))
+                                                  (== (size-atom $saved) (size-atom $values)))
+                                             (!= (sf:get $record "mirror_lineage" "") "")))
                        ($other False))))
           ($numbers (if $matches (map-atom $saved $n (ih:integer $n)) (ih:count-up 1 (size-atom $values) ())))
+          ($lineage (if $matches (sf:get $record "mirror_lineage" "") (system:uuid4-hex)))
+          ($file (if $matches
+                   (if (== (sf:get $record "mirror_device" "") "") none
+                     ((sf:get $record "mirror_device" "") (sf:get $record "mirror_inode" "")))
+                   (mode-history:identity)))
           ($frontier (if $matches (ih:integer (sf:get $record "mirror_frontier" 0)) (size-atom $values)))
           ($top (foldl-atom $numbers $frontier $m $n (max $m $n)))
           ($_ (change-state! &ih-numbers (ih:zip $values $numbers)))
-          ($_ (change-state! &ih-next-number (+ $top 1))))
+          ($_ (change-state! &ih-next-number (+ $top 1)))
+          ($_ (change-state! &ih-lineage $lineage))
+          ($_ (change-state! &ih-frontier-file $file)))
      (change-state! &ih-frontier $frontier)))
+(= (ih:file-part $index)
+   (case (get-state &ih-frontier-file) ((none "") ($pair (index-atom $pair $index)))))
 (= (ih:integer $value)
    (case $value (((JsonNumber $text) (str:string->number $text)) ($number $number))))
 (= (ih:count-up $from $count $out)
@@ -185,12 +199,18 @@
 (= (ih:zip $left $right)
    (if (or (== $left ()) (== $right ())) ()
      (cons-atom ((car-atom $left) (car-atom $right)) (ih:zip (cdr-atom $left) (cdr-atom $right)))))
-; A pending record completed; the frontier is then at least its own.
+; A pending record completed; the frontier is then at least its own. A
+; history file other than the one the frontier was for holds none of the
+; messages: the frontier starts again, and they are all written to it.
 (= (ih:resolve-intent)
-   (case (mode-history:resolve-intent)
-     (((ModeIntentClearV1 $frontier)
-       (let $_ (change-state! &ih-frontier (max (get-state &ih-frontier) (ih:integer $frontier))) True))
-      ($pending False))))
+   (let* (($current (mode-history:identity))
+          ($_ (if (and (!= (get-state &ih-frontier-file) none) (!= (get-state &ih-frontier-file) $current))
+                (change-state! &ih-frontier 0) True))
+          ($_ (change-state! &ih-frontier-file $current)))
+     (case (mode-history:resolve-intent (get-state &ih-lineage))
+       (((ModeIntentClearV1 $frontier)
+         (let $_ (change-state! &ih-frontier (max (get-state &ih-frontier) (ih:integer $frontier))) True))
+        ($pending False)))))
 (= (ih:mirror $experience $numbers)
    (if (not (mode-history:shared?)) True
      (if (not (ih:resolve-intent)) True
@@ -200,8 +220,9 @@
               ($top (foldl-atom $pairs $frontier $m $pair (max $m (index-atom $pair 1))))
               ($text (ih:history-text $new)))
          (if (== $text "") (let $_ (change-state! &ih-frontier $top) True)
-           (case (mode-history:append-own $text $top)
-             ((True (let $_ (change-state! &ih-frontier $top) True))
+           (case (mode-history:append-own $text $top (get-state &ih-lineage))
+             ((True (let* (($_ (change-state! &ih-frontier $top))
+                           ($_ (change-state! &ih-frontier-file (mode-history:identity)))) True))
               ; Pending or abandoned: the next save writes them.
               ($not-yet True))))))))
 (= (ih:history-text $messages)
@@ -240,7 +261,9 @@
    (let* (($_ (health:settle)) ($_ (mode-host:record "boundary" ()))) (mode-host:gate)))
 (= (ih:checkpoint $experience $numbers)
    (let $written (mode-host:checkpoint-with (path:join (mode-host:root) "experience.json") (turn:json (ih:json $experience))
-                   ((JsonPair "mirror_sequences" (JsonArray $numbers)) (JsonPair "mirror_frontier" (get-state &ih-frontier))))
+                   ((JsonPair "mirror_sequences" (JsonArray $numbers)) (JsonPair "mirror_frontier" (get-state &ih-frontier))
+                    (JsonPair "mirror_lineage" (get-state &ih-lineage))
+                    (JsonPair "mirror_device" (ih:file-part 0)) (JsonPair "mirror_inode" (ih:file-part 1))))
      (if (!= $written True) (mode-host:stop-uncommitted $written)
        (mode-host:record "checkpoint" ((JsonPair "messages" (ih:size $experience)))))))
 (= (ih:save $experience)
