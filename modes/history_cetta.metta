@@ -13,20 +13,6 @@
 (= (mode-history:stamp)
    (system:format-time "%Y-%m-%d %H:%M:%S" (math:floor (system:wall-time)) "local"))
 
-; As the framework appends its own turns: one durable write; a failure is
-; reported and the loop goes on.
-(= (mode-history:append $text)
-   (let* (($path (mode-history:path))
-          ($payload (if (str:ends-with $text "\n") $text (str:concat $text "\n")))
-          ($_ (fs:make-directories (path:dirname $path) 504))
-          ($owner (fs:open-write $path ("create" "append") 432)))
-     (case $owner
-       (((NativeHandle $_ $_)
-         (let* (($written (fs:write-all $owner $payload))
-                ($synced (if (sf:failed? $written) $written (fs:sync $owner)))
-                ($_ (fs:close $owner)))
-           (if (sf:failed? $synced) (mode-history:report $synced) True)))
-        ($bad (mode-history:report $bad))))))
 (= (mode-history:report $failure)
    (let $_ (system:write stderr (str:concat "[mode] agent history append error: " (str:concat (diagnostic:text $failure 400) "\n")))
      False))
@@ -36,13 +22,13 @@
 ; is a place in one file: a file with another identity starts it again.
 (= (mode-history:cursor-path) (path:join (mode-host:root) "agent-history-cursor.json"))
 (= (mode-history:cursor)
-   (let $record (sf:native-object (mode-history:cursor-path))
+   (let* (($record (sf:native-object (mode-history:cursor-path))) ($identity (mode-history:identity)))
      (if (and (== (sf:get $record "path" "") (mode-history:path))
-              (or (== (sf:get $record "device" "") "")
-                  (== ((sf:get $record "device" "") (sf:get $record "inode" "")) (mode-history:identity))))
+              (or (or (== (sf:get $record "device" "") "") (== $identity unknown))
+                  (== ((sf:get $record "device" "") (sf:get $record "inode" "")) $identity)))
        (sf:get $record "size" -1) -1)))
 (= (mode-history:mark-at $size)
-   (let $identity (case (mode-history:identity) ((none ("" "")) ($pair $pair)))
+   (let $identity (case (mode-history:identity) ((none ("" "")) (unknown ("" "")) ($pair $pair)))
      (sf:replace (mode-history:cursor-path)
        (turn:json (JsonObject ((JsonPair "path" (mode-history:path)) (JsonPair "size" $size)
                                (JsonPair "device" (index-atom $identity 0)) (JsonPair "inode" (index-atom $identity 1)))))
@@ -59,11 +45,17 @@
 (= (mode-history:intent) (sf:native-object (mode-history:intent-path)))
 (= (mode-history:write-intent $record)
    (sf:replace (mode-history:intent-path) (turn:json $record) 384 True))
-; The history file's identity, as an intent records it; none when absent.
+; The history file's identity, as an intent records it; none when it does not
+; exist; unknown when it could not be observed.
 (= (mode-history:identity)
-   (case (mode-host:file-info (mode-history:path)) (((ModeFileV1 $_ $device $inode) ($device $inode)) ($missing none))))
-; Writes <text> as the mode's own record; True once it is in the file. The
-; frontier is in the numbering <lineage>, and holds only for this file.
+   (let $path (mode-history:path)
+     (case (fs:metadata $path follow-observed)
+       (((fs:failed fs:missing $_ $_ $_ $_ $_) none)
+        ((fs:failed $_ $_ $_ $_ $_ $_) unknown)
+        ($found (case (mode-host:file-info $path) (((ModeFileV1 $_ $device $inode) ($device $inode)) ($other unknown))))))))
+; Writes <text> as the mode's own record: (ModeAppendedV1 <file identity>)
+; once it is in the file. The frontier is in the numbering <lineage>, and
+; holds only for this file.
 (= (mode-history:append-own $text $frontier $lineage)
    (let* (($path (mode-history:path)) ($created (mode-host:ensure-file $path)))
      (if (!= $created True) (ModeIntentFailedV1 $created)
@@ -76,19 +68,24 @@
                               (JsonPair "frontier" $frontier) (JsonPair "lineage" $lineage))))
                   ($written (mode-history:write-intent $record)))
              (if (!= $written True) (ModeIntentFailedV1 (Error mode-history (Incomplete intent-not-durable)))
-               (mode-history:complete $record))))
+               (case (mode-history:complete $record)
+                 ((True (ModeAppendedV1 ($device $inode))) ($not-yet $not-yet))))))
           ($bad (ModeIntentFailedV1 $bad)))))))
 ; A pending intent's text written or found written, then settled: True; a
 ; failure that may pass leaves it pending: (ModeIntentFailedV1 <why>); a file
 ; that no longer holds its place abandons it: ModeIntentAbandonedV1.
+; Only what is established abandons an intent: a missing file, another one,
+; or other bytes at its place. A read or a write that failed keeps it pending.
 (= (mode-history:complete $record)
-   (if (not (fs:exists (sf:get $record "path" ""))) (mode-history:abandon-intent $record file-missing)
-   (case (mode-host:resume-append $record)
-     ((True (mode-history:settle-intent $record))
-      ((Error mode-checkpoint (Forbidden $why)) (mode-history:abandon-intent $record $why))
-      ((Error mode-checkpoint (Incomplete append-verification-failed))
-        (mode-history:abandon-intent $record append-verification-failed))
-      ($failed (let $_ (mode-history:report $failed) (ModeIntentFailedV1 $failed)))))))
+   (case (fs:metadata (sf:get $record "path" "") follow-observed)
+     (((fs:failed fs:missing $_ $_ $_ $_ $_) (mode-history:abandon-intent $record file-missing))
+      ((fs:failed $kind $_ $_ $_ $_ $_)
+        (let $_ (mode-history:report (Error mode-history (Incomplete (file-unknown $kind)))) (ModeIntentFailedV1 $kind)))
+      ($known
+        (case (mode-host:resume-append $record)
+          ((True (mode-history:settle-intent $record))
+           ((Error mode-checkpoint (Forbidden $why)) (mode-history:abandon-intent $record $why))
+           ($failed (let $_ (mode-history:report $failed) (ModeIntentFailedV1 $failed)))))))))
 (= (mode-history:settle-intent $record)
    (let* (($offset (sf:get $record "offset" 0)) ($end (+ $offset (str:byte-length (sf:get $record "payload" ""))))
           ($settled (mode-history:write-intent (sf:put-all $record ((JsonPair "status" "settled"))))))
@@ -114,13 +111,17 @@
              ($failed $failed))))
         ("settled" (mode-history:frontier-of $record $lineage))
         ($other (ModeIntentClearV1 0))))))
+; A file that could not be observed decides nothing: the caller waits.
 (= (mode-history:frontier-of $record $lineage)
-   (if (and (== (sf:get $record "lineage" "") $lineage)
-            (== (mode-history:identity) ((sf:get $record "device" "") (sf:get $record "inode" ""))))
-     (ModeIntentClearV1 (sf:get $record "frontier" 0))
-     (ModeIntentClearV1 0)))
+   (let $identity (mode-history:identity)
+     (if (== $identity unknown) (ModeIntentFailedV1 identity-unknown)
+       (if (and (== (sf:get $record "lineage" "") $lineage)
+                (== $identity ((sf:get $record "device" "") (sf:get $record "inode" ""))))
+         (ModeIntentClearV1 (sf:get $record "frontier" 0))
+         (ModeIntentClearV1 0)))))
 
-; Records other loops appended since this mode's cursor, oldest first. A larger
+; Records other loops appended since this mode's cursor, oldest first; "" when
+; there are none, ModeCatchUpUnavailableV1 when they could not be read. A larger
 ; gap shows its newest $limit bytes and says where the rest is.
 (= (mode-history:catch-up $limit)
    (if (not (mode-history:shared?)) ""
@@ -129,13 +130,13 @@
        (if (<= $size $from) ""
          (if (<= (- $size $from) $limit)
            (let $text (mode-host:read-at $path $from (- $size $from))
-             (if (sf:failed? $text) "" $text))
+             (if (mode-host:read-failed? $text) ModeCatchUpUnavailableV1 $text))
            (case (fs:tail-text $path $limit)
              (((fs:tail $_ $_ $text)
                (str:join "" ("[" (repr (- (- $size $from) (str:byte-length $text)))
                              " earlier bytes of the agent history since this mode last ran are not shown here;"
                              " use episodes or query to read them]\n" $text)))
-              ($bad ""))))))))
+              ($bad ModeCatchUpUnavailableV1))))))))
 
 ; Timestamps as the history writes them, as civil seconds.
 (= (mode-history:leap? $year)

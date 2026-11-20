@@ -136,7 +136,8 @@
    (let* (($_ (ih:resolve-intent))
           ($size (mode-history:size (mode-history:path)))
           ($text (mode-history:catch-up 30000)))
-     (if (== $text "") (ih:mirror $experience (ih:numbers $experience))
+     ; Nothing to show, or nothing readable: the cursor stays where it is.
+     (if (or (== $text "") (== $text ModeCatchUpUnavailableV1)) (ih:mirror $experience (ih:numbers $experience))
        (let* (($_ (ih:append $experience (ih:message "user" (str:concat (ih:catch-up-header) $text))))
               ($numbers (ih:numbers $experience))
               ($_ (ih:checkpoint $experience $numbers))
@@ -182,7 +183,7 @@
           ($file (if $matches
                    (if (== (sf:get $record "mirror_device" "") "") none
                      ((sf:get $record "mirror_device" "") (sf:get $record "mirror_inode" "")))
-                   (mode-history:identity)))
+                   (case (mode-history:identity) ((unknown none) ($known $known)))))
           ($frontier (if $matches (ih:integer (sf:get $record "mirror_frontier" 0)) (size-atom $values)))
           ($top (foldl-atom $numbers $frontier $m $n (max $m $n)))
           ($_ (change-state! &ih-numbers (ih:zip $values $numbers)))
@@ -202,15 +203,17 @@
 ; A pending record completed; the frontier is then at least its own. A
 ; history file other than the one the frontier was for holds none of the
 ; messages: the frontier starts again, and they are all written to it.
+; A file that could not be observed decides nothing: the mirror waits.
 (= (ih:resolve-intent)
-   (let* (($current (mode-history:identity))
-          ($_ (if (and (!= (get-state &ih-frontier-file) none) (!= (get-state &ih-frontier-file) $current))
-                (change-state! &ih-frontier 0) True))
-          ($_ (change-state! &ih-frontier-file $current)))
-     (case (mode-history:resolve-intent (get-state &ih-lineage))
-       (((ModeIntentClearV1 $frontier)
-         (let $_ (change-state! &ih-frontier (max (get-state &ih-frontier) (ih:integer $frontier))) True))
-        ($pending False)))))
+   (let $current (mode-history:identity)
+     (if (== $current unknown) False
+       (let* (($_ (if (and (!= (get-state &ih-frontier-file) none) (!= (get-state &ih-frontier-file) $current))
+                    (change-state! &ih-frontier 0) True))
+              ($_ (change-state! &ih-frontier-file $current)))
+         (case (mode-history:resolve-intent (get-state &ih-lineage))
+           (((ModeIntentClearV1 $frontier)
+             (let $_ (change-state! &ih-frontier (max (get-state &ih-frontier) (ih:integer $frontier))) True))
+            ($pending False)))))))
 (= (ih:mirror $experience $numbers)
    (if (not (mode-history:shared?)) True
      (if (not (ih:resolve-intent)) True
@@ -221,8 +224,8 @@
               ($text (ih:history-text $new)))
          (if (== $text "") (let $_ (change-state! &ih-frontier $top) True)
            (case (mode-history:append-own $text $top (get-state &ih-lineage))
-             ((True (let* (($_ (change-state! &ih-frontier $top))
-                           ($_ (change-state! &ih-frontier-file (mode-history:identity)))) True))
+             (((ModeAppendedV1 $identity)
+               (let* (($_ (change-state! &ih-frontier $top)) ($_ (change-state! &ih-frontier-file $identity))) True))
               ; Pending or abandoned: the next save writes them.
               ($not-yet True))))))))
 (= (ih:history-text $messages)
