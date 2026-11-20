@@ -23,6 +23,8 @@
           ($_ (nline:request $job $buffer "W 7\naž🌿" 2000))
           ($_ (nline:request $job $buffer "S 101 31\n" 2000))
           ($_ (term-test:until $job $buffer $capture "HostSize 101 31" 80))
+          ; The child may take the resize before it reads the input: wait for both.
+          ($_ (term-test:until $job $buffer $capture "INPUT=až🌿" 80))
           ($text (fs:read-text $capture))
           ($_ (nt:require utf8-passes-real-terminal (nt:contains $text "INPUT=až🌿")))
           ($_ (nt:require resize-observed (nt:contains $text "HostSize 101 31")))
