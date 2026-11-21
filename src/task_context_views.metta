@@ -692,15 +692,24 @@
         ((Error $_ $_) (ContextPreparationFailed "context-conversation-read-failed"))
         ($ok (task:full-context-view $base $ok $capacity $ratio))))))
 ; The calls a render carries with their results, reported to the host, which binds them to
-; the rendered prompt's native receipt: call ids of the rows
-; whose disposition is not not_run, uncertain or input. A cut, repeated or collapsed result
-; still carries its content (lean/pettaclaw/ObservedReceipts.lean: presents).
+; the rendered prompt's native receipt: call ids of the rows whose disposition is not
+; not_run, uncertain or input, excluding compacted/preview stubs and archive-only entries
+; (task:stub / task:index-entry). A full-mode cut, repeated or collapsed result still
+; carries its content (lean/pettaclaw/ObservedReceipts.lean: presents).
+(= (task:preview-or-stub? $pair)
+   (or (== (state:json-field $pair "compacted") (JsonBool True))
+     (or (not (== (state:json-field $pair "result_preview") JsonNull))
+         (and (== (state:json-field $pair "result") JsonNull)
+           (and (== (state:json-field $pair "result_raw") JsonNull)
+                (not (== (state:json-field $pair "retrieve") JsonNull)))))))
 (= (task:carried-id $pair)
-   (let $id (task:string $pair "id")
-     (if (str:starts-with $id "task-input:") (empty)
-       (case (state:json-field $pair "disposition")
-         (((JsonString "not_run") (empty)) ((JsonString "uncertain") (empty)) ((JsonString "input") (empty))
-          ($other (JsonString $id)))))))
+   (case (state:json-field $pair "id")
+     (((JsonString $id)
+       (if (or (== $id "") (or (str:starts-with $id "task-input:") (task:preview-or-stub? $pair))) (empty)
+         (case (state:json-field $pair "disposition")
+           (((JsonString "not_run") (empty)) ((JsonString "uncertain") (empty)) ((JsonString "input") (empty))
+            ($other (JsonString $id))))))
+      ($other (empty)))))
 (= (task:carried-ids $pairs) (collapse (let $pair (superpose $pairs) (task:carried-id $pair))))
 (= (task:report-carried $pairs)
    (turn:context-presented (json-stringify (JsonArray (task:carried-ids $pairs)))))

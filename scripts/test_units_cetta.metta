@@ -175,7 +175,11 @@
      (("CETTA_SHARED_MAIL_SOCKET" "{home}/s")))
     ("tests/unit/conversation_index.metta" "UNIT_CONVERSATION_INDEX_OK"
      (("METTACLAW_INPUT_LEDGER_SOCKET" "{home}/l.sock")))
-    ("tests/unit/conversation_index_differential.metta" "UNIT_CONVERSATION_INDEX_DIFFERENTIAL_OK")))
+    ("tests/unit/conversation_index_differential.metta" "UNIT_CONVERSATION_INDEX_DIFFERENTIAL_OK")
+    ("tests/unit/receipt_observation.metta" "UNIT_RECEIPT_OBSERVATION_OK"
+     (("METTACLAW_INPUT_LEDGER_SOCKET" "{home}/l.sock") ("METTACLAW_OBSERVED_STRATEGY" "1")
+      ("METTACLAW_COGNITIVE_HEALTH_PATH" "{home}/health.json") ("METTACLAW_RECYCLE_REQUEST_PATH" "{home}/recycle.requested")
+      ("METTACLAW_LIFECYCLE_PATH" "{home}/lifecycle.json")))))
 
 (= (units:env $directory)
    (let $base (nt:environment $directory)

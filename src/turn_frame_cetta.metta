@@ -70,26 +70,44 @@
      (let* (($ids (turn:get "presented" ())) ($_ (turn:put "prepared" (PreparedContextV1 $digest $incomplete $ids)))
             ($_ (turn:put "presented" ()))) 1)
      (Error turn:context-prepared invalid-context-receipt)))
+(= (turn:uint-string? $text)
+   (case (str:find $text ".")
+     (((TextNotFound $_)
+       (case (str:find $text "e")
+         (((TextNotFound $_)
+           (case (str:find $text "E")
+             (((TextNotFound $_) True) ($other False))))
+          ($other False))))
+      ($other False))))
 (= (turn:call-id $identity)
    (let* (($parts (str:split ":" $identity)) ($n (size-atom $parts)))
      (if (< $n 2) none
-       (let* (($position (str:string->number (index-atom $parts (- $n 1))))
+       (let* (($pos-str (index-atom $parts (- $n 1)))
               ($ticket (str:join ":" (list:take (- $n 1) $parts))))
-         (if (and (== (get-type $position) Number) (>= $position 0)) ($ticket $position) none)))))
+         (if (or (== $ticket "") (not (turn:uint-string? $pos-str))) none
+           (let $position (str:string->number $pos-str)
+             (if (not (== (get-type $position) Number)) none
+               (if (and (>= $position 0) (== (repr $position) $pos-str))
+                 ($ticket $position) none))))))))
+(= (turn:presented-id-text $id)
+   (case $id
+     (((JsonString $text) $text)
+      ($other (if (== (get-type $other) String) $other none)))))
 (= (turn:presented-pairs $ids)
    (if (== $ids ()) ()
      (let* (($id (car-atom $ids)) ($rest (turn:presented-pairs (cdr-atom $ids))))
-       (case $id
-         (((JsonString $text) (case (turn:call-id $text) ((none $rest) ($pair (cons-atom $pair $rest)))))
-          ($other $rest))))))
+       (case (turn:presented-id-text $id)
+         ((none $rest)
+          ($text (case (turn:call-id $text) ((none $rest) ($pair (cons-atom $pair $rest))))))))))
 (= (turn:observe-chunks $pairs)
    (if (== $pairs ()) True
      (let $answer (turn:write "observe" ((list:take 20 $pairs)))
        (if (== $answer True) (turn:observe-chunks (list:drop 20 $pairs)) $answer))))
 (= (turn:observe-presented)
-   (let* (($ids (turn:get "answered-presented" ())) ($_ (turn:put "answered-presented" ())))
-     (if (== $ids ()) True
-       (let $pairs (state:ledger "presented-receipts" ((turn:presented-pairs $ids)))
+   (let* (($ids (turn:get "answered-presented" ())) ($_ (turn:put "answered-presented" ()))
+          ($calls (turn:presented-pairs $ids)))
+     (if (== $calls ()) True
+       (let $pairs (state:ledger "presented-receipts" ($calls))
          (if (turn:failed? $pairs) $pairs (turn:observe-chunks $pairs))))))
 (= (turn:capture $prompt $wake)
    (if (not (strategy:enabled?)) 1
@@ -171,9 +189,10 @@
                (if (turn:failed? $after) $after $records))))))
      $records)))
 (= (turn:provider-failed)
-   (if (< (turn:serial) 0) 1
-     (let $answer (turn:write "decide" ((turn:serial) "failure" "" ""))
-       (if (turn:failed? $answer) $answer 1))))
+   (let $_ (turn:put "answered-presented" ())
+     (if (< (turn:serial) 0) 1
+       (let $answer (turn:write "decide" ((turn:serial) "failure" "" ""))
+         (if (turn:failed? $answer) $answer 1)))))
 (= (turn:conversation-mode)
    (if (or (not (strategy:enabled?)) (== (turn:trigger) "operator-event")) "chat" "task"))
 (= (turn:retire-goal $name $reason) 0)
@@ -217,6 +236,7 @@
        (let* (($_ (turn:put "inputs" $ids)) ($_ (turn:put "turn" (turn:text $turn)))
               ($_ (turn:put "sample" none)) ($_ (turn:put "ticket" ""))
               ($_ (turn:put "prepared" none)) ($_ (turn:put "presented" ()))
+              ($_ (turn:put "answered-presented" ()))
               ($_ (turn:put "message-focus" "")) ($_ (turn:put "trigger" $source))
               ($_ (turn:put "phase" "begin")))
          (if (not (strategy:enabled?)) 1
@@ -275,6 +295,7 @@
 (= (turn:fault)
    (let* (($restored (if (strategy:enabled?) (turn:write "restore" ()) True))
           ($_ (turn:put "sample" none)) ($_ (turn:put "ticket" ""))
+          ($_ (turn:put "answered-presented" ()))
           ($_ (turn:put "phase" "failed")))
      (if (!= $restored True) (Error turn:fault $restored)
        (let $recovered (if (strategy:enabled?) (turn:recover-actions) True)
