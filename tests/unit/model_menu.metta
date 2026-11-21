@@ -82,6 +82,7 @@
           ($_ (mm:observations (str:join "" ("{\"schema\": 1, "
                  (mm:stamped "models" 100 "[{\"id\": \"syn-a\", \"context\": 128000}, {\"id\": \"syn-b\", \"context\": 0}, {\"id\": \"syn-a\"}, 3]") ", "
                  (mm:stamped "kimi-models" 7 "[{\"id\": \"kimi:k1\", \"context\": 256000}]") ", "
+                 (mm:stamped "model-window" 1 "{\"id\": \"claude-unit-b\", \"context\": 200000, \"source\": \"provider-model-metadata\"}") ", "
                  (mm:stamped "quota" 1 "{\"planWeeklyLimit\": {\"percentRemaining\": 37.46}, \"weeklyTokenLimit\": {\"remainingCredits\": 5}, \"rollingFiveHourLimit\": {\"remaining\": 12, \"max\": 40, \"limited\": true}}")
                  "}"))))
           ((ModelMenuV1 $ids $current $unavailable $status) (model:menu-state))

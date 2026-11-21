@@ -21,6 +21,7 @@
 !(import! &self (library system))
 !(import! &self ./model_selection_cetta.metta)
 !(import! &self ./state_file_cetta.metta)
+!(import! &self ./uri_cetta.metta)
 
 ;; ------------------------------------------------------------ lists
 ; Catalogs can be long: lists are built by the engine's own concatenation,
@@ -245,7 +246,9 @@
         (ModelUsable
          (if (not (model:persist $name))
            (str:join "" ("switch to '" $name "' NOT applied: could not durably persist the choice"))
-           (if (model:anthropic? $name) (str:join "" ("model set to '" $name "' (anthropic); persists across restarts"))
+           (if (model:anthropic? $name)
+             (let $_ (model:refresh ("model-window"))
+               (str:join "" ("model set to '" $name "' (anthropic); persists across restarts")))
              (let* (($refreshed (model:refresh ("models")))
                     ($absent (if (== (model:in-catalog (model:observations) $name) False)
                                "; warning: absent from the latest provider catalog, so the provider may reject it" ""))
@@ -317,10 +320,37 @@
 (= (model:ttl "quota") 60.0)
 (= (model:ttl "model-window") 300.0)
 (= (model:retry-seconds) 30.0)
+(= (model:window-uses-observation? $model)
+   (or (model:anthropic? $model) (str:starts-with $model "chatgpt:")))
+(= (model:window-matches? $record $selected)
+   (== (json:get (model:object (json:get $record "value")) "id") $selected))
+(= (model:window-last-error $model)
+   (if (not (model:window-uses-observation? $model)) ""
+     (let* (($record (model:record (model:observations) "model-window"))
+            ($err (json:get $record "last_error")))
+       (if (or (== $err JsonNull) (== $err "")) ""
+         (let $who (json:get $record "attempted_model")
+           (if (or (== $who $model) (and (== $who JsonNull) (not (model:window-matches? $record $model))))
+             (str:trim (system:redact-secrets (model:python-str $err)))
+             ""))))))
+(= (model:window-attempted-same? $record $selected)
+   (let $who (json:get $record "attempted_model")
+     (if (== $who $selected) True
+       (if (== $who JsonNull)
+         (let $id (json:get (model:object (json:get $record "value")) "id")
+           (or (== $id JsonNull) (== $id $selected)))
+         False))))
 (= (model:refresh-due? $record $kind $now)
-   (let* (($observed (model:stamp $record "observed_at")) ($attempted (model:stamp $record "attempted_at")))
-     (and (or (== $observed 0) (>= (- $now $observed) (model:ttl $kind)))
-          (or (== $attempted 0) (>= (- $now $attempted) (model:retry-seconds))))))
+   (let* (($observed (model:stamp $record "observed_at"))
+          ($attempted (model:stamp $record "attempted_at"))
+          ($selected (if (== $kind "model-window") (model:current "") ""))
+          ($stale (or (== $observed 0)
+                    (or (>= (- $now $observed) (model:ttl $kind))
+                      (and (== $kind "model-window") (not (model:window-matches? $record $selected))))))
+          ($retry-ok (or (== $attempted 0)
+                       (or (>= (- $now $attempted) (model:retry-seconds))
+                         (and (== $kind "model-window") (not (model:window-attempted-same? $record $selected)))))))
+     (and $stale $retry-ok)))
 ; Refresh each of KINDS ("models", "quota") that is due; "models" includes
 ; Kimi Code's catalog when its credential is configured. The kinds started.
 (= (model:refresh $kinds)
@@ -331,21 +361,28 @@
    (if (== $kinds ()) ()
      (let* (($kind (car-atom $kinds))
             ($rest (model:refresh-each (cdr-atom $kinds) $now)))
-       (if (model:refresh-due? (model:record (model:observations) $kind) $kind $now)
-         (if (model:start-refresh $kind $now) (cons-atom $kind $rest) $rest)
-         $rest))))
+       (if (and (== $kind "model-window") (not (model:anthropic? (model:current ""))))
+         $rest
+         (if (model:refresh-due? (model:record (model:observations) $kind) $kind $now)
+           (if (model:start-refresh $kind $now) (cons-atom $kind $rest) $rest)
+           $rest)))))
 ; The attempt is stamped first, so a second control within the retry interval
 ; starts none; the child then runs on its own, its output discarded.
 (= (model:start-refresh $kind $now)
-   (if (not (model:update $kind (("attempted_at" $now)) False)) False
-     (let* (($engine (system:executable))
-            ($program (path:join (system:cwd) "src/provider_observation_main.metta"))
-            ($credential (model:credential-env $kind))
-            ($child (catch (proc:spawn ($engine "--lang" "petta" "--import-mode" "ancestor-walk" "--quiet" $program $kind)
-                                       ((env (inherit $credential)) (lifetime detached) (stdout null) (stderr null))))))
-       (case $child
-         (((Error $call $why) False) ((proc:failed $why) False)
-          ($owner (let $closed (proc:close $owner) True)))))))
+   (let $stamp (if (== $kind "model-window")
+                 (("attempted_at" $now) ("attempted_model" (model:current "")))
+                 (("attempted_at" $now)))
+     (if (not (model:update $kind $stamp False)) False
+       (let* (($engine (system:executable))
+              ($configured (system:getenv-or-default "METTACLAW_RUNTIME_ROOT" ""))
+              ($root (if (== $configured "") (system:cwd) $configured))
+              ($program (path:join $root "src/provider_observation_main.metta"))
+              ($credential (model:credential-env $kind))
+              ($child (catch (proc:spawn ($engine "--lang" "petta" "--import-mode" "ancestor-walk" "--quiet" $program $kind)
+                                         ((env (inherit $credential)) (lifetime detached) (stdout null) (stderr null))))))
+         (case $child
+           (((Error $call $why) False) ((proc:failed $why) False)
+            ($owner (let $closed (proc:close $owner) True))))))))
 ; Each provider's credential is an alias the child's requests name; the key
 ; stays in the environment.
 (= (model:credential-alias "kimi-models") "OBSERVE_KIMI")
@@ -425,8 +462,9 @@
    (let ($url $headers $key) (model:request $kind)
      (if (not (model:env-set? $key))
        (ModelObservationFailed (if (== $kind "kimi-models") "Kimi Code credential is not configured" (str:concat $key " is not set")))
-       (let $deadline (model:introspect-ms)
-         (case (io:try-submit (http:request "GET" $url $headers "" $deadline 4194304))
+       (let* (($deadline (model:introspect-ms))
+              ($request (http:request "GET" $url $headers "" $deadline 4194304)))
+         (case (io:try-submit $request)
            (((io:pending $id) (model:received (model:await $id)))
             ($refused (ModelObservationFailed "submit-error"))))))))
 (= (model:await $id)
@@ -503,10 +541,11 @@
      (if (or (not (model:anthropic? $selected)) (not (model:env-set? "ANTHROPIC_API_KEY")))
        (ModelObservationFailed "selected model has no configured metadata route")
        (let* (($url (str:concat (model:anthropic-base) (str:concat "/models/" (uri:encode $selected))))
-              ($reply (case (io:try-submit
-                        (http:request "GET" $url
+              ($deadline (model:introspect-ms))
+              ($request (http:request "GET" $url
                           ((http:credential "OBSERVE_ANTHROPIC") (http:header "anthropic-version" "2023-06-01"))
-                          "" (model:introspect-ms) 4194304))
+                          "" $deadline 4194304))
+              ($reply (case (io:try-submit $request)
                         (((io:pending $id) (model:received (model:await $id)))
                          ($bad (ModelObservationFailed "submit-error"))))))
          (case $reply
@@ -516,11 +555,15 @@
                 (if (> $capacity 0) (ModelWindowPayloadV1 $selected $capacity)
                   (ModelObservationFailed "invalid model window"))))))))))
 (= (model:clip $text $limit) (if (> (str:char-length $text) $limit) (str:char-slice $text 0 $limit) $text))
-!(import! &self ./uri_cetta.metta)
 ; Read KIND from its provider and record it whole, or note the failure and
 ; keep the last good value. True when the file was written.
 (= (model:observe $kind)
    (let* (($fetched (model:fetch $kind)) ($now (system:wall-time)))
      (case $fetched
-       (((ModelObservationFailed $why) (model:update $kind (("attempted_at" $now) ("last_error" (model:clip $why 160))) False))
+       (((ModelObservationFailed $why)
+         (model:update $kind
+           (if (== $kind "model-window")
+             (("attempted_at" $now) ("attempted_model" (model:current "")) ("last_error" (model:clip $why 160)))
+             (("attempted_at" $now) ("last_error" (model:clip $why 160))))
+           False))
         ($payload (model:update $kind (("observed_at" $now) ("attempted_at" $now) ("value" (model:value $kind $payload))) True))))))

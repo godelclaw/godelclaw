@@ -154,9 +154,26 @@
        (rejection:save (sf:put
          (sf:put $record "provider_rejection" (sf:put $block "repair" "attempted"))
          "provider_context_repair" (sf:get $block "context" (JsonObject ())))))))
+(= (turn:window-unknown-code $detail)
+   (case $detail
+     (("submit-error" "context-window-unknown-submit-error")
+      ("transport error" "context-window-unknown-transport-error")
+      ("bad response" "context-window-unknown-bad-response")
+      ("unexpected response" "context-window-unknown-unexpected-response")
+      ("invalid model window" "context-window-unknown-invalid-model-window")
+      ("selected model has no configured metadata route" "context-window-unknown-no-metadata-route")
+      ($other
+        (if (re:is-match (re:compile "^HTTP [0-9]{3}$") $other)
+          (str:concat "context-window-unknown-http-" (str:byte-slice $other 5 8))
+          "context-window-unknown")))))
 (= (turn:preparation-failed $reason)
-   (let $code (if (and (<= (str:char-length $reason) 64)
-                       (re:is-match (re:compile "^context-[a-z0-9]+(?:-[a-z0-9]+)*$") $reason)) $reason "context-preparation-failed")
+   (let $code
+     (if (and (<= (str:char-length $reason) 64)
+              (re:is-match (re:compile "^context-[a-z0-9]+(?:-[a-z0-9]+)*$") $reason))
+       $reason
+       (if (str:starts-with $reason "context-window-unknown: ")
+         (turn:window-unknown-code (str:byte-slice $reason 24 (str:byte-length $reason)))
+         "context-preparation-failed"))
      ("failed" $code 0 False -1.0 (rejection:blocked?) True)))
 
 ; Reserve the durable notice key before publishing, and reuse it on retry.
