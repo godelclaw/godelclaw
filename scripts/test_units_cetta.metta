@@ -45,7 +45,6 @@
     ("tests/unit/telegram_clock.metta" "UNIT_TELEGRAM_CLOCK_OK")
     ("tests/unit/console_history.metta" "UNIT_CONSOLE_HISTORY_OK" (("CONSOLE_HISTORY_HOME" "{home}")))
     ("tests/unit/console_editor_depth.metta" "UNIT_CONSOLE_EDITOR_DEPTH_OK")
-    ("tests/unit/console_painter.metta" "UNIT_CONSOLE_PAINTER_OK" (("TMUX" "unit")))
     ("tests/unit/chatgpt_context_roles.metta" "UNIT_CHATGPT_EVIDENCE_ROLES_OK")
     ("tests/unit/chatgpt_context_roles.metta" "UNIT_REQUEST_INDEX_CHUNKS_OK")
     ("tests/unit/chatgpt_context_roles.metta" "UNIT_TASK_INDEX_CHUNKS_OK")

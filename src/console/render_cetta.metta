@@ -6,6 +6,7 @@
    (if (<= $count 0) ""
      (let $half (cc:repeat $text (math:floor (/ $count 2)))
        (str:join "" ($half $half (if (== (% $count 2) 0) "" $text))))))
+(= (cc:cup $row $column) (str:join "" ("\u001b[" (repr $row) ";" (repr $column) "H")))
 (= (cc:label)
    (cc:display-name (cc:str-field (cc:settings) "agent" "agent")))
 (= (cc:status-text)
@@ -29,21 +30,9 @@
      (let* (($prefix (if $first (cc:style "36" "› ") "  "))
             ($line (str:concat $prefix (car-atom $rows))) ($rest (cc:editor-rows (cdr-atom $rows) False)))
        (cons-atom $line $rest))))
-; The live region is drawn inline, directly below the scrollback written so
-; far, and every move is relative to the cursor: at attach it opens under the
-; shell's last line instead of at the bottom of an empty pane, and once output
-; fills the pane the terminal's own scrolling keeps it at the bottom.
-(= (cc:line-rows $columns $width) (max 1 (math:ceil (/ $width (max 1 $columns)))))
-; Rows from the top of the painted region down to the cursor. A narrowed tmux
-; pane reflows each painted line, and the cursor stays on its character.
-(= (cc:rows-above-cursor $columns)
-   (let* (($widths (cc:get "painted-widths" ())) ($line (cc:get "painted-cursor-line" 0))
-          ($column (cc:get "painted-cursor-column" 0)))
-     (if (or (== $widths ()) (== (system:getenv-or-default "TMUX" "") "")) (if (== $widths ()) 0 $line)
-       (let* (($above (foldl-atom (list:take $line $widths) 0 $sum $width (+ $sum (cc:line-rows $columns $width))))
-              ($own (cc:line-rows $columns (car-atom (list:drop $line $widths)))))
-         (+ $above (min (- $own 1) (math:floor (/ $column (max 1 $columns)))))))))
-(= (cc:cursor-up $count) (if (> $count 0) (str:join "" ("\u001b[" (repr $count) "A")) ""))
+(= (cc:reflow-rows $columns $old)
+   (if (== (system:getenv-or-default "TMUX" "") "") (size-atom $old)
+     (foldl-atom $old 0 $sum $width (+ $sum (max 1 (math:ceil (/ $width (max 1 $columns))))))))
 (= (cc:prepare-frame $terminal)
    (let* (((HostSize $columns $height) (terminal:size $terminal))
           ($small (or (< $columns 5) (< $height 5)))
@@ -60,29 +49,27 @@
           ($lines (if $small ((terminal:clip (str:concat "> " (car-atom $rows)) $width))
                     (list:append ($rule $activity) (list:append (cc:editor-rows $rows True) ($status)))))
           ($reserved (size-atom $lines))
-          ($up (cc:rows-above-cursor $columns))
+          ($old-widths (cc:get "painted-widths" ())) ($old-count (cc:reflow-rows $columns $old-widths))
+          ($old-top (max 1 (+ (- $height $old-count) 1)))
           ($event-owner (cc:get "events" ConsoleNoBufferV1)) ($events (buffer:value $event-owner))
           ($frame-owner (cc:get "output" ConsoleNoBufferV1))
           ; Scrollback is written with autowrap on: a line wider than the pane
           ; wraps instead of being cut at the last column (copying it from
           ; tmux still joins the wrapped rows). Only the live region, clipped
           ; to its width, is drawn with autowrap off.
-          ($prefix (str:join "" ("\u001b[?25l" (cc:cursor-up $up) "\r\u001b[J\u001b[?7h")))
-          ($ended (if (or (== $events "") (str:ends-with $events "\n")) $events (str:concat $events "\n")))
-          ($scroll (str:join "\r\n" (str:split "\n" $ended)))
-          ($cursor-line (if $small 0 (+ 2 $cursor-row)))
-          ($cursor-at (min $width (+ 2 $cursor-column)))
+          ($prefix (str:join "" ("\u001b[?25l" (cc:cup $old-top 1) "\u001b[J\u001b[?7h")))
+          ($scroll (str:concat (str:join "\r\n" (str:split "\n" $events)) (cc:repeat "\r\n" (- $reserved 1))))
+          ($top (+ (- $height $reserved) 1))
           ($screen (str:join "\r\n" $lines))
-          ($frame (str:join "" ($prefix $scroll "\u001b[?7l" $screen "\u001b[0m\u001b[?7h"
-                               (cc:cursor-up (- (- $reserved 1) $cursor-line))
-                               "\r" (if (> $cursor-at 0) (str:join "" ("\u001b[" (repr $cursor-at) "C")) "")
-                               "\u001b[?25h")))
+          ($target-row (if $small $height (+ $top (+ 2 $cursor-row))))
+          ($target-column (min $columns (+ 3 $cursor-column)))
+          ($frame (str:join "" ($prefix $scroll (cc:cup (max 1 $top) 1) "\u001b[?7l" $screen "\u001b[0m\u001b[?7h"
+                               (cc:cup $target-row $target-column) "\u001b[?25h")))
           ($added (buffer:append $frame-owner $frame)))
      (if (cc:buffer-failed? $added) (progn (cc:set "display-fault" "Terminal frame allocation refused") False)
        (let* (($_ (buffer:drop $event-owner (str:byte-length $events)))
               ($_ (cc:set "output-offset" 0)) ($_ (cc:set "dirty" False))
-              ($_ (cc:set "painted-widths" (map-atom $lines $line (terminal:cells (terminal:clean $line)))))
-              ($_ (cc:set "painted-cursor-line" $cursor-line)) ($_ (cc:set "painted-cursor-column" $cursor-at)))
+              ($_ (cc:set "painted-widths" (map-atom $lines $line (terminal:cells (terminal:clean $line))))))
          True))))
 (= (cc:publish $terminal)
    (let* (($owner (cc:get "output" ConsoleNoBufferV1)) ((HostBufferInfo $size $_) (buffer:info $owner))
