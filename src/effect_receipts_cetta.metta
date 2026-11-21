@@ -45,13 +45,16 @@
       ($other JsonNull))))
 (= (er:tool $command)
    (if (== (get-type $command) String)
-     (let $parsed (pw:parsed (json:parse-python $command))
-       (case $parsed
-         (((ErFailure JSONDecodeError $_ $_) JsonNull)
-          ((ErFailure ValueError $_ $_) JsonNull)
-          ((ErFailure $_ $_ $_) $parsed)
-          ($other (er:tool-value $other)))))
-     (er:tool-value $command)))
+     (let $head (erv:command-head $command)
+       (if (not (== $head JsonNull))
+         $head
+         (let $parsed (pw:parsed (json:parse-python $command))
+           (case $parsed
+             (((ErFailure JSONDecodeError $_ $_) JsonNull)
+              ((ErFailure ValueError $_ $_) JsonNull)
+              ((ErFailure $_ $_ $_) $parsed)
+              ($other (er:tool-value $other)))))))
+     (erv:command-head $command)))
 (= (er:hash $text)
    (let $encoded (erv:encode $text)
      (if (erv:failed? $encoded) $encoded (str:concat "rcpt:" (str:byte-slice (str:sha256 $encoded) 0 16)))))
@@ -151,7 +154,7 @@
                  (if (erv:failed? $payload) $payload (erio:append $path $payload True))))))))))
 (= (er:commit $turn $disposition $command $result $occurrence $now)
    (let* (($number (erv:int $turn)) ($d (erv:text $disposition 80))
-          ($c (erv:text $command 6000)) ($r (erv:text $result 6000))
+          ($c (erv:command-clip $command 6000)) ($r (erv:text $result 6000))
           ($failure (erv:first-failure ($number $d $c $r))))
      (if (not (== $failure ErNoFailure)) $failure
        (let* (($entry (JsonObject ((JsonPair "schema" 1) (JsonPair "recorded_at" $now)
@@ -186,12 +189,16 @@
        (let* (($identity (if (erv:truth $chosen) $chosen (system:uuid4-hex)))
               ($now (if (er:failed? $identity) $identity (system:wall-time))))
          (if (er:failed? $now) $now
-           (let $committed (er:commit (erv:cross $turn) (erv:cross $disposition) (erv:cross $command)
-                             (erv:cross $result) $identity $now)
+           (let* (($cmd-value (erv:metta-command $command))
+                  ($committed (er:commit (erv:cross $turn) (erv:cross $disposition) $cmd-value
+                                (erv:cross $result) $identity $now)))
              (if (== $committed 1)
-               (let $_ (collapse (catch (display:receipt (er:text $identity) (er:shown $command) (er:shown $result)
+               (let $_ (collapse (catch (display:receipt (er:text $identity) (er:command-shown $command) (er:shown $result)
                                                          (er:shown $disposition)))) 1)
                $committed)))))))
+; Native MeTTa form of a command for display; never a failure.
+(= (er:command-shown $value)
+   (let $text (erv:metta-command $value) (if (erv:failed? $text) (repr $value) $text)))
 ; Python's str() of a value as it crosses, for the display; never a failure.
 ; The identity has crossed already.
 (= (er:shown $value) (er:text (erv:cross $value)))
@@ -199,7 +206,7 @@
    (let $text (erv:str $value) (if (erv:failed? $text) (repr $value) $text)))
 (= (er:suffix $turn $disposition $commands $reason)
    (let* (($now (system:wall-time)) ($number (erv:int (erv:cross $turn)))
-          ($d (erv:text (erv:cross $disposition) 80)) ($c (erv:text (erv:cross $commands) 6000))
+          ($d (erv:text (erv:cross $disposition) 80)) ($c (erv:command-clip $commands 6000))
           ($r (erv:text (erv:cross $reason) 240)) ($failure (erv:first-failure ($number $d $c $r))))
      (if (not (== $failure ErNoFailure)) $failure
        (er:append (JsonObject ((JsonPair "schema" 1) (JsonPair "recorded_at" $now)
@@ -217,8 +224,8 @@
          (pw:json-result (json:stringify-python-with (erv:get $entry "atlas" (JsonObject ()))
            ((ensure-ascii False) (sort-keys True) (separators "," ":"))))))
        (if (erv:has $entry "command")
-         (erv:join "" ($head " command=" (erv:str (erv:get $entry "command" "")) " result=" (erv:str (erv:get $entry "result" ""))))
-         (erv:join "" ($head " reason=" (erv:str (erv:get $entry "reason" "")) " commands=" (erv:str (erv:get $entry "commands" ""))))))))
+         (erv:join "" ($head " command=" (erv:command-text (erv:str (erv:get $entry "command" ""))) " result=" (erv:str (erv:get $entry "result" ""))))
+         (erv:join "" ($head " reason=" (erv:str (erv:get $entry "reason" "")) " commands=" (erv:command-text (erv:str (erv:get $entry "commands" "")))))))))
 (= (er:render $entries $limit)
    (let* (($count (erv:int $limit)))
      (if (erv:failed? $count) $count

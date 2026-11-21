@@ -457,11 +457,12 @@
                      (("METTACLAW_STREAM_DIR" (nq:path $world "display"))))))
           ($_ (nt:require long-stream-answered (nt:contains $output "NATIVE_STRUCTURED_OK")))
           ($_ (nt:require long-stream-one-request (nt:equal (nq:posts $world) 1)))
-          ; The claim opens the attempt and the submitted wire names its model.
+          ; The claim opens the attempt once with both purpose and wire model.
           ($shown (nq:display $world))
           ($_ (nt:require long-stream-attempt-shown (nt:contains $shown "\"purpose\":\"coding\"")))
-          ($_ (nt:require long-stream-attempt-opened-twice
-                (nt:equal (preq:size (str:split "\"kind\":\"attempt.open\"" $shown)) 3)))
+          ($_ (nt:require long-stream-attempt-opened-once
+                (nt:equal (preq:size (str:split "\"kind\":\"attempt.open\"" $shown)) 2)))
+          ($_ (nt:require long-stream-attempt-has-model (nt:contains $shown "\"model\":\"")))
           ($_ (nt:require long-stream-reply (nt:contains (preq:render (preq:field (preq:parse (fs:read-text $reply)) "message")) "(nop)")))
           ($body (nq:request-body $world))
           ($_ (nt:require long-stream-requested (nt:equal (preq:field $body "stream") (JsonBool True))))

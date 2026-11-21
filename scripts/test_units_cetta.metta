@@ -132,6 +132,10 @@
      (("METTACLAW_STREAM_DIR" "{home}/display") ("METTACLAW_INSTANCE" "unit")
       ("METTACLAW_ACTIVITY_CALL_SCOPE" "coding a/b") ("METTACLAW_STREAM_PARENT" "parent-1")))
     ("tests/unit/display.metta" "UNIT_DISPLAY_OFF_OK")
+    ("tests/unit/display_records_native.metta" "UNIT_DISPLAY_RECORDS_NATIVE_OK"
+     (("METTACLAW_STREAM_DIR" "{home}/display")
+      ("METTACLAW_INSTANCE" "drn")
+      ("METTACLAW_EFFECT_RECEIPT_PATH" "{home}/receipts.jsonl")))
     ("tests/unit/commentary_observer.metta" "UNIT_COMMENTARY_OBSERVER_OK"
      (("METTACLAW_MODEL_COMMENTARY" "1") ("METTACLAW_PUBLIC_WORK_DIR" "{home}/worklog")))
     ("tests/unit/strategy_attempts.metta" "UNIT_STRATEGY_ATTEMPTS_OK"

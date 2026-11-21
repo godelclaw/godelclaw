@@ -124,9 +124,12 @@
    (let* (($command (sf:get $receipt "command" JsonNull))
           ($head (case $command (((JsonArray $items) (obs:nth $items 0 "")) ($other $command))))
           ($match (if (== (get-type $head) String) (obs:match "^\\[\\s*['\"]([A-Za-z_][\\w!-]*)['\"]" $head) NoRegexMatchV1))
+          ($metta-match (if (and (== (get-type $head) String) (not (obs:matched? $match)))
+                          (obs:match "^\\(\\s*([A-Za-z_][\\w!-]*)(?:[\\s)]|$)" $head) NoRegexMatchV1))
           ($kind (if (and (== $command JsonNull) (!= (sf:get $receipt "commands" JsonNull) JsonNull)) "batch"
                   (if (obs:matched? $match) (obs:group $match $head 1)
-                    (case $command (((JsonArray $_) $head) ($other "other")))))))
+                    (if (obs:matched? $metta-match) (obs:group $metta-match $head 1)
+                      (case $command (((JsonArray $_) $head) ($fallback "other"))))))))
      (obs:append "effects.jsonl" (JsonObject ((JsonPair "t" (obs:round1 (sf:get $receipt "recorded_at" 0)))
        (JsonPair "turn" (sf:get $receipt "turn" JsonNull)) (JsonPair "kind" $kind)
        (JsonPair "disposition" (sf:get $receipt "disposition" JsonNull)) (JsonPair "reason" (sf:get $receipt "reason" JsonNull)))))))

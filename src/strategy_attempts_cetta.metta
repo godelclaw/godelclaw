@@ -64,7 +64,7 @@
           ($next (+ $position 1))
           ($_ (add-atom &strategy-batch (StrategyBatchV1 $turn $ticket $next)))
           ($_ (display:event "tool.dispatching" (strategy:identity $ticket $position)
-                             (erv:str (erv:cross $command)) "dispatching")))
+                             (erv:metta-command $command) "dispatching")))
      1))
 (= (strategy:not-recorded $ticket $position $why)
    (turn:attempt-not-recorded $ticket $position (repr $why)))

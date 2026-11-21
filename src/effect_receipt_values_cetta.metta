@@ -210,3 +210,236 @@
 (= (erv:encode $text)
    (case (erv:encoding (erv:points $text) 0)
      ((ErEncodable $text) ($failure $failure))))
+
+; ---------------------------------------------------------------- MeTTa commands
+; New display and receipt records carry the MeTTa form actually issued, e.g.
+; (shell "ls"), rather than Python's str(list) parity layer. Readers keep a
+; backward-compatible decoder for historical "['shell', ...]" and JSON records.
+
+(= (erv:metta-string $text)
+   (let* (($points (erv:points $text))
+          ($body (str:join "" (map-atom $points $cp (erv:repr-point $cp 34)))))
+     (str:join "" ("\"" $body "\""))))
+
+(= (erv:bare-symbol-point? $cp)
+   (and (> $cp 32)
+        (and (not (erv:contains (34 39 40 41 59 91 92 93) $cp))
+             (erv:printable? $cp))))
+(= (erv:bare-symbol-points? $points)
+   (if (== $points ()) True
+     (and (erv:bare-symbol-point? (car-atom $points))
+          (erv:bare-symbol-points? (cdr-atom $points)))))
+(= (erv:bare-symbol? $text)
+   (if (== (get-type $text) String)
+     (let $points (erv:points $text)
+       (and (not (== $points ())) (erv:bare-symbol-points? $points)))
+     False))
+
+(= (erv:metta-head-text $head)
+   (if (== (get-type $head) String)
+     (if (erv:bare-symbol? $head) $head (erv:metta-string $head))
+     (case $head
+       ((True "True") (False "False") (JsonNull "JsonNull")
+        ($other
+          (if (== (get-type $other) Number) (erv:number-str $other)
+            (if (== (get-metatype $other) Symbol) (str:symbol->string $other)
+              (let $sym (str:symbol->string $other)
+                (if (== (get-type $sym) String) $sym
+                  (erv:metta-atom $other))))))))))
+
+(= (erv:metta-atom $value)
+   (if (== (get-type $value) String)
+     (erv:metta-string $value)
+     (case $value
+       ((True "True") (False "False") (JsonNull "JsonNull")
+        ((JsonArray $items) (erv:metta-seq $items False))
+        ((JsonObject $pairs) (erv:str (JsonObject $pairs)))
+        ($other
+          (if (== (get-type $other) Number) (erv:number-str $other)
+            (if (or (== (get-metatype $other) Expression) (== (get-metatype $other) List))
+              (erv:metta-seq $other False)
+              (if (== (get-metatype $other) Symbol) (str:symbol->string $other)
+                (let $sym (str:symbol->string $other)
+                  (if (== (get-type $sym) String) $sym
+                    (erv:fail TypeError "unsupported native value at MeTTa command boundary")))))))))))
+
+(= (erv:seq-item? $value)
+   (case $value
+     (((JsonArray $_) True)
+      ($other (and (not (== (get-type $other) String))
+                   (or (== (get-metatype $other) Expression) (== (get-metatype $other) List)))))))
+
+(= (erv:metta-seq $items $as-command)
+   (if (== $items ()) "()"
+     (let* (($head (car-atom $items)) ($tail (cdr-atom $items)))
+       (if (and $as-command (erv:seq-item? $head))
+         (erv:join "" ("(" (erv:join " " (map-atom $items $it (erv:metta-form $it))) ")"))
+         (let* (($h (if $as-command (erv:metta-head-text $head) (erv:metta-atom $head)))
+                ($rest (map-atom $tail $arg (erv:metta-atom $arg)))
+                ($joined (erv:join " " (cons-atom $h $rest))))
+           (if (erv:failed? $joined) $joined (str:join "" ("(" $joined ")"))))))))
+
+(= (erv:metta-form $value)
+   (if (== (get-type $value) String)
+     (erv:command-text $value)
+     (case $value
+       (((JsonArray $items) (erv:metta-seq $items True))
+        ($other
+          (if (and (not (== (get-type $other) String))
+                   (or (== (get-metatype $other) Expression) (== (get-metatype $other) List)))
+            (erv:metta-seq $other True)
+            (erv:metta-atom $other)))))))
+
+(= (erv:metta-command $value) (erv:metta-form $value))
+
+(= (erv:command-clip $value $limit)
+   (let $text (erv:metta-command $value)
+     (if (erv:failed? $text) $text (erv:clip $text $limit))))
+
+; Legacy Python-list / JSON-array command string reader: converts historical
+; "['shell', 'ls']" and "[['shell', 'a'], ['read-file', 'b']]" strings into
+; MeTTa syntax "(shell \"ls\")" while leaving native MeTTa and plain strings intact.
+(= (erv:py-ws? $ch) (erv:contains (" " "\t" "\n" "\r") $ch))
+(= (erv:py-skip-ws $s $i $n)
+   (if (>= $i $n) $i
+     (if (erv:py-ws? (str:byte-slice $s $i (+ $i 1)))
+       (erv:py-skip-ws $s (+ $i 1) $n) $i)))
+(= (erv:hex-digit $ch)
+   (case $ch
+     (("0" 0) ("1" 1) ("2" 2) ("3" 3) ("4" 4) ("5" 5) ("6" 6) ("7" 7) ("8" 8) ("9" 9)
+      ("a" 10) ("b" 11) ("c" 12) ("d" 13) ("e" 14) ("f" 15)
+      ("A" 10) ("B" 11) ("C" 12) ("D" 13) ("E" 14) ("F" 15) ($bad -1))))
+(= (erv:py-parse-hex $s $i $n $digits $acc)
+   (if (== $digits 0) (ErPyHex $acc $i)
+     (if (>= $i $n) ErPyHexFail
+       (let $d (erv:hex-digit (str:byte-slice $s $i (+ $i 1)))
+         (if (< $d 0) ErPyHexFail
+           (erv:py-parse-hex $s (+ $i 1) $n (- $digits 1) (+ (* $acc 16) $d)))))))
+(= (erv:py-parse-str $s $quote $i $n $acc)
+   (if (>= $i $n) (ErPyFail $i)
+     (let $ch (str:byte-slice $s $i (+ $i 1))
+       (if (== $ch $quote) (ErPyOk (ErPyStr $acc) (+ $i 1))
+         (if (== $ch "\\")
+           (if (>= (+ $i 1) $n) (ErPyFail $i)
+             (let $esc (str:byte-slice $s (+ $i 1) (+ $i 2))
+               (if (== $esc "x")
+                 (case (erv:py-parse-hex $s (+ $i 2) $n 2 0)
+                   (((ErPyHex $cp $k) (erv:py-parse-str $s $quote $k $n (str:concat $acc (erv:from-points ($cp)))))
+                    ($bad (erv:py-parse-str $s $quote (+ $i 2) $n (str:concat $acc "\\x")))))
+                 (if (== $esc "u")
+                   (case (erv:py-parse-hex $s (+ $i 2) $n 4 0)
+                     (((ErPyHex $cp $k) (erv:py-parse-str $s $quote $k $n (str:concat $acc (erv:from-points ($cp)))))
+                      ($bad (erv:py-parse-str $s $quote (+ $i 2) $n (str:concat $acc "\\u")))))
+                   (let $lit (case $esc (("n" "\n") ("t" "\t") ("r" "\r") ("\\" "\\") ("'" "'") ("\"" "\"") ($x (str:concat "\\" $x))))
+                     (erv:py-parse-str $s $quote (+ $i 2) $n (str:concat $acc $lit)))))))
+           (erv:py-parse-str $s $quote (+ $i 1) $n (str:concat $acc $ch)))))))
+(= (erv:py-parse-bare $s $i $n $start)
+   (if (>= $i $n) (ErPyOk (ErPyBare (str:byte-slice $s $start $i)) $i)
+     (let $ch (str:byte-slice $s $i (+ $i 1))
+       (if (erv:contains ("," "]" ")" " " "\t" "\n" "\r") $ch)
+         (ErPyOk (ErPyBare (str:byte-slice $s $start $i)) $i)
+         (erv:py-parse-bare $s (+ $i 1) $n $start)))))
+(= (erv:py-parse-seq $s $end $i $n $acc)
+   (let $j (erv:py-skip-ws $s $i $n)
+     (if (>= $j $n) (ErPyFail $j)
+       (if (== (str:byte-slice $s $j (+ $j 1)) $end)
+         (ErPyOk (ErPySeq (list:reverse $acc)) (+ $j 1))
+         (case (erv:py-parse-val $s $j $n)
+           (((ErPyOk $val $k)
+             (let $m (erv:py-skip-ws $s $k $n)
+               (if (>= $m $n) (ErPyFail $m)
+                 (let $sep (str:byte-slice $s $m (+ $m 1))
+                   (if (== $sep ",") (erv:py-parse-seq $s $end (+ $m 1) $n (cons-atom $val $acc))
+                     (if (== $sep $end) (ErPyOk (ErPySeq (list:reverse (cons-atom $val $acc))) (+ $m 1))
+                       (ErPyFail $m)))))))
+            ($fail $fail)))))))
+(= (erv:py-parse-val $s $i $n)
+   (let $j (erv:py-skip-ws $s $i $n)
+     (if (>= $j $n) (ErPyFail $j)
+       (let $ch (str:byte-slice $s $j (+ $j 1))
+         (if (or (== $ch "'") (== $ch "\"")) (erv:py-parse-str $s $ch (+ $j 1) $n "")
+           (if (== $ch "[") (erv:py-parse-seq $s "]" (+ $j 1) $n ())
+             (if (== $ch "(") (erv:py-parse-seq $s ")" (+ $j 1) $n ())
+               (erv:py-parse-bare $s $j $n $j))))))))
+(= (erv:py-fmt-atom $v)
+   (case $v
+     (((ErPyStr $txt) (erv:metta-string $txt))
+      ((ErPyBare $txt) $txt)
+      ((ErPySeq $items) (str:join "" ("(" (str:join " " (map-atom $items $it (erv:py-fmt-atom $it))) ")"))))))
+(= (erv:py-cmd-item? $v)
+   (case $v
+     (((ErPySeq $items)
+       (if (== $items ()) False
+         (case (car-atom $items) (((ErPyStr $hd) (erv:bare-symbol? $hd)) ($o False)))))
+      ($other False))))
+(= (erv:py-all-cmds? $items)
+   (if (== $items ()) True
+     (and (erv:py-cmd-item? (car-atom $items)) (erv:py-all-cmds? (cdr-atom $items)))))
+(= (erv:py-fmt-cmd $items)
+   (case (car-atom $items)
+     (((ErPyStr $head)
+       (let* (($h (if (erv:bare-symbol? $head) $head (erv:metta-string $head)))
+              ($rest (map-atom (cdr-atom $items) $it (erv:py-fmt-atom $it))))
+         (str:join "" ("(" (str:join " " (cons-atom $h $rest)) ")"))))
+      ($other ""))))
+(= (erv:command-text $cmd)
+   (if (not (== (get-type $cmd) String))
+     (erv:metta-command $cmd)
+     (if (and (str:starts-with $cmd "[") (str:ends-with $cmd "]"))
+       (let $n (str:byte-length $cmd)
+         (case (erv:py-parse-val $cmd 0 $n)
+           (((ErPyOk (ErPySeq $items) $end)
+             (if (and (== (erv:py-skip-ws $cmd $end $n) $n) (not (== $items ())))
+               (if (erv:py-cmd-item? (ErPySeq $items))
+                 (erv:py-fmt-cmd $items)
+                 (if (erv:py-all-cmds? $items)
+                   (str:join "" ("(" (str:join " " (map-atom $items $sub
+                     (case $sub (((ErPySeq $sub-items) (erv:py-fmt-cmd $sub-items)) ($x ""))))) ")"))
+                   $cmd))
+               $cmd))
+            ($fail $cmd))))
+       $cmd)))
+
+(= (erv:metta-head-scan $s $i $n $start)
+   (if (>= $i $n) (str:byte-slice $s $start $i)
+     (let $ch (str:byte-slice $s $i (+ $i 1))
+       (if (erv:contains (" " "\t" "\n" "\r" ")" "(" "\"" "'") $ch)
+         (str:byte-slice $s $start $i)
+         (erv:metta-head-scan $s (+ $i 1) $n $start)))))
+(= (erv:metta-string-head $text)
+   (let* (($n (str:byte-length $text))
+          ($i (erv:py-skip-ws $text 0 $n)))
+     (if (and (< $i $n) (== (str:byte-slice $text $i (+ $i 1)) "("))
+       (let $j (erv:py-skip-ws $text (+ $i 1) $n)
+         (if (>= $j $n) JsonNull
+           (let $ch (str:byte-slice $text $j (+ $j 1))
+             (if (erv:contains (")" "(" "\"" "'") $ch) JsonNull
+               (let $head (erv:metta-head-scan $text $j $n $j)
+                 (if (== $head "") JsonNull $head))))))
+       JsonNull)))
+(= (erv:command-head $command)
+   (if (== (get-type $command) String)
+     (let $mhead (erv:metta-string-head $command)
+       (if (not (== $mhead JsonNull))
+         $mhead
+         (if (and (str:starts-with $command "[") (str:ends-with $command "]"))
+           (let $n (str:byte-length $command)
+             (case (erv:py-parse-val $command 0 $n)
+               (((ErPyOk (ErPySeq $items) $end)
+                 (if (and (== (erv:py-skip-ws $command $end $n) $n) (not (== $items ())))
+                   (case (car-atom $items) (((ErPyStr $hd) $hd) ($o JsonNull)))
+                   JsonNull))
+                ($fail JsonNull))))
+           JsonNull)))
+     (case $command
+       (((JsonArray $items)
+         (if (== $items ()) JsonNull
+           (let $hd (car-atom $items) (if (== (get-type $hd) String) $hd JsonNull))))
+        ($other
+          (if (or (== (get-metatype $other) Expression) (== (get-metatype $other) List))
+            (if (== $other ()) JsonNull
+              (let $hd (car-atom $other)
+                (if (== (get-type $hd) String) $hd
+                  (let $sym (str:symbol->string $hd)
+                    (if (== (get-type $sym) String) $sym JsonNull)))))
+            JsonNull))))))

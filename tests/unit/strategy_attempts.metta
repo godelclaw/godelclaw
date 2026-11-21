@@ -65,16 +65,16 @@
         ($_ (nt:require attempts-recorded-as-the-host-encoded-them
               (nt:equal (sa:attempts $socket "unit-ticket")
                         ((0 "[\"shell\",\"ls\"]") (1 "[\"send\",\"héllo \\\"x\\\"\",3,\"true\"]")))))
-        ; The dispatch is shown under the attempt, with the command as the host's str() gave it.
+        ; The dispatch is shown under the attempt as the MeTTa form issued (not Python list text).
         ($records (sa:records))
         ($_ (nt:require two-dispatches (nt:equal (size-atom $records) 2)))
         ($_ (nt:require dispatch-fields
               (nt:equal (sa:fields (car-atom $records) ("kind" "item" "command" "text" "status" "source" "epoch"))
-                        ((JsonString "tool.dispatching") (JsonString "unit-ticket:0") (JsonString "['shell', 'ls']")
+                        ((JsonString "tool.dispatching") (JsonString "unit-ticket:0") (JsonString "(shell \"ls\")")
                          (JsonString "") (JsonString "dispatching") (JsonString "executor") (JsonString "initial")))))
         ($_ (nt:require second-dispatch-command
               (nt:equal (sa:fields (sa:last $records) ("item" "command"))
-                        ((JsonString "unit-ticket:1") (JsonString "['send', 'héllo \"x\"', 3, 'true']")))))
+                        ((JsonString "unit-ticket:1") (JsonString "(send \"héllo \\\"x\\\"\" 3 True)")))))
         ($_ (nt:require dispatch-holds-the-epoch (nt:equal (display:item-epoch "unit-ticket:1") "initial")))
         ; A batch opened again under the same ticket starts at 0: the ledger
         ; refuses the attempt, the host is asked to fail the batch, nothing moves.
@@ -100,21 +100,21 @@
 ; A receipt ends the dispatched command in the epoch its dispatch kept; in
 ; another epoch it is dropped, and the epoch is released either way.
 !(let* (($_ (nt:require receipt-written
-              (nt:equal (display:receipt "unit-ticket:0" "['shell', 'ls']" "listing" "returned") 1)))
+              (nt:equal (display:receipt "unit-ticket:0" "(shell \"ls\")" "listing" "returned") 1)))
         ($_ (nt:require receipt-fields
               (nt:equal (sa:fields (sa:last (sa:records)) ("kind" "item" "command" "text" "status" "source" "epoch"))
-                        ((JsonString "tool.finished") (JsonString "unit-ticket:0") (JsonString "['shell', 'ls']")
+                        ((JsonString "tool.finished") (JsonString "unit-ticket:0") (JsonString "(shell \"ls\")")
                          (JsonString "listing") (JsonString "returned") (JsonString "executor") (JsonString "initial")))))
         ($_ (nt:require receipt-releases-the-epoch (nt:equal (display:item-epoch "unit-ticket:0") none)))
         ($_ (sa:control "{\"enabled\": true, \"epoch\": \"e2\"}"))
         ($before (size-atom (sa:records)))
         ($_ (nt:require old-epoch-receipt-dropped
-              (nt:equal (display:receipt "unit-ticket:1" "['send']" "sent" "returned") 0)))
+              (nt:equal (display:receipt "unit-ticket:1" "(send)" "sent" "returned") 0)))
         ($_ (nt:require old-epoch-released (nt:equal (display:item-epoch "unit-ticket:1") none)))
         ($_ (nt:require nothing-written-for-it (nt:equal (size-atom (sa:records)) $before)))
         ; A receipt without a dispatch (no observed strategy) is in the console's epoch.
         ($_ (nt:require unheld-receipt-written
-              (nt:equal (display:receipt "f00d" "['help']" "help text" "returned") 1)))
+              (nt:equal (display:receipt "f00d" "(help)" "help text" "returned") 1)))
         ($_ (nt:require unheld-receipt-epoch (nt:equal (sa:fields (sa:last (sa:records)) ("epoch")) ((JsonString "e2"))))))
    (sa:ended))
 

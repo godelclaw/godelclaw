@@ -204,8 +204,11 @@
       (($epoch $offset $stopped $compaction)
        (remove-atom &display-calls (DisplayCallV1 $attempt $epoch $offset $stopped $compaction))))))
 
-; A claimed call opens its attempt, a compaction its maintenance record.
+; A claimed call opens its attempt once (with its wire model when supplied),
+; a compaction its maintenance record.
 (= (display:call-begin $attempt $compaction $provider $purpose)
+   (display:call-begin $attempt $compaction $provider $purpose ""))
+(= (display:call-begin $attempt $compaction $provider $purpose $model)
    (if (not (display:configured?)) 0
      (let* (($epoch (display:current-epoch))
             ($kept (display:call-keep $attempt $epoch 0 False $compaction)))
@@ -216,18 +219,12 @@
             (JsonPair "status" (JsonString "running")))
            ((JsonPair "kind" (JsonString "attempt.open")) (JsonPair "attempt" (JsonString $attempt))
             (JsonPair "item" (JsonString $attempt)) (JsonPair "purpose" (JsonString $purpose))
-            (JsonPair "provider" (JsonString $provider)) (JsonPair "model" (JsonString ""))
+            (JsonPair "provider" (JsonString $provider)) (JsonPair "model" (JsonString (display:text $model)))
             (JsonPair "epoch" (JsonString $epoch)) (JsonPair "status" (JsonString "awaiting"))))))))
 
-; A streamed call on the wire shows its model.
-(= (display:call-wire $attempt $provider $model)
-   (case (display:call $attempt)
-     ((none 0)
-      (($epoch $offset $stopped $compaction)
-       (display:emit ((JsonPair "kind" (JsonString "attempt.open")) (JsonPair "attempt" (JsonString $attempt))
-                      (JsonPair "item" (JsonString $attempt)) (JsonPair "model" (JsonString $model))
-                      (JsonPair "provider" (JsonString $provider)) (JsonPair "status" (JsonString "awaiting"))
-                      (JsonPair "epoch" (JsonString $epoch))))))))
+; Retained for wire-submission callers: display:call-begin already emitted the
+; single attempt.open for this attempt, so never emit a duplicate open.
+(= (display:call-wire $attempt $provider $model) 0)
 
 ; Whether the call's streamed text is shown: it began, is no compaction, its
 ; observation has not stopped, and the console still shows its epoch.

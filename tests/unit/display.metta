@@ -117,16 +117,17 @@
          ($_ (nt:require unwritable-root
                (case (catch (display:write (path:join $artifact "below") ((JsonPair "kind" (JsonString "plan")))))
                  ((1 False) ($unwritten True)))))
-         ; A provider call: its attempt opens at the claim and shows its model on the wire.
+         ; A provider call: its attempt opens once at the claim with its model; wire does not emit a second open.
          ($_ (dt:control "{\"enabled\": true, \"epoch\": \"e5\"}"))
-         ($_ (nt:require call-begin (nt:equal (display:call-begin "a1" False "openai" "coding") 1)))
+         ($_ (nt:require call-begin (nt:equal (display:call-begin "a1" False "openai" "coding" "gpt-fixture") 1)))
+         ($after-open (dt:count))
          ($_ (nt:require call-open-fields
                (nt:equal (dt:fields (dt:last-record) ("kind" "attempt" "item" "purpose" "provider" "model" "epoch" "status"))
                          ((JsonString "attempt.open") (JsonString "a1") (JsonString "a1") (JsonString "coding")
-                          (JsonString "openai") (JsonString "") (JsonString "e5") (JsonString "awaiting")))))
-         ($_ (nt:require call-wire
-               (and (nt:equal (display:call-wire "a1" "openai" "gpt-fixture") 1)
-                    (nt:equal (dt:get (dt:last-record) "model") (JsonString "gpt-fixture")))))
+                          (JsonString "openai") (JsonString "gpt-fixture") (JsonString "e5") (JsonString "awaiting")))))
+         ($_ (nt:require call-wire-no-duplicate-open
+               (and (nt:equal (display:call-wire "a1" "openai" "gpt-fixture") 0)
+                    (nt:equal (dt:count) $after-open))))
          ; Its streamed text: read on where the last read ended, projected under an item.
          ($_ (nt:require call-readable (display:call-readable? "a1")))
          ($_ (nt:require call-advance (nt:equal ((display:call-advance "a1" 5 "ž123") (display:call-offset "a1")) (1 5))))
