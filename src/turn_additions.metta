@@ -57,7 +57,9 @@
           ($state (system:getenv-or-default "METTACLAW_EFFECT_BACKEND_STATE" "")))
      (if (and (== $backend "") (== $state ""))
        (let $_ (tg:set effect-turn (turn:text $turn)) "LIVE_EFFECT_TURN_READY")
-       (Error addition-effect-turn-begin (Forbidden qualification-backend-requires-oracle-runtime)))))
+       (if (== $backend "tmux-shadow")
+         (shadow-effect:begin-turn $turn)
+         (Error addition-effect-turn-begin (Forbidden inconsistent-effect-backend-configuration))))))
 
 ;; Coding sessions that ended without their report are recorded and their
 ;; requester told, at the next turn. Coding mode runs on CeTTa only.

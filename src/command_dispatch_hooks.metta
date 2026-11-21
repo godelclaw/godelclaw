@@ -3,6 +3,7 @@
 !(import! &self ./src/effect_receipts.metta)
 !(import! &self ./src/skills_help.metta)
 !(import! &self ./src/lifecycle_cetta.metta)
+!(import! &self ./src/shadow_effect_cetta.metta)
 ; Each command of the broker's batch is recorded as attempted before it runs
 ; (src/strategy_attempts_cetta.metta).
 (= (dispatch:reserve $turn $command) (strategy:reserve $turn $command))
@@ -11,7 +12,7 @@
 (= (dispatch:stopped)
    (case (catch (lifecycle-native:enabled)) ((1 0) ($other 1))))
 (= (dispatch:shadow $command)
-   (handled (Error dispatch:shadow (Forbidden qualification-backend-requires-oracle-runtime))))
+   (shadow-effect:dispatch $command))
 (= (dispatch:argument-error $command)
    (case (api:argument-error $command)
      (((APINotRegistered $name) (help:command-error $command))

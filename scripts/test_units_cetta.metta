@@ -91,6 +91,7 @@
     ("tests/unit/dispatch_stopped.metta" "UNIT_DISPATCH_STOPPED_OK")
     ("tests/unit/dispatch_admission.metta" "UNIT_DISPATCH_ADMISSION_OK")
     ("tests/unit/shadow_effect_config.metta" "UNIT_SHADOW_EFFECT_CONFIG_OK")
+    ("tests/unit/shadow_effect.metta" "UNIT_SHADOW_EFFECT_OK")
     ("tests/unit/benchmark_statistics.metta" "UNIT_BENCHMARK_STATISTICS_OK")
     ("tests/unit/growth_statistics.metta" "UNIT_GROWTH_STATISTICS_OK")
     ("tests/unit/progress_receipt.metta" "UNIT_PROGRESS_RECEIPT_OK"

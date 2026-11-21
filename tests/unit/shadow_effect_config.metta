@@ -25,7 +25,7 @@
      (nt:require shadow-refusal-has-no-live-effect
        (and (nt:contains (repr (quote $result)) $reason) (== (get-state &probe-count) 0)))))
 !(progn
-  (probe-shadow-refuses "tmux-shadow" "legacy-state" "qualification-backend-requires-oracle-runtime")
+  (probe-shadow-refuses "tmux-shadow" "legacy-state" "shadow-state-unavailable")
   (probe-shadow-refuses "tmux_shadow" "legacy-state" "unknown effect backend")
   (probe-shadow-refuses "" "legacy-state" "inconsistent shadow effect configuration")
   (let* (($ordinary (probe-shadow-selection "" "")) ($count (get-state &probe-count)))
