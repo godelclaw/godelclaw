@@ -435,7 +435,9 @@
 (= (cc:keys $input $flush $left)
    (if (<= $left 0) True
      (case (buffer:input-event $input $flush)
-       (((HostInput $name $text)
+       (((HostInput "cursor-position" $text)
+         (progn (cc:handle-cpr $text) (cc:keys $input wait (- $left 1))))
+        ((HostInput $name $text)
          (progn (cc:key $name $text) (cc:set "dirty" True) (cc:set "draft-dirty" True)
                 (cc:keys $input wait (- $left 1))))
         (HostPending True)
