@@ -6,6 +6,7 @@
 !(import! &self (library system))
 !(import! &self ./llm_ledger)
 !(import! &self ./notice_key)
+!(import! &self ./conversation_index_cetta)
 
 ; Input ledger in the native library db: collection `inputs` holds two kinds
 ; of record, ported from the tables of input_ack.py.
@@ -1351,7 +1352,7 @@
 (= (input-ledger:pageable $verb)
    (case $verb
      (("request-rows" True) ("actions" True) ("attempts" True) ("task-view" True) ("task-rows" True)
-      ("conversation-rows" True) ("conversation-history" True) ("turn-dump" True) ("meta-prefix" True)
+      ("conversation-rows" True) ("conversation-delta" True) ("conversation-history" True) ("turn-dump" True) ("meta-prefix" True)
       ($other (llm-ledger:pageable $other)))))
 
 (= (input-ledger:rows-answer $answer)
@@ -1520,11 +1521,19 @@
    (input-ledger:page-read $db $verb $arguments $start $count 0 none))
 
 (= (input-ledger:perform $db $verb $arguments)
+   (let* (($before (case (get-state &cidx-meta)
+                     ((ConvIdxNone none)
+                      ($present (input-ledger:store-version $db)))))
+          ($answer (input-ledger:perform-raw $db $verb $arguments)))
+     (cidx:after-perform $db $verb $arguments $before $answer)))
+
+(= (input-ledger:perform-raw $db $verb $arguments)
    (case ($verb $arguments)
      ((("page-cache-stats" ())
        (page-cache-stats (get-state input-ledger:page-computations)
                          (get-state input-ledger:page-cache-hits)
                          (size-atom (get-state input-ledger:page-cache))))
+      (("conv-index-stats" ()) (cidx:stats))
       (("committed" ($ids)) (input-ledger:committed $db $ids))
       (("mark-processed" ($now $ids)) (input-ledger:mark-processed $db $ids $now))
       (("register" ($task $update-id $lane $send-key $now))
@@ -1675,11 +1684,11 @@
       (("task-rows" ($request))
        (input-ledger:task-read $db input-ledger:task-rows (|-> ($view) (input-ledger:task-rows-of $view $request))))
       (("conversation-rows" ($focus $offset $limit))
-       (input-ledger:task-read $db input-ledger:conversation-rows
-         (|-> ($view) (input-ledger:conversation-rows-of $view $focus $offset $limit))))
+       (cidx:conversation-rows $db $focus $offset $limit))
+      (("conversation-delta" ($focus $offset $limit $k-epoch $k-rrev $k-nrev $k-erev $k-total $k-focus))
+       (cidx:conversation-delta $db $focus $offset $limit $k-epoch $k-rrev $k-nrev $k-erev $k-total $k-focus))
       (("conversation-history" ($offset $count))
-       (input-ledger:task-read $db input-ledger:conversation-history
-         (|-> ($view) (input-ledger:conversation-history-of $view $offset $count))))
+       (cidx:conversation-history $db $offset $count))
       (("initial-start" ($capacity $ratio))
        (input-ledger:task-read $db input-ledger:initial-start
          (|-> ($view) (input-ledger:initial-start-of $view $capacity $ratio))))

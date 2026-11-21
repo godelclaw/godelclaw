@@ -32,7 +32,7 @@
 (= (ledger-client:pageable $verb)
    (case $verb
      (("request-rows" True) ("actions" True) ("attempts" True) ("task-view" True) ("task-rows" True)
-      ("conversation-rows" True) ("conversation-history" True) ("turn-dump" True) ("meta-prefix" True)
+      ("conversation-rows" True) ("conversation-delta" True) ("conversation-history" True) ("turn-dump" True) ("meta-prefix" True)
       ("llm-usage" True) ("llm-records" True)
       ($other False))))
 

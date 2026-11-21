@@ -2,6 +2,12 @@
 ; recoverable; summaries and excerpts do not replace the original records.
 !(import! &self ./src/state_ledger)
 !(import! &self (library math))
+!(import! &self (library list))
+
+!(bind! &task-conv-mirror (new-state ConvMirrorNone))
+
+(= (task:conv-mirror-reset)
+   (change-state! &task-conv-mirror ConvMirrorNone))
 
 (= (task:root $request)
    (case (state:ledger "task-family" ($request))
@@ -23,10 +29,10 @@
 
 (= (task:row-pair $row $owner)
    (let* ((($serial $request $position $command $record $ticket $disposition) $row)
-          ($result (if (or (== $ticket none) (== $ticket none))
+          ($result (if (== $ticket none)
                      (JsonObject ((JsonPair "disposition" (JsonString "not_run"))
                                   (JsonPair "result" (JsonString $disposition))))
-                     (if (or (== $record none) (== $record none))
+                     (if (== $record none)
                        (JsonObject ((JsonPair "disposition" (JsonString "uncertain"))
                          (JsonPair "result" (JsonString "Interrupted; outcome unknown. This call was not automatically replayed."))))
                        (task:result $record))))
@@ -66,6 +72,84 @@
 
 (= (task:conversation-root)
    (str:concat "conversation:" (state:text (state:meta "owner"))))
+
+(= (task:unknown-delta-verb? $reply)
+   (case $reply
+     (((Error $where (unknown-request $_)) True)
+      ((Error llm-ledger:perform $_) True)
+      ($other False))))
+
+(= (task:conversation-fetch-legacy $request $offset $limit $owner)
+   (case (state:ledger "conversation-rows" ($request $offset $limit))
+     (((conversation-rows $requests $notes $rows)
+       (let* (($req-cols (if (<= $limit 0) (task:request-columns) ("id" "status" "kind" "note" "excerpt")))
+              ($req-objs (state:objects $req-cols $requests))
+              ($note-objs (state:objects (task:note-columns) $notes))
+              ($transcript (task:row-pairs $rows $owner)))
+         (ConvFetchedV1 $req-objs $note-objs $transcript ConvCertNone)))
+      ($other (ContextPreparationFailed "context-conversation-read-failed")))))
+
+(= (task:conversation-fetch $request $offset $limit $owner)
+   (if (<= $limit 0)
+     (task:conversation-fetch-legacy $request $offset $limit $owner)
+     (let* (($socket (state:ledger-socket))
+            ($mirror (get-state &task-conv-mirror))
+            (($matched $k-gen $k-rr $k-nr $k-er $k-tot $k-foc $m-reqs $m-notes $m-pairs)
+             (case $mirror
+               (((ConvMirrorV1 $msock $mown $moff $mlim $mgen $mrr $mnr $mer $mtot $mfoc $mreqs $mnotes $mpairs)
+                 (if (and (== $msock $socket) (and (== $mown $owner) (and (== $moff $offset) (== $mlim $limit))))
+                   (True $mgen $mrr $mnr $mer $mtot $mfoc $mreqs $mnotes $mpairs)
+                   (False none 0 0 0 0 "" () () ())))
+                ($none (False none 0 0 0 0 "" () () ())))))
+            ($reply (state:ledger "conversation-delta"
+                      ($request $offset $limit $k-gen $k-rr $k-nr $k-er $k-tot $k-foc))))
+       (case $reply
+         (((conversation-delta $gen $rr $nr $er $tot $rmode $nmode $emode $from-rel $reqs $notes $rows)
+           (let* (($req-same (and $matched (== $rmode unchanged)))
+                  ($note-same (and $matched (== $nmode unchanged)))
+                  ($req-objs (if $req-same $m-reqs
+                               (state:objects ("id" "status" "kind" "note" "excerpt") $reqs)))
+                  ($note-objs (if $note-same $m-notes
+                                (state:objects (task:note-columns) $notes)))
+                  ($use-tail (and $matched (== $emode tail)))
+                  ($transcript (if $use-tail
+                                 (let* (($prefix (list:take $from-rel $m-pairs))
+                                        ($added (task:row-pairs $rows $owner)))
+                                   (if (== $added ()) $prefix (union-atom $prefix $added)))
+                                 (task:row-pairs $rows $owner)))
+                  ($dirty-from (if $use-tail $from-rel 0))
+                  ($save (if (!= $gen none)
+                           (change-state! &task-conv-mirror
+                             (ConvMirrorV1 $socket $owner $offset $limit $gen $rr $nr $er $tot $request $req-objs $note-objs $transcript))
+                           (change-state! &task-conv-mirror ConvMirrorNone)))
+                  ($cert (if (!= $gen none)
+                           (ConvCertV1 $socket $owner $gen $rr $nr $er $offset $dirty-from $req-same $note-same)
+                           ConvCertNone)))
+             (ConvFetchedV1 $req-objs $note-objs $transcript $cert)))
+          ($other
+           (if (task:unknown-delta-verb? $other)
+             (let $_ (change-state! &task-conv-mirror ConvMirrorNone)
+               (task:conversation-fetch-legacy $request $offset $limit $owner))
+             (ContextPreparationFailed "context-conversation-read-failed"))))))))
+
+(= (task:conversation-projection-with-owner $request $trigger $offset $limit $owner)
+   (if (not (and (== (get-type $offset) Number) (>= $offset 0)))
+     (ContextPreparationFailed "context-conversation-read-failed")
+     (case (task:root $request)
+       (((Error $_ $_) (ContextPreparationFailed "context-conversation-read-failed"))
+        ($task-root
+          (case (task:conversation-fetch $request $offset $limit $owner)
+            (((ConvFetchedV1 $req-objs $note-objs $transcript $cert)
+              (let* (($root (str:concat "conversation:" $owner))
+                     ($view (JsonObject ((JsonPair "root" (JsonString $root)) (JsonPair "task_root" (JsonString $task-root))
+                              (JsonPair "focus" (JsonString $request)) (JsonPair "trigger" (JsonString $trigger))
+                              (JsonPair "offset" (JsonNumber (repr $offset)))
+                              (JsonPair "requests" (JsonArray $req-objs))
+                              (JsonPair "notes" (JsonArray $note-objs))
+                              (JsonPair "transcript" (JsonArray $transcript)) (JsonPair "archive" JsonNull)))))
+                (CertifiedViewV1 $view $cert)))
+             ($failed $failed))))))))
+
 (= (task:conversation-projection $request $trigger $offset $limit)
    (task:native-conversation-projection $request $trigger $offset $limit))
 (= (task:native-conversation-projection $request $trigger $offset $limit)
@@ -74,38 +158,43 @@
      (case (state:meta "owner")
        (((Error $_ $_) (ContextPreparationFailed "context-conversation-read-failed"))
         ($owner-value
-          (case (task:root $request)
-            (((Error $_ $_) (ContextPreparationFailed "context-conversation-read-failed"))
-             ($task-root
-               (case (state:ledger "conversation-rows" ($request $offset $limit))
-                 (((conversation-rows $requests $notes $rows)
-                   (let* (($owner (state:text $owner-value))
-                          ($root (str:concat "conversation:" $owner))
-                          ($transcript (task:row-pairs $rows $owner)))
-                     (JsonObject ((JsonPair "root" (JsonString $root)) (JsonPair "task_root" (JsonString $task-root))
-                       (JsonPair "focus" (JsonString $request)) (JsonPair "trigger" (JsonString $trigger))
-                       (JsonPair "offset" (JsonNumber (repr $offset)))
-                       (JsonPair "requests" (JsonArray (state:objects (if (<= $limit 0) (task:request-columns)
-                                                                        ("id" "status" "kind" "note" "excerpt")) $requests)))
-                       (JsonPair "notes" (JsonArray (state:objects (task:note-columns) $notes)))
-                       (JsonPair "transcript" (JsonArray $transcript)) (JsonPair "archive" JsonNull)))))
-                  ($other (ContextPreparationFailed "context-conversation-read-failed"))))))))))))
+          (case (task:conversation-projection-with-owner $request $trigger $offset $limit (state:text $owner-value))
+            (((CertifiedViewV1 $view $_) $view)
+             ($failed $failed))))))))
 
-; One-time first-start selection uses integer sizes inside SQLite. Only the
+; One-time first-start selection uses integer sizes inside the ledger. Only the
 ; selected window's text crosses into MeTTa; old bodies remain on disk.
 (= (task:initial-start $capacity $ratio)
    (let $start (state:ledger "initial-start" ($capacity $ratio))
        (if (== (get-type $start) Number) $start
          (Error task:initial-start $start))))
-(= (task:initial-view $focus $trigger $capacity $ratio)
+
+(= (task:initial-view-certified $focus $trigger $capacity $ratio)
    (case (state:meta "owner")
      (((Error $_ $_) (ContextPreparationFailed "context-conversation-read-failed"))
-      ($owner
-        (let $saved (state:meta-text (task:window-key (str:concat "conversation:" (state:text $owner))))
+      ($owner-value
+        (let* (($owner (state:text $owner-value))
+               ($root (str:concat "conversation:" $owner))
+               ($saved (state:meta-text (task:window-key $root))))
           (case $saved
             (((Error $_ $_) (ContextPreparationFailed "context-conversation-read-failed"))
              (none
                (case (task:initial-start $capacity $ratio)
                  (((Error $_ $_) (ContextPreparationFailed "context-conversation-read-failed"))
-                  ($start (task:conversation-projection $focus $trigger $start (task:result-chars))))))
-             ($present (task:conversation-view $focus $trigger)))))))))
+                  ($start
+                    (case (task:conversation-projection-with-owner $focus $trigger $start (task:result-chars) $owner)
+                      (((CertifiedViewV1 $view $cert)
+                        (CertifiedInitialV1 $view $cert none (JsonObject ()) 0))
+                       ($failed $failed)))))))
+             ($raw
+               (let* (($checkpoint (json-parse $raw))
+                      ($start (task:checkpoint-start $checkpoint)))
+                 (case (task:conversation-projection-with-owner $focus $trigger $start (task:result-chars) $owner)
+                   (((CertifiedViewV1 $view $cert)
+                     (CertifiedInitialV1 $view $cert $raw $checkpoint $start))
+                    ($failed $failed))))))))))))
+
+(= (task:initial-view $focus $trigger $capacity $ratio)
+   (case (task:initial-view-certified $focus $trigger $capacity $ratio)
+     (((CertifiedInitialV1 $view $_cert $_raw $_chk $_start) $view)
+      ($failed $failed))))

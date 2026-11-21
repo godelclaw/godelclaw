@@ -172,7 +172,9 @@
       ("METTACLAW_CLAUDE_AUTH_PATH" "{home}/no-claude-auth")
       ("METTACLAW_INPUT_LEDGER_SOCKET" "{home}/no-ledger.sock")))
     ("tests/unit/native_console.metta" "UNIT_NATIVE_CONSOLE_OK"
-     (("CETTA_SHARED_MAIL_SOCKET" "{home}/s")))))
+     (("CETTA_SHARED_MAIL_SOCKET" "{home}/s")))
+    ("tests/unit/conversation_index.metta" "UNIT_CONVERSATION_INDEX_OK"
+     (("METTACLAW_INPUT_LEDGER_SOCKET" "{home}/l.sock")))))
 
 (= (units:env $directory)
    (let $base (nt:environment $directory)

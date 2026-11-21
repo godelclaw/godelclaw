@@ -31,22 +31,22 @@
 ; Extra or missing fields make a receipt ineligible. This keeps the display
 ; optimization from hiding any additional evidence.
 (= (task:plain-rest? $pair)
-   (case (state:json-field $pair "id")
-     (((JsonString $id)
-        (case (state:json-field $pair "request")
-          (((JsonString $request)
-             (and (not (== $id ""))
-               (and (not (== $request ""))
-                 (and (== (state:encoded $pair)
-                   (state:encoded (JsonObject (
-                     (JsonPair "id" (JsonString $id))
-                     (JsonPair "request" (JsonString $request))
-                     (JsonPair "command" (state:json-field $pair "command"))
-                     (JsonPair "disposition" (state:json-field $pair "disposition"))
-                     (JsonPair "result" (state:json-field $pair "result"))))))
-                   (task:rest-shape? $pair)))))
-           ($other False))))
-      ($other False))))
+   (if (not (task:rest-shape? $pair)) False
+     (case (state:json-field $pair "id")
+       (((JsonString $id)
+          (case (state:json-field $pair "request")
+            (((JsonString $request)
+               (and (not (== $id ""))
+                 (and (not (== $request ""))
+                   (== (state:encoded $pair)
+                     (state:encoded (JsonObject (
+                       (JsonPair "id" (JsonString $id))
+                       (JsonPair "request" (JsonString $request))
+                       (JsonPair "command" (state:json-field $pair "command"))
+                       (JsonPair "disposition" (state:json-field $pair "disposition"))
+                       (JsonPair "result" (state:json-field $pair "result")))))))))
+             ($other False))))
+        ($other False)))))
 
 (= (task:idle-same? $first $next)
    (and (task:plain-rest? $next)
