@@ -2,11 +2,12 @@
 ; argument is interpreted as a program.
 !(import! &self ./state_file_cetta.metta)
 !(import! &self (library re))
+!(bind! &cli-re-number (new-state (re:compile "\\A[+-]?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?\\z")))
 (= (cli:text $value) (if (== (get-type $value) String) $value (repr (quote $value))))
 (= (cli:strings $args) (map-atom $args $arg (cli:text $arg)))
 (= (cli:number $text $fallback)
    (if (and (== (get-type $text) String)
-         (re:is-match (re:compile "\\A[+-]?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?\\z") $text))
+         (re:is-match (get-state &cli-re-number) $text))
      (parse $text) $fallback))
 (= (cli:pair-args $args $switches $object)
    (if (== $args ()) $object

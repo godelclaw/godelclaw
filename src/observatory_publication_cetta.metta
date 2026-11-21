@@ -4,13 +4,17 @@
 ; Recovery checks the exact appended prefix, then writes only its missing suffix.
 ; Equal records are occurrences, never deduplicated by their content.
 ;
-; Existing report readers remain best-effort during publication. Use a quiescent
-; snapshot for an authoritative multi-file report; this is not reader isolation.
+; Native report readers (observatory_report_cetta.metta) acquire a shared lock
+; on .collector.lock and refuse unrecovered publications unless --best-effort.
+; Legacy unlocked readers remain best-effort during publication.
 !(import! &self ./state_file_cetta.metta)
 !(import! &self (library re))
 !(bind! &op-batch (new-state JsonNull))
+!(bind! &op-re-id (new-state (re:compile "^[0-9a-f]{32}$")))
+!(bind! &op-re-stage (new-state (re:compile "^\\.observation-[0-9a-f]{32}-[a-z]+\\.jsonl\\.stage$")))
 (= (op:names) ("samples.jsonl" "effects.jsonl" "turns.jsonl" "llm.jsonl" "lifecycle.jsonl"))
 (= (op:receipt $root) (path:join $root ".observation-publication.json"))
+(= (op:quiescent? $root) (not (fs:exists (op:receipt $root))))
 (= (op:stage $root $id $name) (path:join $root (str:join "" (".observation-" $id "-" $name ".stage"))))
 (= (op:failure $why) (ObservatoryFailureV1 $why))
 (= (op:read $path)
@@ -23,7 +27,7 @@
        (if (== $current (sf:get $receipt "before" JsonNull)) "commit not observed; recovery required"
          "unresolved; retain publication evidence"))))
 (= (op:valid-id? $id)
-   (and (== (get-type $id) String) (re:is-match (re:compile "^[0-9a-f]{32}$") $id)))
+   (and (== (get-type $id) String) (re:is-match (get-state &op-re-id) $id)))
 (= (op:begin $root)
    (if (fs:exists (op:receipt $root)) (op:failure "previous publication must be recovered first")
     (let* (($before (op:read (path:join $root "cursor.json"))) ($id (system:uuid4-hex))
@@ -104,17 +108,27 @@
              (op:prefix $stage $target $start (+ $at $n) $until)
              (op:failure "projection prefix conflicts with prepared bytes")))
           ($failed (op:failure "projection prefix is unreadable")))))))
+; Align multi-chunk appends to the last newline boundary within each 64 KiB
+; window so ordinary JSONL rows are never split mid-line across write syscalls.
+(= (op:aligned-bytes $bytes $n $at $until)
+   (if (>= (+ $at $n) $until) $bytes
+     (let $parts (str:split "\n" $bytes)
+       (if (<= (size-atom $parts) 1) $bytes
+         (let $cut (- $n (str:byte-length (sf:last $parts)))
+           (if (> $cut 0) (str:byte-slice $bytes 0 $cut) $bytes))))))
 (= (op:copy $stage $target $at $until)
    (if (>= $at $until) True
      (let $n (min 65536 (- $until $at))
        (case (fs:read-chunk $stage $n $at)
          (((fs:chunk $bytes $_)
            (if (!= (str:byte-length $bytes) $n) (op:failure "projection stage is truncated")
-             (case (fs:write-all $target $bytes)
-               (((fs:written $wrote)
-                 (if (== $wrote $n) (op:copy $stage $target (+ $at $n) $until)
-                   (op:failure "projection append is incomplete")))
-                ($failed (op:failure "projection append refused"))))))
+             (let* (($piece (op:aligned-bytes $bytes $n $at $until))
+                    ($want (str:byte-length $piece)))
+               (case (fs:write-all $target $piece)
+                 (((fs:written $wrote)
+                   (if (== $wrote $want) (op:copy $stage $target (+ $at $want) $until)
+                     (op:failure "projection append is incomplete")))
+                  ($failed (op:failure "projection append refused")))))))
           ($failed (op:failure "projection stage is unreadable")))))))
 (= (op:publish-owned $root $entry $stage $target $present $committed)
    (let* (($start (sf:get $entry "start" -1)) ($bytes (sf:get $entry "bytes" -1))
@@ -170,9 +184,24 @@
                  (if (== $saved True) (op:cleanup $root $id)
                    (op:failure "projection cursor commit refused"))))))
           ($bad (op:failure "projection receipt has no file ranges")))))))
+(= (op:sweep-entries $root $names $removed)
+   (if (== $names ()) $removed
+     (let* (($name (car-atom $names))
+            ($did (if (re:is-match (get-state &op-re-stage) $name)
+                    (== (op:remove (path:join $root $name)) True) False)))
+       (op:sweep-entries $root (cdr-atom $names) (or $removed $did)))))
+; Only safe when no active publication receipt exists (after op:recover -> True).
+; Reclaims inert stage files left behind by power loss right after receipt removal.
+(= (op:sweep-inert $root)
+   (if (not (op:quiescent? $root)) True
+     (let $names (catch (fs:entries $root))
+       (if (== (get-metatype $names) Expression)
+         (let $removed (op:sweep-entries $root $names False)
+           (if $removed (let $s (sf:sync-directory $root) True) True))
+         True))))
 (= (op:recover $root)
    (let $raw (op:read (op:receipt $root))
-     (if (== $raw JsonNull) True
+     (if (== $raw JsonNull) (op:sweep-inert $root)
       (if (!= (get-type $raw) String) (op:failure "projection receipt is unreadable")
        (case (json:parse $raw)
          (((JsonObject $fields)

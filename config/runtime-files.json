@@ -276,6 +276,8 @@
     "src/observation_reconcile_cetta.metta",
     "src/observatory_cetta.metta",
     "src/observatory_publication_cetta.metta",
+    "src/observatory_report_cetta.metta",
+    "src/observatory_stream_cetta.metta",
     "src/open_assemblage.metta",
     "src/pins_context_cetta.metta",
     "src/process_identity_cetta.metta",
@@ -736,6 +738,9 @@
       "scripts/runtime_housekeeping_cetta.metta",
       "src/memory_monitor_cetta.metta",
       "src/observatory_cetta.metta",
+      "src/observatory_publication_cetta.metta",
+      "src/observatory_report_cetta.metta",
+      "src/observatory_stream_cetta.metta",
       "src/runtime_housekeeping_cetta.metta"
     ],
     "service-launchers": [

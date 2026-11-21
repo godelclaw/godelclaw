@@ -163,6 +163,7 @@
     ("tests/unit/observatory.metta" "UNIT_NATIVE_OBSERVATORY_OK")
     ("tests/unit/observatory_stream.metta" "UNIT_OBSERVATORY_STREAM_OK")
     ("tests/unit/observatory_publication.metta" "UNIT_OBSERVATORY_PUBLICATION_OK")
+    ("tests/unit/observatory_qualification.metta" "UNIT_OBSERVATORY_QUALIFICATION_OK")
     ("tests/unit/viewer_scope.metta" "UNIT_VIEWER_SCOPE_OK")
     ("tests/unit/audit_scope.metta" "UNIT_AUDIT_SCOPE_OK")
     ("tests/unit/native_console_presentation.metta" "UNIT_NATIVE_CONSOLE_PRESENTATION_OK")
