@@ -10,7 +10,11 @@
 !(import! &self (library math))
 !(import! &self ./src/attention_memory_cetta.metta)
 !(bind! &semantic-cache (new-state Missing))
+!(bind! &semantic-reloads (new-state 0))
 !(bind! &semantic-http (new-space))
+
+(= (sm:reload-count) (get-state &semantic-reloads))
+(= (sm:cache-state) (get-state &semantic-cache))
 
 (= (sm:env $name $default) (system:getenv-or-default $name $default))
 
@@ -95,6 +99,15 @@
      (MemoryPending 1 $op $id $action $text $time $attempts $due $error)
      (MemoryPending 1 $op $id $action $text $time $attempts $due $error)))
 
+(= (sm:pending-count $space)
+   (case
+     (space:count
+       (sm:socket)
+       $space
+       (MemoryPending 1 $op $id $action $text $time $attempts $due $error))
+     (((reply $rid ok $count) $count)
+      ($error (size-atom (sm:pending $space))))))
+
 (= (sm:pending-id $space $id)
    (sm:all
      $space
@@ -116,9 +129,180 @@
    (case
      (hm:commit (sm:socket) $space $ops)
      (((reply $rid ok $answer)
-       (let $invalidated (change-state! &semantic-cache Missing) (MemoryCommitted)))
+       (let $_ (sm:cache-after-commit $space $ops $answer) (MemoryCommitted)))
       ((reply $rid error stale-revision) (MemoryChanged))
       ($error (MemoryUnavailable commit $error)))))
+
+; Advance the loaded collection incrementally when our conditional batch
+; moved the exact cached space revision by $ops alone. Any revision mismatch,
+; unknown record type, concurrent write, or apply error clears &semantic-cache
+; so the next query reloads cleanly from a full snapshot.
+(= (sm:cache-after-commit (space $uuid $sid $sn $backend $kind $rev $count) $ops $answer)
+   (case $answer
+     (((committed $cu $ci $newrev)
+       (if (and (== $cu $uuid) (== $ci $sid))
+         (case (get-state &semantic-cache)
+           (((MCache $cached-uuid $cached-sid $cached-rev $profile $dim)
+             (if (and (== $cached-uuid $uuid)
+                      (and (== $cached-sid $sid) (== $cached-rev $rev)))
+               (let $after (space $uuid $sid $sn $backend $kind $newrev $count)
+                 (if (sm:apply-delta $after $ops $newrev $profile $dim)
+                   (change-state! &semantic-cache (MCache $uuid $sid $newrev $profile $dim))
+                   (change-state! &semantic-cache Missing)))
+               (change-state! &semantic-cache Missing)))
+            ($other-cache (change-state! &semantic-cache Missing))))
+         (change-state! &semantic-cache Missing)))
+      ($other-answer (change-state! &semantic-cache Missing)))))
+
+(= (sm:apply-delta $space-after $ops $newrev $profile $dim)
+   (if (and (== (get-state &memory-profile) (Profile $profile $dim))
+            (== (get-state &memory-matrix) Missing))
+     (case (sm:classify-ops $ops () () ())
+       (((SMDelta $adds $removes $scopes)
+         (let $add-ids (sm:delta-add-ids $adds)
+           (if (== (size-atom (unique-atom $add-ids)) (size-atom $add-ids))
+             (if (sm:delta-apply-adds $space-after $adds $newrev $profile $dim)
+               (if (sm:delta-apply-removes (unique-atom $removes) $add-ids)
+                 (sm:delta-apply-scopes $space-after (unique-atom $scopes) $add-ids $removes $newrev $profile $dim)
+                 False)
+               False)
+             False)))
+        ($unsupported False)))
+     False))
+
+(= (sm:classify-ops $ops $adds $removes $scopes)
+   (if (== $ops ())
+     (SMDelta $adds $removes $scopes)
+     (let* (($op (car-atom $ops))
+            ($rest (cdr-atom $ops)))
+       (case $op
+         (((add (Memory $id $r $p $v $d $m))
+           (sm:classify-ops $rest (cons-atom (Memory $id $r $p $v $d $m) $adds) $removes $scopes))
+          ((remove (Memory $id $r $p $v $d $m))
+           (sm:classify-ops $rest $adds (cons-atom $id $removes) $scopes))
+          ((add (MemoryScope 1 $id $k $val))
+           (sm:classify-ops $rest $adds $removes (cons-atom $id $scopes)))
+          ((remove (MemoryScope 1 $id $k $val))
+           (sm:classify-ops $rest $adds $removes (cons-atom $id $scopes)))
+          ((add (MemoryPending 1 $a $b $c $d $e $f $g $h))
+           (sm:classify-ops $rest $adds $removes $scopes))
+          ((remove (MemoryPending 1 $a $b $c $d $e $f $g $h))
+           (sm:classify-ops $rest $adds $removes $scopes))
+          ((add (MemoryChange 1 $a $b $c $d $e))
+           (sm:classify-ops $rest $adds $removes $scopes))
+          ((remove (MemoryChange 1 $a $b $c $d $e))
+           (sm:classify-ops $rest $adds $removes $scopes))
+          ((add (MemoryVersion 1 $a $b $c $d $e $f))
+           (sm:classify-ops $rest $adds $removes $scopes))
+          ((remove (MemoryVersion 1 $a $b $c $d $e $f))
+           (sm:classify-ops $rest $adds $removes $scopes))
+          ((add (MemoryRetired 1 $a $b $c $d))
+           (sm:classify-ops $rest $adds $removes $scopes))
+          ((remove (MemoryRetired 1 $a $b $c $d))
+           (sm:classify-ops $rest $adds $removes $scopes))
+          ($unknown SMDeltaUnsupported))))))
+
+(= (sm:delta-add-ids $adds)
+   (if (== $adds ()) ()
+     (let (Memory $id $r $p $v $d $m) (car-atom $adds)
+       (cons-atom $id (sm:delta-add-ids (cdr-atom $adds))))))
+
+(= (sm:scopes-at $space $id $expected-rev)
+   (case (sm:snapshot $space (MemoryScope 1 $id $k $val) ($k $val))
+     (((MSnapshot $snap-rev $snap-rows)
+       (if (== $snap-rev $expected-rev)
+         (case $snap-rows
+           (((HFailure $why $at) (SMDeltaFail scope-rows))
+            ($scope-list (SMScopes $scope-list))))
+         (SMDeltaFail concurrent-rev)))
+      ($snap-err (SMDeltaFail scope-snap)))))
+
+(= (sm:row-at $space $id $expected-rev)
+   (case (sm:snapshot $space (Memory $id $r $p $v $d $m) (Memory $id $r $p $v $d $m))
+     (((MSnapshot $snap-rev $snap-rows)
+       (if (== $snap-rev $expected-rev)
+         (case $snap-rows
+           (((HFailure $why $at) (SMDeltaFail row-read))
+            (($row) (SMRow $row))
+            ($other-rows (SMDeltaFail row-cardinality))))
+         (SMDeltaFail concurrent-rev)))
+      ($snap-err (SMDeltaFail row-snap)))))
+
+; Remove existing local row(s) before adding the replacement so an identical
+; row never gets deleted by add-then-remove ordering in lib_memory_collection.
+(= (sm:local-upsert $profile $dim $row)
+   (case (memory:validate $profile $dim $row)
+     ((Valid
+       (case $row
+         (((Memory $id $r $p $v $d $m)
+           (let $existing (collapse (memory:record $id))
+             (if (== $existing ($row))
+               True
+               (let $local-ops (hm:append (collapse (remove (memory:record $id))) ((add $row)))
+                 (case (memory:dispatch (apply $local-ops))
+                   (((Applied $n) True)
+                    ($apply-err False)))))))
+          ($bad-row False))))
+      ($invalid False))))
+
+(= (sm:local-delete $id)
+   (let $local-ops (memory:dispatch (delete ($id)))
+     (if (== $local-ops ())
+       True
+       (case (memory:dispatch (apply $local-ops))
+         (((Applied $n) True)
+          ($apply-err False))))))
+
+(= (sm:delta-apply-adds $space-after $adds $newrev $profile $dim)
+   (if (== $adds ())
+     True
+     (let* (($head (car-atom $adds))
+            ($rest (cdr-atom $adds)))
+       (case $head
+         (((Memory $id $r $p $v $d $m)
+           (if (== $p $profile)
+             (case (sm:scopes-at $space-after $id $newrev)
+               (((SMScopes $scope-list)
+                 (let $enriched (Memory $id $r $p $v $d (unique-atom (union-atom $m $scope-list)))
+                   (if (sm:local-upsert $profile $dim $enriched)
+                     (sm:delta-apply-adds $space-after $rest $newrev $profile $dim)
+                     False)))
+                ($scope-fail False)))
+             False))
+          ($other-add False))))))
+
+(= (sm:delta-apply-removes $removes $add-ids)
+   (if (== $removes ())
+     True
+     (let* (($id (car-atom $removes))
+            ($rest (cdr-atom $removes)))
+       (if (memory:member $id $add-ids)
+         (sm:delta-apply-removes $rest $add-ids)
+         (if (sm:local-delete $id)
+           (sm:delta-apply-removes $rest $add-ids)
+           False)))))
+
+(= (sm:delta-apply-scopes $space-after $scopes $add-ids $removes $newrev $profile $dim)
+   (if (== $scopes ())
+     True
+     (let* (($id (car-atom $scopes))
+            ($rest (cdr-atom $scopes)))
+       (if (or (memory:member $id $add-ids) (memory:member $id $removes))
+         (sm:delta-apply-scopes $space-after $rest $add-ids $removes $newrev $profile $dim)
+         (if (== (collapse (memory:record $id)) ())
+           (sm:delta-apply-scopes $space-after $rest $add-ids $removes $newrev $profile $dim)
+           (case (sm:row-at $space-after $id $newrev)
+             (((SMRow (Memory $rid $r $p $v $d $m))
+               (if (== $p $profile)
+                 (case (sm:scopes-at $space-after $id $newrev)
+                   (((SMScopes $scope-list)
+                     (let $enriched (Memory $rid $r $p $v $d (unique-atom (union-atom $m $scope-list)))
+                       (if (sm:local-upsert $profile $dim $enriched)
+                         (sm:delta-apply-scopes $space-after $rest $add-ids $removes $newrev $profile $dim)
+                         False)))
+                    ($scope-fail False)))
+                 False))
+              ($row-fail False))))))))
 
 ; A reload starts from an empty collection that screens rows with certified
 ; 8-bit copies: the same results as the full scan, from about an eighth of the
@@ -140,18 +324,18 @@
              (case
                $rows
                (((HFailure $why $at) (MemoryUnavailable snapshot $why))
-                ($rows
+                ($row-list
                   (let
                     $_
                     (sm:reset-collection)
                     (case
-                      (memory:dispatch (load $profile $dim $rows))
+                      (memory:dispatch (load $profile $dim $row-list))
                       (((Loaded $n)
-                        (let
-                          $_
-                          (change-state!
-                            &semantic-cache
-                            (MCache $uuid $sid $source-rev $profile $dim))
+                        (let*
+                          (($_ (change-state! &semantic-reloads (+ (get-state &semantic-reloads) 1)))
+                           ($_ (change-state!
+                                 &semantic-cache
+                                 (MCache $uuid $sid $source-rev $profile $dim))))
                           True))
                        ($error (MemoryUnavailable load $error)))))))))
             ($error $error))))))))
@@ -607,7 +791,7 @@
                     (am:select $profile $vector $count $mode))
                   (((MemoryFailure $at $why) (MemoryUnavailable retrieval $why))
                    ($rows
-                     (MemoryResults (sm:hits $rows) (Unindexed (size-atom (sm:pending $space))))))))
+                     (MemoryResults (sm:hits $rows) (Unindexed (sm:pending-count $space)))))))
                    ($error $error)))))
             ($error $error))))
         ($error $error)))))

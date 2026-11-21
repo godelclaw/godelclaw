@@ -54,17 +54,17 @@
         ($other (MemoryFailure query profile-mismatch))))))
 (= (view:query-indexed $vector $count $filter)
    (let $index (case (get-state &memory-index)
-                 ((Missing (memory:build-index (car-atom (tensor:shape $vector)))) ($ready $ready)))
+                 ((Missing (memory:build-index (car-atom (tensor:shape $vector)))) ($base-ready $base-ready)))
      (case $index
        (((MemoryFailure $at $why) $index)
-        ($packed (case (view:query-packed $vector $count $filter $packed)
+        ($base-packed (case (view:query-packed $vector $count $filter $base-packed)
           (((MemoryFailure $at $why) (MemoryFailure $at $why))
            ($hits (if (== (collapse (get-atoms &memory-dirty)) ()) $hits
              (let $delta (case (get-state &memory-delta-index)
-                           ((Missing (memory:build-delta (car-atom (tensor:shape $vector)))) ($ready $ready)))
+                           ((Missing (memory:build-delta (car-atom (tensor:shape $vector)))) ($delta-ready $delta-ready)))
                (case $delta
                  (((MemoryFailure $at $why) $delta)
-                  ($packed (case (view:query-packed $vector $count $filter $packed)
+                  ($delta-packed (case (view:query-packed $vector $count $filter $delta-packed)
                     (((MemoryFailure $at $why) (MemoryFailure $at $why))
                      ($recent (list:sort-by memory:precedes
                        (retain-top-k-keyed-atom (list:append $hits $recent) $count))))))))))))))))))
