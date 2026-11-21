@@ -37,13 +37,17 @@
           ($old-top (max 1 (+ (- $height $old-count) 1)))
           ($event-owner (cc:get "events" ConsoleNoBufferV1)) ($events (buffer:value $event-owner))
           ($frame-owner (cc:get "output" ConsoleNoBufferV1))
-          ($prefix (str:join "" ("\u001b[?25l\u001b[?7l" (cc:cup $old-top 1) "\u001b[J")))
+          ; Scrollback is written with autowrap on: a line wider than the pane
+          ; wraps instead of being cut at the last column (copying it from
+          ; tmux still joins the wrapped rows). Only the live region, clipped
+          ; to its width, is drawn with autowrap off.
+          ($prefix (str:join "" ("\u001b[?25l" (cc:cup $old-top 1) "\u001b[J\u001b[?7h")))
           ($scroll (str:concat (str:join "\r\n" (str:split "\n" $events)) (cc:repeat "\r\n" (- $reserved 1))))
           ($top (+ (- $height $reserved) 1))
           ($screen (str:join "\r\n" $lines))
           ($target-row (if $small $height (+ $top (+ 2 $cursor-row))))
           ($target-column (min $columns (+ 3 $cursor-column)))
-          ($frame (str:join "" ($prefix $scroll (cc:cup (max 1 $top) 1) $screen "\u001b[0m\u001b[?7h"
+          ($frame (str:join "" ($prefix $scroll (cc:cup (max 1 $top) 1) "\u001b[?7l" $screen "\u001b[0m\u001b[?7h"
                                (cc:cup $target-row $target-column) "\u001b[?25h")))
           ($added (buffer:append $frame-owner $frame)))
      (if (cc:buffer-failed? $added) (progn (cc:set "display-fault" "Terminal frame allocation refused") False)
