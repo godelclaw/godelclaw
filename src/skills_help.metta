@@ -6,14 +6,15 @@
 !(import! &self (library re))
 !(import! &self (library str))
 !(import! &self ./src/command_arity.metta)
-!(import! &self ./src/skills_help_pages.metta)
 !(import! &self ./src/small_views_unicode.metta)
 
-!(bind! &help-pages
-   (new-state (sort-atom (unique-atom (collapse (match &self
-     (HelpPageV1 $name $text) (HelpPageV1 $name $text)))))))
-!(bind! &help-nonprintable
-   (new-state (re:compile (sv:nonprintable-pattern))))
+!(bind! &help-pages (new-state HelpPagesUnloadedV1))
+!(bind! &help-nonprintable (new-state HelpRegexUnloadedV1))
+(= (help:nonprintable-regex)
+   (let $cached (get-state &help-nonprintable)
+     (if (!= $cached HelpRegexUnloadedV1) $cached
+       (let $compiled (re:compile (sv:nonprintable-pattern))
+         (progn (change-state! &help-nonprintable $compiled) $compiled)))))
 
 (= (help:contains $text $part)
    (case (str:find $text $part) (((TextNotFound $_) False) ($at True))))
@@ -28,7 +29,7 @@
    (case $char
      (("\t" "\\t") ("\n" "\\n") ("\r" "\\r") ("\\" "\\\\")
       ($other (if (== $char $quote) (str:concat "\\" $char)
-        (if (re:is-match (get-state &help-nonprintable) $char)
+        (if (re:is-match (help:nonprintable-regex) $char)
           (let $code (help:ordinal $char)
             (if (< $code 256) (str:concat "\\x" (help:hex $code 2))
               (if (< $code 65536) (str:concat "\\u" (help:hex $code 4))
@@ -40,7 +41,13 @@
        (str:join "" (map-atom (str:codepoints $text) $char
                       (help:repr-char $char $quote))) $quote))))
 
-(= (help:page-rows) (get-state &help-pages))
+(= (help:page-rows)
+   (let $cached (get-state &help-pages)
+     (if (!= $cached HelpPagesUnloadedV1) $cached
+       (let* (($loaded (import! &self ./src/skills_help_pages.metta))
+              ($rows (sort-atom (unique-atom (collapse (match &self
+                       (HelpPageV1 $name $text) (HelpPageV1 $name $text)))))))
+         (progn (change-state! &help-pages $rows) $rows)))))
 (= (help:find-page $name $rows)
    (if (== $rows ()) ""
      (let (HelpPageV1 $head $text) (car-atom $rows)

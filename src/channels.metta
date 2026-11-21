@@ -1,5 +1,15 @@
 ;configured at runtime:
-!(import! &self ./src/websearch_cetta.metta)
+!(bind! &channels-websearch-loaded (new-state False))
+!(bind! &channels-chat-spool-loaded (new-state False))
+(= (channel:call $expr) (eval $expr))
+(= (channel:ensure-websearch!)
+   (if (get-state &channels-websearch-loaded) True
+     (progn (import! &self ./src/websearch_cetta.metta)
+            (change-state! &channels-websearch-loaded True) True)))
+(= (channel:ensure-chat-spool!)
+   (if (get-state &channels-chat-spool-loaded) True
+     (progn (import! &self ./channels/chat_spool.metta)
+            (change-state! &channels-chat-spool-loaded True) True)))
 (= (commchannel) (empty))
 
 ;Connect all the channels. (configureChannel) is compiled into
@@ -13,12 +23,15 @@
               (println! (tg:start))
               ;; IRC and Mattermost connect in a service of their own
               ;; (run.sh chat-channel), which the loop meets in the chat spool.
-              (println! (chat:started (commchannel))))))
+              (let $ok (channel:ensure-chat-spool!)
+                (println! (channel:call (cons-atom chat:started ((commchannel)))))))))
 
 ;Receive the latest user message considering all communication channels:
 !(import! &self ./src/input_scope_cetta.metta)
 (= (receive-channel)
-   (if (== (commchannel) telegram) (tg:activity-batch) (chat:receive (commchannel))))
+   (if (== (commchannel) telegram) (tg:activity-batch)
+     (let $ok (channel:ensure-chat-spool!)
+       (channel:call (cons-atom chat:receive ((commchannel)))))))
 
 ; Conversation arrivals retain their own acknowledgement path. Native mail
 ; is its own input, so settling a conversation cannot settle unrelated mail.
@@ -32,7 +45,8 @@
    (let $_
      (if (== (commchannel) telegram)
        (let $ids (tg:update-ids (tg:prepared-items)) (input-scope:prepare $ids))
-       (input-scope:prepare (chat:presented-ids)))
+       (let $ok (channel:ensure-chat-spool!)
+         (input-scope:prepare (channel:call (cons-atom chat:presented-ids ())))))
      (if (input-scope:all-settled (input-scope:ids))
        (let $_ (input-scope:reset) (channel:receive-mail-or-job)) $conversation)))
 ; Transport diagnostics are observations, not fabricated deliveries. The
@@ -48,11 +62,15 @@
 ;; Whether pending conversation may keep a parked agent waiting: see
 ;; tg:quiet-batch? and chat:quiet-batch?.
 (= (channel:quiet-activity?)
-   (if (== (commchannel) telegram) (tg:quiet-batch?) (chat:quiet-batch?)))
+   (if (== (commchannel) telegram) (tg:quiet-batch?)
+     (let $ok (channel:ensure-chat-spool!)
+       (channel:call (cons-atom chat:quiet-batch? ())))))
 ;; The turn that read a chat channel's messages is committed: they leave its
 ;; inbox. Telegram's batch is settled by tg:ack-activity-batch.
 (= (channel:ack-chat)
-   (if (== (commchannel) telegram) 1 (chat:ack (commchannel))))
+   (if (== (commchannel) telegram) 1
+     (let $ok (channel:ensure-chat-spool!)
+       (channel:call (cons-atom chat:ack ((commchannel)))))))
 ;; Whether this wake may hand back the whole banked budget: see
 ;; tg:full-wake-batch?. Other channels and clients always may.
 (= (channel:full-wake?)
@@ -76,7 +94,9 @@
         (let $outmsg (utils:decode-safe $safemsg)
              (if (== (commchannel) telegram)
                  (let $temp (cut) (tg:send-effect $outmsg ""))
-                 (let $temp (cut) (chat:send (commchannel) $outmsg))))))
+                 (let $temp (cut)
+                   (let $ok (channel:ensure-chat-spool!)
+                     (channel:call (cons-atom chat:send ((commchannel) $outmsg)))))))))
 
 (= (send-telegram-chat $chat_id $msg)
    (let $safemsg (string-replace $msg  "\n" "\\n")
@@ -98,16 +118,19 @@
 
 ;Search the internet for some information:
 (= (search $msg)
-   (let $query (utils:decode-safe $msg)
-        (search:auto $query)))
+   (let* (($ok (channel:ensure-websearch!))
+          ($query (utils:decode-safe $msg)))
+     (channel:call (cons-atom search:auto ($query)))))
 
 (= (search-tavily $msg)
-   (let $query (utils:decode-safe $msg)
-        (search:run "tavily" $query)))
+   (let* (($ok (channel:ensure-websearch!))
+          ($query (utils:decode-safe $msg)))
+     (channel:call (cons-atom search:run ("tavily" $query)))))
 
 (= (search-ddg $msg)
-   (let $query (utils:decode-safe $msg)
-        (search:run "ddg" $query)))
+   (let* (($ok (channel:ensure-websearch!))
+          ($query (utils:decode-safe $msg)))
+     (channel:call (cons-atom search:run ("ddg" $query)))))
 
 ;; On-demand short-term recall for any chat the bot is in: last $k messages
 ;; (both sides) from the local update log, matched by chat title or id.

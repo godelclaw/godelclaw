@@ -30,9 +30,13 @@
 !(bind! &prose-alnum (new-state (re:compile (prose:pattern alnum))))
 !(bind! &prose-affect (new-state (re:compile (prose:pattern affect-trace))))
 ; The names helper._is_bare_command accepts, owned natively by command_arity
-; and read once after equation discovery and refinement have settled.
-!(bind! &prose-skills
-   (new-state (str:set (str:split "\n" (arity:names-text)))))
+; and loaded lazily on the rare path where a response has no parenthesized form.
+!(bind! &prose-skills (new-state ProseSkillsUnloadedV1))
+(= (prose:skills-set)
+   (let $cached (get-state &prose-skills)
+     (if (!= $cached ProseSkillsUnloadedV1) $cached
+       (let $loaded (str:set (str:split "\n" (arity:names-text)))
+         (progn (change-state! &prose-skills $loaded) $loaded)))))
 ; A Python str comes back from py-call as the symbol it spells, so the loop's
 ; (repr (UNDELIVERED: $prose ...)) writes the prose unquoted. Prose is
 ; returned the same way; "" is the empty symbol py-call returns for it, which
@@ -96,7 +100,7 @@
      (((re:match $at $end $groups)
        (let $word (str:byte-slice $text $at $end)
          (if (str:starts-with $word "(") False
-           (str:is-set-member (get-state &prose-skills) $word))))
+           (str:is-set-member (prose:skills-set) $word))))
       ($none False))))
 
 ; (prose:outside TEXT COUNT): the text with each of its COUNT complete

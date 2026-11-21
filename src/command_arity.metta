@@ -120,16 +120,52 @@
 (= (arity:base-names)
    (map-atom (arity:base-rows) $row (arity:row-name $row)))
 
-!(bind! &arity-base-name-set (new-state (str:set (arity:base-names))))
+!(bind! &arity-root (new-state (system:cwd)))
 !(bind! &arity-retired-name-set
    (new-state (str:set ("rest-command" "background-model" "model-adopt"
                         "model-retire" "goal-review-save" "task-resolve"))))
-!(bind! &arity-equation-start
-   (new-state (re:compile "(?m)^\\(=\\s+\\(|[\\\\\"()]")))
-!(bind! &arity-space (new-state (re:compile (prose:pattern space))))
-!(bind! &arity-token-event
-   (new-state (re:compile
-     (str:concat (prose:pattern space) "|[\"()]"))))
+!(bind! &arity-equation-header (new-state ArityUnloadedV1))
+!(bind! &arity-command-header (new-state ArityUnloadedV1))
+!(bind! &arity-lhs-steering (new-state ArityUnloadedV1))
+!(bind! &arity-space (new-state ArityUnloadedV1))
+!(bind! &arity-token-event (new-state ArityUnloadedV1))
+!(bind! &arity-equations (new-state ArityUnloadedV1))
+!(bind! &arity-rows (new-state ArityUnloadedV1))
+!(bind! &arity-name-set (new-state ArityUnloadedV1))
+
+(= (arity:regex-header)
+   (let $cached (get-state &arity-equation-header)
+     (if (!= $cached ArityUnloadedV1) $cached
+       (let $compiled (re:compile "(?m)^\\(=\\s+\\((?:[^()\"\\\\]*\\))?")
+         (progn (change-state! &arity-equation-header $compiled) $compiled)))))
+(= (arity:any-colon? $names)
+   (if (== $names ()) False
+     (case (str:find (car-atom $names) ":")
+       (((TextNotFound $_) (arity:any-colon? (cdr-atom $names)))
+        ($found True)))))
+(= (arity:regex-command-header $names)
+   (let $cached (get-state &arity-command-header)
+     (if (!= $cached ArityUnloadedV1) $cached
+       (let* (($pat (if (arity:any-colon? $names)
+                      "(?m)^\\(=\\s+\\(\\s*[^\\s()\"\\\\$][^\\s()\"\\\\]*(?:[\\s)]|$)"
+                      "(?m)^\\(=\\s+\\(\\s*[^:\\s()\"\\\\$][^:\\s()\"\\\\]*(?:[\\s)]|$)"))
+              ($compiled (re:compile $pat)))
+         (progn (change-state! &arity-command-header $compiled) $compiled)))))
+(= (arity:regex-steering)
+   (let $cached (get-state &arity-lhs-steering)
+     (if (!= $cached ArityUnloadedV1) $cached
+       (let $compiled (re:compile "[\\\\\"()]")
+         (progn (change-state! &arity-lhs-steering $compiled) $compiled)))))
+(= (arity:regex-space)
+   (let $cached (get-state &arity-space)
+     (if (!= $cached ArityUnloadedV1) $cached
+       (let $compiled (re:compile (prose:pattern space))
+         (progn (change-state! &arity-space $compiled) $compiled)))))
+(= (arity:regex-token-event)
+   (let $cached (get-state &arity-token-event)
+     (if (!= $cached ArityUnloadedV1) $cached
+       (let $compiled (re:compile (str:concat (prose:pattern space) "|[\"()]"))
+         (progn (change-state! &arity-token-event $compiled) $compiled)))))
 
 ; _split_top: None is arity:not-expression; an empty token list is ().
 ; Deliberately no backslash rule: the Python oracle closes at every quote.
@@ -137,7 +173,7 @@
    (let $text (str:strip-python $raw)
      (if (and (str:starts-with $text "(") (str:ends-with $text ")"))
        (let* (($body (str:byte-slice $text 1 (- (str:byte-length $text) 1)))
-              ($events (re:find-all (get-state &arity-token-event) $body)))
+              ($events (re:find-all (arity:regex-token-event) $body)))
          (case $events
            (((re:matches $found)
              (arity:reverse
@@ -152,7 +188,7 @@
                        $start $depth $quoted $out)
    (let $c (str:byte-slice $body $at $end)
      (if (and (and (== $depth 0) (not $quoted))
-              (re:is-match (get-state &arity-space) $c))
+              (re:is-match (arity:regex-space) $c))
        (arity:split-events $body $rest $end $depth $quoted
          (if (> $at $start)
            (cons-atom (str:byte-slice $body $start $at) $out) $out))
@@ -171,16 +207,60 @@
    (if (== $rows ()) $out
      (arity:reverse-onto (cdr-atom $rows) (cons-atom (car-atom $rows) $out))))
 
-; Discover every equation head, not only commands. The combined event stream
-; avoids rescanning a whole file for each left side. Its scanner has the same
-; quote, escaped-character and balanced-parenthesis rules as the Python loop.
+; Discover every equation head, not only commands. Simple single-level left
+; sides (no nested parens, quotes, or backslashes) are captured in one regex
+; pass without matching equation-body punctuation; nested or quoted left sides
+; scan only a bounded window starting at their opening parenthesis with the
+; exact quote, escape, and balanced-parenthesis rules of the Python oracle.
 (= (arity:equation-arities-at $root)
    (let $found (new-space)
-     (let $_ (arity:scan-directory $found (path:join $root "src"))
-       (let $_ (arity:scan-directory $found (path:join $root "channels"))
+     (let $s1 (arity:scan-directory $found (path:join $root "src"))
+       (let $s2 (arity:scan-directory $found (path:join $root "channels"))
          (arity:group-equations
            (sort-atom (unique-atom (collapse (match $found
              (ArityEquationCountV1 $name $count) ($name $count))))))))))
+(= (arity:base-entry-names $rows)
+   (if (== $rows ()) ()
+     (let (ArityBaseV1 $name $_lo $_hi) (car-atom $rows)
+       (cons-atom $name (arity:base-entry-names (cdr-atom $rows))))))
+(= (arity:command-arities-at $root)
+   (let* (($target-list (unique-atom (union-atom (arity:base-entry-names (arity:base-rows)) (arity:equation-commands))))
+          ($targets (str:set $target-list))
+          ($rx (arity:regex-command-header $target-list))
+          ($found (new-space))
+          ($s1 (arity:scan-cmd-directory $found $rx $targets (path:join $root "src")))
+          ($s2 (arity:scan-cmd-directory $found $rx $targets (path:join $root "channels"))))
+     (arity:group-equations
+       (sort-atom (unique-atom (collapse (match $found
+         (ArityEquationCountV1 $name $count) ($name $count))))))))
+(= (arity:scan-cmd-directory $found $rx $targets $directory)
+   (if (fs:exists $directory)
+     (arity:scan-cmd-files $found $rx $targets $directory (sort-atom (fs:entries $directory))) ()))
+(= (arity:scan-cmd-files $found $rx $targets $directory $names)
+   (if (== $names ()) ()
+     (let* (($name (car-atom $names))
+            ($scanned (if (str:ends-with $name ".metta")
+                        (arity:scan-cmd-text $found $rx $targets
+                          (fs:read-text (path:join $directory $name))) ())))
+       (arity:scan-cmd-files $found $rx $targets $directory (cdr-atom $names)))))
+(= (arity:scan-cmd-text $found $rx $targets $text)
+   (case (re:find-all $rx $text)
+     (((re:matches $events)
+       (arity:scan-cmd-matches $found $targets $text (str:byte-length $text) $events))
+      ($other ()))))
+(= (arity:scan-cmd-matches $found $targets $text $total LNil) ())
+(= (arity:scan-cmd-matches $found $targets $text $total (LCons (re:match $at $end $groups) $rest))
+   (let* (($tail (str:byte-slice $text (+ $at 2) $end))
+          ($rel (str:find $tail "("))
+          ($lhs-start (+ (+ $at 2) $rel))
+          ($last (str:byte-slice $text (- $end 1) $end))
+          ($name (str:strip-python (str:byte-slice $text (+ $lhs-start 1) (- $end 1))))
+          ($recorded (if (str:is-set-member $targets $name)
+                       (if (== $last ")")
+                         (arity:record-equation $found (str:byte-slice $text $lhs-start $end))
+                         (arity:scan-complex-lhs $found $text $total $lhs-start 512))
+                       ())))
+     (arity:scan-cmd-matches $found $targets $text $total $rest)))
 (= (arity:scan-directory $found $directory)
    (if (fs:exists $directory)
      (arity:scan-files $found $directory (sort-atom (fs:entries $directory))) ()))
@@ -192,47 +272,54 @@
                     (fs:read-text (path:join $directory $name))) ())))
        (arity:scan-files $found $directory (cdr-atom $names)))))
 (= (arity:scan-text $found $text)
-   (case (re:find-all (get-state &arity-equation-start) $text)
+   (case (re:find-all (arity:regex-header) $text)
      (((re:matches $events)
-       (arity:scan-events $found $text $events arity:no-lhs))
+       (arity:scan-headers $found $text (str:byte-length $text) $events))
       ($other ()))))
 
-(= (arity:scan-events $found $text LNil $state)
-   (if (== $state arity:no-lhs) ()
-     (let (arity:lhs $start $depth $quoted $skip) $state
-       (arity:record-equation $found
-         (str:byte-slice $text $start (str:byte-length $text))))))
-(= (arity:scan-events $found $text
-                       (LCons (re:match $at $end $groups) $rest) $state)
-   (let $c (str:byte-slice $text $at $end)
-     (if (== $state arity:no-lhs)
-       (if (str:starts-with $c "(=")
-         (arity:scan-events $found $text $rest (arity:lhs (- $end 1) 1 False -1))
-         (arity:scan-events $found $text $rest arity:no-lhs))
-       (let (arity:lhs $start $depth $quoted $skip) $state
-         (if (== $at $skip)
-           (arity:scan-events $found $text $rest
-             (arity:lhs $start $depth $quoted -1))
-           (if $quoted
-             (if (== $c "\\")
-               (arity:scan-events $found $text $rest
-                 (arity:lhs $start $depth True $end))
-               (arity:scan-events $found $text $rest
-                 (arity:lhs $start $depth (not (== $c "\"")) -1)))
-             (if (== $c "\"")
-               (arity:scan-events $found $text $rest
-                 (arity:lhs $start $depth True -1))
-               (if (== $c "(")
-                 (arity:scan-events $found $text $rest
-                   (arity:lhs $start (+ $depth 1) False -1))
-                 (if (and (== $c ")") (== $depth 1))
-                   (let $_ (arity:record-equation $found
-                              (str:byte-slice $text $start $end))
-                     (arity:scan-events $found $text $rest arity:no-lhs))
-                   (if (== $c ")")
-                     (arity:scan-events $found $text $rest
-                       (arity:lhs $start (- $depth 1) False -1))
-                     (arity:scan-events $found $text $rest $state)))))))))))
+(= (arity:scan-headers $found $text $total LNil) ())
+(= (arity:scan-headers $found $text $total (LCons (re:match $at $end $groups) $rest))
+   (let $_ (if (== (str:byte-slice $text (- $end 1) $end) ")")
+             (let* (($tail (str:byte-slice $text (+ $at 2) $end))
+                    ($rel (str:find $tail "(")))
+               (arity:record-equation $found
+                 (str:byte-slice $tail $rel (str:byte-length $tail))))
+             (arity:scan-complex-lhs $found $text $total (- $end 1) 512))
+     (arity:scan-headers $found $text $total $rest)))
+
+(= (arity:scan-complex-lhs $found $text $total $start $win)
+   (let* (($limit (min $total (+ $start $win)))
+          ($slice (str:byte-slice $text $start $limit)))
+     (case (re:find-all (arity:regex-steering) $slice)
+       (((re:matches $events)
+         (case (arity:find-balanced-end $slice $events 0 False -1)
+           (((ArityLhsClosedV1 $end-rel)
+             (arity:record-equation $found (str:byte-slice $slice 0 $end-rel)))
+            (ArityLhsOpenV1
+             (if (< $limit $total)
+               (arity:scan-complex-lhs $found $text $total $start (* $win 2))
+               (arity:record-equation $found $slice))))))
+        ($other (arity:record-equation $found $slice))))))
+
+(= (arity:find-balanced-end $slice LNil $depth $quoted $skip) ArityLhsOpenV1)
+(= (arity:find-balanced-end $slice (LCons (re:match $at $end $groups) $rest)
+                            $depth $quoted $skip)
+   (if (== $at $skip)
+     (arity:find-balanced-end $slice $rest $depth $quoted -1)
+     (let $c (str:byte-slice $slice $at $end)
+       (if $quoted
+         (if (== $c "\\")
+           (arity:find-balanced-end $slice $rest $depth True $end)
+           (arity:find-balanced-end $slice $rest $depth (not (== $c "\"")) -1))
+         (if (== $c "\"")
+           (arity:find-balanced-end $slice $rest $depth True -1)
+           (if (== $c "(")
+             (arity:find-balanced-end $slice $rest (+ $depth 1) False -1)
+             (if (and (== $c ")") (== $depth 1))
+               (ArityLhsClosedV1 $end)
+               (if (== $c ")")
+                 (arity:find-balanced-end $slice $rest (- $depth 1) False -1)
+                 (arity:find-balanced-end $slice $rest $depth False -1)))))))))
 
 (= (arity:record-equation $found $left-side)
    (let $fields (arity:split-top $left-side)
@@ -300,16 +387,31 @@
    (sort-atom (union-atom (arity:refine-base (arity:base-rows) $equations)
                           (arity:refine-extra (arity:equation-commands) $equations))))
 
-!(bind! &arity-equations (new-state (arity:equation-arities-at (system:cwd))))
-!(bind! &arity-rows (new-state (arity:refined-rows (get-state &arity-equations))))
-!(bind! &arity-name-set
-   (new-state (str:set (map-atom (get-state &arity-rows) $row (arity:row-name $row)))))
+(= (arity:ensure-equations!)
+   (if (!= (get-state &arity-equations) ArityUnloadedV1) True
+     (let* (($eqs (arity:equation-arities-at (get-state &arity-root)))
+            ($s1 (change-state! &arity-equations $eqs)))
+       True)))
 
-(= (arity:equation-arities) (get-state &arity-equations))
-(= (arity:rows) (get-state &arity-rows))
+(= (arity:ensure-rows!)
+   (if (!= (get-state &arity-rows) ArityUnloadedV1) True
+     (let* (($eqs (if (!= (get-state &arity-equations) ArityUnloadedV1)
+                    (get-state &arity-equations)
+                    (arity:command-arities-at (get-state &arity-root))))
+            ($rows (arity:refined-rows $eqs))
+            ($names (str:set (map-atom $rows $row (arity:row-name $row))))
+            ($s1 (change-state! &arity-rows $rows))
+            ($s2 (change-state! &arity-name-set $names)))
+       True)))
+
+(= (arity:equation-arities)
+   (let $ok (arity:ensure-equations!) (get-state &arity-equations)))
+(= (arity:rows)
+   (let $ok (arity:ensure-rows!) (get-state &arity-rows)))
 (= (arity:names) (map-atom (arity:rows) $row (arity:row-name $row)))
 (= (arity:names-text) (str:join "\n" (arity:names)))
-(= (arity:known? $name) (str:is-set-member (get-state &arity-name-set) $name))
+(= (arity:known? $name)
+   (let $ok (arity:ensure-rows!) (str:is-set-member (get-state &arity-name-set) $name)))
 (= (arity:bounds $name)
    (arity:find-bounds $name (arity:rows)))
 (= (arity:find-bounds $name $rows)
@@ -317,3 +419,8 @@
      (let (ArityRowV1 $head $lo $hi) (car-atom $rows)
        (if (== $head $name) (ArityBoundsV1 $lo $hi)
          (arity:find-bounds $name (cdr-atom $rows))))))
+
+; Preload the compact command-only arity table while boot RSS is low so its
+; temporary scan buffers are reused by subsequent imports instead of stacking
+; onto peak turn RSS. Full 5,500+ equation discovery stays lazy on demand.
+!(arity:ensure-rows!)

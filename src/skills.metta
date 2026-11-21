@@ -1,10 +1,28 @@
 !(import! &self ./src/state_ledger.metta)
 !(import! &self ./src/gateway_client_cetta.metta)
-!(import! &self ./src/mcp_bridge_cetta.metta)
 !(import! &self ./src/mode_state.metta)
 !(import! &self ./src/skills_help.metta)
-!(import! &self ./src/iter_authoring_cetta.metta)
-!(import! &self ./src/claude_bridge_cetta.metta)
+!(bind! &skills-mcp-loaded (new-state False))
+!(bind! &skills-iter-author-loaded (new-state False))
+!(bind! &skills-claude-loaded (new-state False))
+!(bind! &skills-sibling-loaded (new-state False))
+(= (skills:call $expr) (eval $expr))
+(= (skills:ensure-mcp!)
+   (if (get-state &skills-mcp-loaded) True
+     (progn (import! &self ./src/mcp_bridge_cetta.metta)
+            (change-state! &skills-mcp-loaded True) True)))
+(= (skills:ensure-iter-author!)
+   (if (get-state &skills-iter-author-loaded) True
+     (progn (import! &self ./src/iter_authoring_cetta.metta)
+            (change-state! &skills-iter-author-loaded True) True)))
+(= (skills:ensure-claude!)
+   (if (get-state &skills-claude-loaded) True
+     (progn (import! &self ./src/claude_bridge_cetta.metta)
+            (change-state! &skills-claude-loaded True) True)))
+(= (skills:ensure-sibling!)
+   (if (get-state &skills-sibling-loaded) True
+     (progn (import! &self ./src/sibling_cetta.metta)
+            (change-state! &skills-sibling-loaded True) True)))
 (= (getLegacySkills)
    (;INTERNAL:
     "- Coding mode for real work: (work \"task\") or (work \"task\" \"workdir\") starts a session that keeps working (plan, commands, patches, tests) until done and mails you its report; meanwhile you stay free. (work-status) lists sessions, (work-status \"id\") shows plan and report, (work-steer \"id\" \"text\") adds guidance, (work-resume \"id\" [\"current\"]) continues the same finished or interrupted session on its pin or after checking and re-pinning to the current runtime, (work-stop \"id\") stops it, (work-hold \"id\" \"why\" [\"YYYY-MM-DD\"]) holds it until a review date or indefinitely, and (work-archive \"id\" \"why\") sets it aside. Open sessions and pin verdicts appear in the coding-sessions context source, controlled by (setting \"work\" \"context\" \"open\"|\"summary\"|\"off\") and (setting \"work\" \"resume\" \"pinned\"|\"current\"). CeTTa only."
@@ -115,16 +133,16 @@
 ;; proposal-bound edits to stable source.  A captured in-flight request is
 ;; never rewritten.
 (= (iter-transformations)
-   (author:list))
+   (let $ok (skills:ensure-iter-author!) (skills:call (cons-atom author:list ()))))
 
 (= (iter-transform-write $name $source)
-   (author:run "write" $name $source))
+   (let $ok (skills:ensure-iter-author!) (skills:call (cons-atom author:run ("write" $name $source)))))
 
 (= (iter-transform-disable $name)
-   (author:run "disable" $name ""))
+   (let $ok (skills:ensure-iter-author!) (skills:call (cons-atom author:run ("disable" $name "")))))
 
 (= (iter-transform-enable $name)
-   (author:run "enable" $name ""))
+   (let $ok (skills:ensure-iter-author!) (skills:call (cons-atom author:run ("enable" $name "")))))
 
 ;; Rest is a pause, not a spend. The budget still held is banked by the loop
 ;; and handed back when the rest ends, so a short nap no longer costs a whole
@@ -239,7 +257,8 @@
 ;; the operator toggle. Every window on this Unix user's tmux server is shared
 ;; agent workspace, so tmux-send needs no separate authorization layer.
 (= (claude-code $prompt)
-   (claude:ask (utils:decode-safe $prompt)))
+   (let $ok (skills:ensure-claude!)
+        (skills:call (cons-atom claude:ask ((utils:decode-safe $prompt))))))
 !(import! &self ./src/tmux_io)
 
 ;; Progressive disclosure: one-line catalog above, full page on demand.
@@ -282,10 +301,11 @@
 (= (energy) (energy:view))
 (= (energy-set $who $tier)
    (energy:set $who $tier))
-!(import! &self ./src/sibling_cetta.metta)
-(= (sibling-status) (sibling:status))
-(= (sibling-on) (sibling:on))
-(= (sibling-off $reason) (sibling:off (utils:decode-safe $reason)))
+(= (sibling-status) (let $ok (skills:ensure-sibling!) (skills:call (cons-atom sibling:status ()))))
+(= (sibling-on) (let $ok (skills:ensure-sibling!) (skills:call (cons-atom sibling:on ()))))
+(= (sibling-off $reason)
+   (let $ok (skills:ensure-sibling!)
+        (skills:call (cons-atom sibling:off ((utils:decode-safe $reason))))))
 
 ;; LLM API introspection: budget, model list, model switch (src/model_menu_cetta.metta).
 (= (memory-health) (semantic:health))
@@ -295,12 +315,13 @@
 (= (llm-set-model $name) (model:set $name))
 
 ;; Generic MCP bridge. Servers are configured in .mcp.json; arguments are JSON.
-(= (mcp-servers) (mcp:servers))
-(= (mcp-tools $server) (mcp:tools $server))
-(= (mcp-tool-info $server $tool) (mcp:tool-info $server $tool))
+(= (mcp-servers) (let $ok (skills:ensure-mcp!) (skills:call (cons-atom mcp:servers ()))))
+(= (mcp-tools $server) (let $ok (skills:ensure-mcp!) (skills:call (cons-atom mcp:tools ($server)))))
+(= (mcp-tool-info $server $tool) (let $ok (skills:ensure-mcp!) (skills:call (cons-atom mcp:tool-info ($server $tool)))))
 (= (mcp-call $server $tool $json)
-   (let $args (utils:decode-safe $json)
-        (mcp:call-tool $server $tool $args)))
+   (let* (($ok (skills:ensure-mcp!))
+          ($args (utils:decode-safe $json)))
+     (skills:call (cons-atom mcp:call-tool ($server $tool $args)))))
 
 (= (command-receipts) (turn:command-receipts))
 (= (command-receipts $cursor) (turn:command-receipts $cursor))
