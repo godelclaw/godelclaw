@@ -158,6 +158,7 @@
       ("METTACLAW_ATTENTION_PATH" "{home}/attention.metta")
       ("METTACLAW_WORKSPACES_PATH" "{home}/workspaces.metta")))
     ("tests/unit/housekeeping.metta" "UNIT_NATIVE_HOUSEKEEPING_OK")
+    ("tests/unit/operator_tools_native.metta" "UNIT_OPERATOR_TOOLS_NATIVE_OK")
     ("tests/unit/native_worklog_cli.metta" "UNIT_NATIVE_WORKLOG_CLI_OK")
     ("tests/unit/observatory.metta" "UNIT_NATIVE_OBSERVATORY_OK")
     ("tests/unit/observatory_stream.metta" "UNIT_OBSERVATORY_STREAM_OK")

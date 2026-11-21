@@ -1,0 +1,303 @@
+; Native read-only provider usage report over the agent's input ledger socket.
+; Replaces scripts/usage_report.py + src/usage_history.py (report_native) with
+; exact schema, grading, and sorted-JSON parity.
+!(import! &self ./state_file_cetta.metta)
+!(import! &self ./cli_values_cetta.metta)
+!(import! &self ./ledger_client.metta)
+!(import! &self ./usage_evidence_cetta.metta)
+!(import! &self (library fs))
+!(import! &self (library path))
+!(import! &self (library str))
+!(import! &self (library re))
+!(import! &self (library json))
+!(import! &self (library system))
+!(import! &self (library math))
+!(import! &self (library list))
+!(import! &self (library proc))
+
+!(bind! &ur-re-iso (new-state (re:compile "^([0-9]{4})-([0-9]{2})-([0-9]{2})[T ]([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\\.([0-9]+))?(Z|z|([+-])([0-9]{2}):([0-9]{2}))$")))
+!(bind! &ur-re-tz (new-state (re:compile "^[A-Za-z0-9_+./-]+$")))
+!(bind! &ur-tz-cache (new-state (UrTzCache "" -1 "")))
+
+(= (ur:group-text $m $s $i)
+   (let $v (re:group-text $m $s $i)
+     (if (== (get-type $v) String) $v "")))
+
+(= (ur:int $s)
+   (let $trimmed (ur:strip-leading-zeros $s)
+     (cli:number $trimmed 0)))
+
+(= (ur:strip-leading-zeros $s)
+   (if (<= (str:byte-length $s) 1) $s
+     (if (== (str:byte-slice $s 0 1) "0")
+       (ur:strip-leading-zeros (str:byte-slice $s 1 (str:byte-length $s)))
+       $s)))
+
+(= (ur:pow10 $n $acc)
+   (if (<= $n 0) $acc (ur:pow10 (- $n 1) (* $acc 10.0))))
+
+(= (ur:frac $digits)
+   (if (== $digits "") 0.0
+     (/ (ur:int $digits) (ur:pow10 (str:byte-length $digits) 1.0))))
+
+; Exact Gregorian civil-to-days (Howard Hinnant algorithm).
+(= (ur:days-from-civil $year $month $day)
+   (let* (($y (if (<= $month 2) (- $year 1) $year))
+          ($era (math:floor (/ $y 400)))
+          ($yoe (- $y (* $era 400)))
+          ($m (if (> $month 2) (- $month 3) (+ $month 9)))
+          ($doy (+ (math:floor (/ (+ (* 153 $m) 2) 5)) (- $day 1)))
+          ($doe (+ (* $yoe 365) (+ (math:floor (/ $yoe 4)) (- $doy (math:floor (/ $yoe 100)))))))
+     (- (+ (* $era 146097) $doe) 719468)))
+
+; Parse ISO-8601 timestamp requiring an explicit timezone (Z or +/-HH:MM).
+(= (ur:parse-iso $text)
+   (if (!= (get-type $text) String) (UrError "timestamp must be a string")
+     (let $m (re:captures (get-state &ur-re-iso) $text)
+       (case $m
+         (((re:match $_1 $_2 $_3)
+           (let* (($yr (ur:int (ur:group-text $m $text 1)))
+                  ($mo (ur:int (ur:group-text $m $text 2)))
+                  ($dy (ur:int (ur:group-text $m $text 3)))
+                  ($hr (ur:int (ur:group-text $m $text 4)))
+                  ($mn (ur:int (ur:group-text $m $text 5)))
+                  ($sc (ur:int (ur:group-text $m $text 6)))
+                  ($fr (ur:frac (ur:group-text $m $text 7)))
+                  ($tz (ur:group-text $m $text 8))
+                  ($off (if (or (== $tz "Z") (== $tz "z")) 0
+                          (let* (($sign (if (== (ur:group-text $m $text 9) "-") -1 1))
+                                 ($oh (ur:int (ur:group-text $m $text 10)))
+                                 ($om (ur:int (ur:group-text $m $text 11))))
+                            (* $sign (+ (* $oh 3600) (* $om 60)))))))
+             (if (or (< $mo 1) (or (> $mo 12) (or (< $dy 1) (or (> $dy 31)
+                   (or (> $hr 23) (or (> $mn 59) (> $sc 59)))))))
+               (UrError "invalid timestamp range")
+               (let* (($days (ur:days-from-civil $yr $mo $dy))
+                      ($secs (+ (* $days 86400) (+ (* $hr 3600) (+ (* $mn 60) $sc))))
+                      ($epoch (- (+ $secs $fr) $off)))
+                 (UrOk $epoch)))))
+          ($none (UrError "include a timezone, for example 2026-10-24T00:00:00Z")))))))
+
+(= (ur:valid-zone? $zone)
+   (if (or (== $zone "UTC") (or (== $zone "utc") (or (== $zone "Etc/UTC") (== $zone "local")))) True
+     (if (or (not (re:is-match (get-state &ur-re-tz) $zone))
+             (case (str:find $zone "..") (((TextNotFound $_) False) ($bad True))))
+       False
+       (fs:is-file (path:join "/usr/share/zoneinfo" $zone)))))
+
+(= (ur:day $ts $zone)
+   (let $sec (math:floor $ts)
+     (if (or (== $zone "UTC") (or (== $zone "utc") (== $zone "Etc/UTC")))
+       (system:format-time "%Y-%m-%d" $sec "utc")
+       (if (== $zone "local")
+         (system:format-time "%Y-%m-%d" $sec "local")
+         (let* (($bucket (math:floor (/ $sec 900)))
+                ((UrTzCache $cz $cb $cd) (get-state &ur-tz-cache)))
+           (if (and (== $cz $zone) (== $cb $bucket)) $cd
+             (let* (($res (proc:run ("env" (str:concat "TZ=" $zone) "date" "-d"
+                              (str:concat "@" (str:format-fixed $sec 0)) "+%Y-%m-%d")
+                            (system:getcwd) inherit 5000 1024))
+                    ($day (case $res (((proc:exited 0 $out $_err) (str:trim $out))
+                                      ($bad (system:format-time "%Y-%m-%d" $sec "utc")))))
+                    ($sv (change-state! &ur-tz-cache (UrTzCache $zone $bucket $day))))
+               $day)))))))
+
+(= (ur:empty-obj? $v)
+   (case $v
+     (((JsonObject ()) True)
+      (JsonNull True)
+      ($other False))))
+
+(= (ur:merge-pairs $base $pairs)
+   (if (== $pairs ()) $base
+     (let (JsonPair $k $v) (car-atom $pairs)
+       (ur:merge-pairs (sf:put $base $k $v) (cdr-atom $pairs)))))
+
+(= (ur:merge-obj $base $extra)
+   (case $extra
+     (((JsonObject $pairs) (ur:merge-pairs $base $pairs))
+      ($other $base))))
+
+(= (ur:counter-add $obj $key $delta)
+   (let $cur (sf:get $obj $key 0)
+     (sf:put $obj $key (+ $cur $delta))))
+
+(= (ur:counter-merge-pairs $acc $pairs)
+   (if (== $pairs ()) $acc
+     (let (JsonPair $k $v) (car-atom $pairs)
+       (ur:counter-merge-pairs (ur:counter-add $acc $k $v) (cdr-atom $pairs)))))
+
+(= (ur:counter-merge $acc $extra)
+   (case $extra
+     (((JsonObject $pairs) (ur:counter-merge-pairs $acc $pairs))
+      ($other $acc))))
+
+(= (ur:grade-metric $res $counts $name)
+   (let $v (ue:count (sf:get $counts $name JsonNull))
+     (if (!= $v JsonNull)
+       (sf:put $res (str:concat "known_" $name) $v)
+       (sf:put $res (str:concat $name "_unknown_calls") 1))))
+
+(= (ur:grade-metrics $res $counts $names)
+   (if (== $names ()) $res
+     (ur:grade-metrics (ur:grade-metric $res $counts (car-atom $names)) $counts (cdr-atom $names))))
+
+(= (ur:grade $call)
+   (let* (($status-raw (sf:get $call "status" "pending"))
+          ($status (if (== (get-type $status-raw) String) $status-raw "pending"))
+          ($base (sf:put (sf:put (JsonObject ()) "calls" 1) (str:concat $status "_calls") 1))
+          ($usage (sf:get $call "usage" (JsonObject ())))
+          ($failure (sf:get $call "failure" (JsonObject ())))
+          ($not-sub (and (== $status "failed")
+                         (and (== (sf:get $failure "sent" JsonNull) False)
+                              (ur:empty-obj? $usage))))
+          ($r1 (if $not-sub (sf:put $base "not_submitted_calls" 1) $base))
+          ($counts (if $not-sub
+                     (JsonObject ((JsonPair "input_tokens" 0) (JsonPair "cached_tokens" 0)
+                                  (JsonPair "output_tokens" 0) (JsonPair "cache_write_tokens" 0)))
+                     (let* (($c0 (sf:get $usage "counts" (JsonObject ())))
+                            ($rep (sf:get $usage "reported_usage" (JsonObject ())))
+                            ($cw (sf:get $rep "cache_creation_input_tokens" JsonNull)))
+                       (sf:put $c0 "cache_write_tokens" $cw)))))
+     (ur:grade-metrics $r1 $counts ("input_tokens" "cached_tokens" "output_tokens" "cache_write_tokens"))))
+
+(= (ur:ingest-rows $space $rows)
+   (if (== $rows ()) True
+     (let* ((($id $event $detail-str $admitted) (car-atom $rows))
+            ($existing (case (collapse (match $space (UrCall $id $obj) $obj))
+                         ((($obj) (Found $obj)) ($none Missing))))
+            ($call0 (case $existing
+                      (((Found $o) $o)
+                       (Missing (JsonObject ((JsonPair "admitted" $admitted)))))))
+            ($detail (case (json:parse-python $detail-str)
+                       (((JsonObject $p) (JsonObject $p)) ($bad (JsonObject ())))))
+            ($call1 (if (or (== $event "admitted") (== $event "request"))
+                      (ur:merge-obj $call0 $detail)
+                      (if (== $event "usage")
+                        (sf:put $call0 "usage" $detail)
+                        (if (or (== $event "completed") (or (== $event "failed") (== $event "unknown")))
+                          (let $c-st (sf:put $call0 "status" $event)
+                            (if (== $event "failed") (sf:put $c-st "failure" $detail) $c-st))
+                          $call0))))
+            ($d1 (case $existing
+                   (((Found $old) (remove-atom $space (UrCall $id $old)))
+                    (Missing (add-atom $space (UrCallId $id))))))
+            ($d2 (add-atom $space (UrCall $id $call1))))
+       (ur:ingest-rows $space (cdr-atom $rows)))))
+
+(= (ur:str-field $obj $key $fallback)
+   (let $v (sf:get $obj $key $fallback)
+     (if (== (get-type $v) String) $v $fallback)))
+
+(= (ur:str< $a $b)
+   (if (== $a $b) False (== (car-atom (list:sort ($a $b))) $a)))
+
+(= (ur:tuple< $a $b)
+   (if (or (== $a ()) (== $b ())) False
+     (let (($ah $at) ($bh $bt)) (((car-atom $a) (cdr-atom $a)) ((car-atom $b) (cdr-atom $b)))
+       (if (== $ah $bh) (ur:tuple< $at $bt) (ur:str< $ah $bh)))))
+
+(= (ur:insert-key $k $sorted)
+   (if (== $sorted ()) ($k)
+     (let $first (car-atom $sorted)
+       (if (ur:tuple< $k $first) (cons-atom $k $sorted)
+         (cons-atom $first (ur:insert-key $k (cdr-atom $sorted)))))))
+
+(= (ur:sort-keys $keys)
+   (if (== $keys ()) () (ur:insert-key (car-atom $keys) (ur:sort-keys (cdr-atom $keys)))))
+
+(= (ur:aggregate-calls $cspace $gspace $ids $zone $totals)
+   (if (== $ids ()) $totals
+     (let* (($id (car-atom $ids))
+            ($call (case (collapse (match $cspace (UrCall $id $o) $o))
+                     ((($o) $o) ($none (JsonObject ())))))
+            ($admitted (sf:get $call "admitted" 0))
+            ($gkey ((ur:day $admitted $zone)
+                    (ur:str-field $call "instance" "unrecorded")
+                    (ur:str-field $call "session" "")
+                    (ur:str-field $call "provider" "unrecorded")
+                    (ur:str-field $call "model" "unrecorded")
+                    (ur:str-field $call "purpose" "unspecified")
+                    (ur:str-field $call "trigger" "unrecorded")))
+            ($grade (ur:grade $call))
+            ($existing (case (collapse (match $gspace (UrGroup $gkey $cnt) $cnt))
+                         ((($cnt) (Found $cnt)) ($none-g Missing))))
+            ($merged (case $existing
+                       (((Found $prev) (ur:counter-merge $prev $grade))
+                        (Missing $grade))))
+            ($d1 (case $existing
+                   (((Found $old) (remove-atom $gspace (UrGroup $gkey $old)))
+                    (Missing (add-atom $gspace (UrGroupKey $gkey))))))
+            ($d2 (add-atom $gspace (UrGroup $gkey $merged)))
+            ($next-totals (ur:counter-merge $totals $grade)))
+       (ur:aggregate-calls $cspace $gspace (cdr-atom $ids) $zone $next-totals))))
+
+(= (ur:build-groups $gspace $keys)
+   (if (== $keys ()) ()
+     (let* (($k (car-atom $keys))
+            (($day $inst $sess $prov $mod $purp $trig) $k)
+            ($cnts (case (collapse (match $gspace (UrGroup $k $c) $c))
+                     ((($c) $c) ($none (JsonObject ())))))
+            ($base (JsonObject ((JsonPair "day" $day) (JsonPair "instance" $inst)
+                                (JsonPair "session" $sess) (JsonPair "provider" $prov)
+                                (JsonPair "model" $mod) (JsonPair "purpose" $purp)
+                                (JsonPair "trigger" $trig))))
+            ($row (ur:merge-obj $base $cnts))
+            ($rest (ur:build-groups $gspace (cdr-atom $keys))))
+       (cons-atom $row $rest))))
+
+(= (ur:report $socket $since $until $zone)
+   (if (< $until $since) (UrError "until precedes since")
+     (if (not (ur:valid-zone? $zone)) (UrError (str:concat "invalid timezone: " $zone))
+       (case (catch (ledger-client:call $socket "llm-usage" ($since $until)))
+         (((usage $started $legacy $rows)
+           (let* (($started-json (if (== $started none) JsonNull $started))
+                  ($complete (and (!= $started none) (and (>= $since $started) (== $legacy 0))))
+                  ($cspace (new-space))
+                  ($gspace (new-space))
+                  ($ing (ur:ingest-rows $cspace $rows))
+                  ($ids (collapse (match $cspace (UrCallId $cid) $cid)))
+                  ($totals (ur:aggregate-calls $cspace $gspace $ids $zone (JsonObject ())))
+                  ($keys (ur:sort-keys (collapse (match $gspace (UrGroupKey $gk) $gk))))
+                  ($groups (ur:build-groups $gspace $keys)))
+             (UrOk (JsonObject ((JsonPair "schema" 1)
+                                (JsonPair "scope" "local call history; not account-wide billing")
+                                (JsonPair "since" $since)
+                                (JsonPair "until" $until)
+                                (JsonPair "timezone" $zone)
+                                (JsonPair "window" "admission time")
+                                (JsonPair "billing_reconciled" False)
+                                (JsonPair "monetary_cost" JsonNull)
+                                (JsonPair "history_available" True)
+                                (JsonPair "recording_started" $started-json)
+                                (JsonPair "legacy_request_rows_without_history" $legacy)
+                                (JsonPair "coverage_complete" $complete)
+                                (JsonPair "groups" (JsonArray $groups))
+                                (JsonPair "totals" $totals))))))
+          ($err (UrError (str:concat "ledger llm-usage failed: " (repr $err)))))))))
+
+(= (ur:parse-ts-opt $raw $default)
+   (if (== $raw "") (UrOk $default)
+     (let $num (cli:number $raw UrNotNum)
+       (if (!= $num UrNotNum) (UrOk $num) (ur:parse-iso $raw)))))
+
+(= (ur:main $args)
+   (let $options (cli:pair-args (cli:strings $args) () (JsonObject ()))
+     (case $options
+       (((CliFailureV1 $why) (progn (system:write stderr (str:concat $why "\n")) 2))
+        ($opts
+         (let $socket (sf:get $opts "--socket" "")
+           (if (== $socket "")
+             (progn (system:write stderr "usage_report: --socket is required\n") 2)
+             (let* (($zone (sf:get $opts "--timezone" "UTC"))
+                    ($since-r (ur:parse-ts-opt (sf:get $opts "--since" "") 0.0))
+                    ($until-r (ur:parse-ts-opt (sf:get $opts "--until" "") (system:wall-time))))
+               (case ($since-r $until-r)
+                 ((((UrOk $since) (UrOk $until))
+                   (case (ur:report $socket $since $until $zone)
+                     (((UrOk $val)
+                       (let $w (system:write stdout (str:concat (json:stringify-python-with $val ((sort-keys True) (indent 2))) "\n"))
+                         0))
+                      ((UrError $msg) (progn (system:write stderr (str:concat $msg "\n")) 1)))))
+                  (((UrError $msg) $_u) (progn (system:write stderr (str:concat $msg "\n")) 2))
+                  (($_s (UrError $msg)) (progn (system:write stderr (str:concat $msg "\n")) 2))))))))))))
