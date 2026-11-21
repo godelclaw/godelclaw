@@ -209,7 +209,8 @@
           ($_ (nt:require ($mode no-instance-files-used)
                 (and (== (fs:read-text $foreign) "PRIVATE_INSTANCE_SENTINEL")
                      (not (fs:exists (path:join $home ".local/state/godel"))))))
-          ($_ (proc:cancel $http)) ($_ (proc:await $http)) ($_ (proc:close $http)))
+          ($_ (proc:cancel $http)) ($_ (proc:await $http)) ($_ (proc:close $http))
+          ($_ (nt:require ($mode no-leaked-processes) (nt:no-leaked-processes? $paths 20))))
      (let $_ (println! (NATIVE_STANDALONE_MODE_OK $mode)) True)))
 
 !(let $_ (nt:require standalone-suite-completed
@@ -219,4 +220,6 @@
          ("iter" (standalone-test:mode "iter"))
          ("omega" (standalone-test:mode "omega"))
          ($unknown False)))))
-   (println! NATIVE_STANDALONE_MODES_PASSED))
+   (let $_ (nt:require standalone-no-leaked-processes
+             (nt:no-leaked-processes? (nt:required-env "NATIVE_TEST_ARTIFACTS") 20))
+     (println! NATIVE_STANDALONE_MODES_PASSED)))

@@ -6,6 +6,7 @@
 !(import! &self (library json))
 !(import! &self (library math))
 !(import! &self (library path))
+!(import! &self (library host_io))
 
 (: nt:equal (-> %Undefined% %Undefined% Bool))
 (= (nt:equal $actual $expected) (== $actual $expected))
@@ -36,3 +37,22 @@
 (= (nt:environment $home)
    (let $path (system:getenv-or-default "PATH" "/usr/bin:/bin")
      (("PATH" $path) ("HOME" $home) ("LANG" "C.UTF-8") ("LC_ALL" "C.UTF-8"))))
+(: nt:cwd-under? (-> %Undefined% %Undefined% Bool))
+(= (nt:cwd-under? $cwd $root)
+   (and (== (get-type $cwd) String)
+        (or (== $cwd $root) (str:starts-with $cwd (str:concat $root "/")))))
+(: nt:leaked-processes-under (-> %Undefined% %Undefined%))
+(= (nt:leaked-processes-under $root)
+   (let* (($canon (let $c (fs:canonical-path $root) (if (== (get-type $c) String) $c $root)))
+          ($self (repr (system:pid)))
+          ($pids (filter-atom (fs:entries "/proc") $entry
+                   (and (str:is-all-in digit $entry) (!= $entry $self)))))
+     (filter-atom $pids $pid
+       (nt:cwd-under? (fs:canonical-path (str:join "" ("/proc/" $pid "/cwd"))) $canon))))
+(: nt:no-leaked-processes? (-> %Undefined% Number Bool))
+(= (nt:no-leaked-processes? $root $retries)
+   (let $leaked (nt:leaked-processes-under $root)
+     (if (== $leaked ()) True
+       (if (<= $retries 0)
+         (progn (println! (LEAKED_PROCESSES $root $leaked)) False)
+         (progn (host:wait () 50) (nt:no-leaked-processes? $root (- $retries 1)))))))

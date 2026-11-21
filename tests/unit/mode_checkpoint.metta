@@ -35,5 +35,61 @@
               (== (mode-host:append-checkpoint $path "!") True)))
         ($_ (nt:require append-checkpoint-keeps-prefix (== (fs:read-text $path) "A€!")))
         ($_ (nt:require settled-recovery-does-not-reapply-append (== (mode-host:recover) True)))
-        ($_ (nt:require settled-recovery-has-no-extra-bytes (== (fs:read-text $path) "A€!"))))
+        ($_ (nt:require settled-recovery-has-no-extra-bytes (== (fs:read-text $path) "A€!")))
+        ; Standalone ledger cleanup: idempotent on none, cancels+waits+closes live worker,
+        ; and cleans up on explicit exit paths (stop-uncommitted 75 and switch gate 0).
+        ($_ (nt:require stop-ledger-noop-on-none (== (mode-host:stop-ledger) True)))
+        ($ledger-dir (path:join $root "ledger-direct"))
+        ($_ (fs:make-directories $ledger-dir 448))
+        ($sleeper (proc:spawn ("/bin/sleep" "60") ((cwd $ledger-dir) (stdout null) (stderr null))))
+        ($_ (change-state! &mode-native-ledger $sleeper))
+        ($_ (nt:require leak-detector-sees-running-child (not (== (nt:leaked-processes-under $ledger-dir) ()))))
+        ($_ (nt:require stop-ledger-returns-true (== (mode-host:stop-ledger) True)))
+        ($_ (nt:require stop-ledger-clears-state (== (get-state &mode-native-ledger) none)))
+        ($_ (nt:require stop-ledger-stopped-child (nt:no-leaked-processes? $ledger-dir 20)))
+        ($_ (nt:require stop-ledger-idempotent-after-stop (== (mode-host:stop-ledger) True)))
+        ($repo (nt:required-env "TEST_REPOSITORY"))
+        ($bin (system:executable))
+        ($host-mod (path:join $repo "modes/runtime_host_cetta.metta"))
+        ; Exit 75 (mode-host:stop-uncommitted) stops &mode-native-ledger without relying on lifetime owner.
+        ($dir75 (path:join $root "ledger-exit75"))
+        ($_ (fs:make-directories $dir75 448))
+        ($ready75 (path:join $dir75 "ready"))
+        ($prog75 (str:join "" ("!(import! &self \"" $host-mod "\")\n"
+                               "(= (w $p $f $n) (if (or (fs:is-file $f) (<= $n 0)) True (progn (proc:wait $p 20) (w $p $f (- $n 1)))))\n"
+                               "!(let $p (proc:spawn (\"/bin/sh\" \"-c\" \"echo $$ > ready; exec /bin/sleep 60\") ((cwd \"" $dir75 "\") (stdout null) (stderr null) (lifetime detached)))\n"
+                               "   (progn (w $p \"" $ready75 "\" 100) (change-state! &mode-native-ledger $p) (mode-host:stop-uncommitted (Error test (Incomplete check)))))\n")))
+        ($p75-path (path:join $dir75 "run75.metta"))
+        ($_ (fs:write $p75-path $prog75))
+        ($p75-owner (proc:spawn ($bin "--lang" "petta" "--profile" "extended" "--import-mode" "ancestor-walk" "--quiet" $p75-path)
+                                ((cwd $repo) (env (nt:environment $root)) (timeout-ms 15000) (max-bytes 65536))))
+        ($r75 (proc:await $p75-owner))
+        ($_ (proc:close $p75-owner))
+        ($_ (nt:require stop-uncommitted-spawned-child (fs:is-file $ready75)))
+        ($_ (nt:require stop-uncommitted-exits-75
+              (case $r75 (((proc:exited 75 $_ $_) True) ((proc:result (proc:exited 75) $_ $_ $_ $_) True) ($other False)))))
+        ($_ (nt:require stop-uncommitted-stops-ledger (nt:no-leaked-processes? $dir75 20)))
+        ; Exit 0 (mode-host:gate recycle/switch) stops &mode-native-ledger without relying on lifetime owner.
+        ($dir0 (path:join $root "ledger-exit0"))
+        ($_ (fs:make-directories $dir0 448))
+        ($ready0 (path:join $dir0 "ready"))
+        ($recycle-file (path:join $dir0 "recycle.requested"))
+        ($_ (fs:write $recycle-file "switch\n"))
+        ($prog0 (str:join "" ("!(import! &self \"" $host-mod "\")\n"
+                              "(= (w $p $f $n) (if (or (fs:is-file $f) (<= $n 0)) True (progn (proc:wait $p 20) (w $p $f (- $n 1)))))\n"
+                              "!(let $p (proc:spawn (\"/bin/sh\" \"-c\" \"echo $$ > ready; exec /bin/sleep 60\") ((cwd \"" $dir0 "\") (stdout null) (stderr null) (lifetime detached)))\n"
+                              "   (progn (w $p \"" $ready0 "\" 100) (change-state! &mode-native-ledger $p) (mode-host:gate)))\n")))
+        ($p0-path (path:join $dir0 "run0.metta"))
+        ($_ (fs:write $p0-path $prog0))
+        ($env0 (cons-atom ("METTACLAW_MODE_PROFILE" "supervised")
+                (cons-atom ("METTACLAW_RECYCLE_REQUEST_PATH" $recycle-file)
+                 (cons-atom ("METTACLAW_MODE_RUNTIME" $dir0) (nt:environment $root)))))
+        ($p0-owner (proc:spawn ($bin "--lang" "petta" "--profile" "extended" "--import-mode" "ancestor-walk" "--quiet" $p0-path)
+                               ((cwd $repo) (env $env0) (timeout-ms 15000) (max-bytes 65536))))
+        ($r0 (proc:await $p0-owner))
+        ($_ (proc:close $p0-owner))
+        ($_ (nt:require gate-switch-spawned-child (fs:is-file $ready0)))
+        ($_ (nt:require gate-switch-exits-0
+              (case $r0 (((proc:exited 0 $_ $_) True) ((proc:result (proc:exited 0) $_ $_ $_ $_) True) ($other False)))))
+        ($_ (nt:require gate-switch-stops-ledger (nt:no-leaked-processes? $dir0 20))))
    (println! UNIT_NATIVE_MODE_CHECKPOINT_OK))

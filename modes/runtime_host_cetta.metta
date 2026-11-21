@@ -11,8 +11,17 @@
 (= (mode-host:root) (system:getenv-or-default "METTACLAW_MODE_RUNTIME" (system:getcwd)))
 (= (mode-host:shared) (system:getenv-or-default "METTACLAW_MODE_STATE_ROOT" (path:dirname (mode-host:root))))
 (= (mode-host:name) (system:getenv-or-default "METTACLAW_ACTIVE_LOOP_MODE" "iter"))
+(= (mode-host:stop-ledger)
+   (let $owner (get-state &mode-native-ledger)
+     (if (== $owner none) True
+       (let* (($_ (change-state! &mode-native-ledger none))
+              ($_ (catch (proc:cancel $owner)))
+              ($_ (catch (proc:wait $owner 2000)))
+              ($_ (catch (proc:close $owner))))
+         True))))
 (= (mode-host:stop-uncommitted $reason)
-   (let $_ (system:write stderr (str:concat "managed transition incomplete: " (str:concat (diagnostic:text $reason 800) "\n")))
+   (let* (($_ (mode-host:stop-ledger))
+          ($_ (system:write stderr (str:concat "managed transition incomplete: " (str:concat (diagnostic:text $reason 800) "\n")))))
      (system:exit 75)))
 (= (mode-host:standalone?) (== (system:getenv-or-default "METTACLAW_MODE_PROFILE" "") "standalone"))
 (= (mode-host:record $kind $fields)
@@ -27,7 +36,7 @@
 (= (mode-host:gate)
    (if (mode-host:standalone?) True
      (case (boot-state:recycle)
-       ((True (system:exit 0))
+       ((True (progn (mode-host:stop-ledger) (system:exit 0)))
         (False
           (case (lifecycle-native:enabled)
             ((1 True)
@@ -367,13 +376,14 @@
              (if (sf:failed? $removed) $removed True)))))))
 (= (mode-host:ledger)
    (if (not (mode-host:standalone?)) True
-     (let* (($socket (checkpoint:socket)) ($source (path:join (mode-host:root) "input-ledger"))
+     (let* (($_ (mode-host:stop-ledger))
+            ($socket (checkpoint:socket)) ($source (path:join (mode-host:root) "input-ledger"))
             ($binary (system:getenv-or-default "CETTA_VALUE_WORKER_BIN"
                          (path:join (path:dirname (system:executable)) "cetta-value-worker")))
             ($module (path:join (system:getenv-or-default "METTACLAW_RUNTIME_ROOT" (system:getcwd)) "src/input_ledger_server.metta"))
             ($environment (("CETTA_DB_SOURCE" $source) ("CETTA_DB_SOCKET" $socket)))
             ($owner (proc:spawn ($binary "--value-bytes" "268435456" "--serve" "--lang" "petta" $module "db-server:configuration")
-                      ((env (inherit $environment)) (stdout null) (stderr null)))))
+                      ((env (inherit $environment)) (stdout null) (stderr null) (lifetime owner)))))
        (case $owner
          (((Error $_ $_) (Error mode-ledger (Fault launch-failed)))
           ((proc:failed $_) (Error mode-ledger (Fault launch-failed)))
@@ -381,7 +391,8 @@
             (let $_ (change-state! &mode-native-ledger $started)
               (mode-host:ledger-ready $started $socket 100))))))))
 (= (mode-host:ledger-ready $owner $socket $left)
-   (if (<= $left 0) (Error mode-ledger (Incomplete ledger-not-ready))
+   (if (<= $left 0)
+     (progn (mode-host:stop-ledger) (Error mode-ledger (Incomplete ledger-not-ready)))
      (let $answer
          (if (fs:exists $socket) (checkpoint:call-with-timeout "working-set" () 500)
            (ErFailure LedgerUnavailable "" none))

@@ -574,7 +574,8 @@
           ($_ (if (== $mode "iter") (core-boot:iter-unreadable-intent $command $root $environment $runtime $agent-history $mode-path) True))
           ($_ (if (== $mode "iter") (core-boot:iter-controls $root $world $command $environment $mode-path $recycle) True))
           ($_ (proc:cancel $cwp)) ($_ (proc:await $cwp)) ($_ (proc:close $cwp))
-          ($_ (nq:close $world)))
+          ($_ (nq:close $world))
+          ($_ (nt:require ($mode no-leaked-processes) (nt:no-leaked-processes? $directory 20))))
      (let $_ (println! (NATIVE_MODE_BOOT_OK $mode)) (ModeBootDoneV1 $mode))))
 ; Every selected mode runs to its end: a case that leaves no answer, as a
 ; condition that is no Boolean does, fails the suite rather than skip the rest.

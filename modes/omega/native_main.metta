@@ -2,4 +2,5 @@
 !(import! &self ./native/bootstrap.metta)
 !(let $ready (mode-host:boot)
    (if (== $ready True) True (mode-host:stop-uncommitted $ready)))
-!(omega)
+!(let $done (catch (omega))
+   (progn (mode-host:stop-ledger) $done))
