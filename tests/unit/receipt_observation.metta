@@ -20,6 +20,27 @@
                 (JsonPair "disposition" (JsonString $disposition))
                 (JsonPair "result" (JsonString $text))
                 (JsonPair "command" (JsonArray ((JsonString "fixture-read")))))))
+(= (ro:rest-row $id $request)
+   (JsonObject ((JsonPair "id" (JsonString $id))
+                (JsonPair "request" (JsonString $request))
+                (JsonPair "command" (JsonArray ((JsonString "rest"))))
+                (JsonPair "disposition" (JsonString "returned"))
+                (JsonPair "result" (JsonString "(RESTING budget-banked)")))))
+(= (ro:record-rest $turn-num)
+   (let* (($_ (nt:require (rest-begin $turn-num) (nt:equal (turn:begin $turn-num "continuation-tick" "" "[]") 1)))
+          ($_ (turn:context-presented "[]"))
+          ($p (format-args "rest-turn-{} prompt" ($turn-num)))
+          ($_ (turn:context-prepared (str:sha256 $p) 0))
+          ($_ (nt:require (rest-capture $turn-num) (nt:equal (turn:capture $p 0) 1)))
+          ($bt (turn:broker-turn $turn-num))
+          (($ok $ticket) (turn:broker-begin $bt (quote ((rest))) 1))
+          ($_ (nt:require (rest-admitted $turn-num) (and (nt:equal $ok 1) (!= $ticket ""))))
+          ($_ (strategy:open-batch $bt $ticket))
+          ($_ (nt:require (rest-res $turn-num) (nt:equal (strategy:reserve $bt (quote (rest))) 1)))
+          ($_ (nt:require (rest-out $turn-num) (nt:equal (turn:command-result $bt returned (rest) "(RESTING budget-banked)" 0) 1)))
+          ($_ (turn:broker-end $bt (quote ((COMMAND_RETURN: ((rest) "(RESTING budget-banked)"))))))
+          ($_ (strategy:close-batch)))
+     $ticket))
 (= (ro:view $rows)
    (JsonObject ((JsonPair "root" (JsonString "conversation:fixture"))
                 (JsonPair "focus" (JsonString "fixture"))
@@ -99,12 +120,40 @@
         ($missing-id-row
           (JsonObject ((JsonPair "disposition" (JsonString "returned"))
                        (JsonPair "result" (JsonString "nameless")))))
-        ($_ (nt:require carried-id-excludes-stubs-and-archives-only
-              (nt:equal (task:carried-ids ($preview-only-row $archive-only-row $raw-row $rest-run-row $missing-id-row))
+        ($truncated-row
+          (JsonObject ((JsonPair "id" (JsonString "ticket-fixture:9"))
+                       (JsonPair "disposition" (JsonString "returned"))
+                       (JsonPair "result" (JsonString "head\n…100 tokens truncated; task-read shows the whole result…\ntail"))
+                       (JsonPair "result_truncated" (JsonBool True)))))
+        ($grouped-three-row
+          (JsonObject ((JsonPair "compacted" (JsonString "successful-identical-rest-run"))
+                       (JsonPair "count" (JsonNumber "3"))
+                       (JsonPair "id" (JsonString "ticket-fixture:1"))
+                       (JsonPair "ids" (JsonArray ((JsonString "ticket-fixture:1")
+                                                   (JsonString "ticket-fixture:10")
+                                                   (JsonString "ticket-fixture:11"))))
+                       (JsonPair "request" (JsonString "fixture"))
+                       (JsonPair "command" (JsonArray ((JsonString "rest"))))
+                       (JsonPair "disposition" (JsonString "returned"))
+                       (JsonPair "result" (JsonString "(RESTING budget-banked)")))))
+        ($truncated-grouped-row
+          (state:json-set $grouped-three-row "result_truncated" (JsonBool True)))
+        ($_ (nt:require carried-id-excludes-stubs-truncated-and-archives
+              (nt:equal (task:carried-ids ($preview-only-row $archive-only-row $truncated-row $truncated-grouped-row $raw-row $rest-run-row $missing-id-row))
                         ((JsonString "ticket-fixture:6") (JsonString "ticket-fixture:7")))))
+        ($_ (nt:require grouped-step-header-lists-all-member-ids
+              (nt:equal (task:step-id-header $grouped-three-row)
+                        " · ids ticket-fixture:1, ticket-fixture:10, ticket-fixture:11")))
+        ($_ (nt:require grouped-step-carried-tracks-rendered-header
+              (and (nt:equal (task:carried-ids-of-rendered-step $grouped-three-row (task:step-id-header $grouped-three-row))
+                             ((JsonString "ticket-fixture:1") (JsonString "ticket-fixture:10") (JsonString "ticket-fixture:11")))
+                   (and (nt:equal (task:carried-ids-of-rendered-step $grouped-three-row " · ids ticket-fixture:10, ticket-fixture:11")
+                                  ((JsonString "ticket-fixture:10") (JsonString "ticket-fixture:11")))
+                        (nt:equal (task:carried-ids-of-rendered-step $grouped-three-row " · id ticket-fixture:1")
+                                  ((JsonString "ticket-fixture:1")))))))
         ((MeasuredTailV1 $_ $_ $_ $measured-car)
-         (task:shown-and-measure ($preview-only-row $archive-only-row (ro:row "ticket-fixture:8" "returned" "ok")) 2.5 0 True () ()))
-        ($_ (nt:require incremental-shown-and-measure-excludes-stubs
+         (task:shown-and-measure ($preview-only-row $archive-only-row $truncated-row (ro:row "ticket-fixture:8" "returned" "ok")) 2.5 0 True () ()))
+        ($_ (nt:require incremental-shown-and-measure-excludes-stubs-and-truncated
               (nt:equal $measured-car ((JsonString "ticket-fixture:8")))))
 
         ;; 3. Real native ledger controls (preview stub, rejection, digest mismatch, full match).
@@ -265,6 +314,163 @@
         ($_ (nt:require incremental-context-prepare-marks-observed
               (and (nt:equal (state:ledger "presented-receipts" ($probe3)) ())
                    (ro:action-observed? $ticket3))))
+
+        ;; 6. Full-mode clipping (>40,000 chars -> result_truncated: true):
+        ;;    clipped full-mode presentation (direct & incremental #5) stays unobserved;
+        ;;    later complete unclipped presentation marks the receipt observed.
+        ($_ (nt:require turn11-begin (nt:equal (turn:begin 11 "continuation-tick" "" "[]") 1)))
+        ($_ (turn:context-presented "[]"))
+        ($_ (turn:context-prepared (str:sha256 "turn11 prompt") 0))
+        ($_ (nt:require turn11-capture (nt:equal (turn:capture "turn11 prompt" 0) 1)))
+        ($t11-num (turn:broker-turn 11))
+        (($t11-ok $ticket4) (turn:broker-begin $t11-num (quote ((nop))) 1))
+        ($_ (nt:require turn11-admitted (and (nt:equal $t11-ok 1) (!= $ticket4 ""))))
+        ($_ (strategy:open-batch $t11-num $ticket4))
+        ($_ (nt:require t11-res0 (nt:equal (strategy:reserve $t11-num (quote (nop))) 1)))
+        ($_ (nt:require t11-out0 (nt:equal (turn:command-result $t11-num returned (nop) $long 0) 1)))
+        ($_ (turn:broker-end $t11-num (quote ((COMMAND_RETURN: ((nop) $long))))))
+        ($_ (strategy:close-batch))
+        ($call4 (str:concat $ticket4 ":0"))
+        ($row4 (ro:row $call4 "returned" $long))
+        ($probe4 (($ticket4 0)))
+        ($_ (nt:require ticket4-starts-unobserved
+              (and (== (size-atom (state:ledger "presented-receipts" ($probe4))) 1)
+                   (not (ro:action-observed? $ticket4)))))
+
+        ;; Turn 12: full-mode direct render clips >40,000-char body -> stays unobserved.
+        ($_ (nt:require turn12-begin (nt:equal (turn:begin 12 "continuation-tick" "" "[]") 1)))
+        ((Rendered $clip-p12 $clip-ids12) (ro:render-full ($row4)))
+        ($_ (nt:require full-mode-clips-over-40k
+              (and (nt:contains $clip-p12 "tokens truncated; task-read shows the whole result")
+                   (and (not (nt:contains $clip-p12 $long))
+                        (nt:equal $clip-ids12 ())))))
+        ($_ (turn:context-prepared (str:sha256 $clip-p12) 0))
+        ($_ (nt:require turn12-capture (nt:equal (turn:capture $clip-p12 0) 1)))
+        (($t12-ok $_) (turn:broker-begin (turn:broker-turn 12) (quote ()) 0))
+        ($_ (nt:require turn12-admitted (== $t12-ok 1)))
+        ($_ (nt:require clipped-full-mode-stays-unobserved
+              (and (== (size-atom (state:ledger "presented-receipts" ($probe4))) 1)
+                   (not (ro:action-observed? $ticket4)))))
+
+        ;; Turn 13: incremental #5 context:prepare clips >40,000-char body -> still unobserved.
+        ($_ (nt:require turn13-begin (nt:equal (turn:begin 13 "continuation-tick" "" "[]") 1)))
+        ($_ (task:render-caches-reset))
+        ($prompt13 (context:prepare (ro:base) (turn:focus) "continuation-tick" "200000" "gpt-5.4" 0 ""))
+        ($_ (nt:require incremental-full-mode-clips-over-40k
+              (and (nt:contains $prompt13 "tokens truncated; task-read shows the whole result")
+                   (not (nt:contains $prompt13 $long)))))
+        ($_ (nt:require turn13-capture (nt:equal (turn:capture $prompt13 0) 1)))
+        (($t13-ok $_) (turn:broker-begin (turn:broker-turn 13) (quote ()) 0))
+        ($_ (nt:require turn13-admitted (== $t13-ok 1)))
+        ($_ (nt:require incremental-clipped-full-mode-stays-unobserved
+              (and (== (size-atom (state:ledger "presented-receipts" ($probe4))) 1)
+                   (not (ro:action-observed? $ticket4)))))
+
+        ;; Turn 14: complete unclipped presentation (budget mode with ample budget) marks $ticket4 observed.
+        ($_ (nt:require turn14-begin (nt:equal (turn:begin 14 "continuation-tick" "" "[]") 1)))
+        ((Rendered $full-p14 $full-ids14) (ro:render-budget ($row4) 40000))
+        ($_ (nt:require full-body-presented-unclipped
+              (and (nt:contains $full-p14 $long)
+                   (nt:equal (turn:presented-pairs $full-ids14) (($ticket4 0))))))
+        ($_ (turn:context-prepared (str:sha256 $full-p14) 0))
+        ($_ (nt:require turn14-capture (nt:equal (turn:capture $full-p14 0) 1)))
+        (($t14-ok $_) (turn:broker-begin (turn:broker-turn 14) (quote ()) 0))
+        ($_ (nt:require turn14-admitted (== $t14-ok 1)))
+        ($_ (nt:require unclipped-presentation-marks-ticket4-observed
+              (and (nt:equal (state:ledger "presented-receipts" ($probe4)) ())
+                   (ro:action-observed? $ticket4))))
+
+        ;; 7. Grouped idle runs (3 consecutive identical plain rests):
+        ;;    full mode lists all three member IDs alongside the complete result;
+        ;;    all three are marked observed only when all three IDs are rendered.
+        ($rt1 (ro:record-rest 15))
+        ($rt2 (ro:record-rest 16))
+        ($rt3 (ro:record-rest 17))
+        ($rid1 (str:concat $rt1 ":0"))
+        ($rid2 (str:concat $rt2 ":0"))
+        ($rid3 (str:concat $rt3 ":0"))
+        ($rr1 (ro:rest-row $rid1 "fixture"))
+        ($rr2 (ro:rest-row $rid2 "fixture"))
+        ($rr3 (ro:rest-row $rid3 "fixture"))
+        ($rest-probes (($rt1 0) ($rt2 0) ($rt3 0)))
+        ($_ (nt:require three-rests-start-unobserved
+              (and (== (size-atom (state:ledger "presented-receipts" ($rest-probes))) 3)
+                   (and (not (ro:action-observed? $rt1))
+                     (and (not (ro:action-observed? $rt2))
+                          (not (ro:action-observed? $rt3)))))))
+
+        ;; Budget mode grouped idle row keeps all three IDs in JSON and reports all three.
+        ((Rendered $bud-rest-p $bud-rest-ids) (ro:render-budget ($rr1 $rr2 $rr3) 8000))
+        ($_ (nt:require budget-grouped-idle-renders-and-carries-all-three
+              (and (nt:contains $bud-rest-p "successful-identical-rest-run")
+                   (and (nt:contains $bud-rest-p $rid1)
+                     (and (nt:contains $bud-rest-p $rid2)
+                       (and (nt:contains $bud-rest-p $rid3)
+                            (nt:equal (turn:presented-pairs $bud-rest-ids)
+                                      (($rt1 0) ($rt2 0) ($rt3 0)))))))))
+
+        ;; Turn 18: full-mode direct render groups [R1, R2, R3], prints all three IDs + complete result,
+        ;; and marks all three observed in the real ledger.
+        ($_ (nt:require turn18-begin (nt:equal (turn:begin 18 "continuation-tick" "" "[]") 1)))
+        ((Rendered $grp-p18 $grp-ids18) (ro:render-full ($rr1 $rr2 $rr3)))
+        ($expected-hdr18 (str:join "" ("ids " $rid1 ", " $rid2 ", " $rid3)))
+        ($_ (nt:require full-grouped-idle-renders-all-three-ids
+              (and (nt:contains $grp-p18 "(3 identical steps)")
+                   (and (nt:contains $grp-p18 $expected-hdr18)
+                        (nt:contains $grp-p18 "(RESTING budget-banked)")))))
+        ($_ (nt:require full-grouped-idle-carries-all-three
+              (nt:equal (turn:presented-pairs $grp-ids18) (($rt1 0) ($rt2 0) ($rt3 0)))))
+        ($_ (turn:context-prepared (str:sha256 $grp-p18) 0))
+        ($_ (nt:require turn18-capture (nt:equal (turn:capture $grp-p18 0) 1)))
+        (($t18-ok $_) (turn:broker-begin (turn:broker-turn 18) (quote ()) 0))
+        ($_ (nt:require turn18-admitted (== $t18-ok 1)))
+        ($_ (nt:require full-grouped-idle-marks-all-three-observed
+              (and (nt:equal (state:ledger "presented-receipts" ($rest-probes)) ())
+                   (and (ro:action-observed? $rt1)
+                     (and (ro:action-observed? $rt2)
+                          (ro:action-observed? $rt3))))))
+
+        ;; Turn 19: break the rest run with one non-rest command so [R4, R5, R6] is a distinct 3-rest group.
+        ($_ (nt:require turn19-begin (nt:equal (turn:begin 19 "continuation-tick" "" "[]") 1)))
+        ($_ (turn:context-presented "[]"))
+        ($_ (turn:context-prepared (str:sha256 "turn19 breaker prompt") 0))
+        ($_ (nt:require turn19-capture (nt:equal (turn:capture "turn19 breaker prompt" 0) 1)))
+        ($t19-num (turn:broker-turn 19))
+        (($t19-ok $breaker-ticket) (turn:broker-begin $t19-num (quote ((nop))) 1))
+        ($_ (nt:require turn19-admitted (and (nt:equal $t19-ok 1) (!= $breaker-ticket ""))))
+        ($_ (strategy:open-batch $t19-num $breaker-ticket))
+        ($_ (nt:require t19-res0 (nt:equal (strategy:reserve $t19-num (quote (nop))) 1)))
+        ($_ (nt:require t19-out0 (nt:equal (turn:command-result $t19-num returned (nop) "BREAKER_STEP" 0) 1)))
+        ($_ (turn:broker-end $t19-num (quote ((COMMAND_RETURN: ((nop) "BREAKER_STEP"))))))
+        ($_ (strategy:close-batch))
+
+        ;; Turns 20-23: end-to-end incremental #5 context:prepare on a fresh grouped run of 3 rests
+        ;; in the real ledger marks all three observed once rendered with all three IDs.
+        ($rt4 (ro:record-rest 20))
+        ($rt5 (ro:record-rest 21))
+        ($rt6 (ro:record-rest 22))
+        ($rid4 (str:concat $rt4 ":0"))
+        ($rid5 (str:concat $rt5 ":0"))
+        ($rid6 (str:concat $rt6 ":0"))
+        ($rest-probes2 (($rt4 0) ($rt5 0) ($rt6 0)))
+        ($_ (nt:require second-three-rests-start-unobserved
+              (== (size-atom (state:ledger "presented-receipts" ($rest-probes2))) 3)))
+        ($_ (nt:require turn23-begin (nt:equal (turn:begin 23 "continuation-tick" "" "[]") 1)))
+        ($_ (task:render-caches-reset))
+        ($prompt23 (context:prepare (ro:base) (turn:focus) "continuation-tick" "200000" "gpt-5.4" 0 ""))
+        ($expected-hdr23 (str:join "" ("ids " $rid4 ", " $rid5 ", " $rid6)))
+        ($_ (nt:require incremental-grouped-idle-renders-all-three-ids
+              (and (nt:contains $prompt23 "(3 identical steps)")
+                   (and (nt:contains $prompt23 $expected-hdr23)
+                        (nt:contains $prompt23 "(RESTING budget-banked)")))))
+        ($_ (nt:require turn23-capture (nt:equal (turn:capture $prompt23 0) 1)))
+        (($t23-ok $_) (turn:broker-begin (turn:broker-turn 23) (quote ()) 0))
+        ($_ (nt:require turn23-admitted (== $t23-ok 1)))
+        ($_ (nt:require incremental-grouped-idle-marks-all-three-observed
+              (and (nt:equal (state:ledger "presented-receipts" ($rest-probes2)) ())
+                   (and (ro:action-observed? $rt4)
+                     (and (ro:action-observed? $rt5)
+                          (ro:action-observed? $rt6))))))
 
         ($_ (proc:cancel $server)) ($_ (proc:wait $server 5000)))
    (println! UNIT_RECEIPT_OBSERVATION_OK))
