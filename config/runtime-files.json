@@ -152,7 +152,6 @@
     "src/coding_session.metta",
     "src/coding_values.metta",
     "src/coding_work.metta",
-    "src/lazy_import.metta",
     "src/command_arity.metta",
     "src/command_batches_cetta.metta",
     "src/command_dispatch.metta",
@@ -501,7 +500,6 @@
       "src/coding_session.metta",
       "src/coding_values.metta",
       "src/coding_work.metta",
-      "src/lazy_import.metta",
       "src/command_arity.metta",
       "src/command_batches_cetta.metta",
       "src/command_dispatch.metta",
@@ -772,6 +770,11 @@
     "scripts/runtime_housekeeping_cetta.metta"
   ],
   "dynamic_imports": [
+    {
+      "file": "src/skills_help.metta",
+      "target": "src/skills_help_pages.metta under the runtime root",
+      "policy": "fixed help-pages module loaded on the first help call"
+    },
     {
       "file": "src/worklog_sink_cetta.metta",
       "target": "worklog.metta",
