@@ -24,7 +24,9 @@
        (case (catch (str:string->number (str:trim $value)))
          (((Error $call $why) (Error $call $why))
           ($n (tg-clock:whole $n))))
-       (Error (tg-clock:whole $value) "expected a number or number text"))))
+       ; The operation is named by symbol: an embedded (tg-clock:whole ...) in
+       ; an if branch is evaluated again, and the error vanished.
+       (Error tg-clock:whole "expected a number or number text"))))
 
 ; helper.local_clock: Telegram's send time, local, in the format of TIME;
 ; "" for what reads as no time.
