@@ -115,5 +115,15 @@
         ($_ (nt:require stored-cycle-does-not-block (== (unit:edges $stored $elsewhere ("e9" "t1" "p")) True)))
         ; A retired node's children are not followed, as in the stamp.
         ($retired (hm:replace $before "old" (HNode 1 "old" 6 (retired task "done") "old" ("e1" "gone" "p") () 2)))
-        ($_ (nt:require retired-not-followed (== (unit:edges $before $retired ("old")) True))))
+        ($_ (nt:require retired-not-followed (== (unit:edges $before $retired ("old")) True)))
+        ; Reactivating a retired node makes its stored child edges traversable.
+        ($asleep ((HNode 1 "ra" 2 (retired task "done") "ra" ("rb") () 0) (HNode 1 "rb" 1 task "rb" ("ra") () 0)
+                  (HNode 1 "rc" 2 (retired task "done") "rc" ("rd") () 0) (HNode 1 "rd" 1 episode "rd" () () 0)))
+        ($woken (hm:replace $asleep "ra" (HNode 1 "ra" 3 task "ra" ("rb") () 0)))
+        ($_ (nt:require cyclic-reactivation-refused (== (unit:edges $asleep $woken ("ra")) (HFailure cycle "ra"))))
+        ($revived (hm:replace $asleep "rc" (HNode 1 "rc" 3 task "rc" ("rd") () 0)))
+        ($_ (nt:require acyclic-reactivation-sound (== (unit:edges $asleep $revived ("rc")) True)))
+        ($_ (nt:require same-set-equal (hm:same-set (x y y z) (z x y))))
+        ($_ (nt:require same-set-missing (not (hm:same-set (x y) (x z)))))
+        ($_ (nt:require same-set-size (not (hm:same-set (x y z) (x y))))))
    (println! UNIT_HIERARCHY_EDGES_OK))

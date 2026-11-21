@@ -92,8 +92,11 @@
    (case (hm:find $after $id)
      (((HNode 1 $id $r (retired $original $reason) $t $cs $ss $q) True)
       ((HNode 1 $id $r $k $t $cs $ss $q)
+       ; A retired node's children were not followed, so reactivating it makes
+       ; every child edge traversable again: none of them counts as old.
        (let $old (case (hm:find $before $id)
-                   (((HNode 1 $id $r0 $k0 $t0 $oldcs $ss0 $q0) $oldcs) ($absent ())))
+                   (((HNode 1 $id $r0 (retired $o0 $why0) $t0 $oldcs $ss0 $q0) ())
+                    ((HNode 1 $id $r0 $k0 $t0 $oldcs $ss0 $q0) $oldcs) ($absent ())))
          (if (== $cs $old) True
            (let* (($known (new-space)) ($_ (map-atom $old $c (hm:mark! $known $c))))
              (foldl-atom $cs True $ok $child
@@ -121,11 +124,12 @@
              (foldl-atom $cs False $found $child (if $found True (hm:reach $index $visited $child $target))))
             ($missing False)))))))
 
+; Set equality in linear time: one side marked in a space, the other checked.
 (= (hm:same-set $a $b)
-   (and (== (size-atom (hm:unique $a)) (size-atom (hm:unique $b)))
-     (hm:all-in $a $b)))
-(= (hm:all-in $a $b)
-   (if (== $a ()) True (and (hm:has (car-atom $a) $b) (hm:all-in (cdr-atom $a) $b))))
+   (let* (($ua (hm:unique $a)) ($ub (hm:unique $b)))
+     (if (not (== (size-atom $ua) (size-atom $ub))) False
+       (let* (($marks (new-space)) ($_ (map-atom $ub $x (hm:mark! $marks $x))))
+         (foldl-atom $ua True $ok $x (if $ok (hm:marked? $marks $x) False))))))
 
 (= (hm:open $socket $name)
    (case (space:open $socket $name native)
