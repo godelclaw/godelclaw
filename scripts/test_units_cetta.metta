@@ -174,7 +174,8 @@
     ("tests/unit/native_console.metta" "UNIT_NATIVE_CONSOLE_OK"
      (("CETTA_SHARED_MAIL_SOCKET" "{home}/s")))
     ("tests/unit/conversation_index.metta" "UNIT_CONVERSATION_INDEX_OK"
-     (("METTACLAW_INPUT_LEDGER_SOCKET" "{home}/l.sock")))))
+     (("METTACLAW_INPUT_LEDGER_SOCKET" "{home}/l.sock")))
+    ("tests/unit/conversation_index_differential.metta" "UNIT_CONVERSATION_INDEX_DIFFERENTIAL_OK")))
 
 (= (units:env $directory)
    (let $base (nt:environment $directory)

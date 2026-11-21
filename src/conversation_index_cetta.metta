@@ -575,7 +575,7 @@
      ("mark-processed" "register" "submitted" "receipt"
       "notice-withdraw" "notice-delivery" "notice-cleanup-key" "check"
       "topic-select" "topic-note" "provider-notice-reserve" "provider-notice-queued"
-      "control" "restore" "report" "observe" "attest" "meta-cas" "meta-put" "owner")))
+      "control" "restore" "report" "observe" "attest" "meta-cas" "meta-put")))
 
 (= (cidx:llm-verb? $verb) (str:starts-with $verb "llm-"))
 
@@ -624,14 +624,20 @@
             ($next (if (cidx:note-present? $cur $seq) $cur (cidx:insert-note-sorted $cur $head))))
        (cidx:merge-notes $next $tail))))
 
-(= (cidx:apply-delta $db $verb $arguments $after-epoch $after-rev $owner $total $unpos $rrev $nrev $erev $min-c)
+(= (cidx:apply-delta $db $verb $arguments $answer $after-epoch $after-rev $owner $total $unpos $rrev $nrev $erev $min-c)
    (if (or (cidx:disjoint-verb? $verb) (cidx:llm-verb? $verb))
      (let* (($s (change-state! &cidx-meta (ConvIdxV1 $after-epoch $after-rev $owner $total $unpos $rrev $nrev $erev $min-c)))
             ($d (cidx:bump-delta)))
        True)
      (case ($verb $arguments)
-       ((("capture" $_)
-         (if $unpos (cidx:reset)
+       ((("owner" $_)
+         (if (== $owner $answer)
+           (let* (($s (change-state! &cidx-meta (ConvIdxV1 $after-epoch $after-rev $owner $total $unpos $rrev $nrev $erev $min-c)))
+                  ($d (cidx:bump-delta)))
+             True)
+           (cidx:reset)))
+        (("capture" $_)
+         (if (or $unpos (== $owner absent)) (cidx:reset)
            (let* (($s (change-state! &cidx-meta (ConvIdxV1 $after-epoch $after-rev $owner $total $unpos $rrev $nrev $erev $min-c)))
                   ($d (cidx:bump-delta)))
              True)))
@@ -654,9 +660,11 @@
         (("finish" ($id $ticket $req-id))
          (cidx:delta-request-status $db $id $after-epoch $after-rev $owner $total $unpos $rrev $nrev $erev $min-c))
         (("request-accept" ($id $content $checker $kind $summary $digest $req-id))
-         (cidx:delta-request-accept $db $id $after-epoch $after-rev $owner $total $unpos $rrev $nrev $erev $min-c))
+         (if $unpos (cidx:reset)
+           (cidx:delta-request-accept $db $id $after-epoch $after-rev $owner $total $unpos $rrev $nrev $erev $min-c)))
         (("link-inputs" ($request $inputs $req-id))
-         (cidx:delta-cover $db $request $after-epoch $after-rev $owner $total $unpos $rrev $nrev $erev $min-c))
+         (if $unpos (cidx:reset)
+           (cidx:delta-cover $db $request $after-epoch $after-rev $owner $total $unpos $rrev $nrev $erev $min-c)))
         (("task-begin" ($request $trigger $prev $chat $parent $req-id))
          (cidx:delta-cover $db $request $after-epoch $after-rev $owner $total $unpos $rrev $nrev $erev $min-c))
         (("task-focus" ($request $req-id))
@@ -810,7 +818,7 @@
          ((($ae $ar)
            (if (and (== $ae $ce) (== $ar $cr)) $answer
              (if (and (== $before-ver ($ce $cr)) (== $ae $ce))
-               (let $done (cidx:apply-delta $db $verb $arguments $ae $ar $owner $total $unpos $rrev $nrev $erev $min-c)
+               (let $done (cidx:apply-delta $db $verb $arguments $answer $ae $ar $owner $total $unpos $rrev $nrev $erev $min-c)
                  $answer)
                (let $rst (cidx:reset) $answer))))
           ($err (let $rst (cidx:reset) $answer))))))))
