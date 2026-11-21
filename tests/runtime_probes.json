@@ -38,6 +38,7 @@
   ["tests/command_error_labels_probe.metta", "COMMAND_ERROR_LABELS_OK"],
   ["tests/burst_end_and_prose_probe.metta", "BURST_END_AND_PROSE_OK"],
   ["tests/strategy_continuation_attempt_probe.metta", "STRATEGY_CONTINUATION_ATTEMPT_OK"],
+  ["tests/rest_continuation_fault_probe.metta", "REST_CONTINUATION_FAULT_OK"],
   ["tests/command_feedback_probe.metta", "COMMAND_FEEDBACK_OK"],
   ["tests/observed_strategy_probe.metta", "OBSERVED_STRATEGY_OK"],
   ["tests/strategy_fault_probe.metta", "STRATEGY_FAULT_RECOVERY_OK"],

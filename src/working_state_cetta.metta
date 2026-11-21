@@ -147,7 +147,11 @@
        (erv:put $state "rest_until" (+ $now (max 0 $duration))))))
 (= (working-state:claim-transition $state)
    (case (erv:get $state "rest_timer" ErMissing)
-     ((ErMissing $state)
+     ((ErMissing
+       (erv:put $state "rest_timer"
+         (JsonObject ((JsonPair "deadline" 0.0)
+                      (JsonPair "command" (JsonArray ()))
+                      (JsonPair "status" "running")))))
       ((JsonObject $pairs)
        (erv:put $state "rest_timer"
          (erv:put (JsonObject $pairs) "status" "running")))

@@ -512,29 +512,33 @@
           ;; unlike a compound marker it cannot be eagerly reduced away while
           ;; crossing the MeTTa/Prolog call boundary.
           ($turn (- 0 $iteration))
-          ($_ (working:rest-claim))
-          ($turnBegun (addition-effect-turn-begin $turn)))
-     (if (turn:failed? $turnBegun)
-       $turnBegun
-       (let $begun (turn:begin-continuation $turn (quote ($continuation)))
-         (if (turn:failed? $begun)
-           $begun
-           (let* ((($actual $ticket) $begun)
-                  ($opened (strategy:open-batch $actual $ticket))
-                  ($records (run-command-batch-once $actual 1 (quote ($continuation))))
-                  ($reported (turn:broker-end $actual (quote $records)))
-                  ($closed (strategy:close-batch)))
-             (if (turn:failed? $reported)
-               $reported
-               (let* (($results (CONTINUATION_RESULTS: $records))
-                      ($_ (println! $results))
-                      ($_ (hierarchy:begin $turn timed-continuation (turn:view)))
-                      ($_ (hierarchy:record $turn timed-continuation "" (quote $continuation) (quote $records)))
-                      ($_ (working:rest-finish)))
-                 (coordinate-set pending-continuation no-continuation
-                   (coordinate-set loops 2
-                     (coordinate-set last-results (string-safe (repr (quote $results)))
-                                     $periphery)))))))))))
+          ($claimed (working:rest-claim)))
+     (if (not (== $claimed 1))
+       (if (turn:failed? $claimed) $claimed (Error working:rest-claim $claimed))
+       (let $turnBegun (addition-effect-turn-begin $turn)
+         (if (turn:failed? $turnBegun)
+           $turnBegun
+           (let $begun (turn:begin-continuation $turn (quote ($continuation)))
+             (if (turn:failed? $begun)
+               $begun
+               (let* ((($actual $ticket) $begun)
+                      ($opened (strategy:open-batch $actual $ticket))
+                      ($records (run-command-batch-once $actual 1 (quote ($continuation))))
+                      ($reported (turn:broker-end $actual (quote $records)))
+                      ($closed (strategy:close-batch)))
+                 (if (turn:failed? $reported)
+                   $reported
+                   (let* (($results (CONTINUATION_RESULTS: $records))
+                          ($_ (println! $results))
+                          ($_ (hierarchy:begin $turn timed-continuation (turn:view)))
+                          ($_ (hierarchy:record $turn timed-continuation "" (quote $continuation) (quote $records)))
+                          ($finished (working:rest-finish)))
+                     (if (not (== $finished 1))
+                       (if (turn:failed? $finished) $finished (Error working:rest-finish $finished))
+                       (coordinate-set pending-continuation no-continuation
+                         (coordinate-set loops 2
+                           (coordinate-set last-results (string-safe (repr (quote $results)))
+                                           $periphery))))))))))))))
 
 (= (applyTimedContinuation $periphery $timedOut)
    (let $pending (loop-pending-continuation $periphery)

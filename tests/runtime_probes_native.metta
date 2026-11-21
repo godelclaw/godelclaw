@@ -54,10 +54,13 @@
 (= (nr:probe-world-settings $name $world)
    (if (nt:equal $name "tests/strategy_continuation_attempt_probe.metta")
      (("METTACLAW_STREAM_DIR" (nq:path $world "display")))
-     (if (nr:managed? $name)
-       (("METTACLAW_STRATEGY_PATH" (nq:path $world "strategy.sqlite3"))
-        ("METTACLAW_EFFECT_RECEIPT_PATH" (nq:path $world "effects.jsonl")))
-       ())))
+     (if (nt:equal $name "tests/rest_continuation_fault_probe.metta")
+       (("METTACLAW_EFFECT_RECEIPT_PATH" (nq:path $world "effects.jsonl"))
+        ("METTACLAW_CONTINUATION_LOG" (nq:path $world "continuation-effects.log")))
+       (if (nr:managed? $name)
+         (("METTACLAW_STRATEGY_PATH" (nq:path $world "strategy.sqlite3"))
+          ("METTACLAW_EFFECT_RECEIPT_PATH" (nq:path $world "effects.jsonl")))
+         ()))))
 ; The probes of the observed strategy as the agents run it, one command per
 ; batch: each turn's commands are recorded in its ledger and receipts. The
 ; model's window is known.
@@ -165,6 +168,8 @@
    (("ANTHROPIC_API_KEY" "fixture-secret") ("SYNTHETIC_MODEL" "claude-fixture")))
 ; A timed continuation as the agents run it, with the observed strategy on.
 (= (nr:probe-settings "tests/strategy_continuation_attempt_probe.metta")
+   (("METTACLAW_OBSERVED_STRATEGY" "1")))
+(= (nr:probe-settings "tests/rest_continuation_fault_probe.metta")
    (("METTACLAW_OBSERVED_STRATEGY" "1")))
 (= (nr:probe-settings "tests/allowance_wake_loop_probe.metta")
    (("SYNTHETIC_API_KEY" "fixture-secret") ("METTACLAW_TELEGRAM_GROUP_WAKE_EVERY" "-100:3")
