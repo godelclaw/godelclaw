@@ -361,50 +361,54 @@
                   $iteration
                   (policy-command-batch-limit (loop-active-policy $periphery))
                   (quote $sexpr))
-                ()))
-          ($_ (change-state! &error
-                (append (get-state &error)
-                        (addition-command-errors $iteration))))
-          ($results (RESULTS: $commandResults))
-          ($_ (instance-after-broker $iteration (quote $results)))
-          ($_ (eval (attention-complete $iteration $parseOutcome)))
-          ($_ (println! $results))
-          ;; Input is acknowledged only after the successful turn has crossed
-          ;; the effect boundary and its exact message/response pair is in
-          ;; durable history.  Provider or history failure retains the stable
-          ;; activity batch for retry.
-          ($historyReceipt
-            (if (== $providerSucceeded 1)
-                (if (or $has-activity
-                        (or (not (== $sexpr ())) (not (== $undelivered ""))))
-                    (addToHistory $message
-                                  (if (== $undelivered "") $response $undelivered)
-                                  $has-activity)
-                    1)
-                0))
-          ($turnFeedback
-            (if (== $requestObservations "")
-                (string-safe (repr (quote $results)))
-                (string-safe
-                  (utils:py-str ($requestObservations " " (repr (quote $results)))))))
-          ($feedback
-            (if (== $undelivered "") $turnFeedback
-                (string-safe (utils:py-str ($undelivered " " $turnFeedback)))))
-          ($withResults
-            (coordinate-set last-results $feedback $paced))
-          ($directed (loop-directives-apply $withResults))
-          ($banked (applyRestBanking $directed))
-          ($_ (loop-directives-clear))
-          ($_ (working:turn-commit-stage $providerSucceeded $historyReceipt (if $has-activity 1 0)))
-          ($_ (if (and (and (== $providerSucceeded 1) (== $historyReceipt 1))
-                       (or $has-activity (or (not (== $sexpr ())) (not (== $undelivered "")))))
-                  (hierarchy:record $iteration $source $message $response (quote $commandResults))
-                  True))
-          ;; A model/effect episode has exactly one committed successor.  The
-          ;; final cut prevents a bridge predicate's residual choice point
-          ;; from replaying the same pure candidate after effects completed.
-          ($_ (cut)))
-     $banked))
+                ())))
+     (if (turn:failed? $commandResults)
+       $commandResults
+       (let* (($_ (change-state! &error
+                    (append (get-state &error)
+                            (addition-command-errors $iteration))))
+              ($results (RESULTS: $commandResults))
+              ($_ (instance-after-broker $iteration (quote $results)))
+              ($_ (eval (attention-complete $iteration $parseOutcome)))
+              ($_ (println! $results))
+              ;; Input is acknowledged only after the successful turn has crossed
+              ;; the effect boundary and its exact message/response pair is in
+              ;; durable history.  Provider or history failure retains the stable
+              ;; activity batch for retry.
+              ($historyReceipt
+                (if (== $providerSucceeded 1)
+                    (if (or $has-activity
+                            (or (not (== $sexpr ())) (not (== $undelivered ""))))
+                        (addToHistory $message
+                                      (if (== $undelivered "") $response $undelivered)
+                                      $has-activity)
+                        1)
+                    0))
+              ($turnFeedback
+                (if (== $requestObservations "")
+                    (string-safe (repr (quote $results)))
+                    (string-safe
+                      (utils:py-str ($requestObservations " " (repr (quote $results)))))))
+              ($feedback
+                (if (== $undelivered "") $turnFeedback
+                    (string-safe (utils:py-str ($undelivered " " $turnFeedback)))))
+              ($withResults
+                (coordinate-set last-results $feedback $paced))
+              ($directed (loop-directives-apply $withResults))
+              ($banked (applyRestBanking $directed))
+              ($_ (loop-directives-clear))
+              ($commitStage (working:turn-commit-stage $providerSucceeded $historyReceipt (if $has-activity 1 0))))
+         (if (turn:failed? $commitStage)
+           $commitStage
+           (let* (($_ (if (and (and (== $providerSucceeded 1) (== $historyReceipt 1))
+                               (or $has-activity (or (not (== $sexpr ())) (not (== $undelivered "")))))
+                          (hierarchy:record $iteration $source $message $response (quote $commandResults))
+                          True))
+                  ;; A model/effect episode has exactly one committed successor.  The
+                  ;; final cut prevents a bridge predicate's residual choice point
+                  ;; from replaying the same pure candidate after effects completed.
+                  ($_ (cut)))
+             $banked))))))
 
 ;; The policy process computes freely.  Only this wrapper converts its result
 ;; to the kernel's success/failure vocabulary.
@@ -460,10 +464,11 @@
             (if (> (loop-budget $ready) 0)
                 (cognitiveTurn $ready $message $hasActivity $isHuman
                                $autonomous $heartbeat)
-                $ready))
-          ($next
-            (coordinate-set iteration (+ 1 $iteration) $afterTurn)))
-     (candidate $next)))))))
+                $ready)))
+     (case $afterTurn
+       (((Error $call $why) (Error $call $why))
+        ($completed
+         (candidate (coordinate-set iteration (+ 1 $iteration) $completed)))))))))))
 
 ;; Operator authority is an outer lifecycle addition, not a policy encoded in
 ;; the two-equation transformation kernel.  A stopped process keeps only its
@@ -508,21 +513,28 @@
           ;; crossing the MeTTa/Prolog call boundary.
           ($turn (- 0 $iteration))
           ($_ (working:rest-claim))
-          ($_ (addition-effect-turn-begin $turn))
-          (($actual $ticket) (turn:begin-continuation $turn (quote ($continuation))))
-          ($opened (strategy:open-batch $actual $ticket))
-          ($records (run-command-batch-once $actual 1 (quote ($continuation))))
-          ($_ (turn:broker-end $actual (quote $records)))
-          ($closed (strategy:close-batch))
-          ($results (CONTINUATION_RESULTS: $records))
-          ($_ (println! $results))
-          ($_ (hierarchy:begin $turn timed-continuation (turn:view)))
-          ($_ (hierarchy:record $turn timed-continuation "" (quote $continuation) (quote $records)))
-          ($_ (working:rest-finish)))
-     (coordinate-set pending-continuation no-continuation
-       (coordinate-set loops 2
-         (coordinate-set last-results (string-safe (repr (quote $results)))
-                         $periphery)))))
+          ($turnBegun (addition-effect-turn-begin $turn)))
+     (if (turn:failed? $turnBegun)
+       $turnBegun
+       (let $begun (turn:begin-continuation $turn (quote ($continuation)))
+         (if (turn:failed? $begun)
+           $begun
+           (let* ((($actual $ticket) $begun)
+                  ($opened (strategy:open-batch $actual $ticket))
+                  ($records (run-command-batch-once $actual 1 (quote ($continuation))))
+                  ($reported (turn:broker-end $actual (quote $records)))
+                  ($closed (strategy:close-batch)))
+             (if (turn:failed? $reported)
+               $reported
+               (let* (($results (CONTINUATION_RESULTS: $records))
+                      ($_ (println! $results))
+                      ($_ (hierarchy:begin $turn timed-continuation (turn:view)))
+                      ($_ (hierarchy:record $turn timed-continuation "" (quote $continuation) (quote $records)))
+                      ($_ (working:rest-finish)))
+                 (coordinate-set pending-continuation no-continuation
+                   (coordinate-set loops 2
+                     (coordinate-set last-results (string-safe (repr (quote $results)))
+                                     $periphery)))))))))))
 
 (= (applyTimedContinuation $periphery $timedOut)
    (let $pending (loop-pending-continuation $periphery)
@@ -569,16 +581,19 @@
           ($continued
             (if (and $enabled (not $recycling))
                 (applyTimedContinuation $periphery $timedOut)
-                $periphery))
-          ($restored (if $recycling $continued (restoreAfterWait $continued $timedOut)))
-          ($continuedLoops (loop-budget $restored))
-          ($ready
-            (if $enabled
-                (policy-next-autonomous-ready
-                  $policy $continuedLoops $timedOut $paused)
-                0)))
-     (candidate (coordinate-set autonomous-ready
-                  (turn:autonomous-ready $ready) $restored))))
+                $periphery)))
+     (case $continued
+       (((Error $call $why) (Error $call $why))
+        ($settled
+         (let* (($restored (if $recycling $settled (restoreAfterWait $settled $timedOut)))
+                ($continuedLoops (loop-budget $restored))
+                ($ready
+                  (if $enabled
+                      (policy-next-autonomous-ready
+                        $policy $continuedLoops $timedOut $paused)
+                      0)))
+           (candidate (coordinate-set autonomous-ready
+                        (turn:autonomous-ready $ready) $restored))))))))
 
 (= (waitProcess $periphery)
    (protectedOutcome (catch (waitCandidate $periphery))))

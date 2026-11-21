@@ -63,7 +63,8 @@
 ; model's window is known.
 (= (nr:managed? $name)
    (preq:member? $name ("tests/task_context_probe.metta" "tests/sequential_tools_probe.metta"
-     "tests/command_feedback_probe.metta" "tests/runtime_context_probe.metta"
+     "tests/command_feedback_probe.metta" "tests/observed_strategy_probe.metta"
+     "tests/strategy_fault_probe.metta" "tests/runtime_context_probe.metta"
      "tests/cross_mode_history_probe.metta" "tests/cross_mode_own_records_probe.metta"
      "tests/cross_mode_pending_probe.metta" "tests/cross_mode_writer_probe.metta")))
 (= (nr:managed)
@@ -77,6 +78,10 @@
 (= (nr:expected-commands "tests/sequential_tools_probe.metta") 10)
 (= (nr:expected-commands "tests/command_feedback_probe.metta")
    ("['pin', 'verified note']" "['help', 'shell']" "['not-a-tool']" "['help', 'pin']"))
+(= (nr:expected-commands "tests/observed_strategy_probe.metta")
+   ("['shell', 'printf EMITTED_COMMAND']" "['help', 'shell']"))
+(= (nr:expected-commands "tests/strategy_fault_probe.metta")
+   ("['shell', 'printf FIRST_FAULT_WITNESS']" "['shell', 'printf SECOND_FAULT_WITNESS']"))
 (= (nr:expected-commands "tests/cross_mode_history_probe.metta") 5)
 (= (nr:expected-commands "tests/cross_mode_own_records_probe.metta") 5)
 (= (nr:expected-commands "tests/cross_mode_pending_probe.metta") 5)
@@ -148,6 +153,8 @@
 (= (nr:probe-settings "tests/task_context_probe.metta") (nr:managed))
 (= (nr:probe-settings "tests/sequential_tools_probe.metta") (nr:managed))
 (= (nr:probe-settings "tests/command_feedback_probe.metta") (nr:managed))
+(= (nr:probe-settings "tests/observed_strategy_probe.metta") (nr:managed))
+(= (nr:probe-settings "tests/strategy_fault_probe.metta") (nr:managed))
 (= (nr:probe-settings "tests/runtime_context_probe.metta") (nr:managed))
 (= (nr:probe-settings "tests/cross_mode_history_probe.metta") (nr:managed))
 (= (nr:probe-settings "tests/cross_mode_own_records_probe.metta") (nr:managed))

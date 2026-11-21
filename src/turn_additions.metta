@@ -94,13 +94,14 @@
    (coding-prepare-request
      $selected $legacy $system $activity $advertised))
 
+(= (turn:after-model-call $response) $response)
 (= (addition-model-call $model $tokens $reasoning $request $wake)
    (let $begun (health:begin-turn)
      (case $request
        (((ContextPreparationFailed $reason) (health:paced (turn:preparation-failed $reason)))
         ($ready
           (if (== (turn:capture $ready $wake) 1)
-              (llm:command $model $tokens $reasoning $ready)
+              (turn:after-model-call (llm:command $model $tokens $reasoning $ready))
               (let* (($recorded (health:fail "strategy-not-ready" 0)) ($failed (health:turn-failed))) "()")))))))
 
 (= (addition-request-observation $request)
@@ -121,16 +122,19 @@
 ; run (src/strategy_attempts_cetta.metta).
 (= (addition-effect-broker $turn $limit $commands)
    (let* (($broker-turn (strategy:broker-turn $turn))
-          ($_ (addition-effect-turn-begin $broker-turn))
-          ($effective (strategy:batch-limit $limit (quote $commands)))
-          (($admitted $ticket) (turn:broker-begin $broker-turn (quote $commands) $effective)))
-     (if (== $admitted 1)
-       (let* (($opened (strategy:open-batch $broker-turn $ticket))
-              ($records (run-command-batch-once $broker-turn $effective (quote $commands)))
-              ($reported (turn:broker-end $broker-turn (quote $records)))
-              ($closed (strategy:close-batch)))
-         (if (turn:failed? $reported) $reported $records))
-       ((COMMAND_BATCH_WITHHELD: (turn:broker-feedback))))))
+          ($begun (addition-effect-turn-begin $broker-turn)))
+     (if (turn:failed? $begun) $begun
+       (let* (($effective (strategy:batch-limit $limit (quote $commands)))
+              ($decision (turn:broker-begin $broker-turn (quote $commands) $effective)))
+         (if (turn:failed? $decision) $decision
+           (let ($admitted $ticket) $decision
+             (if (== $admitted 1)
+               (let* (($opened (strategy:open-batch $broker-turn $ticket))
+                      ($records (run-command-batch-once $broker-turn $effective (quote $commands)))
+                      ($reported (turn:broker-end $broker-turn (quote $records)))
+                      ($closed (strategy:close-batch)))
+                 (if (turn:failed? $reported) $reported $records))
+               ((COMMAND_BATCH_WITHHELD: (turn:broker-feedback))))))))))
 
 (= (addition-command-errors $turn)
    (command-batch-errors (strategy:broker-turn $turn)))

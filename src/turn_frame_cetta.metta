@@ -156,6 +156,8 @@
        (1 $ticket))))
 (= (turn:report $ticket $payload)
    (turn:write "report" ($ticket $payload "returned" "unknown" (turn:digest $payload) (str:char-length $payload))))
+(: turn:after-broker-report (-> Number String %Undefined%))
+(= (turn:after-broker-report $turn $ticket) True)
 (: turn:broker-end (-> Number Atom %Undefined%))
 (= (turn:broker-end $turn $records)
    (if (== (turn:get "phase" "") "failed") (Error turn:broker-end failed-attempt)
@@ -164,7 +166,9 @@
        (if (== $ticket "") $records
          (let $answer (turn:report $ticket (turn:syntax-text $records))
            (if (turn:failed? $answer) $answer
-             (let $_ (turn:put "phase" "reported") $records)))))
+             (let* (($_ (turn:put "phase" "reported"))
+                    ($after (turn:after-broker-report $turn $ticket)))
+               (if (turn:failed? $after) $after $records))))))
      $records)))
 (= (turn:provider-failed)
    (if (< (turn:serial) 0) 1
