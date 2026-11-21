@@ -69,7 +69,7 @@
        (ProviderRouteV1 "openai" "responses" (str:char-slice $selected 7 (str:char-length $selected))
          "OPENAI_BASE_URL" "https://api.openai.com/v1" "OPENAI_API_KEY")
        (if (str:starts-with $selected "claude-")
-         (ProviderRouteV1 "anthropic" "anthropic" $selected "ANTHROPIC_BASE_URL" "https://api.anthropic.com" "ANTHROPIC_API_KEY")
+         (ProviderRouteV1 "anthropic" "anthropic" $selected "ANTHROPIC_BASE_URL" "https://api.anthropic.com/v1" "ANTHROPIC_API_KEY")
          (ProviderRouteV1 "synthetic" "chat-completions" $selected
            "SYNTHETIC_BASE_URL" "https://api.synthetic.new/openai/v1" "SYNTHETIC_API_KEY")))))
 (= (host-native:rstrip-slash $text)
