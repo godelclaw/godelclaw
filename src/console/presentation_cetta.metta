@@ -89,8 +89,11 @@
           ($lines (cc:user-input-lines (str:split "\n" $trimmed) True)))
      (cc:emit-raw (str:concat (str:join "\n" $lines) "\n"))))
 (= (cc:emit-reply $sender $text $extra)
+   (cc:emit-reply-at $sender $text $extra
+     (if (cc:get "clock-live" False) (system:wall-time) (cc:get "last-event-time" 0))))
+; A stored reply carries the time it was received, not the time it is shown.
+(= (cc:emit-reply-at $sender $text $extra $stamp)
    (let* (($lead (str:concat (cc:style "1;32" (cc:one-line $sender)) (cc:style "32" " → you")))
-          ($stamp (if (cc:get "clock-live" False) (system:wall-time) (cc:get "last-event-time" 0)))
           ($head (cc:header-line $lead () $stamp))
           ($clean (cc:expand-tabs (cc:clean $text)))
           ($trimmed (if (str:ends-with $clean "\n") (str:byte-slice $clean 0 (- (str:byte-length $clean) 1)) $clean))
