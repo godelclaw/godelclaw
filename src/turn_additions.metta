@@ -58,7 +58,7 @@
      (if (and (== $backend "") (== $state ""))
        (let $_ (tg:set effect-turn (turn:text $turn)) "LIVE_EFFECT_TURN_READY")
        (if (== $backend "tmux-shadow")
-         (dispatch:shadow-begin-turn $turn)
+         (shadow-effect:begin-turn $turn)
          (Error addition-effect-turn-begin (Forbidden inconsistent-effect-backend-configuration))))))
 
 ;; Coding sessions that ended without their report are recorded and their

@@ -1,6 +1,7 @@
 ; Native help pages, dry-run verdicts and legacy command argument errors.
 ; Page text is literal generated data; this module owns lookup and disclosure.
 ; command_arity.metta owns the shared command vocabulary and its refinement.
+!(import! &self ./src/lazy_import.metta)
 
 !(import! &self (library math))
 !(import! &self (library re))
@@ -9,6 +10,7 @@
 !(import! &self ./src/small_views_unicode.metta)
 
 !(bind! &help-pages (new-state HelpPagesUnloadedV1))
+!(bind! &help-pages-loaded (new-state False))
 !(bind! &help-nonprintable (new-state HelpRegexUnloadedV1))
 (= (help:nonprintable-regex)
    (let $cached (get-state &help-nonprintable)
@@ -44,7 +46,7 @@
 (= (help:page-rows)
    (let $cached (get-state &help-pages)
      (if (!= $cached HelpPagesUnloadedV1) $cached
-       (let* (($loaded (import! &self ./src/skills_help_pages.metta))
+       (let* (($loaded (lazy:import! &help-pages-loaded "src/skills_help_pages.metta"))
               ($rows (sort-atom (unique-atom (collapse (match &self
                        (HelpPageV1 $name $text) (HelpPageV1 $name $text)))))))
          (progn (change-state! &help-pages $rows) $rows)))))
