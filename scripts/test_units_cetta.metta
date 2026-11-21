@@ -40,6 +40,8 @@
     ("tests/unit/iter_request.metta" "UNIT_ITER_REQUEST_OK")
     ("tests/unit/iter_request.metta" "UNIT_ITER_TOOL_FAILURE_OK")
     ("tests/unit/iter_request.metta" "UNIT_ITER_REFUSAL_OK")
+    ("tests/unit/hierarchy_stamp.metta" "UNIT_HIERARCHY_STAMP_OK")
+    ("tests/unit/hierarchy_stamp.metta" "UNIT_HIERARCHY_EDGES_OK")
     ("tests/unit/chatgpt_context_roles.metta" "UNIT_CHATGPT_EVIDENCE_ROLES_OK")
     ("tests/unit/chatgpt_context_roles.metta" "UNIT_REQUEST_INDEX_CHUNKS_OK")
     ("tests/unit/chatgpt_context_roles.metta" "UNIT_TASK_INDEX_CHUNKS_OK")
