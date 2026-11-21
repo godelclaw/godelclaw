@@ -1,6 +1,7 @@
 !(import! &self ./editor_cetta.metta)
 (= (cc:initialize $settings)
    (let* (($_ (cc:projection-reset))
+          ($_ (cc:editor-reset))
           ($_ (cc:set "settings" $settings)) ($_ (cc:set "editor" (buffer:new 33554432 text)))
           ($_ (cc:set "events" (buffer:new 8388608 bytes))) ($_ (cc:set "output" (buffer:new 16777216 bytes)))
           ($_ (cc:set "input" (buffer:new 2097152 bytes)))
