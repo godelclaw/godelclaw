@@ -60,7 +60,7 @@ def run(args, mode, name, scenario, evaluator, mutant=None):
            "ITER_PYTHON": str(args.python), "LLM_MODEL": "fixture-model",
            "BASE_URL": "http://offline.invalid", "AI_API_KEY": "offline"}
     if evaluator == "cetta":
-        cmd = [str(args.cetta), "--lang", "petta", str(entry)]
+        cmd = [str(args.cetta), "--lang", "petta", "--profile", "extended", "--import-mode", "ancestor-walk", str(entry)]
     elif mode == "iter":
         cmd = [str(args.python), str(MODES / "iter/iter_fixture.py"), str(MODES / "iter/upstream/iter.py")]
     else:
