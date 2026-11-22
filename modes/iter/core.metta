@@ -174,7 +174,9 @@
                               ($arrived (if (iter:true (ih:not-equal $e "")) (let $_ (ih:sleep $wait) $e) (iter:slow $wait))))
                          (iter:loop (iter:state (ih:take $clean (get-state &iter-checkpoint)) $p $s $n $arrived $next-bucket))))
                       ($next (let $_ (change-state! &iter-failures 0) (iter:loop $next)))))))))
+; The bucket starts at -1 (iter.py's cleanup_bucket as patched on
+; godelclaw/iter master-fixed): the first cycle cleans a restored history once
+; and then records its bucket, so a cleanup due before a restart is not lost.
 (= (iter:start)
    (let $history (ih:initialize)
-     (iter:loop (iter:state $history False 0 True ""
-                  (math:floor (/ (ih:size $history) 20))))))
+     (iter:loop (iter:state $history False 0 True "" -1))))

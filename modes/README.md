@@ -244,7 +244,7 @@ operator-controlled storage outside the published source tree.
 
 | Component | Exact source |
 |---|---|
-| Iter | `patham9/iter` `f4064d97849ecaccac7939315a3f1a68de15c3ef` |
+| Iter | `patham9/iter` `f4064d97849ecaccac7939315a3f1a68de15c3ef`, with `godelclaw/iter` [`cd7db8c`](https://github.com/godelclaw/iter/commit/cd7db8cef510ecbc151bee41c57359c234d1d66c) (clean once after a restart) applied to `iter.py` |
 | Omega | `singnet/Omega` `94d7b9a2e1ef6b5873aee764ca1ef16de8dcd943` |
 | Canonical call schema | `modes/protocol/ToolCalls.module`; exact digest recorded in each runtime adapter ledger |
 | Omega reference evaluator | PeTTa v1.0.4 `7037f4c2ad378c52fc328004fe216d5118b674f0` |

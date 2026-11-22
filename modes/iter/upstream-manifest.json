@@ -30,7 +30,7 @@
       "path": "iter.py",
       "classification": "core",
       "vendored": true,
-      "sha256": "281597213d59fc0bc4a352c5d245914db30c1055f78dc6348267633d5696bc4c"
+      "sha256": "69664f906d6d5d6077a8107d235455fc00699a17b4b045d403629ef5fa7b3ae3"
     },
     {
       "path": "prompt.txt",
@@ -67,6 +67,17 @@
       "classification": "core",
       "vendored": true,
       "sha256": "a7bc41169e7edd3268b480ce0b7a81f143b9bbcb68427bb531d4e9cb1a33ea2d"
+    }
+  ],
+  "patches": [
+    {
+      "repository": "https://github.com/godelclaw/iter",
+      "branch": "master-fixed",
+      "commit": "cd7db8cef510ecbc151bee41c57359c234d1d66c",
+      "files": [
+        "iter.py"
+      ],
+      "summary": "Clean once after a restart (cleanup_bucket starts at -1)"
     }
   ]
 }

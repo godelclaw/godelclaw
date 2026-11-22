@@ -212,7 +212,7 @@ Path("memory").mkdir(exist_ok=True)
 Path("transformations").mkdir(exist_ok=True)
 post_task_mode, autonomous_steps, new_burst, pending_event_append = False, 0, True, ""
 cleanup_interval = MAX_EXPERIENCE_SIZE - RETAIN_EXPERIENCE_SIZE
-cleanup_bucket = len(experience) // cleanup_interval
+cleanup_bucket = -1  # clean once after a restart; the loop then records the bucket from the loaded length
 while True:
     current_bucket = len(experience) // cleanup_interval
     if current_bucket > cleanup_bucket:
