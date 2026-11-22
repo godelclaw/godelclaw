@@ -17,6 +17,12 @@
 ;   outbox, nothing is published; the next cycle tries again.
 ; - The text names only host labels and the configured provider and model:
 ;   provider bodies and exception text may carry credentials.
+; - A failure that a retry recovers is not news: an episode is announced only
+;   once it has stayed open for the grace period
+;   (METTACLAW_FAILURE_NOTICE_GRACE_SECONDS, 180 by default), so a stream cut
+;   that the next attempt repairs reaches nobody. A refused authorization needs
+;   the operator and is announced at once. The console's status line shows an
+;   open episode as it happens.
 !(import! &self (library json))
 !(import! &self (library math))
 !(import! &self (library str))
@@ -38,6 +44,17 @@
          (if (== $pairs ()) None
            (if (health:truthy? (sf:get $episode "resolved_at" JsonNull)) None $episode))))
       ($other None))))
+
+(= (fnote:grace)
+   (case (catch (str:string->number (system:getenv-or-default "METTACLAW_FAILURE_NOTICE_GRACE_SECONDS" "180")))
+     (((Error $_ $_) 180) ($seconds $seconds))))
+; Whether the open episode is due its notice at NOW.
+(= (fnote:due? $episode $now)
+   (let* (($kind (sf:get $episode "kind" ""))
+          ($first (sf:get $episode "first_at" FnoteMissing)))
+     (if (or (== $kind "provider-rejected-401") (== $kind "provider-rejected-403")) True
+       (if (not (== (get-type $first) Number)) False
+         (>= (- $now $first) (fnote:grace))))))
 
 (= (fnote:reason $kind)
    (if (== $kind "provider-rejected-429")
@@ -105,7 +122,7 @@
 ; the open episode, else 0.
 (= (fnote:notify)
    (let $episode (fnote:open-episode (health:read))
-     (if (== $episode None) 0
+     (if (or (== $episode None) (not (fnote:due? $episode (system:wall-time)))) 0
        (let* (($id (sf:get $episode "id" JsonNull)) ($socket (fnote:socket)))
          (if (not (and (== (get-type $id) String) (not (== $socket "")))) 0
            (if (fnote:queued? $id) 0

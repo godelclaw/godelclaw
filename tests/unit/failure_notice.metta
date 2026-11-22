@@ -112,6 +112,20 @@
           ($_ (fs:remove (path:join (fnu:outbox) "42.0.1.json"))))
      (fnu:passed UNIT_FAILURE_NOTICE_TEXT_OK)))
 
+;; ------------------------------------------------------------- grace period
+
+; A failure a retry repairs within the grace period is never announced; one
+; that stays open past it is; a refused authorization is announced at once.
+!(let* (($now 1000000)
+        ($cut (JsonObject ((JsonPair "kind" "incomplete-stream") (JsonPair "first_at" (- $now 25)))))
+        ($long (JsonObject ((JsonPair "kind" "incomplete-stream") (JsonPair "first_at" (- $now 181)))))
+        ($auth (JsonObject ((JsonPair "kind" "provider-rejected-401") (JsonPair "first_at" (- $now 1)))))
+        ($_ (nt:require recovered-cut-not-due (not (fnote:due? $cut $now))))
+        ($_ (nt:require long-outage-due (fnote:due? $long $now)))
+        ($_ (nt:require refused-authorization-due-at-once (fnote:due? $auth $now)))
+        ($_ (nt:require grace-default (nt:equal (fnote:grace) 180))))
+   (fnu:passed UNIT_FAILURE_NOTICE_GRACE_OK))
+
 ;; ------------------------------------------------------------- one notice an episode
 
 !(if (== (fnu:socket) "") ()
@@ -216,5 +230,5 @@
 
 !(if (== (fnu:socket) "") ()
    (let $blocks (collapse (match &self (fnu:block-passed $block) $block))
-     (if (== (size-atom $blocks) 3) (println! UNIT_FAILURE_NOTICE_OK)
+     (if (== (size-atom $blocks) 4) (println! UNIT_FAILURE_NOTICE_OK)
        (println! (UNIT_FAILURE_NOTICE_INCOMPLETE $blocks)))))
