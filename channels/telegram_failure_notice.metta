@@ -52,17 +52,24 @@
 (= (fnote:due? $episode $now)
    (let* (($kind (sf:get $episode "kind" ""))
           ($first (sf:get $episode "first_at" FnoteMissing)))
-     (if (or (== $kind "provider-rejected-401") (== $kind "provider-rejected-403")) True
+     (if (fnote:needs-person? $kind) True
        (if (not (== (get-type $first) Number)) False
          (>= (- $now $first) (fnote:grace))))))
 
+; Refused authorization (401, 403) and a payment stop (402) need a person:
+; retries cannot repair them, so they are announced at once. A rate limit
+; (429) is retried and waits out the grace period like any other failure.
+(= (fnote:needs-person? $kind)
+   (or (== $kind "provider-rejected-401") (or (== $kind "provider-rejected-403") (== $kind "provider-rejected-402"))))
 (= (fnote:reason $kind)
-   (if (== $kind "provider-rejected-429")
-     "HTTP 429: the provider refused the request (rate or quota limit). Check its balance/limits, or choose a model with /models."
-     (if (or (== $kind "provider-rejected-401") (== $kind "provider-rejected-403"))
-       "The provider refused authorization. Check its credentials/access, or choose a model with /models."
-       (str:join "" ("The turn failed: " (erv:str $kind)
-                     ". /activity reports the retry or blocked state; /models remains available.")))))
+   (if (== $kind "provider-rate-limited-429")
+     "HTTP 429: the provider is limiting requests (rate or quota) and retries have not got through. Check its limits/balance, or choose a model with /models."
+     (if (== $kind "provider-rejected-402")
+       "HTTP 402: the provider requires payment. Check the account's billing or credit, or choose a model with /models."
+       (if (or (== $kind "provider-rejected-401") (== $kind "provider-rejected-403"))
+         "The provider refused authorization. Check its credentials/access, or choose a model with /models."
+         (str:join "" ("The turn failed: " (erv:str $kind)
+                       ". /activity reports the retry or blocked state; /models remains available."))))))
 
 ; The notice's text, or None when the episode lacks its kind, provider or
 ; first failure time.

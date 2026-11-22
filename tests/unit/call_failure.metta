@@ -33,7 +33,7 @@
         ($_ (nt:require timeout-status-is-not-a-rejection
               (nt:equal (failure:of none http-status 408 -1) (CallFailureV1 "RuntimeError" "RuntimeError" 408 False -1))))
         ($_ (nt:require rate-limit-is-transient
-              (nt:equal (failure:of none http-status 429 12) (CallFailureV1 "RuntimeError" "RuntimeError" 429 True 12))))
+              (nt:equal (failure:of none http-status 429 12) (CallFailureV1 "provider-rate-limited-429" "RuntimeError" 429 True 12))))
         ($_ (nt:require server-error-is-transient
               (nt:equal (failure:of none http-status 503 -1) (CallFailureV1 "RuntimeError" "RuntimeError" 503 True -1))))
         ($_ (nt:require refused-answer-named-by-its-reason

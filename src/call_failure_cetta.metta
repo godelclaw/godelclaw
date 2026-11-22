@@ -16,13 +16,14 @@
 ; and its owner's retry-after (-1 for none).
 ; - code names the failure for the health record and the pacer, type the
 ;   error class its cause stands for; a deterministic rejection's code is its
-;   status (provider-rejected-NNN);
+;   status (provider-rejected-NNN), and a rate limit's is provider-rate-limited-429;
 ; - a timeout, a rate limit (429) and a server error (5xx) are transient;
 ; - retry is the owner's retry-after, else an admission denial's, never below
 ;   0, else -1 (none).
 (= (failure:of $cause $kind $status $retry)
    (let* (((CallClass $code $type $moving $own) (failure:class $cause (failure:text $kind)))
-          ($named (if (health:rejected-status? $status) (str:concat "provider-rejected-" (repr $status)) $code))
+          ($named (if (health:rejected-status? $status) (str:concat "provider-rejected-" (repr $status))
+                    (if (== $status 429) "provider-rate-limited-429" $code)))
           ($transient (or $moving (or (== $status 429) (>= $status 500))))
           ($after (if (>= $retry 0) $retry $own)))
      (CallFailureV1 $named $type $status $transient $after)))

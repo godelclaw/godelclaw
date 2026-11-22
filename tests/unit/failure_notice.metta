@@ -19,7 +19,7 @@
 ; at NOW and fails a second later with a rate limit.
 (= (fnu:fail $now)
    (let $started (health:write (health:started (health:read) "fixture" "chosen-model" $now))
-     (health:write (health:failed (health:read) "provider-rejected-429" (+ $now 1) 0 (system:uuid4-hex)))))
+     (health:write (health:failed (health:read) "provider-rate-limited-429" (+ $now 1) 0 (system:uuid4-hex)))))
 (= (fnu:recover $now)
    (let $started (health:write (health:started (health:read) "fixture" "chosen-model" $now))
      (health:write (health:completed (health:read) 10 (+ $now 1)))))
@@ -66,10 +66,10 @@
 ;; ------------------------------------------------------------- the text and the key
 
 !(if (== (fnu:socket) "") ()
-   (let* (($episode (json:parse "{\"id\": \"e1\", \"first_at\": 100.9, \"provider\": \"fixture\", \"model\": \"chosen-\\u017e\", \"kind\": \"provider-rejected-429\"}"))
+   (let* (($episode (json:parse "{\"id\": \"e1\", \"first_at\": 100.9, \"provider\": \"fixture\", \"model\": \"chosen-\\u017e\", \"kind\": \"provider-rate-limited-429\"}"))
           ($_ (nt:require rate-limit-text
                 (nt:equal (fnote:text $episode)
-                          "Turn failure observed at 1970-01-01 00:01:40 UTC: HTTP 429: the provider refused the request (rate or quota limit). Check its balance/limits, or choose a model with /models.\nAttempted configuration: {\"provider\": \"fixture\", \"model\": \"chosen-\\u017e\"}\nYour messages are retained. No model was switched automatically. /activity shows the current state.")))
+                          "Turn failure observed at 1970-01-01 00:01:40 UTC: HTTP 429: the provider is limiting requests (rate or quota) and retries have not got through. Check its limits/balance, or choose a model with /models.\nAttempted configuration: {\"provider\": \"fixture\", \"model\": \"chosen-\\u017e\"}\nYour messages are retained. No model was switched automatically. /activity shows the current state.")))
           ($_ (nt:require authorization-text
                 (nt:equal (map-atom ("provider-rejected-401" "provider-rejected-403") $kind
                             (str:starts-with (fnote:text (sf:put $episode "kind" $kind))
@@ -123,6 +123,11 @@
         ($_ (nt:require recovered-cut-not-due (not (fnote:due? $cut $now))))
         ($_ (nt:require long-outage-due (fnote:due? $long $now)))
         ($_ (nt:require refused-authorization-due-at-once (fnote:due? $auth $now)))
+        ($_ (nt:require payment-stop-due-at-once
+              (fnote:due? (JsonObject ((JsonPair "kind" "provider-rejected-402") (JsonPair "first_at" (- $now 1)))) $now)))
+        ($_ (nt:require rate-limit-waits-grace
+              (not (fnote:due? (JsonObject ((JsonPair "kind" "provider-rate-limited-429") (JsonPair "first_at" (- $now 25)))) $now))))
+        ($_ (nt:require payment-reason (str:starts-with (fnote:reason "provider-rejected-402") "HTTP 402: the provider requires payment.")))
         ($_ (nt:require grace-default (nt:equal (fnote:grace) 180))))
    (fnu:passed UNIT_FAILURE_NOTICE_GRACE_OK))
 

@@ -93,14 +93,14 @@
 
 ; An unresolved turn failure silences the notice and starts no delay. The
 ; record is read at each scan.
-!(let* (($open "{\"failure_episode\": {\"kind\": \"provider-rejected-429\", \"first_at\": 5.0}}")
+!(let* (($open "{\"failure_episode\": {\"kind\": \"provider-rate-limited-429\", \"first_at\": 5.0}}")
         ($_ (in:health $open))
         ($_ (nt:require failure-pending (health:failure-pending)))
         ($_ (nt:require the-last-scan-saw-no-failure (not (notice:failure?))))
         ($_ (notice:begin-scan-at 1.0 () ()))
         ($_ (nt:require silent-during-failure (nt:equal ((in:key 100.0 "f" "42.0") (in:key 200.0 "f" "42.0")) ("" ""))))
         ($_ (nt:require failure-starts-no-delay (nt:equal (notice:pending-count) 0)))
-        ($_ (in:health "{\"failure_episode\": {\"kind\": \"provider-rejected-429\", \"resolved_at\": 6.5}}"))
+        ($_ (in:health "{\"failure_episode\": {\"kind\": \"provider-rate-limited-429\", \"resolved_at\": 6.5}}"))
         ($_ (nt:require failure-resolved (not (health:failure-pending))))
         ($_ (in:health "{\"failure_episode\": {}}"))
         ($_ (nt:require empty-episode-is-none (not (health:failure-pending))))
