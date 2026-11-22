@@ -35,16 +35,34 @@
               ($lead (str:join "" ((cc:style (cc:glyph-style "running") (cc:glyph "running")) " " (cc:short-sid (cc:one-line $sid)) " running "))))
          (cc:clip (str:join "" ($lead (cc:one-line (erv:command-text $cmd)) $elapsed $more)) $width)))))
 (= (cv:newer-running ($a $_ $_) ($b $_ $_)) (>= $a $b))
+; The terminal's width now, from the viewer's own handle on stdout.
+(= (cv:columns)
+   (case (cc:get "viewer-terminal" ConsoleNoTerminalV1)
+     ((ConsoleNoTerminalV1 (cc:display-width))
+      ($terminal (case (catch (terminal:size $terminal))
+                   (((HostSize $cols $_) (if (> $cols 0) $cols (cc:display-width))) ($other (cc:display-width))))))))
+(= (cv:rows-of $cells $cols) (if (<= $cells $cols) 1 (+ 1 (math:floor (/ (- $cells 1) $cols)))))
+(= (cv:erase-up $n) (if (<= $n 0) "" (str:concat "\u001b[1A\u001b[2K" (cv:erase-up (- $n 1)))))
+; The status was painted on one row of the width it had then; a terminal that
+; has since narrowed and rewrapped it holds it on more rows, all erased.
 (= (cv:clear-status)
-   (if (== (cc:get "viewer-status-shown" "") "") True
-     (progn (system:write stdout "\r\u001b[2K") (cc:set "viewer-status-shown" "") True)))
+   (let $shown (cc:get "viewer-status-shown" "")
+     (if (== $shown "") True
+       (let* (($painted (cc:get "viewer-status-cols" 0)) ($now (cv:columns))
+              ($rows (if (< $now $painted) (cv:rows-of (terminal:cells $shown) $now) 1)))
+         (progn (system:write stdout (str:concat "\r\u001b[2K" (cv:erase-up (- $rows 1))))
+                (cc:set "viewer-status-shown" "") True)))))
+; Painted one column short of the edge, so the line never wraps by itself.
 (= (cv:paint-status)
    (if (not (and (cc:get "viewer-status" False) (cc:get "viewer-line-start" True))) True
-     (let* (($text (cv:running-status (cc:display-width)))
+     (let* (($cols (cv:columns))
+            ($text (cv:running-status (max 10 (- $cols 1))))
             ($shown (cc:get "viewer-status-shown" "")))
-       (if (== $text $shown) True
-         (progn (system:write stdout (str:concat "\r\u001b[2K" $text))
-                (cc:set "viewer-status-shown" $text) True)))))
+       (if (and (== $text $shown) (== $cols (cc:get "viewer-status-cols" 0))) True
+         (progn (cv:clear-status)
+                (system:write stdout $text)
+                (cc:set "viewer-status-shown" $text)
+                (cc:set "viewer-status-cols" $cols) True)))))
 
 ; Strip ANSI SGR sequences (if color is enabled) before checking block lead.
 (= (cv:strip-sgr $line)
@@ -231,6 +249,11 @@
           ($_ (cc:set "viewer-emitted" False))
           ($_ (cc:set "viewer-buffer-once" $buffer-once))
           ($_ (cc:set "viewer-status" (and (not $once) (and (not $as-json) (cv:stdout-tty?)))))
+          ($_ (if (cc:get "viewer-status" False)
+                (case (terminal:open "/dev/stdout")
+                  (((HostFailure $_ $_ $_) (cc:set "viewer-status" False))
+                   ($handle (cc:set "viewer-terminal" $handle))))
+                True))
           ($_ (if $buffer-once (cc:set "viewer-once-buf" (buffer:new 33554432 bytes)) True))
           ($_ (fs:make-directories $directory 448))
           ($watch (host:watch $directory))
