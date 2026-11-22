@@ -11,7 +11,36 @@
         ($_ (nt:require iter-request-fields-admitted (== (llm:v1:request-fields $tagged) True)))
         ($_ (nt:require iter-request-valid (== (llm:v1:validate-request $tagged) True)))
         ($_ (nt:require iter-reasoning-is-an-effort
-              (== (sf:get (sf:get $body "reasoning" JsonNull) "effort" "") "medium"))))
+              (== (sf:get (sf:get $body "reasoning" JsonNull) "effort" "") "medium")))
+        ($_ (nt:require iter-default-max-tokens-5000
+              (== (sf:get $body "max_tokens" 0) 5000)))
+        ($_ (nt:require iter-default-tool-choice-required
+              (== (sf:get $body "tool_choice" "") "required")))
+        ; Malformed JSON tool arguments must fail decoding rather than falling through.
+        ($bad-json (ih:decode "{"))
+        ($_ (nt:require bad-json-decode-fails (not (ih:flag $bad-json "ok"))))
+        ($_ (nt:require bad-json-decode-message (str:starts-with (ih:get $bad-json "error") "Invalid tool arguments from model")))
+        ($good-obj (ih:decode "{\"a\":1}"))
+        ($_ (nt:require good-json-decode-ok (and (ih:flag $good-obj "ok") (ih:flag $good-obj "object"))))
+        ($good-arr (ih:decode "[]"))
+        ($_ (nt:require array-json-not-object (and (ih:flag $good-arr "ok") (not (ih:flag $good-arr "object")))))
+        ; LLM_BACKUP_MODEL is strictly opt-in (off by default when unset).
+        ($_ (nt:require backup-model-off-by-default (== (ih:backup-model "openai:primary") "")))
+        ; Refusal classification matches upstream utils.py:is_refusal.
+        ($ref-fin (ih:box (JsonObject ((JsonPair "finish" "refusal") (JsonPair "message" (JsonObject ((JsonPair "content" "no"))))))))
+        ($ref-cf (ih:box (JsonObject ((JsonPair "finish" "content_filter") (JsonPair "message" (JsonObject ((JsonPair "content" "no"))))))))
+        ($ref-fld (ih:box (JsonObject ((JsonPair "finish" "stop") (JsonPair "message" (JsonObject ((JsonPair "refusal" "policy") (JsonPair "content" "hi"))))))))
+        ($ref-empty (ih:box (JsonObject ((JsonPair "finish" "stop") (JsonPair "message" (JsonObject ((JsonPair "content" ""))))))))
+        ($ref-null (ih:box (JsonObject ((JsonPair "finish" "stop") (JsonPair "message" JsonNull)))))
+        ($ok-call (ih:box (JsonObject ((JsonPair "finish" "tool_calls") (JsonPair "message" (JsonObject ((JsonPair "tool_calls" (JsonArray ((JsonObject ((JsonPair "id" "1")))))))))))))
+        ($ok-txt (ih:box (JsonObject ((JsonPair "finish" "stop") (JsonPair "message" (JsonObject ((JsonPair "content" "hello"))))))))
+        ($_ (nt:require refusal-on-finish (ih:reply-refusal? $ref-fin)))
+        ($_ (nt:require refusal-on-content-filter (ih:reply-refusal? $ref-cf)))
+        ($_ (nt:require refusal-on-message-field (ih:reply-refusal? $ref-fld)))
+        ($_ (nt:require refusal-on-empty-message (ih:reply-refusal? $ref-empty)))
+        ($_ (nt:require refusal-on-null-message (ih:reply-refusal? $ref-null)))
+        ($_ (nt:require non-refusal-on-tool-call (not (ih:reply-refusal? $ok-call))))
+        ($_ (nt:require non-refusal-on-text (not (ih:reply-refusal? $ok-txt)))))
    (println! UNIT_ITER_REQUEST_OK))
 ; A tool that fails, by raising or by returning an Error, is the step's output.
 !(let* (($none (ih:object))

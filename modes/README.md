@@ -30,7 +30,7 @@ Configure the model endpoint before starting:
 
 | Mode | Upstream configuration retained |
 |---|---|
-| ITER | `LLM_MODEL`, `BASE_URL`, `AI_API_KEY`; the pinned defaults apply when absent. |
+| ITER | `LLM_MODEL`, `BASE_URL`, `AI_API_KEY`, plus upstream parameters (`MAX_TOKENS`, `MAX_SKILLS`, `MAX_CONTEXT_TRANSFORMATIONS`, `MAX_TOOLS`, `TOOL_CHOICE`, window sizes, and opt-in `LLM_BACKUP_MODEL`, unset/off by default); the pinned defaults apply when absent. |
 | Omega core | `OMEGA_provider` and `OMEGA_model`. `OpenAIAPI` uses `OMEGA_openaiapi_url`, `OMEGA_openaiapi_model`, and the key variable named by `OMEGA_api_token_var` (default `OPENAIAPI_API_KEY`). The launcher also accepts `ASICloud`, `Anthropic`, and `OpenAI` with their provider-specific API keys. |
 
 The two commands select the standalone profile explicitly. They do not read
@@ -244,7 +244,7 @@ operator-controlled storage outside the published source tree.
 
 | Component | Exact source |
 |---|---|
-| Iter | `patham9/iter` `f4064d97849ecaccac7939315a3f1a68de15c3ef`, with `godelclaw/iter` [`cd7db8c`](https://github.com/godelclaw/iter/commit/cd7db8cef510ecbc151bee41c57359c234d1d66c) (clean once after a restart) applied to `iter.py` |
+| Iter | `patham9/iter` `774f805dd88f64f1b2ddbd55854319f6f1e7f78f`, with `godelclaw/iter` [`cd7db8c`](https://github.com/godelclaw/iter/commit/cd7db8cef510ecbc151bee41c57359c234d1d66c) (clean once after a restart) applied to `iter.py`; Python curses TUI files (`log.py`, `tools/ui.py`) vendored as non-core only |
 | Omega | `singnet/Omega` `94d7b9a2e1ef6b5873aee764ca1ef16de8dcd943` |
 | Canonical call schema | `modes/protocol/ToolCalls.module`; exact digest recorded in each runtime adapter ledger |
 | Omega reference evaluator | PeTTa v1.0.4 `7037f4c2ad378c52fc328004fe216d5118b674f0` |

@@ -14,6 +14,8 @@ from types import SimpleNamespace
 
 HERE = Path(__file__).resolve().parent
 UPSTREAM = HERE / "upstream/iter.py"
+if str(UPSTREAM.parent) not in sys.path:
+    sys.path.insert(0, str(UPSTREAM.parent))
 namespace = {"__file__": str(UPSTREAM), "__name__": "iter_upstream_helpers"}
 source = UPSTREAM.read_text().split("# 4. Main loop")[0]
 exec(compile(source, str(UPSTREAM), "exec"), namespace)
@@ -191,16 +193,17 @@ def memory_overflow(length):
 
 def request_plan(experience, temporary, loaded, surface):
     # Component/file and provider I/O, with request policy selected by core.metta.
-    transformations = namespace["load_transformation_descriptions"]()
+    transformations, active_paths, _ = namespace["load_transformation_descriptions"]()
+    skills, _ = namespace["load_skills"]()
     prompt = Path("prompt.txt").read_text(encoding="utf-8", errors="replace").strip()
     messages = [{"role": "system", "content": "prompt.txt:\n" + prompt +
-                 "\n\n./transformations/:\n" + transformations + "\n\n" + surface}]
+                 "\n\n./transformations/:\n" + transformations + "\n\n" + surface + "\n\n" + skills}]
     messages += unbox(experience) + unbox(temporary)
-    messages, schemas, error = namespace["apply_transformation"](messages, unbox(loaded)["schemas"])
+    messages, schemas, error = namespace["apply_transformation"](messages, unbox(loaded)["schemas"], active_paths)
     if error:
         messages += [{"role": "user", "content": error}]
     return Box(dict(model=namespace["MODEL"], messages=messages, tools=schemas,
-                    tool_choice="required", max_tokens=2524,
+                    tool_choice=namespace["TOOL_CHOICE"], max_tokens=namespace["MAX_TOKENS"],
                     extra_body={"enable_thinking": True}))
 
 

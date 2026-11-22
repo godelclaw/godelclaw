@@ -52,7 +52,7 @@
        (Error mode-prepare (Unsolvable pinned-tool-not-declared)))))
 (= (mode-prepare:iter)
    (let* (($root (mode-tool:app-root)) ($runtime (mode-host:root))
-          ($_ (map-atom ("tools" "channels" "memory" "transformations") $name
+          ($_ (map-atom ("tools" "channels" "memory" "skills" "transformations") $name
                  (fs:make-directories (path:join $runtime $name) 504)))
           ($tools (map-atom ("shell" "send" "python" "nop") $name (mode-prepare:iter-tool $name)))
           ($shared (if (mode-host:standalone?) ()
