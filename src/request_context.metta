@@ -76,24 +76,37 @@
      (RequestParts $instructions
        (request:append-list $conversation
          (request:conversation (coding-message-list (coding-message $role $text) $tail))))))
+; Cache points index the rendered messages (the policy is message 0). Only the
+; Anthropic route reads them: it reuses a cached prefix only at a marked block,
+; looking back at most 20 blocks for an earlier entry, with at most four marks
+; per request. Transcript chunks are immutable, and a new request rewrites only
+; the last chunk of the request index, so the marks go on the last two index
+; chunks, the end of the transcript and the end of the trusted instructions.
+; Observations and data change on every call: a mark there is written at the
+; cache-write price and never read back.
+(= (request:cache-points $trusted $past $requests)
+   (let* (($history-end (+ $trusted $past)) ($index-end (+ $history-end $requests)))
+     (if (> $requests 1) ($index-end (- $index-end 1) $history-end $trusted)
+       (if (== $requests 1) ($index-end $history-end $trusted) ($history-end $trusted)))))
+(= (request:numbers $values)
+   (if (== $values ()) ()
+     (cons-atom (JsonNumber (repr (car-atom $values))) (request:numbers (cdr-atom $values)))))
 (= (request:render $request)
    (case $request
      (((RoleContext $messages $advertised $observations $history $index $data $instructions)
        (let* (((RequestParts $trusted $conversation) (request:partition $messages () ()))
               ($policy (request:message "system" (str:join "\n\n"
                  ((str:concat "ADVERTISED_CAPABILITIES:\n" $advertised) $instructions))))
-              ($evidence (request:data-messages
-                 (request:append-list $history
-                   (request:append-list (request:index-list $index) ($observations $data)))))
+              ($past (request:data-messages $history))
+              ($requests (request:data-messages (request:index-list $index)))
+              ($current (request:data-messages ($observations $data)))
+              ($evidence (request:append-list $past (request:append-list $requests $current)))
               ($all (cons-atom $policy (request:append-list $trusted
-                       (request:append-list $evidence $conversation)))))
+                       (request:append-list $evidence $conversation))))
+              ($points (request:cache-points (length $trusted) (length $past) (length $requests))))
          (json-stringify (JsonObject ((JsonPair "kind" (JsonString "role-context-v1"))
                                      (JsonPair "messages" (JsonArray $all))
-                                     (JsonPair "cache_points" (JsonArray
-                                       ((JsonNumber (repr (length $trusted)))
-                                        (JsonNumber (repr (+ (length $trusted) (length $history))))
-                                        (JsonNumber (repr (- (+ (length $trusted) (length $history)) 1)))
-                                        (JsonNumber (repr (- (length $all) 2)))))))))))
+                                     (JsonPair "cache_points" (JsonArray (request:numbers $points))))))))
       ($plain $plain))))
 (= (request:bytes $request) (str:byte-length (request:render $request)))
 
