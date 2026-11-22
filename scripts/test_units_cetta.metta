@@ -48,7 +48,7 @@
     ("tests/unit/websearch_batch.metta" "UNIT_SEARCH_MERGE_OK")
     ("tests/unit/websearch_batch.metta" "UNIT_SEARCH_SEARXNG_OK")
     ("tests/unit/websearch_batch.metta" "UNIT_WEB_READ_TEXT_OK")
-    ("tests/unit/websearch_batch.metta" "UNIT_WEB_READ_FALLBACK_OK")
+    ("tests/unit/websearch_batch.metta" "UNIT_WEB_BROWSE_OK")
     ("tests/unit/console_history.metta" "UNIT_CONSOLE_HISTORY_OK" (("CONSOLE_HISTORY_HOME" "{home}")))
     ("tests/unit/console_editor_depth.metta" "UNIT_CONSOLE_EDITOR_DEPTH_OK")
     ("tests/unit/console_painter.metta" "UNIT_CONSOLE_PAINTER_OK" (("TMUX" "/tmp/unit-tmux,1,0")))

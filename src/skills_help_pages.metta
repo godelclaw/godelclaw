@@ -53,6 +53,8 @@
 (HelpPageV1 "rest" "usage: (rest) — until the next human message | (rest seconds)\nEnds the burst. The operator's message or /wake ends a timed rest;\nother activity queues. Rest remains yours to choose.")
 (HelpPageV1 "search" "usage: (search \"q1\" \"q2\" ...) — up to six queries in one command, searched together and merged (results tagged Q1, Q2, ...); local metasearch first, Tavily when it finds nothing; also (search-tavily ...), (search-ddg ...).")
 (HelpPageV1 "read-url" "usage: (read-url \"https://...\") — the page as text, JavaScript run; (read-url \"https://...\" \"words\") — only the passages around each match.")
+(HelpPageV1 "find-in-url" "usage: (find-in-url \"https://...\" \"words\") — the passages of the page around each match.")
+(HelpPageV1 "browse" "usage: (browse \"open\" \"https://...\") returns the page's interactive elements as refs (@e1 ...); then (browse \"click\" \"@e3\"), (browse \"fill\" \"@e5\" \"text\"), (browse \"press\" \"Enter\"), (browse \"back\"), (browse \"scroll\" \"down\"), (browse \"text\"), (browse \"close\").")
 (HelpPageV1 "search-ddg" "")
 (HelpPageV1 "search-tavily" "")
 (HelpPageV1 "send" "usage: (send \"message\")\nSends to the configured primary operator chat when one is set; a\ncross-chat read cannot redirect it. End messages to humans/agents\nwith the affect trace line. For every other audience use the exact\naddress: (send-telegram-chat \"id\" \"msg\").")

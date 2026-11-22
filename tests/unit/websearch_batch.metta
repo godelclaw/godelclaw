@@ -1,5 +1,6 @@
 !(import! &self ../native_test_support.metta)
 !(import! &self ../../src/webread_cetta.metta)
+!(import! &self ../../src/webbrowse_cetta.metta)
 ; Batched search and page reading, without the network.
 
 (= (wsb:row $url) (JsonObject ((JsonPair "title" (str:concat "t:" $url)) (JsonPair "url" $url) (JsonPair "snippet" "s"))))
@@ -50,3 +51,14 @@
         ($_ (nt:require plain-text (and (nt:contains $plain "Fish & chips") (nt:contains $plain "a b <c>"))))
         ($_ (nt:require scheme-guard (str:starts-with (web:read "file:///etc/passwd" "") "READ_URL_ERROR: not an http(s) URL"))))
    (println! UNIT_WEB_READ_FALLBACK_OK))
+
+; Browsing without a browser: ports, guards, the budget and unknown actions.
+!(let* (($godel (browse:port-of "godel")) ($lila (browse:port-of "lila")))
+   (let* (($_ (nt:require browse-ports-differ (not (== $godel $lila))))
+          ($_ (nt:require browse-port-range
+                (and (>= (str:string->number $godel) 9300) (< (str:string->number $godel) 9500))))
+          ($_ (nt:require browse-scheme-guard (str:starts-with (browse:command "open" "file:///etc/passwd" "") "BROWSE_ERROR: not an http(s) URL")))
+          ($_ (nt:require browse-unknown-action (str:starts-with (browse:command "teleport" "" "") "BROWSE_ERROR: unknown action")))
+          ($_ (nt:require browse-error-shown (== (browse:show (BrowseFailedV1 "x")) "BROWSE_ERROR: x")))
+          ($_ (nt:require browse-ok-trimmed (== (browse:show (BrowseOkV1 "  page  ")) "page"))))
+     (println! UNIT_WEB_BROWSE_OK)))

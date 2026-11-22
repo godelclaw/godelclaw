@@ -1,6 +1,7 @@
 ;configured at runtime:
 !(import! &self ./src/websearch_cetta.metta)
 !(import! &self ./src/webread_cetta.metta)
+!(import! &self ./src/webbrowse_cetta.metta)
 (= (commchannel) (empty))
 
 ;Connect all the channels. (configureChannel) is compiled into
@@ -112,6 +113,13 @@
 ;Read a web page as text (JavaScript runs); with a second argument, only the
 ;passages around each match of that text.
 (= (read-url $url) (web:read (utils:decode-safe $url) ""))
+(= (find-in-url $url $phrase) (web:read (utils:decode-safe $url) (utils:decode-safe $phrase)))
+
+;Browse like a person: (browse "open" URL), then click, fill, press, back,
+;scroll, text, snapshot and close, on elements by reference (@e1, ...).
+(= (browse $verb) (browse:command (utils:decode-safe $verb) "" ""))
+(= (browse $verb $a) (browse:command (utils:decode-safe $verb) (utils:decode-safe $a) ""))
+(= (browse $verb $a $b) (browse:command (utils:decode-safe $verb) (utils:decode-safe $a) (utils:decode-safe $b)))
 (= (read-url $url $find) (web:read (utils:decode-safe $url) (utils:decode-safe $find)))
 
 (= (search-tavily $msg)

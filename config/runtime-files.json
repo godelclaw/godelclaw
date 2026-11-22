@@ -356,6 +356,7 @@
     "src/utils_cetta.metta",
     "src/weak_process_core.metta",
     "src/webread_cetta.metta",
+    "src/webbrowse_cetta.metta",
     "src/websearch_cetta.metta",
     "src/working_state.metta",
     "src/working_state_cetta.metta",
@@ -684,6 +685,7 @@
       "src/utils_cetta.metta",
       "src/weak_process_core.metta",
       "src/webread_cetta.metta",
+      "src/webbrowse_cetta.metta",
       "src/websearch_cetta.metta",
       "src/working_state.metta",
       "src/working_state_cetta.metta",
@@ -820,6 +822,11 @@
       "name": "lightpanda",
       "file": "src/webread_cetta.metta",
       "policy": "read-url page renderer, run in a memory-capped systemd --user scope with a timeout"
+    },
+    {
+      "name": "agent-browser",
+      "file": "src/webbrowse_cetta.metta",
+      "policy": "browse: drives the agent's own Lightpanda CDP server, a memory-capped transient user service with a lifetime; each call in a memory-capped scope"
     },
     {
       "name": "configured-gateway-tool",
