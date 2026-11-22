@@ -2,6 +2,7 @@
 ; The coordinator is a Python-disabled CeTTa executable; all fixture state is local.
 !(import! &self ../tests/provider_native_qualification.metta)
 !(import! &self ../tests/native_framework_controls.metta)
+!(import! &self ../tests/cognitive_search_clients.metta)
 (= (native-provider-test:run)
    (let* (($root (system:cwd)) ($sdk (nt:required-env "NATIVE_TEST_SDK"))
           ($core (nt:required-env "NATIVE_TEST_CORE")) ($artifacts (nt:required-env "NATIVE_TEST_ARTIFACTS"))
@@ -46,7 +47,8 @@
           ($_ (nq:rejection $root $sdk $core $artifacts $fixture False))
           ($_ (nq:rejection $root $sdk $core $artifacts $fixture True))
           ($_ (nq:observation-refresh $root $sdk $core $artifacts $fixture))
-          ($_ (nq:progress-receipts $root $sdk $core $artifacts $fixture)))
+          ($_ (nq:progress-receipts $root $sdk $core $artifacts $fixture))
+          ($_ (nt:require search-clients (== (search-client:run $root $core $artifacts $fixture) NativeSearchClientsPassedV1))))
      NativeProviderSuitePassedV1))
 !(nt:require provider-driver-completed
    (nt:equal (collapse (native-provider-test:run)) (NativeProviderSuitePassedV1)))

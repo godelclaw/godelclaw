@@ -18,11 +18,12 @@ unset -f native_auth_descriptor
 
 # Native leaf tools have explicit paths; no interpreter environment is initialized.
 export PATH="${HOME:-}/.local/bin:$PATH"
-if [[ -z "${METTACLAW_XMLLINT_BIN:-}" ]]; then
-    if command -v xmllint >/dev/null 2>&1; then
-        METTACLAW_XMLLINT_BIN="$(command -v xmllint)"
-    elif [[ -x "${HOME:-}/miniforge3/bin/xmllint" ]]; then
-        METTACLAW_XMLLINT_BIN="${HOME:-}/miniforge3/bin/xmllint"
+# The page reader's renderer (Lightpanda): the user's installation, else PATH.
+if [[ -z "${METTACLAW_LIGHTPANDA_BIN:-}" ]]; then
+    if [[ -x "${HOME:-}/.local/lib/godelclaw/lightpanda/lightpanda" ]]; then
+        METTACLAW_LIGHTPANDA_BIN="${HOME:-}/.local/lib/godelclaw/lightpanda/lightpanda"
+    elif command -v lightpanda >/dev/null 2>&1; then
+        METTACLAW_LIGHTPANDA_BIN="$(command -v lightpanda)"
     fi
-    export METTACLAW_XMLLINT_BIN
+    if [[ -n "${METTACLAW_LIGHTPANDA_BIN:-}" ]]; then export METTACLAW_LIGHTPANDA_BIN; fi
 fi

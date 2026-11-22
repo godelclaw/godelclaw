@@ -1,5 +1,6 @@
 ;configured at runtime:
 !(import! &self ./src/websearch_cetta.metta)
+!(import! &self ./src/webread_cetta.metta)
 (= (commchannel) (empty))
 
 ;Connect all the channels. (configureChannel) is compiled into
@@ -96,10 +97,22 @@
 (= (delete-message-exact $chat_id $message_id)
    (tg:delete-recorded (format-args "{}" (cons-atom $chat_id ())) $message_id))
 
-;Search the internet for some information:
+;Search the internet: one query, or up to six in one command, searched
+;together and merged fairly (each result tagged with its query, Q1..Q6).
 (= (search $msg)
    (let $query (utils:decode-safe $msg)
-        (search:auto $query)))
+        (search:lines $query)))
+(= (search:decoded $queries) (map-atom $queries $q (utils:decode-safe $q)))
+(= (search $a $b) (search:batch (search:decoded ($a $b))))
+(= (search $a $b $c) (search:batch (search:decoded ($a $b $c))))
+(= (search $a $b $c $d) (search:batch (search:decoded ($a $b $c $d))))
+(= (search $a $b $c $d $e) (search:batch (search:decoded ($a $b $c $d $e))))
+(= (search $a $b $c $d $e $f) (search:batch (search:decoded ($a $b $c $d $e $f))))
+
+;Read a web page as text (JavaScript runs); with a second argument, only the
+;passages around each match of that text.
+(= (read-url $url) (web:read (utils:decode-safe $url) ""))
+(= (read-url $url $find) (web:read (utils:decode-safe $url) (utils:decode-safe $find)))
 
 (= (search-tavily $msg)
    (let $query (utils:decode-safe $msg)

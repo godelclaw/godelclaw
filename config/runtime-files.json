@@ -355,6 +355,7 @@
     "src/utils.metta",
     "src/utils_cetta.metta",
     "src/weak_process_core.metta",
+    "src/webread_cetta.metta",
     "src/websearch_cetta.metta",
     "src/working_state.metta",
     "src/working_state_cetta.metta",
@@ -682,6 +683,7 @@
       "src/utils.metta",
       "src/utils_cetta.metta",
       "src/weak_process_core.metta",
+      "src/webread_cetta.metta",
       "src/websearch_cetta.metta",
       "src/working_state.metta",
       "src/working_state_cetta.metta",
@@ -815,9 +817,9 @@
       "policy": "explicit authorized coding tool only"
     },
     {
-      "name": "xmllint",
-      "file": "src/websearch_cetta.metta",
-      "policy": "native HTML parser"
+      "name": "lightpanda",
+      "file": "src/webread_cetta.metta",
+      "policy": "read-url page renderer, run in a memory-capped systemd --user scope with a timeout"
     },
     {
       "name": "configured-gateway-tool",

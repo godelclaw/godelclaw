@@ -2,7 +2,8 @@
 !(import! &self ../../modes/omega/native/bootstrap.metta)
 !(let* (($tools (omega-host:collect-tools (getSkills)))
         ($names (map-atom $tools $tool (sf:get (sf:get $tool "function" JsonNull) "name" "")))
-        ($_ (nt:require all-thirteen-omega-tools-retained (== (size-atom $names) 13)))
+        ($_ (nt:require all-sixteen-omega-tools-retained (== (size-atom $names) 16)))
+        ($_ (nt:require web-tools-advertised (and (erv:contains $names "websearch") (and (erv:contains $names "read-url") (erv:contains $names "find-in-url")))))
         ($_ (nt:require zero-argument-tools-retained (and (erv:contains $names "version") (erv:contains $names "nop"))))
         ($_ (nt:require metadata-names-are-text
               (== (filter-atom $names $name (str:starts-with $name "<internal-tag")) ())))
