@@ -15,7 +15,36 @@
               (if (cc:get "viewer-buffer-once" False)
                 (let $acc (cc:get "viewer-once-buf" ConsoleNoBufferV1)
                   (progn (buffer:append $acc $text) True))
-                (progn (system:write stdout $text) True))))))
+                (progn (cv:clear-status)
+                       (system:write stdout $text)
+                       (cc:set "viewer-line-start" (str:ends-with $text "\n"))
+                       True))))))
+
+; Follow mode on a terminal keeps one live line at the bottom while a tool
+; runs: its session, its command and how long it has run. The line is erased
+; before every block is written, so the finished block lands once and no
+; running row is left behind; it is painted only at the start of a line.
+(= (cv:running-status $width)
+   (let $open (collapse (match &cc-items (ConsoleToolItemV1 $e $s $a $i $k $nm $cmd $st $disp $upd $stat $hc $ec $txt $art False)
+                (if (or (== $k "tool.forming") (== $cmd "")) (empty) ((if (> $disp 0) $disp $st) $s $cmd))))
+     (if (== $open ()) ""
+       (let* ((($since $sid $cmd) (car-atom (list:sort-by cv:newer-running $open)))
+              ($now (cc:live-now))
+              ($elapsed (if (and (> $since 0) (>= $now $since)) (str:concat " · " (cc:span (- $now $since))) ""))
+              ($more (if (> (size-atom $open) 1) (str:join "" (" (+" (repr (- (size-atom $open) 1)) " more)")) ""))
+              ($lead (str:join "" ((cc:style (cc:glyph-style "running") (cc:glyph "running")) " " (cc:short-sid (cc:one-line $sid)) " running "))))
+         (cc:clip (str:join "" ($lead (cc:one-line (erv:command-text $cmd)) $elapsed $more)) $width)))))
+(= (cv:newer-running ($a $_ $_) ($b $_ $_)) (>= $a $b))
+(= (cv:clear-status)
+   (if (== (cc:get "viewer-status-shown" "") "") True
+     (progn (system:write stdout "\r\u001b[2K") (cc:set "viewer-status-shown" "") True)))
+(= (cv:paint-status)
+   (if (not (and (cc:get "viewer-status" False) (cc:get "viewer-line-start" True))) True
+     (let* (($text (cv:running-status (cc:display-width)))
+            ($shown (cc:get "viewer-status-shown" "")))
+       (if (== $text $shown) True
+         (progn (system:write stdout (str:concat "\r\u001b[2K" $text))
+                (cc:set "viewer-status-shown" $text) True)))))
 
 ; Strip ANSI SGR sequences (if color is enabled) before checking block lead.
 (= (cv:strip-sgr $line)
@@ -107,13 +136,15 @@
        (progn (if (cc:get "viewer-json" False) True
                 (progn (cc:flush-visible-items) (if $once (cc:flush-running-tools) True)))
               (cv:flush)
+              (cv:clear-status)
               (if (and $once (cc:get "viewer-buffer-once" False))
                 (cv:emit-once-result (cc:get "viewer-limit" 18))
                 (if (and $once (and (not (cc:get "viewer-json" False)) (not (cc:get "viewer-emitted" False))))
                   (system:write stdout "Waiting for agent or coding-session output…\n")
                   True))
               True)
-       (progn (if (== $work ())
+       (progn (cv:paint-status)
+              (if (== $work ())
                  (let $watch (cc:get "stream-watch" ConsoleNoWatchV1) (host:wait (($watch read)) $interval)) True)
               False)))))
 
@@ -199,6 +230,7 @@
           ($_ (cc:set "viewer-limit" $limit))
           ($_ (cc:set "viewer-emitted" False))
           ($_ (cc:set "viewer-buffer-once" $buffer-once))
+          ($_ (cc:set "viewer-status" (and (not $once) (and (not $as-json) (cv:stdout-tty?)))))
           ($_ (if $buffer-once (cc:set "viewer-once-buf" (buffer:new 33554432 bytes)) True))
           ($_ (fs:make-directories $directory 448))
           ($watch (host:watch $directory))
@@ -207,6 +239,8 @@
           ($signals (host:signals))
           ($selected (cv:select-names (cc:stream-names) $session (or $full $as-json)))
           ($_ (cv:seed-ordered $selected (or $full $as-json) $tail-bytes $signals))
+          ; Live from here on: elapsed times on the status line count in wall time.
+          ($_ (if (cc:get "viewer-status" False) (cc:set "clock-live" True) True))
           ($interval (max 50 (math:floor (* 1000 (cli:number (sf:get $options "--interval" "0.15") 0.15)))))
           ($status (cv:loop $signals $once $interval))
           ($_ (host:close $signals))
