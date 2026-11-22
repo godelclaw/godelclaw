@@ -186,6 +186,7 @@
     ("tests/unit/observatory_qualification.metta" "UNIT_OBSERVATORY_QUALIFICATION_OK")
     ("tests/unit/viewer_scope.metta" "UNIT_VIEWER_SCOPE_OK")
     ("tests/unit/worklog_view_native.metta" "UNIT_WORKLOG_VIEW_IN_FLIGHT_OK")
+    ("tests/unit/skill_first_line.metta" "UNIT_SKILL_FIRST_LINE_OK")
     ("tests/unit/audit_scope.metta" "UNIT_AUDIT_SCOPE_OK")
     ("tests/unit/native_console_presentation.metta" "UNIT_NATIVE_CONSOLE_PRESENTATION_OK")
     ("tests/unit/cold_boot_lazy_modules.metta" "UNIT_COLD_BOOT_LAZY_OK"
