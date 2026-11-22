@@ -69,6 +69,21 @@
           ($_ (if (< $queued 1048576) (progn (cc:streams-step) (cc:archive-step)) True))
           ($_ (if (and (cc:get "draft-dirty" False) (>= $now (cc:get "next-draft" 0)))
                 (progn (cc:save-draft) (cc:set "next-draft" (+ $now 500000000))) True))) True))
+; How long a tick waits when no key, resize or display event wakes it: 25 ms
+; while output is waiting, the operator typed in the last two seconds, or a
+; control request is open; 125 ms (the spinner's frame rate) while the status
+; animates; 250 ms otherwise. Every tick costs memory the engine reclaims only
+; in part, so an idle console must not tick 40 times a second. The mail
+; worker's receive is a long poll and does not count as open.
+(= (cc:request-open? $kind)
+   (case (cc:get (cc:rpc-key $kind) ConsoleNoWorkerV1)
+     (((ConsoleRpcV1 $_ $_ $pending $queue $_) (or (!= $pending ConsoleNoRequestV1) (!= $queue ()))) ($none False))))
+(= (cc:tick-wait-ms $output-waiting)
+   (if (or $output-waiting
+           (or (< (- (system:monotonic-ns) (cc:get "last-input" 0)) 2000000000)
+               (cc:request-open? "control")))
+     25
+     (if (cc:get "status-animated" False) 125 250)))
 (= (cc:interactive-tick $terminal $signals)
    ; Only the explicit editor/projection state crosses an event boundary.
    (once
@@ -91,7 +106,7 @@
               ($base (if (cc:buffer-failed? $watch) (($terminal read) ($terminal resize))
                              (($terminal read) ($terminal resize) ($watch read))))
               ($interests (if (> $output-size (cc:get "output-offset" 0)) (cons-atom ($terminal write) $base) $base))
-              ($ready (host:wait $interests 25))
+              ($ready (host:wait $interests (cc:tick-wait-ms (> $output-size (cc:get "output-offset" 0)))))
               ($_ (case $ready (((HostReady $events)
                     (if (cli:member? ($terminal resize) $events)
                       (let (HostSize $cols $height) (terminal:size $terminal)

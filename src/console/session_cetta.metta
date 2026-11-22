@@ -99,7 +99,9 @@
                    (cc:set (cc:rpc-key $kind) (ConsoleRpcV1 $owner $input $request (cdr-atom $queue)
                       (+ (system:monotonic-ns) (if (== $kind "mail") 35000000000 10000000000)))))
                   ($blocked (cc:set (cc:rpc-key $kind) (ConsoleRpcV1 $owner $input $next $queue $until))))))
-             (cc:set (cc:rpc-key $kind) (ConsoleRpcV1 $owner $input $next $queue $until))))))
+             ; Nothing arrived and nothing was sent: the record stands as it is.
+             (if (== $next $pending) True
+               (cc:set (cc:rpc-key $kind) (ConsoleRpcV1 $owner $input $next $queue $until)))))))
       ($none
        (if (< (system:monotonic-ns) (cc:get (str:concat "restart-" $kind) 0)) True
          (let* (($_ (cc:spawn-worker $kind))

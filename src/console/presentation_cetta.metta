@@ -839,6 +839,7 @@
    (if (== $sids ()) ConsoleNoDoingV1
      (let $d (cc:session-doing (car-atom $sids) $now)
        (case $d (((ConsoleDoingV1 $_ $_ $_ True $_ $_ $_) $d) ($idle (cc:find-busy (cdr-atom $sids) $now)))))))
+(= (cc:set-changed $key $value) (if (== (cc:get $key ConsoleUnsetV1) $value) True (cc:set $key $value)))
 (= (cc:activity-text $width)
    (let* (($now (cc:live-now))
           ($agent (cc:str-field (cc:settings) "agent" ""))
@@ -850,7 +851,8 @@
        (cc:clip (str:join "" ("menu open · type 1-" (repr (size-atom $menu)) " to choose, or /close-menu")) $width)
        (case $busy
          (((ConsoleDoingV1 $sid $word $since True $cmd $more $rsec)
-           (let* (($lead (str:join "" ((cc:spinner-frame $now) " " (cc:one-line $sid) " "))))
+           (let* (($_ (cc:set-changed "status-animated" True))
+                  ($lead (str:join "" ((cc:spinner-frame $now) " " (cc:one-line $sid) " "))))
              (if (== $word "running")
                (let* (($elapsed (if (and (> $since 0) (>= $now $since)) (cc:span (- $now $since)) ""))
                       ($extra (if (> $more 0) (str:join "" (" (+" (repr $more) " more)")) ""))
@@ -859,7 +861,7 @@
                  (cc:clip (str:join "" ($lead "running " (cc:clip (cc:one-line $cmd) $room) $tail)) $width))
                (cc:clip (str:concat $lead (cc:doing-state-text $busy $now)) $width))))
           ($idle
-           (let $fault (cc:get "display-fault" "")
+           (let* (($_ (cc:set-changed "status-animated" False)) ($fault (cc:get "display-fault" "")))
              (if (!= $fault "") (cc:clip (cc:one-line $fault) $width)
                (cc:clip "Enter sends · Alt-Enter new line · /help commands · Ctrl-D detaches" $width)))))))))
 (= (cc:status-fit $items $width)
