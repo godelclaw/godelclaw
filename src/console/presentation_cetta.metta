@@ -470,6 +470,14 @@
            (let $upd (ConsoleTextItemV1 $e $s $a $i $p $ch $t $st "" $c $o False)
              (progn (cc:text-put $upd) (cc:commit-text $upd $b False "ok" "" False) True)))))))
 
+; A one-shot view ends with what is still in flight: every tool that has
+; started and not finished is shown as running, under its own session.
+(= (cc:flush-running-tools)
+   (let $open (collapse (match &cc-items (ConsoleToolItemV1 $e $s $a $i $k $nm $cmd $st $disp $upd $stat $hc $ec $txt $art False)
+                (if (== $k "tool.forming") (empty)
+                  (ConsoleToolItemV1 $e $s $a $i $k $nm $cmd $st $disp $upd $stat $hc $ec $txt $art False))))
+     (map-atom $open $rec (cc:emit-tool $rec False))))
+
 ; -- tool item state and formatting -------------------------------------------
 (= (cc:tool-get $epoch $sid $attempt $item)
    (case (collapse (match &cc-items (ConsoleToolItemV1 $epoch $sid $attempt $item $k $nm $cmd $st $disp $upd $stat $hc $ec $txt $art $term)

@@ -104,7 +104,8 @@
     (let* (($_ (cc:streams-step)) ($_ (cv:flush))
           ($work (cc:get "stream-work" ())))
      (if (or (!= (host:signal $signals) 0) (and $once (== $work ())))
-       (progn (if (cc:get "viewer-json" False) True (cc:flush-visible-items))
+       (progn (if (cc:get "viewer-json" False) True
+                (progn (cc:flush-visible-items) (if $once (cc:flush-running-tools) True)))
               (cv:flush)
               (if (and $once (cc:get "viewer-buffer-once" False))
                 (cv:emit-once-result (cc:get "viewer-limit" 18))
