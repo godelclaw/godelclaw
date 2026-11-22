@@ -2,9 +2,15 @@
 ; layout, images and fonts are skipped) in a memory-capped scope and a
 ; bubblewrap sandbox of its own: it sees the system directories, its own binary
 ; and the agent's web state, not the home directories, /shared or the agent's
-; environment (no keys, no SSH agent). It obeys robots.txt, never reaches
-; private or local addresses, and sends no telemetry. When it refuses or fails,
-; the reason is reported; nothing else fetches the page behind its back.
+; environment (no keys, no SSH agent). It never reaches private or local
+; addresses and sends no telemetry. When it refuses or fails, the reason is
+; reported; nothing else fetches the page behind its back.
+;
+; A read is made for the agent's task, one page at a time, as a person's
+; browser reads a page they asked for: it does not consult robots.txt, which
+; governs crawlers (METTACLAW_WEB_OBEY_ROBOTS=1 makes reads obey it too). It
+; never hides who it is: the User-Agent is the agent's own name and page,
+; "godelclaw (+https://github.com/godelclaw)", and never another browser's.
 ;
 ; The sandbox never costs function. The agent's web state (an HTTP cache, the
 ; cookies its browser kept, and the pages it rendered in the last 15 minutes)
@@ -45,6 +51,10 @@
                                 "--http-cache-entry-limit" (web:setting "METTACLAW_WEB_CACHE_ENTRIES" "1000"))
                                (if (fs:exists $cookies) ("--cookie" $cookies) ()))
                   (if $save ("--cookie-jar" $cookies) ()))))
+; Who the agent is, and whether reads obey robots.txt (see the header).
+(= (web:identity-options)
+   (list:append ("--user-agent" (web:setting "METTACLAW_WEB_AGENT_NAME" "godelclaw (+https://github.com/godelclaw)"))
+                (if (== (web:setting "METTACLAW_WEB_OBEY_ROBOTS" "0") "1") ("--obey-robots") ())))
 
 ;; The sandbox
 
@@ -131,8 +141,9 @@
 (= (web:fetch-variants $url)
    (let* (($bin (web:setting "METTACLAW_LIGHTPANDA_BIN" "lightpanda"))
           ($state (web:state))
-          ($fetch (list:append (list:append ((web:tool-path $bin) "fetch" "--obey-robots" "--block-private-networks"
-                                             "--dump" "markdown" "--log-level" "error")
+          ($fetch (list:append (list:append (list:append ((web:tool-path $bin) "fetch" "--block-private-networks"
+                                                           "--dump" "markdown" "--log-level" "error")
+                                                          (web:identity-options))
                                             (web:state-options $state "read" False))
                                ($url)))
           ($binds (list:append (web:tool-dir $bin) ("--bind" $state $state "--unshare-pid" "--die-with-parent"))))

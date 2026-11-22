@@ -6,7 +6,9 @@
 ; still ends; every agent-browser call runs in a memory-capped scope. Both run
 ; in the bubblewrap sandbox of read-url with a cleared environment;
 ; agent-browser keeps its session state in a directory of the instance's own.
-; The browser obeys robots.txt, spaces navigations to one host (1 s by
+; Like a read, browsing is for the agent's task: it does not consult
+; robots.txt unless METTACLAW_WEB_OBEY_ROBOTS=1, and it names itself as
+; godelclaw in its User-Agent. It spaces navigations to one host (1 s by
 ; default), never reaches private or local addresses and sends no telemetry.
 ; Targets are element references from the snapshot and keys are key names;
 ; typed text follows "--", so nothing the model writes becomes an option.
@@ -73,9 +75,10 @@
 ; sandboxed server does not listen, it starts again without the sandbox.
 (= (browse:serve-argv $bin $port $jailed)
    (let* (($state (web:state))
-          ($serve (list:append ((web:tool-path $bin) "serve" "--obey-robots" "--block-private-networks"
-                                "--http-nav-delay" (browse:setting "METTACLAW_BROWSE_HOST_DELAY_MS" "1000")
-                                "--host" "127.0.0.1" "--port" $port "--log-level" "fatal")
+          ($serve (list:append (list:append ((web:tool-path $bin) "serve" "--block-private-networks"
+                                             "--http-nav-delay" (browse:setting "METTACLAW_BROWSE_HOST_DELAY_MS" "1000")
+                                             "--host" "127.0.0.1" "--port" $port "--log-level" "fatal")
+                                            (web:identity-options))
                                (web:state-options $state "browse" True))))
      (if $jailed
        (web:jail (list:append (web:tool-dir $bin) ("--bind" $state $state "--unshare-pid" "--die-with-parent")) "/tmp" $serve)

@@ -69,6 +69,14 @@
    (println! UNIT_WEB_READ_TEXT_OK))
 
 ; Refusals are reported with their reason; the URL guard.
+; Reads name the agent and leave robots.txt to crawlers unless told to obey it.
+!(let* (($default (web:identity-options))
+        ($_ (nt:require reads-name-the-agent
+              (== $default ("--user-agent" "godelclaw (+https://github.com/godelclaw)"))))
+        ($_ (nt:require reads-never-claim-mozilla (not (nt:contains (str:join " " $default) "Mozilla"))))
+        ($_ (nt:require fetch-has-identity
+              (nt:contains (str:join " " (car-atom (web:fetch-variants "https://example.org/"))) "--user-agent godelclaw"))))
+   (println! UNIT_WEB_IDENTITY_OK))
 !(let* (($_ (nt:require robots-reason
               (== (web:failure-reason 1 "$level=error $msg=\"page failed\" url=x err=RobotsBlocked")
                   "robots.txt of the site disallows this page")))
