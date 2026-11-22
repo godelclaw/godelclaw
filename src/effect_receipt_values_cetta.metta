@@ -216,10 +216,26 @@
 ; (shell "ls"), rather than Python's str(list) parity layer. Readers keep a
 ; backward-compatible decoder for historical "['shell', ...]" and JSON records.
 
-(= (erv:metta-string $text)
+(= (erv:metta-string-slow $text)
    (let* (($points (erv:points $text))
           ($body (str:join "" (map-atom $points $cp (erv:repr-point $cp 34)))))
      (str:join "" ("\"" $body "\""))))
+(= (erv:no-substring? $text $needle)
+   (== (str:find $text $needle) (TextNotFound $needle)))
+(= (erv:metta-string $text)
+   ; For pure ASCII strings without DEL or non-JSON control escapes, JSON
+   ; string formatting is byte-identical to erv:repr-point without per-codepoint
+   ; MeTTa traversal.
+   (if (and (== (str:byte-length $text) (str:char-length $text))
+            (erv:no-substring? $text (erv:from-points (127))))
+     (let $rendered (json:stringify-python-with $text ((ensure-ascii False)))
+       (if (and (== (get-type $rendered) String)
+                (and (erv:no-substring? $rendered "\\u00")
+                     (and (erv:no-substring? $rendered "\\b")
+                          (erv:no-substring? $rendered "\\f"))))
+         $rendered
+         (erv:metta-string-slow $text)))
+     (erv:metta-string-slow $text)))
 
 (= (erv:bare-symbol-point? $cp)
    (and (> $cp 32)

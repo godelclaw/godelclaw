@@ -4,6 +4,13 @@
 !(import! &self ../../src/effect_receipts_cetta.metta)
 !(import! &self ../../src/console/presentation_cetta.metta)
 
+(= (drn:check-ascii-range $cp)
+   (if (> $cp 127) True
+     (let $s (erv:from-points ($cp))
+       (if (== (erv:metta-string $s) (erv:metta-string-slow $s))
+         (drn:check-ascii-range (+ $cp 1))
+         False))))
+
 (= (drn:display-file)
    (let ($producer $start) (display:producer)
      (path:join (display:root) (str:concat (display:safe (display:session)) (str:concat "." (str:concat $producer ".jsonl"))))))
@@ -46,6 +53,12 @@
                 (nt:equal (erv:command-text "[\"read-file\", \"notes.md\"]") "(read-file \"notes.md\")")))
           ($_ (nt:require decode-malformed-bracket-safe
                 (nt:equal (erv:command-text "[unterminated") "[unterminated")))
+          ; 2b. Fast-path erv:metta-string matches erv:metta-string-slow across all 128 ASCII codepoints and tricky literals.
+          ($_ (nt:require metta-string-ascii-exact (drn:check-ascii-range 0)))
+          ($_ (nt:require metta-string-tricky-literals
+                (and (nt:equal (erv:metta-string "a\\bb\\fc\\u0041\"\\") (erv:metta-string-slow "a\\bb\\fc\\u0041\"\\"))
+                     (nt:equal (erv:metta-string (str:join "" ("héllo " (erv:from-points (160 8203)) " 🎉")))
+                               (erv:metta-string-slow (str:join "" ("héllo " (erv:from-points (160 8203)) " 🎉")))))))
 
           ; 3. er:tool extracts tool name uniformly across all 5 command representations.
           ($_ (nt:require tool-from-metta-expr (nt:equal (er:tool (quote (shell "ls"))) "shell")))
@@ -98,7 +111,7 @@
                         (JsonPair "time" 1002) (JsonPair "session" "drn") (JsonPair "parent_session" "")
                         (JsonPair "kind" "tool.finished") (JsonPair "attempt" "a1") (JsonPair "item" "i1")
                         (JsonPair "source" "executor") (JsonPair "status" "returned") (JsonPair "text" "ok")
-                        (JsonPair "command" "['shell', 'old-ls']"))))
+                        (JsonPair "command" "['shell', 'old-ls \\x41\\u00e9']"))))
           ($ev-native (JsonObject ((JsonPair "producer" "p1") (JsonPair "sequence" 3) (JsonPair "epoch" "e1")
                         (JsonPair "time" 1003) (JsonPair "session" "drn") (JsonPair "parent_session" "")
                         (JsonPair "kind" "tool.finished") (JsonPair "attempt" "a1") (JsonPair "item" "i2")
@@ -109,7 +122,7 @@
           ($_ (cc:event $ev-native False))
           ($presented (buffer:value $buf))
           ($_ (host:close $buf))
-          ($_ (nt:require presentation-decodes-legacy (nt:contains $presented "old-ls")))
+          ($_ (nt:require presentation-decodes-legacy (nt:contains $presented "old-ls Aé")))
           ($_ (nt:require presentation-shows-native (nt:contains $presented "new-ls")))
           ($_ (nt:require presentation-no-py-list (not (nt:contains $presented "['"))))
 
