@@ -38,6 +38,18 @@
      (((proc:exited 0 $out $_) (BrowseOkV1 $out))
       ((proc:exited $code $out $err)
        (BrowseFailedV1 (str:join "" ("exit " (repr $code) "; tool output (untrusted): " (str:trim $err) " " (str:trim $out)))))
+      ; A command that started and was stopped may already have acted on the
+      ; page; it is never repeated for the model, which looks first.
+      ((proc:timed-out $out $err)
+       (BrowseFailedV1 (str:join "" ("timed out after it started; whether it acted is unknown. "
+                                     "Run (browse \"snapshot\") to see the page before repeating it. "
+                                     "Tool output (untrusted): " (str:trim $err) " " (str:trim $out)))))
+      ((proc:signaled $signal $out $err)
+       (BrowseFailedV1 (str:join "" ("stopped by signal " (repr $signal) " after it started; whether it acted is unknown. "
+                                     "Run (browse \"snapshot\") to see the page before repeating it. "
+                                     "Tool output (untrusted): " (str:trim $err) " " (str:trim $out)))))
+      ((proc:failed $why)
+       (BrowseFailedV1 (str:join "" ("could not start the browser tool (" (if (== (get-type $why) String) $why (repr $why)) "); scripts/install_web_tools.sh installs it"))))
       ($other (BrowseFailedV1 "tool unavailable; scripts/install_web_tools.sh installs it")))))
 (= (browse:run $argv $timeout) (browse:result (proc:run $argv (system:getcwd) inherit $timeout 4194304)))
 
