@@ -5,8 +5,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-ROOT = Path(os.environ["ITER_FIXTURE_ROOT"])
-SCRIPT = json.loads((ROOT / "scenario.json").read_text())
+ROOT = Path(os.environ["ITER_FIXTURE_ROOT"]) if "ITER_FIXTURE_ROOT" in os.environ else Path(".")
+SCRIPT = json.loads((ROOT / "scenario.json").read_text()) if (ROOT / "scenario.json").exists() else {}
 TRACE = ROOT / "trace.jsonl"
 _boundary = 0
 _receive = 0
@@ -93,11 +93,34 @@ def install(ns):
 
 
 def reference(path):
+    upstream_dir = str(Path(path).resolve().parent)
+    if upstream_dir not in sys.path:
+        sys.path.insert(0, upstream_dir)
+    stubbed_openai = False
+    if "openai" not in sys.modules:
+        try:
+            import openai  # noqa: F401
+        except ModuleNotFoundError:
+            sys.modules["openai"] = SimpleNamespace(OpenAI=OpenAI)
+            stubbed_openai = True
     text = Path(path).read_text()
     marker = text.index("try:\n    with open(\"experience.json\"")
     ns = {"__file__": str(Path(path).resolve()), "__name__": "iter_reference"}
     exec(compile(text[:marker], str(path), "exec"), ns)
     install(ns)
+    if stubbed_openai:
+        orig_popen = ns["subprocess"].Popen
+        runner = (
+            "import os,sys,types,runpy; sys.argv=sys.argv[1:]; "
+            "sys.path.insert(0,os.path.dirname(os.path.abspath(sys.argv[0]))); "
+            "sys.modules.setdefault('openai',types.SimpleNamespace()); "
+            "runpy.run_path(sys.argv[0],run_name='__main__')"
+        )
+        def wrapped_popen(cmd, *args, **kwargs):
+            if isinstance(cmd, list) and len(cmd) >= 3 and cmd[2] == "--invoke":
+                cmd = [cmd[0], "-c", runner, *cmd[1:]]
+            return orig_popen(cmd, *args, **kwargs)
+        ns["subprocess"] = SimpleNamespace(**{**vars(ns["subprocess"]), "Popen": wrapped_popen})
     line = next(i for i, s in enumerate(text.splitlines(), 1) if s == "while True:")
     def observe(frame, event, arg):
         if frame.f_code.co_filename == str(path) and event == "line" and frame.f_lineno == line:

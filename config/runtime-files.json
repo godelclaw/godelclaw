@@ -852,6 +852,7 @@
     "modes/conformance/scenarios.json",
     "modes/conformance/upstream_tests.py",
     "modes/conformance/verify.py",
+    "modes/iter/fixture_host_cetta.metta",
     "modes/iter/iter_fixture.py",
     "modes/iter/iter_host.py",
     "modes/iter/offline.py",

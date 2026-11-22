@@ -171,7 +171,8 @@
                               ($_ (system:write stderr (str:join "" ("Output> " (diagnostic:text (Error $a $b) 600)
                                     " [failed step " (repr $count) "; next attempt in " (repr $wait) " s or on new input]\n"))))
                               (($p $s $n $e) (get-state &iter-control))
-                              ($arrived (if (iter:true (ih:not-equal $e "")) (let $_ (ih:sleep $wait) $e) (iter:slow $wait))))
+                              ($arrived (if (or (<= $count 3) (iter:true (ih:not-equal $e "")))
+                                            (let $_ (ih:sleep $wait) $e) (iter:slow $wait))))
                          (iter:loop (iter:state (ih:take $clean (get-state &iter-checkpoint)) $p $s $n $arrived $next-bucket))))
                       ($next (let $_ (change-state! &iter-failures 0) (iter:loop $next)))))))))
 ; The bucket starts at -1 (iter.py's cleanup_bucket as patched on

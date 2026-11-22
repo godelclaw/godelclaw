@@ -46,7 +46,7 @@ def run(args, mode, name, scenario, evaluator, mutant=None):
             path.write_text(mutant(path.read_text()))
         else:
             text = (MODES / "iter/core.metta").read_text()
-            text = text.replace("./iter_host.py", str(MODES / "iter/iter_host.py"))
+            text = text.replace("./host_cetta.metta", str(MODES / "iter/fixture_host_cetta.metta"))
             text = text.replace("../../src/native_llm.metta", str(MODES.parent / "src/native_llm.metta"))
             (root / "mutant.metta").write_text(mutant(text))
             entry.write_text(f'!(import! &self "{root}/mutant.metta")\n!(iter:start)\n')
@@ -57,6 +57,7 @@ def run(args, mode, name, scenario, evaluator, mutant=None):
            "PYTHONPATH": str(MODES / "iter") if mode == "iter" else
                          os.pathsep.join((str(root), str(MODES))),
            f"{mode.upper()}_FIXTURE_ROOT": str(root),
+           "ITER_UPSTREAM_SCRIPT": str(MODES / "iter/upstream/iter.py"),
            "ITER_PYTHON": str(args.python), "LLM_MODEL": "fixture-model",
            "BASE_URL": "http://offline.invalid", "AI_API_KEY": "offline"}
     if evaluator == "cetta":
@@ -153,9 +154,9 @@ def main():
                     print(f"FAIL {mode}/{name}/{variant}: {error}", flush=True)
     if args.mutants:
         mutants = [
-            ("iter", "nop-in-batch", "last-nop-only", '(or $nop (iter:true (py-call (iter_host.equal $name "nop"))))', '(iter:true (py-call (iter_host.equal $name "nop")))'),
+            ("iter", "nop-in-batch", "last-nop-only", '(or $nop (iter:true (ih:equal $name "nop")))', '(iter:true (ih:equal $name "nop"))'),
             ("iter", "fast-budget", "budget-49", '(>= $used 50)', '(>= $used 49)'),
-            ("iter", "tool-caps", "nine-call-cap", '(iter_host.take $calls 10)', '(iter_host.take $calls 9)'),
+            ("iter", "tool-caps", "nine-call-cap", '(ih:take $calls 10)', '(ih:take $calls 9)'),
             ("omega", "duplicate-input", "duplicate-rearms", '(!= $msgrcv (get-state &prevmsg))', 'True'),
             ("omega", "wake-boundary", "inclusive-wake", '(> (get_time) (get-state &nextWakeAt))', '(>= (get_time) (get-state &nextWakeAt))'),
             ("omega", "budget-exhaustion", "no-decrement", '(- (get-state &loops) 1)', '(- (get-state &loops) 0)')]

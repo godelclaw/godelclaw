@@ -24,6 +24,10 @@ def prepare(root, scenario):
         p.write_text(text)
     if "experience" in scenario:
         (root / "experience.json").write_text(json.dumps(scenario["experience"]))
+    core = (HERE / "core.metta").read_text()
+    core = core.replace("./host_cetta.metta", str(HERE / "fixture_host_cetta.metta"))
+    core = core.replace("../../src/native_llm.metta", str(HERE.parents[1] / "src/native_llm.metta"))
+    (root / "core-offline.metta").write_text(core)
     entry = root / "run.metta"
-    entry.write_text(f'!(import! &self "{HERE}/core.metta")\n!(iter:start)\n')
+    entry.write_text(f'!(import! &self "{root}/core-offline.metta")\n!(iter:start)\n')
     return entry
