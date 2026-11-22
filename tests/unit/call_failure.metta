@@ -77,7 +77,14 @@
               (nt:equal (failure:detail (CallPreparation "(llm:v1:error bad request text)")) "")))
         ($_ (nt:require provider-statement-shown
               (nt:equal (failure:line none "openai" http-status 400 True 0 0 (CallStated "string_above_max_length" "too long"))
-                        "[native_llm] failed request: http-status; provider=openai; status=400; sent=true; elapsed_ms=0; deadline_ms=0; code=string_above_max_length; message=too long\n"))))
+                        "[native_llm] failed request: http-status; provider=openai; status=400; sent=true; elapsed_ms=0; deadline_ms=0; code=string_above_max_length; message=too long\n")))
+        ; A refused stream names why: the provider's error event or an early end.
+        ($_ (nt:require stream-reason-shown
+              (nt:equal (cf:line (CallStreamEnd stream-overloaded) "anthropic" incomplete-stream 0 True 7084 1800000)
+                        "[native_llm] failed request: incomplete-stream; provider=anthropic; status=0; sent=true; elapsed_ms=7084; deadline_ms=1800000; stream=stream-overloaded\n")))
+        ($_ (nt:require stream-reason-keeps-the-retried-class
+              (nt:equal (failure:of (CallStreamEnd stream-incomplete) incomplete-stream 0 -1)
+                        (CallFailureV1 "RuntimeError" "RuntimeError" 0 False -1)))))
    (println! UNIT_CALL_FAILURE_LINE_OK))
 
 ; Engine observations become causes only when consistent; a compaction's

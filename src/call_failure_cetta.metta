@@ -31,6 +31,9 @@
 (= (failure:class none $kind)
    (if (== $kind "transport-error") (CallClass "OSError" "OSError" False -1)
      (CallClass "RuntimeError" "RuntimeError" False -1)))
+; A stream the decoder refused keeps the class it had before its reason was
+; kept: a RuntimeError the turn retries.
+(= (failure:class (CallStreamEnd $why) $kind) (CallClass "RuntimeError" "RuntimeError" False -1))
 (= (failure:class (CallDenied $reason $retry) $kind)
    (CallClass "AdmissionDenied" "AdmissionDenied" False (if (> $retry 0) $retry 0)))
 (= (failure:class (CallTransport $transport $code) $kind)
@@ -70,6 +73,9 @@
 (= (failure:detail (CallDenied $reason $retry)) (str:concat "; reason=" (failure:text $reason)))
 (= (failure:detail (CallTransport $transport $code))
    (str:join "" ("; transport_code=" (repr $code) "; transport_kind=" $transport)))
+; Why the decoder refused a streamed response: the provider's error event
+; (stream-overloaded, stream-api-error, ...) or a stream that ended early.
+(= (failure:detail (CallStreamEnd $why)) (str:concat "; stream=" (failure:text $why)))
 (= (failure:detail (CallRefusedResponse $reason $bound))
    (if (> $bound 0) (str:concat "; response_bound=" (repr $bound)) ""))
 ; A refused preparation is named by its code; any other reason may quote the

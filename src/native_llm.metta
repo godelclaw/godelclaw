@@ -250,7 +250,8 @@
               ($_ (host-native:decoding-wait (call:host $plan) $attempt)))
          (llm:decode-received-body $plan $epoch $correlation $protocol $body $stream $limit (+ $attempt 1))))
       ((llm:v1:error $why)
-       (llm:v1:failed $epoch $correlation incomplete-stream response-received))
+       (let $_ (call:note-cause $plan (CallStreamEnd $why))
+         (llm:v1:failed $epoch $correlation incomplete-stream response-received)))
       ($other (llm:v1:failed $epoch $correlation invalid-decode-result response-received)))))
 
 (: llm:continue (-> Atom Atom %Undefined%))
