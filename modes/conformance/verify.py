@@ -59,7 +59,8 @@ def run(args, mode, name, scenario, evaluator, mutant=None):
            f"{mode.upper()}_FIXTURE_ROOT": str(root),
            "ITER_UPSTREAM_SCRIPT": str(MODES / "iter/upstream/iter.py"),
            "ITER_PYTHON": str(args.python), "LLM_MODEL": "fixture-model",
-           "BASE_URL": "http://offline.invalid", "AI_API_KEY": "offline"}
+           "BASE_URL": "http://offline.invalid", "AI_API_KEY": "offline",
+           **{k: str(v) for k, v in scenario.get("env", {}).items()}}
     if evaluator == "cetta":
         cmd = [str(args.cetta), "--lang", "petta", "--profile", "extended", "--import-mode", "ancestor-walk", str(entry)]
     elif mode == "iter":
@@ -155,8 +156,8 @@ def main():
     if args.mutants:
         mutants = [
             ("iter", "nop-in-batch", "last-nop-only", '(or $nop (iter:true (ih:equal $name "nop")))', '(iter:true (ih:equal $name "nop"))'),
-            ("iter", "fast-budget", "budget-49", '(>= $used 50)', '(>= $used 49)'),
-            ("iter", "tool-caps", "nine-call-cap", '(ih:take $calls 10)', '(ih:take $calls 9)'),
+            ("iter", "fast-budget", "budget-49", '(>= $used (ih:cfg-max-fast-steps))', '(>= $used (- (ih:cfg-max-fast-steps) 1))'),
+            ("iter", "tool-caps", "nine-call-cap", '(ih:take $calls (ih:cfg-max-tool-calls))', '(ih:take $calls (- (ih:cfg-max-tool-calls) 1))'),
             ("omega", "duplicate-input", "duplicate-rearms", '(!= $msgrcv (get-state &prevmsg))', 'True'),
             ("omega", "wake-boundary", "inclusive-wake", '(> (get_time) (get-state &nextWakeAt))', '(>= (get_time) (get-state &nextWakeAt))'),
             ("omega", "budget-exhaustion", "no-decrement", '(- (get-state &loops) 1)', '(- (get-state &loops) 0)')]

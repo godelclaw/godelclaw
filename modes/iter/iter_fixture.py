@@ -46,6 +46,7 @@ class Message:
     def __init__(self, data):
         self.data = json.loads(json.dumps(data))
         self.content = data.get("content")
+        self.refusal = data.get("refusal")
         self.tool_calls = [SimpleNamespace(id=c["id"], type=c["type"],
                            function=SimpleNamespace(**c["function"]))
                            for c in data.get("tool_calls", [])]
@@ -75,13 +76,15 @@ class OpenAI:
         if "raise" in reply:
             record("provider_error", error=reply["raise"])
             raise RuntimeError(reply["raise"])
+        msg_data = reply.get("message")
+        msg = None if msg_data is None else Message(msg_data)
         return SimpleNamespace(choices=[SimpleNamespace(
-            message=Message(reply["message"]), finish_reason=reply.get("finish", "tool_calls"))], usage=None)
+            message=msg, finish_reason=reply.get("finish", "tool_calls"))], usage=None)
 
 
 def install(ns):
     ns["openai"] = SimpleNamespace(OpenAI=OpenAI)
-    ns["time"] = SimpleNamespace(sleep=sleep)
+    ns["time"] = SimpleNamespace(sleep=sleep, monotonic=lambda: 0.0)
     ns["uuid"] = SimpleNamespace(uuid4=lambda: "fixture")
     ns["get_current_time"] = lambda: "2026-01-01 00:00:00"
     ns["receive"] = receive

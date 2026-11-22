@@ -16,7 +16,8 @@ The explicit python coding tool can call the other captured tools as functions;
 its execution does not implement the runtime's provider or input coordination.
 
 TRANSFORMATIONS
-Create .metta files in transformations/. They run in filename order.
+Create .metta files in transformations/. They run in filename order, up to
+MAX_CONTEXT_TRANSFORMATIONS (default 30); omitted transformations do not run.
 Declare a ComponentDeclarationV1 and define:
   (= (component:transform-request (JsonArray ($messages $tools)))
      (JsonArray ($messages $tools)))
@@ -24,3 +25,10 @@ Both arguments are native JsonArrays. Return exactly those two arrays.
 An invalid or interrupted transformation preserves the previous request and
 adds a diagnostic. Source is captured once; editing a file does not rewrite
 an in-flight request.
+
+SKILLS
+Create .md files in skills/ (nested directories allowed). Any file or directory
+segment beginning with _ is inactive. The first line must match:
+  DESCRIPTION="Concise description of when and how to use this skill"
+Up to MAX_SKILLS (default 30) skills are indexed by path and first-line
+description in the system prompt; omitted skills trigger a notice.

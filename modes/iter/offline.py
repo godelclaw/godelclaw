@@ -17,6 +17,7 @@ def prepare(root, scenario):
     (tools / "echo.py").write_text('DESCRIPTION = "Fixture echo"\ndef run(text): return text\n')
     (tools / "raise_error.py").write_text('DESCRIPTION = "Fixture failure"\ndef run(): raise ValueError("fixture tool failure")\n')
     (root / "memory").mkdir()
+    (root / "skills").mkdir()
     (root / "transformations").mkdir()
     for name, text in scenario.get("files", {}).items():
         p = root / name

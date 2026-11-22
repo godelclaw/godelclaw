@@ -1,6 +1,6 @@
 {
   "repository": "https://github.com/patham9/iter",
-  "commit": "f4064d97849ecaccac7939315a3f1a68de15c3ef",
+  "commit": "774f805dd88f64f1b2ddbd55854319f6f1e7f78f",
   "files": [
     {
       "path": ".gitignore",
@@ -30,7 +30,14 @@
       "path": "iter.py",
       "classification": "core",
       "vendored": true,
-      "sha256": "69664f906d6d5d6077a8107d235455fc00699a17b4b045d403629ef5fa7b3ae3"
+      "sha256": "b086aada12efa054dc559cb0b9942f3d082ab8123bf046002ac47bd71b4ffa0f"
+    },
+    {
+      "path": "log.py",
+      "classification": "non-core",
+      "vendored": true,
+      "sha256": "b7902922f417a7722ae796a00fdfe19fa8e32dc28ce25e4baa4e0fba10ad3e58",
+      "reason": "Python curses TUI and terminal logger; godelclaw's Iter runs headless under the agent service and uses the native console. Vendored unmodified so the pinned upstream reference executes intact."
     },
     {
       "path": "prompt.txt",
@@ -67,6 +74,19 @@
       "classification": "core",
       "vendored": true,
       "sha256": "a7bc41169e7edd3268b480ce0b7a81f143b9bbcb68427bb531d4e9cb1a33ea2d"
+    },
+    {
+      "path": "tools/ui.py",
+      "classification": "non-core",
+      "vendored": true,
+      "sha256": "3af77d29a34f9a8f89ef7682496dd03a2277b75daec0f133db65efbbdbfa0f75",
+      "reason": "Optional curses TUI side-panel pin tool; not ported because godelclaw's Iter runs headless under the agent service and uses the native console."
+    },
+    {
+      "path": "utils.py",
+      "classification": "core",
+      "vendored": true,
+      "sha256": "31d3b0d5c9011daa527d05c2562b4eb493ff2d041384e0a0d962c860557284b4"
     }
   ],
   "patches": [

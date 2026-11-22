@@ -37,9 +37,10 @@
        (let* (($binary (system:getenv-or-default "METTACLAW_PYTHON_TOOL_BIN" "python3"))
               ($cwd (system:getcwd))
               ($argv ("/usr/bin/env" $binary $script))
-              ($child (catch (io:submit (proc:request $argv $cwd inherit 5000 $stdout $stderr))))
+              ($timeout (component:dynamic-timeout-ms))
+              ($child (catch (io:submit (proc:request $argv $cwd inherit $timeout $stdout $stderr))))
               ($ended (case $child
-                (((io:pending $handle) (rpc:await $handle (+ (system:monotonic-ns) 6000000000)))
+                (((io:pending $handle) (rpc:await $handle (+ (system:monotonic-ns) (* (+ $timeout 1000) 1000000))))
                  ($bad (Error python-tool (Fault launch-failed))))))
               ($out (artifact:retain-file $stdout)) ($err (artifact:retain-file $stderr))
               ($known (case $ended (((proc:finished $_ exited $_ $_ $_) True) ($other False))))

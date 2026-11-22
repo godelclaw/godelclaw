@@ -56,8 +56,8 @@
 ; A structured (coding or iter) request is a tagged JSON value; its purpose is
 ; the ledger's: "turn" (iter), "coding" or "compaction". Preparation captures
 ; both, so a plan is never retargeted after it exists.
-(= (llm:structured-plan $request $purpose)
-   (let* (($selected (model:current syn:large:text)) ($native (preq:tag $request)))
+(= (llm:structured-plan-for-model $selected $request $purpose)
+   (let $native (preq:tag $request)
      (if (str:starts-with $selected "chatgpt:")
        (if (== $purpose "turn") (Error llm:structured-plan chatgpt-command-mode-only)
          (let $session (chatgpt:session)
@@ -65,6 +65,8 @@
              (((ChatGPTUnavailable $why) (Error llm:structured-plan $why))
               ($ready (chatgpt:structured-plan-purpose $selected $native $ready $purpose))))))
        (pcall:structured-plan $selected $native $purpose))))
+(= (llm:structured-plan $request $purpose)
+   (llm:structured-plan-for-model (model:current syn:large:text) $request $purpose))
 
 ; The reply of a structured call, written as JSON where its caller keeps it
 ; (atomically) and returned as a value. It never crosses the host.

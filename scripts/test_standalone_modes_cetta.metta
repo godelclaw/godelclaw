@@ -95,7 +95,7 @@
           ($system (filter-atom $messages $row (== (sf:get $row "role" "") "system"))))
      (nt:require ($mode correct-provider-request)
        (and (and (== (sf:get $body "model" "") "fixture-model") (== (size-atom $system) 1))
-            (and (== (sf:get $body (if $omega "max_tokens" "max_output_tokens") 0) (if $omega 6000 2524))
+            (and (== (sf:get $body (if $omega "max_tokens" "max_output_tokens") 0) (if $omega 6000 5000))
                  (and (nt:contains (sf:get (car-atom $system) "content" "") "Standalone prompt addition λ")
                       (not (nt:contains (fs:read-text $path) "PRIVATE_INSTANCE_SENTINEL"))))))))
 (= (standalone-test:tool-result $path $id $marker)
