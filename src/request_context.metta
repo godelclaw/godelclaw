@@ -1,6 +1,11 @@
-; Message authority is explicit. Cache layout and quoted text cannot assign
-; roles. The context renderer carries this value through compaction and binds
-; coverage to its final serialized bytes, before provider admission.
+; Message authority is explicit. Quoted text cannot assign roles, and cache
+; layout assigns one only where a route says so: the ChatGPT-plan route sends
+; evidence before the first user message as developer items, because that
+; route reuses a cached prefix only at system and developer items
+; (chatgpt:evidence-roles). Evidence never becomes system, and the
+; conversation keeps its roles. The context renderer carries this value
+; through compaction and binds coverage to its final serialized bytes, before
+; provider admission.
 ; Only core import! is needed here. The PeTTa-only lib_import package provides
 ; Prolog/git import helpers, none of which the request renderer calls.
 !(import! &self (library json))
