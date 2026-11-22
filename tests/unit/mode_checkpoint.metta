@@ -1,4 +1,7 @@
 !(import! &self ../native_test_support.metta)
+(= (mcu:await-file $path $tries)
+   (if (fs:is-file $path) True
+     (if (<= $tries 0) False (progn (host:wait () 20) (mcu:await-file $path (- $tries 1))))))
 !(import! &self ../../modes/runtime_host_cetta.metta)
 (= (mode-test:append-intent $path $data $offset)
    (case (mode-host:file-info $path)
@@ -41,8 +44,11 @@
         ($_ (nt:require stop-ledger-noop-on-none (== (mode-host:stop-ledger) True)))
         ($ledger-dir (path:join $root "ledger-direct"))
         ($_ (fs:make-directories $ledger-dir 448))
-        ($sleeper (proc:spawn ("/bin/sleep" "60") ((cwd $ledger-dir) (stdout null) (stderr null))))
+        ; The spawn returns before the child runs; the child names itself ready
+        ; from its working directory, and the detector then scans once.
+        ($sleeper (proc:spawn ("/bin/sh" "-c" "echo $$ > ready; exec /bin/sleep 60") ((cwd $ledger-dir) (stdout null) (stderr null))))
         ($_ (change-state! &mode-native-ledger $sleeper))
+        ($_ (nt:require leak-detector-child-ready (mcu:await-file (path:join $ledger-dir "ready") 250)))
         ($_ (nt:require leak-detector-sees-running-child (not (== (nt:leaked-processes-under $ledger-dir) ()))))
         ($_ (nt:require stop-ledger-returns-true (== (mode-host:stop-ledger) True)))
         ($_ (nt:require stop-ledger-clears-state (== (get-state &mode-native-ledger) none)))
