@@ -138,3 +138,65 @@
             ($_ (nt:require failed-lock-keeps-count
                   (== (sf:get (sf:native-object (path:join $unlockable "submission-limit.json")) "remaining" -1) 5))))
        (println! UNIT_SUBMISSION_LIMIT_OK))))
+
+; Real skills/ and transformations/ directories under MAX_SKILLS and
+; MAX_CONTEXT_TRANSFORMATIONS from the environment: verifies ih:skills,
+; ih:skill-limit, ih:transformations, ih:transform-limit, and the resulting
+; request body (including non-execution of omitted transformations).
+!(let $case-dir (system:getenv-or-default "ITER_SKILLS_CASE" "")
+   (if (== $case-dir "") (println! UNIT_ITER_SKILLS_LIMIT_SKIPPED)
+     (let* (($root (system:getcwd))
+            ($engine (nt:required-env "NATIVE_CORE_BIN"))
+            ($_ (fs:make-directories (path:join $case-dir "memory") 448))
+            ($_ (fs:make-directories (path:join $case-dir "tools") 448))
+            ($_ (fs:make-directories (path:join $case-dir "transformations") 448))
+            ($_ (fs:make-directories (path:join $case-dir "skills/sub") 448))
+            ($_ (fs:make-directories (path:join $case-dir "skills/_hidden") 448))
+            ($_ (fs:write (path:join $case-dir "prompt.txt") "Skills limit unit prompt.\n"))
+            ($_ (fs:write (path:join $case-dir "skills/01-alpha.md") "DESCRIPTION=\"Alpha \\\"quoted\\\" skill\"\nBody\n"))
+            ($_ (fs:write (path:join $case-dir "skills/02-missing.md") "# Missing first-line description\n"))
+            ($_ (fs:write (path:join $case-dir "skills/sub/03-omitted.md") "DESCRIPTION=\"Third omitted skill\"\n"))
+            ($_ (fs:write (path:join $case-dir "skills/_skip.md") "DESCRIPTION=\"Hidden file\"\n"))
+            ($_ (fs:write (path:join $case-dir "skills/_hidden/secret.md") "DESCRIPTION=\"Hidden dir\"\n"))
+            ($_ (fs:write (path:join $case-dir "skills/notes.txt") "DESCRIPTION=\"Not markdown\"\n"))
+            ($_ (fs:write (path:join $case-dir "transformations/01-run.metta")
+                  "(ComponentDeclarationV1 \"First transform\" ())\n(= (component:transform-request (JsonArray ((JsonArray $m) $t))) (JsonArray ((JsonArray (list:append $m ((JsonObject ((JsonPair \"role\" \"user\") (JsonPair \"content\" \"RAN-01\")))))) $t)))\n"))
+            ($_ (fs:write (path:join $case-dir "transformations/02-omitted.metta")
+                  "(ComponentDeclarationV1 \"Second transform\" ())\n(= (component:transform-request (JsonArray ((JsonArray $m) $t))) (JsonArray ((JsonArray (list:append $m ((JsonObject ((JsonPair \"role\" \"user\") (JsonPair \"content\" \"MUST-NOT-RUN-02\")))))) $t)))\n"))
+            ($probe (path:join $case-dir "probe.metta"))
+            ($_ (fs:write $probe (str:join "" (
+                  "!(import! &self \"" (path:join $root "tests/native_test_support.metta") "\")\n"
+                  "!(import! &self \"" (path:join $root "modes/iter/core.metta") "\")\n"
+                  "!(let* (($skills (ih:skills))\n"
+                  "        ($s-omitted (ih:get $skills \"omitted\"))\n"
+                  "        ($s-surface (ih:get $skills \"surface\"))\n"
+                  "        ($s-notice (ih:skill-limit $s-omitted))\n"
+                  "        ($transforms (ih:transformations))\n"
+                  "        ($t-omitted (ih:get $transforms \"omitted\"))\n"
+                  "        ($t-notice (ih:transform-limit $t-omitted))\n"
+                  "        ($_ (nt:require env-max-skills-omitted (== $s-omitted 1)))\n"
+                  "        ($_ (nt:require env-skill-limit-text (== $s-notice \"[SKILL LIMIT REACHED: 1 Markdown skills are omitted. Consolidate or remove skills if they are needed.]\")))\n"
+                  "        ($_ (nt:require env-skill-alpha-listed (nt:contains $s-surface \"./skills/01-alpha.md: DESCRIPTION=\\\"Alpha \\\\\\\"quoted\\\\\\\" skill\\\"\")))\n"
+                  "        ($_ (nt:require env-skill-missing-sentinel (nt:contains $s-surface \"./skills/02-missing.md: [DESCRIPTION FIRST LINE MISSING]\")))\n"
+                  "        ($_ (nt:require env-skill-third-omitted (not (nt:contains $s-surface \"03-omitted.md\"))))\n"
+                  "        ($_ (nt:require env-skill-hidden-excluded (and (not (nt:contains $s-surface \"_skip.md\")) (not (nt:contains $s-surface \"_hidden\")))))\n"
+                  "        ($_ (nt:require env-skill-non-md-excluded (not (nt:contains $s-surface \"notes.txt\"))))\n"
+                  "        ($_ (nt:require env-max-transforms-omitted (== $t-omitted 1)))\n"
+                  "        ($_ (nt:require env-transform-limit-text (== $t-notice \"[CONTEXT TRANSFORMATION LIMIT REACHED: 1 transformations are omitted and will not execute. Consolidate or remove transformations if they are needed.]\")))\n"
+                  "        ($temp (ih:empty-list))\n"
+                  "        ($_ (ih:append $temp (ih:message \"user\" $t-notice)))\n"
+                  "        ($_ (ih:append $temp (ih:message \"user\" $s-notice)))\n"
+                  "        ((IterRequestV1 $body $_ $_ $_) (ih:request-plan-full (ih:list) $temp (ih:tools) $transforms $s-surface \"[3000 CHARACTERS BELOW MAXIMUM]\\n./memory/:\\n\"))\n"
+                  "        ($wire (turn:json $body))\n"
+                  "        ($_ (nt:require wire-carries-skills-and-omitted-notice (and (nt:contains $wire \"./skills/01-alpha.md\") (nt:contains $wire \"SKILL LIMIT REACHED: 1 Markdown skills are omitted\"))))\n"
+                  "        ($_ (nt:require wire-ran-first-transform-only (and (nt:contains $wire \"RAN-01\") (not (nt:contains $wire \"MUST-NOT-RUN-02\"))))))\n"
+                  "   (println! CHILD_ITER_SKILLS_LIMIT_OK))\n"))))
+            ($env (list:append (nt:environment $case-dir)
+                    (("METTACLAW_RUNTIME_ROOT" $root) ("METTACLAW_MODE_RUNTIME" $case-dir)
+                     ("METTACLAW_MODE_PROFILE" "standalone") ("METTACLAW_ACTIVE_LOOP_MODE" "iter")
+                     ("METTACLAW_TOOL_OUTPUT_DIR" (path:join $case-dir "artifacts"))
+                     ("MAX_SKILLS" "2") ("MAX_CONTEXT_TRANSFORMATIONS" "1"))))
+            ($output (nt:exit-ok (proc:run ($engine "--lang" "petta" "--profile" "extended" "--import-mode" "ancestor-walk" "--quiet" $probe)
+                                           $case-dir $env 30000 1048576)))
+            ($_ (nt:require iter-skills-limit-child (nt:contains $output "CHILD_ITER_SKILLS_LIMIT_OK"))))
+       (println! UNIT_ITER_SKILLS_LIMIT_OK))))

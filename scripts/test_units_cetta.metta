@@ -56,6 +56,8 @@
     ("tests/unit/chatgpt_context_roles.metta" "UNIT_REQUEST_INDEX_CHUNKS_OK")
     ("tests/unit/chatgpt_context_roles.metta" "UNIT_TASK_INDEX_CHUNKS_OK")
     ("tests/unit/iter_request.metta" "UNIT_SUBMISSION_LIMIT_OK" (("METTACLAW_COGNITIVE_HEALTH_PATH" "{home}/health.json")))
+    ("tests/unit/iter_request.metta" "UNIT_ITER_SKILLS_LIMIT_OK"
+     (("ITER_SKILLS_CASE" "{home}/skills-case") ("MAX_SKILLS" "2") ("MAX_CONTEXT_TRANSFORMATIONS" "1")))
     ("tests/unit/standalone_mode_config.metta" "UNIT_STANDALONE_MODE_CONFIG_OK")
     ("tests/unit/context_registry.metta" "UNIT_NATIVE_CONTEXT_REGISTRY_OK")
     ("tests/unit/context_capacity.metta" "UNIT_CONTEXT_CAPACITY_OK"
