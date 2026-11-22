@@ -139,6 +139,12 @@
                   (== (sf:get (sf:native-object (path:join $unlockable "submission-limit.json")) "remaining" -1) 5))))
        (println! UNIT_SUBMISSION_LIMIT_OK))))
 
+(= (iter-unit:repeat $s $n)
+   (if (<= $n 0) ""
+     (if (== $n 1) $s
+       (let $half (iter-unit:repeat $s (math:floor (/ $n 2)))
+         (if (== (% $n 2) 0) (str:concat $half $half) (str:join "" ($half $half $s)))))))
+
 ; Real skills/ and transformations/ directories under MAX_SKILLS and
 ; MAX_CONTEXT_TRANSFORMATIONS from the environment: verifies ih:skills,
 ; ih:skill-limit, ih:transformations, ih:transform-limit, and the resulting
@@ -189,8 +195,25 @@
                   "        ((IterRequestV1 $body $_ $_ $_) (ih:request-plan-full (ih:list) $temp (ih:tools) $transforms $s-surface \"[3000 CHARACTERS BELOW MAXIMUM]\\n./memory/:\\n\"))\n"
                   "        ($wire (turn:json $body))\n"
                   "        ($_ (nt:require wire-carries-skills-and-omitted-notice (and (nt:contains $wire \"./skills/01-alpha.md\") (nt:contains $wire \"SKILL LIMIT REACHED: 1 Markdown skills are omitted\"))))\n"
-                  "        ($_ (nt:require wire-ran-first-transform-only (and (nt:contains $wire \"RAN-01\") (not (nt:contains $wire \"MUST-NOT-RUN-02\"))))))\n"
+                  "        ($_ (nt:require wire-ran-first-transform-only (and (nt:contains $wire \"RAN-01\") (not (nt:contains $wire \"MUST-NOT-RUN-02\")))))\n"
+                  "        ; First-line streaming reader: \\r-only, \\r\\n, malformed UTF-8 -> U+FFFD, multibyte UTF-8 across 4096B chunk, and unreadable file.\n"
+                  "        ($_ (nt:require skill-cr-only-newline (== (component:skill-description \"extra-cr.md\") \"DESCRIPTION=\\\"CR only\\\"\")))\n"
+                  "        ($_ (nt:require skill-crlf-newline (== (component:skill-description \"extra-crlf.md\") \"DESCRIPTION=\\\"CRLF line\\\"\")))\n"
+                  "        ($_ (nt:require skill-bad-utf8-replaced (== (component:skill-description \"extra-bad-utf8.md\") \"DESCRIPTION=\\\"bad\ufffdbyte\\\"\")))\n"
+                  "        ($_ (nt:require skill-split-utf8-preserved (and (str:starts-with (component:skill-description \"extra-split-utf8.md\") \"DESCRIPTION=\\\"\") (nt:contains (component:skill-description \"extra-split-utf8.md\") \"€\\\"\"))))\n"
+                  "        ($_ (nt:require skill-empty-file-missing (== (component:skill-description \"extra-empty.md\") \"[DESCRIPTION FIRST LINE MISSING]\")))\n"
+                  "        ($_ (nt:require skill-missing-file-read-error (str:starts-with (component:skill-description \"extra-no-such-file.md\") \"[READ ERROR:\"))))\n"
                   "   (println! CHILD_ITER_SKILLS_LIMIT_OK))\n"))))
+            ($_ (fs:write (path:join $case-dir "extra-cr.md") "DESCRIPTION=\"CR only\"\rsecond line\r"))
+            ($_ (fs:write (path:join $case-dir "extra-crlf.md") "  DESCRIPTION=\"CRLF line\"  \r\nsecond line\r\n"))
+            ($_ (fs:write (path:join $case-dir "extra-empty.md") ""))
+            ; Write malformed UTF-8 (0xff) and multibyte UTF-8 (€ straddling byte 4096).
+            ($_ (proc:run ("/bin/sh" "-c" (str:join "" ("printf 'DESCRIPTION=\"bad\\377byte\"\\nbody\\n' > " (path:join $case-dir "extra-bad-utf8.md"))))
+                          $case-dir (("PATH" "/usr/bin:/bin")) 5000 1024))
+            ($_ (let* (($pad (iter-unit:repeat "a" 4082))
+                       ($w (fs:open-write (path:join $case-dir "extra-split-utf8.md") ("create" "truncate") 384))
+                       ($_ (fs:write-all $w (str:join "" ("DESCRIPTION=\"" $pad "€\"\nbody\n"))))
+                       ($_ (fs:close $w))) True))
             ($env (list:append (nt:environment $case-dir)
                     (("METTACLAW_RUNTIME_ROOT" $root) ("METTACLAW_MODE_RUNTIME" $case-dir)
                      ("METTACLAW_MODE_PROFILE" "standalone") ("METTACLAW_ACTIVE_LOOP_MODE" "iter")
