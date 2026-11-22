@@ -91,22 +91,40 @@
      (if (== (web:setting "METTACLAW_READ_URL_SCOPE" "1") "0") ($jailed $clean)
        (let* (($first (web:scope $memory $jailed)) ($second (web:scope $memory $clean)))
          ($first $second $clean)))))
-; A failure of the sandbox or the scope themselves, not of the command: a
-; command that could not start (125-127), or bubblewrap's or systemd's own
-; error lines.
+; Which way to run commands is decided once per process, before any command
+; that could act: a harmless `true` is run in each setup, strongest first, and
+; the first that runs is kept. A real command then runs exactly once in it, so
+; a click, a fill or a key press that timed out or failed is never sent again
+; through a weaker setup. A setup failure is one of bubblewrap's or systemd's
+; own: a launcher that cannot start the command (125-127), their error lines,
+; or no result at all.
 (= (web:setup-failure? $result)
    (case $result
      (((proc:exited 0 $_ $_) False)
       ((proc:exited $code $_ $err)
        (or (and (>= $code 125) (<= $code 127))
-           (case (re:captures (re:compile "(^|\n)(bwrap: |Failed to (start|connect|create))") $err)
+           (case (re:captures (re:compile "(^|\n)(bwrap: |Failed to (start transient|connect to bus|create bus connection))") $err)
              ((re:no-match False) ($_ True)))))
+      ((proc:timed-out $_ $_) False)
       ($other True))))
+!(bind! &web-level (new-state -1))
+; A probe that cannot even run `true` in time counts against its setup too.
+(= (web:probe-failed? $result)
+   (case $result (((proc:timed-out $_ $_) True) ($other (web:setup-failure? $result)))))
+(= (web:probe-level $variants $index)
+   (if (== (cdr-atom $variants) ()) $index
+     (if (web:probe-failed? (proc:run (car-atom $variants) (system:getcwd) inherit 15000 4096))
+       (web:probe-level (cdr-atom $variants) (+ $index 1))
+       $index)))
+(= (web:level)
+   (let $known (get-state &web-level)
+     (if (>= $known 0) $known
+       (let $found (web:probe-level (web:variants "64M" () "/tmp" ("true") "10") 0)
+         (let $_ (change-state! &web-level $found) $found)))))
+(= (web:nth $items $index)
+   (if (or (<= $index 0) (== (cdr-atom $items) ())) (car-atom $items) (web:nth (cdr-atom $items) (- $index 1))))
 (= (web:attempt $variants $timeout $limit)
-   (let $result (proc:run (car-atom $variants) (system:getcwd) inherit $timeout $limit)
-     (if (and (web:setup-failure? $result) (!= (cdr-atom $variants) ()))
-       (web:attempt (cdr-atom $variants) $timeout $limit)
-       $result)))
+   (proc:run (web:nth $variants (web:level)) (system:getcwd) inherit $timeout $limit))
 
 ;; Rendering, with the pages rendered recently kept
 
