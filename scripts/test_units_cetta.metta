@@ -177,6 +177,7 @@
     ("tests/unit/operator_tools_native.metta" "UNIT_OPERATOR_TOOLS_NATIVE_OK")
     ("tests/unit/native_worklog_cli.metta" "UNIT_NATIVE_WORKLOG_CLI_OK")
     ("tests/unit/observatory.metta" "UNIT_NATIVE_OBSERVATORY_OK")
+    ("tests/unit/observatory_parity.metta" "UNIT_OBSERVATORY_PARITY_OK")
     ("tests/unit/observatory_stream.metta" "UNIT_OBSERVATORY_STREAM_OK")
     ("tests/unit/observatory_publication.metta" "UNIT_OBSERVATORY_PUBLICATION_OK")
     ("tests/unit/observatory_qualification.metta" "UNIT_OBSERVATORY_QUALIFICATION_OK")
