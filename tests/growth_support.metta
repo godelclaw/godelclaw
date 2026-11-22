@@ -5,8 +5,12 @@
 ; library the agents load. Only ratios between neighbouring sizes are
 ; asserted: a linear path may take at most about 6x the time and 4x the memory
 ; (plus a constant) per 4x of input, so a quadratic path (16x) fails while
-; host noise, which scales both sizes alike, does not. Each size runs three
-; times. Time keeps the fastest run: a busy host only ever adds to it. Memory
+; host noise, which scales both sizes alike, does not. A run's time is the
+; smaller of its wall time and the CPU time its threads ran: a busy host makes
+; a process wait for a processor, which only wall time counts, and threads
+; running at once add up in CPU time only, while a slower path shows in both.
+; Each size runs three times. Time keeps the fastest run: contention for
+; caches and cores only ever adds to it. Memory
 ; keeps the middle reading: a resident peak can read low as well as high (the
 ; kernel reclaims pages under memory pressure, and the allocator reuses pages
 ; a run left resident), and the lowest of three is the run that undercounted.
@@ -28,16 +32,31 @@
      (let* (($_ (fs:write-all $writer "5")) ($_ (fs:close $writer))) True)))
 (= (growth:size) (str:string->number (nt:required-env "GROWTH_SIZE")))
 (= (growth:directory) (nt:required-env "GROWTH_DIR"))
-; Measure the workload: monotonic time, and the peak resident memory it added.
+; The nanoseconds this process's threads have run on a processor: the first
+; field of each thread's schedstat. A thread gone before it is read counts 0.
+; A running thread's total advances only at scheduler ticks (about 1 ms); a
+; 1 ms sleep first takes the reader off the processor, which settles it.
+(= (growth:cpu-ns)
+   (let $_ (host:wait () 1) (growth:sum-cpu (fs:entries "/proc/self/task") 0)))
+(= (growth:sum-cpu $tasks $total)
+   (if (== $tasks ()) $total
+     (growth:sum-cpu (cdr-atom $tasks)
+       (+ $total (case (fs:read-text-result (str:join "" ("/proc/self/task/" (car-atom $tasks) "/schedstat")) 0 "replace")
+                   ((("ok" $text) (str:string->number (car-atom (str:split " " $text))))
+                    ($gone 0)))))))
+; Measure the workload: its CPU time, the peak resident memory it added, and
+; its wall time.
 (: growth:measure (-> Atom %Undefined%))
 (= (growth:measure $workload)
    (let* (($_ (growth:reset-peak)) ($before (growth:status-kib "VmRSS:"))
           ($start (system:monotonic-ns))
+          ($cpu-start (growth:cpu-ns))
           ($answers (collapse (eval $workload)))
+          ($cpu (- (growth:cpu-ns) $cpu-start))
           ($elapsed (- (system:monotonic-ns) $start))
           ($peak (growth:status-kib "VmHWM:"))
           ($added (if (> $peak $before) (- $peak $before) 0)))
-     (fs:write (nt:required-env "GROWTH_RESULT") (format-args "{} {} {}" ($elapsed $added (size-atom $answers))))))
+     (fs:write (nt:required-env "GROWTH_RESULT") (format-args "{} {} {} {}" ($cpu $added (size-atom $answers) $elapsed)))))
 
 ;; ------------------------------------------------------ in the driver
 
@@ -62,8 +81,9 @@
           ($run (proc:run ((nt:join $engine "cetta") "--lang" "petta" "--import-mode" "ancestor-walk" "--quiet"
                            (nt:join $root $script)) $root $env 600000 1048576))
           ($_ (nt:exit-ok $run))
-          ($fields (str:split " " (fs:read-text $result))))
-     ((str:string->number (car-atom $fields)) (str:string->number (car-atom (cdr-atom $fields))))))
+          ($fields (str:split " " (fs:read-text $result)))
+          (($cpu $memory $answers $wall) (map-atom $fields $f (str:string->number $f))))
+     ((min $cpu $wall) $memory)))
 (= (growth:median3 $a $b $c) (max (min $a $b) (min (max $a $b) $c)))
 ; Three (time memory) readings of one size: the fastest time, the middle memory.
 (= (growth:statistic ($t1 $m1) ($t2 $m2) ($t3 $m3))
@@ -86,8 +106,8 @@
           (($t1 $m1) (growth:sample $root $engine $script $n $dir))
           (($t4 $m4) (growth:sample $root $engine $script (* 4 $n) $dir))
           (($t16 $m16) (growth:sample $root $engine $script (* 16 $n) $dir))
-          ($_ (println! (GROWTH $name (size $n ns $t1 kib $m1) (size (* 4 $n) ns $t4 kib $m4)
-                                (size (* 16 $n) ns $t16 kib $m16)
+          ($_ (println! (GROWTH $name (size $n time-ns $t1 kib $m1) (size (* 4 $n) time-ns $t4 kib $m4)
+                                (size (* 16 $n) time-ns $t16 kib $m16)
                                 (time-ratios (/ $t4 (max 1 $t1)) (/ $t16 (max 1 $t4)))))))
      (and (growth:within $name ($n $t1 $m1) ((* 4 $n) $t4 $m4) $bounds)
           (growth:within $name ((* 4 $n) $t4 $m4) ((* 16 $n) $t16 $m16) $bounds))))
@@ -109,8 +129,8 @@
           (($t1 $m1) (growth:sample $root $engine $script $n $dir))
           (($t4 $m4) (growth:sample $root $engine $script (* 4 $n) $dir))
           (($t16 $m16) (growth:sample $root $engine $script (* 16 $n) $dir))
-          ($_ (println! (GROWTH-MUTANT $name (size $n ns $t1 kib $m1) (size (* 4 $n) ns $t4 kib $m4)
-                                       (size (* 16 $n) ns $t16 kib $m16)
+          ($_ (println! (GROWTH-MUTANT $name (size $n time-ns $t1 kib $m1) (size (* 4 $n) time-ns $t4 kib $m4)
+                                       (size (* 16 $n) time-ns $t16 kib $m16)
                                        (time-ratios (/ $t4 (max 1 $t1)) (/ $t16 (max 1 $t4)))))))
      (or (growth:breaks? $dimension ($n $t1 $m1) ((* 4 $n) $t4 $m4) $bounds)
          (growth:breaks? $dimension ((* 4 $n) $t4 $m4) ((* 16 $n) $t16 $m16) $bounds))))
