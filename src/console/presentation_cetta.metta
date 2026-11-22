@@ -66,7 +66,13 @@
             ($bounded (if (and (not (cc:get "viewer-full" False)) (> (str:byte-length $text) 131072))
               (str:concat (str:char-slice $text 0 16000) "\n[display folded; original retained in its source record]\n")
               $text))
-            ($answer (buffer:append $queued $bounded)))
+            ; A bounded one-shot view counts the blocks emitted here, not glyphs
+            ; in rendered text: each emission starts with a record separator,
+            ; which is removed from the text itself first.
+            ($answer (buffer:append $queued
+                       (if (cc:get "viewer-mark-emissions" False)
+                         (str:concat "\u001e" (str:join "" (str:split "\u001e" $bounded)))
+                         $bounded))))
        (case $answer
          (((HostBuffered $_)
            (progn (cc:set "dirty" True)

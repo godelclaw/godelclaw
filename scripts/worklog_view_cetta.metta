@@ -89,25 +89,26 @@
    (let $first (car-atom (str:split "\n" $block))
      (str:starts-with (cv:strip-sgr $first) "◆ ")))
 
-; Group rendered lines into whole presentation blocks without splitting inside
-; heredocs or multi-paragraph commentary: a new block starts only at a glyph
-; header line at start-of-output or immediately following a blank line.
-(= (cv:split-blocks-go $lines $prev-blank $cur $acc)
-   (if (== $lines ())
-     (let $final (if (== $cur ()) $acc (cons-atom (str:join "\n" (list:reverse $cur)) $acc))
-       (list:reverse $final))
-     (let* ((($line $rest) (decons-atom $lines))
-            ($blank (== $line ""))
-            ($starts (and $prev-blank (cv:block-header? $line))))
-       (if (and $starts (not (== $cur ())))
-         (cv:split-blocks-go $rest $blank ($line)
-           (cons-atom (str:join "\n" (list:reverse $cur)) $acc))
-         (if (and $blank (== $cur ()))
-           (cv:split-blocks-go $rest True () $acc)
-           (cv:split-blocks-go $rest $blank (cons-atom $line $cur) $acc))))))
-
+; Group emissions into whole presentation blocks. A block starts only where
+; an emission starts with a glyph header line; text inside an emission (a
+; heredoc, a multi-paragraph reply) never starts one, whatever its lines say.
+; An emission without a header (a separator, a continued stream) joins the
+; block before it.
+(= (cv:starts-block? $emission)
+   (cv:block-header? (car-atom (str:split "\n" $emission))))
+(= (cv:group-emissions $emissions $cur $acc)
+   (if (== $emissions ())
+     (list:reverse (if (== $cur "") $acc (cons-atom $cur $acc)))
+     (let* ((($emission $rest) (decons-atom $emissions)))
+       (if (and (cv:starts-block? $emission) (!= $cur ""))
+         (cv:group-emissions $rest $emission (cons-atom $cur $acc))
+         (cv:group-emissions $rest (str:concat $cur $emission) $acc)))))
+(= (cv:strip-leading-blanks $block)
+   (if (str:starts-with $block "\n")
+     (cv:strip-leading-blanks (str:byte-slice $block 1 (str:byte-length $block)))
+     $block))
 (= (cv:split-blocks $text)
-   (let $blocks (cv:split-blocks-go (str:split "\n" $text) True () ())
+   (let $blocks (map-atom (cv:group-emissions (str:split "\u001e" $text) "" ()) $b (cv:strip-leading-blanks $b))
      (filter-atom $blocks $b (!= (str:trim $b) ""))))
 
 (= (cv:last-session-header $blocks $found)
@@ -255,6 +256,7 @@
                    ($handle (cc:set "viewer-terminal" $handle))))
                 True))
           ($_ (if $buffer-once (cc:set "viewer-once-buf" (buffer:new 33554432 bytes)) True))
+          ($_ (cc:set "viewer-mark-emissions" $buffer-once))
           ($_ (fs:make-directories $directory 448))
           ($watch (host:watch $directory))
           ($_ (cc:set "stream-watch" $watch))

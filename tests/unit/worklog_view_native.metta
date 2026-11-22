@@ -74,7 +74,8 @@
         ($older-stream (path:join $dir "godel.older.jsonl"))
         ($_ (fs:write $older-stream (wv:old-chunk-lines 1 80 ())))
         ($_ (sleep 0.05))
-        ($heredoc "cat > /srv/demo.metta <<'EOF'\n!(println! line1)\n\n!(println! line2)\nEOF")
+        ; The body has a line after a blank line that reads like a block header.
+        ($heredoc "cat > /srv/demo.metta <<'EOF'\n!(println! line1)\n\n✓ heading within data\n!(println! line2)\nEOF")
         ($stream (path:join $dir "godel.active.jsonl"))
         ($events (str:join "" (
           ; Session open + lifecycle noise (must NOT leak)
