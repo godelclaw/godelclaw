@@ -1,8 +1,10 @@
 ; Reading a web page as text. Lightpanda renders the page (its JavaScript runs;
 ; layout, images and fonts are skipped) in a memory-capped scope of its own and
-; prints it as Markdown. When it fails, a plain fetch with the markup removed
-; stands in. The text is trimmed to a character budget; with a search phrase,
-; only the passages around its matches are kept.
+; prints it as Markdown. It obeys robots.txt, never reaches private or local
+; addresses, and sends no telemetry. When it refuses or fails, the reason is
+; reported; nothing else fetches the page behind its back. The text is trimmed
+; to a character budget; with a search phrase, only the passages around its
+; matches are kept.
 !(import! &self (library proc))
 !(import! &self ./websearch_cetta.metta)
 
@@ -13,41 +15,28 @@
 (= (web:argv $url)
    (let* (($bin (web:setting "METTACLAW_LIGHTPANDA_BIN" "lightpanda"))
           ($memory (str:concat "MemoryMax=" (web:setting "METTACLAW_READ_URL_MEMORY" "768M")))
-          ($fetch ($bin "fetch" "--obey-robots" "--dump" "markdown" "--log-level" "fatal" $url)))
+          ($fetch ("env" "LIGHTPANDA_DISABLE_TELEMETRY=true" $bin "fetch" "--obey-robots" "--block-private-networks"
+                   "--dump" "markdown" "--log-level" "error" $url)))
      (if (== (web:setting "METTACLAW_READ_URL_SCOPE" "1") "0") $fetch
        (list:append ("systemd-run" "--user" "--scope" "-q" "-p" $memory "-p" "MemorySwapMax=0" "timeout" "45")
                     $fetch))))
 
-(= (web:render $url)
-   (case (proc:run (web:argv $url) (system:getcwd) inherit 60000 8388608)
-     (((proc:exited 0 $text $_) (if (== (str:trim $text) "") (WebReadFailedV1 "empty-render") (WebPageV1 $text)))
-      ((proc:exited $code $_ $_) (WebReadFailedV1 (str:concat "render-exit-" (repr $code))))
-      ($other (WebReadFailedV1 "render-unavailable")))))
-
-; The fallback: the page's markup without scripts, styles and tags.
-(= (web:plain $html)
-   (let* (($no-code (re:replace-literal (re:compile "(?is)<(script|style|noscript)[^>]*>.*?</\\1>") $html " "))
-          ($breaks (re:replace-literal (re:compile "(?i)<(br|p|div|li|h[1-6]|tr)[^>]*>") $no-code "\n"))
-          ($text (re:replace-literal (re:compile "<[^>]*>") $breaks ""))
-          ($a (re:replace-literal (re:compile "&nbsp;") $text " "))
-          ($b (re:replace-literal (re:compile "&lt;") $a "<"))
-          ($c (re:replace-literal (re:compile "&gt;") $b ">"))
-          ($d (re:replace-literal (re:compile "&quot;") $c "\""))
-          ($e (re:replace-literal (re:compile "&#39;") $d "'"))
-          ($f (re:replace-literal (re:compile "&amp;") $e "&")))
-     (re:replace-literal (re:compile "\\n\\s*\\n+") $f "\n\n")))
-(= (web:fetch-plain $url)
-   (case (search:http "GET" $url ((http:header "User-Agent" "Mozilla/5.0 (X11; Linux x86_64)")) "" 30)
-     (((SearchHttpFailedV1 $status) (WebReadFailedV1 (search:http-reason $status)))
-      ($html (WebPageV1 (web:plain $html))))))
+; Lightpanda names why a page failed (err=RobotsBlocked, err=CouldntConnect, ...).
+(= (web:failure-reason $code $stderr)
+   (case (re:captures (re:compile "err=([A-Za-z]+)") $stderr)
+     ((re:no-match (if (== $code 124) "timed out" (str:concat "render exit " (repr $code))))
+      ($match (let $name (re:group-text $match $stderr 1)
+                (case $name
+                  (("RobotsBlocked" "robots.txt of the site disallows this page")
+                   ("CouldntConnect" "could not connect (private and local addresses are never fetched)")
+                   ("CouldntResolveHost" "unknown host")
+                   ($other $other))))))))
 
 (= (web:page $url)
-   (case (web:render $url)
-     (((WebPageV1 $text) (WebPageV1 $text))
-      ((WebReadFailedV1 $why)
-       (case (web:fetch-plain $url)
-         (((WebPageV1 $text) (WebPageV1 (str:join "" ("(rendering failed: " $why ")\n" $text))))
-          ((WebReadFailedV1 $second) (WebReadFailedV1 (str:concat $why (str:concat ", fetch " $second))))))))))
+   (case (proc:run (web:argv $url) (system:getcwd) inherit 60000 8388608)
+     (((proc:exited 0 $text $_) (if (== (str:trim $text) "") (WebReadFailedV1 "empty page") (WebPageV1 $text)))
+      ((proc:exited $code $_ $err) (WebReadFailedV1 (web:failure-reason $code $err)))
+      ($other (WebReadFailedV1 "renderer unavailable; scripts/install_web_tools.sh installs it")))))
 
 ;; Presentation
 

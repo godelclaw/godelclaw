@@ -3,7 +3,9 @@
 ; or goes back, like a person at a browser. agent-browser drives a Lightpanda
 ; CDP server of the agent's own. The server runs as a transient user service
 ; with a memory cap and a lifetime (RuntimeMaxSec), so a session nobody closes
-; still ends; every agent-browser call runs in a memory-capped scope.
+; still ends; every agent-browser call runs in a memory-capped scope. The
+; browser obeys robots.txt, spaces navigations to one host (1 s by default),
+; never reaches private or local addresses and sends no telemetry.
 !(import! &self (library proc))
 !(import! &self (library list))
 !(import! &self ./websearch_cetta.metta)
@@ -44,8 +46,10 @@
 (= (browse:launch $bin $memory $lifetime $port)
    (let* (($started (browse:run ("systemd-run" "--user" "--quiet" "--collect" "--unit" (browse:unit)
                                  "-p" $memory "-p" "MemorySwapMax=0" "-p" $lifetime
-                                 $bin "serve" "--obey-robots" "--host" "127.0.0.1" "--port" $port
-                                 "--log-level" "fatal") 20000)))
+                                 "-E" "LIGHTPANDA_DISABLE_TELEMETRY=true"
+                                 $bin "serve" "--obey-robots" "--block-private-networks"
+                                 "--http-nav-delay" (browse:setting "METTACLAW_BROWSE_HOST_DELAY_MS" "1000")
+                                 "--host" "127.0.0.1" "--port" $port "--log-level" "fatal") 20000)))
      (case $started
        (((BrowseFailedV1 $why) (BrowseFailedV1 (str:concat "server: " $why)))
         ($_ (if (browse:port-open? $port 50) (BrowseOkV1 "started") (BrowseFailedV1 "server did not listen")))))))

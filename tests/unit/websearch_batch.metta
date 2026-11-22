@@ -45,12 +45,15 @@
         ($_ (nt:require no-passage (nt:contains (web:present "https://p.example" $page "absent") "no line of https://p.example contains"))))
    (println! UNIT_WEB_READ_TEXT_OK))
 
-; The fallback text and the URL guard.
-!(let* (($plain (web:plain "<html><head><style>x{}</style><script>var a=1;</script></head><body><p>Fish &amp; chips</p><div>a&nbsp;b &lt;c&gt;</div></body></html>"))
-        ($_ (nt:require plain-drops-code (not (nt:contains $plain "var a"))))
-        ($_ (nt:require plain-text (and (nt:contains $plain "Fish & chips") (nt:contains $plain "a b <c>"))))
+; Refusals are reported with their reason; the URL guard.
+!(let* (($_ (nt:require robots-reason
+              (== (web:failure-reason 1 "$level=error $msg=\"page failed\" url=x err=RobotsBlocked")
+                  "robots.txt of the site disallows this page")))
+        ($_ (nt:require private-reason (str:starts-with (web:failure-reason 1 "err=CouldntConnect") "could not connect")))
+        ($_ (nt:require unknown-reason (== (web:failure-reason 1 "err=SomethingNew") "SomethingNew")))
+        ($_ (nt:require timeout-reason (== (web:failure-reason 124 "") "timed out")))
         ($_ (nt:require scheme-guard (str:starts-with (web:read "file:///etc/passwd" "") "READ_URL_ERROR: not an http(s) URL"))))
-   (println! UNIT_WEB_READ_FALLBACK_OK))
+   (println! UNIT_WEB_READ_REFUSAL_OK))
 
 ; Browsing without a browser: ports, guards, the budget and unknown actions.
 !(let* (($godel (browse:port-of "godel")) ($lila (browse:port-of "lila")))
