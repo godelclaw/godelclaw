@@ -31,11 +31,3 @@ if [[ -z "${METTACLAW_BWRAP_BIN:-}" ]] && command -v bwrap >/dev/null 2>&1; then
     METTACLAW_BWRAP_BIN="$(command -v bwrap)"
     export METTACLAW_BWRAP_BIN
 fi
-if [[ -z "${METTACLAW_AGENT_BROWSER_BIN:-}" ]]; then
-    if [[ -x "${HOME:-}/.local/lib/godelclaw/agent-browser/agent-browser" ]]; then
-        METTACLAW_AGENT_BROWSER_BIN="${HOME:-}/.local/lib/godelclaw/agent-browser/agent-browser"
-    elif command -v agent-browser >/dev/null 2>&1; then
-        METTACLAW_AGENT_BROWSER_BIN="$(command -v agent-browser)"
-    fi
-    if [[ -n "${METTACLAW_AGENT_BROWSER_BIN:-}" ]]; then export METTACLAW_AGENT_BROWSER_BIN; fi
-fi

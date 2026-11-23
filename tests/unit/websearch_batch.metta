@@ -94,6 +94,25 @@
           ($_ (nt:require browse-scheme-guard (str:starts-with (browse:command "open" "file:///etc/passwd" "") "BROWSE_ERROR: not an http(s) URL")))
           ($_ (nt:require browse-unknown-action (str:starts-with (browse:command "teleport" "" "") "BROWSE_ERROR: unknown action")))
           ($_ (nt:require browse-error-shown (== (browse:show (BrowseFailedV1 "x")) "BROWSE_ERROR: x")))
+          ; The page outline: an interactive line starts with its ref; other lines lose their number.
+          ($_ (nt:require browse-outline-refs
+                (== (browse:snapshot-text "1 RootWebArea 'T'\n 2 [i]\n  4 [i] link 'Jump'\n  5 heading 'Intro'")
+                    "RootWebArea 'T'\n @e2\n  @e4 link 'Jump'\n  heading 'Intro'")))
+          ($_ (nt:require browse-ref-node (== (browse:node "@e417") 417)))
+          ; The browser offers only the tools browse calls, and names the agent.
+          ($_ (nt:require browse-server-tools
+                (let $argv (str:join " " (browse:serve-argv "/bin/true" "9431" False))
+                  (and (nt:contains $argv " mcp ")
+                       (and (nt:contains $argv "--tools goto,tree,markdown,click,fill,press,waitForState,getUrl,evaluate")
+                            (and (nt:contains $argv "--user-agent godelclaw") (not (nt:contains $argv "--obey-robots"))))))))
+          ; A failed call says why; a timed-out one says its effect is unknown.
+          ($_ (nt:require browse-timeout-unknown
+                (case (browse:reply (McpFailureV1 "incomplete" "MCP request timed out; effects may be uncertain"))
+                  (((BrowseFailedV1 $why) (nt:contains $why "whether the action happened is unknown")) ($other False)))))
+          ($_ (nt:require browse-tool-error
+                (case (browse:reply (JsonObject ((JsonPair "content" (JsonArray ((JsonObject ((JsonPair "type" "text") (JsonPair "text" "no such node")))))) (JsonPair "isError" True))))
+                  (((BrowseFailedV1 $why) (nt:contains $why "no such node")) ($other False)))))
+          ($_ (nt:require browse-lost-session (browse:session-lost? (McpFailureV1 "transport" "MCP HTTP 404"))))
           ; A started action that was stopped reports an unknown outcome, never a missing tool.
           ($_ (nt:require browse-timeout-outcome-unknown
                 (case (browse:result (proc:timed-out "" "partial"))

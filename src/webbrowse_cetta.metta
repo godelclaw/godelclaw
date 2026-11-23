@@ -1,26 +1,26 @@
-; Browsing: an agent opens a page, reads it as an accessibility snapshot whose
-; elements carry references (@e1, @e2, ...), and clicks, fills, presses keys
-; or goes back, like a person at a browser. agent-browser drives a Lightpanda
-; CDP server of the agent's own. The server runs as a transient user service
-; with a memory cap and a lifetime (RuntimeMaxSec), so a session nobody closes
-; still ends; every agent-browser call runs in a memory-capped scope. Both run
-; in the bubblewrap sandbox of read-url with a cleared environment;
-; agent-browser keeps its session state in a directory of the instance's own.
-; Like a read, browsing is for the agent's task: it does not consult
-; robots.txt unless METTACLAW_WEB_OBEY_ROBOTS=1, and it names itself as
-; godelclaw in its User-Agent. It spaces navigations to one host (1 s by
+; Browsing: an agent opens a page, reads it as the browser's semantic tree,
+; whose interactive elements carry references (@e and the browser's node
+; number), and clicks, fills, presses keys, scrolls or goes back, like a person
+; at a browser. Lightpanda's own MCP server drives the page, over HTTP on a
+; port of the agent's own; it runs as a transient user service with a memory
+; cap and a lifetime (RuntimeMaxSec), so a session nobody closes still ends,
+; and in the bubblewrap sandbox of read-url with a cleared environment. The
+; server offers only the tools browse calls: the model names no tool and
+; writes no script. Like a read, browsing is for the agent's task: it does not
+; consult robots.txt unless METTACLAW_WEB_OBEY_ROBOTS=1, and it names itself
+; as godelclaw in its User-Agent. It spaces navigations to one host (1 s by
 ; default), never reaches private or local addresses and sends no telemetry.
-; Targets are element references from the snapshot and keys are key names;
-; typed text follows "--", so nothing the model writes becomes an option.
+; Targets are element references from the snapshot and keys are key names.
 ; The browser's cookies and HTTP cache live in the agent's web state (see
 ; read-url), so logins and consent survive a restart of the server; where the
-; sandbox or the scope cannot run, the tools run without them. Long pages read
-; on with "@N". Known limit: the CDP port and agent-browser's daemon socket are
+; sandbox or the scope cannot run, the server runs without them. Long pages
+; read on with "@N". Known limit: the server's port, and so its session, is
 ; reachable by other local users of the machine.
 !(import! &self (library proc))
 !(import! &self (library list))
 !(import! &self (library re))
 !(import! &self ./webread_cetta.metta)
+!(import! &self ./mcp_http_cetta.metta)
 
 (= (browse:setting $name $default) (system:getenv-or-default $name $default))
 (= (browse:instance) (browse:setting "METTACLAW_INSTANCE" "agent"))
@@ -75,9 +75,10 @@
 ; sandboxed server does not listen, it starts again without the sandbox.
 (= (browse:serve-argv $bin $port $jailed)
    (let* (($state (web:state))
-          ($serve (list:append (list:append ((web:tool-path $bin) "serve" "--block-private-networks"
+          ($serve (list:append (list:append ((web:tool-path $bin) "mcp" "--block-private-networks"
                                              "--http-nav-delay" (browse:setting "METTACLAW_BROWSE_HOST_DELAY_MS" "1000")
-                                             "--host" "127.0.0.1" "--port" $port "--log-level" "fatal")
+                                             "--host" "127.0.0.1" "--port" $port "--log-level" "fatal"
+                                             "--tools" (browse:tools))
                                             (web:identity-options))
                                (web:state-options $state "browse" True))))
      (if $jailed
@@ -97,24 +98,88 @@
                         ($_ (proc:run ("systemctl" "--user" "reset-failed" (browse:unit)) "/" inherit 20000 4096)))
                    (browse:launch-once $bin $memory $lifetime $port False)))))))
 
-; agent-browser in the agent's own session, in a capped scope and the sandbox,
-; with its state in the instance's own directory.
-(= (browse:state)
-   (let $dir (path:join (system:expanduser "~/.local/state/godelclaw/browse") (browse:instance))
-     (let* (($_ (fs:make-directories $dir 448)) ($_ (catch (fs:set-mode $dir 448)))) $dir)))
-(= (browse:ab $arguments)
-   (let* (($bin (browse:setting "METTACLAW_AGENT_BROWSER_BIN" "agent-browser"))
-          ($state (browse:state))
-          ($idle (str:concat (browse:lifetime) "s"))
-          ($command (list:append ((web:tool-path $bin) "--session" (browse:instance) "--idle-timeout" $idle) $arguments))
-          ($variants (web:variants "512M" (list:append (web:tool-dir $bin) ("--bind" $state $state)) $state $command "60")))
-     (browse:result (web:attempt $variants 70000 4194304))))
+;; The browser's own MCP server, over HTTP. The server offers only the tools
+;; browse calls; the model never names a tool or writes a script. One MCP
+;; session is one browsing session (page, history, cookies in memory): its id
+;; is kept in the agent's web state, so a page stays open across commands.
+(= (browse:tools) "goto,tree,markdown,click,fill,press,waitForState,getUrl,evaluate")
+(= (browse:endpoint) (str:join "" ("http://127.0.0.1:" (browse:port) "/mcp")))
+(= (browse:session-file) (path:join (web:state) "browse-session"))
+(= (browse:saved-session)
+   (case (fs:read-text-result (browse:session-file) 0 "replace") ((("ok" $text) (str:trim $text)) ($none ""))))
+(= (browse:spec)
+   (JsonObject ((JsonPair "type" "http") (JsonPair "url" (browse:endpoint))
+                (JsonPair "readTimeoutSeconds" 70) (JsonPair "totalTimeoutSeconds" 90))))
+; A client state on the saved session, or on a new one it saves.
+(= (browse:client)
+   (let $state (mcp:open-spec "browse" (browse:spec))
+     (if (mcp:failed? $state) $state
+       (let $saved (browse:saved-session)
+         (if (!= $saved "")
+           (let* (($_ (mcp:set $state "session" $saved)) ($_ (mcp:set $state "initialized" True))
+                  ($_ (mcp:set $state "protocol" "2025-06-18"))) $state)
+           (browse:new-session $state))))))
+(= (browse:new-session $state)
+   (let $ready (mcp:initialize $state)
+     (if (mcp:failed? $ready) (let $_ (mcp:close $state) $ready)
+       (let $session (mcp:get $state "session" "")
+         (if (== $session "") (let $_ (mcp:close $state) (mcp:failure "protocol" "the browser gave no session"))
+           (let $_ (fs:write (browse:session-file) $session) $state))))))
+(= (browse:forget-session) (catch (fs:remove (browse:session-file))))
+; One tool call: its text, or why it failed. A session the server no longer
+; knows (it was restarted) is replaced once; a call that timed out after it
+; was sent may have acted and is never repeated.
+(= (browse:tool $name $arguments) (browse:tool-try $name $arguments 1))
+(= (browse:tool-try $name $arguments $retries)
+   (let $state (browse:client)
+     (if (mcp:failed? $state) (BrowseFailedV1 (browse:mcp-why $state))
+       (let* (($reply (mcp:call $state "tools/call" (JsonObject ((JsonPair "name" $name) (JsonPair "arguments" $arguments)))))
+              ($_ (mcp:close $state)))
+         (if (and (> $retries 0) (browse:session-lost? $reply))
+           (let $_ (browse:forget-session) (browse:tool-try $name $arguments (- $retries 1)))
+           (browse:reply $reply))))))
+(= (browse:session-lost? $reply)
+   (case $reply (((McpFailureV1 "transport" $detail) (or (browse:mentions? $detail "HTTP 404") (browse:mentions? $detail "HTTP 400"))) ($other False))))
+(= (browse:mentions? $text $part)
+   (case (str:find (if (== (get-type $text) String) $text (repr $text)) $part) (((TextNotFound $_) False) ($_ True))))
+(= (browse:mcp-why $failure)
+   (case $failure
+     (((McpFailureV1 "incomplete" $_)
+       "the browser did not answer in time; whether the action happened is unknown. Run (browse \"snapshot\") to see the page before repeating it.")
+      ((McpFailureV1 $kind $detail) (str:join "" ("browser " $kind ": " (diagnostic:text $detail 300))))
+      ($other "the browser call failed"))))
+(= (browse:texts $items)
+   (if (== $items ()) ""
+     (str:concat (sf:get (car-atom $items) "text" "") (browse:texts (cdr-atom $items)))))
+(= (browse:reply $reply)
+   (if (mcp:failed? $reply) (BrowseFailedV1 (browse:mcp-why $reply))
+     (let $text (case (sf:get $reply "content" JsonNull) (((JsonArray $items) (browse:texts $items)) ($none "")))
+       (if (== (sf:get $reply "isError" False) True)
+         (BrowseFailedV1 (str:concat "the browser refused (untrusted): " (str:trim $text)))
+         (BrowseOkV1 $text)))))
 
 (= (browse:ensure)
    (if (browse:server-running?) (BrowseOkV1 "running")
-     (case (browse:start-server)
-       (((BrowseFailedV1 $why) (BrowseFailedV1 $why))
-        ($_ (browse:ab ("connect" (browse:port))))))))
+     (let $_ (browse:forget-session) (browse:start-server))))
+
+;; The page as the model sees it: the browser's semantic tree, where an
+;; interactive element's line starts with its reference (@e and the
+;; browser's node number) and other lines carry no number.
+(= (browse:tree-line $line)
+   (case (re:captures (re:compile "^( *)([0-9]+) (.*)$") $line)
+     ((re:no-match $line)
+      ($match (let* (($indent (re:group-text $match $line 1)) ($id (re:group-text $match $line 2))
+                     ($rest (re:group-text $match $line 3)))
+                (if (== $rest "[i]") (str:join "" ($indent "@e" $id))
+                (if (str:starts-with $rest "[i] ")
+                  (str:join "" ($indent "@e" $id " " (str:byte-slice $rest 4 (str:byte-length $rest))))
+                  (str:concat $indent $rest))))))))
+(= (browse:snapshot-text $tree) (str:join "\n" (map-atom (str:split "\n" $tree) $line (browse:tree-line $line))))
+(= (browse:snapshot)
+   (case (browse:tool "tree" (JsonObject ((JsonPair "maxBytes" 400000))))
+     (((BrowseOkV1 $tree) (BrowseOkV1 (browse:snapshot-text $tree))) ($failed $failed))))
+(= (browse:page-text) (browse:tool "markdown" (JsonObject ((JsonPair "maxBytes" 2000000)))))
+(= (browse:node $ref) (str:string->number (str:byte-slice $ref 2 (str:byte-length $ref))))
 
 ; At most the budget of characters from $from on; the note names how to read on.
 (= (browse:cut $text $from $verb)
@@ -131,8 +196,9 @@
 (= (browse:then-snapshot $result)
    (case $result
      (((BrowseOkV1 $_)
-       (let $_ (browse:ab ("wait" "--load" "networkidle" "--timeout" (browse:setting "METTACLAW_BROWSE_SETTLE_MS" "8000")))
-         (browse:show (browse:ab ("snapshot" "-i")))))
+       (let $_ (browse:tool "waitForState" (JsonObject ((JsonPair "state" "networkidle")
+                  (JsonPair "timeout" (str:string->number (browse:setting "METTACLAW_BROWSE_SETTLE_MS" "8000"))))))
+         (browse:show (browse:snapshot))))
       ($failed (browse:show $failed)))))
 
 (= (browse:open $url)
@@ -141,13 +207,21 @@
        (str:concat "BROWSE_ERROR: not an http(s) URL: " $target)
        (case (browse:ensure)
          (((BrowseFailedV1 $why) (str:concat "BROWSE_ERROR: " $why))
-          ($_ (browse:then-snapshot (browse:ab ("open" $target)))))))))
-(= (browse:act $action $arguments)
+          ($_ (browse:then-snapshot (browse:tool "goto" (JsonObject ((JsonPair "url" $target)))))))))))
+(= (browse:act $tool $arguments)
    (if (not (browse:server-running?)) "BROWSE_ERROR: no page is open; (browse \"open\" URL) first"
-     (browse:then-snapshot (browse:ab (cons-atom $action $arguments)))))
+     (browse:then-snapshot (browse:tool $tool $arguments))))
+; Back and scrolling run fixed scripts of ours; the model passes no script.
+(= (browse:script $code) (JsonObject ((JsonPair "script" $code))))
+(= (browse:scroll-script $direction)
+   (case $direction
+     (("down" "window.scrollBy(0, Math.round(window.innerHeight * 0.9))")
+      ("up" "window.scrollBy(0, -Math.round(window.innerHeight * 0.9))")
+      ("right" "window.scrollBy(Math.round(window.innerWidth * 0.9), 0)")
+      ("left" "window.scrollBy(-Math.round(window.innerWidth * 0.9), 0)"))))
 (= (browse:close)
-   (let* (($_ (browse:ab ("close")))
-          ($_ (proc:run ("systemctl" "--user" "stop" (browse:unit)) "/" inherit 20000 4096)))
+   (let* (($_ (proc:run ("systemctl" "--user" "stop" (browse:unit)) "/" inherit 20000 4096))
+          ($_ (browse:forget-session)))
      "BROWSE: closed"))
 
 ; What the model may pass: element references from the snapshot, key names,
@@ -163,18 +237,19 @@
 (= (browse:command $verb $first $second)
    (case $verb
      (("open" (browse:open $first))
-      ("snapshot" (browse:show-from (browse:ab ("snapshot" "-i")) (web:offset $first) "snapshot"))
-      ("text" (browse:show-from (browse:ab ("snapshot")) (web:offset $first) "text"))
-      ("click" (if (browse:ref? $first) (browse:act "click" ($first))
+      ("snapshot" (browse:show-from (browse:snapshot) (web:offset $first) "snapshot"))
+      ("text" (browse:show-from (browse:page-text) (web:offset $first) "text"))
+      ("click" (if (browse:ref? $first) (browse:act "click" (JsonObject ((JsonPair "backendNodeId" (browse:node $first)))))
                  (browse:bad "click takes an element reference from the snapshot, like @e3")))
       ("fill" (if (not (browse:ref? $first)) (browse:bad "fill takes an element reference from the snapshot, like @e5")
                 (if (> (str:char-length $second) (browse:text-limit)) (browse:bad "fill text is limited to 4000 characters")
-                  (browse:act "fill" ($first "--" $second)))))
-      ("press" (if (browse:key? $first) (browse:act "press" ($first))
+                  (browse:act "fill" (JsonObject ((JsonPair "backendNodeId" (browse:node $first)) (JsonPair "value" $second)))))))
+      ("press" (if (browse:key? $first) (browse:act "press" (JsonObject ((JsonPair "key" $first))))
                  (browse:bad "press takes a key name, like Enter, Tab or Control+a")))
-      ("back" (browse:act "back" ()))
+      ("back" (browse:act "evaluate" (browse:script "history.back()")))
       ("scroll" (let $direction (if (== $first "") "down" $first)
-                  (if (erv:contains ("up" "down" "left" "right") $direction) (browse:act "scroll" ($direction))
+                  (if (erv:contains ("up" "down" "left" "right") $direction)
+                    (browse:act "evaluate" (browse:script (browse:scroll-script $direction)))
                     (browse:bad "scroll takes up, down, left or right"))))
       ("close" (browse:close))
       ($other (str:join "" ("BROWSE_ERROR: unknown action " (repr $verb)

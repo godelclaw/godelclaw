@@ -821,17 +821,12 @@
     {
       "name": "lightpanda",
       "file": "src/webread_cetta.metta",
-      "policy": "read-url page renderer, run in a memory-capped systemd --user scope with a timeout"
+      "policy": "read-url page renderer, run in a memory-capped systemd --user scope with a timeout; browse drives its MCP server, a memory-capped transient user service with a lifetime"
     },
     {
       "name": "bwrap",
       "file": "src/webread_cetta.metta",
       "policy": "sandbox for the page renderer and browser: system directories read-only, empty /home and /tmp, cleared environment; METTACLAW_WEB_SANDBOX=0 turns it off"
-    },
-    {
-      "name": "agent-browser",
-      "file": "src/webbrowse_cetta.metta",
-      "policy": "browse: drives the agent's own Lightpanda CDP server, a memory-capped transient user service with a lifetime; each call in a memory-capped scope"
     },
     {
       "name": "configured-gateway-tool",

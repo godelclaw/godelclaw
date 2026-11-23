@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Install the agents' web tools for this user:
-# - the Lightpanda page renderer that read-url runs, a pinned release checked
-#   against its SHA-256, or a given build with --from FILE --sha256 HEX;
-# - agent-browser, which browse uses to drive a Lightpanda session, from its
-#   pinned npm platform package checked against its SHA-256;
+# - Lightpanda, the page renderer read-url runs and the browser whose MCP
+#   server browse drives, a pinned release checked against its SHA-256, or a
+#   given build with --from FILE --sha256 HEX;
 # - a local SearXNG metasearch service for search: a podman container bound to
 #   127.0.0.1, memory-capped, from a pinned image digest, run by systemd --user.
 # Rerunning keeps the existing SearXNG settings (and their secret key).
@@ -12,9 +11,6 @@ set -euo pipefail
 LIGHTPANDA_VERSION=1.0.5
 LIGHTPANDA_URL="https://github.com/lightpanda-io/browser/releases/download/${LIGHTPANDA_VERSION}/lightpanda-x86_64-linux"
 LIGHTPANDA_SHA256=0ec21fa4867ab9e82b35285ff4ab0e7336c6c1d89f26fe991f27d73c8a678bd7
-AGENT_BROWSER_VERSION=0.43.0
-AGENT_BROWSER_URL="https://registry.npmjs.org/@agent-browser/cli-linux-x64-gnu/-/cli-linux-x64-gnu-${AGENT_BROWSER_VERSION}.tgz"
-AGENT_BROWSER_SHA256=aa00b14ee8294edfeb1bc01bc6418cf4b7e50d75b046a9ab497c10384207383f
 SEARXNG_IMAGE="docker.io/searxng/searxng@sha256:27c6f6eca6aa5284eb8ec6ec40eee787cc4fe3014fad0c82059991a631ea741f"
 SEARXNG_PORT="${SEARXNG_PORT:-8888}"
 SEARXNG_MEMORY="${SEARXNG_MEMORY:-768m}"
@@ -49,23 +45,6 @@ mkdir -p "$target"
 mv -f "$stage" "$target/lightpanda"
 ln -sfn "${actual:0:16}/lightpanda" "$lib/lightpanda"
 echo "lightpanda: $("$lib/lightpanda" version) at $lib/lightpanda"
-
-ab_lib="$HOME/.local/lib/godelclaw/agent-browser"
-mkdir -p "$ab_lib"
-ab_stage="$(mktemp -d "$ab_lib/.incoming-XXXXXX")"
-trap 'rm -f "$stage"; rm -rf "$ab_stage"' EXIT
-curl -fsSL --max-time 300 -o "$ab_stage/cli.tgz" "$AGENT_BROWSER_URL"
-ab_actual="$(sha256sum "$ab_stage/cli.tgz" | cut -d' ' -f1)"
-if [[ "$ab_actual" != "$AGENT_BROWSER_SHA256" ]]; then
-    echo "agent-browser checksum mismatch: expected $AGENT_BROWSER_SHA256, got $ab_actual" >&2
-    exit 1
-fi
-tar -xzf "$ab_stage/cli.tgz" -C "$ab_stage" package/bin/agent-browser
-ab_target="$ab_lib/${ab_actual:0:16}"
-mkdir -p "$ab_target"
-install -m 755 "$ab_stage/package/bin/agent-browser" "$ab_target/agent-browser"
-ln -sfn "${ab_actual:0:16}/agent-browser" "$ab_lib/agent-browser"
-echo "agent-browser: $("$ab_lib/agent-browser" --version) at $ab_lib/agent-browser"
 
 if [[ -n "${skip_searxng:-}" ]]; then exit 0; fi
 

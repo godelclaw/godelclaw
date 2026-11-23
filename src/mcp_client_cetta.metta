@@ -84,7 +84,10 @@
       ($bad (mcp:failure "configuration" "args must be an array")))))
 (= (mcp:open $name)
    (let $spec (mcp:server $name)
-     (if (mcp:failed? $spec) $spec
+     (if (mcp:failed? $spec) $spec (mcp:open-spec $name $spec))))
+; A session from a server specification a caller holds, not from the
+; configuration files.
+(= (mcp:open-spec $name $spec)
        (let* (($transport (str:lower (str:join "-" (str:split "_" (sf:get $spec "type" "stdio")))))
               ($read (mcp:seconds $spec "readTimeoutSeconds" 30))
               ($seconds (mcp:seconds $spec "totalTimeoutSeconds" (max 60 (+ $read 10))))
@@ -101,7 +104,7 @@
               ($opened (if (== $transport "stdio") (mcp:open-stdio $state)
                          (if (erv:contains ("http" "streamable-http" "sse" "http-sse") $transport)
                            (mcp:open-http $state) (mcp:failure "configuration" "unsupported MCP transport")))))
-         (if (mcp:failed? $opened) (let $_ (mcp:close $state) $opened) $state)))))
+         (if (mcp:failed? $opened) (let $_ (mcp:close $state) $opened) $state)))
 (= (mcp:get $state $key $default)
    (case (collapse (match $state (McpFieldV1 $key $value) $value))
      ((() $default) (($value) $value) ($bad (Error mcp:state (Fault duplicate-field))))))
