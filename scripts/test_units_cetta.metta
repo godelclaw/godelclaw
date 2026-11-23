@@ -108,6 +108,23 @@
     ("tests/unit/structured_request.metta" "UNIT_STRUCTURED_REFUSALS_OK")
     ("tests/unit/completion_effects.metta" "UNIT_COMPLETION_EFFECTS_OK")
     ("tests/unit/rejection_gate.metta" "UNIT_REJECTION_GATE_OK")
+    ("tests/group_wake_probe.metta" "GROUP_WAKE_OK"
+     (("METTACLAW_OBSERVED_STRATEGY" "0") ("METTACLAW_STRATEGY_PATH" "{home}/state.sqlite3")
+      ("METTACLAW_WORKING_SET_PATH" "{home}/working.json") ("METTACLAW_TELEGRAM_SERVICE_SOCKET" "")
+      ("METTACLAW_ENGINE_STATE_PATH" "{home}/engine") ("METTACLAW_TELEGRAM_LOG_PATH" "{home}/updates.jsonl")
+      ("METTACLAW_TELEGRAM_GROUP_WAKE_EVERY" "-100:3, -200:x") ("METTACLAW_TELEGRAM_BOT_USERNAME" "GodelTestBot"))
+     (no-error-values))
+    ("tests/ecan_essential.metta" "ECAN_DUPLICATE_TARGETS_OK" (("ECAN_SNAPSHOT_PATH" "{home}/snapshot.metta")) (no-error-values))
+    ("tests/ecan_arguments.metta" "ECAN_ARGUMENT_TESTS_OK" (("ECAN_SNAPSHOT_PATH" "{home}/snapshot.metta")) (no-error-values))
+    ("tests/ecan_policy.metta" "ECAN_POLICY_TESTS_OK" (("ECAN_SNAPSHOT_PATH" "{home}/snapshot.metta")) (no-error-values))
+    ("tests/ecan_snapshot.metta" "ECAN_SNAPSHOT_WRITTEN"
+     (("ECAN_SNAPSHOT_PATH" "{run}/ecan-snapshot.metta") ("ECAN_SNAPSHOT_PHASE" "write")) (no-error-values))
+    ("tests/ecan_snapshot.metta" "ECAN_SNAPSHOT_RESTORED"
+     (("ECAN_SNAPSHOT_PATH" "{run}/ecan-snapshot.metta") ("ECAN_SNAPSHOT_PHASE" "read")) (no-error-values))
+    ("tests/unit/native_idle_backoff.metta" "IDLE_BACKOFF_OK"
+     (("METTACLAW_IDLE_RETRY_SECONDS" "30") ("METTACLAW_TELEGRAM_SERVICE_SOCKET" "{home}/absent.sock")))
+    ("tests/unit/metta_parse_only.metta" "UNIT_METTA_PARSE_ONLY_OK")
+    ("tests/unit/native_iter_process.metta" "UNIT_NATIVE_ITER_PROCESS_OK")
     ("tests/unit/dispatch_stopped.metta" "UNIT_DISPATCH_STOPPED_OK")
     ("tests/unit/dispatch_admission.metta" "UNIT_DISPATCH_ADMISSION_OK")
     ("tests/unit/shadow_effect_config.metta" "UNIT_SHADOW_EFFECT_CONFIG_OK")
@@ -220,13 +237,17 @@
         ("NATIVE_CORE_PEER" (path:join (nt:required-env "NATIVE_TEST_ARTIFACTS") "native-core-peer"))
         ("METTACLAW_CLAUDE_BIN" (path:join (nt:required-env "NATIVE_TEST_ARTIFACTS") "native-core-peer")))
        $base)))
-; A setting may name a path in the unit's own scratch directory as "{home}/...".
-(= (units:homed $settings $directory)
+; A setting may name a path in the unit's own scratch directory as "{home}/...",
+; or in the run's artifacts as "{run}/..." to pass state between units that
+; run in sequence (one process writes, the next reads).
+(= (units:homed $settings $directory $artifacts)
    (map-atom $settings $setting
      (let ($name $value) $setting
        ($name (if (== $value "{home}") $directory
                 (if (str:starts-with $value "{home}/")
-                  (nt:join $directory (str:byte-slice $value 7 (str:byte-length $value))) $value))))))
+                  (nt:join $directory (str:byte-slice $value 7 (str:byte-length $value)))
+                  (if (str:starts-with $value "{run}/")
+                    (nt:join $artifacts (str:byte-slice $value 6 (str:byte-length $value))) $value)))))))
 (= (preq-free:append $front $back)
    (if (== $front ()) $back (cons-atom (car-atom $front) (preq-free:append (cdr-atom $front) $back))))
 (= (units:override $base $extra)
@@ -235,14 +256,21 @@
 (= (units:member? $key $keys)
    (if (== $keys ()) False (if (== $key (car-atom $keys)) True (units:member? $key (cdr-atom $keys)))))
 
+; A case is (file marker), (file marker settings) or (file marker settings
+; checks); the check no-error-values also refuses output that shows an
+; (Error ...) value anywhere, not only a missing marker.
 (= (units:one $root $engine $artifacts ($file $marker))
-   (units:one $root $engine $artifacts ($file $marker ())))
+   (units:one $root $engine $artifacts ($file $marker () ())))
 (= (units:one $root $engine $artifacts ($file $marker $extra))
+   (units:one $root $engine $artifacts ($file $marker $extra ())))
+(= (units:one $root $engine $artifacts ($file $marker $extra $checks))
    (let* (($directory (nt:join $artifacts (str:concat "u-" (str:byte-slice (system:uuid4-hex) 0 10))))
           ($_ (fs:make-directories $directory 448))
           ($output (nt:exit-ok (proc:run ($engine "--lang" "petta" "--profile" "extended" "--import-mode" "ancestor-walk" "--quiet" $file)
-                                         $root (units:override (units:env $directory) (units:homed $extra $directory)) 120000 1048576)))
+                                         $root (units:override (units:env $directory) (units:homed $extra $directory $artifacts)) 120000 1048576)))
           ($_ (nt:require unit-marker (nt:contains $output $marker)))
+          ($_ (if (units:member? no-error-values $checks)
+                (nt:require unit-without-error-values (not (nt:contains $output "(Error "))) True))
           ($_ (println! (UNIT_PASSED $file)))) 1))
 
 (= (units:selected $all $only)

@@ -1,0 +1,20 @@
+; The parse-only check accepts the loop and the attention graph without
+; evaluating them, and refuses an unclosed expression.
+!(import! &self ../native_test_support.metta)
+(= (mpo:parse $path $home)
+   (proc:run ((nt:required-env "CETTA_BIN") "--lang" "petta" "scripts/metta_parse_only.metta" "--" $path)
+             (system:cwd) (nt:environment $home) 30000 1048576))
+(= (mpo:refused? $result)
+   (case $result
+     (((proc:exited 1 $out $err) (nt:contains $out "SYNTAX_ERROR"))
+      ((proc:result (proc:exited 1) proc:normal $out $err $capture) (nt:contains $out "SYNTAX_ERROR"))
+      ($other False))))
+!(let* (($home (nt:required-env "HOME"))
+        ($loop (nt:exit-ok (mpo:parse "src/loop.metta" $home)))
+        ($_ (nt:require loop-parses-without-evaluation (nt:contains $loop "SYNTAX_OK")))
+        ($graph (nt:exit-ok (mpo:parse "src/attention_graph.metta" $home)))
+        ($_ (nt:require attention-graph-parses-without-evaluation (nt:contains $graph "SYNTAX_OK")))
+        ($broken (nt:join $home "broken.metta"))
+        ($_ (fs:write $broken "(= (broken $x"))
+        ($_ (nt:require unclosed-expression-is-refused (mpo:refused? (mpo:parse $broken $home)))))
+   (println! UNIT_METTA_PARSE_ONLY_OK))
