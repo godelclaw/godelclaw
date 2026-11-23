@@ -4,7 +4,10 @@
 !(import! &self str)
 
 ; The owner can use the durable mailbox identity check. A restricted member
-; must use the shaped append path, which does not require reading other mail.
+; must use the shaped append path, which does not require reading other mail;
+; the service then keeps one message per id under the grant's uniqueness
+; rule. In its own inbox a member holds every right, and the same identity
+; check keeps one message per id there.
 (= (shared-mail:post $socket $name $id $to $agent $body)
    (case (str:split "/" $to)
      ((($account $recipient)
@@ -15,7 +18,9 @@
      (((reply $rid ok (principal $account owner))
        (mailbox:send $socket (shared-mail:owner-space $name $account) $id $to (from $account $agent) $body))
       ((reply $rid ok (principal $account member))
-       (mailbox:post $socket (if (== $name "") "agent-mail" $name) $id $to $agent $body))
+       (if (== $name (shared-mail:owner-space "" $account))
+         (mailbox:send $socket $name $id $to (from $account $agent) $body)
+         (mailbox:post $socket (if (== $name "") "agent-mail" $name) $id $to $agent $body)))
       ($error $error))))
 
 ; Bare recipients stay on the agent bus. Qualified recipients select an

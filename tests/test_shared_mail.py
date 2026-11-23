@@ -326,6 +326,36 @@ class SharedMailTests(unittest.TestCase):
         refused = self.run_cli('send', 'reviewer', 'fixture-agent', 'changed', '--id', 'member-one', expected=1)
         self.assertIn('id-conflict', refused['reason'])
 
+    def test_member_own_inbox_retry_is_one_message(self):
+        # The receiver keeps one message per id: a retry after a lost answer,
+        # after pickup, after ack and after a service restart stores nothing.
+        args = ('send', 'observer', LOGIN + '/fixture-agent', 'alert', '--id', 'own-one')
+        self.assertEqual(self.run_cli(*args)['status'], 'accepted')
+        self.assertEqual(self.run_cli(*args)['status'], 'duplicate')
+        self.assertEqual(self.run_cli('inbox', 'fixture-agent')['count'], 1)
+        delivery = self.run_cli('next', 'fixture-agent')
+        self.assertEqual((delivery['id'], delivery['text']), ('own-one', 'alert'))
+        self.assertEqual(self.run_cli(*args)['status'], 'duplicate')
+        self.assertEqual(self.run_cli('ack', 'fixture-agent', 'own-one')['status'], 'settled')
+        self.stop()
+        self.start(member=True)
+        self.assertEqual(self.run_cli(*args)['status'], 'duplicate')
+        self.assertEqual(self.run_cli('next', 'fixture-agent'), {'status': 'idle'})
+        refused = self.run_cli('send', 'observer', LOGIN + '/fixture-agent', 'changed',
+                               '--id', 'own-one', expected=1)
+        self.assertIn('conflict', refused['reason'])
+
+    def test_member_concurrent_retries_store_one_message(self):
+        for to, ident in ((LOGIN + '/fixture-agent', 'own-race'), ('fixture-agent', 'bus-race')):
+            with self.subTest(to=to):
+                command = self.command('send', 'observer', to, 'alert', '--id', ident)
+                runs = [subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                        for _ in range(6)]
+                results = [p.communicate(timeout=30) for p in runs]
+                statuses = sorted(json.loads(out)['status'] for out, _ in results)
+                self.assertEqual(statuses, ['accepted'] + ['duplicate'] * 5, results)
+        self.assertEqual(self.run_cli('inbox', 'fixture-agent')['count'], 1)
+
     def install(self, destination, *extra):
         command = ['sh', str(ROOT / 'scripts/install_claw_mail.sh'), '--engine', str(BINARY),
                    '--bin-dir', str(destination / 'bin'), '--skill-dir', str(destination / 'skills'), *extra]
