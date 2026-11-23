@@ -1,4 +1,4 @@
-"""CLI round trips against the real service, with a staged member account."""
+"""Round trips of the native claw-mail client against the real service, with a staged member account."""
 import json
 from isolated_env import isolated_environ  # noqa: E402
 import os
@@ -9,16 +9,9 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest import mock
-from types import SimpleNamespace
-import contextlib
-import io
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-import shared_mail
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / 'scripts/shared_mail.py'
+CLIENT = ROOT / 'scripts/claw_mail_cetta.metta'
 BINARY = Path(os.environ.get('CETTA_BIN', '/nonexistent/cetta')).resolve()
 SERVICE = BINARY.parent / 'cetta-space-service'
 LOGIN = pwd.getpwuid(os.getuid()).pw_name
@@ -75,7 +68,8 @@ class SharedMailTests(unittest.TestCase):
         return result.stdout
 
     def command(self, *arguments):
-        return [sys.executable, str(CLI), '--config', str(self.work / 'no-config.toml'), '--json', '--cetta', str(BINARY), '--socket', str(self.socket), *arguments]
+        return [str(BINARY), '--no-results', '--lang', 'petta', str(CLIENT),
+                '--config', str(self.work / 'no-config.toml'), '--json', '--socket', str(self.socket), *arguments]
 
     def run_cli(self, *arguments, env=None, expected=0):
         result = subprocess.run(self.command(*arguments), capture_output=True, text=True, env=env, timeout=10)
@@ -242,35 +236,43 @@ class SharedMailTests(unittest.TestCase):
                 waiting.communicate(timeout=5)
 
     def test_transport_disconnect_retries_but_protocol_refusals_do_not(self):
-        args = SimpleNamespace(cetta=str(BINARY))
         for reason, retryable in (("disconnect", True), ("connect", True),
                                   ("timeout-or-disconnect", True),
                                   ("permission-denied", False),
                                   ("malformed-reply", False)):
             with self.subTest(reason=reason):
-                result = shared_mail.invoke(args, '(space:unavailable "test" %s)' % reason)
+                path = self.work / 'classify.metta'
+                path.write_text('!(import! &self %s)\n!(shared-mail:print (space:unavailable "test" %s))\n'
+                                % (json.dumps(str(ROOT / 'scripts/shared_mail.metta')), reason))
+                run = subprocess.run([str(BINARY), '--no-results', '--lang', 'petta', str(path)],
+                                     capture_output=True, text=True, timeout=10)
+                self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+                result = json.loads(run.stdout.splitlines()[-1])
+                result = json.loads(result) if isinstance(result, str) else result
                 self.assertEqual(result["status"], "error")
                 self.assertIs(result["retryable"], retryable)
 
     def test_lost_wait_reply_recovers_the_same_unacknowledged_delivery(self):
+        # A reader that saw a delivery but lost the service (here: the
+        # service stops) gets the same unacknowledged delivery once it is back.
         self.reply('recover this delivery')
-        actual_invoke = shared_mail.invoke
-        first = []
-        def lose_first_response(*args, **kwargs):
-            result = actual_invoke(*args, **kwargs)
-            if not first:
-                self.assertEqual(result['status'], 'delivery')
-                first.append(result)
-                return {'status': 'error', 'reason': 'disconnect', 'retryable': True}
-            return result
-        output = io.StringIO()
-        with mock.patch.object(shared_mail, 'invoke', side_effect=lose_first_response), \
-             contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
-            code = shared_mail.main(self.command('wait', 'reviewer', '--timeout', '3')[2:])
-        self.assertEqual(code, 0)
-        recovered = json.loads(output.getvalue())
-        self.assertEqual(recovered, first[0])
-        self.assertEqual(self.run_cli('inbox', 'reviewer')['count'], 1)
+        first = self.run_cli('next', 'reviewer')
+        self.assertEqual(first['status'], 'delivery')
+        self.stop()
+        waiting = subprocess.Popen(self.command('wait', 'reviewer', '--timeout', '6'),
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            time.sleep(.3)
+            self.start(member=True)
+            out, err = waiting.communicate(timeout=10)
+            self.assertEqual(waiting.returncode, 0, out + err)
+            self.assertIn('mail temporarily unavailable; retry 1/8', err)
+            self.assertEqual(json.loads(out), first)
+            self.assertEqual(self.run_cli('inbox', 'reviewer')['count'], 1)
+        finally:
+            if waiting.poll() is None:
+                waiting.terminate()
+                waiting.communicate(timeout=5)
 
     def test_zero_timeout_waits_until_mail(self):
         waiting = subprocess.Popen(self.command('wait', 'reviewer', '--timeout', '0'),
@@ -324,44 +326,46 @@ class SharedMailTests(unittest.TestCase):
         refused = self.run_cli('send', 'reviewer', 'fixture-agent', 'changed', '--id', 'member-one', expected=1)
         self.assertIn('id-conflict', refused['reason'])
 
+    def install(self, destination, *extra):
+        command = ['sh', str(ROOT / 'scripts/install_claw_mail.sh'), '--engine', str(BINARY),
+                   '--bin-dir', str(destination / 'bin'), '--skill-dir', str(destination / 'skills'), *extra]
+        return subprocess.run(command, capture_output=True, text=True, timeout=10)
+
     def test_config_relative_paths_work_from_another_directory_and_a_symlink(self):
+        installed = self.install(self.work / 'installed')
+        self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
         config = self.work / 'mail.toml'
-        engine = self.work / 'engine'
-        engine.symlink_to(BINARY)
         config.write_text('socket = "service.sock"\ncetta = "./engine"\nagent = "reviewer"\n')
         command = self.work / 'claw-mail'
-        command.symlink_to(CLI)
+        command.symlink_to(self.work / 'installed/bin/claw-mail')
         env = isolated_environ()
         for key in ('CETTA_BIN', 'CETTA_SHARED_MAIL_SOCKET', 'CLAW_MAIL_AGENT'):
             env.pop(key, None)
-        result = subprocess.run([sys.executable, str(command), '--config', str(config), 'inbox', '--count'],
+        result = subprocess.run([str(command), '--config', str(config), 'inbox', '--count'],
                                 cwd=ROOT, env=env, capture_output=True, text=True, timeout=5)
         self.assertEqual((result.returncode, result.stdout), (0, '0\n'), result.stderr)
 
     def test_installation_creates_links_and_private_account_config(self):
         destination = self.work / 'installed'
         config = destination / 'mail.toml'
-        command = [sys.executable, str(ROOT / 'scripts/install_claw_mail.py'),
-                   '--bin-dir', str(destination / 'bin'), '--skill-dir', str(destination / 'skills'),
-                   '--config', str(config), '--socket', str(self.socket), '--cetta', str(BINARY),
-                   '--agent', 'reviewer']
-        installed = subprocess.run(command, capture_output=True, text=True, timeout=5)
+        extra = ('--config', str(config), '--socket', str(self.socket), '--agent', 'reviewer')
+        installed = self.install(destination, *extra)
         self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
         self.assertEqual(config.stat().st_mode & 0o777, 0o600)
-        installed = (destination / 'bin/claw-mail').resolve()
-        self.assertNotEqual(installed, CLI)
-        self.assertEqual(installed.read_bytes(), CLI.read_bytes())
-        self.assertEqual(installed.with_suffix('.metta').read_bytes(), CLI.with_suffix('.metta').read_bytes())
+        launcher = (destination / 'bin/claw-mail').resolve()
+        self.assertTrue(launcher.is_relative_to(destination / 'share/claw-mail'))
+        self.assertIn(str(BINARY), launcher.read_text())
+        for name in ('claw_mail_cetta.metta', 'shared_mail.metta'):
+            self.assertEqual((launcher.parent / name).read_bytes(), (ROOT / 'scripts' / name).read_bytes())
         self.assertTrue((destination / 'skills/claw-mail/SKILL.md').is_file())
         env = isolated_environ()
         for key in ('CETTA_BIN', 'CETTA_SHARED_MAIL_SOCKET', 'CLAW_MAIL_AGENT'):
             env.pop(key, None)
-        result = subprocess.run([sys.executable, str(destination / 'bin/claw-mail'),
-                                 '--config', str(config), 'inbox', '--count'],
+        result = subprocess.run([str(destination / 'bin/claw-mail'), '--config', str(config), 'inbox', '--count'],
                                 cwd=destination, env=env, capture_output=True, text=True, timeout=5)
         self.assertEqual((result.returncode, result.stdout), (0, '0\n'), result.stderr)
         before = config.read_bytes()
-        again = subprocess.run(command, capture_output=True, text=True, timeout=5)
+        again = self.install(destination, *extra)
         self.assertEqual(again.returncode, 2)
         self.assertEqual(config.read_bytes(), before)
 
@@ -375,37 +379,50 @@ class SharedMailTests(unittest.TestCase):
 
 
 
+@unittest.skipUnless(BINARY.is_file() and SERVICE.is_file(), 'provide CETTA_BIN in a native release bundle')
 class WaitRetryPolicyTests(unittest.TestCase):
-    def command(self):
-        return ['--config', '/nonexistent/test-mail.toml', '--socket', '/fixture/socket',
-                '--cetta', '/fixture/cetta', '--json', 'wait', 'reviewer']
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='shared-mail-policy-')
+        self.addCleanup(self.temp.cleanup)
+        self.work = Path(self.temp.name)
+
+    def command(self, socket, *arguments):
+        return [str(BINARY), '--no-results', '--lang', 'petta', str(CLIENT), '--config',
+                str(self.work / 'no-config.toml'), '--socket', str(socket), '--json', 'wait', 'reviewer', *arguments]
 
     def test_transient_failures_do_not_reset_finite_deadline(self):
-        now = [0.0]
-        calls = []
-        def invoke(args, call, timeout):
-            calls.append((call, timeout))
-            return {'status': 'error', 'reason': 'disconnect', 'retryable': True}
-        def sleep(delay):
-            now[0] += delay
-        with mock.patch.object(shared_mail, 'invoke', side_effect=invoke), \
-             mock.patch.object(shared_mail.time, 'monotonic', side_effect=lambda: now[0]), \
-             mock.patch.object(shared_mail.time, 'sleep', side_effect=sleep), \
-             contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(shared_mail.main(self.command() + ['--timeout', '0.7']), 1)
-        self.assertAlmostEqual(now[0], 0.7)
-        self.assertEqual(len(calls), 3)
-        self.assertIn('700)', calls[0][0])
-        self.assertIn('0)', calls[-1][0])
+        started = time.monotonic()
+        result = subprocess.run(self.command(self.work / 'absent.sock', '--timeout', '0.7'),
+                                capture_output=True, text=True, timeout=10)
+        elapsed = time.monotonic() - started
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertTrue(json.loads(result.stdout)['retryable'])
+        retries = [line for line in result.stderr.splitlines() if 'temporarily unavailable' in line]
+        self.assertEqual(len(retries), 2, result.stderr)
+        self.assertTrue(retries[0].endswith('retry 1/8 in 0.5s'), retries[0])
+        self.assertLess(float(retries[1].rsplit(' in ', 1)[1][:-1]), .5)
+        self.assertGreaterEqual(elapsed, .65)
+        self.assertLess(elapsed, 5)
 
     def test_terminal_refusal_does_not_retry(self):
-        with mock.patch.object(shared_mail, 'invoke', return_value={
-                'status': 'error', 'reason': 'permission-denied', 'retryable': False}) as invoke, \
-             mock.patch.object(shared_mail.time, 'sleep') as sleep, \
-             contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(shared_mail.main(self.command() + ['--forever']), 1)
-        self.assertEqual(invoke.call_count, 1)
-        sleep.assert_not_called()
+        # A member whose inbox was never granted is refused, not disconnected.
+        socket = self.work / 'service.sock'
+        service = subprocess.Popen([str(SERVICE), '--socket', str(socket), '--data', str(self.work / 'store'),
+                                    '--owner-uid', str(65534 if os.getuid() != 65534 else 65533)],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        try:
+            deadline = time.monotonic() + 5
+            while not socket.exists():
+                self.assertIsNone(service.poll(), 'fixture did not start')
+                self.assertLess(time.monotonic(), deadline, 'fixture did not start')
+                time.sleep(.01)
+            result = subprocess.run(self.command(socket, '--forever'), capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('missing-space', json.loads(result.stdout)['reason'])
+            self.assertNotIn('temporarily unavailable', result.stderr)
+        finally:
+            service.terminate()
+            service.communicate(timeout=10)
 
 
 if __name__ == '__main__':

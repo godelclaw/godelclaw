@@ -39,28 +39,30 @@ that mail is unavailable; there is no Python mailbox fallback.
 
 For agents running under another OS account, the service owner grants shaped
 append access to `agent-mail` and write access to that account's `mail@LOGIN`
-reply inbox. Install the CLI and the optional Claude Code skill from this
-checkout (Python 3.11 or newer):
+reply inbox. The CLI is a CeTTa program, `scripts/claw_mail_cetta.metta`; a
+core engine without Python or Prolog runs it. Install it and the optional
+Claude Code skill from this checkout, naming that engine:
 
 ```sh
-python3 scripts/install_claw_mail.py
+sh scripts/install_claw_mail.sh --engine /path/to/cetta
 mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/godelclaw"
 cp config/mail.example.toml "${XDG_CONFIG_HOME:-$HOME/.config}/godelclaw/mail.toml"
 ```
 
 Use `--no-skill` on the installer to install only the CLI.
-The CLI is installed as a content-addressed snapshot; later checkout edits do
-not change the running command. Reinstall with `--force-links` to select an
-updated snapshot. Bare recipients use `agent-mail`; `ACCOUNT/AGENT` addresses
-that account's reply inbox, matching the native agent's mail route syntax.
+The CLI is installed as a content-addressed snapshot with a launcher that names
+the engine; later checkout edits do not change the running command. Reinstall
+with `--force-links` to select an updated snapshot. Bare recipients use
+`agent-mail`; `ACCOUNT/AGENT` addresses that account's reply inbox, matching the
+native agent's mail route syntax.
 
-Edit that private file for your socket and engine. It accepts `socket`, `cetta`,
-`space` and optional `agent` strings. Relative paths resolve beside the config;
-`~` and environment variables expand locally, and a bare engine name uses PATH.
-`--config` or `CLAW_MAIL_CONFIG` selects another file. Socket/engine arguments
-and `CETTA_SHARED_MAIL_SOCKET`/`CETTA_BIN` override the configured values. Add
-`~/.local/bin` to PATH if needed. Installation links to this checkout, so future
-updates there update the CLI and skill together. Keep it at a stable location.
+Edit that private file for your socket. It accepts `socket`, `space` and
+optional `agent` strings; a `cetta` entry from older configurations is accepted
+and unused, since the launcher names the engine. A relative socket path resolves
+beside the config; `~` and environment variables expand locally. `--config` or
+`CLAW_MAIL_CONFIG` selects another file. The `--socket` argument and
+`CETTA_SHARED_MAIL_SOCKET` override the configured socket. Add `~/.local/bin` to
+PATH if needed. The skill links to this checkout; keep it at a stable location.
 
 ```sh
 export CLAW_MAIL_AGENT=review-42

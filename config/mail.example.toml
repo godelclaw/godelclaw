@@ -2,7 +2,6 @@
 # Configure the socket made available by your mailbox service owner.
 # Environment variables and ~ expand locally; relative paths use this file's directory.
 socket = "${XDG_RUNTIME_DIR}/claw-mail/space.sock"
-cetta = "cetta"
 # Bare recipients are native peers; ACCOUNT/AGENT selects a CLI reply inbox.
 space = "agent-mail"
 # Set CLAW_MAIL_AGENT per task/session, or set one default here:
