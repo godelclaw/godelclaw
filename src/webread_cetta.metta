@@ -23,6 +23,8 @@
 !(import! &self (library fs))
 !(import! &self (library path))
 !(import! &self (library re))
+!(import! &self (library math))
+!(import! &self (library host_io))
 !(import! &self ./websearch_cetta.metta)
 
 (= (web:setting $name $default) (system:getenv-or-default $name $default))
@@ -178,8 +180,36 @@
    (let* (($_ (catch (web:prune (fs:entries (web:pages)))))
           ($_ (catch (fs:update-text $file "replace" $text "" ""))))
      $text))
+;; Pacing: reads to one host are a gap apart (METTACLAW_WEB_HOST_GAP_MS, 1 s
+;; by default). A read asked at `now`, to a host last read at `last`, starts
+;; at the later of `now` and `last` plus the gap: RequestPacing.serveAt, whose
+;; schedules are proved spaced by the gap and never early, so a window of w
+;; milliseconds holds at most w / gap + 1 reads to a host. The last start time
+;; of each host is kept in the agent's web state, across reads and restarts.
+(= (web:host $url)
+   (case (re:captures (re:compile "^https?://([^/:?#]+)") $url)
+     ((re:no-match "") ($match (str:lower (re:group-text $match $url 1))))))
+(= (web:gap-ms)
+   (case (catch (str:string->number (web:setting "METTACLAW_WEB_HOST_GAP_MS" "1000")))
+     (((Error $_ $_) 1000) ($n (if (and (== (get-type $n) Number) (>= $n 0)) $n 1000)))))
+(= (web:pace-file $host)
+   (let $dir (path:join (web:state) "pace")
+     (let $_ (fs:make-directories $dir 448) (path:join $dir (str:sha256 $host)))))
+(= (web:now-ms) (math:floor (/ (system:wall-time-ns) 1000000)))
+(= (web:serve-at $now $last $gap) (if (< $last 0) $now (max $now (+ $last $gap))))
+(= (web:last-ms $file)
+   (case (fs:read-text-result $file 0 "replace")
+     ((("ok" $text) (case (catch (str:string->number (str:trim $text))) (((Error $_ $_) -1) ($n (if (== (get-type $n) Number) $n -1)))))
+      ($none -1))))
+(= (web:pace $url)
+   (let $host (web:host $url)
+     (if (== $host "") True
+       (let* (($file (web:pace-file $host)) ($now (web:now-ms))
+              ($start (web:serve-at $now (web:last-ms $file) (web:gap-ms)))
+              ($_ (if (> $start $now) (host:wait () (- $start $now)) True)))
+         (catch (fs:write $file (repr $start)))))))
 (= (web:render $url $file)
-   (case (web:attempt (web:fetch-variants $url) 60000 8388608)
+   (case (let $_ (web:pace $url) (web:attempt (web:fetch-variants $url) 60000 8388608))
      (((proc:exited 0 $text $_)
        (if (== (str:trim $text) "") (WebReadFailedV1 "empty page")
          (let $_ (web:keep $file $text) (WebPageV1 $text ""))))

@@ -69,6 +69,18 @@
    (println! UNIT_WEB_READ_TEXT_OK))
 
 ; Refusals are reported with their reason; the URL guard.
+; Pacing: a read starts at the later of now and the host's last start plus the gap.
+!(let* (($_ (nt:require pace-first-now (== (web:serve-at 5000 -1 1000) 5000)))
+        ($_ (nt:require pace-waits-gap (== (web:serve-at 5000 4500 1000) 5500)))
+        ($_ (nt:require pace-late-asks-now (== (web:serve-at 9000 4500 1000) 9000)))
+        ($_ (nt:require pace-host (== (web:host "https://En.Wikipedia.org:443/wiki/X?y") "en.wikipedia.org")))
+        ($_ (nt:require pace-no-host (== (web:host "file:///etc/passwd") "")))
+        ; Two reads to one host in a row: the second waits out the default 1 s gap.
+        ($t0 (system:monotonic-ns))
+        ($_ (web:pace "https://pace-check.invalid/a"))
+        ($_ (web:pace "https://pace-check.invalid/b"))
+        ($_ (nt:require pace-really-waits (>= (- (system:monotonic-ns) $t0) 900000000))))
+   (println! UNIT_WEB_PACING_OK))
 ; Reads name the agent and leave robots.txt to crawlers unless told to obey it.
 !(let* (($default (web:identity-options))
         ($_ (nt:require reads-name-the-agent
