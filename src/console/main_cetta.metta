@@ -59,10 +59,10 @@
    (case (cc:get (cc:rpc-key $kind) ConsoleNoWorkerV1)
      (((ConsoleRpcV1 $_ $_ ConsoleNoRequestV1 () $_) True) ($busy False))))
 (= (cc:background $now)
-   (let* (($_ (cc:pump-worker "control")) ($_ (cc:pump-worker "mail"))
+   (let* (($_ (cc:pump-when-due "control" $now)) ($_ (cc:pump-when-due "mail" $now))
           ($_ (if (and (>= $now (cc:get "next-status" 0)) (cc:rpc-idle? "control"))
                 (progn (cc:control "status" ((JsonPair "background" True)))
-                       (cc:set "next-status" (+ $now 5000000000))) True))
+                       (cc:set "next-status" (+ $now (cc:status-interval-ns $now)))) True))
           ($_ (if (and (>= $now (cc:get "next-mail" 0)) (cc:rpc-idle? "mail"))
                 (progn (cc:mail-request "receive" ()) (cc:set "next-mail" (+ $now 500000000))) True))
           ((HostBufferInfo $queued $_) (buffer:info (cc:get "events" ConsoleNoBufferV1)))
@@ -78,6 +78,24 @@
 (= (cc:request-open? $kind)
    (case (cc:get (cc:rpc-key $kind) ConsoleNoWorkerV1)
      (((ConsoleRpcV1 $_ $_ $pending $queue $_) (or (!= $pending ConsoleNoRequestV1) (!= $queue ()))) ($none False))))
+; A worker with work in flight is read on every tick; an idle one once a
+; second, which still notices a delivery or a worker that ended. Mail's
+; standing receive is a long poll and is not work in flight.
+; The agent's status every 5 s while the operator is at the console (a key in
+; the last two minutes), otherwise every 30 s: each reply costs memory.
+(= (cc:status-interval-ns $now)
+   (if (< (- $now (cc:get "last-input" 0)) 120000000000) 5000000000 30000000000))
+(= (cc:pump-urgent? $kind)
+   (case (cc:get (cc:rpc-key $kind) ConsoleNoWorkerV1)
+     (((ConsoleRpcV1 $_ $_ $pending $queue $_)
+       (or (!= $queue ())
+           (and (!= $pending ConsoleNoRequestV1)
+                (or (== $kind "control") (!= (sf:get $pending "operation" "") "receive")))))
+      ($none True))))
+(= (cc:pump-when-due $kind $now)
+   (if (or (cc:pump-urgent? $kind) (>= $now (cc:get (str:concat "next-pump-" $kind) 0)))
+     (let $_ (cc:set (str:concat "next-pump-" $kind) (+ $now 1000000000)) (cc:pump-worker $kind))
+     True))
 (= (cc:tick-wait-ms $output-waiting)
    (if (or $output-waiting
            (or (< (- (system:monotonic-ns) (cc:get "last-input" 0)) 2000000000)
