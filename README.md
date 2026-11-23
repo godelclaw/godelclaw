@@ -1228,7 +1228,8 @@ INTEGER column without losing digits. Provider wire validation remains separate.
 Export a read-only report with:
 
 ```sh
-python3 scripts/usage_report.py --ledger "$METTACLAW_LLM_LEDGER_PATH" \
+"$CETTA_BIN" --no-results --lang petta --profile extended --import-mode ancestor-walk \
+  scripts/usage_report_cetta.metta --socket "$METTACLAW_INPUT_LEDGER_SOCKET" \
   --since 2026-10-24T00:00:00Z --timezone UTC
 ```
 
@@ -1507,7 +1508,7 @@ is sensitive, so remove the captures after comparing them. Capturing does not
 send additional requests or change their contents.
 
 Set `paths.stream_dir` in private `config/local.toml` to enable the local
-operator stream. Use `python scripts/worklog_view.py --dir DIRECTORY`; select
+operator stream. Run `scripts/worklog_view_cetta.metta --dir DIRECTORY` with CeTTa; select
 an agent and its coding children with `--session NAME`. `--once --full` reads
 retained text and `--json` exposes the typed observation records. No operator
 stream content is automatically sent to Telegram or the public notes feed.
@@ -1528,7 +1529,7 @@ uncertain. Sessions pin source imports, instructions and the engine on launch;
 steering and transcript recovery continue through the ordinary session files.
 Interactive stdin/PTY operations are not supplied by this file-backed route.
 
-`scripts/worklog_control.py on|off --dir DIRECTORY` changes the local display
+`scripts/worklog_control_cetta.metta on|off --dir DIRECTORY` changes the local display
 epoch. Queued observations from an earlier epoch are discarded. The writer has
 a bounded asynchronous queue and reserved terminal slots; display overload is
 reported as a gap, with final transcript/output artifacts retained. Viewport
