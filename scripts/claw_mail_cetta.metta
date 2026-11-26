@@ -376,7 +376,9 @@
      (cm:one (collapse (catch (shared-mail:json (shared-mail:next $socket $agent $milliseconds)))))))
 
 ; Deadlines are monotonic nanoseconds, or CmForever.
-(= (cm:expired? $deadline) (if (== $deadline CmForever) False (>= (system:monotonic-ns) $deadline)))
+; The waiter counts in whole milliseconds (budgets and sleeps), so less than one
+; left cannot be waited on: that is the deadline.
+(= (cm:expired? $deadline) (if (== $deadline CmForever) False (>= (+ (system:monotonic-ns) 1000000) $deadline)))
 (= (cm:remaining-s $deadline)
    (if (== $deadline CmForever) 8 (max 0 (/ (- $deadline (system:monotonic-ns)) 1000000000.0))))
 (= (cm:budget-ms $deadline)
@@ -415,7 +417,9 @@
                    (progn
                      (cm:err (str:concat "mail temporarily unavailable; retry " (str:concat (repr $tried)
                        (str:concat "/" (str:concat (repr $limit) (str:concat " in " (str:concat (cm:seconds-text $delay) "s")))))))
-                     (host:wait () (math:floor (* $delay 1000)))
+                     ; Rounded up: a wait cut short to the deadline must reach it, or the
+                     ; sub-millisecond rest would start a burst of zero-length retries.
+                     (host:wait () (math:ceil (* $delay 1000)))
                      (cm:wait-loop $socket $agent $waiting $deadline $generation $named $tried $limit)))))
              (if (or (!= (cm:status $checked) "idle") (cm:expired? $deadline)) $checked
                (cm:wait-loop $socket $agent $waiting $deadline $generation $named 0 $limit))))))))
