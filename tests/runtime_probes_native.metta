@@ -140,6 +140,8 @@
 (= (nr:probe-settings "tests/telegram_access_probe.metta")
    (("METTACLAW_TELEGRAM_BOT_USERNAME" "GodelTestBot") ("METTACLAW_TELEGRAM_OPERATOR_IDS" "7")
     ("METTACLAW_TELEGRAM_ALLOWED_CHAT_IDS" "42,-100") ("METTACLAW_TELEGRAM_WAKE_IDS" "8")))
+; Input refresh across a failed turn runs without a Telegram service.
+(= (nr:probe-settings "tests/input_batch_refresh_probe.metta") (("METTACLAW_TELEGRAM_SERVICE_SOCKET" "")))
 (= (nr:probe-settings "tests/telegram_window_probe.metta")
    (("METTACLAW_TELEGRAM_OPERATOR_IDS" "7") ("METTACLAW_TELEGRAM_PRIMARY_CHAT_ID" "42")
     ("METTACLAW_TELEGRAM_ALLOWED_CHAT_IDS" "42,-100")))
