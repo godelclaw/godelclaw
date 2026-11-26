@@ -1560,7 +1560,7 @@
    "fate": "port-test",
    "phase": 7,
    "sweep": "pass",
-   "support_for": 34
+   "support_for": 32
   },
   "tests/mode_state_cwd_check.py": {
    "fate": "port-test",
@@ -2281,11 +2281,6 @@
    ],
    "sweep": "fail"
   },
-  "tests/test_context_continuity.py": {
-   "fate": "port-test",
-   "phase": 3,
-   "sweep": "fail"
-  },
   "tests/test_context_failure_feedback.py": {
    "fate": "delete-with-native-coverage",
    "phase": 4,
@@ -2649,20 +2644,10 @@
    "phase": 2,
    "sweep": "pass"
   },
-  "tests/test_host_boundary.py": {
-   "fate": "port-test",
-   "phase": 3,
-   "sweep": "fail"
-  },
   "tests/test_http_observation_contract.py": {
    "fate": "port-test",
    "phase": 2,
    "sweep": "pass"
-  },
-  "tests/test_human_wake_engine.py": {
-   "fate": "port-test",
-   "phase": 3,
-   "sweep": "fail"
   },
   "tests/test_input_ack.py": {
    "fate": "delete-with-native-coverage",
@@ -2736,11 +2721,6 @@
     "src/iter_authoring.py"
    ],
    "sweep": "pass"
-  },
-  "tests/test_iter_authoring_engines.py": {
-   "fate": "port-test",
-   "phase": 3,
-   "sweep": "fail"
   },
   "tests/test_knowledge_store_cetta.py": {
    "fate": "port-test",
@@ -2827,11 +2807,6 @@
     "src/loop_modes.py"
    ],
    "sweep": "pass"
-  },
-  "tests/test_loop_retry_safety.py": {
-   "fate": "port-test",
-   "phase": 3,
-   "sweep": "fail"
   },
   "tests/test_mcp_bridge_atlas.py": {
    "fate": "delete-with-native-coverage",
@@ -3612,8 +3587,8 @@
   },
   "tests/test_shared_mail.py": {
    "fate": "port-test",
-   "phase": 3,
-   "sweep": "fail"
+   "phase": 2,
+   "sweep": "pass"
   },
   "tests/test_skills_help_native.py": {
    "fate": "port-test",

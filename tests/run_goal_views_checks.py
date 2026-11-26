@@ -4,7 +4,7 @@ import run_context_bundle_checks as runner
 runner.SUITES = {
     "native": ["-m", "unittest", "-v", "test_goal_views_native"],
     "regression": ["-m", "unittest", "-v", "test_work_state", "test_goals_kernel",
-                   "test_context_sources", "test_context_continuity"],
+                   "test_context_sources"],
     "replay": ["-m", "unittest", "-v",
                "test_context_bundle_native.NativeContextBundleTest.test_exhaustive_lean_model_and_python_replay"],
     "callers": ["-m", "unittest", "-v", "test_context_bundle_native", "test_small_views_native",

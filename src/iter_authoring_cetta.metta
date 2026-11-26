@@ -54,8 +54,9 @@
 (= (author:run $operation $name $source)
    (let* (($text (erv:str $name)) ($directory (author:directory)) ($_ (fs:make-directories $directory 504)))
      (if (not (author:valid? $text)) (turn:json (author:error $operation $text "name must be one active .metta entry"))
+       ; sf:locked takes its body unevaluated and runs it under the lock.
        (let $result (sf:locked (path:join $directory ".author.lock") 432
-                        (quote (author:locked $directory $operation $text $source)))
+                        (author:locked $directory $operation $text $source))
          (turn:json (if (author:failure? $result) (author:error $operation $text $result) $result))))))
 (= (author:locked $directory $operation $name $source)
    (case (author:snapshot $directory)

@@ -18,7 +18,7 @@ ENGINE = os.environ.get("CETTA_BIN", "cetta")
 SUITES = {
     "native": ["-m", "unittest", "-v", "test_context_bundle_native"],
     "regression": ["-m", "unittest", "-v", "test_pins_context_native",
-                   "test_context_continuity", "test_action_window_native", "test_undelivered_prose",
+                   "test_action_window_native", "test_undelivered_prose",
                    "test_context_sources"],
     "bench": ["tests/context_bundle_bench.py"],
 }

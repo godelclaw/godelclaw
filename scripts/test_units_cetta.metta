@@ -224,6 +224,11 @@
     ("tests/unit/native_jobs.metta" "UNIT_NATIVE_JOBS_OK")
     ("tests/unit/mode_sources.metta" "UNIT_MODE_SOURCES_OK")
     ("tests/unit/mail_k4.metta" "UNIT_MAIL_K4_OK")
+    ("tests/unit/human_wake.metta" "UNIT_HUMAN_WAKE_OK")
+    ("tests/unit/iter_authoring.metta" "UNIT_ITER_AUTHORING_OK")
+    ("tests/unit/context_continuity.metta" "UNIT_CONTEXT_CONTINUITY_OK")
+    ("tests/unit/loop_retry_safety.metta" "UNIT_LOOP_RETRY_SAFETY_OK")
+    ("tests/unit/host_text.metta" "UNIT_HOST_TEXT_OK")
     ("tests/unit/configuration_render.metta" "UNIT_CONFIGURATION_RENDER_OK")
     ("tests/unit/native_console_presentation.metta" "UNIT_NATIVE_CONSOLE_PRESENTATION_OK")
     ("tests/unit/cold_boot_lazy_modules.metta" "UNIT_COLD_BOOT_LAZY_OK"
