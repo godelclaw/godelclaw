@@ -96,6 +96,10 @@
           ($_ (if (audit:unique? (sort-strings $files) "") True (audit:fail duplicate-selected-file)))
           ($_ (map-atom $files $file
             (if (fs:is-file (path:join $root $file)) True (audit:fail (missing-selected-file $file)))))
+          ; Every selected file ships, so a Python file is refused wherever it is
+          ; selected, not only when a role names it.
+          ($_ (map-atom $files $file
+            (if (str:ends-with $file ".py") (audit:fail (python-selected $file)) True)))
           ($_ (map-atom $inspected $file
             (if (str:ends-with $file ".py") (audit:fail (python-in-core $file))
               (if (str:ends-with $file ".metta") (audit:source $root $file $lexer $files $dynamic)

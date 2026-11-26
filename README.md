@@ -586,10 +586,10 @@ Use the configuration command to inspect, validate or change a nonsecret
 setting while preserving the other settings:
 
 ```bash
-python3 scripts/config_ctl.py check
-python3 scripts/config_ctl.py get agent.llm_timeout_seconds
-python3 scripts/config_ctl.py --dry-run set agent.llm_timeout_seconds 300
-python3 scripts/config_ctl.py set agent.llm_timeout_seconds 300
+scripts/config_ctl check
+scripts/config_ctl get agent.llm_timeout_seconds
+scripts/config_ctl --dry-run set agent.llm_timeout_seconds 300
+scripts/config_ctl set agent.llm_timeout_seconds 300
 ```
 
 The command returns JSON, serializes concurrent edits, validates before writing,

@@ -95,6 +95,78 @@
                  (case $r-hold (((proc:exited 2 $_o9 $_e9) True) ($b9 False))))))
      True))
 
+; What a render writes: defaults reach an instance, edits survive a render with
+; the rest of the file, secrets stay out, and coding guidance keeps its lists.
+(= (ot:cfg $root $args) (ot:run-script "scripts/config_ctl_cetta.metta" (cons-atom "--root" (cons-atom $root $args)) inherit))
+(= (ot:code $result) (case $result (((proc:exited $code $_o $_e) $code) ($bad -1))))
+(= (ot:out $result) (case $result (((proc:exited $_c $out $_e) $out) ($bad ""))))
+(= (ot:test-config-render)
+   (let* (($root (ot:dir "cfg-render"))
+          ($_ (fs:make-directories (path:join $root "config") 448))
+          ($defaults (re:replace-literal (re:compile "shell_timeout_seconds = 120")
+                       (fs:read-text (path:join (nt:required-env "TEST_REPOSITORY") "config/default.toml"))
+                       "shell_timeout_seconds = 77"))
+          ($_ (fs:write (path:join $root "config/default.toml") $defaults))
+          ($orig "# Keep this comment\n[agent]\nsynthetic_model = \"fixture-model\"\n[channel]\nkind = \"telegram\"\n")
+          ($local (path:join $root "config/local.toml")) ($env (path:join $root ".env"))
+          ($_ (fs:write $local $orig))
+          ($_ (fs:write (path:join $root "config/secrets.env") "SECRET=fixture-secret\n"))
+          ($_ (fs:write $env "original environment\n"))
+          ; The cache TTL is validated before anything is replaced.
+          ($forever (ot:cfg $root ("set" "context.anthropic_cache_ttl" "forever")))
+          ($_ (nt:require config-invalid-cache-ttl-refused-before-replacing
+                (and (== (ot:code $forever) 2)
+                     (and (== (fs:read-text $local) $orig) (== (fs:read-text $env) "original environment\n")))))
+          ($hour (ot:cfg $root ("set" "context.anthropic_cache_ttl" "1h")))
+          ($_ (nt:require config-valid-cache-ttl-reaches-the-environment
+                (and (== (ot:code $hour) 0) (nt:contains (fs:read-text $env) "METTACLAW_ANTHROPIC_CACHE_TTL='1h'"))))
+          ; Defaults reach an instance unless it overrides them.
+          ($_ (nt:require config-render-ok (== (ot:code (ot:cfg $root ("render"))) 0)))
+          ($_ (nt:require config-defaults-reach-the-instance
+                (and (nt:contains (fs:read-text $env) "METTACLAW_SHELL_TIMEOUT_SECONDS='77'")
+                     (nt:contains (fs:read-text $env) "METTACLAW_LIFECYCLE_PATH="))))
+          ($_ (nt:require config-an-override-replaces-the-default
+                (and (== (ot:code (ot:cfg $root ("set" "agent.shell_timeout_seconds" "99"))) 0)
+                     (nt:contains (fs:read-text $env) "METTACLAW_SHELL_TIMEOUT_SECONDS='99'"))))
+          ; Coding guidance keeps its discovery lists and paths, and refuses a path out.
+          ($_ (nt:require config-coding-guidance-rendered
+                (let $text (fs:read-text $env)
+                  (and (nt:contains $text (path:join $root "identity"))
+                       (and (nt:contains $text "METTACLAW_CODING_ROOT_MARKERS=")
+                            (nt:contains $text "METTACLAW_CODING_DOC_FALLBACKS="))))))
+          ($before (fs:read-text $local))
+          ($_ (nt:require config-coding-lists-refuse-a-path-out
+                (and (== (ot:code (ot:cfg $root ("set" "coding.project_root_markers" "[\"../outside\"]"))) 2)
+                     (and (== (ot:code (ot:cfg $root ("set" "coding.project_doc_fallback_filenames" "[\"../outside\"]"))) 2)
+                          (== (fs:read-text $local) $before)))))
+          ($_ (nt:require config-coding-list-edit-reaches-the-environment
+                (and (== (ot:code (ot:cfg $root ("set" "coding.project_doc_fallback_filenames" "[\"TEAM_GUIDE.txt\"]"))) 0)
+                     (nt:contains (fs:read-text $env) "TEAM_GUIDE.txt"))))
+          ; A set survives a later render, the rest of the file is kept, and no secret leaks.
+          ($set (ot:cfg $root ("set" "agent.llm_timeout_seconds" "300")))
+          ($_ (nt:require config-set-asks-for-a-restart
+                (and (== (ot:code $set) 0) (nt:contains (ot:out $set) "\"restart_required\": true"))))
+          ($_ (nt:require config-set-keeps-comments-and-other-values
+                (and (nt:contains (fs:read-text $local) "# Keep this comment")
+                     (nt:contains (fs:read-text $local) "synthetic_model = \"fixture-model\""))))
+          ($_ (fs:write $env "stale environment\n"))
+          ($render (ot:cfg $root ("render")))
+          ($_ (nt:require config-edits-survive-a-render
+                (let $text (fs:read-text $env)
+                  (and (== (ot:code $render) 0)
+                       (and (nt:contains $text "SYNTHETIC_TIMEOUT='300'") (nt:contains $text "SYNTHETIC_MODEL='fixture-model'"))))))
+          ($_ (nt:require config-secrets-stay-out-and-unchanged
+                (and (not (nt:contains (str:concat (fs:read-text $env) (str:concat (ot:out $set) (ot:out $render))) "fixture-secret"))
+                     (== (fs:read-text (path:join $root "config/secrets.env")) "SECRET=fixture-secret\n"))))
+          ($_ (nt:require config-environment-is-private
+                (== (str:strip-python (nt:exit-ok (proc:run ("stat" "-c" "%a" $env) $root inherit 5000 64))) "600")))
+          ; The short command works from any directory on the named engine.
+          ($short (proc:run ("sh" (ot:entry "scripts/config_ctl") "--root" $root "get" "agent.shell_timeout_seconds")
+                            (nt:required-env "HOME") (cons-atom ("CETTA_BIN" (system:executable)) (nt:environment $root)) 20000 65536))
+          ($_ (nt:require config-short-command-reads-the-setting
+                (and (== (ot:code $short) 0) (nt:contains (ot:out $short) "\"value\": 99")))))
+     True))
+
 (= (ot:wait-socket $sock $left)
    (if (or (fs:exists $sock) (<= $left 0)) (fs:exists $sock)
      (progn (host:wait () 50) (ot:wait-socket $sock (- $left 1)))))
@@ -282,6 +354,7 @@
      True))
 
 !(let* (($p1 (ot:test-config-ctl))
+        ($p1r (ot:test-config-render))
         ($p2 (ot:test-ledger-tools))
         ($p3 (ot:test-runtime-watch)))
    (println! UNIT_OPERATOR_TOOLS_NATIVE_OK))

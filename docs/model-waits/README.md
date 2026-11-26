@@ -19,7 +19,7 @@ queryable through `model-jobs` and `model-result`; transport progress, heartbeat
 and partial JSON are not complete model output.
 
 Configure the nonsecret settings in `config/local.toml` under `[agent]`, using
-`scripts/config_ctl.py set agent.<setting> <value>`. The launcher regenerates
+`scripts/config_ctl set agent.<setting> <value>`. The launcher regenerates
 its derived environment. Apply the same checked runtime release to all managed
 instances; each instance retains its own credentials and state.
 

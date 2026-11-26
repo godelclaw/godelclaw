@@ -22,7 +22,7 @@
  "files": {
   "channels/telegram.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
+   "phase": 6,
    "package": "channels",
    "native": [
     "channels/telegram.metta",
@@ -39,7 +39,16 @@
     "scripts/telegram_journal_retention.metta",
     "scripts/telegram_journal_retention_main.metta",
     "scripts/telegram_service_cetta.metta"
-   ]
+   ],
+   "named_by": [
+    "channels/telegram.metta",
+    "modes/omega/upstream-manifest.json",
+    "src/runtime_events_cetta.metta",
+    "src/runtime_watch_cetta.metta",
+    "tests/unit/operator_tools_native.metta",
+    "tests/unit/telegram_files.metta"
+   ],
+   "used_by": 9
   },
   "channels/websearch.py": {
    "fate": "delete-with-native-coverage",
@@ -50,8 +59,8 @@
    ]
   },
   "examples/execution_gateway_demo.py": {
-   "fate": "dead",
-   "phase": 1
+   "fate": "port-tool",
+   "phase": 5
   },
   "examples/responsiveness_replay/probe_host.py": {
    "fate": "port-tool",
@@ -70,7 +79,8 @@
   },
   "modes/conformance/fixtures.py": {
    "fate": "port-tool",
-   "phase": 6
+   "phase": 6,
+   "used_by": 1
   },
   "modes/conformance/qualify.py": {
    "fate": "port-tool",
@@ -86,11 +96,13 @@
   },
   "modes/conformance/verify.py": {
    "fate": "port-tool",
-   "phase": 6
+   "phase": 6,
+   "used_by": 1
   },
   "modes/iter/iter_fixture.py": {
    "fate": "port-tool",
-   "phase": 6
+   "phase": 6,
+   "used_by": 1
   },
   "modes/iter/iter_host.py": {
    "fate": "port-tool",
@@ -124,11 +136,15 @@
     "src/iter_process_cetta.metta",
     "src/iter_process_io.metta",
     "src/iter_process_policy.metta"
+   ],
+   "named_by": [
+    "modes/iter/fixture_host_cetta.metta"
    ]
   },
   "modes/iter/upstream/log.py": {
    "fate": "vendored-external",
-   "phase": 6
+   "phase": 6,
+   "used_by": 2
   },
   "modes/iter/upstream/tools/nop.py": {
    "fate": "vendored-external",
@@ -177,7 +193,8 @@
     "modes/omega/native/utils.metta",
     "src/utils.metta",
     "src/utils_cetta.metta"
-   ]
+   ],
+   "used_by": 1
   },
   "modes/omega/fixture_host.py": {
    "fate": "port-tool",
@@ -202,7 +219,8 @@
   "modes/omega/upstream/providers/lib_llm_ext.py": {
    "fate": "vendored-external",
    "phase": 6,
-   "package": "process-runtime"
+   "package": "process-runtime",
+   "used_by": 4
   },
   "modes/omega/upstream/providers/mockprovider.py": {
    "fate": "vendored-external",
@@ -212,7 +230,8 @@
   "modes/omega/upstream/providers/openai.py": {
    "fate": "vendored-external",
    "phase": 6,
-   "package": "process-runtime"
+   "package": "process-runtime",
+   "used_by": 4
   },
   "modes/omega/upstream/providers/openaiapi.py": {
    "fate": "vendored-external",
@@ -221,28 +240,31 @@
   },
   "modes/omega/upstream/src/channels.py": {
    "fate": "vendored-external",
-   "phase": 6,
+   "phase": 7,
    "package": "process-runtime",
    "native": [
     "modes/omega/native/channels.metta",
     "src/channels.metta"
-   ]
+   ],
+   "used_by": 3
   },
   "modes/omega/upstream/src/config.py": {
    "fate": "vendored-external",
-   "phase": 6,
+   "phase": 7,
    "package": "process-runtime",
    "native": [
     "scripts/config_ctl_cetta.metta",
     "scripts/config_to_env_cetta.metta",
     "src/config_ctl_cetta.metta",
     "src/console/config_cetta.metta"
-   ]
+   ],
+   "used_by": 8
   },
   "modes/omega/upstream/src/embedding_models.py": {
    "fate": "vendored-external",
    "phase": 6,
-   "package": "process-runtime"
+   "package": "process-runtime",
+   "used_by": 3
   },
   "modes/omega/upstream/src/fileio.py": {
    "fate": "vendored-external",
@@ -255,12 +277,14 @@
    "package": "process-runtime",
    "native": [
     "src/goal_views_cetta.metta"
-   ]
+   ],
+   "used_by": 21
   },
   "modes/omega/upstream/src/logger.py": {
    "fate": "vendored-external",
    "phase": 6,
-   "package": "process-runtime"
+   "package": "process-runtime",
+   "used_by": 2
   },
   "modes/omega/upstream/src/memory_export.py": {
    "fate": "vendored-external",
@@ -278,7 +302,8 @@
    "package": "process-runtime",
    "native": [
     "modes/omega/native/providers.metta"
-   ]
+   ],
+   "used_by": 5
   },
   "modes/omega/upstream/src/rag.py": {
    "fate": "vendored-external",
@@ -294,7 +319,8 @@
     "modes/omega/native/utils.metta",
     "src/utils.metta",
     "src/utils_cetta.metta"
-   ]
+   ],
+   "used_by": 1
   },
   "modes/omega/upstream/src/websearch.py": {
    "fate": "vendored-external",
@@ -312,7 +338,8 @@
     "modes/omega/native/utils.metta",
     "src/utils.metta",
     "src/utils_cetta.metta"
-   ]
+   ],
+   "used_by": 1
   },
   "modes/omega/upstream/tests/res/metta_python.py": {
    "fate": "vendored-external",
@@ -349,7 +376,8 @@
   "modes/tool_protocol.py": {
    "fate": "port-tool",
    "phase": 6,
-   "package": "process-runtime"
+   "package": "process-runtime",
+   "used_by": 1
   },
   "scripts/agent_console.py": {
    "fate": "delete-with-native-coverage",
@@ -357,14 +385,8 @@
    "package": "console-stream",
    "native": [
     "scripts/agent_console_cetta.metta"
-   ]
-  },
-  "scripts/audit_native_runtime.py": {
-   "fate": "dead",
-   "phase": 1,
-   "native": [
-    "scripts/audit_native_runtime.metta"
-   ]
+   ],
+   "used_by": 2
   },
   "scripts/audit_public_tree.py": {
    "fate": "port-tool",
@@ -376,11 +398,20 @@
   },
   "scripts/build_cetta.py": {
    "fate": "port-tool",
-   "phase": 5
+   "phase": 5,
+   "named_by": [
+    ".dockerignore",
+    "Dockerfile",
+    "config/default.toml"
+   ]
   },
   "scripts/build_console_release.py": {
    "fate": "port-tool",
-   "phase": 5
+   "phase": 5,
+   "named_by": [
+    "scripts/test_console_release_policy.metta"
+   ],
+   "used_by": 1
   },
   "scripts/build_runtime_release.py": {
    "fate": "port-tool",
@@ -388,11 +419,13 @@
   },
   "scripts/cetta_profile.py": {
    "fate": "port-tool",
-   "phase": 5
+   "phase": 5,
+   "used_by": 2
   },
   "scripts/cetta_source_snapshot.py": {
    "fate": "port-tool",
-   "phase": 5
+   "phase": 5,
+   "used_by": 2
   },
   "scripts/check_commentary_boundary.py": {
    "fate": "port-tool",
@@ -408,48 +441,50 @@
   },
   "scripts/check_retry_wake.py": {
    "fate": "port-tool",
-   "phase": 5
-  },
-  "scripts/config_ctl.py": {
-   "fate": "dead",
-   "phase": 1,
-   "package": "process-runtime",
-   "native": [
-    "scripts/config_ctl_cetta.metta",
-    "src/config_ctl_cetta.metta"
-   ]
-  },
-  "scripts/config_to_env.py": {
-   "fate": "dead",
-   "phase": 1,
-   "package": "process-runtime",
-   "native": [
-    "scripts/config_to_env_cetta.metta"
+   "phase": 5,
+   "named_by": [
+    "verification/RetryWakeKernels.metta"
    ]
   },
   "scripts/console_entry.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 7
+   "phase": 7,
+   "used_by": 2
   },
   "scripts/generate_action_window_unicode.py": {
    "fate": "port-tool",
-   "phase": 5
+   "phase": 5,
+   "named_by": [
+    "src/action_window_unicode.metta"
+   ]
   },
   "scripts/generate_prose_unicode.py": {
    "fate": "port-tool",
-   "phase": 5
+   "phase": 5,
+   "named_by": [
+    "src/undelivered_prose_unicode.metta"
+   ],
+   "used_by": 3
   },
   "scripts/generate_retry_wake.py": {
    "fate": "port-tool",
-   "phase": 5
+   "phase": 5,
+   "used_by": 1
   },
   "scripts/generate_skills_help_pages.py": {
    "fate": "port-tool",
-   "phase": 5
+   "phase": 5,
+   "named_by": [
+    "src/skills_help_pages.metta"
+   ]
   },
   "scripts/generate_small_views_unicode.py": {
    "fate": "port-tool",
-   "phase": 5
+   "phase": 5,
+   "named_by": [
+    "src/small_views_unicode.metta"
+   ],
+   "used_by": 1
   },
   "scripts/generate_stream_events.py": {
    "fate": "port-tool",
@@ -461,7 +496,10 @@
   },
   "scripts/install_console.py": {
    "fate": "port-tool",
-   "phase": 5
+   "phase": 5,
+   "named_by": [
+    "scripts/test_console_release_policy.metta"
+   ]
   },
   "scripts/install_execution_gateway.py": {
    "fate": "port-tool",
@@ -484,11 +522,13 @@
   },
   "scripts/render_channel_config.py": {
    "fate": "port-tool",
-   "phase": 5
+   "phase": 5,
+   "used_by": 4
   },
   "scripts/retry_wake_compiler.py": {
    "fate": "port-tool",
-   "phase": 5
+   "phase": 5,
+   "used_by": 3
   },
   "scripts/run_tmux_qualification.py": {
    "fate": "port-tool",
@@ -501,11 +541,18 @@
    "native": [
     "scripts/runtime_watch_cetta.metta",
     "src/runtime_watch_cetta.metta"
-   ]
+   ],
+   "named_by": [
+    "src/runtime_watch_cetta.metta"
+   ],
+   "used_by": 1
   },
   "scripts/sync_instances.py": {
    "fate": "port-tool",
-   "phase": 5
+   "phase": 5,
+   "named_by": [
+    "scripts/test_runtime_source_snapshot_cetta.metta"
+   ]
   },
   "scripts/test_native.py": {
    "fate": "delete-with-native-coverage",
@@ -516,7 +563,11 @@
   },
   "scripts/update_instances.py": {
    "fate": "port-tool",
-   "phase": 5
+   "phase": 5,
+   "named_by": [
+    "scripts/test_artifact_bootstrap_native.metta"
+   ],
+   "used_by": 2
   },
   "src/action_graph.py": {
    "fate": "delete-with-native-coverage",
@@ -526,15 +577,17 @@
   "src/active_queries.py": {
    "fate": "delete-with-native-coverage",
    "phase": 4,
-   "package": "context-memory"
+   "package": "context-memory",
+   "used_by": 2
   },
   "src/activity_model_host.py": {
    "fate": "delete-with-native-coverage",
    "phase": 4
   },
   "src/activity_tool_exec.py": {
-   "fate": "dead",
-   "phase": 1
+   "fate": "delete-with-native-coverage",
+   "phase": 4,
+   "used_by": 1
   },
   "src/activity_worker.py": {
    "fate": "delete-with-native-coverage",
@@ -542,17 +595,19 @@
   },
   "src/admission_frontier.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "package": "input-effects"
+   "phase": 6,
+   "package": "input-effects",
+   "used_by": 2
   },
   "src/agent_checkpoint.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "package": "input-effects"
+   "phase": 6,
+   "package": "input-effects",
+   "used_by": 2
   },
   "src/attention.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
+   "phase": 6,
    "package": "context-memory",
    "native": [
     "src/attention_api.metta",
@@ -561,7 +616,11 @@
     "src/attention_memory_cetta.metta",
     "src/attention_parameters.metta",
     "src/attention_studies.metta"
-   ]
+   ],
+   "named_by": [
+    "src/attention_cetta.metta"
+   ],
+   "used_by": 1
   },
   "src/claude_bridge.py": {
    "fate": "delete-with-native-coverage",
@@ -569,38 +628,46 @@
    "package": "host-tools",
    "native": [
     "src/claude_bridge_cetta.metta"
+   ],
+   "named_by": [
+    "channels/telegram_control.metta"
    ]
   },
   "src/cognitive_health.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "package": "process-runtime"
+   "phase": 6,
+   "package": "process-runtime",
+   "used_by": 5
   },
   "src/command_arity.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
+   "phase": 6,
    "package": "host-tools",
    "native": [
     "src/command_arity.metta"
-   ]
+   ],
+   "used_by": 3
   },
   "src/commitment_projection.py": {
    "fate": "delete-with-native-coverage",
    "phase": 4,
-   "package": "context-memory"
+   "package": "context-memory",
+   "used_by": 2
   },
   "src/context_budget.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
+   "phase": 6,
    "package": "context-memory",
    "native": [
     "src/context_budget_cetta.metta"
-   ]
+   ],
+   "used_by": 1
   },
   "src/context_source_loaders.py": {
    "fate": "delete-with-native-coverage",
    "phase": 4,
-   "package": "context-memory"
+   "package": "context-memory",
+   "used_by": 2
   },
   "src/context_sources.py": {
    "fate": "delete-with-native-coverage",
@@ -608,61 +675,71 @@
    "package": "context-memory",
    "native": [
     "src/context_sources_cetta.metta"
-   ]
+   ],
+   "used_by": 9
   },
   "src/development_state.py": {
    "fate": "delete-with-native-coverage",
    "phase": 4,
-   "package": "context-memory"
+   "package": "context-memory",
+   "used_by": 2
   },
   "src/durable_telegram.py": {
    "fate": "delete-with-native-coverage",
    "phase": 7,
-   "package": "channels"
+   "package": "channels",
+   "used_by": 7
   },
   "src/effect_receipts.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
+   "phase": 6,
    "package": "input-effects",
    "native": [
     "src/effect_receipts.metta",
     "src/effect_receipts_cetta.metta",
     "src/effect_receipts_native.metta"
-   ]
+   ],
+   "used_by": 11
   },
   "src/effect_receipts_plugin.py": {
-   "fate": "dead",
-   "phase": 1,
-   "package": "input-effects"
+   "fate": "delete-with-native-coverage",
+   "phase": 4,
+   "package": "input-effects",
+   "used_by": 2
   },
   "src/engine_modes.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
+   "phase": 6,
    "package": "process-runtime",
    "native": [
     "src/engine_modes.metta",
     "src/engine_modes_cetta.metta"
-   ]
+   ],
+   "used_by": 6
   },
   "src/execution_gateway/__init__.py": {
-   "fate": "dead",
-   "phase": 1,
-   "package": "gateway"
+   "fate": "delete-with-native-coverage",
+   "phase": 5,
+   "package": "gateway",
+   "used_by": 3
   },
   "src/execution_gateway/__main__.py": {
-   "fate": "dead",
-   "phase": 1,
-   "package": "gateway"
+   "fate": "delete-with-native-coverage",
+   "phase": 5,
+   "package": "gateway",
+   "used_by": 2
   },
   "src/execution_gateway/cetta_worker.py": {
    "fate": "port-tool",
-   "phase": 5,
-   "package": "gateway"
+   "phase": 6,
+   "package": "gateway",
+   "used_by": 12
   },
   "src/execution_gateway/client.py": {
-   "fate": "dead",
-   "phase": 1,
-   "package": "gateway"
+   "fate": "delete-with-native-coverage",
+   "phase": 5,
+   "package": "gateway",
+   "used_by": 3
   },
   "src/execution_gateway/read_tools.py": {
    "fate": "delete-with-native-coverage",
@@ -673,14 +750,16 @@
    ]
   },
   "src/execution_gateway/server.py": {
-   "fate": "dead",
-   "phase": 1,
-   "package": "gateway"
+   "fate": "delete-with-native-coverage",
+   "phase": 5,
+   "package": "gateway",
+   "used_by": 1
   },
   "src/execution_gateway/store.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "package": "gateway"
+   "phase": 5,
+   "package": "gateway",
+   "used_by": 2
   },
   "src/file_tools.py": {
    "fate": "delete-with-native-coverage",
@@ -690,12 +769,17 @@
   "src/fsops.py": {
    "fate": "delete-with-native-coverage",
    "phase": 4,
-   "package": "host-tools"
+   "package": "host-tools",
+   "used_by": 1
   },
   "src/fuel_modes.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "package": "process-runtime"
+   "phase": 6,
+   "package": "process-runtime",
+   "named_by": [
+    "src/fuel_cetta.metta"
+   ],
+   "used_by": 2
   },
   "src/gateway_bridge.py": {
    "fate": "delete-with-native-coverage",
@@ -705,29 +789,39 @@
   "src/goal_views_boundary.py": {
    "fate": "delete-with-native-coverage",
    "phase": 4,
-   "package": "context-memory"
+   "package": "context-memory",
+   "used_by": 2
   },
   "src/goals.py": {
    "fate": "delete-with-native-coverage",
    "phase": 4,
-   "package": "context-memory"
+   "package": "context-memory",
+   "used_by": 9
   },
   "src/helper.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
+   "phase": 6,
    "package": "context-memory",
    "native": [
     "src/goal_views_cetta.metta"
-   ]
+   ],
+   "named_by": [
+    "channels/telegram_clock.metta",
+    "modes/omega/upstream-manifest.json",
+    "src/balance_parentheses.metta",
+    "src/undelivered_prose.metta"
+   ],
+   "used_by": 23
   },
   "src/input_ack.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
+   "phase": 6,
    "package": "input-effects",
    "native": [
     "src/input_ledger.metta",
     "src/ledger_client.metta"
-   ]
+   ],
+   "used_by": 22
   },
   "src/iter_authoring.py": {
    "fate": "delete-with-native-coverage",
@@ -735,39 +829,48 @@
    "package": "host-tools",
    "native": [
     "src/iter_authoring_cetta.metta"
-   ]
+   ],
+   "used_by": 2
   },
   "src/jobs.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
+   "phase": 6,
    "package": "host-tools",
    "native": [
     "src/jobs_cetta.metta"
-   ]
+   ],
+   "used_by": 1
   },
   "src/lifecycle.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
+   "phase": 6,
    "package": "process-runtime",
    "native": [
     "src/lifecycle_cetta.metta"
-   ]
+   ],
+   "named_by": [
+    "src/runtime_watch_cetta.metta",
+    "tests/unit/operator_tools_native.metta"
+   ],
+   "used_by": 5
   },
   "src/llm_policy.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
+   "phase": 6,
    "package": "provider",
    "native": [
     "src/llm_policy_cetta.metta"
-   ]
+   ],
+   "used_by": 10
   },
   "src/loop_modes.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
+   "phase": 6,
    "package": "process-runtime",
    "native": [
     "src/loop_modes_cetta.metta"
-   ]
+   ],
+   "used_by": 4
   },
   "src/mcp_bridge.py": {
    "fate": "delete-with-native-coverage",
@@ -779,25 +882,28 @@
   },
   "src/memory_health.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
+   "phase": 6,
    "package": "context-memory",
    "native": [
     "scripts/memory_health_cetta.metta",
     "src/memory_health_cetta.metta"
-   ]
+   ],
+   "used_by": 2
   },
   "src/mode_channel.py": {
    "fate": "delete-with-native-coverage",
    "phase": 7,
-   "package": "channels"
+   "package": "channels",
+   "used_by": 4
   },
   "src/model_commentary.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
+   "phase": 5,
    "package": "provider",
    "native": [
     "src/model_commentary_cetta.metta"
-   ]
+   ],
+   "used_by": 2
   },
   "src/moltbook.py": {
    "fate": "port-tool",
@@ -806,21 +912,24 @@
   },
   "src/native_lifetime.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
+   "phase": 6,
    "package": "provider",
    "native": [
     "src/native_lifetime_cetta.metta"
-   ]
+   ],
+   "used_by": 4
   },
   "src/native_llm_host.py": {
    "fate": "delete-with-native-coverage",
    "phase": 4,
-   "package": "provider"
+   "package": "provider",
+   "used_by": 1
   },
   "src/observed_strategy.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "package": "input-effects"
+   "phase": 6,
+   "package": "input-effects",
+   "used_by": 10
   },
   "src/pins.py": {
    "fate": "delete-with-native-coverage",
@@ -829,48 +938,59 @@
    "native": [
     "src/pins_context_cetta.metta",
     "src/turn_additions.metta"
-   ]
+   ],
+   "used_by": 2
   },
   "src/process_supervision.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "package": "process-runtime"
+   "phase": 6,
+   "package": "process-runtime",
+   "named_by": [
+    "src/progress_receipt_cetta.metta"
+   ],
+   "used_by": 3
   },
   "src/project_capabilities.py": {
    "fate": "delete-with-native-coverage",
    "phase": 4,
-   "package": "context-memory"
+   "package": "context-memory",
+   "used_by": 3
   },
   "src/project_evidence.py": {
    "fate": "delete-with-native-coverage",
    "phase": 4,
-   "package": "context-memory"
+   "package": "context-memory",
+   "used_by": 3
   },
   "src/provider_protocol.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "package": "provider"
+   "phase": 6,
+   "package": "provider",
+   "used_by": 4
   },
   "src/provider_rejection.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
+   "phase": 6,
    "package": "provider",
    "native": [
     "src/provider_rejection_cetta.metta"
-   ]
+   ],
+   "used_by": 3
   },
   "src/provider_stream.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4
+   "phase": 4,
+   "used_by": 1
   },
   "src/public_worklog.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
+   "phase": 6,
    "package": "host-tools",
    "native": [
     "scripts/public_worklog_cetta.metta",
     "src/public_worklog_cetta.metta"
-   ]
+   ],
+   "used_by": 2
   },
   "src/replay_evaluation.py": {
    "fate": "delete-with-native-coverage",
@@ -878,13 +998,18 @@
    "package": "host-tools"
   },
   "src/retry_wake_model.py": {
-   "fate": "dead",
-   "phase": 1
+   "fate": "port-tool",
+   "phase": 5,
+   "used_by": 2
   },
   "src/runtime_context.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "package": "context-memory"
+   "phase": 6,
+   "package": "context-memory",
+   "named_by": [
+    "src/runtime_cetta.metta"
+   ],
+   "used_by": 1
   },
   "src/runtime_health.py": {
    "fate": "delete-with-native-coverage",
@@ -897,27 +1022,36 @@
   },
   "src/skills_help.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
+   "phase": 5,
    "package": "host-tools",
    "native": [
     "src/skills_help.metta",
     "src/skills_help_pages.metta"
-   ]
+   ],
+   "used_by": 1
   },
   "src/start_telegram_service.py": {
    "fate": "delete-with-native-coverage",
    "phase": 4,
-   "package": "channels"
+   "package": "channels",
+   "named_by": [
+    "channels/telegram_commands.metta"
+   ]
   },
   "src/stimulus_frontier.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "package": "input-effects"
+   "phase": 6,
+   "package": "input-effects",
+   "named_by": [
+    "src/shadow_effect_cetta.metta"
+   ],
+   "used_by": 1
   },
   "src/strategy_host.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "package": "input-effects"
+   "phase": 6,
+   "package": "input-effects",
+   "used_by": 18
   },
   "src/stream_lifecycle.py": {
    "fate": "delete-with-native-coverage",
@@ -925,36 +1059,42 @@
    "package": "console-stream",
    "native": [
     "src/stream_lifecycle.metta"
-   ]
+   ],
+   "used_by": 2
   },
   "src/stream_sink.py": {
    "fate": "delete-with-native-coverage",
    "phase": 7,
-   "package": "console-stream"
+   "package": "console-stream",
+   "used_by": 5
   },
   "src/synthetic_llm.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "package": "provider"
+   "phase": 6,
+   "package": "provider",
+   "used_by": 6
   },
   "src/task_context.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
+   "phase": 6,
    "package": "context-memory",
    "native": [
     "src/task_context_cetta.metta",
     "src/task_context_views.metta"
-   ]
+   ],
+   "used_by": 3
   },
   "src/task_phase.py": {
    "fate": "delete-with-native-coverage",
    "phase": 4,
-   "package": "context-memory"
+   "package": "context-memory",
+   "used_by": 2
   },
   "src/terminal_client.py": {
    "fate": "delete-with-native-coverage",
    "phase": 7,
-   "package": "channels"
+   "package": "channels",
+   "used_by": 1
   },
   "src/tmux_bridge.py": {
    "fate": "delete-with-native-coverage",
@@ -963,26 +1103,32 @@
   },
   "src/tmux_qualification.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "package": "host-tools"
+   "phase": 5,
+   "package": "host-tools",
+   "used_by": 1
   },
   "src/tool_output.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
+   "phase": 5,
    "package": "input-effects",
    "native": [
     "src/tool_output_cetta.metta"
-   ]
+   ],
+   "used_by": 4
   },
   "src/topic_jobs.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "package": "host-tools"
+   "phase": 6,
+   "package": "host-tools",
+   "used_by": 5
   },
   "src/usage_history.py": {
    "fate": "delete-with-native-coverage",
    "phase": 4,
-   "package": "provider"
+   "package": "provider",
+   "named_by": [
+    "src/usage_report_cetta.metta"
+   ]
   },
   "src/working_state_host.py": {
    "fate": "delete-with-native-coverage",
@@ -997,7 +1143,7 @@
     "src/helper.py"
    ],
    "sweep": "pass",
-   "support_for": 1
+   "used_by": 1
   },
   "tests/advertised_skills_check.py": {
    "fate": "port-test",
@@ -1008,7 +1154,7 @@
    "fate": "port-test",
    "phase": 7,
    "sweep": "pass",
-   "support_for": 4
+   "used_by": 4
   },
   "tests/call_config_probe.py": {
    "fate": "port-test",
@@ -1064,7 +1210,7 @@
    "fate": "port-test",
    "phase": 7,
    "sweep": "pass",
-   "support_for": 1
+   "used_by": 1
   },
   "tests/context_bundle_bench.py": {
    "fate": "port-test",
@@ -1080,19 +1226,19 @@
     "src/strategy_host.py"
    ],
    "sweep": "pass",
-   "support_for": 1
+   "used_by": 1
   },
   "tests/context_bundle_transcripts.py": {
    "fate": "port-test",
    "phase": 3,
    "sweep": "fail",
-   "support_for": 3
+   "used_by": 3
   },
   "tests/effect_receipts_bundle.py": {
    "fate": "port-test",
    "phase": 4,
    "sweep": "pass",
-   "support_for": 4
+   "used_by": 4
   },
   "tests/effect_receipts_caller_probe.py": {
    "fate": "delete-with-native-coverage",
@@ -1113,13 +1259,13 @@
     "src/effect_receipts.py"
    ],
    "sweep": "fail",
-   "support_for": 3
+   "used_by": 3
   },
   "tests/effect_receipts_capability_checkpoint.py": {
    "fate": "port-test",
    "phase": 4,
    "sweep": "fail",
-   "support_for": 3
+   "used_by": 3
   },
   "tests/effect_receipts_edges_check.py": {
    "fate": "delete-with-native-coverage",
@@ -1178,7 +1324,7 @@
     "src/effect_receipts.py"
    ],
    "sweep": "fail",
-   "support_for": 5
+   "used_by": 5
   },
   "tests/effect_receipts_outcomes_check.py": {
    "fate": "delete-with-native-coverage",
@@ -1193,7 +1339,7 @@
    "fate": "port-test",
    "phase": 4,
    "sweep": "fail",
-   "support_for": 5
+   "used_by": 5
   },
   "tests/effect_receipts_probe.py": {
    "fate": "port-test",
@@ -1220,7 +1366,7 @@
    "fate": "port-test",
    "phase": 4,
    "sweep": "pass",
-   "support_for": 18
+   "used_by": 18
   },
   "tests/effect_receipts_values_check.py": {
    "fate": "delete-with-native-coverage",
@@ -1229,7 +1375,7 @@
     "src/public_worklog.py"
    ],
    "sweep": "fail",
-   "support_for": 1
+   "used_by": 1
   },
   "tests/effect_receipts_worklog_check.py": {
    "fate": "delete-with-native-coverage",
@@ -1252,7 +1398,7 @@
    "fate": "port-test",
    "phase": 3,
    "sweep": "pass",
-   "support_for": 2
+   "used_by": 2
   },
   "tests/file_read_probe.py": {
    "fate": "delete-with-native-coverage",
@@ -1273,7 +1419,8 @@
   },
   "tests/fixtures/gateway_tool.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4
+   "phase": 5,
+   "used_by": 1
   },
   "tests/goal_bookkeeping_bench.py": {
    "fate": "delete-with-native-coverage",
@@ -1282,7 +1429,7 @@
     "src/goals.py"
    ],
    "sweep": "pass",
-   "support_for": 2
+   "used_by": 2
   },
   "tests/goal_bookkeeping_caller_bench.py": {
    "fate": "port-test",
@@ -1311,13 +1458,13 @@
     "src/strategy_host.py"
    ],
    "sweep": "pass",
-   "support_for": 4
+   "used_by": 4
   },
   "tests/goal_bookkeeping_support.py": {
    "fate": "port-test",
    "phase": 4,
    "sweep": "pass",
-   "support_for": 14
+   "used_by": 14
   },
   "tests/goal_bookkeeping_views_check.py": {
    "fate": "port-test",
@@ -1350,7 +1497,7 @@
     "src/strategy_host.py"
    ],
    "sweep": "pass",
-   "support_for": 2
+   "used_by": 2
   },
   "tests/help_arity_baseline.py": {
    "fate": "delete-with-native-coverage",
@@ -1374,15 +1521,15 @@
   },
   "tests/hermetic_env.py": {
    "fate": "port-test",
-   "phase": 5,
+   "phase": 4,
    "sweep": "pass",
-   "support_for": 20
+   "used_by": 19
   },
   "tests/isolated_env.py": {
    "fate": "port-test",
    "phase": 7,
    "sweep": "pass",
-   "support_for": 36
+   "used_by": 34
   },
   "tests/mode_state_cwd_check.py": {
    "fate": "port-test",
@@ -1398,7 +1545,7 @@
    "fate": "port-test",
    "phase": 3,
    "sweep": "pass",
-   "support_for": 3
+   "used_by": 3
   },
   "tests/native_ledger.py": {
    "fate": "delete-with-native-coverage",
@@ -1408,7 +1555,7 @@
     "src/llm_policy.py"
    ],
    "sweep": "pass",
-   "support_for": 35
+   "used_by": 35
   },
   "tests/native_ledger_client.py": {
    "fate": "delete-with-native-coverage",
@@ -1417,13 +1564,13 @@
     "src/input_ack.py"
    ],
    "sweep": "fail",
-   "support_for": 11
+   "used_by": 11
   },
   "tests/native_mail_runtime_probe.py": {
    "fate": "port-test",
    "phase": 2,
    "sweep": "pass",
-   "support_for": 1
+   "used_by": 1
   },
   "tests/native_request_client.py": {
    "fate": "delete-with-native-coverage",
@@ -1447,17 +1594,19 @@
   },
   "tests/oracles/provider_sqlite/llm_policy.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
+   "phase": 6,
    "native": [
     "src/llm_policy_cetta.metta"
-   ]
+   ],
+   "used_by": 10
   },
   "tests/oracles/provider_sqlite/native_lifetime.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
+   "phase": 6,
    "native": [
     "src/native_lifetime_cetta.metta"
-   ]
+   ],
+   "used_by": 4
   },
   "tests/pins_context_bench.py": {
    "fate": "delete-with-native-coverage",
@@ -1495,13 +1644,13 @@
     "src/effect_receipts.py"
    ],
    "sweep": "pass",
-   "support_for": 5
+   "used_by": 5
   },
   "tests/run_context_bundle_checks.py": {
    "fate": "port-test",
    "phase": 3,
    "sweep": "fail",
-   "support_for": 2
+   "used_by": 2
   },
   "tests/run_effect_receipts_checks.py": {
    "fate": "delete-with-native-coverage",
@@ -1536,25 +1685,25 @@
    "fate": "port-test",
    "phase": 4,
    "sweep": "pass",
-   "support_for": 1
+   "used_by": 1
   },
   "tests/small_views_bench.py": {
    "fate": "port-test",
    "phase": 3,
    "sweep": "fail",
-   "support_for": 1
+   "used_by": 1
   },
   "tests/small_views_cold_bench.py": {
    "fate": "port-test",
    "phase": 3,
    "sweep": "fail",
-   "support_for": 1
+   "used_by": 1
   },
   "tests/small_views_cold_probe.py": {
    "fate": "port-test",
    "phase": 2,
    "sweep": "pass",
-   "support_for": 2
+   "used_by": 2
   },
   "tests/small_views_probe.py": {
    "fate": "delete-with-native-coverage",
@@ -1573,7 +1722,7 @@
     "src/task_phase.py"
    ],
    "sweep": "pass",
-   "support_for": 4
+   "used_by": 4
   },
   "tests/soak_durable_telegram.py": {
    "fate": "delete-with-native-coverage",
@@ -1587,11 +1736,14 @@
    "fate": "port-test",
    "phase": 3,
    "sweep": "pass",
-   "support_for": 4
+   "used_by": 4
   },
   "tests/support/python_entry_census.py": {
    "fate": "dead",
-   "phase": 8
+   "phase": 8,
+   "named_by": [
+    "scripts/census_python_entries_cetta.metta"
+   ]
   },
   "tests/test_action_graph.py": {
    "fate": "delete-with-native-coverage",
@@ -1608,7 +1760,7 @@
     "src/helper.py"
    ],
    "sweep": "pass",
-   "support_for": 1
+   "used_by": 1
   },
   "tests/test_action_window_native.py": {
    "fate": "delete-with-native-coverage",
@@ -1788,7 +1940,7 @@
     "src/native_lifetime.py"
    ],
    "sweep": "fail",
-   "support_for": 3
+   "used_by": 3
   },
   "tests/test_cognitive_health.py": {
    "fate": "delete-with-native-coverage",
@@ -1820,7 +1972,7 @@
    "fate": "port-test",
    "phase": 7,
    "sweep": "fail",
-   "support_for": 23
+   "used_by": 23
   },
   "tests/test_commentary_boundary_hol.py": {
    "fate": "port-test",
@@ -1851,24 +2003,6 @@
     "src/native_llm_host.py"
    ],
    "sweep": "fail"
-  },
-  "tests/test_config_ctl.py": {
-   "fate": "port-test",
-   "phase": 2,
-   "sweep": "pass"
-  },
-  "tests/test_config_privacy.py": {
-   "fate": "port-test",
-   "phase": 2,
-   "sweep": "pass"
-  },
-  "tests/test_configuration_native.py": {
-   "fate": "port-test",
-   "phase": 5,
-   "covers": [
-    "scripts/render_channel_config.py"
-   ],
-   "sweep": "pass"
   },
   "tests/test_console_installation.py": {
    "fate": "port-test",
@@ -1917,7 +2051,7 @@
     "src/strategy_host.py"
    ],
    "sweep": "fail",
-   "support_for": 7
+   "used_by": 7
   },
   "tests/test_context_compaction.py": {
    "fate": "delete-with-native-coverage",
@@ -1997,7 +2131,7 @@
     "src/durable_telegram.py"
    ],
    "sweep": "pass",
-   "support_for": 1
+   "used_by": 1
   },
   "tests/test_durable_wake.py": {
    "fate": "delete-with-native-coverage",
@@ -2055,7 +2189,7 @@
    "fate": "port-test",
    "phase": 4,
    "sweep": "pass",
-   "support_for": 1
+   "used_by": 1
   },
   "tests/test_file_tools.py": {
    "fate": "delete-with-native-coverage",
@@ -2115,7 +2249,7 @@
    "fate": "port-test",
    "phase": 5,
    "sweep": "pass",
-   "support_for": 1
+   "used_by": 1
   },
   "tests/test_git_import_arguments.py": {
    "fate": "port-test",
@@ -2131,7 +2265,7 @@
     "src/helper.py"
    ],
    "sweep": "fail",
-   "support_for": 3
+   "used_by": 3
   },
   "tests/test_goal_bookkeeping_candidates.py": {
    "fate": "delete-with-native-coverage",
@@ -2141,7 +2275,7 @@
     "src/helper.py"
    ],
    "sweep": "fail",
-   "support_for": 6
+   "used_by": 6
   },
   "tests/test_goal_bookkeeping_domain.py": {
    "fate": "delete-with-native-coverage",
@@ -2150,7 +2284,7 @@
     "src/goals.py"
    ],
    "sweep": "fail",
-   "support_for": 2
+   "used_by": 2
   },
   "tests/test_goal_bookkeeping_load.py": {
    "fate": "delete-with-native-coverage",
@@ -2183,7 +2317,7 @@
     "src/goals.py"
    ],
    "sweep": "pass",
-   "support_for": 2
+   "used_by": 2
   },
   "tests/test_goal_bookkeeping_replay.py": {
    "fate": "port-test",
@@ -2206,7 +2340,7 @@
     "src/strategy_host.py"
    ],
    "sweep": "fail",
-   "support_for": 3
+   "used_by": 3
   },
   "tests/test_goals_kernel.py": {
    "fate": "delete-with-native-coverage",
@@ -2273,7 +2407,7 @@
     "src/mode_channel.py"
    ],
    "sweep": "pass",
-   "support_for": 9
+   "used_by": 9
   },
   "tests/test_input_batch_refresh.py": {
    "fate": "port-test",
@@ -2299,7 +2433,7 @@
     "src/observed_strategy.py"
    ],
    "sweep": "pass",
-   "support_for": 6
+   "used_by": 6
   },
   "tests/test_input_ledger_remote.py": {
    "fate": "delete-with-native-coverage",
@@ -2310,7 +2444,7 @@
     "src/observed_strategy.py"
    ],
    "sweep": "fail",
-   "support_for": 17
+   "used_by": 17
   },
   "tests/test_iter_authoring.py": {
    "fate": "delete-with-native-coverage",
@@ -2329,7 +2463,7 @@
    "fate": "port-test",
    "phase": 3,
    "sweep": "fail",
-   "support_for": 1
+   "used_by": 1
   },
   "tests/test_ledger_pages.py": {
    "fate": "delete-with-native-coverage",
@@ -2373,7 +2507,7 @@
     "src/llm_policy.py"
    ],
    "sweep": "pass",
-   "support_for": 1
+   "used_by": 1
   },
   "tests/test_loop_modes.py": {
    "fate": "delete-with-native-coverage",
@@ -2484,7 +2618,7 @@
     "src/task_context.py"
    ],
    "sweep": "pass",
-   "support_for": 1
+   "used_by": 1
   },
   "tests/test_native_jobs.py": {
    "fate": "port-test",
@@ -2522,7 +2656,7 @@
     "src/strategy_host.py"
    ],
    "sweep": "fail",
-   "support_for": 14
+   "used_by": 14
   },
   "tests/test_native_llm_stream.py": {
    "fate": "delete-with-native-coverage",
@@ -2534,11 +2668,6 @@
    "sweep": "fail"
   },
   "tests/test_native_mail_engine.py": {
-   "fate": "port-test",
-   "phase": 2,
-   "sweep": "pass"
-  },
-  "tests/test_native_migration.py": {
    "fate": "port-test",
    "phase": 2,
    "sweep": "pass"
@@ -2558,7 +2687,7 @@
     "src/topic_jobs.py"
    ],
    "sweep": "fail",
-   "support_for": 1
+   "used_by": 1
   },
   "tests/test_native_transport.py": {
    "fate": "port-test",
@@ -2632,7 +2761,7 @@
     "src/pins.py"
    ],
    "sweep": "fail",
-   "support_for": 4
+   "used_by": 4
   },
   "tests/test_present_continuity.py": {
    "fate": "delete-with-native-coverage",
@@ -2672,7 +2801,7 @@
    "fate": "port-test",
    "phase": 3,
    "sweep": "fail",
-   "support_for": 4
+   "used_by": 4
   },
   "tests/test_provider_admission_failures_cetta.py": {
    "fate": "port-test",
@@ -2688,19 +2817,19 @@
    "fate": "port-test",
    "phase": 3,
    "sweep": "fail",
-   "support_for": 2
+   "used_by": 2
   },
   "tests/test_provider_constraint_store_cetta.py": {
    "fate": "port-test",
    "phase": 3,
    "sweep": "fail",
-   "support_for": 1
+   "used_by": 1
   },
   "tests/test_provider_domain_cetta.py": {
    "fate": "port-test",
    "phase": 3,
    "sweep": "fail",
-   "support_for": 4
+   "used_by": 4
   },
   "tests/test_provider_domain_failures_cetta.py": {
    "fate": "port-test",
@@ -2716,7 +2845,7 @@
    "fate": "port-test",
    "phase": 3,
    "sweep": "fail",
-   "support_for": 1
+   "used_by": 1
   },
   "tests/test_provider_indexes_cetta.py": {
    "fate": "port-test",
@@ -2727,7 +2856,7 @@
    "fate": "port-test",
    "phase": 3,
    "sweep": "fail",
-   "support_for": 1
+   "used_by": 1
   },
   "tests/test_provider_policy_cetta.py": {
    "fate": "port-test",
@@ -2757,7 +2886,7 @@
    "fate": "port-test",
    "phase": 3,
    "sweep": "fail",
-   "support_for": 1
+   "used_by": 1
   },
   "tests/test_provider_store_cetta.py": {
    "fate": "port-test",
@@ -2771,7 +2900,7 @@
     "src/provider_stream.py"
    ],
    "sweep": "pass",
-   "support_for": 2
+   "used_by": 2
   },
   "tests/test_provider_views_cetta.py": {
    "fate": "port-test",
@@ -2898,7 +3027,7 @@
    "fate": "port-test",
    "phase": 4,
    "sweep": "fail",
-   "support_for": 3
+   "used_by": 3
   },
   "tests/test_rest_control.py": {
    "fate": "delete-with-native-coverage",
@@ -2983,7 +3112,7 @@
    "fate": "port-test",
    "phase": 3,
    "sweep": "fail",
-   "support_for": 5
+   "used_by": 5
   },
   "tests/test_service_cycles_native.py": {
    "fate": "port-test",
@@ -3029,7 +3158,7 @@
     "src/helper.py"
    ],
    "sweep": "fail",
-   "support_for": 4
+   "used_by": 4
   },
   "tests/test_sql_value_cetta.py": {
    "fate": "port-test",
@@ -3109,7 +3238,7 @@
     "src/task_context.py"
    ],
    "sweep": "pass",
-   "support_for": 4
+   "used_by": 4
   },
   "tests/test_task_context_native.py": {
    "fate": "delete-with-native-coverage",
@@ -3294,7 +3423,7 @@
     "src/observed_strategy.py"
    ],
    "sweep": "fail",
-   "support_for": 1
+   "used_by": 1
   },
   "tests/test_turn_effect_native.py": {
    "fate": "delete-with-native-coverage",
@@ -3306,7 +3435,7 @@
     "src/topic_jobs.py"
    ],
    "sweep": "pass",
-   "support_for": 3
+   "used_by": 3
   },
   "tests/test_turn_health_native.py": {
    "fate": "delete-with-native-coverage",
@@ -3326,7 +3455,7 @@
     "src/helper.py"
    ],
    "sweep": "fail",
-   "support_for": 2
+   "used_by": 2
   },
   "tests/test_unicode_profiles.py": {
    "fate": "port-test",
@@ -3405,7 +3534,8 @@
    "package": "console-stream",
    "native": [
     "scripts/console_mail_cetta.metta"
-   ]
+   ],
+   "used_by": 1
   },
   "ui/worklog/inlineview/__init__.py": {
    "fate": "delete-with-native-coverage",
@@ -3424,7 +3554,8 @@
    "native": [
     "src/engine_modes.metta",
     "src/engine_modes_cetta.metta"
-   ]
+   ],
+   "used_by": 1
   },
   "ui/worklog/inlineview/render.py": {
    "fate": "delete-with-native-coverage",
@@ -3432,17 +3563,20 @@
    "package": "console-stream",
    "native": [
     "src/console/render_cetta.metta"
-   ]
+   ],
+   "used_by": 2
   },
   "ui/worklog/inlineview/textsafe.py": {
    "fate": "delete-with-native-coverage",
    "phase": 7,
-   "package": "console-stream"
+   "package": "console-stream",
+   "used_by": 3
   },
   "ui/worklog/viewer.py": {
    "fate": "delete-with-native-coverage",
    "phase": 7,
-   "package": "console-stream"
+   "package": "console-stream",
+   "used_by": 1
   }
  }
 }

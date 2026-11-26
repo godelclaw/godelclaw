@@ -87,6 +87,7 @@
     "run.sh",
     "scripts/agent_console_cetta.metta",
     "scripts/audit_native_runtime.metta",
+    "scripts/config_ctl",
     "scripts/config_ctl_cetta.metta",
     "scripts/config_to_env_cetta.metta",
     "scripts/console_mail_cetta.metta",
@@ -722,6 +723,7 @@
       "src/execution_gateway/read_tools_cetta.metta"
     ],
     "deployment-tools": [
+      "scripts/config_ctl",
       "scripts/config_ctl_cetta.metta",
       "scripts/runtime_watch_cetta.metta",
       "scripts/shadow_eval.sh",

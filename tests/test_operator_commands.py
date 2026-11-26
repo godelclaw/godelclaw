@@ -115,13 +115,6 @@ class BareGroupCommandsTest(unittest.TestCase):
         shared = (ROOT / "channels" / "telegram_commands.metta").read_text(encoding="utf-8")
         self.assertNotIn("\n" + launcher.BARE_IN_GROUPS, shared)
 
-    def test_the_default_configuration_renders_it_on(self):
-        import subprocess
-        result = subprocess.run(["python3", str(ROOT / "scripts" / "config_to_env.py"),
-                                 str(ROOT / "config" / "default.toml"), str(ROOT)],
-                                check=True, capture_output=True, text=True)
-        self.assertIn("export METTACLAW_TELEGRAM_BARE_GROUP_COMMANDS='1'", result.stdout)
-
     @unittest.skipUnless(os.environ.get("CETTA_ROOT"), "set CETTA_ROOT to an engine bundle")
     def test_the_installed_service_accepts_what_is_written_for_it(self):
         # Whatever the bundle under test is, its own usage decides, and the

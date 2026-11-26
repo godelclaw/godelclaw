@@ -1,0 +1,23 @@
+#!/bin/sh
+# Inspect, validate or change this checkout's nonsecret configuration:
+#
+#   scripts/config_ctl [--dry-run] [--root DIR] check|render|show
+#   scripts/config_ctl [--dry-run] [--root DIR] get SECTION.KEY
+#   scripts/config_ctl [--dry-run] [--root DIR] set SECTION.KEY VALUE
+#
+# Runs scripts/config_ctl_cetta.metta on the instance's engine: CETTA_BIN, or
+# the cetta in the CETTA_ROOT that the checkout's generated .env names. The
+# checkout is the default root; an explicit --root wins.
+set -eu
+root=$(cd "$(dirname "$0")/.." && pwd -P)
+if [ -z "${CETTA_BIN:-}" ]; then
+  if [ -f "$root/.env" ]; then
+    set -a
+    . "$root/.env"
+    set +a
+  fi
+  CETTA_BIN=${CETTA_ROOT:-$root/.runtime/cetta}/cetta
+fi
+[ -x "$CETTA_BIN" ] || { echo "config_ctl: no engine at $CETTA_BIN; set CETTA_BIN" >&2; exit 2; }
+exec "$CETTA_BIN" --no-results --lang petta --profile extended --import-mode ancestor-walk \
+  "$root/scripts/config_ctl_cetta.metta" --root "$root" "$@"

@@ -7,6 +7,10 @@
    (proc:run ((system:executable) "--no-results" "--lang" "petta" "--profile" "extended"
                   "--import-mode" "ancestor-walk" (path:join $root "scripts/audit_native_runtime.metta"))
                   $root inherit 15000 1048576))
+; The fixture's selection: the checkout's files and $extra.
+(= (as:select $fixture $selection $files $extra)
+   (sf:replace (path:join $fixture "config/runtime-files.json")
+     (json:stringify-python (sf:put $selection "files" (JsonArray (list:append $files $extra)))) 384 True))
 !(let* (($root (nt:required-env "TEST_REPOSITORY"))
          ($output (nt:exit-ok (as:run $root)))
          ($report (json:parse-python $output))
@@ -23,6 +27,25 @@
          ((JsonArray $files) (sf:get $selection "files" JsonNull))
          ($_ (nt:exit-ok (proc:run (list:append ("cp" "--parents" "--") (list:append $files (cons-atom $fixture ())))
                         $root inherit 15000 1048576)))
+         ; Comments and quoted text are neither foreign calls nor imports.
+         ($quoted "src/audit_quoted_cetta.metta")
+         ($_ (fs:write (path:join $fixture $quoted)
+               "; !(import! &self fake.py) (py-call (fake.run))\n!(println! \"(py-call (example.run)) ; example.py\")\n"))
+         ($_ (as:select $fixture $selection $files ($quoted)))
+         ($_ (nt:require quoted-and-commented-calls-are-not-boundaries
+               (case (as:run $fixture) (((proc:exited 0 $out $_) (nt:contains $out "native_selection_closed")) ($bad False)))))
+         ($_ (fs:append-text (path:join $fixture $quoted) "!(py-call (real.run \"text ; with a comment character\"))\n"))
+         ($_ (nt:require a-real-call-is-found-past-quoted-text
+               (case (as:run $fixture)
+                 (((proc:exited $code $out $_)
+                   (and (!= $code 0) (and (nt:contains $out "foreign-call") (nt:contains $out $quoted)))) ($bad False)))))
+         ; A selected Python file ships, so it is refused wherever it is selected.
+         ($_ (fs:write (path:join $fixture "service.py") "print('hidden')\n"))
+         ($_ (as:select $fixture $selection $files ("service.py")))
+         ($_ (nt:require a-python-file-cannot-hide-behind-clean-metta
+               (case (as:run $fixture)
+                 (((proc:exited $code $out $_)
+                   (and (!= $code 0) (and (nt:contains $out "python-selected") (nt:contains $out "service.py")))) ($bad False)))))
          ($canary "src/audit_unassigned_cetta.metta")
          ($_ (fs:write (path:join $fixture $canary) "!(py-call arbitrary-host-procedure)\n"))
          ($_ (fs:append-text (path:join $fixture "src/observatory_cetta.metta") "\n!(import! &self ./audit_unassigned_cetta.metta)\n"))

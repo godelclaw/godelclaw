@@ -1,7 +1,7 @@
-; Native configuration inspector and editor for config/local.toml and .env.
-; Replaces scripts/config_ctl.py with exclusive file locking, AST-verified
-; surgical TOML updates, secret-key protection, conflict warnings, and durable
-; atomic publication via src/configuration_cetta.metta.
+; Configuration inspector and editor for config/local.toml and .env
+; (scripts/config_ctl): exclusive file locking, AST-verified surgical TOML
+; updates, secret-key protection, conflict warnings, and durable atomic
+; publication via src/configuration_cetta.metta.
 !(import! &self ./configuration_cetta.metta)
 !(import! &self ./state_file_cetta.metta)
 !(import! &self ./cli_values_cetta.metta)
@@ -161,8 +161,8 @@
           ($sec2 (sf:put $sec-obj $key $val)))
      (sf:put $obj $section $sec2)))
 
-; Surgical TOML update accepted only if the re-parsed TOML AST equals the
-; exact expected table (matching scripts/config_ctl.py:replace_setting).
+; Surgical TOML update, accepted only if the re-parsed TOML AST equals the
+; expected table: the old table with exactly this one setting changed.
 (= (cctl:replace-setting $text $section $key $value)
    (case (cfg:parse $text)
      (((TomlTableV1 $fields)
