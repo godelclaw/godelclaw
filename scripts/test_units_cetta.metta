@@ -206,6 +206,7 @@
     ("tests/unit/worklog_view_native.metta" "UNIT_WORKLOG_VIEW_IN_FLIGHT_OK")
     ("tests/unit/skill_first_line.metta" "UNIT_SKILL_FIRST_LINE_OK")
     ("tests/unit/audit_scope.metta" "UNIT_AUDIT_SCOPE_OK")
+    ("tests/unit/python_reference.metta" "UNIT_PYTHON_REFERENCE_OK")
     ("tests/unit/native_console_presentation.metta" "UNIT_NATIVE_CONSOLE_PRESENTATION_OK")
     ("tests/unit/cold_boot_lazy_modules.metta" "UNIT_COLD_BOOT_LAZY_OK"
      (("METTACLAW_ITER_TRANSFORM_DIR" "{home}/iter-transforms")
