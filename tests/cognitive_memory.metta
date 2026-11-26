@@ -1,5 +1,10 @@
 ; Actual native durable memory plus a local native embedding protocol peer.
-!(import! &self ./provider_native_qualification.metta)
+!(import! &self ./memory_world.metta)
+!(import! &self ./memory_api.metta)
+!(import! &self ./memory_settings.metta)
+!(import! &self ./memory_workspaces.metta)
+!(import! &self ./memory_attention.metta)
+!(import! &self ./memory_studies.metta)
 !(import! &self (library lib_tensor))
 (= (memory-flow:run)
    (let* (($root (system:cwd)) ($core (nt:required-env "NATIVE_TEST_CORE"))
@@ -73,42 +78,6 @@
 ; by forget and by a newer edit, a retry that wakes the idle loop, the public
 ; skills through the agent bootstrap, health over the provider and an empty
 ; collection, a provider in another protocol, and a disconnected store.
-(= (mc:prefix $root)
-   (str:join "" ("!(import! &self " (repr (path:join $root "src/semantic_memory_cetta.metta")) ")
-(= (fixture:drain $n)
-   (let $_ (semantic:maintain)
-     (if (== (memory-pending) ()) True
-       (if (== $n 0) (FixturePending (memory-pending))
-         (let (io:pending $h) (io:submit (timer:after 10)) (let $_ (io:wait $h 1000) (fixture:drain (- $n 1))))))))
-")))
-(= (mc:guest $world $root $forms $env)
-   (nq:output (nq:guest $world "fixture-model" "petta" (str:concat (mc:prefix $root) $forms) $env)))
-(= (mc:env $world $config $retry)
-   (let (NativeProviderTestWorldV1 $_ $_ $_ $_ $_ $endpoint $_ $_ $_ $_) $world
-     (("METTACLAW_MEMORY_BACKEND_CONFIG" $config) ("METTACLAW_EMBED_ENDPOINT" $endpoint)
-      ("METTACLAW_EMBED_PROTOCOL" "fixture-v1") ("METTACLAW_MEMORY_RETRY_SECONDS" $retry))))
-(= (mc:serve $service $socket $data $directory)
-   (let* (($_ (if (fs:exists $socket) (fs:remove $socket) True))
-          ($server (proc:spawn ($service "--socket" $socket "--data" $data)
-                    ((env (nt:environment $directory)) (max-bytes 65536))))
-          ($_ (nq:wait-file $server $socket 100)))
-     $server))
-(= (mc:stop $server) (let* (($_ (proc:cancel $server)) ($_ (proc:await $server)) ($_ (proc:close $server))) True))
-; A store named $case holding the two original records.
-(= (mc:store $world $service $case)
-   (let* (($socket (nq:path $world (str:concat $case ".sock"))) ($data (nq:path $world (str:concat $case "-data")))
-          ($server (mc:serve $service $socket $data (nq:path $world "")))
-          ((reply $opened-id ok $view) (space:open $socket $case native))
-          ($a (tensor:from f64 (3) (1.0 0.0 0.0))) ($b (tensor:from f64 (3) (0.0 1.0 0.0)))
-          ((reply $seed-id ok $seeded)
-           (space:batch $socket $view
-             (ops (add (MemoryProfile "unit-profile" "{\"embedding_output_dim\":3}"))
-                  (add (Memory "a" 1 "unit-profile" $a "old alpha" (("time" "original"))))
-                  (add (Memory "b" 1 "unit-profile" $b "beta reference" (("time" "original")))))))
-          ($config (nq:path $world (str:concat $case ".json")))
-          ($_ (fs:write $config (str:join "" ("{\"mode\":\"native\",\"name\":" (repr $case) ",\"socket\":" (repr $socket) "}")))))
-     (MemoryCase $server $socket $data $config)))
-
 (= (mc:outage $world $service $root)
    (let* (((MemoryCase $server $socket $data $config) (mc:store $world $service "outage"))
           ($env (mc:env $world $config ".05"))
@@ -195,10 +164,7 @@
 !(println! (PUBLIC_HEALTH (memory-health)))
 !(println! (PUBLIC_HELP (help \"memory-edit\")))
 "))
-          ($env (nq:guest-env $world "fixture-model" (mc:env $world $config ".05")))
-          ($out (nt:exit-ok (proc:run ((path:join $sdk "cetta") "--lang" "petta" "--profile" "extended" "--import-mode" "ancestor-walk"
-                                       "--quiet" (path:join $root "cetta_bootstrap.metta") $probe)
-                                      $root $env 30000 16777216)))
+          ($out (mc:bootstrap $world $root $sdk $probe (mc:env $world $config ".05")))
           ($_ (nt:require the-public-memory-skills-work-through-the-bootstrap
                 (and (nt:contains $out "(MemoryHit \"a\"")
                      (and (nt:contains $out "(MemoryQueued \"a\"")
@@ -277,6 +243,11 @@
           ($_ (mc:health $world $service $root))
           ($_ (mc:drift $world $service $root))
           ($_ (mc:disconnected $world $service $root))
+          ($_ (mapi:run $world $service $root $core))
+          ($_ (msets:run $world $service $root $core))
+          ($_ (mws:run $world $service $root $core))
+          ($_ (mat:run $world $service $root $core))
+          ($_ (mst:run $world $service $root $core))
           ($_ (nq:close $world)))
      NativeMemoryControlsPassedV1))
 !(nt:require memory-controls-completed

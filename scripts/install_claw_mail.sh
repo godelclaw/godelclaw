@@ -90,8 +90,11 @@ link "$release/claw-mail" "$bin_dir/claw-mail"
 if [ -n "$socket$agent" ]; then
   mkdir -p "$(dirname "$config")"
   toml() { printf '%s = "%s"\n' "$1" "$(printf '%s' "$2" | sed 's/\\/\\\\/g; s/"/\\"/g')"; }
+  # A default ACL on the directory overrides the umask, so the mode is set
+  # explicitly as well.
   ( umask 077; set -C
     { [ -z "$socket" ] || toml socket "$socket"; [ -z "$agent" ] || toml agent "$agent"; } > "$config" ) \
     || fail "$config already exists; edit it to update its settings"
+  chmod 0600 "$config" || fail "could not make $config private"
   echo "$config"
 fi

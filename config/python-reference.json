@@ -1058,8 +1058,9 @@
   },
   "tests/call_config_probe.py": {
    "fate": "port-test",
-   "phase": 2,
-   "sweep": "pass"
+   "phase": 4,
+   "sweep": "pass",
+   "support_for": 1
   },
   "tests/check_provider_admission_contract.py": {
    "fate": "port-tool",
@@ -1164,7 +1165,7 @@
     "src/strategy_host.py"
    ],
    "sweep": "pass",
-   "support_for": 3
+   "support_for": 5
   },
   "tests/effect_receipts_callers_check.py": {
    "fate": "delete-with-native-coverage",
@@ -1264,8 +1265,9 @@
   },
   "tests/effect_receipts_probe.py": {
    "fate": "port-test",
-   "phase": 2,
-   "sweep": "pass"
+   "phase": 5,
+   "sweep": "pass",
+   "support_for": 1
   },
   "tests/effect_receipts_profile.py": {
    "fate": "delete-with-native-coverage",
@@ -1320,7 +1322,7 @@
    "fate": "port-test",
    "phase": 5,
    "sweep": "pass",
-   "support_for": 2
+   "support_for": 1
   },
   "tests/file_read_probe.py": {
    "fate": "delete-with-native-coverage",
@@ -1328,7 +1330,8 @@
    "covers": [
     "src/fsops.py"
    ],
-   "sweep": "pass"
+   "sweep": "pass",
+   "support_for": 1
   },
   "tests/file_tools_probe.py": {
    "fate": "delete-with-native-coverage",
@@ -1337,7 +1340,8 @@
     "src/file_tools.py",
     "src/fsops.py"
    ],
-   "sweep": "pass"
+   "sweep": "pass",
+   "support_for": 1
   },
   "tests/fixtures/gateway_tool.py": {
    "fate": "delete-with-native-coverage",
@@ -1374,7 +1378,8 @@
     "src/helper.py",
     "src/strategy_host.py"
    ],
-   "sweep": "pass"
+   "sweep": "pass",
+   "support_for": 1
   },
   "tests/goal_bookkeeping_candidate_bench.py": {
    "fate": "delete-with-native-coverage",
@@ -1384,7 +1389,8 @@
     "src/goals.py",
     "src/helper.py"
    ],
-   "sweep": "fail"
+   "sweep": "fail",
+   "support_for": 1
   },
   "tests/goal_bookkeeping_probe.py": {
    "fate": "delete-with-native-coverage",
@@ -1396,7 +1402,7 @@
     "src/strategy_host.py"
    ],
    "sweep": "pass",
-   "support_for": 4
+   "support_for": 7
   },
   "tests/goal_bookkeeping_support.py": {
    "fate": "port-test",
@@ -1546,26 +1552,27 @@
   },
   "tests/helper_port_probe.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
+   "phase": 5,
    "covers": [
     "modes/omega/upstream/src/helper.py",
     "src/file_tools.py",
     "src/helper.py",
     "src/tmux_bridge.py"
    ],
-   "sweep": "pass"
+   "sweep": "pass",
+   "support_for": 2
   },
   "tests/hermetic_env.py": {
    "fate": "port-test",
    "phase": 7,
    "sweep": "pass",
-   "support_for": 19
+   "support_for": 18
   },
   "tests/isolated_env.py": {
    "fate": "port-test",
    "phase": 7,
    "sweep": "pass",
-   "support_for": 31
+   "support_for": 29
   },
   "tests/mode_state_cwd_check.py": {
    "fate": "port-tool",
@@ -1670,11 +1677,11 @@
     "src/pins.py"
    ],
    "sweep": "pass",
-   "support_for": 1
+   "support_for": 2
   },
   "tests/provider_policy_reference.py": {
    "fate": "port-test",
-   "phase": 2,
+   "phase": 5,
    "sweep": "fail",
    "support_for": 1
   },
@@ -1879,7 +1886,7 @@
    "fate": "port-test",
    "phase": 5,
    "sweep": "pass",
-   "support_for": 4
+   "support_for": 3
   },
   "tests/support/python_entry_census.py": {
    "fate": "dead",
@@ -1953,11 +1960,6 @@
    ],
    "sweep": "pass"
   },
-  "tests/test_api_registry_engine.py": {
-   "fate": "port-test",
-   "phase": 2,
-   "sweep": "pass"
-  },
   "tests/test_atlas_mcp_integration.py": {
    "fate": "delete-with-native-coverage",
    "phase": 4,
@@ -1966,16 +1968,6 @@
     "src/effect_receipts.py",
     "src/mcp_bridge.py"
    ],
-   "sweep": "pass"
-  },
-  "tests/test_attention_memory_engine.py": {
-   "fate": "port-test",
-   "phase": 2,
-   "sweep": "pass"
-  },
-  "tests/test_attention_studies_engine.py": {
-   "fate": "port-test",
-   "phase": 2,
    "sweep": "pass"
   },
   "tests/test_background_jobs.py": {
@@ -2116,11 +2108,6 @@
    ],
    "sweep": "pass"
   },
-  "tests/test_coding_estate_native_core.py": {
-   "fate": "port-test",
-   "phase": 2,
-   "sweep": "pass"
-  },
   "tests/test_coding_guidance.py": {
    "fate": "delete-with-native-coverage",
    "phase": 4,
@@ -2199,7 +2186,7 @@
    "fate": "port-test",
    "phase": 7,
    "sweep": "fail",
-   "support_for": 17
+   "support_for": 12
   },
   "tests/test_commentary_boundary_hol.py": {
    "fate": "port-test",
@@ -2426,9 +2413,10 @@
    "sweep": "pass"
   },
   "tests/test_effect_receipts_bundle.py": {
-   "fate": "port-test",
-   "phase": 2,
-   "sweep": "pass"
+   "fate": "delete-with-native-coverage",
+   "phase": 5,
+   "sweep": "pass",
+   "harness": "tests/effect_receipts_bundle.py"
   },
   "tests/test_engine_modes.py": {
    "fate": "delete-with-native-coverage",
@@ -2679,11 +2667,6 @@
    ],
    "sweep": "pass"
   },
-  "tests/test_hierarchy_store.py": {
-   "fate": "port-test",
-   "phase": 2,
-   "sweep": "pass"
-  },
   "tests/test_http_observation_contract.py": {
    "fate": "port-test",
    "phase": 2,
@@ -2872,11 +2855,6 @@
    ],
    "sweep": "pass"
   },
-  "tests/test_memory_workspaces_engine.py": {
-   "fate": "port-test",
-   "phase": 2,
-   "sweep": "pass"
-  },
   "tests/test_mode_control_boundary.py": {
    "fate": "delete-with-native-coverage",
    "phase": 5,
@@ -2888,9 +2866,10 @@
    "sweep": "pass"
   },
   "tests/test_mode_state_support.py": {
-   "fate": "port-test",
-   "phase": 2,
-   "sweep": "pass"
+   "fate": "delete-with-native-coverage",
+   "phase": 5,
+   "sweep": "pass",
+   "harness": "tests/mode_state_support.py"
   },
   "tests/test_model_commentary.py": {
    "fate": "delete-with-native-coverage",
@@ -3265,11 +3244,6 @@
    "sweep": "pass",
    "support_for": 1
   },
-  "tests/test_provider_indexes_cetta.py": {
-   "fate": "port-test",
-   "phase": 2,
-   "sweep": "pass"
-  },
   "tests/test_provider_order_cetta.py": {
    "fate": "port-test",
    "phase": 5,
@@ -3277,8 +3251,11 @@
    "support_for": 1
   },
   "tests/test_provider_policy_cetta.py": {
-   "fate": "port-test",
-   "phase": 2,
+   "fate": "delete-with-native-coverage",
+   "phase": 5,
+   "covers": [
+    "src/llm_policy.py"
+   ],
    "sweep": "pass"
   },
   "tests/test_provider_protocol.py": {
@@ -3316,11 +3293,6 @@
    "sweep": "pass",
    "support_for": 2
   },
-  "tests/test_provider_store_cetta.py": {
-   "fate": "port-test",
-   "phase": 2,
-   "sweep": "pass"
-  },
   "tests/test_provider_stream.py": {
    "fate": "delete-with-native-coverage",
    "phase": 4,
@@ -3329,11 +3301,6 @@
    ],
    "sweep": "pass",
    "support_for": 2
-  },
-  "tests/test_provider_views_cetta.py": {
-   "fate": "port-test",
-   "phase": 2,
-   "sweep": "pass"
   },
   "tests/test_public_tree_audit.py": {
    "fate": "port-test",
@@ -3614,22 +3581,6 @@
    "phase": 3,
    "sweep": "fail"
   },
-  "tests/test_semantic_memory_engine.py": {
-   "fate": "port-test",
-   "phase": 2,
-   "sweep": "pass",
-   "support_for": 5
-  },
-  "tests/test_settings_registry_engine.py": {
-   "fate": "port-test",
-   "phase": 2,
-   "sweep": "pass"
-  },
-  "tests/test_shared_mail.py": {
-   "fate": "port-test",
-   "phase": 2,
-   "sweep": "pass"
-  },
   "tests/test_skills_help_native.py": {
    "fate": "port-test",
    "phase": 5,
@@ -3687,11 +3638,6 @@
    ],
    "sweep": "fail",
    "support_for": 4
-  },
-  "tests/test_sql_value_cetta.py": {
-   "fate": "port-test",
-   "phase": 2,
-   "sweep": "pass"
   },
   "tests/test_stimulus_frontier.py": {
    "fate": "delete-with-native-coverage",
@@ -4128,7 +4074,8 @@
     "src/strategy_host.py",
     "src/working_state_host.py"
    ],
-   "sweep": "pass"
+   "sweep": "pass",
+   "support_for": 1
   },
   "ui/worklog/console.py": {
    "fate": "delete-with-native-coverage",

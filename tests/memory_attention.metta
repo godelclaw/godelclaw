@@ -1,0 +1,347 @@
+; Attention over the native memory world (loaded by tests/cognitive_memory.metta
+; after tests/memory_world.metta). Guests that check numbers import
+; tests/memory_attention_guest.metta.
+
+(= (mat:guest-module $root) (str:join "" ("!(import! &self " (repr (path:join $root "tests/memory_attention_guest.metta")) ")\n")))
+(= (mat:zero) "-?0(?:\\.0)?")
+(= (mat:ecan $id $s $m $l) (str:join "" ("\\(ECANValue \"" $id "\" " $s " " $m " " $l "\\)")))
+
+(= (mat:modes $world $service $root)
+   (let* (((OpenCase $server $socket $config $env) (mc:open-case $world $service "at-modes"))
+          ($out (mc:guest $world $root "
+!(attention-policy \"exposure\" 0)
+!(attention-policy \"sti-half-life\" 0)
+!(attention-policy \"mti-half-life\" 0)
+!(attention-policy \"lti-half-life\" 0)
+!(println! (USE (attention-use \"b\" 100)))
+!(println! (SIM (semantic:query \"alpha\" 1 \"similarity\")))
+!(println! (ATTN (semantic:query \"alpha\" 1 \"attention\")))
+!(println! (MIX (semantic:query \"alpha\" 1 \"hybrid\")))
+!(println! (DETAIL (attention-last)))
+!(println! (SET (attention-policy \"mode\" \"attention\")))" $env))
+          ($_ (nt:require modes-rank-differently-and-distance-stays-distance
+                (and (mc:has-all $out ("(SIM (MemoryResults ((MemoryHit \"a\"" "(ATTN (MemoryResults ((MemoryHit \"b\""
+                                       "(MIX (MemoryResults ((MemoryHit \"a\"" "(Persistence true)"))
+                     (mc:matches? $out "\\(ATTN .*MemoryHit \"b\" [^ ]+ \\(\"original\"\\) 1(?:\\.0)? \"beta reference\""))))
+          ($again (mc:guest $world $root "!(println! (RESTORED (semantic:query \"alpha\" 1)))\n!(println! (attention-policy))" $env))
+          ($_ (nt:require the-mode-persists
+                (mc:has-all $again ("(RESTORED (MemoryResults ((MemoryHit \"b\"" "(AttentionSetting \"mode\" \"attention\")")))))
+     (mc:stop $server)))
+
+(= (mat:certified $world $service $root)
+   (let* (((OpenCase $server $socket $config $env) (mc:open-case $world $service "at-certified"))
+          ($out (mc:guest $world $root "
+!(attention-policy \"exposure\" 0)
+!(attention-policy \"bootstrap-neighbours\" 0)
+!(attention-policy \"spread-rounds\" 50)
+!(attention-policy \"restart\" 0.9)
+!(println! (FIRST (semantic:query \"alpha\" 1 \"hybrid\")))
+!(println! (EXPLAIN (attention-last)))
+!(attention-policy \"restart\" 0)
+!(println! (ZERO (semantic:query \"alpha\" 1 \"hybrid\")))
+!(println! (EXPLAIN_ZERO (attention-last)))" $env))
+          ($_ (nt:require spreading-stops-once-the-selection-is-certified
+                (and (nt:contains $out "(FIRST (MemoryResults ((MemoryHit \"a\"")
+                     (and (nt:contains (mc:line $out "(EXPLAIN ") "(Spread (Rounds 1) Certified)")
+                          (nt:contains (mc:line $out "(EXPLAIN_ZERO ") "(Spread (Rounds 50) Uncertified)"))))))
+     (mc:stop $server)))
+
+(= (mat:spread $world $service $root)
+   (let* (((OpenCase $server $socket $config $env) (mc:open-case $world $service "at-spread"))
+          ($_ (nt:require bridge-records-join-the-store
+                (mc:add $socket "at-spread" (("c" (tensor:from f64 (3) (0.0 0.0 1.0)) "linked bridge" (("time" "fixture")))
+                                            ("d" (tensor:from f64 (3) (-1.0 0.0 0.0)) "linked destination" (("time" "fixture")))))))
+          ($out (mc:guest $world $root "
+!(attention-policy \"exposure\" 0)
+!(attention-policy \"candidate-multiplier\" 1)
+!(attention-policy \"restart\" 0.1)
+!(attention-policy \"spread-rounds\" 3)
+!(attention-use \"a\" 10)
+!(attention-link \"a\" \"c\" 1)
+!(attention-link \"a\" \"c\" 1)
+!(attention-link \"c\" \"d\" 1)
+!(println! (POLICY (attention-policy)))
+!(println! (SIM (semantic:query \"alpha\" 1 \"similarity\")))
+!(println! (SPREAD (semantic:query \"alpha\" 1 \"attention\")))
+!(println! (EXPLAIN (attention-last)))
+!(println! (FORGET (forget \"d\")))
+!(println! (AFTER (semantic:query \"alpha\" 0 \"attention\")))
+!(println! (POLICY_AFTER (attention-policy)))" $env))
+          ($after (mc:after $out "(AFTER "))
+          ($_ (nt:require weighted-spread-reaches-beyond-both-initial-pools
+                (and (mc:has-all $out ("(Links 2)" "(SIM (MemoryResults ((MemoryHit \"a\"" "(SPREAD (MemoryResults ((MemoryHit \"d\""))
+                     (and (not (nt:contains $after "(MemoryHit \"d\"")) (nt:contains $after "(Links 1)"))))))
+     (mc:stop $server)))
+
+(= (mat:exposure $world $service $root)
+   (let* (((OpenCase $server $socket $config $env) (mc:open-case $world $service "at-exposure"))
+          ($out (mc:guest $world $root "
+!(attention-policy \"sti-half-life\" 0)
+!(attention-policy \"mti-half-life\" 0)
+!(attention-policy \"lti-half-life\" 0)
+!(attention-policy \"exposure\" 0.25)
+!(semantic:query \"alpha\" 1 \"similarity\")
+!(println! (EXPOSED (attention-focus 0)))
+!(memory-read \"a\")
+!(println! (READ (attention-focus 0)))
+!(attention-policy \"exposure\" 0)
+!(attention-policy \"read-stimulus\" 0)
+!(semantic:query \"alpha\" 1)
+!(memory-read \"a\")
+!(println! (DISABLED (attention-focus 0)))" $env))
+          ($_ (nt:require exposure-and-an-explicit-read-are-distinct-and-optional
+                (and (mc:has-all $out ("(ECANValue \"a\" 0.25 0 0)" "(ECANValue \"a\" 1.25 0.0625 0.00125)"))
+                     (== (mc:line $out "(READ ") (mc:line $out "(DISABLED "))))))
+     (mc:stop $server)))
+
+(= (mat:bad-arguments $world $service $root)
+   (let* (((OpenCase $server $socket $config $env) (mc:open-case $world $service "at-bad"))
+          ($out (mc:guest $world $root "
+!(println! (attention-policy \"sti-halflife\" 5))
+!(println! (attention-policy \"sti-half-life\" -5))
+!(println! (attention-policy \"restart\" -0.1))
+!(println! (attention-policy \"spread-rounds\" 1.5))
+!(println! (attention-use \"b\" -1))
+!(println! (attention-link \"a\" \"b\" -1))
+!(println! (attention-policy))
+!(println! (STILL_WORKS (semantic:query \"alpha\" 1)))" $env))
+          ($_ (nt:require bad-arguments-change-nothing-and-block-nothing
+                (mc:has-all $out ("(AttentionSetting \"restart\" 0.5)" "(ECANSetting sti-half-life 300)"
+                                  "(STILL_WORKS (MemoryResults ((MemoryHit \"a\"")))))
+     (mc:stop $server)))
+
+; "a2" repeats a's text: one memory written twice. It must not take a second
+; slot from the distinct runner-up "c", in either mode.
+(= (mat:sorted-ids $line) (let $ids (mc:hit-ids $line) (if (== $ids ("a" "c")) $ids (if (== $ids ("c" "a")) ("a" "c") $ids))))
+(= (mat:copies $world $service $root)
+   (let* (((OpenCase $server $socket $config $env) (mc:open-case $world $service "at-copies"))
+          ($_ (nt:require a-copy-and-a-sibling-join-the-store
+                (mc:add $socket "at-copies" (("a2" (tensor:from f64 (3) (1.0 0.0 0.0)) "old alpha" (("time" "original")))
+                                            ("c" (tensor:from f64 (3) (0.8 0.6 0.0)) "alpha sibling" (("time" "original")))))))
+          ($out (mc:guest $world $root "
+!(println! (SIM (semantic:query \"alpha\" 2 \"similarity\")))
+!(println! (SIMLINKS (am:links (am:bank))))
+!(println! (MIX (semantic:query \"alpha\" 2 \"hybrid\")))
+!(println! (DETAIL (attention-last)))
+!(println! (LINKS (am:links (am:bank))))" $env))
+          ($_ (nt:require copies-of-one-text-share-one-recall-slot
+                (and (== (mat:sorted-ids (mc:line $out "(SIM ")) ("a" "c"))
+                     (== (mat:sorted-ids (mc:line $out "(MIX ")) ("a" "c")))))
+          ($_ (nt:require copies-never-link-to-each-other
+                (and (not (mc:matches? (mc:line $out "(SIMLINKS ") "AttentionLink \"a2?\" \"a2?\""))
+                (and (not (nt:contains (mc:line $out "(SIMLINKS ") "\"a2\""))
+                (and (not (mc:matches? (mc:line $out "(LINKS ") "AttentionLink \"a2?\" \"a2?\""))
+                     (not (nt:contains (mc:line $out "(LINKS ") "\"a2\"")))))))
+          ($_ (nt:require the-recall-names-the-copies
+                (nt:contains (mc:line $out "(DETAIL ") "(Copies ((Copies \"a\" (\"a2\"))))"))))
+     (mc:stop $server)))
+
+(= (mat:bootstrap-links $world $service $root)
+   (let* (((OpenCase $server $socket $config $env) (mc:open-case $world $service "at-lazy"))
+          ($_ (nt:require a-related-record-joins-the-store
+                (mc:add $socket "at-lazy" (("c" (tensor:from f64 (3) (0.8 0.6 0.0)) "related alpha beta" ())))))
+          ($out (mc:guest $world $root "
+!(attention-policy \"exposure\" 0)
+!(attention-link \"a\" \"c\" 7)
+!(semantic:query \"alpha\" 0 \"similarity\")
+!(println! (FIRST (am:links (am:bank))))
+!(semantic:query \"alpha\" 0 \"similarity\")
+!(println! (SECOND (am:links (am:bank))))
+!(println! (MARKERS (am:graph-state (am:bank))))" $env))
+          ($first (mc:line $out "(FIRST "))
+          ($_ (nt:require the-lazy-semantic-bootstrap-is-idempotent-and-keeps-explicit-links
+                (and (== $first (mc:line $out "(SECOND "))
+                (and (mc:has-all $first ("(AttentionLink \"a\" \"c\" 7)" "(AttentionLink \"b\" \"c\" 0.06)"))
+                (and (not (nt:contains $first "(AttentionLink \"a\" \"b\""))
+                     (nt:contains $out "AttentionBootstrapped"))))))
+          ($later (mc:guest $world $root "
+!(println! (RESTORED (am:graph-state (am:bank))))
+!(forget \"c\")
+!(semantic:query \"alpha\" 0)
+!(println! (FORGOTTEN (am:graph-state (am:bank))))" $env))
+          ($_ (nt:require bootstrapped-links-persist-and-forget-removes-them
+                (and (nt:contains $later "(AttentionLink \"a\" \"c\" 7)")
+                     (not (nt:contains (mc:line $later "(FORGOTTEN ") "\"c\""))))))
+     (mc:stop $server)))
+
+(= (mat:pulse $world $service $root)
+   (let* (((OpenCase $server $socket $config $env) (mc:open-case $world $service "at-pulse"))
+          ($_ (nt:require a-distant-record-joins-the-store
+                (mc:add $socket "at-pulse" (("c" (tensor:from f64 (3) (0.0 0.0 1.0)) "two hops away" ())))))
+          ($out (mc:guest $world $root "
+!(attention-policy \"exposure\" 0)
+!(attention-policy \"bootstrap-neighbours\" 0)
+!(attention-policy \"sti-half-life\" 0)
+!(attention-policy \"mti-half-life\" 0)
+!(attention-policy \"lti-half-life\" 0)
+!(attention-policy \"sti-mti-rate\" 0)
+!(attention-policy \"mti-lti-rate\" 0)
+!(attention-policy \"recall-spread\" 0.25)
+!(semantic:query \"alpha\" 0 \"similarity\")
+!(attention-link \"a\" \"b\" 1)
+!(attention-link \"b\" \"c\" 1)
+!(attention-use \"a\" 4)
+!(println! (PULSE (attention-focus 0)))
+!(println! (TOTAL (ecan:total (am:bank))))
+!(println! (FUNDS (ecan:funds (am:bank))))
+!(attention-policy \"recall-spread\" 0)
+!(attention-use \"a\" 4)
+!(println! (DISABLED (attention-focus 0)))" $env))
+          ($pulse (mc:line $out "(PULSE "))
+          ($z (mat:zero))
+          ($_ (nt:require a-recall-pulse-is-one-hop-and-keeps-the-bank-balanced
+                (and (mc:matches? $pulse (mat:ecan "a" "3(?:\\.0)?" $z $z))
+                (and (mc:matches? $pulse (mat:ecan "b" "1(?:\\.0)?" $z $z))
+                (and (not (nt:contains $pulse "(ECANValue \"c\""))
+                (and (mc:matches? $out (str:join "" ("\\(TOTAL \\(ECANTotal " $z " " $z " " $z "\\)\\)")))
+                (and (mc:matches? $out (str:join "" ("\\(FUNDS \\(ECANFunds -4(?:\\.0)? " $z " " $z "\\)\\)")))
+                     (mc:matches? $out (mat:ecan "a" "7(?:\\.0)?" $z $z))))))))))
+     (mc:stop $server)))
+
+(= (mat:read-bootstrap $world $service $root)
+   (let* (((OpenCase $server $socket $config $env) (mc:open-case $world $service "at-read"))
+          ($_ (nt:require a-neighbour-joins-the-store
+                (mc:add $socket "at-read" (("c" (tensor:from f64 (3) (0.8 0.6 0.0)) "related alpha" ())))))
+          ($out (mc:guest $world $root (str:concat (mat:guest-module $root) "
+!(attention-policy \"sti-half-life\" 0)
+!(attention-policy \"mti-half-life\" 0)
+!(attention-policy \"lti-half-life\" 0)
+!(memory-read \"a\")
+!(println! (GRAPH (am:links (am:bank))))
+!(let $focus (attention-focus 0)
+   (nt:require a-read-bootstraps-without-consolidating-neighbours
+     (and (ox:close3 (ox:ecan \"a\" $focus) (0.8 0.04 0.0008) 0.0000001)
+          (ox:close3 (ox:ecan \"c\" $focus) (0.2 0 0) 0))))
+!(println! READ_BOOTSTRAP_OK)") $env))
+          ($_ (nt:require an-explicit-read-links-its-neighbour
+                (mc:has-all $out ("(AttentionLink \"a\" \"c\"" "READ_BOOTSTRAP_OK")))))
+     (mc:stop $server)))
+
+(= (mat:corrupt $world $service $root)
+   (let* (((OpenCase $server $socket $config $env) (mc:open-case $world $service "at-corrupt"))
+          ($snapshot (path:join (mc:case-dir $world "at-corrupt") "attention.metta"))
+          ($_ (fs:write $snapshot "(BrokenSnapshot \"keep me\")"))
+          ($out (mc:guest $world $root "!(println! (semantic:query \"alpha\" 1))\n!(println! (attention-policy))" $env))
+          ($_ (nt:require a-corrupt-snapshot-is-kept-and-similarity-carries-on
+                (and (mc:has-all $out ("(MemoryHit \"a\"" "AttentionUnavailable snapshot"))
+                     (== (fs:read-text $snapshot) "(BrokenSnapshot \"keep me\")")))))
+     (mc:stop $server)))
+
+(= (mat:health $world $service $root)
+   (let* (((OpenCase $server $socket $config $env) (mc:open-case $world $service "at-health"))
+          ($out (mc:guest $world $root "!(println! (semantic:health))" $env))
+          ($_ (nt:require health-does-not-train-attention
+                (and (nt:contains $out "(MemoryHealth healthy native")
+                     (not (fs:exists (path:join (mc:case-dir $world "at-health") "attention.metta")))))))
+     (mc:stop $server)))
+
+(= (mat:co-use $world $service $root)
+   (let* (((OpenCase $server $socket $config $env) (mc:open-case $world $service "at-co-use"))
+          ($out (mc:guest $world $root "
+!(semantic:query \"alpha\" 2)
+!(println! (SEARCH_ONLY (attention-policy)))
+!(am:begin-turn)
+!(attention-use \"a\")
+!(attention-use \"b\")
+!(attention-use \"a\")
+!(println! (FIRST (am:links (am:bank))))
+!(am:begin-turn)
+!(attention-use \"a\")
+!(attention-use \"b\")
+!(println! (SECOND (am:links (am:bank))))
+!(attention-policy \"co-use-weight\" 0)
+!(am:begin-turn)
+!(attention-use \"a\")
+!(attention-use \"b\")
+!(println! (DISABLED (am:links (am:bank))))
+!(forget \"a\")
+!(attention-use \"b\")
+!(println! (FORGOTTEN (am:links (am:bank))))" $env))
+          ($second (mc:line $out "(SECOND "))
+          ($_ (nt:require co-use-learns-once-per-turn-and-search-alone-teaches-nothing
+                (and (mc:has-all $out ("(Links 0)" "(AttentionLink \"a\" \"b\" 1)" "(AttentionLink \"b\" \"a\" 1)" "(FORGOTTEN ())"))
+                     (and (== $second (mc:line $out "(DISABLED "))
+                          (nt:contains $second "(AttentionLink \"a\" \"b\" 2)")))))
+          ($_ (nt:require forgetting-removes-learned-links-for-good
+                (nt:contains (mc:guest $world $root "!(println! (attention-policy))\n!(println! (am:links (am:bank)))" $env) "(Links 0)"))))
+     (mc:stop $server)))
+
+(= (mat:transport $world $service $root)
+   (let* (((OpenCase $server $socket $config $env) (mc:open-case $world $service "at-transport"))
+          ($_ (nt:require transport-records-join-the-store
+                (mc:add $socket "at-transport" (("c" (tensor:from f64 (3) (0.0 0.0 1.0)) "bridge" ())
+                                               ("d" (tensor:from f64 (3) (-1.0 0.0 0.0)) "destination" ())))))
+          ($out (mc:guest $world $root (str:concat (mat:guest-module $root) "
+!(attention-policy \"exposure\" 0)
+!(semantic:query \"alpha\" 1 \"similarity\")
+!(nt:require transport-matches-the-exact-oracle-on-random-graphs (== (ox:trials 84 8 0) 8))
+!(println! (TOTAL (ecan:total (am:bank))))
+!(println! TRANSPORT_OK)") $env))
+          ($_ (nt:require transport-leaves-the-bank-unchanged
+                (mc:has-all $out ("(TOTAL (ECANTotal 0 0 0))" "TRANSPORT_OK")))))
+     (mc:stop $server)))
+
+(= (mat:invalid-setting $world $service $root)
+   (let* (((OpenCase $server $socket $config $env) (mc:open-case $world $service "at-invalid"))
+          ($snapshot (path:join (mc:case-dir $world "at-invalid") "attention.metta"))
+          ($_ (mc:guest $world $root "!(attention-policy \"mode\" \"attention\")" $env))
+          ($saved (fs:read-text $snapshot))
+          ($damaged (str:join "(AttentionSetting \"restart\" -1)" (str:split "(AttentionSetting \"restart\" 0.5)" $saved)))
+          ($_ (nt:require the-saved-setting-is-there-to-damage (not (== $damaged $saved))))
+          ($_ (fs:write $snapshot $damaged))
+          ($out (mc:guest $world $root "!(println! (semantic:query \"alpha\" 1))\n!(println! (attention-policy))" $env))
+          ($_ (nt:require an-invalid-saved-setting-falls-back-without-overwriting
+                (and (mc:has-all $out ("(MemoryHit \"a\"" "(AttentionUnavailable snapshot invalid-setting)"))
+                     (== (fs:read-text $snapshot) $damaged)))))
+     (mc:stop $server)))
+
+(= (mat:bootstrap $world $service $root $sdk)
+   (let* (((OpenCase $server $socket $config $env) (mc:open-case $world $service "at-bootstrap"))
+          ($probe (nq:path $world "public-attention.metta"))
+          ($_ (fs:write $probe "
+!(println! (PUBLIC_POLICY (attention-policy)))
+!(println! (PUBLIC_SET (attention-policy \"mode\" \"attention\")))
+!(println! (PUBLIC_USE (attention-use \"b\" 100)))
+!(println! (PUBLIC_QUERY (query \"alpha\" 1 \"attention\")))
+!(println! (PUBLIC_CONTEXT (am:context)))
+!(println! (PUBLIC_HELP (help \"attention-policy\")))
+"))
+          ($out (mc:bootstrap $world $root $sdk $probe $env))
+          ($_ (nt:require the-attention-tools-work-through-the-bootstrap-and-prompt
+                (and (mc:has-all $out ("(PUBLIC_QUERY (MemoryResults ((MemoryHit \"b\"" "(AttentionMemory (Mode \"attention\")"
+                                       "co-use-weight"))
+                     (not (nt:contains $out "(Error "))))))
+     (mc:stop $server)))
+
+(= (mat:beside-engine-state $world $service $root)
+   (let* (((OpenCase $server $socket $config $env) (mc:open-case $world $service "at-beside"))
+          ($engine (path:join (mc:case-dir $world "at-beside") "engine"))
+          ($_ (fs:write $engine "cetta\n"))
+          ($out (mc:guest $world $root "!(println! (attention-use \"a\"))" $env))
+          ($_ (nt:require the-default-snapshot-sits-beside-the-engine-state
+                (and (nt:contains $out "(AttentionUsed")
+                (and (not (nt:contains $out "AttentionUnavailable"))
+                (and (fs:exists (path:join (mc:case-dir $world "at-beside") "attention.metta"))
+                     (== (fs:read-text $engine) "cetta\n"))))))
+          ($_ (nt:require the-snapshot-is-read-back
+                (nt:contains (mc:guest $world $root "!(println! (attention-focus 0))" $env) "(ECANValue \"a\""))))
+     (mc:stop $server)))
+
+(= (mat:run $world $service $root $sdk)
+   (let* (($_ (mat:modes $world $service $root))
+          ($_ (mat:certified $world $service $root))
+          ($_ (mat:spread $world $service $root))
+          ($_ (mat:exposure $world $service $root))
+          ($_ (mat:bad-arguments $world $service $root))
+          ($_ (mat:copies $world $service $root))
+          ($_ (mat:bootstrap-links $world $service $root))
+          ($_ (mat:pulse $world $service $root))
+          ($_ (mat:read-bootstrap $world $service $root))
+          ($_ (mat:corrupt $world $service $root))
+          ($_ (mat:health $world $service $root))
+          ($_ (mat:co-use $world $service $root))
+          ($_ (mat:transport $world $service $root))
+          ($_ (mat:invalid-setting $world $service $root))
+          ($_ (mat:bootstrap $world $service $root $sdk))
+          ($_ (mat:beside-engine-state $world $service $root)))
+     True))
