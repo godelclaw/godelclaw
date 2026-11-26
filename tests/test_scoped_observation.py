@@ -61,18 +61,6 @@ class ScopedObservationTests(unittest.TestCase):
         self.assertEqual(projection[0], S('ObservationValuesV1'))
         return projection[3]
 
-    def test_selected_native_library_matches_qualified_provenance(self):
-        manifest = json.loads((ROOT / 'config/native-libraries.json').read_text())
-        selection = json.loads((ROOT / 'config/runtime-files.json').read_text())
-        self.assertEqual(manifest['schema'], 1)
-        for library in manifest['libraries']:
-            path = ROOT / library['runtime']
-            self.assertIn(library['runtime'], selection)
-            self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), library['sha256'])
-        self.assertIn('config/native-libraries.json', selection)
-        for name in ('src/knowledge_store_cetta.metta', 'src/knowledge_observation_cetta.metta'):
-            self.assertIn(name, selection)
-
     def test_missing_key_in_nonempty_store_has_scoped_empty_and_no_values(self):
         self.seed.apply([E('KnowledgePutV1', 'other', 'present')])
         body = '(let $r (kb:read-report $view "missing" 1048576) (Results (obs:status $r) (obs:values $r) (obs:scope $r)))'

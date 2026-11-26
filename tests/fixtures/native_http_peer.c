@@ -100,7 +100,10 @@ int main(int argc,char **argv) {
         }
         size_t n=0;char *setting=read_file(root,"delay-ms",&n);long delay=strtol(setting,NULL,10);free(setting);
         if(delay>0){struct timespec pause={.tv_sec=delay/1000,.tv_nsec=(delay%1000)*1000000L};while(nanosleep(&pause,&pause)&&errno==EINTR){}}
-        setting=read_file(root,"status",&n);int status=(int)strtol(setting,NULL,10);free(setting);
+        /* A scripted status for this request number takes precedence. */
+        snprintf(name,sizeof(name),"status-%lu",count);
+        char scripted_status[4096];snprintf(scripted_status,sizeof(scripted_status),"%s/%s",root,name);
+        setting=read_file(root,access(scripted_status,R_OK)==0?name:"status",&n);int status=(int)strtol(setting,NULL,10);free(setting);
         if(status==0){close(client);continue;}
         /* A scripted reply for this request number takes precedence. */
         snprintf(name,sizeof(name),"response-%lu.body",count);

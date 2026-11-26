@@ -229,6 +229,13 @@
     ("tests/unit/context_continuity.metta" "UNIT_CONTEXT_CONTINUITY_OK")
     ("tests/unit/loop_retry_safety.metta" "UNIT_LOOP_RETRY_SAFETY_OK")
     ("tests/unit/host_text.metta" "UNIT_HOST_TEXT_OK")
+    ("tests/unit/control_input.metta" "UNIT_CONTROL_INPUT_OK")
+    ("tests/unit/native_libraries.metta" "UNIT_NATIVE_LIBRARIES_OK")
+    ("tests/unit/effect_receipts_source.metta" "UNIT_EFFECT_RECEIPTS_SOURCE_OK")
+    ("tests/unit/engine_launcher.metta" "UNIT_ENGINE_LAUNCHER_OK")
+    ("tests/test_nal.metta" "NAL_OK")
+    ("tests/attention_graph_probe.metta" "ATTENTION_GRAPH_OK")
+    ("tests/activity_carrier_probe.metta" "ACTIVITY_CARRIER_OK")
     ("tests/unit/configuration_render.metta" "UNIT_CONFIGURATION_RENDER_OK")
     ("tests/unit/native_console_presentation.metta" "UNIT_NATIVE_CONSOLE_PRESENTATION_OK")
     ("tests/unit/cold_boot_lazy_modules.metta" "UNIT_COLD_BOOT_LAZY_OK"
