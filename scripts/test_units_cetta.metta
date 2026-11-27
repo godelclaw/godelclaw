@@ -3,6 +3,7 @@
 ; marker. Run from the checkout root with NATIVE_TEST_CORE and
 ; NATIVE_TEST_ARTIFACTS; pass one unit name as the first argument to run only it.
 !(import! &self ../tests/native_test_support.metta)
+!(import! &self (library re))
 
 (= (units:all)
    (("tests/unit/model_selection.metta" "UNIT_MODEL_SELECTION_OK")
@@ -68,6 +69,8 @@
     ("tests/unit/native_pin_admission.metta" "UNIT_NATIVE_PIN_ADMISSION_OK" (("METTACLAW_REQUIRE_NATIVE_CORE" "1")))
     ("tests/unit/coding_report_mail.metta" "UNIT_NATIVE_CODING_REPORT_MAIL_OK"
      (("METTACLAW_MAIL_SOCKET" "{home}/s") ("METTACLAW_WORK_MAIL" "/unused/bin/claw-mail")))
+    ("tests/unit/tool_output.metta" "UNIT_TOOL_OUTPUT_OK"
+     (("METTACLAW_TOOL_OUTPUT_DIR" "{home}/artifacts") ("METTACLAW_MCP_MAX_OUTPUT_CHARS" "100")))
     ("tests/unit/claude_client.metta" "UNIT_NATIVE_CLAUDE_CLIENT_OK"
      (("METTACLAW_CLAUDE_TIMEOUT_SECONDS" "0.1") ("METTACLAW_TOOL_OUTPUT_DIR" "{home}/artifacts")))
     ("tests/unit/native_components.metta" "UNIT_NATIVE_COMPONENT_DRIVER_OK"
@@ -129,6 +132,14 @@
     ("tests/unit/dispatch_admission.metta" "UNIT_DISPATCH_ADMISSION_OK")
     ("tests/unit/shadow_effect_config.metta" "UNIT_SHADOW_EFFECT_CONFIG_OK")
     ("tests/unit/shadow_effect.metta" "UNIT_SHADOW_EFFECT_OK")
+    ("tests/unit/task_phase.metta" "UNIT_TASK_PHASE_OK" (("METTACLAW_TASK_PHASE_PATH" "{home}/task-phase.json")))
+    ("tests/unit/pins.metta" "UNIT_PINS_OK" (("METTACLAW_PINS_PATH" "{home}/pins.txt")))
+    ("tests/unit/llm_admission.metta" "UNIT_LLM_ADMISSION_OK"
+     (("METTACLAW_INPUT_LEDGER_SOCKET" "{home}/l.sock") ("METTACLAW_LLM_POLICY" "managed")))
+    ("tests/unit/runtime_event_identity.metta" "UNIT_RUNTIME_EVENT_IDENTITY_OK"
+     (("METTACLAW_INPUT_LEDGER_SOCKET" "{home}/l.sock") ("METTACLAW_OBSERVED_STRATEGY" "1")))
+    ("tests/unit/ledger_reads.metta" "UNIT_LEDGER_READS_OK"
+     (("METTACLAW_INPUT_LEDGER_SOCKET" "{home}/l.sock") ("METTACLAW_OBSERVED_STRATEGY" "1")))
     ("tests/unit/benchmark_statistics.metta" "UNIT_BENCHMARK_STATISTICS_OK")
     ("tests/unit/growth_statistics.metta" "UNIT_GROWTH_STATISTICS_OK")
     ("tests/unit/progress_receipt.metta" "UNIT_PROGRESS_RECEIPT_OK"
@@ -250,7 +261,19 @@
     ("tests/unit/telegram_reply_target.metta" "UNIT_TELEGRAM_REPLY_TARGET_OK")
     ("tests/unit/tmux.metta" "UNIT_TMUX_OK")
     ("tests/unit/file_tools.metta" "UNIT_FILE_TOOLS_OK")
+    ("tests/unit/file_read.metta" "UNIT_FILE_READ_OK")
+    ("tests/unit/small_views.metta" "UNIT_SMALL_VIEWS_OK")
+    ("tests/unit/command_arity.metta" "UNIT_COMMAND_ARITY_OK")
+    ("tests/unit/memory_health.metta" "UNIT_MEMORY_HEALTH_OK" (("METTACLAW_MEMORY_BACKEND_CONFIG" "{home}/cfg.json")))
+    ("tests/unit/rest_timer.metta" "UNIT_REST_TIMER_OK")
+    ("tests/unit/wake_vitals.metta" "UNIT_WAKE_VITALS_OK")
+    ("tests/unit/control_menu_pages.metta" "UNIT_CONTROL_MENU_PAGES_OK")
+    ("tests/unit/goal_write.metta" "UNIT_GOAL_WRITE_OK")
     ("tests/unit/stream_assembly.metta" "UNIT_STREAM_ASSEMBLY_OK")
+    ("tests/unit/usage_history.metta" "UNIT_USAGE_HISTORY_OK"
+     (("METTACLAW_INPUT_LEDGER_SOCKET" "{home}/l.sock") ("METTACLAW_LLM_POLICY" "managed")
+      ("METTACLAW_INSTANCE" "fixture-agent") ("METTACLAW_ACTIVITY_CALL_SCOPE" "work-fixture")
+      ("METTACLAW_LLM_COMPLETION_PATH" "{home}/completion.json")))
     ("tests/unit/working_state.metta" "UNIT_WORKING_STATE_LEDGER_OK"
      (("METTACLAW_INPUT_LEDGER_SOCKET" "{home}/l.sock")
       ("METTACLAW_OBSERVED_STRATEGY" "1")))
@@ -318,9 +341,47 @@
           ($output (nt:exit-ok (proc:run ($engine "--lang" "petta" "--profile" "extended" "--import-mode" "ancestor-walk" "--quiet" $file)
                                          $root (units:override (units:env $directory) (units:homed $extra $directory $artifacts)) 120000 1048576)))
           ($_ (nt:require unit-marker (nt:contains $output $marker)))
+          ($_ (units:record-passes $file $output))
           ($_ (if (units:member? no-error-values $checks)
                 (nt:require unit-without-error-values (not (nt:contains $output "(Error "))) True))
           ($_ (println! (UNIT_PASSED $file)))) 1))
+
+;; A requirement whose case came back empty never ran and printed no PASS,
+;; and the marker alone would pass it. So every requirement a unit's own code
+;; writes, (nt:require NAME ...) outside string literals, must have printed
+;; its PASS in at least one of the file's registrations (several registrations
+;; of a file may each enable different cases). (nt:require NAME False), a
+;; failure path, is not counted. A requirement inside a string
+;; belongs to a program the unit writes for a child, whose marker it checks.
+!(bind! &units-require (new-state (re:compile "\\(nt:require ([^\\s()\"]+)")))
+!(bind! &units-pass (new-state (re:compile "\\(PASS ([^\\s()\"]+)\\)")))
+; (nt:require NAME False) marks a failure path, as on a wait's timeout: it
+; never passes, by design.
+!(bind! &units-failure-only (new-state (re:compile "\\(nt:require [^\\s()\"]+ False\\)")))
+!(bind! &units-string (new-state (re:compile "\"(?:[^\"\\\\]|\\\\.)*\"")))
+!(bind! &units-seen (new-space))
+(= (units:names $pattern $text)
+   (case (re:find-all $pattern $text)
+     (((re:matches $matches) (unique-atom (units:group-texts $matches $text)))
+      ($none ()))))
+(= (units:required-names $source)
+   (let* (($code (re:replace-literal (get-state &units-string) $source "\"\""))
+          ($checked (re:replace-literal (get-state &units-failure-only) $code "")))
+     (units:names (get-state &units-require) $checked)))
+(= (units:record-passes $file $output)
+   (map-atom (units:names (get-state &units-pass) $output) $name
+     (let $seen (UnitPassedV1 $file $name) (add-atom &units-seen $seen))))
+(= (units:never-ran $root $files)
+   (filter-atom
+     (map-atom $files $file
+       (let $required (units:required-names (fs:read-text (nt:join $root $file)))
+         ($file (filter-atom $required $name
+                  (== (collapse (match &units-seen (UnitPassedV1 $file $name) True)) ())))))
+     $row (let ($file $missing) $row (not (== $missing ())))))
+(= (units:group-texts $matches $source)
+   (case $matches
+     (((LCons $match $rest) (cons-atom (re:group-text $match $source 1) (units:group-texts $rest $source)))
+      ($end ()))))
 
 (= (units:selected $all $only)
    (if (== $all ()) ()
@@ -350,5 +411,9 @@
           ($only (system:getenv-or-default "NATIVE_UNIT" ""))
           ($cases (units:selected (units:from (units:all) (system:getenv-or-default "NATIVE_UNIT_START" "")) $only))
           ($_ (nt:require unit-selection-nonempty (not (== $cases ())))))
-     (units:run $root $engine $artifacts $cases 0)))
+     (let* (($count (units:run $root $engine $artifacts $cases 0))
+            ($never (units:never-ran $root (unique-atom (map-atom $cases $case (car-atom $case)))))
+            ($_ (map-atom $never $row (println! (UNIT_REQUIREMENTS_NEVER_RAN $row))))
+            ($_ (nt:require every-unit-requirement-ran (== $never ()))))
+       $count)))
 !(let $count (units:main) (println! (NATIVE_UNITS_PASSED $count)))

@@ -41,6 +41,10 @@ static char *reply(const char *request){
         strcpy(result,"{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"native-fixture\",\"version\":\"1\"}}");
     else if(strstr(request,"\"tools/list\""))
         strcpy(result,"{\"tools\":[{\"name\":\"echo\",\"description\":\"Echo locally\\nSecond line\",\"inputSchema\":{\"type\":\"object\"}}]}");
+    else if(strstr(request,"\"tools/call\"") && strstr(request,"\"atlas_query\""))
+        strcpy(result,"{\"content\":[{\"type\":\"text\",\"text\":\"not json\"}],\"isError\":false,"
+               "\"structuredContent\":{\"view_id\":\"view:fixture\",\"state_revision\":\"state:fixture\","
+               "\"status\":\"known\",\"receipt\":{\"receipt_id\":\"receipt:fixture\"}}}");
     else if(strstr(request,"\"tools/call\"")){
         unsigned effects=increment("effects");
         snprintf(result,sizeof(result),"{\"content\":[{\"type\":\"text\",\"text\":\"hello\"}],\"isError\":false,\"structuredContent\":{\"effects\":%u,\"sawPrivate\":%s}}",
@@ -131,7 +135,13 @@ int main(int argc,char **argv){
     }
     if(argc==3 && !strcmp(argv[1],"-p")){
         if(!strcmp(argv[2],"fixture-fail")){fputs("native cli failure\n",stderr);return 3;}
-        if(!strcmp(argv[2],"fixture-timeout")){fputs("partial-output",stdout);fflush(stdout);nap(1000);return 0;}
+        if(!strcmp(argv[2],"fixture-fail-large")){
+            for(int i=0;i<2000;i++){fputs("answer",stdout);fputs("problem",stderr);}
+            return 7;
+        }
+        if(!strcmp(argv[2],"fixture-timeout")){
+            fputs("partial-output",stdout);fflush(stdout);fputs("partial-stderr",stderr);fflush(stderr);nap(1000);return 0;
+        }
         puts("native cli answer");return 0;
     }
     if(argc!=3){fputs("native-core-peer MODE PRIVATE_DIRECTORY\n",stderr);return 2;}

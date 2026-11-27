@@ -46,12 +46,61 @@
           ($load (if (== $loads ()) "" (str:concat "load " (str:concat (car-atom $loads) (str:concat "/" (repr $cpu))))))
           ($mem (if (< $memory 0) "" (str:concat "mem " (str:concat (repr $memory) "%")))))
      (str:join " | " (filter-atom ($load $mem) $part (!= $part "")))))
+; The newest turn's time, for the first wake after a start: the last
+; timestamp in the final 64 KiB of the history, a local time read as mktime
+; reads it; none without history.
+!(bind! &runtime-history-stamp
+   (new-state (re:compile "(20[0-9]{2})-([0-9]{2})-([0-9]{2}) ([0-9]{2}):([0-9]{2}):([0-9]{2})")))
+(= (runtime-support:history-path)
+   (system:getenv-or-default "METTACLAW_HISTORY_PATH" "./memory/history.metta"))
+(= (runtime-support:days-from-civil $y $m $d)
+   (let* (($year (if (<= $m 2) (- $y 1) $y))
+          ($era (math:floor (/ $year 400)))
+          ($yoe (- $year (* $era 400)))
+          ($doy (+ (math:floor (/ (+ (* 153 (+ $m (if (> $m 2) -3 9))) 2) 5)) (- $d 1)))
+          ($doe (+ (- (+ (* $yoe 365) (math:floor (/ $yoe 4))) (math:floor (/ $yoe 100))) $doy)))
+     (- (+ (* $era 146097) $doe) 719468)))
+; The local zone's offset from UTC at a time, in seconds ("+0200" is 7200).
+(= (runtime-support:zone-offset $timestamp)
+   (let $zone (system:format-time "%z" $timestamp "local")
+     (if (!= (str:byte-length $zone) 5) 0
+       (let* (($sign (if (== (str:byte-slice $zone 0 1) "-") -1 1))
+              ($hours (str:string->number (str:byte-slice $zone 1 3)))
+              ($minutes (str:string->number (str:byte-slice $zone 3 5))))
+         (* $sign (+ (* $hours 3600) (* $minutes 60)))))))
+(= (runtime-support:local-time $y $m $d $hour $minute $second)
+   (let* (($wall (+ (* 86400 (runtime-support:days-from-civil $y $m $d)) (+ (* 3600 $hour) (+ (* 60 $minute) $second))))
+          ($guess (- $wall (runtime-support:zone-offset $wall))))
+     (- $wall (runtime-support:zone-offset $guess))))
+(= (runtime-support:last-match $matches)
+   (case $matches
+     (((LCons $match LNil) $match)
+      ((LCons $match $rest) (runtime-support:last-match $rest))
+      ($none none))))
+(= (runtime-support:last-turn)
+   (case (fs:tail-text (runtime-support:history-path) 65536)
+     (((fs:tail $size $complete $text)
+       (case (re:find-all (get-state &runtime-history-stamp) $text)
+         (((re:matches $matches)
+           (let $match (runtime-support:last-match $matches)
+             (if (== $match none) none
+               (runtime-support:local-time
+                 (str:string->number (re:group-text $match $text 1)) (str:string->number (re:group-text $match $text 2))
+                 (str:string->number (re:group-text $match $text 3)) (str:string->number (re:group-text $match $text 4))
+                 (str:string->number (re:group-text $match $text 5)) (str:string->number (re:group-text $match $text 6))))))
+          ($none none))))
+      ($unavailable none))))
+; Compact vitals for one turn: the time since the previous turn (the
+; history's newest turn for the first wake after a start), the machine's
+; load against its CPUs, and memory in use. One view per turn.
 (= (runtime-support:wake-view $iteration)
+   (runtime-support:wake-view-at $iteration (system:wall-time) (runtime-support:machine)))
+(= (runtime-support:wake-view-at $iteration $now $machine)
    (let (WakeViewV1 $last $previous $cached) (get-state &native-wake-view)
      (if (and (== $last (turn:text $iteration)) (!= $cached "")) $cached
-       (let* (($now (system:wall-time)) ($machine (runtime-support:machine))
-              ($view (str:concat (if (> $previous 0)
-                        (str:join "" ("+" (runtime-support:duration (- $now $previous)) " since last turn | ")) "") $machine))
+       (let* (($since (if (> $previous 0) $previous (runtime-support:last-turn)))
+              ($gap (if (== $since none) "" (str:join "" ("+" (runtime-support:duration (- $now $since)) " since last turn"))))
+              ($view (str:join " | " (filter-atom ($gap $machine) $part (!= $part ""))))
               ($_ (change-state! &native-wake-view (WakeViewV1 (turn:text $iteration) $now $view))))
          (if (== $view "") "unavailable" $view)))))
 (= (runtime-support:cgroup)

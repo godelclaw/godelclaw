@@ -1,0 +1,13 @@
+{
+ "about": "SHA-256 of each fixture file (tests/fixtures/file_read_tree.sh) decoded as UTF-8 with U+FFFD for each malformed sequence, as Python 3.12's decode(errors=\"replace\") answers; recorded before the Python reader was retired.",
+ "decoded_sha256": {
+  "all-byte-pairs": "a02cd1f57a0c4514c70179368e9f58378d41612150209b10a0d163b2bd12f12a",
+  "boundary": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+  "large": "baa7a6d36ffa957552df230235c2d51d735f28d49c58a5f3438a3a973a25a37d",
+  "long-line": "f0cee97781c260d2aaf49bc7932602ab13c6edeb70579daa553eb3f110aaba94",
+  "malformed": "a7747997ee15402e184ead163c118763dd50274aca7f038d68c38772f4e429ae",
+  "nul": "c118f9c8ac84dc3387f131376eea79d7b8b657c1a4c288ebdd4453f91b92edd5",
+  "random": "cc1a61a1054d9280236f72bad09f405796383f6b665cbe35c55c86246fa794cd",
+  "unicode": "0d54fcbcb7c1feb46a24e64e1532a22ea55e78c8a266aedfff8ce43ab74c73db"
+ }
+}

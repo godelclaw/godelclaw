@@ -1,5 +1,6 @@
 ; The Telegram control responder's input handling, each case in a clean home:
-; control commands are recognized from their declarations; only ordinary
+; control commands are recognized from their declarations, so /steer, which
+; none declares, is ordinary input with no control authority; only ordinary
 ; operator input counts as awaiting cognition; a parse is cached only while
 ; its task is ordinary input on the page; a ledger that does not answer gives
 ; its error, no notice key and no delay; the Claude Code authorization command
@@ -33,12 +34,15 @@
            "!(println! (OTHER (ti:control-text? \"/activity@OtherBot\")))"
            "!(println! (CASE (ti:control-text? \"  /ACTIVITY@OtherBot  \")))"
            "!(println! (UNKNOWN (ti:control-text? \"/custom question\")))"
+           "!(println! (STEER (ti:control-text? \"/steer correction\")))"
+           "!(println! (STEER-OTHER (ti:control-text? \"/steer@other_bot\")))"
            "!(println! (ORDINARY (ti:control-text? \"please explain /activity\")))"
            "!(println! (EMPTY (ti:control-text? \"\")))"
            "(tg-cmd:command \"/new_control\" delegated \"fixture declaration\")"
            "!(println! (DYNAMIC (ti:control-text? \"/new_control@OtherBot\")))" "")) ()))
          ($_ (nt:require commands-are-recognized-from-their-declarations
-               (ci:has-all $commands ("(OTHER true)" "(CASE true)" "(DYNAMIC true)" "(UNKNOWN false)" "(ORDINARY false)" "(EMPTY false)"))))
+               (ci:has-all $commands ("(OTHER true)" "(CASE true)" "(DYNAMIC true)" "(UNKNOWN false)" "(ORDINARY false)" "(EMPTY false)"
+                                  "(STEER false)" "(STEER-OTHER false)"))))
          ($tasks (str:join " " ((ci:input-task "foreign" "operator" "text" "/activity@OtherBot")
                                 (ci:input-task "caption" "operator" "caption" " /ACTIVITY@OtherBot")
                                 (ci:input-task "ordinary" "operator" "text" "a real question")

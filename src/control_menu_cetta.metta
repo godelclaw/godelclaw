@@ -69,8 +69,11 @@
          (if (and (== $prefix "model") (== (car-atom $tail) "providers")) (menu:page "model" 0 "")
            (let* (($provider (if (== (size-atom $tail) 2) (car-atom $tail) ""))
                   ($offset (str:string->number (if (== $provider "") (car-atom $tail) (index-atom $tail 1)))))
-             (if (== (get-type $offset) Number) (menu:page $prefix $offset $provider)
-               (Error settings-menu (Unsolvable invalid-page)))))))))
+             (if (not (== (get-type $offset) Number)) (Error settings-menu (Unsolvable invalid-page))
+               ; A route names a provider the menu knows; an unknown one is refused, not an empty page.
+               (if (and (!= $provider "") (== (menu:provider-label $provider) ""))
+                 (Error settings-menu (Unsolvable unknown-model-provider))
+                 (menu:page $prefix $offset $provider)))))))))
 (= (menu:button-choice $argument)
    (let $parts (str:split ":" $argument)
      (if (!= (size-atom $parts) 2) (Error settings-menu (Unsolvable invalid-choice))

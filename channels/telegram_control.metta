@@ -191,7 +191,7 @@
                                        (tc:energy-menu $reply))))))
                   ($other (format-args "unknown button {}" ($data)))))))))))
 
-; Claude Code's authorization is the flag file the bridge (src/claude_bridge.py)
+; Claude Code's authorization is the flag file the bridge (src/claude_bridge_cetta.metta)
 ; reads before every headless turn; the command turns it over.
 (= (tc:claude-code-flag) (system:expanduser "~/.config/pettaclaw/claude_code_authorized"))
 (= (tc:claude-code-authorized? $flag)

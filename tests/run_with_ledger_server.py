@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run unittest modules with METTACLAW_INPUT_LEDGER_SOCKET on a temporary native ledger server.
 
-    CETTA_BIN=<cetta> python3 run_with_ledger_server.py test_input_ack test_input_ledger ...
+    CETTA_BIN=<cetta> python3 run_with_ledger_server.py test_input_ledger ...
 
 Starts src/input_ledger_server.metta (CETTA_DB_SERVER_MODULE overrides it) on a
 fresh store in a new temporary directory, runs `python3 -m unittest <modules>`
@@ -55,4 +55,4 @@ def main(modules):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:] or ["test_input_ack", "test_input_ledger", "test_input_ledger_remote"]))
+    sys.exit(main(sys.argv[1:] or ["test_input_ledger", "test_input_ledger_remote"]))

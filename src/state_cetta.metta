@@ -32,9 +32,23 @@
 (= (pins:append $lines $line)
    (if (== $lines ()) ($line)
      (cons-atom (car-atom $lines) (pins:append (cdr-atom $lines) $line))))
+; Pin and unpin read, change and replace the file under an exclusive lock
+; beside it, so engines pinning at once keep every pin.
+(= (pins:locked $request $failure)
+   (let* (($path (pins:path)) ($directory (path:dirname $path))
+          ($_ (if (or (== $directory "") (fs:exists $directory)) True (fs:make-directories $directory 504)))
+          ($owner (fs:open-write (str:concat $path ".lock") ("create" "append") 384)))
+     (case $owner
+       (((NativeHandle "file-writer" $id)
+         (case (fs:lock $owner exclusive)
+           ((fs:locked (let $result (pins:held $request) (let $_ (fs:close $owner) $result)))
+            ($bad (let $_ (fs:close $owner) (str:concat $failure "the pins lock is unavailable"))))))
+        ($bad (str:concat $failure "the pins lock cannot be opened"))))))
 (= (pins:cetta-pin $text)
    (let $line (str:trim (str:join " " (str:split "\n" $text)))
      (if (== $line "") "pin failed: empty text"
+       (pins:locked (PinsPin $line) "pin failed: "))))
+(= (pins:held (PinsPin $line))
        (case (pins:read)
          (((PinsReadFailure $why) (str:concat "pin failed: " (repr $why)))
           ($old
@@ -44,7 +58,7 @@
               (case (pins:save $next)
                 ((("written" $_ $_ $_ $_)
                   (str:join "" ("pinned " (repr (length $next)) " — survives restarts")))
-                 ($error (str:concat "pin failed: " (repr $error))))))))))))
+                 ($error (str:concat "pin failed: " (repr $error))))))))))
 (= (pins:without $lines $fragment)
    (if (== $lines ()) ()
      (case (str:find (str:lower (car-atom $lines)) (str:lower $fragment))
@@ -54,6 +68,8 @@
 (= (pins:cetta-unpin $fragment)
    (let $text (str:trim $fragment)
      (if (== $text "") "unpin failed: give a fragment of the pin to remove"
+       (pins:locked (PinsUnpin $text) "unpin failed: "))))
+(= (pins:held (PinsUnpin $text))
        (case (pins:read)
          (((PinsReadFailure $why) (str:concat "unpin failed: " (repr $why)))
           ($old
@@ -62,7 +78,7 @@
               (case (pins:save $kept)
                 ((("written" $_ $_ $_ $_)
                   (str:join "" ("unpinned " (repr $removed) ", " (repr (length $kept)) " remain")))
-                 ($error (str:concat "unpin failed: " (repr $error))))))))))))
+                 ($error (str:concat "unpin failed: " (repr $error))))))))))
 (= (pins:cetta-view)
    (case (pins:read)
      (((PinsReadFailure $why) (str:concat "pins unavailable: " (repr $why)))

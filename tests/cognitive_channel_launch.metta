@@ -37,5 +37,98 @@
             (case $refused (((proc:exited 78 $_ $_) (not (fs:is-file $capture))) ($other False)))))
           ($_ (nt:require invalid-admission-does-not-publish-menu (== (nq:posts $world) 1)))
           ($_ (nq:close $world))) NativeChannelLaunchPassedV1))
+; What each launch declares and passes on: an agent name only when usable;
+; bare group commands unless a setting (environment or the instance's .env)
+; turns them off; private chats only when allowed; chats, owners and private
+; access added by the access policy's facts; a menu of every declared command,
+; and a menu that cannot be submitted never stops the launch.
+(= (channel-launch-case:run $root $command $env $world $extra)
+   (let* (($capture (nq:path $world "channel-capture"))
+          ($_ (if (fs:exists $capture) (fs:remove $capture) True))
+          ($run (proc:run $command $root (nq:overlay-env $env $extra) 15000 65536)))
+     (case $run
+       (((proc:exited 0 $out $err)
+         (LaunchV1 (fs:read-text $capture) (fs:read-text (nq:path $world "commands.metta"))))
+        ($other (LaunchFailedV1 $other))))))
+(= (channel-launch-case:flag-values $argv $flag)
+   (let $lines (str:split "\n" $argv)
+     (channel-launch-case:after $lines $flag)))
+(= (channel-launch-case:after $lines $flag)
+   (if (or (== $lines ()) (== (cdr-atom $lines) ())) ()
+     (let $rest (channel-launch-case:after (cdr-atom $lines) $flag)
+       (if (== (car-atom $lines) $flag) (cons-atom (car-atom (cdr-atom $lines)) $rest) $rest))))
+(= (channel-launch-case:declares? $launch $line)
+   (case $launch (((LaunchV1 $argv $commands) (nt:contains $commands $line)) ($o (Unlaunched $o)))))
+(= (channel-launch-case:argv $launch) (case $launch (((LaunchV1 $argv $commands) $argv) ($o ""))))
+(= (channel-cases:run)
+   (let* (($root (system:cwd)) ($core (nt:required-env "NATIVE_TEST_CORE"))
+          ($world (nq:world $root $core $core (nt:required-env "NATIVE_TEST_ARTIFACTS") (nt:required-env "NATIVE_TEST_HTTP_FIXTURE") "channel-cases"))
+          ($directory (nq:path $world "")) ($fixture (nt:required-env "NATIVE_CORE_PEER"))
+          ($credential (nq:path $world "unit-credential")) ($_ (fs:write $credential "unit-token\n"))
+          ((NativeProviderTestWorldV1 $_ $_ $_ $_ $_ $base $_ $_ $_ $_) $world)
+          ($_ (fs:write (nq:path $world "response.body") "{\"ok\":true}"))
+          ($env (preq:append (nt:environment $directory)
+            (("CETTA_BIN" (path:join $core "cetta")) ("CETTA_TELEGRAM_SERVICE_BIN" $fixture) ("CETTA_TELEGRAM_SERVICE_ROOT" $core)
+             ("METTACLAW_TELEGRAM_OPERATOR_IDS" "7") ("METTACLAW_TELEGRAM_PRIMARY_CHAT_ID" "42")
+             ("METTACLAW_TELEGRAM_MENU_ORIGIN" $base) ("NATIVE_CHANNEL_CAPTURE" (nq:path $world "channel-capture")))))
+          ($command ("bash" "-c" "exec 3</dev/null; exec 4</dev/null; exec \"$@\"" "native-fixture"
+                     "bash" (path:join $root "scripts/start_telegram_service.sh") "--repo" $root "--state" $directory "--credential" $credential))
+          ($shared (fs:read-text (path:join $root "channels/telegram_commands.metta")))
+          ($_ (nt:require the-shared-file-declares-no-agent-and-no-bare-commands
+                (and (not (nt:contains $shared "\n(tg-cmd:agent")) (not (nt:contains $shared "\n(tg-cmd:bare-in-groups)")))))
+          ($named (map-atom ("Gödel" "Lila") $name
+                    (channel-launch-case:declares? (channel-launch-case:run $root $command $env $world (("METTACLAW_AGENT_NAME" $name)))
+                      (str:join "" ("\n(tg-cmd:agent " (repr $name) ")")))))
+          ($_ (nt:require each-agent-gets-its-own-name (== $named (True True))))
+          ($unusable (map-atom ("" "Bad\"Name" "back\\slash" "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" "tab\there") $name
+                       (channel-launch-case:declares? (channel-launch-case:run $root $command $env $world (("METTACLAW_AGENT_NAME" $name)))
+                         "\n(tg-cmd:agent ")))
+          ($_ (nt:require an-unusable-name-is-left-out (== $unusable (False False False False False))))
+          ($bare (map-atom ("" "1" "0" "false" "off" "no") $value
+                   (channel-launch-case:declares? (channel-launch-case:run $root $command $env $world (("METTACLAW_TELEGRAM_BARE_GROUP_COMMANDS" $value)))
+                     "(tg-cmd:bare-in-groups)")))
+          ($_ (nt:require bare-group-commands-unless-turned-off (== $bare (True True False False False False))))
+          ($repo (path:join $directory "instance"))
+          ($_ (fs:make-directories $repo 448))
+          ($_ (map-atom ("scripts" "src" "channels" "config" "lib") $part
+                (proc:run ("ln" "-sfn" (path:join $root $part) (path:join $repo $part)) $directory (nt:environment $directory) 5000 4096)))
+          ($_ (fs:write (path:join $repo ".env") "export METTACLAW_TELEGRAM_BARE_GROUP_COMMANDS='0'\n"))
+          ($instance (proc:run ("bash" "-c" "exec 3</dev/null; exec 4</dev/null; exec \"$@\"" "native-fixture"
+                                "bash" (path:join $root "scripts/start_telegram_service.sh") "--repo" $repo "--state" $directory "--credential" $credential)
+                               $root $env 15000 65536))
+          ($_ (nt:require the-instance-env-setting-is-read
+                (and (case $instance (((proc:exited 0 $o $e) True) ($x False)))
+                     (not (nt:contains (fs:read-text (nq:path $world "commands.metta")) "(tg-cmd:bare-in-groups)")))))
+          ($private (map-atom ("" "0" "1" "true") $value
+                      (nt:contains (channel-launch-case:argv (channel-launch-case:run $root $command $env $world (("METTACLAW_TELEGRAM_ALLOW_PRIVATE" $value))))
+                                   "--allow-private")))
+          ($_ (nt:require private-chats-only-when-allowed (== $private (False False True True))))
+          ($facts (path:join $directory "access.metta"))
+          ($_ (fs:write $facts "; who else\n(owner (sender telegram \"66\"))\n(allow-sender everywhere (sender telegram \"55\"))\n(access (group telegram \"-400\") groups open)\n(access (channel telegram) direct open)\n"))
+          ($with-facts (channel-launch-case:argv (channel-launch-case:run $root $command $env $world (("METTACLAW_ACCESS_POLICY_PATH" $facts)))))
+          ($_ (nt:require the-facts-add-chats-owners-and-private-chats
+                (and (== (sort-atom (channel-launch-case:flag-values $with-facts "--chat")) (sort-atom ("-400" "42" "55" "66")))
+                (and (== (sort-atom (channel-launch-case:flag-values $with-facts "--operator")) (sort-atom ("66" "7")))
+                     (nt:contains $with-facts "--allow-private")))))
+          ($_ (fs:write $facts "(access (channel telegram) direct allowlist)\n"))
+          ($_ (nt:require the-facts-can-keep-private-chats-out
+                (not (nt:contains (channel-launch-case:argv (channel-launch-case:run $root $command $env $world
+                                     (("METTACLAW_ACCESS_POLICY_PATH" $facts) ("METTACLAW_TELEGRAM_ALLOW_PRIVATE" "1"))))
+                                  "--allow-private"))))
+          ($_ (fs:write $facts "(owner (sender telegram 66))\n"))
+          ($_ (nt:require a-malformed-fact-refuses-the-launch
+                (case (channel-launch-case:run $root $command $env $world (("METTACLAW_ACCESS_POLICY_PATH" $facts)))
+                  (((LaunchFailedV1 $why) True) ($o False)))))
+          ($menu (json:parse (fs:read-text (nq:path $world "menu.json"))))
+          ($names (map-atom (json:array-items (json:get $menu "commands")) $c (json:get $c "command")))
+          ($_ (nt:require the-menu-lists-every-declared-command-help-first
+                (and (== (car-atom $names) "help")
+                (and (== (size-atom $names) (size-atom (unique-atom $names)))
+                     (== (size-atom $names) (- (size-atom (str:split "(tg-cmd:command " $shared)) 1))))))
+          ($_ (fs:write (nq:path $world "status") "500"))
+          ($_ (nt:require an-unsubmitted-menu-never-stops-the-launch
+                (case (channel-launch-case:run $root $command $env $world ()) (((LaunchV1 $a $c) True) ($o False)))))
+          ($_ (nq:close $world))) NativeChannelCasesPassedV1))
 !(nt:require native-channel-launch-completed (== (collapse (channel-flow:run)) (NativeChannelLaunchPassedV1)))
+!(nt:require native-channel-cases-completed (== (collapse (channel-cases:run)) (NativeChannelCasesPassedV1)))
 !(println! NATIVE_CHANNEL_LAUNCH_PASSED)

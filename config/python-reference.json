@@ -540,14 +540,6 @@
    ],
    "used_by": 1
   },
-  "src/claude_bridge.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "package": "host-tools",
-   "native": [
-    "src/claude_bridge_cetta.metta"
-   ]
-  },
   "src/cognitive_health.py": {
    "fate": "delete-with-native-coverage",
    "phase": 5,
@@ -613,7 +605,7 @@
     "src/effect_receipts_cetta.metta",
     "src/effect_receipts_native.metta"
    ],
-   "used_by": 4
+   "used_by": 3
   },
   "src/engine_modes.py": {
    "fate": "delete-with-native-coverage",
@@ -750,7 +742,7 @@
    "native": [
     "src/llm_policy_cetta.metta"
    ],
-   "used_by": 5
+   "used_by": 4
   },
   "src/loop_modes.py": {
    "fate": "delete-with-native-coverage",
@@ -760,14 +752,6 @@
     "src/loop_modes_cetta.metta"
    ],
    "used_by": 3
-  },
-  "src/mcp_bridge.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "package": "host-tools",
-   "native": [
-    "src/mcp_bridge_cetta.metta"
-   ]
   },
   "src/memory_health.py": {
    "fate": "delete-with-native-coverage",
@@ -893,11 +877,6 @@
    ],
    "used_by": 1
   },
-  "src/start_telegram_service.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "package": "channels"
-  },
   "src/stimulus_frontier.py": {
    "fate": "delete-with-native-coverage",
    "phase": 5,
@@ -966,18 +945,13 @@
    "native": [
     "src/tool_output_cetta.metta"
    ],
-   "used_by": 4
+   "used_by": 2
   },
   "src/topic_jobs.py": {
    "fate": "delete-with-native-coverage",
    "phase": 5,
    "package": "host-tools",
    "used_by": 3
-  },
-  "src/usage_history.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "package": "provider"
   },
   "tests/action_window_probe.py": {
    "fate": "delete-with-native-coverage",
@@ -1264,15 +1238,6 @@
    "sweep": "pass",
    "support_for": 1
   },
-  "tests/file_read_probe.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "src/fsops.py"
-   ],
-   "sweep": "pass",
-   "support_for": 1
-  },
   "tests/fixtures/gateway_tool.py": {
    "fate": "delete-with-native-coverage",
    "phase": 5,
@@ -1491,13 +1456,13 @@
    "fate": "port-test",
    "phase": 7,
    "sweep": "pass",
-   "support_for": 16
+   "support_for": 15
   },
   "tests/isolated_env.py": {
    "fate": "port-test",
    "phase": 7,
    "sweep": "pass",
-   "support_for": 28
+   "support_for": 26
   },
   "tests/mode_state_cwd_check.py": {
    "fate": "port-tool",
@@ -1527,7 +1492,7 @@
     "tests/oracles/provider_sqlite/llm_policy.py"
    ],
    "sweep": "pass",
-   "support_for": 33
+   "support_for": 27
   },
   "tests/native_ledger_client.py": {
    "fate": "port-test",
@@ -1679,15 +1644,11 @@
    "sweep": "fail",
    "runs": [
     "tests/test_action_window_native.py",
-    "tests/test_commitment_projection.py",
     "tests/test_context_bundle_native.py",
     "tests/test_context_sources.py",
     "tests/test_pins_context_native.py",
-    "tests/test_project_capabilities.py",
-    "tests/test_project_evidence.py",
     "tests/test_small_views_cold_bench.py",
-    "tests/test_small_views_native.py",
-    "tests/test_task_phase.py"
+    "tests/test_small_views_native.py"
    ]
   },
   "tests/run_with_ledger_server.py": {
@@ -1703,9 +1664,8 @@
   },
   "tests/runtime_spool.py": {
    "fate": "port-test",
-   "phase": 4,
-   "sweep": "pass",
-   "support_for": 1
+   "phase": 2,
+   "sweep": "pass"
   },
   "tests/small_views_bench.py": {
    "fate": "delete-with-native-coverage",
@@ -1857,30 +1817,11 @@
    ],
    "sweep": "pass"
   },
-  "tests/test_activity_wait_persistence.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 5,
-   "covers": [
-    "modes/omega/upstream/src/helper.py",
-    "src/helper.py"
-   ],
-   "sweep": "pass"
-  },
   "tests/test_activity_worker.py": {
    "fate": "delete-with-native-coverage",
    "phase": 4,
    "covers": [
     "src/activity_worker.py"
-   ],
-   "sweep": "pass"
-  },
-  "tests/test_atlas_mcp_integration.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "src/context_sources.py",
-    "src/effect_receipts.py",
-    "src/mcp_bridge.py"
    ],
    "sweep": "pass"
   },
@@ -2075,17 +2016,6 @@
    ],
    "sweep": "pass"
   },
-  "tests/test_command_arity.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 5,
-   "covers": [
-    "modes/omega/upstream/src/helper.py",
-    "src/command_arity.py",
-    "src/helper.py",
-    "src/skills_help.py"
-   ],
-   "sweep": "pass"
-  },
   "tests/test_command_batches_native.py": {
    "fate": "delete-with-native-coverage",
    "phase": 5,
@@ -2106,14 +2036,6 @@
    "phase": 5,
    "covers": [
     "scripts/check_commentary_boundary.py"
-   ],
-   "sweep": "pass"
-  },
-  "tests/test_commitment_projection.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "src/commitment_projection.py"
    ],
    "sweep": "pass"
   },
@@ -2247,30 +2169,6 @@
    ],
    "sweep": "pass"
   },
-  "tests/test_control_menu_pages.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 5,
-   "covers": [
-    "modes/omega/upstream/src/helper.py",
-    "src/helper.py"
-   ],
-   "sweep": "pass"
-  },
-  "tests/test_cooperative_attention.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "channels/telegram.py",
-    "src/attention.py",
-    "src/durable_telegram.py",
-    "src/execution_gateway/cetta_worker.py",
-    "src/input_ack.py",
-    "src/llm_policy.py",
-    "src/observed_strategy.py",
-    "tests/oracles/provider_sqlite/llm_policy.py"
-   ],
-   "sweep": "pass"
-  },
   "tests/test_durable_journal_migration.py": {
    "fate": "port-test",
    "phase": 5,
@@ -2311,14 +2209,6 @@
    "sweep": "pass",
    "harness": "tests/effect_receipts_bundle.py"
   },
-  "tests/test_engine_modes.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 5,
-   "covers": [
-    "src/engine_modes.py"
-   ],
-   "sweep": "pass"
-  },
   "tests/test_execution_gateway.py": {
    "fate": "delete-with-native-coverage",
    "phase": 4,
@@ -2331,20 +2221,6 @@
     "tests/fixtures/gateway_tool.py"
    ],
    "sweep": "fail"
-  },
-  "tests/test_file_read_engine.py": {
-   "fate": "port-test",
-   "phase": 2,
-   "sweep": "pass"
-  },
-  "tests/test_fsops.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "src/fsops.py",
-    "src/goals.py"
-   ],
-   "sweep": "pass"
   },
   "tests/test_fuel_cetta.py": {
    "fate": "delete-with-native-coverage",
@@ -2542,19 +2418,6 @@
    ],
    "sweep": "pass"
   },
-  "tests/test_input_ack.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "src/durable_telegram.py",
-    "src/execution_gateway/cetta_worker.py",
-    "src/input_ack.py",
-    "src/llm_policy.py",
-    "src/observed_strategy.py",
-    "tests/oracles/provider_sqlite/llm_policy.py"
-   ],
-   "sweep": "fail"
-  },
   "tests/test_input_ack_native.py": {
    "fate": "delete-with-native-coverage",
    "phase": 5,
@@ -2666,19 +2529,6 @@
    ],
    "sweep": "pass"
   },
-  "tests/test_llm_policy.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "src/durable_telegram.py",
-    "src/execution_gateway/cetta_worker.py",
-    "src/input_ack.py",
-    "src/llm_policy.py",
-    "src/observed_strategy.py",
-    "tests/oracles/provider_sqlite/llm_policy.py"
-   ],
-   "sweep": "pass"
-  },
   "tests/test_llm_policy_cetta.py": {
    "fate": "delete-with-native-coverage",
    "phase": 4,
@@ -2698,30 +2548,6 @@
    "phase": 5,
    "covers": [
     "src/loop_modes.py"
-   ],
-   "sweep": "pass"
-  },
-  "tests/test_mcp_bridge_atlas.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "src/mcp_bridge.py"
-   ],
-   "sweep": "pass"
-  },
-  "tests/test_memory_health.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 5,
-   "covers": [
-    "src/memory_health.py"
-   ],
-   "sweep": "pass"
-  },
-  "tests/test_memory_health_native.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 5,
-   "covers": [
-    "src/memory_health.py"
    ],
    "sweep": "pass"
   },
@@ -2977,22 +2803,6 @@
    ],
    "sweep": "pass"
   },
-  "tests/test_operator_commands.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "src/start_telegram_service.py"
-   ],
-   "sweep": "pass"
-  },
-  "tests/test_pins.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "src/pins.py"
-   ],
-   "sweep": "pass"
-  },
   "tests/test_pins_context_native.py": {
    "fate": "delete-with-native-coverage",
    "phase": 4,
@@ -3024,22 +2834,6 @@
     "src/process_supervision.py"
    ],
    "sweep": "pass"
-  },
-  "tests/test_project_capabilities.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "src/project_capabilities.py"
-   ],
-   "sweep": "pass"
-  },
-  "tests/test_project_evidence.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "src/project_evidence.py"
-   ],
-   "sweep": "fail"
   },
   "tests/test_provider_admission_cetta.py": {
    "fate": "port-test",
@@ -3322,15 +3116,6 @@
    ],
    "sweep": "pass"
   },
-  "tests/test_rest_timer.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 5,
-   "covers": [
-    "modes/omega/upstream/src/helper.py",
-    "src/helper.py"
-   ],
-   "sweep": "pass"
-  },
   "tests/test_retry_wake_kernels.py": {
    "fate": "port-test",
    "phase": 5,
@@ -3370,20 +3155,6 @@
     "tests/oracles/provider_sqlite/llm_policy.py"
    ],
    "sweep": "fail"
-  },
-  "tests/test_runtime_event_identity.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "channels/telegram.py",
-    "src/durable_telegram.py",
-    "src/execution_gateway/cetta_worker.py",
-    "src/input_ack.py",
-    "src/llm_policy.py",
-    "src/observed_strategy.py",
-    "tests/oracles/provider_sqlite/llm_policy.py"
-   ],
-   "sweep": "pass"
   },
   "tests/test_runtime_service_probe.py": {
    "fate": "port-test",
@@ -3573,14 +3344,6 @@
    ],
    "sweep": "pass"
   },
-  "tests/test_task_phase.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "src/task_phase.py"
-   ],
-   "sweep": "pass"
-  },
   "tests/test_telegram_clock.py": {
    "fate": "delete-with-native-coverage",
    "phase": 5,
@@ -3625,13 +3388,12 @@
   },
   "tests/test_telegram_metta_client.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
+   "phase": 5,
    "covers": [
     "channels/telegram.py",
     "src/durable_telegram.py",
     "src/input_ack.py",
-    "src/loop_modes.py",
-    "src/start_telegram_service.py"
+    "src/loop_modes.py"
    ],
    "sweep": "fail"
   },
@@ -3672,10 +3434,8 @@
   },
   "tests/test_tool_output.py": {
    "fate": "delete-with-native-coverage",
-   "phase": 4,
+   "phase": 5,
    "covers": [
-    "src/claude_bridge.py",
-    "src/mcp_bridge.py",
     "src/tool_output.py"
    ],
    "sweep": "pass"
@@ -3685,20 +3445,6 @@
    "phase": 5,
    "covers": [
     "src/provider_protocol.py"
-   ],
-   "sweep": "pass"
-  },
-  "tests/test_topic_jobs.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "src/durable_telegram.py",
-    "src/execution_gateway/cetta_worker.py",
-    "src/input_ack.py",
-    "src/llm_policy.py",
-    "src/observed_strategy.py",
-    "src/topic_jobs.py",
-    "tests/oracles/provider_sqlite/llm_policy.py"
    ],
    "sweep": "pass"
   },
@@ -3784,31 +3530,6 @@
     "scripts/build_runtime_release.py",
     "scripts/sync_instances.py",
     "scripts/update_instances.py"
-   ],
-   "sweep": "pass"
-  },
-  "tests/test_usage_history.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "src/durable_telegram.py",
-    "src/execution_gateway/cetta_worker.py",
-    "src/input_ack.py",
-    "src/llm_policy.py",
-    "src/native_llm_host.py",
-    "src/observed_strategy.py",
-    "src/usage_history.py",
-    "tests/oracles/provider_sqlite/llm_policy.py"
-   ],
-   "sweep": "pass"
-  },
-  "tests/test_wake_vitals.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 5,
-   "covers": [
-    "channels/telegram.py",
-    "modes/omega/upstream/src/helper.py",
-    "src/helper.py"
    ],
    "sweep": "pass"
   },

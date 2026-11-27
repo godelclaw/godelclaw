@@ -1,0 +1,1608 @@
+{
+ "about": "Answers of the Python small-view loaders (active_queries, commitment_projection, task_phase, development_state, project_capabilities, project_evidence) after each step, with each step's file operations as shell; recorded before the Python loaders were retired.",
+ "fake_default_inventory": "Languages:\n  petta implemented Native 日 🙂\n  future planned Not yet\nignored implemented no indent",
+ "development_inner_error": "{\"iter_transformations\":{\"error_kind\":\"ValueError\",\"state\":\"unavailable\"},\"schema\":2}",
+ "capability_model_projection": [
+  "petta Native 日 🙂",
+  "unicode λ"
+ ],
+ "cases": [
+  {
+   "name": "active-queries",
+   "source": "active-query-declaration",
+   "setup": [],
+   "steps": [
+    {
+     "script": "",
+     "env": {},
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '[\\0042 x \\0042, \\0042x\\0042, \\0042active-goals\\0042, \\0042\\0346\\0227\\0245\\0360\\0237\\0231\\0202\\0042, \\0042\\0134u001c \\0303\\0251 \\0343\\0200\\0200\\0042, \\0042quote\\0134\\0042\\0134\\0134\\0134n\\0134u0000\\0042]' > '{dir}/METTACLAW_ACTIVE_QUERIES_PATH'",
+     "env": {
+      "METTACLAW_ACTIVE_QUERIES_PATH": "{dir}/METTACLAW_ACTIVE_QUERIES_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '[]' > '{dir}/METTACLAW_ACTIVE_QUERIES_PATH'",
+     "env": {
+      "METTACLAW_ACTIVE_QUERIES_PATH": "{dir}/METTACLAW_ACTIVE_QUERIES_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{}' > '{dir}/METTACLAW_ACTIVE_QUERIES_PATH'",
+     "env": {
+      "METTACLAW_ACTIVE_QUERIES_PATH": "{dir}/METTACLAW_ACTIVE_QUERIES_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '[\\0042 \\0042]' > '{dir}/METTACLAW_ACTIVE_QUERIES_PATH'",
+     "env": {
+      "METTACLAW_ACTIVE_QUERIES_PATH": "{dir}/METTACLAW_ACTIVE_QUERIES_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '[4]' > '{dir}/METTACLAW_ACTIVE_QUERIES_PATH'",
+     "env": {
+      "METTACLAW_ACTIVE_QUERIES_PATH": "{dir}/METTACLAW_ACTIVE_QUERIES_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' 'not json' > '{dir}/METTACLAW_ACTIVE_QUERIES_PATH'",
+     "env": {
+      "METTACLAW_ACTIVE_QUERIES_PATH": "{dir}/METTACLAW_ACTIVE_QUERIES_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '\\0042\\0377\\0042' > '{dir}/METTACLAW_ACTIVE_QUERIES_PATH'",
+     "env": {
+      "METTACLAW_ACTIVE_QUERIES_PATH": "{dir}/METTACLAW_ACTIVE_QUERIES_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '[\\0042recovered\\0042]' > '{dir}/METTACLAW_ACTIVE_QUERIES_PATH'",
+     "env": {
+      "METTACLAW_ACTIVE_QUERIES_PATH": "{dir}/METTACLAW_ACTIVE_QUERIES_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "",
+     "env": {
+      "METTACLAW_ACTIVE_QUERIES_PATH": "{dir}/METTACLAW_ACTIVE_QUERIES_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    }
+   ],
+   "expected": [
+    [
+     "value",
+     "[\"operator-stimulus\",\"active-goals\",\"task-phase\",\"effect-outcomes\",\"source-currentness\"]"
+    ],
+    [
+     "value",
+     "[\"operator-stimulus\",\"active-goals\",\"task-phase\",\"effect-outcomes\",\"source-currentness\",\"x\",\"日🙂\",\"é\",\"quote\\\"\\\\\\n\\u0000\"]"
+    ],
+    [
+     "value",
+     "[\"operator-stimulus\",\"active-goals\",\"task-phase\",\"effect-outcomes\",\"source-currentness\"]"
+    ],
+    [
+     "unavailable"
+    ],
+    [
+     "unavailable"
+    ],
+    [
+     "unavailable"
+    ],
+    [
+     "unavailable"
+    ],
+    [
+     "unavailable"
+    ],
+    [
+     "value",
+     "[\"operator-stimulus\",\"active-goals\",\"task-phase\",\"effect-outcomes\",\"source-currentness\",\"recovered\"]"
+    ],
+    [
+     "value",
+     "[\"operator-stimulus\",\"active-goals\",\"task-phase\",\"effect-outcomes\",\"source-currentness\",\"recovered\"]"
+    ]
+   ],
+   "probes": [
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    []
+   ]
+  },
+  {
+   "name": "commitment",
+   "source": "commitment-state",
+   "setup": [],
+   "steps": [
+    {
+     "script": "",
+     "env": {},
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{\\0042phase\\0042: \\0042need-trust\\0042, \\0042revision\\0042: 3, \\0042finished\\0042: true}' > '{dir}/METTACLAW_COMMITMENT_STATE_PATH'",
+     "env": {
+      "METTACLAW_COMMITMENT_STATE_PATH": "{dir}/METTACLAW_COMMITMENT_STATE_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{\\0042phase\\0042: \\0042stopped\\0042, \\0042effects\\0042: \\0042 +1_234 \\0042, \\0042finished\\0042: []}' > '{dir}/METTACLAW_COMMITMENT_STATE_PATH'",
+     "env": {
+      "METTACLAW_COMMITMENT_STATE_PATH": "{dir}/METTACLAW_COMMITMENT_STATE_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{\\0042phase\\0042: \\0042goal-satisfied\\0042, \\0042revision\\0042: -2.8, \\0042finished\\0042: \\0042\\0346\\0227\\0245\\0042}' > '{dir}/METTACLAW_COMMITMENT_STATE_PATH'",
+     "env": {
+      "METTACLAW_COMMITMENT_STATE_PATH": "{dir}/METTACLAW_COMMITMENT_STATE_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{\\0042phase\\0042: \\0042need-launch\\0042, \\0042revision\\0042: \\0042 +\\0331\\0241_\\0357\\0274\\0222\\0331\\0243 \\0042}' > '{dir}/METTACLAW_COMMITMENT_STATE_PATH'",
+     "env": {
+      "METTACLAW_COMMITMENT_STATE_PATH": "{dir}/METTACLAW_COMMITMENT_STATE_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{\\0042phase\\0042: \\0042need-launch\\0042, \\0042revision\\0042: \\0042\\0134u001c2\\0042}' > '{dir}/METTACLAW_COMMITMENT_STATE_PATH'",
+     "env": {
+      "METTACLAW_COMMITMENT_STATE_PATH": "{dir}/METTACLAW_COMMITMENT_STATE_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{\\0042phase\\0042: \\0042unknown \\0346\\0227\\0245\\0042}' > '{dir}/METTACLAW_COMMITMENT_STATE_PATH'",
+     "env": {
+      "METTACLAW_COMMITMENT_STATE_PATH": "{dir}/METTACLAW_COMMITMENT_STATE_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '[]' > '{dir}/METTACLAW_COMMITMENT_STATE_PATH'",
+     "env": {
+      "METTACLAW_COMMITMENT_STATE_PATH": "{dir}/METTACLAW_COMMITMENT_STATE_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{' > '{dir}/METTACLAW_COMMITMENT_STATE_PATH'",
+     "env": {
+      "METTACLAW_COMMITMENT_STATE_PATH": "{dir}/METTACLAW_COMMITMENT_STATE_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{\\0042phase\\0042: \\0042need-create\\0042}' > '{dir}/METTACLAW_COMMITMENT_STATE_PATH'",
+     "env": {
+      "METTACLAW_COMMITMENT_STATE_PATH": "{dir}/METTACLAW_COMMITMENT_STATE_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    }
+   ],
+   "expected": [
+    [
+     "value",
+     ""
+    ],
+    [
+     "value",
+     "phase=need-trust revision=3 finished=true"
+    ],
+    [
+     "value",
+     "phase=stopped revision=1234 finished=false"
+    ],
+    [
+     "value",
+     "phase=goal-satisfied revision=-2 finished=true"
+    ],
+    [
+     "value",
+     "phase=need-launch revision=123 finished=false"
+    ],
+    [
+     "unavailable"
+    ],
+    [
+     "unavailable"
+    ],
+    [
+     "unavailable"
+    ],
+    [
+     "unavailable"
+    ],
+    [
+     "value",
+     "phase=need-create revision=0 finished=false"
+    ]
+   ],
+   "probes": [
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    []
+   ]
+  },
+  {
+   "name": "task-phase",
+   "source": "task-phase",
+   "setup": [],
+   "steps": [
+    {
+     "script": "",
+     "env": {},
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{\\0042schema\\0042: 1, \\0042task_id\\0042: \\0042\\0346\\0227\\0245\\0360\\0237\\0231\\0202\\0042, \\0042revision\\0042: 4, \\0042evidence_revision\\0042: \\0042r\\0134\\0134\\0134\\0042\\0042, \\0042phases\\0042: {\\0042z\\0042: {\\0042status\\0042: \\0042pending\\0042}, \\0042\\0346\\0227\\0245\\0042: {\\0042status\\0042: \\0042active\\0042}, \\0042a\\0042: {\\0042status\\0042: \\0042completed\\0042}, \\0042ignored\\0042: []}}' > '{dir}/METTACLAW_TASK_PHASE_PATH'",
+     "env": {
+      "METTACLAW_TASK_PHASE_PATH": "{dir}/METTACLAW_TASK_PHASE_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{\\0042schema\\0042: 1, \\0042phases\\0042: {\\0042b\\0042: {\\0042status\\0042: \\0042active\\0042}, \\0042a\\0042: {\\0042status\\0042: \\0042active\\0042}}}' > '{dir}/METTACLAW_TASK_PHASE_PATH'",
+     "env": {
+      "METTACLAW_TASK_PHASE_PATH": "{dir}/METTACLAW_TASK_PHASE_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{\\0042schema\\0042: 1, \\0042phases\\0042: {\\0042\\0360\\0237\\0231\\0202\\0042: {\\0042status\\0042: \\0042completed\\0042}}}' > '{dir}/METTACLAW_TASK_PHASE_PATH'",
+     "env": {
+      "METTACLAW_TASK_PHASE_PATH": "{dir}/METTACLAW_TASK_PHASE_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{\\0042schema\\0042: true, \\0042task_id\\0042: [true, null, {\\0042\\0346\\0227\\0245\\0042: \\0042quote\\0047\\0134\\0042\\0134n\\0134u001c\\0343\\0200\\0200\\0042}], \\0042revision\\0042: null, \\0042evidence_revision\\0042: {\\0042a\\0042: \\0042it\\0047s\\0042, \\0042b\\0042: \\0042\\0134u0000\\0360\\0237\\0231\\0202\\0356\\0200\\0200\\0042}}' > '{dir}/METTACLAW_TASK_PHASE_PATH'",
+     "env": {
+      "METTACLAW_TASK_PHASE_PATH": "{dir}/METTACLAW_TASK_PHASE_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{\\0042schema\\0042: 1, \\0042revision\\0042: 1.0}' > '{dir}/METTACLAW_TASK_PHASE_PATH'",
+     "env": {
+      "METTACLAW_TASK_PHASE_PATH": "{dir}/METTACLAW_TASK_PHASE_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{\\0042schema\\0042: 1, \\0042revision\\0042: 1e+20}' > '{dir}/METTACLAW_TASK_PHASE_PATH'",
+     "env": {
+      "METTACLAW_TASK_PHASE_PATH": "{dir}/METTACLAW_TASK_PHASE_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{\\0042schema\\0042: 1, \\0042revision\\0042: 1000000000000000.0}' > '{dir}/METTACLAW_TASK_PHASE_PATH'",
+     "env": {
+      "METTACLAW_TASK_PHASE_PATH": "{dir}/METTACLAW_TASK_PHASE_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{\\0042schema\\0042: 1, \\0042revision\\0042: 100000000000000.0}' > '{dir}/METTACLAW_TASK_PHASE_PATH'",
+     "env": {
+      "METTACLAW_TASK_PHASE_PATH": "{dir}/METTACLAW_TASK_PHASE_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{\\0042schema\\0042: 1, \\0042revision\\0042: 0.0001}' > '{dir}/METTACLAW_TASK_PHASE_PATH'",
+     "env": {
+      "METTACLAW_TASK_PHASE_PATH": "{dir}/METTACLAW_TASK_PHASE_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{\\0042schema\\0042: 1, \\0042revision\\0042: 1e-05}' > '{dir}/METTACLAW_TASK_PHASE_PATH'",
+     "env": {
+      "METTACLAW_TASK_PHASE_PATH": "{dir}/METTACLAW_TASK_PHASE_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{\\0042schema\\0042: 1, \\0042revision\\0042: 1e-07}' > '{dir}/METTACLAW_TASK_PHASE_PATH'",
+     "env": {
+      "METTACLAW_TASK_PHASE_PATH": "{dir}/METTACLAW_TASK_PHASE_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{\\0042schema\\0042: 1, \\0042revision\\0042: -1000000000000000.0}' > '{dir}/METTACLAW_TASK_PHASE_PATH'",
+     "env": {
+      "METTACLAW_TASK_PHASE_PATH": "{dir}/METTACLAW_TASK_PHASE_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{\\0042schema\\0042: 1, \\0042revision\\0042: 1.2345678901234567}' > '{dir}/METTACLAW_TASK_PHASE_PATH'",
+     "env": {
+      "METTACLAW_TASK_PHASE_PATH": "{dir}/METTACLAW_TASK_PHASE_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{\\0042schema\\0042:1,\\0042phases\\0042:{\\0042a\\0042:{\\0042status\\0042:\\0042active\\0042},\\0042a\\0042:{\\0042status\\0042:\\0042pending\\0042}}}' > '{dir}/METTACLAW_TASK_PHASE_PATH'",
+     "env": {
+      "METTACLAW_TASK_PHASE_PATH": "{dir}/METTACLAW_TASK_PHASE_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{\\0042schema\\0042: 2}' > '{dir}/METTACLAW_TASK_PHASE_PATH'",
+     "env": {
+      "METTACLAW_TASK_PHASE_PATH": "{dir}/METTACLAW_TASK_PHASE_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{\\0042schema\\0042: 1, \\0042phases\\0042: []}' > '{dir}/METTACLAW_TASK_PHASE_PATH'",
+     "env": {
+      "METTACLAW_TASK_PHASE_PATH": "{dir}/METTACLAW_TASK_PHASE_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{' > '{dir}/METTACLAW_TASK_PHASE_PATH'",
+     "env": {
+      "METTACLAW_TASK_PHASE_PATH": "{dir}/METTACLAW_TASK_PHASE_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '[]' > '{dir}/METTACLAW_TASK_PHASE_PATH'",
+     "env": {
+      "METTACLAW_TASK_PHASE_PATH": "{dir}/METTACLAW_TASK_PHASE_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{\\0042schema\\0042: 1}' > '{dir}/METTACLAW_TASK_PHASE_PATH'",
+     "env": {
+      "METTACLAW_TASK_PHASE_PATH": "{dir}/METTACLAW_TASK_PHASE_PATH"
+     },
+     "command": null,
+     "sleep": 0
+    }
+   ],
+   "expected": [
+    [
+     "value",
+     ""
+    ],
+    [
+     "value",
+     "task=日🙂 phase=日 revision=4 evidence-revision=r\\\" active=[\"日\"] completed=[\"a\"] pending=[\"z\"]"
+    ],
+    [
+     "value",
+     "task=? phase=plural revision=0 evidence-revision=? active=[\"a\", \"b\"] completed=[] pending=[]"
+    ],
+    [
+     "value",
+     "task=? phase=completed revision=0 evidence-revision=? active=[] completed=[\"🙂\"] pending=[]"
+    ],
+    [
+     "value",
+     "task=[True, None, {'日': 'quote\\'\"\\n\\x1c\\u3000'}] phase=plural revision=None evidence-revision={'a': \"it's\", 'b': '\\x00🙂\\ue000'} active=[] completed=[] pending=[]"
+    ],
+    [
+     "value",
+     "task=? phase=plural revision=1.0 evidence-revision=? active=[] completed=[] pending=[]"
+    ],
+    [
+     "value",
+     "task=? phase=plural revision=1e+20 evidence-revision=? active=[] completed=[] pending=[]"
+    ],
+    [
+     "value",
+     "task=? phase=plural revision=1000000000000000.0 evidence-revision=? active=[] completed=[] pending=[]"
+    ],
+    [
+     "value",
+     "task=? phase=plural revision=100000000000000.0 evidence-revision=? active=[] completed=[] pending=[]"
+    ],
+    [
+     "value",
+     "task=? phase=plural revision=0.0001 evidence-revision=? active=[] completed=[] pending=[]"
+    ],
+    [
+     "value",
+     "task=? phase=plural revision=1e-05 evidence-revision=? active=[] completed=[] pending=[]"
+    ],
+    [
+     "value",
+     "task=? phase=plural revision=1e-07 evidence-revision=? active=[] completed=[] pending=[]"
+    ],
+    [
+     "value",
+     "task=? phase=plural revision=-1000000000000000.0 evidence-revision=? active=[] completed=[] pending=[]"
+    ],
+    [
+     "value",
+     "task=? phase=plural revision=1.2345678901234567 evidence-revision=? active=[] completed=[] pending=[]"
+    ],
+    [
+     "value",
+     "task=? phase=plural revision=0 evidence-revision=? active=[] completed=[] pending=[\"a\"]"
+    ],
+    [
+     "unavailable"
+    ],
+    [
+     "unavailable"
+    ],
+    [
+     "unavailable"
+    ],
+    [
+     "unavailable"
+    ],
+    [
+     "value",
+     "task=? phase=plural revision=0 evidence-revision=? active=[] completed=[] pending=[]"
+    ]
+   ],
+   "probes": [
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    []
+   ]
+  },
+  {
+   "name": "development",
+   "source": "development-state",
+   "setup": [],
+   "steps": [
+    {
+     "script": "",
+     "env": {},
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}/iter' && printf '%b' '(hello)\\0015\\0012\\0377\\0000' > '{dir}/iter/日.metta'\nmkdir -p '{dir}/iter' && printf '%b' '\\0360\\0237\\0231\\0202' > '{dir}/iter/_a.metta'",
+     "env": {},
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}/iter' && printf '%b' 'changed' > '{dir}/iter/日.metta'\nrm -f '{dir}/iter/_a.metta'",
+     "env": {},
+     "command": null,
+     "sleep": 0
+    }
+   ],
+   "expected": [
+    [
+     "value",
+     "{\"iter_transformations\":{\"active\":[],\"disabled\":[],\"revision\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"schema\":1,\"state\":\"observed\"},\"schema\":2}"
+    ],
+    [
+     "value",
+     "{\"iter_transformations\":{\"active\":[{\"name\":\"日.metta\",\"sha256\":\"56b7fc2e0afd1b991cee8aae2ec2eceeb50e547cec5d503570a1859e5725a602\"}],\"disabled\":[{\"name\":\"_a.metta\",\"sha256\":\"d06f1525f791397809f9bc98682b5c13318eca4c3123433467fd4dffda44fd14\"}],\"revision\":\"08bf51d7f3ac08db234cfeb495028ae21f5db9f974c6b738405c12844652c5b1\",\"schema\":1,\"state\":\"observed\"},\"schema\":2}"
+    ],
+    [
+     "value",
+     "{\"iter_transformations\":{\"active\":[{\"name\":\"日.metta\",\"sha256\":\"d67e2e944994496c8d8ec76eed0cf9f09679448d584b532bebf941852a37f5ed\"}],\"disabled\":[],\"revision\":\"a764d57f80dfd15fd582f6984f260ae3a2978ecc4ef927f863ebabd0a495b820\",\"schema\":1,\"state\":\"observed\"},\"schema\":2}"
+    ]
+   ],
+   "probes": [
+    [],
+    [],
+    []
+   ]
+  },
+  {
+   "name": "development-directory",
+   "source": "development-state",
+   "setup": [
+    "mkdir -p {dir}/iter && printf 'changed' > '{dir}/iter/日.metta' && mkdir {dir}/iter/bad.metta"
+   ],
+   "steps": [
+    {
+     "script": "",
+     "env": {},
+     "command": null,
+     "sleep": 0
+    }
+   ],
+   "expected": [
+    [
+     "value",
+     "{\"iter_transformations\":{\"error\":\"AuthoringError: transformation entry is not a regular file\",\"name\":\"\",\"operation\":\"list\",\"schema\":1,\"state\":\"error\"},\"schema\":2}"
+    ]
+   ],
+   "probes": [
+    []
+   ]
+  },
+  {
+   "name": "development-symlink",
+   "source": "development-state",
+   "setup": [
+    "mkdir -p {dir}/iter && printf 'changed' > '{dir}/iter/日.metta' && ln -s '日.metta' {dir}/iter/link.metta"
+   ],
+   "steps": [
+    {
+     "script": "",
+     "env": {},
+     "command": null,
+     "sleep": 0
+    }
+   ],
+   "expected": [
+    [
+     "value",
+     "{\"iter_transformations\":{\"error\":\"AuthoringError: transformation entry is not a regular file\",\"name\":\"\",\"operation\":\"list\",\"schema\":1,\"state\":\"error\"},\"schema\":2}"
+    ]
+   ],
+   "probes": [
+    []
+   ]
+  },
+  {
+   "name": "development-unreadable",
+   "source": "development-state",
+   "setup": [
+    "mkdir -p {dir}/iter && printf 'changed' > '{dir}/iter/日.metta' && chmod 0 '{dir}/iter/日.metta'"
+   ],
+   "steps": [
+    {
+     "script": "",
+     "env": {},
+     "command": null,
+     "sleep": 0
+    }
+   ],
+   "expected": [
+    [
+     "value",
+     "{\"iter_transformations\":{\"error\":\"PermissionError: [Errno 13] Permission denied: '{dir}/iter/日.metta'\",\"name\":\"\",\"operation\":\"list\",\"schema\":1,\"state\":\"error\"},\"schema\":2}"
+    ]
+   ],
+   "probes": [
+    []
+   ]
+  },
+  {
+   "name": "capability-cache",
+   "source": "project-capabilities",
+   "setup": [
+    "native-fake {dir}/fake-cetta"
+   ],
+   "steps": [
+    {
+     "script": "printf '%s' '' > '{dir}/mode'",
+     "env": {},
+     "command": [
+      "{dir}/fake-cetta",
+      "{dir}/mode",
+      "{dir}/count"
+     ],
+     "sleep": 0
+    },
+    {
+     "script": "printf '%s' 'fail=1\n' > '{dir}/mode'",
+     "env": {},
+     "command": [
+      "{dir}/fake-cetta",
+      "{dir}/mode",
+      "{dir}/count"
+     ],
+     "sleep": 0
+    },
+    {
+     "script": "touch -h -d @1700000000.000000001 '{dir}/fake-cetta'",
+     "env": {},
+     "command": [
+      "{dir}/fake-cetta",
+      "{dir}/mode",
+      "{dir}/count"
+     ],
+     "sleep": 0
+    },
+    {
+     "script": "",
+     "env": {},
+     "command": [
+      "{dir}/fake-cetta",
+      "{dir}/mode",
+      "{dir}/count"
+     ],
+     "sleep": 0
+    },
+    {
+     "script": "printf '%s' 'version='\"'\"'changed 🙂'\"'\"'\n' > '{dir}/mode'",
+     "env": {},
+     "command": [
+      "{dir}/fake-cetta",
+      "{dir}/mode",
+      "{dir}/count"
+     ],
+     "sleep": 0
+    },
+    {
+     "script": "printf '%s' 'timeout=1\n' > '{dir}/mode'\ntouch -h -d @1700000000.000000002 '{dir}/fake-cetta'",
+     "env": {},
+     "command": [
+      "{dir}/fake-cetta",
+      "{dir}/mode",
+      "{dir}/count"
+     ],
+     "sleep": 0
+    },
+    {
+     "script": "printf '%s' 'inventory='\"'\"'no inventory'\"'\"'\n' > '{dir}/mode'",
+     "env": {},
+     "command": [
+      "{dir}/fake-cetta",
+      "{dir}/mode",
+      "{dir}/count"
+     ],
+     "sleep": 0
+    },
+    {
+     "script": "printf '%s' '' > '{dir}/mode'",
+     "env": {},
+     "command": [
+      "{dir}/fake-cetta",
+      "{dir}/mode",
+      "{dir}/count"
+     ],
+     "sleep": 0
+    },
+    {
+     "script": "",
+     "env": {},
+     "command": [
+      "{dir}/missing"
+     ],
+     "sleep": 0
+    },
+    {
+     "script": "",
+     "env": {},
+     "command": [
+      "{dir}/fake-cetta",
+      "{dir}/mode",
+      "{dir}/count"
+     ],
+     "sleep": 0
+    },
+    {
+     "script": "",
+     "env": {},
+     "command": [
+      "{dir}/fake-cetta",
+      "{dir}/mode",
+      "{dir}/count",
+      "extra-prefix-argument"
+     ],
+     "sleep": 0
+    },
+    {
+     "script": "native-fake-suffix '{dir}/fake-cetta' '\\0012'\ntouch -h -d @1700000000.000000002 '{dir}/fake-cetta'",
+     "env": {},
+     "command": [
+      "{dir}/fake-cetta",
+      "{dir}/mode",
+      "{dir}/count",
+      "extra-prefix-argument"
+     ],
+     "sleep": 0
+    },
+    {
+     "script": "native-fake-suffix '{dir}/fake-cetta' ' '\nprintf '%s' 'fail=1\n' > '{dir}/mode'\ntouch -h -d @1700000000.000000002 '{dir}/fake-cetta'",
+     "env": {},
+     "command": [
+      "{dir}/fake-cetta",
+      "{dir}/mode",
+      "{dir}/count",
+      "extra-prefix-argument"
+     ],
+     "sleep": 0
+    }
+   ],
+   "expected": [
+    [
+     "value",
+     "artifact=cetta revision=fixture 日 r1 inventory-sha256=720058d12b114693\nimplemented petta — Native 日 🙂\nplanned future — Not yet"
+    ],
+    [
+     "value",
+     "artifact=cetta revision=fixture 日 r1 inventory-sha256=720058d12b114693\nimplemented petta — Native 日 🙂\nplanned future — Not yet"
+    ],
+    [
+     "unavailable"
+    ],
+    [
+     "unavailable"
+    ],
+    [
+     "value",
+     "artifact=cetta revision=changed 🙂 inventory-sha256=ac58d8bafcadd57c\nimplemented petta — Native 日 🙂\nplanned future — Not yet"
+    ],
+    [
+     "unavailable"
+    ],
+    [
+     "unavailable"
+    ],
+    [
+     "value",
+     "artifact=cetta revision=fixture 日 r1 inventory-sha256=720058d12b114693\nimplemented petta — Native 日 🙂\nplanned future — Not yet"
+    ],
+    [
+     "missing"
+    ],
+    [
+     "value",
+     "artifact=cetta revision=fixture 日 r1 inventory-sha256=720058d12b114693\nimplemented petta — Native 日 🙂\nplanned future — Not yet"
+    ],
+    [
+     "value",
+     "artifact=cetta revision=fixture 日 r1 inventory-sha256=720058d12b114693\nimplemented petta — Native 日 🙂\nplanned future — Not yet"
+    ],
+    [
+     "value",
+     "artifact=cetta revision=fixture 日 r1 inventory-sha256=720058d12b114693\nimplemented petta — Native 日 🙂\nplanned future — Not yet"
+    ],
+    [
+     "value",
+     "artifact=cetta revision=fixture 日 r1 inventory-sha256=720058d12b114693\nimplemented petta — Native 日 🙂\nplanned future — Not yet"
+    ]
+   ],
+   "probes": [
+    [
+     "--version",
+     "--list-languages"
+    ],
+    [
+     "--version",
+     "--list-languages"
+    ],
+    [
+     "--version",
+     "--list-languages",
+     "--version"
+    ],
+    [
+     "--version",
+     "--list-languages",
+     "--version",
+     "--version"
+    ],
+    [
+     "--version",
+     "--list-languages",
+     "--version",
+     "--version",
+     "--version",
+     "--list-languages"
+    ],
+    [
+     "--version",
+     "--list-languages",
+     "--version",
+     "--version",
+     "--version",
+     "--list-languages",
+     "--version"
+    ],
+    [
+     "--version",
+     "--list-languages",
+     "--version",
+     "--version",
+     "--version",
+     "--list-languages",
+     "--version",
+     "--version",
+     "--list-languages"
+    ],
+    [
+     "--version",
+     "--list-languages",
+     "--version",
+     "--version",
+     "--version",
+     "--list-languages",
+     "--version",
+     "--version",
+     "--list-languages",
+     "--version",
+     "--list-languages"
+    ],
+    [
+     "--version",
+     "--list-languages",
+     "--version",
+     "--version",
+     "--version",
+     "--list-languages",
+     "--version",
+     "--version",
+     "--list-languages",
+     "--version",
+     "--list-languages"
+    ],
+    [
+     "--version",
+     "--list-languages",
+     "--version",
+     "--version",
+     "--version",
+     "--list-languages",
+     "--version",
+     "--version",
+     "--list-languages",
+     "--version",
+     "--list-languages"
+    ],
+    [
+     "--version",
+     "--list-languages",
+     "--version",
+     "--version",
+     "--version",
+     "--list-languages",
+     "--version",
+     "--version",
+     "--list-languages",
+     "--version",
+     "--list-languages",
+     "--version",
+     "--list-languages"
+    ],
+    [
+     "--version",
+     "--list-languages",
+     "--version",
+     "--version",
+     "--version",
+     "--list-languages",
+     "--version",
+     "--version",
+     "--list-languages",
+     "--version",
+     "--list-languages",
+     "--version",
+     "--list-languages",
+     "--version",
+     "--list-languages"
+    ],
+    [
+     "--version",
+     "--list-languages",
+     "--version",
+     "--version",
+     "--version",
+     "--list-languages",
+     "--version",
+     "--version",
+     "--list-languages",
+     "--version",
+     "--list-languages",
+     "--version",
+     "--list-languages",
+     "--version",
+     "--list-languages"
+    ]
+   ]
+  },
+  {
+   "name": "capability-replaced-inode",
+   "source": "project-capabilities",
+   "setup": [
+    "native-fake {dir}/fake-cetta"
+   ],
+   "steps": [
+    {
+     "script": "printf '%s' '' > '{dir}/mode'",
+     "env": {},
+     "command": [
+      "{dir}/fake-cetta",
+      "{dir}/mode",
+      "{dir}/count"
+     ],
+     "sleep": 0
+    },
+    {
+     "script": "printf '%s' 'fail=1\n' > '{dir}/mode'\ncat '{dir}/fake-cetta' > '{dir}/fake-cetta'.replacement && chmod 700 '{dir}/fake-cetta'.replacement && mv '{dir}/fake-cetta'.replacement '{dir}/fake-cetta'\ntouch -h -d @1700000000.000000000 '{dir}/fake-cetta'",
+     "env": {},
+     "command": [
+      "{dir}/fake-cetta",
+      "{dir}/mode",
+      "{dir}/count"
+     ],
+     "sleep": 0
+    },
+    {
+     "script": "touch -h -d @1700000000.000000001 '{dir}/fake-cetta'",
+     "env": {},
+     "command": [
+      "{dir}/fake-cetta",
+      "{dir}/mode",
+      "{dir}/count"
+     ],
+     "sleep": 0
+    }
+   ],
+   "expected": [
+    [
+     "value",
+     "artifact=cetta revision=fixture 日 r1 inventory-sha256=720058d12b114693\nimplemented petta — Native 日 🙂\nplanned future — Not yet"
+    ],
+    [
+     "value",
+     "artifact=cetta revision=fixture 日 r1 inventory-sha256=720058d12b114693\nimplemented petta — Native 日 🙂\nplanned future — Not yet"
+    ],
+    [
+     "unavailable"
+    ]
+   ],
+   "probes": [
+    [
+     "--version",
+     "--list-languages"
+    ],
+    [
+     "--version",
+     "--list-languages"
+    ],
+    [
+     "--version",
+     "--list-languages",
+     "--version"
+    ]
+   ]
+  },
+  {
+   "name": "capability-symlink",
+   "source": "project-capabilities",
+   "setup": [
+    "native-fake {dir}/fake-cetta",
+    "ln -s fake-cetta {dir}/artifact-link"
+   ],
+   "steps": [
+    {
+     "script": "printf '%s' '' > '{dir}/mode'",
+     "env": {},
+     "command": [
+      "{dir}/artifact-link",
+      "{dir}/mode",
+      "{dir}/count"
+     ],
+     "sleep": 0
+    },
+    {
+     "script": "printf '%s' 'fail=1\n' > '{dir}/mode'",
+     "env": {},
+     "command": [
+      "{dir}/artifact-link",
+      "{dir}/mode",
+      "{dir}/count"
+     ],
+     "sleep": 0
+    },
+    {
+     "script": "touch -h -d @1700000000.000000001 '{dir}/fake-cetta'",
+     "env": {},
+     "command": [
+      "{dir}/artifact-link",
+      "{dir}/mode",
+      "{dir}/count"
+     ],
+     "sleep": 0
+    },
+    {
+     "script": "printf '%s' 'version='\"'\"'symlink recovery'\"'\"'\n' > '{dir}/mode'",
+     "env": {},
+     "command": [
+      "{dir}/artifact-link",
+      "{dir}/mode",
+      "{dir}/count"
+     ],
+     "sleep": 0
+    },
+    {
+     "script": "rm -f '{dir}/fake-cetta'",
+     "env": {},
+     "command": [
+      "{dir}/artifact-link",
+      "{dir}/mode",
+      "{dir}/count"
+     ],
+     "sleep": 0
+    }
+   ],
+   "expected": [
+    [
+     "value",
+     "artifact=cetta revision=fixture 日 r1 inventory-sha256=720058d12b114693\nimplemented petta — Native 日 🙂\nplanned future — Not yet"
+    ],
+    [
+     "value",
+     "artifact=cetta revision=fixture 日 r1 inventory-sha256=720058d12b114693\nimplemented petta — Native 日 🙂\nplanned future — Not yet"
+    ],
+    [
+     "unavailable"
+    ],
+    [
+     "value",
+     "artifact=cetta revision=symlink recovery inventory-sha256=3ee7b34030c3b8b6\nimplemented petta — Native 日 🙂\nplanned future — Not yet"
+    ],
+    [
+     "missing"
+    ]
+   ],
+   "probes": [
+    [
+     "--version",
+     "--list-languages"
+    ],
+    [
+     "--version",
+     "--list-languages"
+    ],
+    [
+     "--version",
+     "--list-languages",
+     "--version"
+    ],
+    [
+     "--version",
+     "--list-languages",
+     "--version",
+     "--version",
+     "--list-languages"
+    ],
+    [
+     "--version",
+     "--list-languages",
+     "--version",
+     "--version",
+     "--list-languages"
+    ]
+   ]
+  },
+  {
+   "name": "capability-inventory-0",
+   "source": "project-capabilities",
+   "setup": [
+    "native-fake {dir}/fake-cetta"
+   ],
+   "steps": [
+    {
+     "script": "printf '%s' 'fail_on='\"'\"'--list-languages'\"'\"'\n' > '{dir}/mode'",
+     "env": {},
+     "command": [
+      "{dir}/fake-cetta",
+      "{dir}/mode",
+      "{dir}/count"
+     ],
+     "sleep": 0
+    }
+   ],
+   "expected": [
+    [
+     "unavailable"
+    ]
+   ],
+   "probes": [
+    [
+     "--version",
+     "--list-languages"
+    ]
+   ]
+  },
+  {
+   "name": "capability-inventory-1",
+   "source": "project-capabilities",
+   "setup": [
+    "native-fake {dir}/fake-cetta"
+   ],
+   "steps": [
+    {
+     "script": "printf '%s' 'timeout_on='\"'\"'--list-languages'\"'\"'\n' > '{dir}/mode'",
+     "env": {},
+     "command": [
+      "{dir}/fake-cetta",
+      "{dir}/mode",
+      "{dir}/count"
+     ],
+     "sleep": 0
+    }
+   ],
+   "expected": [
+    [
+     "unavailable"
+    ]
+   ],
+   "probes": [
+    [
+     "--version",
+     "--list-languages"
+    ]
+   ]
+  },
+  {
+   "name": "capability-inventory-2",
+   "source": "project-capabilities",
+   "setup": [
+    "native-fake {dir}/fake-cetta"
+   ],
+   "steps": [
+    {
+     "script": "printf '%s' 'raw_stdout='\"'\"'\\0377'\"'\"'\n' > '{dir}/mode'",
+     "env": {},
+     "command": [
+      "{dir}/fake-cetta",
+      "{dir}/mode",
+      "{dir}/count"
+     ],
+     "sleep": 0
+    }
+   ],
+   "expected": [
+    [
+     "unavailable"
+    ]
+   ],
+   "probes": [
+    [
+     "--version"
+    ]
+   ]
+  },
+  {
+   "name": "capability-inventory-3",
+   "source": "project-capabilities",
+   "setup": [
+    "native-fake {dir}/fake-cetta"
+   ],
+   "steps": [
+    {
+     "script": "printf '%s' 'raw_stderr='\"'\"'\\0377'\"'\"'\n' > '{dir}/mode'",
+     "env": {},
+     "command": [
+      "{dir}/fake-cetta",
+      "{dir}/mode",
+      "{dir}/count"
+     ],
+     "sleep": 0
+    }
+   ],
+   "expected": [
+    [
+     "unavailable"
+    ]
+   ],
+   "probes": [
+    [
+     "--version"
+    ]
+   ]
+  },
+  {
+   "name": "capability-inventory-4",
+   "source": "project-capabilities",
+   "setup": [
+    "native-fake {dir}/fake-cetta"
+   ],
+   "steps": [
+    {
+     "script": "printf '%s' 'version='\"'\"''\"'\"'\n' > '{dir}/mode'",
+     "env": {},
+     "command": [
+      "{dir}/fake-cetta",
+      "{dir}/mode",
+      "{dir}/count"
+     ],
+     "sleep": 0
+    }
+   ],
+   "expected": [
+    [
+     "unavailable"
+    ]
+   ],
+   "probes": [
+    [
+     "--version",
+     "--list-languages"
+    ]
+   ]
+  },
+  {
+   "name": "capability-inventory-5",
+   "source": "project-capabilities",
+   "setup": [
+    "native-fake {dir}/fake-cetta"
+   ],
+   "steps": [
+    {
+     "script": "printf '%s' 'inventory='\"'\"'Header\n \u001fname\u001fimplemented\u001fUnicode 日 🙂\u001f\n\tplan\tplanned\tdesc'\"'\"'\n' > '{dir}/mode'",
+     "env": {},
+     "command": [
+      "{dir}/fake-cetta",
+      "{dir}/mode",
+      "{dir}/count"
+     ],
+     "sleep": 0
+    }
+   ],
+   "expected": [
+    [
+     "value",
+     "artifact=cetta revision=fixture 日 r1 inventory-sha256=3d066f298b8e6f9e\nimplemented name — Unicode 日 🙂\nplanned plan — desc"
+    ]
+   ],
+   "probes": [
+    [
+     "--version",
+     "--list-languages"
+    ]
+   ]
+  },
+  {
+   "name": "evidence",
+   "source": "project-evidence",
+   "setup": [
+    "mkdir -p {dir}/checkout '{dir}/reports/日' && GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=Fixture GIT_AUTHOR_EMAIL=fixture@example.invalid GIT_COMMITTER_NAME=Fixture GIT_COMMITTER_EMAIL=fixture@example.invalid GIT_AUTHOR_DATE='2026-01-01T00:00:00Z' GIT_COMMITTER_DATE='2026-01-01T00:00:00Z' git -C {dir}/checkout init -q -b fixture && GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=Fixture GIT_AUTHOR_EMAIL=fixture@example.invalid GIT_COMMITTER_NAME=Fixture GIT_COMMITTER_EMAIL=fixture@example.invalid GIT_AUTHOR_DATE='2026-01-01T00:00:00Z' GIT_COMMITTER_DATE='2026-01-01T00:00:00Z' git -C {dir}/checkout commit -q --allow-empty -m fixture && printf '%b' 'text\\0012#  \\0346\\0227\\0245 \\0360\\0237\\0231\\0202 0\\0011 title\\0012\\0377' > '{dir}/reports/日/0.md' && printf '%b' 'text\\0012#  \\0346\\0227\\0245 \\0360\\0237\\0231\\0202 1\\0011 title\\0012\\0377' > '{dir}/reports/日/1.md' && printf '%b' 'text\\0012#  \\0346\\0227\\0245 \\0360\\0237\\0231\\0202 2\\0011 title\\0012\\0377' > '{dir}/reports/日/2.md' && printf '%b' 'text\\0012#  \\0346\\0227\\0245 \\0360\\0237\\0231\\0202 3\\0011 title\\0012\\0377' > '{dir}/reports/日/3.md' && printf '%b' 'text\\0012#  \\0346\\0227\\0245 \\0360\\0237\\0231\\0202 4\\0011 title\\0012\\0377' > '{dir}/reports/日/4.md' && printf '%b' 'text\\0012#  \\0346\\0227\\0245 \\0360\\0237\\0231\\0202 5\\0011 title\\0012\\0377' > '{dir}/reports/日/5.md'"
+   ],
+   "steps": [
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{\\0042schema\\0042: 1, \\0042projects\\0042: [{\\0042id\\0042: \\0042\\0346\\0227\\0245\\0042, \\0042checkouts\\0042: [{\\0042path\\0042: \\0042{dir}/checkout\\0042}]}]}' > '{dir}/registry.json'",
+     "env": {
+      "METTACLAW_REPORTS_ROOT": "{dir}/reports"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{' > '{dir}/registry.json'",
+     "env": {
+      "METTACLAW_REPORTS_ROOT": "{dir}/reports"
+     },
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "",
+     "env": {
+      "METTACLAW_REPORTS_ROOT": "{dir}/reports"
+     },
+     "command": null,
+     "sleep": 2.05
+    },
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{\\0042schema\\0042: 1, \\0042projects\\0042: []}' > '{dir}/registry.json'",
+     "env": {
+      "METTACLAW_REPORTS_ROOT": "{dir}/reports"
+     },
+     "command": null,
+     "sleep": 0
+    }
+   ],
+   "expected": [
+    [
+     "value",
+     "PROJECT EVIDENCE: Git state and immutable report identities are regenerated from their sources; report claims remain self-reports.\nPROJECT 日\ncheckout role=checkout branch=fixture head=4bc6698a4d40d826198eb842ddb917e74942b1e4 tracked-dirty=false\nreport=2.md sha256=50d3beb6c195d5fc title=日 🙂 2 title\nreport=3.md sha256=5eeaf1a6ae0798b0 title=日 🙂 3 title\nreport=4.md sha256=d0a6ab6e6ffcb604 title=日 🙂 4 title\nreport=5.md sha256=edafdd3f6257584f title=日 🙂 5 title"
+    ],
+    [
+     "value",
+     "PROJECT EVIDENCE: Git state and immutable report identities are regenerated from their sources; report claims remain self-reports.\nPROJECT 日\ncheckout role=checkout branch=fixture head=4bc6698a4d40d826198eb842ddb917e74942b1e4 tracked-dirty=false\nreport=2.md sha256=50d3beb6c195d5fc title=日 🙂 2 title\nreport=3.md sha256=5eeaf1a6ae0798b0 title=日 🙂 3 title\nreport=4.md sha256=d0a6ab6e6ffcb604 title=日 🙂 4 title\nreport=5.md sha256=edafdd3f6257584f title=日 🙂 5 title"
+    ],
+    [
+     "unavailable"
+    ],
+    [
+     "value",
+     "PROJECT EVIDENCE: Git state and immutable report identities are regenerated from their sources; report claims remain self-reports."
+    ]
+   ],
+   "probes": [
+    [],
+    [],
+    [],
+    []
+   ]
+  },
+  {
+   "name": "evidence-adapters",
+   "source": "project-evidence",
+   "setup": [
+    "mkdir -p {dir}/repo {dir}/reports/demo && GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=Fixture GIT_AUTHOR_EMAIL=fixture@example.invalid GIT_COMMITTER_NAME=Fixture GIT_COMMITTER_EMAIL=fixture@example.invalid GIT_AUTHOR_DATE='2026-01-01T00:00:00Z' GIT_COMMITTER_DATE='2026-01-01T00:00:00Z' git -C {dir}/repo init -q -b main && printf 'one\\n' > {dir}/repo/evidence.txt && GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=Fixture GIT_AUTHOR_EMAIL=fixture@example.invalid GIT_COMMITTER_NAME=Fixture GIT_COMMITTER_EMAIL=fixture@example.invalid GIT_AUTHOR_DATE='2026-01-01T00:00:00Z' GIT_COMMITTER_DATE='2026-01-01T00:00:00Z' git -C {dir}/repo add evidence.txt && GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=Fixture GIT_AUTHOR_EMAIL=fixture@example.invalid GIT_COMMITTER_NAME=Fixture GIT_COMMITTER_EMAIL=fixture@example.invalid GIT_AUTHOR_DATE='2026-01-01T00:00:00Z' GIT_COMMITTER_DATE='2026-01-01T00:00:00Z' git -C {dir}/repo commit -q -m evidence"
+   ],
+   "steps": [
+    {
+     "script": "mkdir -p '{dir}' && printf '%b' '{\\0042schema\\0042: 1, \\0042projects\\0042: [{\\0042id\\0042: \\0042demo\\0042, \\0042report_namespace\\0042: \\0042demo\\0042, \\0042checkouts\\0042: [{\\0042path\\0042: \\0042{dir}/repo\\0042, \\0042role\\0042: \\0042canonical\\0042}]}]}' > '{dir}/registry.json'",
+     "env": {},
+     "command": null,
+     "sleep": 0
+    },
+    {
+     "script": "",
+     "env": {
+      "METTACLAW_REPORTS_ROOT": "{dir}/reports"
+     },
+     "command": null,
+     "sleep": 2.05
+    },
+    {
+     "script": "mkdir -p '{dir}/reports/demo' && printf '%b' '# Verified finding\\0012\\0012Evidence.\\0012' > '{dir}/reports/demo/2026-08-25-test.md'",
+     "env": {
+      "METTACLAW_REPORTS_ROOT": "{dir}/reports"
+     },
+     "command": null,
+     "sleep": 2.05
+    }
+   ],
+   "expected": [
+    [
+     "value",
+     "PROJECT EVIDENCE: Git state and immutable report identities are regenerated from their sources; report claims remain self-reports.\nPROJECT demo\ncheckout role=canonical branch=main head=cfa038cd9b431e20eb75dc2d67eeb4502a6b58c4 tracked-dirty=false\nreports-adapter=unconfigured"
+    ],
+    [
+     "value",
+     "PROJECT EVIDENCE: Git state and immutable report identities are regenerated from their sources; report claims remain self-reports.\nPROJECT demo\ncheckout role=canonical branch=main head=cfa038cd9b431e20eb75dc2d67eeb4502a6b58c4 tracked-dirty=false\nreports=absent"
+    ],
+    [
+     "value",
+     "PROJECT EVIDENCE: Git state and immutable report identities are regenerated from their sources; report claims remain self-reports.\nPROJECT demo\ncheckout role=canonical branch=main head=cfa038cd9b431e20eb75dc2d67eeb4502a6b58c4 tracked-dirty=false\nreport=2026-08-25-test.md sha256=d50416e2844d43c0 title=Verified finding"
+    ]
+   ],
+   "probes": [
+    [],
+    [],
+    []
+   ]
+  },
+  {
+   "name": "empty-directory-active-query-declaration",
+   "source": "active-query-declaration",
+   "setup": [
+    "mkdir -p {dir}/empty"
+   ],
+   "steps": [
+    {
+     "script": "",
+     "env": {
+      "METTACLAW_ACTIVE_QUERIES_PATH": "{dir}/empty"
+     },
+     "command": null,
+     "sleep": 0
+    }
+   ],
+   "expected": [
+    [
+     "unavailable"
+    ]
+   ],
+   "probes": [
+    []
+   ]
+  },
+  {
+   "name": "empty-directory-commitment-state",
+   "source": "commitment-state",
+   "setup": [
+    "mkdir -p {dir}/empty"
+   ],
+   "steps": [
+    {
+     "script": "",
+     "env": {
+      "METTACLAW_COMMITMENT_STATE_PATH": "{dir}/empty"
+     },
+     "command": null,
+     "sleep": 0
+    }
+   ],
+   "expected": [
+    [
+     "unavailable"
+    ]
+   ],
+   "probes": [
+    []
+   ]
+  },
+  {
+   "name": "empty-directory-task-phase",
+   "source": "task-phase",
+   "setup": [
+    "mkdir -p {dir}/empty"
+   ],
+   "steps": [
+    {
+     "script": "",
+     "env": {
+      "METTACLAW_TASK_PHASE_PATH": "{dir}/empty"
+     },
+     "command": null,
+     "sleep": 0
+    }
+   ],
+   "expected": [
+    [
+     "value",
+     ""
+    ]
+   ],
+   "probes": [
+    []
+   ]
+  },
+  {
+   "name": "empty-directory-project-evidence",
+   "source": "project-evidence",
+   "setup": [
+    "mkdir -p {dir}/empty"
+   ],
+   "steps": [
+    {
+     "script": "",
+     "env": {
+      "METTACLAW_PROJECT_REGISTRY_PATH": "{dir}/empty"
+     },
+     "command": null,
+     "sleep": 0
+    }
+   ],
+   "expected": [
+    [
+     "unavailable"
+    ]
+   ],
+   "probes": [
+    []
+   ]
+  },
+  {
+   "name": "empty-directory-development-state",
+   "source": "development-state",
+   "setup": [
+    "mkdir -p {dir}/empty"
+   ],
+   "steps": [
+    {
+     "script": "",
+     "env": {
+      "METTACLAW_ITER_PROCESS_DIR": "{dir}/empty"
+     },
+     "command": null,
+     "sleep": 0
+    }
+   ],
+   "expected": [
+    [
+     "value",
+     "{\"iter_transformations\":{\"active\":[],\"disabled\":[],\"revision\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"schema\":1,\"state\":\"observed\"},\"schema\":2}"
+    ]
+   ],
+   "probes": [
+    []
+   ]
+  },
+  {
+   "name": "empty-directory-project-capabilities",
+   "source": "project-capabilities",
+   "setup": [
+    "mkdir -p {dir}/empty"
+   ],
+   "steps": [
+    {
+     "script": "",
+     "env": {},
+     "command": [
+      "{dir}/empty"
+     ],
+     "sleep": 0
+    }
+   ],
+   "expected": [
+    [
+     "missing"
+    ]
+   ],
+   "probes": [
+    []
+   ]
+  }
+ ]
+}

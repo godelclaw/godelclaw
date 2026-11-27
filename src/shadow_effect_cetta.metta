@@ -269,6 +269,10 @@
          (sf:replace $fpath $line 384 False)))))
 
 ; Task phase updater: mirrors witnessed shadow progress into METTACLAW_TASK_PHASE_PATH.
+; A phase completes only with evidence, and a completed phase is never made
+; active again.
+(= (se:completed-phase? $phases $name)
+   (== (sf:get (sf:get $phases $name (JsonObject ())) "status" "") "completed"))
 (= (se:advance-task-phase $state $prev-phase $next-phase $evidence)
    (let $tpath (system:getenv-or-default "METTACLAW_TASK_PHASE_PATH" "")
      (if (or (== $tpath "") (not (fs:is-file $tpath))) True
@@ -277,9 +281,10 @@
               ($rev (+ (sf:get $doc "revision" 0) 1))
               ($ev-rev (str:join "" ("turn:" (repr (sf:get $state "turn" 0))
                                      ":effects:" (repr (sf:get $state "effects" 0)))))
-              ($p1 (sf:put $phases $prev-phase
-                     (JsonObject ((JsonPair "status" "completed") (JsonPair "evidence" $evidence)))))
-              ($p2 (if (== $next-phase "") $p1
+              ($p1 (if (== $evidence "") $phases
+                     (sf:put $phases $prev-phase
+                       (JsonObject ((JsonPair "status" "completed") (JsonPair "evidence" $evidence))))))
+              ($p2 (if (or (== $next-phase "") (se:completed-phase? $p1 $next-phase)) $p1
                      (sf:put $p1 $next-phase
                        (JsonObject ((JsonPair "status" "active") (JsonPair "evidence" JsonNull))))))
               ($next-doc (sf:put-all $doc

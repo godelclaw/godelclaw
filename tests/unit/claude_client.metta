@@ -1,5 +1,11 @@
 !(import! &self ../native_test_support.metta)
 !(import! &self ../../src/claude_bridge_cetta.metta)
+!(import! &self (library list))
+; Each stream is retained whole, in a file named by its digest.
+(= (cc:retained $artifacts $text)
+   (let $path (path:join $artifacts (str:concat (str:sha256 $text) ".txt"))
+     (and (fs:exists $path) (== (fs:read-text $path) $text))))
+(= (cc:repeat $piece $n) (str:join "" (map-atom (list:range 0 $n) $i $piece)))
 !(let* (($flag (claude:flag))
         ($_ (nt:require authorization-fixture-is-isolated (str:starts-with $flag (str:concat (nt:required-env "HOME") "/"))))
         ($_ (nt:require unauthorized-tool-does-not-launch (nt:contains (claude:ask "fixture-ok") "not authorized")))
@@ -7,5 +13,17 @@
         ($_ (nt:require authorized-native-cli-returns-text (== (claude:ask "fixture-ok") "native cli answer")))
         ($_ (nt:require nonzero-cli-is-a-failure (nt:contains (claude:ask "fixture-fail") "exit 3")))
         ($_ (nt:require timed-out-cli-retains-uncertainty (nt:contains (claude:ask "fixture-timeout") "unknown")))
-        ($_ (nt:require fractional-timeout-is-supported (== (claude:timeout "0.125") 0.125))))
+        ($_ (nt:require fractional-timeout-is-supported (== (claude:timeout "0.125") 0.125)))
+        ($artifacts (nt:required-env "METTACLAW_TOOL_OUTPUT_DIR"))
+        ($failed (claude:ask "fixture-fail-large"))
+        ($_ (nt:require a-failure-keeps-both-streams-and-reports-its-exit
+              (and (nt:contains $failed "exit 7")
+              (and (nt:contains $failed "full output:")
+              (and (cc:retained $artifacts (cc:repeat "answer" 2000)) (cc:retained $artifacts (cc:repeat "problem" 2000)))))))
+        ($expired (claude:ask "fixture-timeout"))
+        ($_ (nt:require a-deadline-keeps-partial-evidence-without-claiming-no-effect
+              (and (nt:contains $expired "effects are unknown")
+              (and (cc:retained $artifacts "partial-output") (cc:retained $artifacts "partial-stderr")))))
+        ($_ (nt:require a-zero-deadline-waits-for-the-answer
+              (and (== (claude:timeout "0") 0) (== (claude:run "fixture-timeout" 0) "partial-output")))))
    (println! UNIT_NATIVE_CLAUDE_CLIENT_OK))

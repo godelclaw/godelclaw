@@ -17,8 +17,36 @@
           ($structured (sf:get $called "structuredContent" JsonNull))
           ($_ (nt:require native-tool-effect-once (== (sf:get $structured "effects" 0) 1)))
           ($_ (nt:require stdio-does-not-inherit-provider-secrets
-                (== (sf:get $structured "sawPrivate" True) False))))
+                (== (sf:get $structured "sawPrivate" True) False)))
+          ; An Atlas answer: its structured content wins over the text, its view,
+          ; state and receipt are recorded, and the next context shows them.
+          ($atlas (json:parse (mcp:call-tool "peer" "atlas_query" "{\"text\":\"integration witness\",\"limit\":5}")))
+          ($_ (nt:require atlas-answer-is-returned (== (sf:get $atlas "isError" True) False)))
+          ($receipts (er:view 10))
+          ($_ (nt:require atlas-view-receipt-is-recorded
+                (and (nt:contains $receipts "disposition=atlas-result-returned server=peer tool=atlas_query")
+                (and (nt:contains $receipts "\"view_id\":\"view:fixture\"")
+                (and (nt:contains $receipts "\"state_revision\":\"state:fixture\"")
+                     (nt:contains $receipts "\"receipt_id\":\"receipt:fixture\""))))))
+          ($_ (nt:require atlas-receipt-reaches-the-next-context
+                (case (er:context-load) ((("value" $text) (nt:contains $text "receipt:fixture")) ($o False))))))
      (println! NATIVE_MCP_CLIENT_OK)))
+(= (client-case:atlas-payloads)
+   (let* (($structured (json:parse "{\"view_id\":\"view:structured\",\"state_revision\":\"state:one\",\"receipt\":{\"receipt_id\":\"receipt:one\"}}"))
+          ($payload (json:parse "{\"revision_id\":\"state:two\",\"receipt\":{\"receipt_id\":\"receipt:two\"}}"))
+          ($text (json:stringify-python $payload))
+          ($_ (nt:require structured-content-precedes-the-text
+                (== (mcp:atlas-payload (JsonObject ((JsonPair "structuredContent" $structured)
+                      (JsonPair "content" (JsonArray ((JsonObject ((JsonPair "type" "text") (JsonPair "text" "not json"))))))
+                      (JsonPair "isError" False))))
+                    $structured)))
+          ($_ (nt:require text-is-the-fallback
+                (== (json:stringify-python (mcp:atlas-payload (JsonObject ((JsonPair "content" (JsonArray ((JsonObject ((JsonPair "type" "text") (JsonPair "text" $text))))))
+                                                                         (JsonPair "isError" False)))))
+                    $text)))
+          ($_ (nt:require an-error-answer-records-nothing
+                (== (mcp:atlas-payload (JsonObject ((JsonPair "structuredContent" $payload) (JsonPair "isError" True)))) JsonNull))))
+     (println! NATIVE_ATLAS_PAYLOADS_OK)))
 (= (client-case:gateway)
    (let $reply (json:parse (gateway:tools))
      (let* (($_ (nt:require unix-native-result (== (sf:get $reply "ok" False) True)))
@@ -32,5 +60,5 @@
                   (== (str:trim (fs:read-text (path:join (nt:required-env "NATIVE_CASE_DIR") "count"))) "1"))))
        (println! NATIVE_GATEWAY_INCOMPLETE_OK))))
 !(case (turn:text (system:arg 0))
-   (("mcp" (client-case:mcp)) ("gateway" (client-case:gateway))
+   (("mcp" (client-case:mcp)) ("atlas-payloads" (client-case:atlas-payloads)) ("gateway" (client-case:gateway))
     ("incomplete" (client-case:incomplete)) ($bad (system:exit 2))))

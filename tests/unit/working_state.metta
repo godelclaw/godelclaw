@@ -237,4 +237,26 @@
               (and (ws:member? (ws:get (ws:checkpoint) "lastresults") ("a" "b"))
                    (== (ws:processed "input:one") 1))))))
         ($_ (proc:cancel (get-state &ws-ledger))))
-   (println! UNIT_WORKING_STATE_LEDGER_OK))
+   (println! UNIT_WORKING_STATE_LEDGER_CASES_OK))
+
+; The wait mode is kept as data, whatever the budget: a save that waits for
+; input is read back as waiting at the next boot, with its banked loops; a
+; retained intent keeps every word, its scope qualifier included.
+!(let* (($d (ws:case-dir "waiting"))
+        ($intent (str:concat (str:join "" (map-atom (1 2 3 4 5 6 7 8 9 10) $i "context context context context context context context context context context "))
+                             " applies only to this task and pane; never a global restriction"))
+        ($first (ws:run $d "first" (ws:standard)
+                  ("!(println! (WS_WAIT (working:save 0 60 \"waiting\" 100 0 43 1)))"
+                   (str:join "" ("!(println! (WS_INTENT (working:intent-save " (repr $intent) ")))")))
+                  ()))
+        ($stored (ws:json (ws:working $d)))
+        ($_ (nt:require a-waiting-save-is-kept-as-data
+              (and (ws:ok $first "(WS_WAIT 1)")
+              (and (== (ws:get $stored "rest_await_input") True)
+                   (== (ws:get $stored "intent") $intent)))))
+        ($second (ws:run $d "second" (ws:standard)
+                   ("!(working:boot)"
+                    "!(println! (WS_BOOT (working:boot-int \"rest_await_input\" 0) (working:boot-int \"banked_loops\" 0) (working:boot-int \"loops\" -1)))")
+                   ())))
+   (nt:require the-wait-mode-survives-a-boot (ws:ok $second "(WS_BOOT 1 43 0)")))
+!(println! UNIT_WORKING_STATE_LEDGER_OK)

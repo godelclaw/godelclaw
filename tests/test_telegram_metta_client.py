@@ -249,12 +249,12 @@ with tempfile.TemporaryDirectory(prefix="lila-telegram-metta-") as temp:
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
     listener.bind(str(path)); listener.listen(16); path.chmod(0o600)
     ledger = temp / "telegram.jsonl"
-    # The commands file as the launcher writes it for this service: with the
-    # declaration of bare commands in groups when the service knows it.
-    sys.path[:0] = [str(ROOT / "src")]
-    import start_telegram_service as launcher
-    BARE = launcher.service_takes_bare_commands(SERVICE)
-    commands = launcher.write_commands(ROOT, temp / "commands.metta", BARE)
+    # The commands file as the native launcher writes it for this service.
+    commands = temp / "commands.metta"
+    subprocess.run(["bash", str(ROOT / "scripts/start_telegram_service.sh"), "--repo", str(ROOT),
+                    "--write-commands", str(commands)],
+                   env=dict(os.environ, CETTA_BIN=os.environ.get("CETTA_BIN", "cetta")), check=True)
+    BARE = True  # the native launcher declares bare group commands by default
     env = dict(os.environ,
                METTACLAW_TELEGRAM_CLIENT="metta",
                METTACLAW_ENGINE="cetta", METTACLAW_ACTIVE_ENGINE="cetta",
