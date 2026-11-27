@@ -125,10 +125,10 @@
          (host-native:refused-seed $kind $purpose $provider "RuntimeError")
          (let* (($stream (and (== $protocol "chat-completions") (== (system:getenv-or-default "METTACLAW_LLM_STREAM" "0") "1")))
                 ($visible (host-native:visible $purpose))
-                ($cap (lp:python-int (system:getenv-or-default "METTACLAW_LLM_RESPONSE_BYTES"
-                         (if (or $stream $visible) "8388608" "1048576"))))
+                ($cap (lp:python-int (system:getenv-or-default "METTACLAW_LLM_RESPONSE_BYTES" "67108864")))
                 ($base (host-native:rstrip-slash (system:getenv-or-default $base-env $default))))
-           (if (not (host-native:bounded-number? $cap 1024 16777216))
+           ; Any bound from 1 KiB to the engine's largest string is accepted.
+           (if (not (host-native:bounded-number? $cap 1024 2147483647))
              (host-native:refused-seed $kind $purpose $provider "ValueError")
              (let* (($facts (host-native:base-facts $selected $tokens $kind $purpose $provider $protocol $wire $stream $cap
                              (get-state &provider-session-epoch) (system:uuid4-hex) $waits))

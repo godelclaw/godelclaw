@@ -105,8 +105,12 @@
 ; A guest whose engine takes flags, as a coding session's engine does.
 (: nq:guest-run (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (= (nq:guest-run $world $model $language $forms $extra $cwd $flags)
+   (let (NativeProviderTestWorldV1 $root $sdk $core $directory $socket $base $peer $server $env-base $io_fixture) $world
+     (nq:guest-module $world (nt:join $root "src/native_llm.metta") $model $language $forms $extra $cwd $flags)))
+; A guest on a given provider module in place of src/native_llm.metta.
+(= (nq:guest-module $world $module $model $language $forms $extra $cwd $flags)
    (let* (((NativeProviderTestWorldV1 $root $sdk $core $directory $socket $base $peer $server $env-base $io_fixture) $world)
-          ($entry (nt:join $directory "guest.metta")) ($module (nt:join $root "src/native_llm.metta"))
+          ($entry (nt:join $directory "guest.metta"))
           ($literal (preq:repr $module))
           ($support (preq:repr (nt:join (system:cwd) "tests/native_test_support.metta")))
           ($source (format-args "!(import! &self {})\n!(import! &self {})\n{}\n" ($literal $support $forms)))
@@ -333,7 +337,7 @@
                               $content "\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":2}}"))))
           ($_ (nt:require oversized-past-the-bound (> (str:byte-length $content) 1048576)))
           ($forms "!(nt:require oversized-is-not-an-answer (nt:equal (llm:command \"fixture-model\" 42 \"low\" \"input\") \"()\"))\n!(nt:require oversized-turn-failed (nt:equal (health:turn-succeeded) 0))\n!(println! NATIVE_OVERSIZED_OK)")
-          ($result (nq:guest $world "fixture-model" "petta" $forms ()))
+          ($result (nq:guest $world "fixture-model" "petta" $forms (("METTACLAW_LLM_RESPONSE_BYTES" "1048576"))))
           ($_ (nt:require oversized-returned (nt:contains (nq:output $result) "NATIVE_OVERSIZED_OK")))
           ($err (nq:stderr $result))
           ($_ (nt:require oversized-named (nt:contains $err "failed request: response-too-large; provider=synthetic; status=0; sent=true")))

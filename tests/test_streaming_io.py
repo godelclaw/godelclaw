@@ -11,7 +11,6 @@ import unittest
 
 import test_native_llm_boundary as boundary
 from test_responses_stream_engine import event, response
-import provider_stream
 import stream_sink
 
 ROOT = boundary.ROOT
@@ -37,30 +36,6 @@ class ProjectionTests(unittest.TestCase):
             self.assertTrue(w.flush(2))
             saved = json.loads(w.path.read_text().splitlines()[0])
             self.assertEqual(saved["text"], text)
-
-    def test_anthropic_terminal_preserves_summary_signature_and_tools(self):
-        frames = [
-            {"type": "message_start", "message": {"id": "m", "role": "assistant", "content": [], "usage": {}}},
-            {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": "", "signature": ""}},
-            {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "Compare boundaries"}},
-            {"type": "content_block_delta", "index": 0, "delta": {"type": "signature_delta", "signature": "opaque"}},
-            {"type": "content_block_stop", "index": 0},
-            {"type": "content_block_start", "index": 1, "content_block": {"type": "tool_use", "id": "c", "name": "metta", "input": {}}},
-            {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": '{"program":'}},
-            {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": '"((nop))"}'}},
-            {"type": "content_block_stop", "index": 1},
-            {"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": 12}},
-            {"type": "message_stop"},
-        ]
-        wire = "".join(event(v) for v in frames)
-        value = json.loads(provider_stream.anthropic(wire))
-        self.assertEqual(value["content"][0]["signature"], "opaque")
-        self.assertEqual(value["content"][1]["input"], {"program": "((nop))"})
-        self.assertEqual(value["usage"], {"output_tokens": 12})
-        for bad in (wire.rsplit("event:", 1)[0], wire + event({"type": "ping"}),
-                    wire.replace('"thinking_delta"', '"text_delta"')):
-            with self.assertRaises((ValueError, TypeError)):
-                provider_stream.anthropic(bad)
 
 
 class StreamingPeer(boundary.Peer):

@@ -41,9 +41,9 @@ remote result without provider-supported remote job retrieval.
 protocols retain buffered decoding. The native C worker receives bounded bytes;
 the host's pure protocol adapter assembles text, reasoning, indexed tool calls,
 finish and usage before the native MeTTa codec validates the canonical result.
-Streaming defaults to an 8 MiB body cap because token-delta envelopes can be
-much larger than the final answer; buffered responses default to 1 MiB.
-METTACLAW_LLM_RESPONSE_BYTES sets a checked override up to 16 MiB.
+A response may be up to 64 MiB by default, streamed or buffered: token-delta
+envelopes can be much larger than the final answer. METTACLAW_LLM_RESPONSE_BYTES
+sets any bound from 1 KiB to the engine's largest string.
 Missing finish, missing `[DONE]`, mixed response identities, provider errors,
 incomplete events and partial tool batches fail closed. There is no generation
 POST retry or stream reconnect in the adapter.
@@ -71,11 +71,14 @@ foreign values are rejected as a whole rather than extracting apparent IDs
 from error text. Only correlated bot-owned notices with confirmed message IDs
 are eligible for deletion.
 
-Offline checks use loopback peers and fixture credentials:
+Offline checks use loopback peers and fixture credentials. Stream assembly
+(tests/unit/stream_assembly.metta) and the provider call's edges, commentary
+before completion and sharing epochs (scripts/test_provider_native.metta, with
+tests/native_llm_cases.metta and tests/native_commentary_cases.metta) are
+native and run in the native gate. The remaining checks are:
 
 ```sh
 python -m unittest discover -s tests -p 'test_handover_ids.py'
-python -m unittest discover -s tests -p 'test_provider_stream.py'
 python -m unittest discover -s tests -p 'test_native_lifetime.py'
 CETTA_BIN=/path/to/http-python-cetta python -m unittest discover -s tests -p 'test_native_llm*.py'
 ```

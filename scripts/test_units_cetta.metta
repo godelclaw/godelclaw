@@ -187,6 +187,7 @@
     ("tests/unit/native_gateway_queue.metta" "UNIT_NATIVE_GATEWAY_QUEUE_OK")
     ("tests/unit/native_gateway_host.metta" "UNIT_NATIVE_GATEWAY_HOST_OK")
     ("tests/unit/native_gateway_lifecycle.metta" "UNIT_NATIVE_GATEWAY_LIFECYCLE_OK")
+    ("tests/unit/native_gateway_fault.metta" "UNIT_NATIVE_GATEWAY_FAULT_OK")
     ("tests/unit/native_read_adapter_values.metta" "UNIT_NATIVE_READ_ADAPTER_VALUES_OK")
     ("tests/unit/native_gateway_growth.metta" "UNIT_NATIVE_GATEWAY_GROWTH_OK")
     ("tests/unit/memory_monitor.metta" "UNIT_NATIVE_MEMORY_MONITOR_OK")
@@ -249,6 +250,7 @@
     ("tests/unit/telegram_reply_target.metta" "UNIT_TELEGRAM_REPLY_TARGET_OK")
     ("tests/unit/tmux.metta" "UNIT_TMUX_OK")
     ("tests/unit/file_tools.metta" "UNIT_FILE_TOOLS_OK")
+    ("tests/unit/stream_assembly.metta" "UNIT_STREAM_ASSEMBLY_OK")
     ("tests/unit/working_state.metta" "UNIT_WORKING_STATE_LEDGER_OK"
      (("METTACLAW_INPUT_LEDGER_SOCKET" "{home}/l.sock")
       ("METTACLAW_OBSERVED_STRATEGY" "1")))

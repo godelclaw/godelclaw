@@ -862,10 +862,6 @@
    ],
    "used_by": 3
   },
-  "src/provider_stream.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4
-  },
   "src/public_worklog.py": {
    "fate": "delete-with-native-coverage",
    "phase": 5,
@@ -998,7 +994,7 @@
    "fate": "port-test",
    "phase": 7,
    "sweep": "pass",
-   "support_for": 4
+   "support_for": 3
   },
   "tests/call_config_probe.py": {
    "fate": "port-test",
@@ -1531,7 +1527,7 @@
     "tests/oracles/provider_sqlite/llm_policy.py"
    ],
    "sweep": "pass",
-   "support_for": 34
+   "support_for": 33
   },
   "tests/native_ledger_client.py": {
    "fate": "port-test",
@@ -2112,26 +2108,6 @@
     "scripts/check_commentary_boundary.py"
    ],
    "sweep": "pass"
-  },
-  "tests/test_commentary_stream_native.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "src/durable_telegram.py",
-    "src/execution_gateway/cetta_worker.py",
-    "src/input_ack.py",
-    "src/llm_policy.py",
-    "src/native_lifetime.py",
-    "src/native_llm_host.py",
-    "src/observed_strategy.py",
-    "src/provider_protocol.py",
-    "src/provider_stream.py",
-    "src/public_worklog.py",
-    "src/strategy_host.py",
-    "tests/oracles/provider_sqlite/llm_policy.py",
-    "tests/oracles/provider_sqlite/native_lifetime.py"
-   ],
-   "sweep": "fail"
   },
   "tests/test_commitment_projection.py": {
    "fate": "delete-with-native-coverage",
@@ -2890,26 +2866,7 @@
     "tests/oracles/provider_sqlite/native_lifetime.py"
    ],
    "sweep": "fail",
-   "support_for": 14
-  },
-  "tests/test_native_llm_stream.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "src/durable_telegram.py",
-    "src/execution_gateway/cetta_worker.py",
-    "src/input_ack.py",
-    "src/llm_policy.py",
-    "src/native_lifetime.py",
-    "src/native_llm_host.py",
-    "src/observed_strategy.py",
-    "src/provider_protocol.py",
-    "src/provider_stream.py",
-    "src/strategy_host.py",
-    "tests/oracles/provider_sqlite/llm_policy.py",
-    "tests/oracles/provider_sqlite/native_lifetime.py"
-   ],
-   "sweep": "fail"
+   "support_for": 12
   },
   "tests/test_native_task_context.py": {
    "fate": "delete-with-native-coverage",
@@ -3187,15 +3144,6 @@
    "sweep": "pass",
    "support_for": 2
   },
-  "tests/test_provider_stream.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "src/provider_stream.py"
-   ],
-   "sweep": "pass",
-   "support_for": 2
-  },
   "tests/test_public_tree_audit.py": {
    "fate": "port-test",
    "phase": 5,
@@ -3364,7 +3312,7 @@
     "tests/oracles/provider_sqlite/native_lifetime.py"
    ],
    "sweep": "fail",
-   "support_for": 3
+   "support_for": 2
   },
   "tests/test_rest_control.py": {
    "fate": "delete-with-native-coverage",
@@ -3551,7 +3499,6 @@
     "src/native_llm_host.py",
     "src/observed_strategy.py",
     "src/provider_protocol.py",
-    "src/provider_stream.py",
     "src/strategy_host.py",
     "src/stream_sink.py",
     "tests/oracles/provider_sqlite/llm_policy.py",

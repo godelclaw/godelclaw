@@ -109,7 +109,23 @@ int main(int argc,char **argv) {
         snprintf(name,sizeof(name),"response-%lu.body",count);
         char scripted[4096];snprintf(scripted,sizeof(scripted),"%s/%s",root,name);
         char *body=read_file(root,access(scripted,R_OK)==0?name:"response.body",&n);char response[256];int head=snprintf(response,sizeof(response),"HTTP/1.1 %d Fixture\r\nContent-Length: %zu\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n",status,n);
-        if(head>0 && send_all(client,response,(size_t)head))send_all(client,body,n);
+        /* An optional prefix barrier: the first prefix-bytes of the body, a
+         * prefix-sent marker, then the rest once release-prefix exists, so a
+         * reader can observe a reply while it is still arriving. */
+        size_t prefix=n;
+        char prefix_path[4096];
+        if(snprintf(prefix_path,sizeof(prefix_path),"%s/prefix-bytes",root)>=(int)sizeof(prefix_path)) fail("prefix path");
+        if(!access(prefix_path,R_OK)){
+            size_t size=0;char *limit=read_file(root,"prefix-bytes",&size);long wanted=strtol(limit,NULL,10);free(limit);
+            if(wanted>=0&&(size_t)wanted<n)prefix=(size_t)wanted;
+        }
+        if(head>0 && send_all(client,response,(size_t)head) && send_all(client,body,prefix) && prefix<n){
+            FILE *sent=file(root,"prefix-sent","wb");fclose(sent);
+            char gate[4096];
+            if(snprintf(gate,sizeof(gate),"%s/release-prefix",root)>=(int)sizeof(gate)) fail("prefix path");
+            while(access(gate,F_OK)!=0){struct timespec pause={.tv_nsec=10000000L};while(nanosleep(&pause,&pause)&&errno==EINTR){}}
+            send_all(client,body+prefix,n-prefix);
+        }
         free(body);close(client);
     }
 }

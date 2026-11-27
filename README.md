@@ -808,9 +808,9 @@ key for that scope, refuses credential redirects and duplicate credential
 headers, and blocks a response containing the key. The client configures these
 aliases from the chosen provider; custom aliases require host configuration.
 The native soft wait defaults to 120 seconds, with a 1,800-second hard backstop.
-Streaming has an 8 MiB response bound; buffered responses retain the 1 MiB bound.
-Configure these through `config/local.toml`; `METTACLAW_LLM_RESPONSE_BYTES`
-provides a checked response-size override.
+A response may be up to 64 MiB, streamed or buffered. Configure this through
+`config/local.toml`; `METTACLAW_LLM_RESPONSE_BYTES` sets any bound from 1 KiB to
+the engine's largest string.
 The transport byte cap is not a guarantee that the JSON codec accepts every
 body below it. Parser work and depth limits can reject a smaller body; these
 remain an explicit qualification limit for large contexts and replies.

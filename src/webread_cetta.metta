@@ -9,8 +9,8 @@
 ; A read is made for the agent's task, one page at a time, as a person's
 ; browser reads a page they asked for: it does not consult robots.txt, which
 ; governs crawlers (METTACLAW_WEB_OBEY_ROBOTS=1 makes reads obey it too). It
-; never hides who it is: the User-Agent is the agent's own name and page,
-; "godelclaw (+https://github.com/godelclaw)", and never another browser's.
+; presents a desktop browser's User-Agent, as sites expect of a reader;
+; METTACLAW_WEB_AGENT_NAME sets another.
 ;
 ; The sandbox never costs function. The agent's web state (an HTTP cache, the
 ; cookies its browser kept, and the pages it rendered in the last 15 minutes)
@@ -53,9 +53,10 @@
                                 "--http-cache-entry-limit" (web:setting "METTACLAW_WEB_CACHE_ENTRIES" "1000"))
                                (if (fs:exists $cookies) ("--cookie" $cookies) ()))
                   (if $save ("--cookie-jar" $cookies) ()))))
-; Who the agent is, and whether reads obey robots.txt (see the header).
+; The User-Agent, and whether reads obey robots.txt (see the header).
+(= (web:default-agent) "Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0")
 (= (web:identity-options)
-   (list:append ("--user-agent" (web:setting "METTACLAW_WEB_AGENT_NAME" "godelclaw (+https://github.com/godelclaw)"))
+   (list:append ("--user-agent" (web:setting "METTACLAW_WEB_AGENT_NAME" (web:default-agent)))
                 (if (== (web:setting "METTACLAW_WEB_OBEY_ROBOTS" "0") "1") ("--obey-robots") ())))
 
 ;; The sandbox

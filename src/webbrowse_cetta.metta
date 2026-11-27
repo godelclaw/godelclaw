@@ -7,8 +7,8 @@
 ; and in the bubblewrap sandbox of read-url with a cleared environment. The
 ; server offers only the tools browse calls: the model names no tool and
 ; writes no script. Like a read, browsing is for the agent's task: it does not
-; consult robots.txt unless METTACLAW_WEB_OBEY_ROBOTS=1, and it names itself
-; as godelclaw in its User-Agent. It spaces navigations to one host (1 s by
+; consult robots.txt unless METTACLAW_WEB_OBEY_ROBOTS=1, and it presents the
+; same browser User-Agent as a read. It spaces navigations to one host (1 s by
 ; default), never reaches private or local addresses and sends no telemetry.
 ; Targets are element references from the snapshot and keys are key names.
 ; The browser's cookies and HTTP cache live in the agent's web state (see

@@ -81,13 +81,15 @@
         ($_ (web:pace "https://pace-check.invalid/b"))
         ($_ (nt:require pace-really-waits (>= (- (system:monotonic-ns) $t0) 900000000))))
    (println! UNIT_WEB_PACING_OK))
-; Reads name the agent and leave robots.txt to crawlers unless told to obey it.
+; Reads present a browser's User-Agent and leave robots.txt to crawlers unless
+; told to obey it.
 !(let* (($default (web:identity-options))
-        ($_ (nt:require reads-name-the-agent
-              (== $default ("--user-agent" "godelclaw (+https://github.com/godelclaw)"))))
-        ($_ (nt:require reads-never-claim-mozilla (not (nt:contains (str:join " " $default) "Mozilla"))))
+        ($_ (nt:require reads-present-a-browser-user-agent
+              (and (== $default ("--user-agent" (web:default-agent)))
+                   (str:starts-with (web:default-agent) "Mozilla/5.0 "))))
         ($_ (nt:require fetch-has-identity
-              (nt:contains (str:join " " (car-atom (web:fetch-variants "https://example.org/"))) "--user-agent godelclaw"))))
+              (nt:contains (str:join " " (car-atom (web:fetch-variants "https://example.org/")))
+                           (str:concat "--user-agent " (web:default-agent))))))
    (println! UNIT_WEB_IDENTITY_OK))
 !(let* (($_ (nt:require robots-reason
               (== (web:failure-reason 1 "$level=error $msg=\"page failed\" url=x err=RobotsBlocked")
@@ -111,12 +113,12 @@
                 (== (browse:snapshot-text "1 RootWebArea 'T'\n 2 [i]\n  4 [i] link 'Jump'\n  5 heading 'Intro'")
                     "RootWebArea 'T'\n @e2\n  @e4 link 'Jump'\n  heading 'Intro'")))
           ($_ (nt:require browse-ref-node (== (browse:node "@e417") 417)))
-          ; The browser offers only the tools browse calls, and names the agent.
+          ; The browser offers only the tools browse calls, with a browser's User-Agent.
           ($_ (nt:require browse-server-tools
                 (let $argv (str:join " " (browse:serve-argv "/bin/true" "9431" False))
                   (and (nt:contains $argv " mcp ")
                        (and (nt:contains $argv "--tools goto,tree,markdown,click,fill,press,waitForState,getUrl,evaluate")
-                            (and (nt:contains $argv "--user-agent godelclaw") (not (nt:contains $argv "--obey-robots"))))))))
+                            (and (nt:contains $argv (str:concat "--user-agent " (web:default-agent))) (not (nt:contains $argv "--obey-robots"))))))))
           ; A failed call says why; a timed-out one says its effect is unknown.
           ($_ (nt:require browse-timeout-unknown
                 (case (browse:reply (McpFailureV1 "incomplete" "MCP request timed out; effects may be uncertain"))

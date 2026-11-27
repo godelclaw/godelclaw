@@ -20,7 +20,7 @@
 (SettingSpec 1 "chatgpt" "account" "" "registration id" Text "persistent" "Native registration used for chatgpt: model ids. Empty means unconfigured; no provider fallback." chatgpt-policy chatgpt-policy)
 (SettingSpec 1 "chatgpt" "auth-deadline-ms" 300000 "milliseconds" (IntegerFrom 0) "persistent" "Default browser sign-in and renewal deadline; zero disables it. A sign-in call may override it." chatgpt-policy chatgpt-policy)
 (SettingSpec 1 "chatgpt" "model-list-deadline-ms" 30000 "milliseconds" (IntegerFrom 0) "persistent" "Model discovery deadline; zero disables it." chatgpt-policy chatgpt-policy)
-(SettingSpec 1 "chatgpt" "response-bytes" 8388608 "bytes" (IntegerFrom 1) "persistent" "Collected Responses SSE body allowance; raise it for larger reasoning/output streams." chatgpt-policy chatgpt-policy)
+(SettingSpec 1 "chatgpt" "response-bytes" 67108864 "bytes" (IntegerFrom 1) "persistent" "Collected Responses SSE body allowance; raise it for larger reasoning/output streams." chatgpt-policy chatgpt-policy)
 
 (= (chatgpt:available?) (let $providers (io:capabilities) (llm:v1:member? siwc $providers)))
 !(if (chatgpt:available?) (import! &self siwc) True)
