@@ -244,6 +244,14 @@
     ("tests/unit/shared_mail.metta" "UNIT_SHARED_MAIL_OK")
     ("tests/unit/sql_value.metta" "UNIT_SQL_VALUE_OK")
     ("tests/unit/scoped_observation.metta" "UNIT_SCOPED_OBSERVATION_OK")
+    ("tests/unit/unicode_tables.metta" "UNIT_UNICODE_TABLES_OK")
+    ("tests/unit/replay_evaluation.metta" "UNIT_REPLAY_EVALUATION_OK")
+    ("tests/unit/telegram_reply_target.metta" "UNIT_TELEGRAM_REPLY_TARGET_OK")
+    ("tests/unit/tmux.metta" "UNIT_TMUX_OK")
+    ("tests/unit/file_tools.metta" "UNIT_FILE_TOOLS_OK")
+    ("tests/unit/working_state.metta" "UNIT_WORKING_STATE_LEDGER_OK"
+     (("METTACLAW_INPUT_LEDGER_SOCKET" "{home}/l.sock")
+      ("METTACLAW_OBSERVED_STRATEGY" "1")))
     ("tests/unit/configuration_render.metta" "UNIT_CONFIGURATION_RENDER_OK")
     ("tests/unit/native_console_presentation.metta" "UNIT_NATIVE_CONSOLE_PRESENTATION_OK")
     ("tests/unit/cold_boot_lazy_modules.metta" "UNIT_COLD_BOOT_LAZY_OK"

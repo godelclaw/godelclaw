@@ -40,15 +40,7 @@
     "scripts/telegram_journal_retention_main.metta",
     "scripts/telegram_service_cetta.metta"
    ],
-   "used_by": 7
-  },
-  "channels/websearch.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "package": "channels",
-   "native": [
-    "src/websearch_cetta.metta"
-   ]
+   "used_by": 6
   },
   "examples/execution_gateway_demo.py": {
    "fate": "port-tool",
@@ -80,7 +72,11 @@
   },
   "modes/conformance/replay.py": {
    "fate": "port-tool",
-   "phase": 6
+   "phase": 6,
+   "native": [
+    "scripts/replay_evaluation_cetta.metta",
+    "src/replay_evaluation_cetta.metta"
+   ]
   },
   "modes/conformance/upstream_tests.py": {
    "fate": "port-tool",
@@ -267,7 +263,7 @@
    "native": [
     "src/goal_views_cetta.metta"
    ],
-   "used_by": 2
+   "used_by": 1
   },
   "modes/omega/upstream/src/logger.py": {
    "fate": "vendored-external",
@@ -425,15 +421,6 @@
    "fate": "delete-with-native-coverage",
    "phase": 7
   },
-  "scripts/generate_action_window_unicode.py": {
-   "fate": "port-tool",
-   "phase": 5
-  },
-  "scripts/generate_prose_unicode.py": {
-   "fate": "port-tool",
-   "phase": 5,
-   "used_by": 2
-  },
   "scripts/generate_retry_wake.py": {
    "fate": "port-tool",
    "phase": 5,
@@ -443,15 +430,7 @@
    "fate": "port-tool",
    "phase": 5
   },
-  "scripts/generate_small_views_unicode.py": {
-   "fate": "port-tool",
-   "phase": 5
-  },
   "scripts/generate_stream_events.py": {
-   "fate": "port-tool",
-   "phase": 5
-  },
-  "scripts/generate_unicode_casefold.py": {
    "fate": "port-tool",
    "phase": 5
   },
@@ -498,8 +477,7 @@
    "native": [
     "scripts/runtime_watch_cetta.metta",
     "src/runtime_watch_cetta.metta"
-   ],
-   "used_by": 1
+   ]
   },
   "scripts/sync_instances.py": {
    "fate": "port-tool",
@@ -516,11 +494,6 @@
    "fate": "port-tool",
    "phase": 5,
    "used_by": 2
-  },
-  "src/action_graph.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "package": "input-effects"
   },
   "src/active_queries.py": {
    "fate": "delete-with-native-coverage",
@@ -579,7 +552,7 @@
    "fate": "delete-with-native-coverage",
    "phase": 5,
    "package": "process-runtime",
-   "used_by": 5
+   "used_by": 4
   },
   "src/command_arity.py": {
    "fate": "delete-with-native-coverage",
@@ -696,11 +669,6 @@
    "package": "gateway",
    "used_by": 2
   },
-  "src/file_tools.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "package": "host-tools"
-  },
   "src/fsops.py": {
    "fate": "delete-with-native-coverage",
    "phase": 4,
@@ -736,7 +704,7 @@
    "native": [
     "src/goal_views_cetta.metta"
    ],
-   "used_by": 8
+   "used_by": 7
   },
   "src/input_ack.py": {
    "fate": "delete-with-native-coverage",
@@ -746,7 +714,7 @@
     "src/input_ledger.metta",
     "src/ledger_client.metta"
    ],
-   "used_by": 11
+   "used_by": 10
   },
   "src/iter_authoring.py": {
    "fate": "delete-with-native-coverage",
@@ -773,7 +741,7 @@
    "native": [
     "src/lifecycle_cetta.metta"
    ],
-   "used_by": 4
+   "used_by": 3
   },
   "src/llm_policy.py": {
    "fate": "delete-with-native-coverage",
@@ -791,7 +759,7 @@
    "native": [
     "src/loop_modes_cetta.metta"
    ],
-   "used_by": 4
+   "used_by": 3
   },
   "src/mcp_bridge.py": {
    "fate": "delete-with-native-coverage",
@@ -809,7 +777,7 @@
     "scripts/memory_health_cetta.metta",
     "src/memory_health_cetta.metta"
    ],
-   "used_by": 2
+   "used_by": 1
   },
   "src/mode_channel.py": {
    "fate": "delete-with-native-coverage",
@@ -908,11 +876,6 @@
    ],
    "used_by": 1
   },
-  "src/replay_evaluation.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "package": "host-tools"
-  },
   "src/retry_wake_model.py": {
    "fate": "port-tool",
    "phase": 5,
@@ -923,15 +886,6 @@
    "phase": 5,
    "package": "context-memory",
    "used_by": 1
-  },
-  "src/runtime_health.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "package": "process-runtime",
-   "native": [
-    "scripts/runtime_health_cetta.metta",
-    "src/runtime_health_cetta.metta"
-   ]
   },
   "src/skills_help.py": {
    "fate": "delete-with-native-coverage",
@@ -958,7 +912,7 @@
    "fate": "delete-with-native-coverage",
    "phase": 5,
    "package": "input-effects",
-   "used_by": 9
+   "used_by": 8
   },
   "src/stream_lifecycle.py": {
    "fate": "delete-with-native-coverage",
@@ -1003,11 +957,6 @@
    "package": "channels",
    "used_by": 1
   },
-  "src/tmux_bridge.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "package": "host-tools"
-  },
   "src/tmux_qualification.py": {
    "fate": "delete-with-native-coverage",
    "phase": 5,
@@ -1033,11 +982,6 @@
    "fate": "delete-with-native-coverage",
    "phase": 4,
    "package": "provider"
-  },
-  "src/working_state_host.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "package": "input-effects"
   },
   "tests/action_window_probe.py": {
    "fate": "delete-with-native-coverage",
@@ -1333,16 +1277,6 @@
    "sweep": "pass",
    "support_for": 1
   },
-  "tests/file_tools_probe.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "src/file_tools.py",
-    "src/fsops.py"
-   ],
-   "sweep": "pass",
-   "support_for": 1
-  },
   "tests/fixtures/gateway_tool.py": {
    "fate": "delete-with-native-coverage",
    "phase": 5,
@@ -1416,7 +1350,6 @@
    "covers": [
     "channels/telegram.py",
     "modes/omega/upstream/src/helper.py",
-    "scripts/generate_small_views_unicode.py",
     "scripts/render_channel_config.py",
     "src/active_queries.py",
     "src/commitment_projection.py",
@@ -1443,7 +1376,6 @@
    "covers": [
     "channels/telegram.py",
     "modes/omega/upstream/src/helper.py",
-    "scripts/generate_small_views_unicode.py",
     "scripts/render_channel_config.py",
     "src/active_queries.py",
     "src/commitment_projection.py",
@@ -1494,7 +1426,6 @@
    "covers": [
     "channels/telegram.py",
     "modes/omega/upstream/src/helper.py",
-    "scripts/generate_small_views_unicode.py",
     "scripts/render_channel_config.py",
     "src/active_queries.py",
     "src/commitment_projection.py",
@@ -1555,24 +1486,22 @@
    "phase": 5,
    "covers": [
     "modes/omega/upstream/src/helper.py",
-    "src/file_tools.py",
-    "src/helper.py",
-    "src/tmux_bridge.py"
+    "src/helper.py"
    ],
    "sweep": "pass",
-   "support_for": 2
+   "support_for": 1
   },
   "tests/hermetic_env.py": {
    "fate": "port-test",
    "phase": 7,
    "sweep": "pass",
-   "support_for": 17
+   "support_for": 16
   },
   "tests/isolated_env.py": {
    "fate": "port-test",
    "phase": 7,
    "sweep": "pass",
-   "support_for": 29
+   "support_for": 28
   },
   "tests/mode_state_cwd_check.py": {
    "fate": "port-tool",
@@ -1602,7 +1531,7 @@
     "tests/oracles/provider_sqlite/llm_policy.py"
    ],
    "sweep": "pass",
-   "support_for": 35
+   "support_for": 34
   },
   "tests/native_ledger_client.py": {
    "fate": "port-test",
@@ -1788,7 +1717,6 @@
    "covers": [
     "channels/telegram.py",
     "modes/omega/upstream/src/helper.py",
-    "scripts/generate_small_views_unicode.py",
     "scripts/render_channel_config.py",
     "src/active_queries.py",
     "src/commitment_projection.py",
@@ -1814,7 +1742,6 @@
    "covers": [
     "channels/telegram.py",
     "modes/omega/upstream/src/helper.py",
-    "scripts/generate_small_views_unicode.py",
     "scripts/render_channel_config.py",
     "src/active_queries.py",
     "src/commitment_projection.py",
@@ -1892,14 +1819,6 @@
    "fate": "dead",
    "phase": 8
   },
-  "tests/test_action_graph.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "src/action_graph.py"
-   ],
-   "sweep": "pass"
-  },
   "tests/test_action_window.py": {
    "fate": "delete-with-native-coverage",
    "phase": 5,
@@ -1915,7 +1834,6 @@
    "phase": 4,
    "covers": [
     "modes/omega/upstream/src/helper.py",
-    "scripts/generate_action_window_unicode.py",
     "src/context_sources.py",
     "src/helper.py"
    ],
@@ -1982,11 +1900,10 @@
    "sweep": "pass"
   },
   "tests/test_balance_parentheses.py": {
-   "fate": "port-test",
+   "fate": "delete-with-native-coverage",
    "phase": 5,
    "covers": [
     "modes/omega/upstream/src/helper.py",
-    "scripts/generate_prose_unicode.py",
     "src/command_arity.py",
     "src/helper.py",
     "src/skills_help.py"
@@ -2186,7 +2103,7 @@
    "fate": "port-test",
    "phase": 7,
    "sweep": "fail",
-   "support_for": 12
+   "support_for": 11
   },
   "tests/test_commentary_boundary_hol.py": {
    "fate": "port-test",
@@ -2441,24 +2358,7 @@
   },
   "tests/test_file_read_engine.py": {
    "fate": "port-test",
-   "phase": 4,
-   "sweep": "pass",
-   "support_for": 1
-  },
-  "tests/test_file_tools.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "src/file_tools.py"
-   ],
-   "sweep": "pass"
-  },
-  "tests/test_file_tools_engine.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "src/fsops.py"
-   ],
+   "phase": 2,
    "sweep": "pass"
   },
   "tests/test_fsops.py": {
@@ -2620,7 +2520,6 @@
    "covers": [
     "channels/telegram.py",
     "modes/omega/upstream/src/helper.py",
-    "scripts/generate_small_views_unicode.py",
     "scripts/render_channel_config.py",
     "src/active_queries.py",
     "src/commitment_projection.py",
@@ -2665,11 +2564,6 @@
    "covers": [
     "src/skills_help.py"
    ],
-   "sweep": "pass"
-  },
-  "tests/test_http_observation_contract.py": {
-   "fate": "port-test",
-   "phase": 2,
    "sweep": "pass"
   },
   "tests/test_input_ack.py": {
@@ -3355,14 +3249,6 @@
    ],
    "sweep": "pass"
   },
-  "tests/test_replay_evaluation.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "src/replay_evaluation.py"
-   ],
-   "sweep": "pass"
-  },
   "tests/test_request_capture.py": {
    "fate": "delete-with-native-coverage",
    "phase": 4,
@@ -3551,14 +3437,6 @@
    ],
    "sweep": "pass"
   },
-  "tests/test_runtime_health.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "src/runtime_health.py"
-   ],
-   "sweep": "pass"
-  },
   "tests/test_runtime_service_probe.py": {
    "fate": "port-test",
    "phase": 5,
@@ -3581,7 +3459,6 @@
    "phase": 5,
    "covers": [
     "modes/omega/upstream/src/helper.py",
-    "scripts/generate_prose_unicode.py",
     "scripts/generate_skills_help_pages.py",
     "src/command_arity.py",
     "src/helper.py",
@@ -3614,7 +3491,6 @@
    "covers": [
     "channels/telegram.py",
     "modes/omega/upstream/src/helper.py",
-    "scripts/generate_small_views_unicode.py",
     "scripts/render_channel_config.py",
     "src/active_queries.py",
     "src/commitment_projection.py",
@@ -3812,15 +3688,6 @@
    ],
    "sweep": "fail"
   },
-  "tests/test_telegram_routing_replay.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "modes/omega/upstream/src/channels.py",
-    "src/action_graph.py"
-   ],
-   "sweep": "pass"
-  },
   "tests/test_terminal_client.py": {
    "fate": "delete-with-native-coverage",
    "phase": 7,
@@ -3846,24 +3713,6 @@
     "src/helper.py"
    ],
    "sweep": "fail"
-  },
-  "tests/test_tmux_bridge.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "src/tmux_bridge.py"
-   ],
-   "sweep": "pass"
-  },
-  "tests/test_tmux_native.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "modes/omega/upstream/src/helper.py",
-    "src/helper.py",
-    "src/tmux_bridge.py"
-   ],
-   "sweep": "pass"
   },
   "tests/test_tmux_qualification.py": {
    "fate": "port-test",
@@ -3971,24 +3820,15 @@
    "sweep": "fail"
   },
   "tests/test_undelivered_prose.py": {
-   "fate": "port-test",
+   "fate": "delete-with-native-coverage",
    "phase": 5,
    "covers": [
     "modes/omega/upstream/src/helper.py",
-    "scripts/generate_prose_unicode.py",
     "src/command_arity.py",
     "src/helper.py"
    ],
    "sweep": "fail",
    "support_for": 2
-  },
-  "tests/test_unicode_profiles.py": {
-   "fate": "port-test",
-   "phase": 5,
-   "covers": [
-    "scripts/generate_prose_unicode.py"
-   ],
-   "sweep": "fail"
   },
   "tests/test_update_instances.py": {
    "fate": "port-test",
@@ -4025,15 +3865,6 @@
    ],
    "sweep": "pass"
   },
-  "tests/test_websearch.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "channels/websearch.py",
-    "modes/omega/upstream/src/websearch.py"
-   ],
-   "sweep": "pass"
-  },
   "tests/test_work_state.py": {
    "fate": "delete-with-native-coverage",
    "phase": 4,
@@ -4043,34 +3874,6 @@
     "src/helper.py"
    ],
    "sweep": "pass"
-  },
-  "tests/test_working_state_native.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "modes/omega/upstream/src/helper.py",
-    "src/durable_telegram.py",
-    "src/execution_gateway/cetta_worker.py",
-    "src/helper.py",
-    "src/input_ack.py",
-    "src/llm_policy.py",
-    "src/observed_strategy.py",
-    "tests/oracles/provider_sqlite/llm_policy.py"
-   ],
-   "sweep": "fail"
-  },
-  "tests/working_state_probe.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "channels/telegram.py",
-    "modes/omega/upstream/src/helper.py",
-    "src/helper.py",
-    "src/strategy_host.py",
-    "src/working_state_host.py"
-   ],
-   "sweep": "pass",
-   "support_for": 1
   },
   "ui/worklog/console.py": {
    "fate": "delete-with-native-coverage",

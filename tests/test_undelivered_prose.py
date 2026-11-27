@@ -361,11 +361,6 @@ class UndeliveredProseParity(unittest.TestCase):
             self.assertEqual(values.get(name), expected, "%s\n%s" % (name, detail))
             self.assertEqual(values.get("nul-" + name) in ("true", True), name == "word", name)
 
-    def test_generated_tables_are_current(self):
-        result = subprocess.run([sys.executable, str(ROOT / "scripts/generate_prose_unicode.py"),
-                                 "--check"], capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
     def test_pipeline_uses_the_native_prose(self):
         program = ["!(import! &self ./src/helper.py)", "!(import! &self prose_record.py)",
                    "!(import! &self ./src/command_pipeline.metta)",

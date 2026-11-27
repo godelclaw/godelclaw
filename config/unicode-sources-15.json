@@ -1,0 +1,38 @@
+{
+  "format": "godelclaw-unicode-sources-v1",
+  "version": "15.0.0",
+  "license": "Unicode-3.0",
+  "license_url": "https://www.unicode.org/license.txt",
+  "sources": [
+    {
+      "path": "UnicodeData.txt",
+      "url": "https://www.unicode.org/Public/15.0.0/ucd/UnicodeData.txt",
+      "bytes": 1913704,
+      "sha256": "806e9aed65037197f1ec85e12be6e8cd870fc5608b4de0fffd990f689f376a73"
+    },
+    {
+      "path": "LineBreak.txt",
+      "url": "https://www.unicode.org/Public/15.0.0/ucd/LineBreak.txt",
+      "bytes": 248086,
+      "sha256": "012bca868e2c4e59a5a10a7546baf0c6fb1b2ef458c277f054915c8a49d292bf"
+    },
+    {
+      "path": "CaseFolding.txt",
+      "url": "https://www.unicode.org/Public/15.0.0/ucd/CaseFolding.txt",
+      "bytes": 84690,
+      "sha256": "cdd49e55eae3bbf1f0a3f6580c974a0263cb86a6a08daa10fbf705b4808a56f7"
+    },
+    {
+      "path": "SpecialCasing.txt",
+      "url": "https://www.unicode.org/Public/15.0.0/ucd/SpecialCasing.txt",
+      "bytes": 16832,
+      "sha256": "78b29c64b5840d25c11a9f31b665ee551b8a499eca6c70d770fcad7dd710f494"
+    },
+    {
+      "path": "extracted/DerivedNumericType.txt",
+      "url": "https://www.unicode.org/Public/15.0.0/ucd/extracted/DerivedNumericType.txt",
+      "bytes": 19888,
+      "sha256": "710abf2d581ac9c57f244c0834f9d9969d9781e0396adccd330eaae658ac7d6b"
+    }
+  ]
+}

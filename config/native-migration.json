@@ -7,7 +7,7 @@
     "role": "native cognitive core and execution gateway repairs; retained frontend, observatory and Nostr dependencies remain open",
     "native_audit": "scripts/audit_native_runtime.metta",
     "native_audit_scope": "Native source dependencies only; inspect installed process roles separately. The established frontend, kept for rollback, executes Python.",
-    "engine_revision": "c6db48682860ef4a7ff4355122caae79d5fc4855",
+    "engine_revision": "2e2fe4798bca4bd8047e6dcf7de4b54dea075fcb",
     "runtime_profile": "native-agent",
     "shared_contracts": ["ResumableModeCheckpoint", "SingleReplyObservation", "GatewayRequestedStop", "PublicationBarrier"],
     "qualification": ["complete registered native units", "PeTTa provider contracts", "real normal and managed-mode turns", "input crash recovery", "native gateway/read adapters", "actual terminal and native mail/control fixtures", "growth and alternating complete-flow performance", "paired production forward/rollback/forward with forward-written state"],

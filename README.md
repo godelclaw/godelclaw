@@ -1243,9 +1243,8 @@ can update the accounting without committing a failed turn. Monetary cost stays
 unpriced until a provider bill or a separate, versioned price valuation is
 attached. An older ledger without this history is reported as untracked, rather
 than as zero spend. Reading a report cannot create or migrate a ledger.
-MeTTa callers can import `src/usage_history.metta` and call
-`(usage:events ledger since until)` to read the same identified events through
-native `sqlite:observe`.
+MeTTa callers can import `src/usage_report_cetta.metta` and call
+`(ur:report socket since until timezone)` for the same report as data.
 
 The native storage target is an application-level knowledge store: typed MeTTa
 facts and queries, captured views, atomic changes with durable receipts, and

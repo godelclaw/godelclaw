@@ -1,7 +1,8 @@
 ; An agent's operator commands, as the CeTTa Telegram channel service reads
 ; them (--commands). Declarations only; the service refuses anything else.
-; This file is shared by every agent. src/start_telegram_service.py writes each
-; agent's own copy with (tg-cmd:agent NAME) from METTACLAW_AGENT_NAME.
+; This file is shared by every agent. scripts/telegram_service_cetta.metta
+; writes each agent's own copy with (tg-cmd:agent NAME) from
+; METTACLAW_AGENT_NAME.
 ;
 ; help, stop and start are the service's own: it answers them at once, and
 ; stop holds everything the agent submits until start. Every delegated command

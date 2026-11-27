@@ -514,11 +514,6 @@ class BalanceParity(CettaCase):
         expected = hashlib.sha256("".join(c for c in universe if not c.isspace()).encode()).hexdigest()
         self.assertEqual(values.get("space"), expected, detail)
 
-    def test_generated_tables_are_current(self):
-        result = subprocess.run([sys.executable, str(ROOT / "scripts/generate_prose_unicode.py"),
-                                 "--check"], capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
 
 class LiveCaller(CettaCase):
     """addition-balance-response, the caller the loop and the shadow use, hands

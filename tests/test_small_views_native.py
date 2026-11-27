@@ -474,11 +474,6 @@ print(mode.get("version", "fixture 日 r1") if sys.argv[-1] == "--version" else 
                 self.compare(source, [{"env": {variable: str(empty)}}])
         self.compare("project-capabilities", [{"command": [str(empty)]}])
 
-    def test_unicode_table_matches_matching_python(self):
-        result = subprocess.run([sys.executable, str(ROOT / "scripts/generate_small_views_unicode.py"), "--check"],
-                                cwd=ROOT, env=guest_env(self.directory), capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
     def test_capability_lean_projection_replay(self):
         model = Path(os.environ.get("CAPABILITY_PROJECTION_LEAN",
                                     ROOT.parent / "MeTTapedia/lean/pettaclaw/CapabilityProjection.lean"))

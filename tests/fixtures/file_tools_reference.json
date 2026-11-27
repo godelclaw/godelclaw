@@ -1,0 +1,367 @@
+{
+ "about": "Answers of the Python file skills (src/fsops.py, src/file_tools.py) on the tree tests/fixtures/file_tools_tree.sh writes; {work} stands for its directory.",
+ "reads": [
+  {
+   "call": "(read-lines \"{work}/text\")",
+   "expected": "{work}/text: showing 1-6; end of file\n    1\tfirst\n    2\tλ 🌸\n    3\tthird\n    4\t\n    5\txxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx�\n    6\tlast"
+  },
+  {
+   "call": "(read-lines \"{work}/text\" 1 2)",
+   "expected": "{work}/text: showing 1-2; next start 3\n    1\tfirst\n    2\tλ 🌸"
+  },
+  {
+   "call": "(read-lines \"{work}/text\" 2 3)",
+   "expected": "{work}/text: showing 2-4; next start 5\n    2\tλ 🌸\n    3\tthird\n    4\t"
+  },
+  {
+   "call": "(read-lines \"{work}/text\" 5 1)",
+   "expected": "{work}/text: showing 5-5; next start 6\n    5\txxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx�"
+  },
+  {
+   "call": "(read-lines \"{work}/text\" 6 10)",
+   "expected": "{work}/text: showing 6-6; end of file\n    6\tlast"
+  },
+  {
+   "call": "(read-lines \"{work}/text\" 99 1)",
+   "expected": "{work}/text: no lines at or after 99"
+  },
+  {
+   "call": "(read-lines \"{work}/text\" 0 0)",
+   "expected": "{work}/text: showing 1-1; next start 2\n    1\tfirst"
+  },
+  {
+   "call": "(read-lines \"{work}/text\" -3 -1)",
+   "expected": "{work}/text: showing 1-1; next start 2\n    1\tfirst"
+  },
+  {
+   "call": "(read-lines \"{work}/text\" \"2\" \"2\")",
+   "expected": "{work}/text: showing 2-3; next start 4\n    2\tλ 🌸\n    3\tthird"
+  },
+  {
+   "call": "(read-lines \"{work}/empty\")",
+   "expected": "READ_OK_EMPTY_FILE: {work}/empty exists and holds zero bytes"
+  },
+  {
+   "call": "(read-lines \"{work}/empty\" 1 2)",
+   "expected": "READ_OK_EMPTY_FILE: {work}/empty exists and holds zero bytes"
+  },
+  {
+   "call": "(read-lines \"{work}/empty\" 2 3)",
+   "expected": "{work}/empty: no lines at or after 2"
+  },
+  {
+   "call": "(read-lines \"{work}/empty\" 5 1)",
+   "expected": "{work}/empty: no lines at or after 5"
+  },
+  {
+   "call": "(read-lines \"{work}/empty\" 6 10)",
+   "expected": "{work}/empty: no lines at or after 6"
+  },
+  {
+   "call": "(read-lines \"{work}/empty\" 99 1)",
+   "expected": "{work}/empty: no lines at or after 99"
+  },
+  {
+   "call": "(read-lines \"{work}/empty\" 0 0)",
+   "expected": "READ_OK_EMPTY_FILE: {work}/empty exists and holds zero bytes"
+  },
+  {
+   "call": "(read-lines \"{work}/empty\" -3 -1)",
+   "expected": "READ_OK_EMPTY_FILE: {work}/empty exists and holds zero bytes"
+  },
+  {
+   "call": "(read-lines \"{work}/empty\" \"2\" \"2\")",
+   "expected": "{work}/empty: no lines at or after 2"
+  },
+  {
+   "call": "(read-lines \"{work}/missing\")",
+   "expected": "read-lines failed: [Errno 2] No such file or directory: '{work}/missing'"
+  },
+  {
+   "call": "(read-lines \"{work}\")",
+   "expected": "read-lines failed: [Errno 21] Is a directory: '{work}'"
+  },
+  {
+   "call": "(ls-tree \"{work}/tree\" 1 100 0)",
+   "expected": "{work}/tree\na/\nbroken-link\nlink-dir\nz/\nb\nc\nd\nlink-file"
+  },
+  {
+   "call": "(ls-tree \"{work}/tree\" 2 100 0)",
+   "expected": "{work}/tree\na/\n  nested/\nbroken-link\nlink-dir\nz/\n  leaf\nb\nc\nd\nlink-file"
+  },
+  {
+   "call": "(ls-tree \"{work}/tree\" 5 100 0)",
+   "expected": "{work}/tree\na/\n  nested/\n    deep\nbroken-link\nlink-dir\nz/\n  leaf\nb\nc\nd\nlink-file"
+  },
+  {
+   "call": "(ls-tree \"{work}/tree\" 9 2 0)",
+   "expected": "{work}/tree\na/\n  nested/\n[more entries; next offset 2]"
+  },
+  {
+   "call": "(ls-tree \"{work}/tree\" 9 2 2)",
+   "expected": "{work}/tree\n    deep\nbroken-link\n[more entries; next offset 4]"
+  },
+  {
+   "call": "(ls-tree \"{work}/tree\" 9 2 99)",
+   "expected": "{work}/tree\n"
+  },
+  {
+   "call": "(ls-tree \"{work}/text\")",
+   "expected": "ls-tree failed: not a directory: {work}/text"
+  },
+  {
+   "call": "(grep-files \"needle\" \"{work}/tree\" 2 0)",
+   "expected": "{work}/tree/b:1: needle one\n{work}/tree/b:3: needle two\n[more matches; next offset 2]\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"needle\" \"{work}/tree\" 100 0)",
+   "expected": "{work}/tree/b:1: needle one\n{work}/tree/b:3: needle two\n{work}/tree/d:1: needle�\n{work}/tree/link-file:1: needle one\n{work}/tree/link-file:3: needle two\n{work}/tree/a/nested/deep:1: needle\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"needle\" \"{work}/tree\" 2 2)",
+   "expected": "{work}/tree/d:1: needle�\n{work}/tree/link-file:1: needle one\n[more matches; next offset 4]\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"(?i)needle\" \"{work}/tree\" 2 0)",
+   "expected": "{work}/tree/b:1: needle one\n{work}/tree/b:3: needle two\n[more matches; next offset 2]\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"(?i)needle\" \"{work}/tree\" 100 0)",
+   "expected": "{work}/tree/b:1: needle one\n{work}/tree/b:3: needle two\n{work}/tree/d:1: needle�\n{work}/tree/link-file:1: needle one\n{work}/tree/link-file:3: needle two\n{work}/tree/a/nested/deep:1: needle\n{work}/tree/z/leaf:1: NEEDLE\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"(?i)needle\" \"{work}/tree\" 2 2)",
+   "expected": "{work}/tree/d:1: needle�\n{work}/tree/link-file:1: needle one\n[more matches; next offset 4]\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"^needle\" \"{work}/tree\" 2 0)",
+   "expected": "{work}/tree/b:1: needle one\n{work}/tree/b:3: needle two\n[more matches; next offset 2]\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"^needle\" \"{work}/tree\" 100 0)",
+   "expected": "{work}/tree/b:1: needle one\n{work}/tree/b:3: needle two\n{work}/tree/d:1: needle�\n{work}/tree/link-file:1: needle one\n{work}/tree/link-file:3: needle two\n{work}/tree/a/nested/deep:1: needle\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"^needle\" \"{work}/tree\" 2 2)",
+   "expected": "{work}/tree/d:1: needle�\n{work}/tree/link-file:1: needle one\n[more matches; next offset 4]\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"needle(?= two)\" \"{work}/tree\" 2 0)",
+   "expected": "{work}/tree/b:3: needle two\n{work}/tree/link-file:3: needle two\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"needle(?= two)\" \"{work}/tree\" 100 0)",
+   "expected": "{work}/tree/b:3: needle two\n{work}/tree/link-file:3: needle two\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"needle(?= two)\" \"{work}/tree\" 2 2)",
+   "expected": "no matches in this page for \"needle(?= two)\" under {work}/tree (5 files scanned)\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"(?P<word>needle) (?P=word)\" \"{work}/tree\" 2 0)",
+   "expected": "no matches in this page for \"(?P<word>needle) (?P=word)\" under {work}/tree (5 files scanned)\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"(?P<word>needle) (?P=word)\" \"{work}/tree\" 100 0)",
+   "expected": "no matches in this page for \"(?P<word>needle) (?P=word)\" under {work}/tree (5 files scanned)\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"(?P<word>needle) (?P=word)\" \"{work}/tree\" 2 2)",
+   "expected": "no matches in this page for \"(?P<word>needle) (?P=word)\" under {work}/tree (5 files scanned)\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"\\\\w+\" \"{work}/tree\" 2 0)",
+   "expected": "{work}/tree/b:1: needle one\n{work}/tree/b:2: λ_１２\n[more matches; next offset 2]"
+  },
+  {
+   "call": "(grep-files \"\\\\w+\" \"{work}/tree\" 100 0)",
+   "expected": "{work}/tree/b:1: needle one\n{work}/tree/b:2: λ_１２\n{work}/tree/b:3: needle two\n{work}/tree/b:4: [broken\n{work}/tree/d:1: needle�\n{work}/tree/d:2: next\n{work}/tree/link-file:1: needle one\n{work}/tree/link-file:2: λ_１２\n{work}/tree/link-file:3: needle two\n{work}/tree/link-file:4: [broken\n{work}/tree/a/nested/deep:1: needle\n{work}/tree/z/leaf:1: NEEDLE\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"\\\\w+\" \"{work}/tree\" 2 2)",
+   "expected": "{work}/tree/b:3: needle two\n{work}/tree/b:4: [broken\n[more matches; next offset 4]\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"\\\\bλ_１２\\\\b\" \"{work}/tree\" 2 0)",
+   "expected": "{work}/tree/b:2: λ_１２\n{work}/tree/link-file:2: λ_１２\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"\\\\bλ_１２\\\\b\" \"{work}/tree\" 100 0)",
+   "expected": "{work}/tree/b:2: λ_１２\n{work}/tree/link-file:2: λ_１２\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"\\\\bλ_１２\\\\b\" \"{work}/tree\" 2 2)",
+   "expected": "no matches in this page for \"\\\\bλ_１２\\\\b\" under {work}/tree (5 files scanned)\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"[broken\" \"{work}/tree\" 2 0)",
+   "expected": "{work}/tree/b:4: [broken\n{work}/tree/link-file:4: [broken\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"[broken\" \"{work}/tree\" 100 0)",
+   "expected": "{work}/tree/b:4: [broken\n{work}/tree/link-file:4: [broken\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"[broken\" \"{work}/tree\" 2 2)",
+   "expected": "no matches in this page for \"[broken\" under {work}/tree (5 files scanned)\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"needle.*\\\\Z\" \"{work}/tree\" 2 0)",
+   "expected": "no matches in this page for \"needle.*\\\\Z\" under {work}/tree (5 files scanned)\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"needle.*\\\\Z\" \"{work}/tree\" 100 0)",
+   "expected": "no matches in this page for \"needle.*\\\\Z\" under {work}/tree (5 files scanned)\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"needle.*\\\\Z\" \"{work}/tree\" 2 2)",
+   "expected": "no matches in this page for \"needle.*\\\\Z\" under {work}/tree (5 files scanned)\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"^$\" \"{work}/tree\" 2 0)",
+   "expected": "no matches in this page for \"^$\" under {work}/tree (5 files scanned)\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"^$\" \"{work}/tree\" 100 0)",
+   "expected": "no matches in this page for \"^$\" under {work}/tree (5 files scanned)\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"^$\" \"{work}/tree\" 2 2)",
+   "expected": "no matches in this page for \"^$\" under {work}/tree (5 files scanned)\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"\" \"{work}/tree\" 2 0)",
+   "expected": "{work}/tree/b:1: needle one\n{work}/tree/b:2: λ_１２\n[more matches; next offset 2]"
+  },
+  {
+   "call": "(grep-files \"\" \"{work}/tree\" 100 0)",
+   "expected": "{work}/tree/b:1: needle one\n{work}/tree/b:2: λ_１２\n{work}/tree/b:3: needle two\n{work}/tree/b:4: [broken\n{work}/tree/d:1: needle�\n{work}/tree/d:2: next\n{work}/tree/link-file:1: needle one\n{work}/tree/link-file:2: λ_１２\n{work}/tree/link-file:3: needle two\n{work}/tree/link-file:4: [broken\n{work}/tree/a/nested/deep:1: needle\n{work}/tree/z/leaf:1: NEEDLE\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(grep-files \"\" \"{work}/tree\" 2 2)",
+   "expected": "{work}/tree/b:3: needle two\n{work}/tree/b:4: [broken\n[more matches; next offset 4]\n[unreadable files]\n{work}/tree/broken-link: [Errno 2] No such file or directory: '{work}/tree/broken-link'"
+  },
+  {
+   "call": "(file-io:exists \"{work}/text\")",
+   "expected": "True"
+  },
+  {
+   "call": "(file-io:exists \"{work}\")",
+   "expected": "False"
+  },
+  {
+   "call": "(file-io:exists \"{work}/absent\")",
+   "expected": "False"
+  }
+ ],
+ "writes": [
+  {
+   "call": "(let $content (read-file \"{work}/nul-input\") (write-file \"{work}/write\" $content))",
+   "kind": "written",
+   "path": "{work}/write",
+   "sha256": "6ee97332caa931c53fbd65f158e4e16d29bef9a6c4b7d59f3af3fb279824a753",
+   "bytes": 9,
+   "previous_sha256": "f1f1de3e53f5c43b4bba213a32a4d44b23080a8342b4215bee8255ce435d946d",
+   "mode": 416
+  },
+  {
+   "call": "(append-file \"{work}/write\" \"🌸\")",
+   "kind": "written",
+   "path": "{work}/write",
+   "sha256": "e4374cf27c9216cee12a3448c78d6584d708c9aea6baef4e36397e3fda5bf087",
+   "bytes": 14,
+   "previous_sha256": "6ee97332caa931c53fbd65f158e4e16d29bef9a6c4b7d59f3af3fb279824a753",
+   "mode": 416
+  },
+  {
+   "call": "(edit-file \"{work}/absent\" \"\" \"z\")",
+   "kind": "check",
+   "expected": "edit failed: old-string is empty"
+  },
+  {
+   "call": "(edit-file \"{work}/write\" \"\" \"z\")",
+   "kind": "check",
+   "expected": "edit failed: old-string is empty"
+  },
+  {
+   "call": "(edit-file \"{work}/write\" \"absent\" \"z\")",
+   "kind": "check",
+   "expected": "edit failed: old-string occurs 0 times in {work}/write; it must occur exactly once"
+  },
+  {
+   "call": "(edit-file \"{work}/write\" \"x\" \"XX\")",
+   "kind": "written",
+   "path": "{work}/write",
+   "sha256": "35bce406075a52c5fe637a3d2ee770749dfa9713128376817e606e22c3e456a9",
+   "bytes": 15,
+   "previous_sha256": "e4374cf27c9216cee12a3448c78d6584d708c9aea6baef4e36397e3fda5bf087",
+   "mode": 416
+  },
+  {
+   "call": "(edit-file \"{work}/write\" \"X\" \"z\")",
+   "kind": "check",
+   "expected": "edit failed: old-string occurs 2 times in {work}/write; it must occur exactly once"
+  },
+  {
+   "call": "(write-file \"{work}/write\" \"\")",
+   "kind": "written",
+   "path": "{work}/write",
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "bytes": 0,
+   "previous_sha256": "35bce406075a52c5fe637a3d2ee770749dfa9713128376817e606e22c3e456a9",
+   "mode": 416
+  },
+  {
+   "call": "(let $content (read-file \"{work}/crlf-input\") (write-file \"{work}/write\" $content))",
+   "kind": "written",
+   "path": "{work}/write",
+   "sha256": "3e0182ea30114bb6fdf5f9aa41428732d204af0e31761805d6555d7ba5e95977",
+   "bytes": 9,
+   "previous_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "mode": 416
+  },
+  {
+   "call": "(edit-file \"{work}/write\" \"old\" \"new\")",
+   "kind": "written",
+   "path": "{work}/write",
+   "sha256": "5a12977ce98807612ae06f5bf817026f7f2126ac7ebbb79ae17d4070cd69d50c",
+   "bytes": 8,
+   "previous_sha256": "3e0182ea30114bb6fdf5f9aa41428732d204af0e31761805d6555d7ba5e95977",
+   "mode": 416
+  },
+  {
+   "call": "(edit-file \"{work}/bad-input\" \"bad\" \"ok\")",
+   "kind": "failed",
+   "prefix": "edit failed:",
+   "path": "{work}/bad-input",
+   "sha256": "69f5f0e0fa0fda78f93925cc50aef69d8e4f4973e8ca5e23d4121bc8696178a5"
+  },
+  {
+   "call": "(write-file \"{work}/new\" \"new\")",
+   "kind": "written",
+   "path": "{work}/new",
+   "sha256": "11507a0e2f5e69d5dfa40a62a1bd7b6ee57e6bcd85c67c9b8431b36fff21c437",
+   "bytes": 3,
+   "previous_sha256": null,
+   "mode": 384
+  },
+  {
+   "call": "(file-io:write-present \"replace\" (file-io:update \"{work}/nested/state.json\" \"replace\" \"{\\\"default\\\":\\\"full\\\"}\" \"\"))",
+   "kind": "written",
+   "path": "{work}/nested/state.json",
+   "sha256": "141a7bc4afa5663d2e60988fd0ce2b5b7fa1d61e56597eb870571066e3d6cd4e",
+   "bytes": 18,
+   "previous_sha256": null,
+   "mode": 384
+  },
+  {
+   "call": "(file-io:write-present \"replace\" (file-io:update \"{work}/nested/state.json\" \"replace\" \"{\\\"default\\\":\\\"mid\\\",\\\"name\\\":\\\"λ 🌸\\\"}\" \"\"))",
+   "kind": "written",
+   "path": "{work}/nested/state.json",
+   "sha256": "6b0ccca6f368d5baf5a816aac7802ddd91d9f53c5411e6550935d09a287c3acf",
+   "bytes": 34,
+   "previous_sha256": null,
+   "mode": 384
+  }
+ ]
+}

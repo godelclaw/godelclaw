@@ -426,11 +426,6 @@ class NativeActionWindowTest(unittest.TestCase):
         self.assertIn("(Unicode true)", stdout, "missing=%r extra=%r" %
                       ([hex(ord(c)) for c in missing[:100]], [hex(ord(c)) for c in extra[:100]]))
 
-    def test_checked_in_unicode_tables(self):
-        result = subprocess.run([sys.executable, str(ROOT / "scripts/generate_action_window_unicode.py"), "--check"],
-                                cwd=ROOT, env=guest_env(self.directory), capture_output=True, text=True, timeout=120)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
     def caller_lines(self, table, file_io=True, forbid=False, native=True):
         """native: the CeTTa views, compared with the earlier bridge's atom;
         otherwise helper's own views, which return what the bridge returns."""
