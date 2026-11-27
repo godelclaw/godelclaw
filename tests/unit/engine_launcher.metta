@@ -70,8 +70,9 @@
           ($stopped (el:wait-gone $launcher $child 100))
           ($_ (if $stopped True (proc:run ("kill" "-KILL" $child) "/" inherit 5000 64)))
           ($_ (proc:close $launcher)))
-     (and $started (and (nt:contains $args (if (== $phase "health") "memory_health_cetta.metta" "utility.metta"))
-                        (and (el:stopped-by-term? $exit) $stopped)))))
+     (let $ok (and $started (and (nt:contains $args (if (== $phase "health") "memory_health_cetta.metta" "utility.metta"))
+                                 (and (el:stopped-by-term? $exit) $stopped)))
+       (if $ok True (let $_ (println! (HOLD_FAILED $phase $started $args $exit $stopped)) False)))))
 
 !(let* (($repo (nt:required-env "TEST_REPOSITORY")) ($home (nt:required-env "HOME"))
          ($_ (nt:require the-launcher-names-the-instance-for-its-children

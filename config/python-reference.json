@@ -1566,7 +1566,7 @@
    "fate": "port-test",
    "phase": 7,
    "sweep": "pass",
-   "support_for": 18
+   "support_for": 17
   },
   "tests/isolated_env.py": {
    "fate": "port-test",
@@ -2749,7 +2749,7 @@
    "fate": "port-test",
    "phase": 5,
    "sweep": "pass",
-   "support_for": 2
+   "support_for": 1
   },
   "tests/test_ledger_pages.py": {
    "fate": "delete-with-native-coverage",
@@ -3574,11 +3574,6 @@
     "channels/telegram.py",
     "scripts/runtime_watch.py"
    ],
-   "sweep": "fail"
-  },
-  "tests/test_scoped_observation.py": {
-   "fate": "port-test",
-   "phase": 3,
    "sweep": "fail"
   },
   "tests/test_skills_help_native.py": {

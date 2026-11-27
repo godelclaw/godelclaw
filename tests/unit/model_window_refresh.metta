@@ -213,6 +213,8 @@
         ($mid-text (mw:repeat $chunk16k 29 ""))
         ($mid-base (RoleContext coding-messages-empty "skills" "obs" () () $mid-text "inst"))
         ($prep-compact-unknown (context:prepare $mid-base "req-1" "continuation-tick" "" "claude-sonnet-5-5" 32768 "default"))
+        ($_ (if (nt:equal $prep-compact-unknown (ContextPreparationFailed "context-window-unknown")) True
+               (println! (WINDOW_UNKNOWN_DIFFERS unknown-window-refuses-compaction $prep-compact-unknown (model:observations)))))
         ($_ (nt:require unknown-window-refuses-compaction
               (nt:equal $prep-compact-unknown (ContextPreparationFailed "context-window-unknown"))))
         ($_ (nt:require unknown-window-checkpoint-untouched
@@ -220,6 +222,8 @@
         ($big-text (mw:repeat $chunk16k 40 ""))
         ($big-base (RoleContext coding-messages-empty "skills" "obs" () () $big-text "inst"))
         ($prep-big-unknown (context:prepare $big-base "req-1" "continuation-tick" "" "claude-sonnet-5-5" 32768 "default"))
+        ($_ (if (nt:equal $prep-big-unknown (ContextPreparationFailed "context-window-unknown")) True
+               (println! (WINDOW_UNKNOWN_DIFFERS unknown-window-oversized-fails-closed $prep-big-unknown (model:observations)))))
         ($_ (nt:require unknown-window-oversized-fails-closed
               (nt:equal $prep-big-unknown (ContextPreparationFailed "context-window-unknown"))))
         ($prep-big-1m (context:prepare $big-base "req-1" "continuation-tick" "967232" "claude-sonnet-5-5" 32768 "default"))

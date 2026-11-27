@@ -262,14 +262,16 @@ fi
 # shell waiting on a child runs its traps only after the child exits, so a
 # TERM from a timeout or Ctrl-C would stop neither of them, and the engine
 # would keep running orphaned. Forward the signal to the probe and to its
-# children, then return its status.
+# children, then return its status. The probe may already be gone when the
+# signal arrives, so a kill that finds nothing must not end the launcher
+# (errexit would turn the stop into status 1).
 run_probe() {
     probe_stop_status=0
     "$@" <&0 &
     probe_pid=$!
-    trap 'probe_stop_status=143; pkill -TERM -P "$probe_pid" 2>/dev/null; kill -TERM "$probe_pid" 2>/dev/null' TERM
-    trap 'probe_stop_status=130; pkill -TERM -P "$probe_pid" 2>/dev/null; kill -TERM "$probe_pid" 2>/dev/null' INT
-    trap 'probe_stop_status=129; pkill -TERM -P "$probe_pid" 2>/dev/null; kill -TERM "$probe_pid" 2>/dev/null' HUP
+    trap 'probe_stop_status=143; pkill -TERM -P "$probe_pid" 2>/dev/null || :; kill -TERM "$probe_pid" 2>/dev/null || :' TERM
+    trap 'probe_stop_status=130; pkill -TERM -P "$probe_pid" 2>/dev/null || :; kill -TERM "$probe_pid" 2>/dev/null || :' INT
+    trap 'probe_stop_status=129; pkill -TERM -P "$probe_pid" 2>/dev/null || :; kill -TERM "$probe_pid" 2>/dev/null || :' HUP
     local status=0
     wait "$probe_pid" || status=$?
     while kill -0 "$probe_pid" 2>/dev/null; do

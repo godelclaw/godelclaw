@@ -243,6 +243,7 @@
     ("tests/unit/hierarchy_store.metta" "UNIT_HIERARCHY_STORE_OK")
     ("tests/unit/shared_mail.metta" "UNIT_SHARED_MAIL_OK")
     ("tests/unit/sql_value.metta" "UNIT_SQL_VALUE_OK")
+    ("tests/unit/scoped_observation.metta" "UNIT_SCOPED_OBSERVATION_OK")
     ("tests/unit/configuration_render.metta" "UNIT_CONFIGURATION_RENDER_OK")
     ("tests/unit/native_console_presentation.metta" "UNIT_NATIVE_CONSOLE_PRESENTATION_OK")
     ("tests/unit/cold_boot_lazy_modules.metta" "UNIT_COLD_BOOT_LAZY_OK"
