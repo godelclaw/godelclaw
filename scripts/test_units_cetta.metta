@@ -269,6 +269,8 @@
     ("tests/unit/wake_vitals.metta" "UNIT_WAKE_VITALS_OK")
     ("tests/unit/control_menu_pages.metta" "UNIT_CONTROL_MENU_PAGES_OK")
     ("tests/unit/goal_write.metta" "UNIT_GOAL_WRITE_OK")
+    ("tests/unit/goal_stack.metta" "UNIT_GOAL_STACK_OK")
+    ("tests/unit/goal_stack_replay.metta" "UNIT_GOAL_STACK_REPLAY_OK")
     ("tests/unit/stream_assembly.metta" "UNIT_STREAM_ASSEMBLY_OK")
     ("tests/unit/usage_history.metta" "UNIT_USAGE_HISTORY_OK"
      (("METTACLAW_INPUT_LEDGER_SOCKET" "{home}/l.sock") ("METTACLAW_LLM_POLICY" "managed")

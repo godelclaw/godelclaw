@@ -1243,94 +1243,6 @@
    "phase": 5,
    "used_by": 1
   },
-  "tests/goal_bookkeeping_bench.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "src/goals.py"
-   ],
-   "sweep": "pass",
-   "support_for": 2
-  },
-  "tests/goal_bookkeeping_caller_bench.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "modes/omega/upstream/src/helper.py",
-    "src/fuel_modes.py",
-    "src/goals.py",
-    "src/helper.py",
-    "src/strategy_host.py"
-   ],
-   "sweep": "fail"
-  },
-  "tests/goal_bookkeeping_callers_probe.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "modes/omega/upstream/src/helper.py",
-    "src/goals.py",
-    "src/helper.py",
-    "src/strategy_host.py"
-   ],
-   "sweep": "pass",
-   "support_for": 1
-  },
-  "tests/goal_bookkeeping_candidate_bench.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "modes/omega/upstream/src/helper.py",
-    "src/goals.py",
-    "src/helper.py"
-   ],
-   "sweep": "fail",
-   "support_for": 1
-  },
-  "tests/goal_bookkeeping_probe.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "modes/omega/upstream/src/helper.py",
-    "src/goals.py",
-    "src/helper.py",
-    "src/strategy_host.py"
-   ],
-   "sweep": "pass",
-   "support_for": 7
-  },
-  "tests/goal_bookkeeping_support.py": {
-   "fate": "port-test",
-   "phase": 4,
-   "sweep": "pass",
-   "support_for": 14
-  },
-  "tests/goal_bookkeeping_views_check.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "channels/telegram.py",
-    "modes/omega/upstream/src/helper.py",
-    "scripts/render_channel_config.py",
-    "src/active_queries.py",
-    "src/commitment_projection.py",
-    "src/context_source_loaders.py",
-    "src/context_sources.py",
-    "src/development_state.py",
-    "src/effect_receipts.py",
-    "src/engine_modes.py",
-    "src/goal_views_boundary.py",
-    "src/goals.py",
-    "src/helper.py",
-    "src/iter_authoring.py",
-    "src/pins.py",
-    "src/project_capabilities.py",
-    "src/project_evidence.py",
-    "src/strategy_host.py",
-    "src/task_phase.py"
-   ],
-   "sweep": "fail"
-  },
   "tests/goal_views_bench.py": {
    "fate": "delete-with-native-coverage",
    "phase": 4,
@@ -1462,7 +1374,7 @@
    "fate": "port-test",
    "phase": 7,
    "sweep": "pass",
-   "support_for": 26
+   "support_for": 25
   },
   "tests/mode_state_cwd_check.py": {
    "fate": "port-tool",
@@ -1606,22 +1518,6 @@
    ],
    "sweep": "fail"
   },
-  "tests/run_goal_bookkeeping_checks.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "sweep": "fail",
-   "runs": [
-    "tests/test_goal_bookkeeping_callers.py",
-    "tests/test_goal_bookkeeping_domain.py",
-    "tests/test_goal_bookkeeping_load.py",
-    "tests/test_goal_bookkeeping_missing_mood.py",
-    "tests/test_goal_bookkeeping_oracle.py",
-    "tests/test_goal_bookkeeping_replay.py",
-    "tests/test_goal_bookkeeping_utf8.py",
-    "tests/test_goals_kernel.py",
-    "tests/test_work_state.py"
-   ]
-  },
   "tests/run_goal_views_checks.py": {
    "fate": "delete-with-native-coverage",
    "phase": 4,
@@ -1631,7 +1527,6 @@
     "tests/test_context_bundle_native.py",
     "tests/test_context_sources.py",
     "tests/test_goal_views_native.py",
-    "tests/test_goals_kernel.py",
     "tests/test_pins_context_native.py",
     "tests/test_small_views_cold_bench.py",
     "tests/test_small_views_native.py",
@@ -2268,104 +2163,6 @@
    "sweep": "pass",
    "support_for": 1
   },
-  "tests/test_goal_bookkeeping_callers.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "modes/omega/upstream/src/helper.py",
-    "src/fuel_modes.py",
-    "src/goals.py",
-    "src/helper.py",
-    "src/strategy_host.py"
-   ],
-   "sweep": "fail",
-   "support_for": 3
-  },
-  "tests/test_goal_bookkeeping_candidates.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "modes/omega/upstream/src/helper.py",
-    "src/goals.py",
-    "src/helper.py"
-   ],
-   "sweep": "fail",
-   "support_for": 6
-  },
-  "tests/test_goal_bookkeeping_domain.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "modes/omega/upstream/src/helper.py",
-    "src/goals.py",
-    "src/helper.py",
-    "src/strategy_host.py"
-   ],
-   "sweep": "fail",
-   "support_for": 2
-  },
-  "tests/test_goal_bookkeeping_load.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "modes/omega/upstream/src/helper.py",
-    "src/fuel_modes.py",
-    "src/goals.py",
-    "src/helper.py",
-    "src/strategy_host.py"
-   ],
-   "sweep": "fail"
-  },
-  "tests/test_goal_bookkeeping_missing_mood.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "src/goals.py"
-   ],
-   "sweep": "pass"
-  },
-  "tests/test_goal_bookkeeping_native.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "modes/omega/upstream/src/helper.py",
-    "src/goals.py",
-    "src/helper.py",
-    "src/strategy_host.py"
-   ],
-   "sweep": "fail"
-  },
-  "tests/test_goal_bookkeeping_oracle.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "src/goals.py"
-   ],
-   "sweep": "pass",
-   "support_for": 2
-  },
-  "tests/test_goal_bookkeeping_replay.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "modes/omega/upstream/src/helper.py",
-    "src/goals.py",
-    "src/helper.py"
-   ],
-   "sweep": "pass"
-  },
-  "tests/test_goal_bookkeeping_utf8.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "modes/omega/upstream/src/helper.py",
-    "src/fuel_modes.py",
-    "src/goals.py",
-    "src/helper.py",
-    "src/strategy_host.py"
-   ],
-   "sweep": "fail"
-  },
   "tests/test_goal_views_native.py": {
    "fate": "delete-with-native-coverage",
    "phase": 4,
@@ -2391,15 +2188,7 @@
     "src/task_phase.py"
    ],
    "sweep": "fail",
-   "support_for": 3
-  },
-  "tests/test_goals_kernel.py": {
-   "fate": "delete-with-native-coverage",
-   "phase": 4,
-   "covers": [
-    "src/goals.py"
-   ],
-   "sweep": "pass"
+   "support_for": 2
   },
   "tests/test_handover_ids.py": {
    "fate": "delete-with-native-coverage",
